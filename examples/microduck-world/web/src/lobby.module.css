@@ -1,0 +1,706 @@
+@font-face {
+  font-family: "Chakra Petch";
+  src: url("./fonts/ChakraPetch-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+.shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #142443;
+  color: #eff4ff;
+  font-family: system-ui, sans-serif;
+}
+.header {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  min-height: 68px;
+  padding: 0 32px;
+  border-bottom: 1px solid #ffffff16;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font: 700 14px "Chakra Petch", sans-serif;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.brandIcon {
+  display: grid;
+  place-items: center;
+  margin-right: 7px;
+  width: 27px;
+  height: 27px;
+  background: #ffcf62;
+  color: #142443;
+  border-radius: 7px 7px 7px 0;
+  font-size: 23px;
+  letter-spacing: 0;
+  box-sizing: border-box;
+}
+.capacity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #b2c4df;
+}
+.capacity i, .availability i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #88dac3;
+  flex-shrink: 0;
+}
+.actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 12px;
+  color: #b2c4df;
+}
+.actions button {
+  background: #233757;
+  color: #eff4ff;
+  border: 1px solid #607392;
+  border-radius: 6px;
+  font: inherit;
+  padding: 9px 13px;
+  cursor: pointer;
+}
+.actions button span {
+  margin-left: 12px;
+}
+.shell button:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 4px;
+}
+.landing {
+  flex: 1;
+  overflow: auto;
+  padding: clamp(32px, 5vh, 64px) clamp(20px, 3.5vw, 64px) 28px;
+  background: radial-gradient(ellipse at 50% 36%, #293f66 0, transparent 72%);
+}
+.intro, .choices, .footer {
+  max-width: 1480px;
+  margin-inline: auto;
+}
+.intro {
+  margin-bottom: 34px;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  font-weight: 700;
+  color: #a8bddc;
+}
+.intro h1 {
+  font: 700 clamp(32px, 3.3vw, 56px)/1.13 "Chakra Petch", sans-serif;
+  letter-spacing: -0.035em;
+  margin: 13px 0 0;
+}
+.intro h1 span {
+  color: #ffcf62;
+}
+.intro p {
+  color: #b2c4df;
+  font-size: 13px;
+  line-height: 1.8;
+  margin: 14px 0 0;
+}
+.choices {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 18px;
+}
+.character {
+  --duck: #d5e2f9;
+  min-width: 0;
+  background: #203556;
+  border: 1px solid #6983ad55;
+  border-radius: 14px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 18px 32px #08142b33;
+  transition: transform 0.18s, border-color 0.18s;
+}
+.character:hover, .character:focus-within {
+  transform: translateY(-4px);
+  border-color: var(--duck);
+}
+.cardTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 18px 0;
+  z-index: 1;
+}
+.player {
+  font: 700 19px "Chakra Petch", sans-serif;
+  color: var(--duck);
+}
+.availability {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: #d7e4f6;
+}
+.unavailable .availability {
+  color: #ffcf9c;
+}
+.unavailable .availability i {
+  background: #ffb766;
+}
+.portrait, .roomPreview {
+  height: clamp(180px, 16vw, 235px);
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.portrait {
+  background: radial-gradient(
+    ellipse at 50% 57%,
+    color-mix(in srgb, var(--duck) 16%, transparent),
+    transparent 69%
+  );
+}
+.portrait img {
+  width: 111%;
+  height: 111%;
+  object-fit: contain;
+  position: absolute;
+  bottom: -3%;
+  z-index: 1;
+}
+.orbit {
+  width: 77%;
+  height: 27%;
+  border: 1px solid color-mix(in srgb, var(--duck) 35%, transparent);
+  border-radius: 50%;
+  position: absolute;
+  bottom: 29px;
+  transform: rotate(-7deg);
+  box-shadow: 0 0 0 14px #ffffff03, 0 0 0 29px #ffffff02;
+}
+.previewFallback {
+  font: 700 112px "Chakra Petch", sans-serif;
+  color: var(--duck);
+  opacity: 0.4;
+}
+.cardBody {
+  padding: 21px 20px 20px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.cardBody h2 {
+  font: 700 30px "Chakra Petch", sans-serif;
+  margin: 0 0 9px;
+  letter-spacing: -0.04em;
+}
+.knowledge {
+  color: var(--duck);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  font-weight: 750;
+}
+.cardBody button {
+  margin-top: 24px;
+  width: 100%;
+  background: var(--duck);
+  color: #142443;
+  border: 1px solid var(--duck);
+  border-radius: 6px;
+  padding: 13px 14px;
+  font: 700 13px "Chakra Petch", sans-serif;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: filter 0.16s;
+}
+.cardBody button span {
+  font: 20px/1 system-ui, sans-serif;
+}
+.cardBody button:hover:not(:disabled) {
+  filter: brightness(1.13);
+}
+.cardBody button:disabled {
+  background: #314560;
+  border-color: #566982;
+  color: #a5b4ca;
+  cursor: default;
+}
+.roomPreview svg {
+  width: 80%;
+  height: 88%;
+  margin-bottom: 4px;
+  transform: rotate(-4deg);
+  filter: drop-shadow(0 12px 8px #0f1f3655);
+}
+.spectator {
+  max-width: 1480px;
+  margin: 20px auto 0;
+  padding: 12px 22px 12px 8px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  background: #1a2e4c;
+  border: 1px solid #6983ad55;
+  border-radius: 12px;
+}
+.spectator .roomPreview {
+  width: 115px;
+  height: 95px;
+  flex-shrink: 0;
+}
+.spectator h2 {
+  margin: 0 0 6px;
+  font: 700 22px "Chakra Petch", sans-serif;
+}
+.spectator p {
+  margin: 0;
+  color: #b2c4df;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.spectator button {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 13px 20px;
+  cursor: pointer;
+  background: transparent;
+  color: #d5e2f9;
+  border: 1px solid #7f94b3;
+  border-radius: 6px;
+  font: 700 14px "Chakra Petch", sans-serif;
+}
+.spectator button span {
+  margin-left: 24px;
+}
+.spectator button:hover:not(:disabled) {
+  background: #2e4465;
+}
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 18px;
+  padding-top: 27px;
+  color: #93aaca;
+  font-size: 10px;
+  line-height: 1.7;
+}
+.footer b {
+  padding: 0 8px;
+  font-weight: 400;
+}
+.footer kbd {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 19px;
+  border: 1px solid #738bae;
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  margin-right: 3px;
+  font: 9px system-ui, sans-serif;
+  color: #d5e2f9;
+}
+.world {
+  flex: 1;
+  min-height: 0;
+}
+.observer {
+  display: flex;
+  gap: 16px;
+  min-height: 0;
+  height: 100%;
+  padding: 16px;
+  box-sizing: border-box;
+}
+.observerWorld {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.worldGuide {
+  width: 230px;
+  flex-shrink: 0;
+  padding: 18px 6px;
+  overflow: auto;
+}
+.worldGuide svg {
+  margin: 20px 0 12px;
+  width: 100%;
+}
+.worldGuide h2 {
+  font: 700 21px "Chakra Petch", sans-serif;
+  margin: 0;
+}
+.worldGuide p {
+  color: #a8bddc;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.worldGuide ul {
+  list-style: none;
+  margin: 24px 0 0;
+  padding: 0;
+}
+.worldGuide li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 0;
+  border-top: 1px solid #ffffff16;
+  font-size: 12px;
+}
+.worldGuide small {
+  color: #9db1d3;
+  margin-left: auto;
+  font-size: 10px;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.loading {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 24px;
+  box-sizing: border-box;
+  color: #b2c4df;
+}
+.loading h2 {
+  font: 700 28px "Chakra Petch", sans-serif;
+  color: #eff4ff;
+  margin-bottom: 0;
+}
+.loading p {
+  font-size: 13px;
+}
+.loadingMark {
+  font-size: 50px;
+  color: #ffcf62;
+}
+.error {
+  padding: 12px 32px;
+  background: #573e28;
+  color: #ffe0b2;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+@media (min-width: 1201px) {
+  .cardTop {
+    padding: 14px 12px 0;
+  }
+  .cardBody {
+    padding: 16px 14px;
+  }
+  .cardBody h2 {
+    font-size: 26px;
+  }
+  .cardBody button {
+    padding: 12px 10px;
+    font-size: 12px;
+  }
+  .knowledge {
+    font-size: 8px;
+    letter-spacing: 0.04em;
+  }
+}
+@media (max-width: 1200px) {
+  .choices {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 1100px) {
+  .choices {
+    gap: 12px;
+  }
+  .cardBody {
+    padding: 20px 15px 15px;
+  }
+  .cardTop {
+    padding: 16px 13px 0;
+  }
+  .intro {
+    display: block;
+  }
+  .intro p {
+    margin-top: 15px;
+  }
+  .cardBody h2 {
+    font-size: 27px;
+  }
+  .cardBody button {
+    font-size: 12px;
+    padding: 13px 10px;
+  }
+}
+@media (max-width: 850px) {
+  .choices {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+  }
+  .portrait, .roomPreview {
+    height: 260px;
+  }
+  .header {
+    gap: 16px;
+    padding: 14px 20px;
+    min-height: 40px;
+  }
+  .actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .worldGuide {
+    width: 180px;
+  }
+}
+@media (max-width: 520px) {
+  .choices {
+    grid-template-columns: 1fr;
+  }
+  .intro h1 {
+    font-size: 37px;
+  }
+  .intro h1 span {
+    display: block;
+  }
+  .intro {
+    margin-bottom: 26px;
+  }
+  .portrait, .roomPreview {
+    height: 300px;
+  }
+  .cardBody {
+    padding: 24px;
+  }
+  .cardTop {
+    padding: 20px 24px 0;
+  }
+  .cardBody h2 {
+    font-size: 32px;
+  }
+  .cardBody button {
+    font-size: 15px;
+  }
+  .header {
+    gap: 12px;
+  }
+  .capacity {
+    font-size: 10px;
+  }
+  .brand {
+    font-size: 12px;
+  }
+  .footer {
+    font-size: 11px;
+  }
+  .observer {
+    flex-direction: column;
+    overflow: auto;
+  }
+  .observerWorld {
+    flex: none;
+    height: 60vh;
+    min-height: 350px;
+  }
+  .worldGuide {
+    width: 100%;
+    padding: 10px;
+    box-sizing: border-box;
+  }
+  .worldGuide svg {
+    max-width: 260px;
+    display: block;
+    margin: 10px auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .character, .cardBody button {
+    transition: none;
+  }
+  .character:hover, .character:focus-within {
+    transform: none;
+  }
+}
+.teamHeading {
+  max-width: 1480px;
+  margin: 0 auto 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.teamHeading p {
+  margin: 0;
+  color: #b2c4df;
+  font-size: 12px;
+}
+.teamSummary {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.teamSummary > span {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #b2c4df;
+  font-size: 11px;
+}
+.teamSummary b {
+  font: 700 17px "Chakra Petch", sans-serif;
+}
+.teamSummary [data-team="red"] b {
+  color: #f17a7c;
+}
+.teamSummary [data-team="blue"] b {
+  color: #75b4ff;
+}
+.portrait img {
+  width: 100%;
+  height: 100%;
+  inset: 0;
+}
+.portrait[data-animated="true"] img {
+  opacity: 0;
+}
+.previewButton {
+  position: absolute;
+  bottom: 0;
+  right: 14px;
+  border: 0;
+  border-bottom: 1px dotted #a7bbd0;
+  color: #c0d0e5;
+  font: 10px system-ui, sans-serif;
+  background: transparent;
+  padding: 5px;
+  cursor: pointer;
+  z-index: 5;
+}
+.occupant {
+  color: #e6edf8;
+  font-size: 13px;
+  margin: -4px 0 12px;
+  overflow-wrap: anywhere;
+}
+
+.nameDialog {
+  width: min(420px, calc(100vw - 64px));
+  max-height: calc(100dvh - 64px);
+  padding: 30px;
+  overflow: auto;
+  color: #eff4ff;
+  background: #1d3150;
+  border: 1px solid #607392;
+  border-radius: 14px;
+  box-shadow: 0 24px 80px #0008;
+  font-family: system-ui, sans-serif;
+}
+.nameDialog::backdrop {
+  background: #081326b8;
+  backdrop-filter: blur(5px);
+}
+.nameDialog h2 {
+  margin: 12px 0 8px;
+  font: 700 30px "Chakra Petch", sans-serif;
+}
+.nameDialog p {
+  color: #bdcde3;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.nameDialog label {
+  display: block;
+  margin: 24px 0 9px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.nameDialog input {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid #7589a8;
+  border-radius: 6px;
+  background: #132642;
+  color: #f4f6fb;
+  padding: 12px 14px;
+  font: inherit;
+}
+.nameDialog input:focus-visible {
+  outline: 2px solid #ffd166;
+  outline-offset: 2px;
+}
+.nameDialog .nameHint {
+  font-size: 11px;
+  margin: 9px 0;
+}
+.nameDialog .joinError {
+  color: #ffd0b3;
+}
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 26px;
+}
+.dialogActions button {
+  border: 1px solid #7589a8;
+  border-radius: 6px;
+  padding: 11px 16px;
+  background: transparent;
+  color: #eff4ff;
+  cursor: pointer;
+  font: 700 14px "Chakra Petch", sans-serif;
+}
+.dialogActions button[type="submit"] {
+  background: #ffcf62;
+  border-color: #ffcf62;
+  color: #142443;
+}
+.dialogActions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+@media (max-width: 700px) {
+  .spectator {
+    flex-wrap: wrap;
+    padding: 20px;
+    gap: 16px;
+  }
+  .spectator .roomPreview {
+    display: none;
+  }
+  .spectator button {
+    margin-left: 0;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+  }
+  .nameDialog {
+    padding: 24px;
+    box-sizing: border-box;
+    width: calc(100vw - 32px);
+  }
+}

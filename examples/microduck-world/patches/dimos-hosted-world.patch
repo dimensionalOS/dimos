@@ -1,0 +1,1460 @@
+diff --git i/dimos/agents/mcp/mcp_client.py w/dimos/agents/mcp/mcp_client.py
+index 0a7d3eb..cbfe457 100644
+--- i/dimos/agents/mcp/mcp_client.py
++++ w/dimos/agents/mcp/mcp_client.py
+@@ -55,6 +55,10 @@ logger = setup_logger()
+ _RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+ 
+ 
++def _uses_responses_api(model_name: str) -> bool:
++    return ":" not in model_name and model_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES)
++
++
+ def _init_model(model_name: str, trace_dir: Path | None = None) -> Any:
+     """Initialize a model while preserving LangChain provider resolution.
+ 
+@@ -63,7 +67,7 @@ def _init_model(model_name: str, trace_dir: Path | None = None) -> Any:
+     ``http_client``; other providers keep working, untraced at the wire.
+     """
+     client = None if trace_dir is None else tracing_http_client(trace_dir)
+-    if ":" in model_name or not model_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES):
++    if not _uses_responses_api(model_name):
+         model = init_chat_model(model=model_name)
+         if client is not None and isinstance(model, ChatOpenAI):
+             return init_chat_model(model=model_name, http_client=client)
+@@ -205,15 +209,20 @@ class McpClient(Module):
+         description = mcp_tool.get("description", "")
+         input_schema = mcp_tool.get("inputSchema", {"type": "object", "properties": {}})
+ 
+-        def call_tool(**kwargs: Any) -> str:
++        def call_tool(**kwargs: Any) -> str | list[dict[str, Any]]:
+             result = self._mcp_tool_call(name, kwargs)
+-            content = result.get("content", [])
++            content: list[dict[str, Any]] = result.get("content", [])
++            # Responses accepts image/file blocks in function outputs. Keep them
++            # in this tool turn so the model can observe before answering.
++            if _uses_responses_api(self.config.model) and any(
++                item.get("type") != "text" for item in content
++            ):
++                return content
+             parts = [c.get("text", "") for c in content if c.get("type") == "text"]
+             text = "\n".join(parts)
+ 
+-            # Images need to be added to the history separately because they
+-            # cannot be included in the tool response for OpenAI models and
+-            # probably others.
++            # Preserve the separate-message fallback for model adapters that
++            # do not support multimodal tool outputs.
+             for item in content:
+                 if item.get("type") != "text":
+                     uuid_ = str(uuid.uuid4())
+diff --git i/dimos/agents/mcp/mcp_server.py w/dimos/agents/mcp/mcp_server.py
+index 61d7572..4bbbd5c 100644
+--- i/dimos/agents/mcp/mcp_server.py
++++ w/dimos/agents/mcp/mcp_server.py
+@@ -381,15 +381,16 @@ class McpServer(Module):
+     def on_system_modules(self, modules: list[RPCClient]) -> None:
+         # TODO: this is a bit hacky, also not thread-safe
+         assert self.rpc is not None
+-        app.state.skills = [
+-            skill_info for module in modules for skill_info in (module.get_skills() or [])
++        bound_skills = [
++            (module.remote_name, skill_info)
++            for module in modules
++            for skill_info in (module.get_skills() or [])
+         ]
++        app.state.skills = [skill_info for _, skill_info in bound_skills]
+         app.state.skills_by_name = {s.func_name: s for s in app.state.skills}
+         app.state.rpc_calls = {
+-            skill_info.func_name: RpcCall(
+-                None, self.rpc, skill_info.func_name, skill_info.class_name, []
+-            )
+-            for skill_info in app.state.skills
++            skill_info.func_name: RpcCall(None, self.rpc, skill_info.func_name, instance_name, [])
++            for instance_name, skill_info in bound_skills
+         }
+ 
+     @skill
+diff --git i/dimos/agents/mcp/test_mcp_client_unit.py w/dimos/agents/mcp/test_mcp_client_unit.py
+index a49df13..857aded 100644
+--- i/dimos/agents/mcp/test_mcp_client_unit.py
++++ w/dimos/agents/mcp/test_mcp_client_unit.py
+@@ -18,7 +18,7 @@ from queue import Empty
+ from threading import RLock
+ from unittest.mock import MagicMock, create_autospec, patch
+ 
+-from langchain_core.messages import HumanMessage
++from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+ from langchain_core.messages.base import BaseMessage
+ from langchain_openai import ChatOpenAI
+ import pytest
+@@ -265,3 +265,53 @@ def test_on_system_modules_resolves_non_reasoning_models(
+         configured_mcp_client.on_system_modules([])
+ 
+     init.assert_called_once_with(model=model_name)
++
++
++@pytest.mark.parametrize("include_text", [False, True])
++def test_observation_is_in_tool_response_before_next_model_turn(
++    mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch, include_text: bool
++) -> None:
++    """The Responses adapter receives the camera in the tool output, not a later user turn."""
++    image = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,/9j/2Q=="}}
++    content = ([{"type": "text", "text": "Current camera"}] if include_text else []) + [image]
++    monkeypatch.setattr(mcp_client, "_mcp_tool_call", lambda name, args: {"content": content})
++    tool = mcp_client._mcp_tool_to_langchain(
++        {"name": "observe", "description": "Get the current camera."}
++    )
++    call = {"name": "observe", "args": {}, "id": "camera-call", "type": "tool_call"}
++
++    result = tool.invoke(call)
++
++    assert isinstance(result, ToolMessage)
++    assert result.content == content
++    with pytest.raises(Empty):
++        mcp_client._message_queue.get_nowait()
++    model = ChatOpenAI(model="gpt-5.6-luna", use_responses_api=True, api_key="test-key")
++    payload = model._get_request_payload(
++        [HumanMessage("Observe."), AIMessage(content="", tool_calls=[call]), result]
++    )
++    expected = ([{"type": "input_text", "text": "Current camera"}] if include_text else []) + [
++        {"type": "input_image", "image_url": "data:image/jpeg;base64,/9j/2Q=="}
++    ]
++    assert payload["input"][-1] == {
++        "type": "function_call_output",
++        "call_id": "camera-call",
++        "output": expected,
++    }
++
++
++def test_legacy_model_keeps_separate_image_fallback(
++    mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    monkeypatch.setattr(mcp_client.config, "model", "gpt-4.1")
++    image = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,/9j/2Q=="}}
++    monkeypatch.setattr(mcp_client, "_mcp_tool_call", lambda name, args: {"content": [image]})
++    tool = mcp_client._mcp_tool_to_langchain(
++        {"name": "observe", "description": "Get the current camera."}
++    )
++
++    result = tool.invoke({})
++
++    assert "Tool call started with UUID:" in result
++    message = mcp_client._message_queue.get_nowait()
++    assert message.content[1] == image
+diff --git i/dimos/agents/mcp/tool_stream.py w/dimos/agents/mcp/tool_stream.py
+index 7a8d088..a2344c7 100644
+--- i/dimos/agents/mcp/tool_stream.py
++++ w/dimos/agents/mcp/tool_stream.py
+@@ -39,6 +39,7 @@ from typing import Any
+ import uuid
+ 
+ from dimos.agents.annotation import current_skill_context
++from dimos.core.global_config import global_config
+ from dimos.core.transport import PubSubTransport
+ from dimos.core.transport_factory import make_transport
+ from dimos.utils.logging_config import setup_logger
+@@ -97,7 +98,7 @@ def make_stopped_notification(tool_name: str, token: str | None = None) -> dict[
+ 
+ def subscribe(callback: ToolStreamCallback) -> Callable[[], None]:
+     """Subscribe to the tool-stream topic and return a cleanup callable."""
+-    transport: PubSubTransport[dict[str, Any]] = make_transport(TOOL_STREAM_TOPIC)
++    transport: PubSubTransport[dict[str, Any]] = make_transport(global_config.tool_stream_topic)
+     transport.start()
+     unsubscribe = transport.subscribe(callback)
+ 
+@@ -138,6 +139,7 @@ class ToolStream:
+ 
+     def __init__(self, tool_name: str) -> None:
+         self.tool_name: str = tool_name
++        self._topic = global_config.tool_stream_topic
+         self.id: str = str(uuid.uuid4())
+         self._closed: threading.Event = threading.Event()
+         self._lock = threading.Lock()
+@@ -179,7 +181,7 @@ class ToolStream:
+                 logger.warning("send on closed ToolStream", stream_id=self.id)
+                 return
+             if self._transport is None:
+-                self._transport = make_transport(TOOL_STREAM_TOPIC)
++                self._transport = make_transport(self._topic)
+                 self._transport.start()
+             self._progress += 1
+             progress = self._progress
+@@ -205,7 +207,7 @@ class ToolStream:
+         # If no `send()` ever happened we spin up a transport here so the
+         # lifecycle signal isn't lost.
+         if transport is None:
+-            transport = make_transport(TOOL_STREAM_TOPIC)
++            transport = make_transport(self._topic)
+             transport.start()
+         try:
+             transport.publish(make_stopped_notification(self.tool_name, self._acquire_token))
+diff --git i/dimos/core/global_config.py w/dimos/core/global_config.py
+index e9252da..196c01b 100644
+--- i/dimos/core/global_config.py
++++ w/dimos/core/global_config.py
+@@ -104,6 +104,8 @@ class GlobalConfig(BaseSettings):
+     robot_rotation_diameter: float = 0.6
+     nerf_speed: float = 1.0
+     mcp_port: int = 9990
++    # Scope background skill updates when several robot runtimes share a transport.
++    tool_stream_topic: str = "/tool_streams"
+     # `DIMOS_TRANSPORT` (or `.env`) is the single switch read by every process
+     # (dimos, humancli, agentspy, dtop). The `transport` alias keeps the bare
+     # env name and the `--transport` CLI flag (which sets the field by name) working.
+diff --git i/dimos/robot/pollen/microduck/gait.py w/dimos/robot/pollen/microduck/gait.py
+index dda4bc9..b2e2138 100644
+--- i/dimos/robot/pollen/microduck/gait.py
++++ w/dimos/robot/pollen/microduck/gait.py
+@@ -139,6 +139,8 @@ class MicroduckObserver:
+         model: mujoco.MjModel,
+         joint_names: Sequence[str],
+         default_pose: NDArray[np.float32],
++        *,
++        prefix: str = "",
+     ) -> None:
+         import mujoco
+ 
+@@ -152,23 +154,24 @@ class MicroduckObserver:
+         self._qpos_adr = np.empty(n, dtype=np.int64)
+         self._qvel_adr = np.empty(n, dtype=np.int64)
+         for i, name in enumerate(self.joint_names):
+-            jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
++            jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, prefix + name)
+             if jid < 0:
+                 raise RuntimeError(f"Microduck joint '{name}' not found in composed model")
+             self._qpos_adr[i] = model.jnt_qposadr[jid]
+             self._qvel_adr[i] = model.jnt_dofadr[jid]
+ 
+-        gyro_sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, _GYRO_SENSOR)
++        gyro_sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, prefix + _GYRO_SENSOR)
+         if gyro_sid < 0:
+             raise RuntimeError(f"Microduck model has no '{_GYRO_SENSOR}' sensor")
+         adr = int(model.sensor_adr[gyro_sid])
+         self._gyro_slice = slice(adr, adr + 3)
+ 
+-        trunk_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, _TRUNK_FREEJOINT)
++        trunk_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, prefix + _TRUNK_FREEJOINT)
+         if trunk_jid < 0:
+             raise RuntimeError(f"Microduck model has no '{_TRUNK_FREEJOINT}'")
+         root_adr = int(model.jnt_qposadr[trunk_jid])
+         self.root_qpos_adr = root_adr
++        self.root_qvel_adr = int(model.jnt_dofadr[trunk_jid])
+         self._root_quat_slice = slice(root_adr + 3, root_adr + 7)
+ 
+     @property
+@@ -181,7 +184,8 @@ class MicroduckObserver:
+         data.qpos[adr + 2] = 0.125
+         data.qpos[adr + 3 : adr + 7] = (1.0, 0.0, 0.0, 0.0)
+         data.qpos[self._qpos_adr] = self.default_pose
+-        data.qvel[:] = 0.0
++        data.qvel[self._qvel_adr] = 0.0
++        data.qvel[self.root_qvel_adr : self.root_qvel_adr + 6] = 0.0
+ 
+     def root_yaw(self, data: mujoco.MjData) -> float:
+         """Trunk yaw (rad) in the world frame."""
+diff --git i/dimos/robot/pollen/microduck/policies.py w/dimos/robot/pollen/microduck/policies.py
+index 2049b63..17d936a 100644
+--- i/dimos/robot/pollen/microduck/policies.py
++++ w/dimos/robot/pollen/microduck/policies.py
+@@ -42,6 +42,7 @@ throttle for 2 s before handing over to a legged policy) and upstream's
+ from __future__ import annotations
+ 
+ from collections.abc import Callable, Iterable, Mapping
++from copy import copy
+ from dataclasses import dataclass
+ import math
+ from pathlib import Path
+@@ -345,6 +346,16 @@ class PolicyBank:
+         )
+         self._availability = policy_availability(variant, self.missing)
+ 
++    def for_robot(self, model: mujoco.MjModel, prefix: str) -> PolicyBank:
++        """Bind shared inference sessions to another robot with independent action history."""
++        bank = copy(self)
++        bank._observer = MicroduckObserver(
++            model, self.joint_names, self.default_pose, prefix=prefix
++        )
++        bank.root_qpos_adr = bank._observer.root_qpos_adr
++        bank.last_action = np.zeros(len(self.joint_names), dtype=np.float32)
++        return bank
++
+     @property
+     def names(self) -> tuple[str, ...]:
+         """Loaded policies, display order."""
+diff --git i/dimos/robot/pollen/microduck/sim_module.py w/dimos/robot/pollen/microduck/sim_module.py
+index 51862be..a7aff56 100644
+--- i/dimos/robot/pollen/microduck/sim_module.py
++++ w/dimos/robot/pollen/microduck/sim_module.py
+@@ -161,6 +161,9 @@ def _shape_twist(
+     return vx, vy, wz
+ 
+ 
++shape_twist = _shape_twist
++
++
+ class MicroduckSimModuleConfig(MujocoSimModuleConfig):
+     # 14 servo joints and no gripper; a smaller dof would make the parent
+     # misread joint 14 onward as a gripper.
+@@ -431,16 +434,18 @@ class MicroduckSimModule(MujocoSimModule):
+         logger.warning("Microduck fell over; standing it back up")
+         # Falls usually happen tripping over an obstacle; standing back up
+         # exactly in place can wedge the robot inside it. Nudge toward the
+-        # room origin, which is open floor in the bundled scenes.
++        # configured spawn point, which the scene author chose as clear floor.
+         data = engine.data
+         adr = bank.root_qpos_adr
+         x = float(data.qpos[adr])
+         y = float(data.qpos[adr + 1])
+-        dist = math.hypot(x, y)
++        spawn_x, spawn_y = self.config.spawn_xy or (0.0, 0.0)
++        dx, dy = x - spawn_x, y - spawn_y
++        dist = math.hypot(dx, dy)
+         if dist > 1e-3:
+             shift = min(0.25, dist)
+-            data.qpos[adr] = x - shift * x / dist
+-            data.qpos[adr + 1] = y - shift * y / dist
++            data.qpos[adr] = x - shift * dx / dist
++            data.qpos[adr + 1] = y - shift * dy / dist
+         self._stand_in_place(engine)
+         self._fallen_since = None
+         return True
+@@ -522,6 +527,9 @@ class MicroduckSimModule(MujocoSimModule):
+     # ------------------------------------------------------------------- model
+ 
+     def _compose_model(self) -> mujoco.MjModel:
++        return self._compose_spec().compile()
++
++    def _compose_spec(self) -> mujoco.MjSpec:
+         """Compose scene + robot, adding the lidar and chase cameras and the ball.
+ 
+         Simplified from the parent: no scene-package entities, and the
+@@ -592,7 +600,7 @@ class MicroduckSimModule(MujocoSimModule):
+         if not self.config.cast_shadows:
+             for light in spec_scene.lights:
+                 light.castshadow = False
+-        return spec_scene.compile()
++        return spec_scene
+ 
+ 
+ # The base policies hold a stand on a zero command, so the module needs no
+diff --git i/dimos/robot/pollen/microduck/test_sim_module.py w/dimos/robot/pollen/microduck/test_sim_module.py
+index a6b2efc..1aa973c 100644
+--- i/dimos/robot/pollen/microduck/test_sim_module.py
++++ w/dimos/robot/pollen/microduck/test_sim_module.py
+@@ -299,15 +299,21 @@ class _FakeEngine:
+         self.model = None
+ 
+ 
+-def test_check_fall_is_debounced_and_nudges_toward_origin() -> None:
+-    module = MicroduckSimModule(auto_stand=True, auto_stand_after=2.0)
++@pytest.mark.parametrize(
++    ("spawn_xy", "expected_x"),
++    [(None, 0.75), ((2.0, 0.0), 1.25), ((1.0, 0.0), 1.0)],
++)
++def test_check_fall_is_debounced_and_nudges_toward_spawn(
++    monkeypatch: pytest.MonkeyPatch, spawn_xy: tuple[float, float] | None, expected_x: float
++) -> None:
++    module = MicroduckSimModule(auto_stand=True, auto_stand_after=2.0, spawn_xy=spawn_xy)
+     try:
+         bank = _FakeBank(gravity_z=0.9)  # lying on its back
+         scheduler = _FakeScheduler()
+         module._bank = bank  # type: ignore[assignment]
+         module._scheduler = scheduler  # type: ignore[assignment]
+         stood: list[Any] = []
+-        module._stand_in_place = stood.append  # type: ignore[method-assign]
++        monkeypatch.setattr(module, "_stand_in_place", stood.append)
+         engine = _FakeEngine()
+ 
+         assert module._check_fall(engine, now=10.0) is False  # timer starts
+@@ -316,7 +322,7 @@ def test_check_fall_is_debounced_and_nudges_toward_origin() -> None:
+         assert module._check_fall(engine, now=12.1) is True  # stood back up
+         assert scheduler.falls == [True]
+         assert stood == [engine]
+-        assert engine.data.qpos[0] == pytest.approx(0.75)  # nudged 0.25 m toward origin
++        assert engine.data.qpos[0] == pytest.approx(expected_x)
+         assert module._fallen_since is None
+ 
+         bank.gravity_z = -1.0  # upright again
+diff --git i/dimos/simulation/engines/mujoco_engine.py w/dimos/simulation/engines/mujoco_engine.py
+index c98ad13..7c0c431 100644
+--- i/dimos/simulation/engines/mujoco_engine.py
++++ w/dimos/simulation/engines/mujoco_engine.py
+@@ -93,6 +93,9 @@ def _camera_ray_directions(width: int, height: int, fovy_degrees: float) -> NDAr
+     return cast("NDArray[np.float64]", directions / norms)
+ 
+ 
++camera_ray_directions = _camera_ray_directions
++
++
+ @dataclass
+ class CameraConfig:
+     name: str
+diff --git i/dimos/simulation/engines/mujoco_sim_module.py w/dimos/simulation/engines/mujoco_sim_module.py
+index ad51881..e17c262 100644
+--- i/dimos/simulation/engines/mujoco_sim_module.py
++++ w/dimos/simulation/engines/mujoco_sim_module.py
+@@ -524,6 +524,7 @@ class MujocoSimModule(
+         if self.config.robot_mjcf is not None:
+             engine_kwargs["config_path"] = Path(self.config.robot_mjcf)
+             engine_kwargs["model"] = self._compose_model()
++            engine_kwargs["robot_sim_spec"] = self.config.robot_sim_spec
+         else:
+             engine_kwargs["config_path"] = Path(self.config.address)
+             engine_kwargs["assets"] = engine_assets
+diff --git i/dimos/web/cockpit.py w/dimos/web/cockpit.py
+index 7504f35..02adf86 100644
+--- i/dimos/web/cockpit.py
++++ w/dimos/web/cockpit.py
+@@ -412,14 +412,17 @@ class Teleop(Panel):
+ 
+ @dataclass(frozen=True, kw_only=True)
+ class Chat(Panel):
+-    """Agent chat: the agent transcript, its idle flag and the control mode
+-    in; typed human input out."""
++    """Agent chat: transcript, idle flag and mode in; typed human input out.
++
++    read_only disables the panel's composer; it is not a transport access policy.
++    """
+ 
+     kind: ClassVar[str] = "chat"
+     chat: str = "agent"
+     idle: str = "agent_idle"
+     mode: str = "mode"
+     input: str = "human_input"
++    read_only: bool = False
+     title: str = "Agent"
+ 
+     def __post_init__(self) -> None:
+@@ -437,7 +440,10 @@ class Chat(Panel):
+         )
+ 
+     def _panel_params(self) -> dict[str, Any]:
+-        return {"chat": self.chat, "idle": self.idle, "mode": self.mode, "input": self.input}
++        params = {"chat": self.chat, "idle": self.idle, "mode": self.mode, "input": self.input}
++        if self.read_only:
++            return {**params, "readOnly": True}
++        return params
+ 
+ 
+ @dataclass(frozen=True, kw_only=True)
+@@ -454,6 +460,7 @@ class NavMap(Panel):
+     goal: str = "goal_request"
+     command: str = "ui_command"
+     title: str = "Nav map"
++    fit_places: bool = False
+ 
+     def __post_init__(self) -> None:
+         _check_stream("costmap", self.costmap)
+@@ -480,7 +487,7 @@ class NavMap(Panel):
+         )
+ 
+     def _panel_params(self) -> dict[str, Any]:
+-        return {
++        params: dict[str, Any] = {
+             "costmap": self.costmap,
+             "pose": self.pose,
+             "path": self.path,
+@@ -489,6 +496,9 @@ class NavMap(Panel):
+             "goal": self.goal,
+             "command": self.command,
+         }
++        if self.fit_places:
++            params["fitPlaces"] = True
++        return params
+ 
+ 
+ @dataclass(frozen=True, kw_only=True)
+diff --git i/dimos/web/relay_bridge/_wt_session.py w/dimos/web/relay_bridge/_wt_session.py
+index ddaa8d5..5b13f74 100644
+--- i/dimos/web/relay_bridge/_wt_session.py
++++ w/dimos/web/relay_bridge/_wt_session.py
+@@ -271,9 +271,15 @@ class SessionProtocol(QuicConnectionProtocol):
+         observe the drain-and-requeue.
+         """
+         if isinstance(msg, Subs):
++            replay = set(msg.replay or [])
+             for queued in self._drain_control_msgs():
+-                if not isinstance(queued, Subs):
++                if isinstance(queued, Subs):
++                    replay.update(queued.replay or [])
++                else:
+                     self.control_msgs.put_nowait(queued)
++            # Replay is an event carried alongside the full subscription state.
++            # Retain pending requests across a burst, bounded by active channels.
++            msg = msg.model_copy(update={"replay": sorted(replay.intersection(msg.chs)) or None})
+         if self.control_msgs.full():
+             msgs = self._drain_control_msgs()
+             # A victim always exists: at most one queued Subs (coalesced
+diff --git i/dimos/web/relay_bridge/locate.py w/dimos/web/relay_bridge/locate.py
+index c5b71a2..0e029c5 100644
+--- i/dimos/web/relay_bridge/locate.py
++++ w/dimos/web/relay_bridge/locate.py
+@@ -87,6 +87,7 @@ def relay_run_cmd(
+     cockpit_dir: Path | None = None,
+     sdk_dir: Path | None = None,
+     serve_dir: Path | None = None,
++    entrypoint: Path | None = None,
+ ) -> list[str]:
+     """Build the argv that runs the relay with the pinned config and least permissions."""
+     # Canonical paths: the relay realpath-checks served files against its
+@@ -106,6 +107,8 @@ def relay_run_cmd(
+     # the cockpit build tooling), which would make this run materialize
+     # node_modules next to the config -- inside site-packages under a wheel.
+     allow_read = ",".join([str(web_dir), *(str(path) for _, path in dirs)])
++    if entrypoint is not None:
++        allow_read += "," + str(entrypoint.resolve().parent)
+     cmd = [
+         deno,
+         "run",
+@@ -115,7 +118,7 @@ def relay_run_cmd(
+         "--allow-net",
+         "--config",
+         str(web_dir / "deno.json"),
+-        str(web_dir / "relay" / "main.ts"),
++        str(entrypoint.resolve() if entrypoint else web_dir / "relay" / "main.ts"),
+     ]
+     for flag, path in dirs:
+         cmd += [flag, str(path)]
+diff --git i/dimos/web/relay_bridge/protocol.py w/dimos/web/relay_bridge/protocol.py
+index bbac5b5..7fd01be 100644
+--- i/dimos/web/relay_bridge/protocol.py
++++ w/dimos/web/relay_bridge/protocol.py
+@@ -249,6 +249,18 @@ class Subs(_WireModel):
+     t: Literal["subs"] = "subs"
+     chs: list[str]
+     n: int | float
++    replay: list[str] | None = None
++
++    @field_validator("replay", mode="before")
++    @classmethod
++    def _replay_is_subscribed(cls, value: Any, info: ValidationInfo) -> list[str] | None:
++        if value is None and info.context is not _WIRE_CTX:
++            return None
++        if not isinstance(value, list) or any(
++            not isinstance(ch, str) or ch not in info.data.get("chs", []) for ch in value
++        ):
++            raise ValueError("replay must name subscribed channels")
++        return value
+ 
+ 
+ # Teleop (T6). twist/stop ride datagrams viewer->relay->robot (loss-tolerant:
+diff --git i/dimos/web/relay_bridge/relay_bridge_module.py w/dimos/web/relay_bridge/relay_bridge_module.py
+index e6f1396..101e6d3 100644
+--- i/dimos/web/relay_bridge/relay_bridge_module.py
++++ w/dimos/web/relay_bridge/relay_bridge_module.py
+@@ -962,7 +962,7 @@ class RelayBridgeModule(Module):
+                     async for msg in session.client.control_messages():
+                         if isinstance(msg, Subs) and msg.n > session.last_n:
+                             session.last_n = msg.n
+-                            self._reconcile(session, set(msg.chs))
++                            self._reconcile(session, set(msg.chs), replay=msg.replay)
+                         elif isinstance(msg, WireTwist):
+                             self._on_wire_twist(msg)
+                         elif isinstance(msg, WireStop):
+@@ -1224,7 +1224,7 @@ class RelayBridgeModule(Module):
+                 logger.warning(f"relay reconnect failed ({e}); retrying")
+                 await asyncio.sleep(_RECONNECT_PAUSE_S)
+ 
+-    def _reconcile(self, session: _Session, want: set[str]) -> None:
++    def _reconcile(self, session: _Session, want: set[str], *, replay: list[str] | None = None) -> None:
+         """Subscribe/unsubscribe inputs so exactly `want` is being encoded."""
+         for spec in self._channel_specs:
+             active = spec.ch in session.unsubs
+@@ -1246,15 +1246,17 @@ class RelayBridgeModule(Module):
+                     # Replay precedes the subscribe: this offer runs
+                     # synchronously on the loop, so a live frame - possible
+                     # only once subscribed - always queues behind it and wins
+-                    # the 1-slot mailbox. Fires on 0->1 transitions only: the
+-                    # relay reports sub-set changes and stays cache-free, so
+-                    # an extra viewer on an already-active channel waits for
+-                    # the next publish (review issue 2, deferred).
++                    # the 1-slot mailbox. Late reliable viewers request a
++                    # replay explicitly without detaching active encoders.
+                     self._replay(session, spec, sender)
+                     session.unsubs[spec.ch] = self.inputs[spec.ch].subscribe(
+                         functools.partial(self._on_input, session, spec, sender)
+                     )
+                 logger.info(f"relay bridge: viewer subscribed to {spec.ch}; encoding started")
++            elif active and should and spec.ch in (replay or []) and spec.resend_on_subscribe:
++                # Existing viewers dedupe log entries by their stable message n.
++                # Only requested channels replay; other live encoders stay attached.
++                self._replay(session, spec, session.senders[spec.ch])
+             elif active and not should:
+                 unsubscribe = session.unsubs[spec.ch]
+                 unsubscribe()
+diff --git i/dimos/web/relay_bridge/relay_process.py w/dimos/web/relay_bridge/relay_process.py
+index 7cb9fba..d725664 100644
+--- i/dimos/web/relay_bridge/relay_process.py
++++ w/dimos/web/relay_bridge/relay_process.py
+@@ -296,7 +296,9 @@ class RelayProcess:
+         sdk_dir: Path | None = None,
+         serve_dir: Path | None = None,
+         timeout: float = 20.0,
++        entrypoint: Path | None = None,
+     ) -> None:
++        self._entrypoint = entrypoint
+         self._port = port
+         self._host = host
+         self._web_dir = web_dir
+@@ -328,6 +330,7 @@ class RelayProcess:
+             cockpit_dir=cockpit_dir,
+             sdk_dir=sdk_dir,
+             serve_dir=self._serve_dir,
++            entrypoint=self._entrypoint,
+         )
+         logger.info(f"starting relay: {' '.join(cmd)}")
+         env = os.environ | {"NO_COLOR": "1"}
+diff --git i/dimos/web/relay_bridge/test_protocol.py w/dimos/web/relay_bridge/test_protocol.py
+index 4c629a1..3cf4a7d 100644
+--- i/dimos/web/relay_bridge/test_protocol.py
++++ w/dimos/web/relay_bridge/test_protocol.py
+@@ -43,6 +43,7 @@ from dimos.web.relay_bridge.protocol import (
+     ProtocolError,
+     RobotInfo,
+     Robots,
++    Subs,
+     TeleopStop,
+     Tx,
+     decode_data_frame,
+@@ -576,3 +577,14 @@ def test_control_reader_drops_invalid_keeps_valid_neighbors():
+         msg_from_dict({"t": "hello", "v": PROTOCOL_VERSION, "role": "viewer"}),
+         msg_from_dict({"t": "ping", "n": 3, "ts": 4.5}),
+     ]
++
++
++def test_subscription_replay_hint_names_an_active_channel() -> None:
++    message = {"t": "subs", "chs": ["agent"], "n": 3, "replay": ["agent"]}
++    assert msg_from_dict(message) == Subs(chs=["agent"], n=3, replay=["agent"])
++
++
++@pytest.mark.parametrize("replay", [None, 1, "agent", [1], ["unknown"]])
++def test_subscription_rejects_invalid_replay_hint(replay) -> None:
++    with pytest.raises(ProtocolError):
++        msg_from_dict({"t": "subs", "chs": ["agent"], "n": 3, "replay": replay})
+diff --git i/dimos/web/relay_bridge/test_relay_bridge_module.py w/dimos/web/relay_bridge/test_relay_bridge_module.py
+index 84700eb..d6413fa 100644
+--- i/dimos/web/relay_bridge/test_relay_bridge_module.py
++++ w/dimos/web/relay_bridge/test_relay_bridge_module.py
+@@ -1127,11 +1127,11 @@ def test_supervisor_survives_reconcile_error(bridge, monkeypatch) -> None:
+     real = module._reconcile
+     calls: list[int] = []
+ 
+-    def flaky(session: Any, want: set[str]) -> None:
++    def flaky(session: Any, want: set[str], *, replay: list[str] | None = None) -> None:
+         calls.append(1)
+         if len(calls) == 1:
+             raise RuntimeError("boom")
+-        real(session, want)
++        real(session, want, replay=replay)
+ 
+     monkeypatch.setattr(module, "_reconcile", flaky)
+     push(module, clients[0], Subs(chs=["odom"], n=1))
+@@ -2552,3 +2552,20 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
+ def test_composition_preserves_generated_bridge() -> None:
+     blueprint = cockpit(channels=[Channel("target_pose", PoseStamped, encoding="pose.json.v1")])
+     assert with_relay_bridge(blueprint) is blueprint
++
++
++def test_late_viewer_replays_live_chat_without_resubscribing(agent_bridge) -> None:
++    module, clients = agent_bridge
++    client = clients[0]
++    transport_of(module, "agent").publish(HumanMessage(content="hello"))
++    push(module, client, Subs(chs=["agent"], n=1))
++    assert wait_until(lambda: len(frames_on(client, "agent")) == 1)
++    first_number = ns_on(client, "agent")[0]
++    push(module, client, Subs(chs=["agent"], n=2, replay=["agent"]))
++    assert wait_until(lambda: len(frames_on(client, "agent")) == 2)
++    assert [entry["content"] for entry in frames_on(client, "agent")] == ["hello", "hello"]
++    assert ns_on(client, "agent") == [first_number, first_number]
++    assert len(transport_of(module, "agent").subscribers) == 1
++    push(module, client, Subs(chs=["agent"], n=2, replay=["agent"]))
++    flush_loop(module)
++    assert len(frames_on(client, "agent")) == 2
+diff --git i/dimos/web/relay_bridge/test_wt_session.py w/dimos/web/relay_bridge/test_wt_session.py
+index b289011..d82585f 100644
+--- i/dimos/web/relay_bridge/test_wt_session.py
++++ w/dimos/web/relay_bridge/test_wt_session.py
+@@ -263,6 +263,27 @@ async def test_newer_subs_snapshot_supersedes_the_queued_one():
+     assert session.control_dropped == 0
+ 
+ 
++async def test_coalesced_subscriptions_preserve_pending_replays():
++    session = _session()
++    session.incoming_is_carrier = True
++    snapshots = [
++        Subs(chs=["agent", "mode", "places"], n=1, replay=["agent"]),
++        Subs(chs=["agent", "mode", "places"], n=2, replay=["places"]),
++        Subs(chs=["agent", "mode", "places"], n=3, replay=["agent"]),
++        Subs(chs=["agent", "mode"], n=4),
++    ]
++    # One transport read delivers the whole subscription burst before consumption.
++    wire = b"".join(
++        _control_bytes(encode_datagram(msg), seq=i) for i, msg in enumerate(snapshots)
++    )
++    session._stream_data_received(3, wire, False)
++    assert session.control_msgs.qsize() == 1
++    assert session.control_msgs.get_nowait() == Subs(
++        chs=["agent", "mode"], n=4, replay=["agent"]
++    )
++    assert session.control_dropped == 0
++
++
+ async def test_carrier_reset_fails_the_robot_session():
+     # The relay never replaces a carrier, so a reset while the connection
+     # lives (e.g. the relay's carrier dispose racing its delayed session
+diff --git i/dimos/web/relay_bridge/wt_client.py w/dimos/web/relay_bridge/wt_client.py
+index 162a854..57cf60c 100644
+--- i/dimos/web/relay_bridge/wt_client.py
++++ w/dimos/web/relay_bridge/wt_client.py
+@@ -120,6 +120,9 @@ class RelayClient:
+                 f"relay URL path must be {expected_path!r} for role={role}, got {parsed.path!r}"
+             )
+ 
++        if parsed.query:
++            path += "?" + parsed.query
++
+         ctx = aioquic_connect(
+             host,
+             port,
+@@ -138,7 +141,7 @@ class RelayClient:
+         except BaseException:
+             await ctx.__aexit__(None, None, None)
+             raise
+-        logger.info(f"WebTransport session established: {url} path={path}")
++        logger.info(f"WebTransport session established: {parsed.scheme}://{host}:{port}{expected_path}")
+         return cls(url, role, session, ctx)
+ 
+     async def __aenter__(self) -> RelayClient:
+diff --git i/dimos/web/test_cockpit.py w/dimos/web/test_cockpit.py
+index 99f2753..65a3845 100644
+--- i/dimos/web/test_cockpit.py
++++ w/dimos/web/test_cockpit.py
+@@ -959,3 +959,17 @@ def test_tx_channel_defs_unpack_as_wire_triples() -> None:
+         "goal_request": ("pose_goal.json.v1", "reliable"),
+         "ui_command": ("command.json.v1", "reliable"),
+     }
++
++
++def test_read_only_chat_preserves_manifest_compatibility() -> None:
++    manifest = build_microduck(Chat(read_only=True))
++    panel = manifest["panels"][0]
++    assert panel["params"]["readOnly"] is True
++    assert panel["channels"] == ["agent", "agent_idle", "mode", "human_input"]
++    parse_manifest(manifest)
++
++
++def test_scene_fitting_is_an_additive_navmap_option() -> None:
++    manifest = build_microduck(NavMap(fit_places=True))
++    assert manifest["panels"][0]["params"]["fitPlaces"] is True
++    parse_manifest(manifest)
+diff --git i/web/cockpit/src/App.tsx w/web/cockpit/src/App.tsx
+index 46439fb..74d5e03 100644
+--- i/web/cockpit/src/App.tsx
++++ w/web/cockpit/src/App.tsx
+@@ -14,7 +14,7 @@ export function App({ session }: { session: Session }) {
+   let content;
+   if (status.transport.phase === "failed") {
+     content = <p className={styles.notice}>Connection failed: {status.transport.reason}</p>;
+-  } else if (status.robots.length > 1) {
++  } else if (status.robots.length > 1 && status.watchedRobot === null) {
+     content = (
+       <p className={styles.notice}>
+         {status.robots.length} robots connected; the robot picker arrives in a later release.
+diff --git i/web/cockpit/src/layout/PanelFrame.module.css w/web/cockpit/src/layout/PanelFrame.module.css
+index fcba306..3489c01 100644
+--- i/web/cockpit/src/layout/PanelFrame.module.css
++++ w/web/cockpit/src/layout/PanelFrame.module.css
+@@ -94,6 +94,17 @@
+   position: relative;
+ }
+ 
++/* Control strips take only the height their wrapped buttons need. */
++.frame[data-panel-kind="control"] .body {
++  min-height: 0;
++}
++
++/* Let paired video feeds adapt to their actual panel dimensions. */
++.frame[data-panel-kind="video"] .body,
++.frameMax[data-panel-kind="video"] .body {
++  container-type: size;
++}
++
+ /* A maximized frame owns the viewport; lift the panels' own height caps. */
+ .frameMax .body :global(canvas) {
+   max-height: 100%;
+diff --git i/web/cockpit/src/panels/ChatPanel.tsx w/web/cockpit/src/panels/ChatPanel.tsx
+index 38f1443..58724cc 100644
+--- i/web/cockpit/src/panels/ChatPanel.tsx
++++ w/web/cockpit/src/panels/ChatPanel.tsx
+@@ -87,7 +87,8 @@ function ChatView({ spec, store, teleop, chans }: PanelProps & { chans: ChatChan
+   const thinking = idle === false;
+   // humancli stamps the spinner with the time it appeared.
+   const thinkingSince = useMemo(() => (thinking ? Date.now() / 1000 : 0), [thinking]);
+-  const wrongMode = mode !== null && mode !== "agent";
++  const canSend = spec.params.readOnly !== true && teleop !== undefined && chans.input !== undefined;
++  const wrongMode = canSend && mode !== null && mode !== "agent";
+ 
+   const [draft, setDraft] = useState("");
+   const [error, setError] = useState<string | null>(null);
+@@ -104,10 +105,8 @@ function ChatView({ spec, store, teleop, chans }: PanelProps & { chans: ChatChan
+     stick.current = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_SLACK_PX;
+   };
+ 
+-  const canSend = teleop !== undefined && chans.input !== undefined;
+-
+   const transmit = (text: string): boolean => {
+-    if (teleop === undefined || chans.input === undefined) {
++    if (!canSend || teleop === undefined || chans.input === undefined) {
+       setError("no send path bound");
+       return false;
+     }
+@@ -205,7 +204,7 @@ function ChatView({ spec, store, teleop, chans }: PanelProps & { chans: ChatChan
+             </div>
+           )}
+           {rows.length === 0 && pending.length === 0 && !thinking && (
+-            <span className={styles.hint}>{EMPTY_TEXT}</span>
++            <span className={styles.hint}>{canSend ? EMPTY_TEXT : "Read-only transcript"}</span>
+           )}
+         </div>
+         <div className={styles.compose}>
+@@ -213,7 +212,7 @@ function ChatView({ spec, store, teleop, chans }: PanelProps & { chans: ChatChan
+             className={styles.input}
+             data-testid={`chat-${chans.chat}-input`}
+             aria-label="message to the agent"
+-            placeholder={canSend ? "Enter sends, Shift+Enter for a new line" : "no send path bound"}
++            placeholder={canSend ? "Enter sends, Shift+Enter for a new line" : "Agent input unavailable"}
+             rows={2}
+             value={draft}
+             disabled={!canSend}
+diff --git i/web/cockpit/src/panels/ControlPanel.tsx w/web/cockpit/src/panels/ControlPanel.tsx
+index fb12039..16fbb75 100644
+--- i/web/cockpit/src/panels/ControlPanel.tsx
++++ w/web/cockpit/src/panels/ControlPanel.tsx
+@@ -136,6 +136,11 @@ export function ControlPanel({ spec, store, teleop }: PanelProps) {
+           );
+         })}
+         {policy === null && <span className={styles.hint}>waiting for policy state...</span>}
++        {policy?.active === "stand" && (
++          <span className={styles.hint} role="status" data-testid="control-stand-notice">
++            Stand holds position. Select walk to drive or navigate.
++          </span>
++        )}
+         <div className={styles.chips}>
+           {policy !== null && policy.variant !== "" && (
+             <span className={styles.chip} data-testid="chip-variant">{policy.variant}</span>
+diff --git i/web/cockpit/src/panels/MapPanel.tsx w/web/cockpit/src/panels/MapPanel.tsx
+index 9195bb5..30709fd 100644
+--- i/web/cockpit/src/panels/MapPanel.tsx
++++ w/web/cockpit/src/panels/MapPanel.tsx
+@@ -24,7 +24,7 @@ import type { PanelProps } from "./registry.tsx";
+ // the last grid on subscribe.
+ export const MAP_STALE_MS = 5000;
+ 
+-/** Test seams; real inflate is DecompressionStream, real resize an observer. */
++/** View options and injectable decode/visibility hooks. */
+ export interface MapSinkDeps {
+   inflate?: (value: CostmapValue) => Promise<Uint8Array>;
+   hidden?: () => boolean;
+@@ -33,6 +33,10 @@ export interface MapSinkDeps {
+   /** Reports the fitted transform (device pixels) on every draw, so an
+    * overlay (NavMapPanel) can place world features on the same canvas. */
+   onTransform?: (t: MapTransform, place: GridPlacement) => void;
++  /** Alternate view framing; the underlying grid retains its actual placement. */
++  transform?: (place: GridPlacement, width: number, height: number) => MapTransform;
++  /** Channels whose updates change the view without changing grid data. */
++  redrawOn?: readonly string[];
+ }
+ 
+ function isCostmapValue(v: unknown): v is CostmapValue {
+@@ -101,7 +105,7 @@ export function startMapSink(
+       canvas.height = h;
+     }
+     ctx.clearRect(0, 0, w, h);
+-    const t = fitTransform(place, w, h);
++    const t = deps.transform?.(place, w, h) ?? fitTransform(place, w, h);
+     deps.onTransform?.(t, place);
+     ctx.imageSmoothingEnabled = false; // crisp cells when zoomed in
+     const { ax, ay, rot, dw, dh } = gridBlit(t, place);
+@@ -153,6 +157,7 @@ export function startMapSink(
+   const unsubscribeGrid = store.subscribe(costmapCh, pump);
+   // Pose redraws reuse the cached grid bitmap: no inflate at odom rate.
+   const unsubscribePose = poseCh === undefined ? null : store.subscribe(poseCh, draw);
++  const unsubscribeView = (deps.redrawOn ?? []).map((ch) => store.subscribe(ch, draw));
+   const disposeResize = observeResize(canvas, draw);
+   const onVisibility = (): void => {
+     pump();
+@@ -164,6 +169,7 @@ export function startMapSink(
+     stopped = true;
+     unsubscribeGrid();
+     unsubscribePose?.();
++    for (const unsubscribe of unsubscribeView) unsubscribe();
+     disposeResize();
+     document.removeEventListener("visibilitychange", onVisibility);
+   };
+diff --git i/web/cockpit/src/panels/NavMapPanel.tsx w/web/cockpit/src/panels/NavMapPanel.tsx
+index 51d9a4f..8f8d586 100644
+--- i/web/cockpit/src/panels/NavMapPanel.tsx
++++ w/web/cockpit/src/panels/NavMapPanel.tsx
+@@ -34,6 +34,7 @@ import {
+ import {
+   clickToWorld,
+   fallbackTransform,
++  fitPlacesTransform,
+   goalPayload,
+   hitLabel,
+   type LabelBox,
+@@ -264,13 +265,17 @@ export type NavOverlayChannels = Pick<
+   "costmap" | "pose" | "path" | "places" | "navState"
+ >;
+ 
++export interface NavOverlayOptions extends MapSinkDeps {
++  fitPlaces?: boolean;
++}
++
+ export function startNavOverlay(
+   store: ChannelStore,
+   chans: NavOverlayChannels,
+   base: HTMLCanvasElement,
+   overlay: HTMLCanvasElement,
+   health: DrawHealth,
+-  deps: MapSinkDeps = {},
++  deps: NavOverlayOptions = {},
+ ): NavOverlayHandle {
+   const hidden = deps.hidden ?? (() => document.hidden);
+   const observeResize = deps.observeResize ?? ((el, cb) => {
+@@ -288,6 +293,16 @@ export function startNavOverlay(
+   const read = (ch: string | undefined): unknown =>
+     ch === undefined ? undefined : store.get(ch)?.value;
+ 
++  const viewTransform = (grid: GridPlacement | null, w: number, h: number): MapTransform => {
++    if (deps.fitPlaces) {
++      const fitted = fitPlacesTransform(readPlaces(read(chans.places)), w, h);
++      if (fitted !== null) return fitted;
++    }
++    return grid === null
++      ? fallbackTransform(w, h)
++      : deps.transform?.(grid, w, h) ?? fitTransform(grid, w, h);
++  };
++
+   const draw = (): void => {
+     if (stopped || hidden() || ctx === null) return;
+     const cssW = overlay.clientWidth;
+@@ -300,7 +315,7 @@ export function startNavOverlay(
+       overlay.width = w;
+       overlay.height = h;
+     }
+-    const t = place === null ? fallbackTransform(w, h) : fitTransform(place, w, h);
++    const t = viewTransform(place, w, h);
+     current = t;
+     labels = drawOverlay(ctx, t, w, h, dpr, {
+       places: readPlaces(read(chans.places)),
+@@ -314,6 +329,11 @@ export function startNavOverlay(
+ 
+   const stopBase = startMapSink(store, chans.costmap, undefined, base, health, {
+     ...deps,
++    transform: viewTransform,
++    redrawOn: [
++      ...(deps.redrawOn ?? []),
++      ...(deps.fitPlaces && chans.places !== undefined ? [chans.places] : []),
++    ],
+     onTransform: (t, p) => {
+       deps.onTransform?.(t, p);
+       if (p !== place) {
+@@ -378,6 +398,7 @@ function NavMapView({ spec, store, teleop, chans }: PanelProps & { chans: NavMap
+ 
+   // Channel names are the effect's identity (chans is rebuilt per render).
+   const { costmap, pose, path, places, navState } = chans;
++  const fitPlaces = spec.params.fitPlaces === true;
+   useEffect(() => {
+     const base = baseRef.current;
+     const overlay = overlayRef.current;
+@@ -388,13 +409,14 @@ function NavMapView({ spec, store, teleop, chans }: PanelProps & { chans: NavMap
+       base,
+       overlay,
+       health,
++      { fitPlaces },
+     );
+     handleRef.current = handle;
+     return () => {
+       handleRef.current = null;
+       handle.stop();
+     };
+-  }, [store, costmap, pose, path, places, navState, health]);
++  }, [store, costmap, pose, path, places, navState, health, fitPlaces]);
+ 
+   const send = (ch: string | undefined, data: Record<string, unknown>, what: string): void => {
+     if (teleop === undefined || ch === undefined) {
+diff --git i/web/cockpit/src/panels/VideoPanel.module.css w/web/cockpit/src/panels/VideoPanel.module.css
+index 4d40c17..b057689 100644
+--- i/web/cockpit/src/panels/VideoPanel.module.css
++++ w/web/cockpit/src/panels/VideoPanel.module.css
+@@ -1,7 +1,10 @@
+ .canvas {
+   display: block;
+-  max-height: 70vh;
+-  max-width: 100%;
++  position: absolute;
++  inset: 0;
++  width: 100%;
++  height: 100%;
++  object-fit: contain;
+ }
+ 
+ /* Picture-in-picture: a second feed over the corner of the first. Sized by
+@@ -11,7 +14,7 @@
+   position: absolute;
+   right: 10px;
+   bottom: 10px;
+-  width: min(34%, 260px);
++  width: min(34%, 320px);
+   border: 1px solid #30363d;
+   border-radius: 4px;
+   background: #0d1117;
+@@ -23,3 +26,22 @@
+   color: #8b949e;
+   position: absolute;
+ }
++
++/* A tall panel has room for both full-width views instead of a tiny inset. */
++@container (max-aspect-ratio: 5/4) {
++  .canvas:has(+ .inset) {
++    height: 50%;
++  }
++
++  .inset {
++    right: 0;
++    bottom: 0;
++    width: 100%;
++    height: 50%;
++    object-fit: contain;
++    border: 0;
++    border-radius: 0;
++    box-shadow: none;
++    background: #000;
++  }
++}
+diff --git i/web/cockpit/src/panels/cockpitPanels.test.tsx w/web/cockpit/src/panels/cockpitPanels.test.tsx
+index 78ac90b..f4942f6 100644
+--- i/web/cockpit/src/panels/cockpitPanels.test.tsx
++++ w/web/cockpit/src/panels/cockpitPanels.test.tsx
+@@ -10,6 +10,7 @@ import { ControlPanel } from "./ControlPanel.tsx";
+ import { PENDING_MS } from "./controlPolicy.ts";
+ import { NavMapPanel, NOTE_LINGER_MS, startNavOverlay } from "./NavMapPanel.tsx";
+ import { getPanel } from "./registry.tsx";
++import type { MapTransform } from "./mapRenderer.ts";
+ 
+ (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+ 
+@@ -169,6 +170,21 @@ describe("cockpit panels", () => {
+       act(() => root.render(<ChatPanel spec={CHAT_SPEC} store={store} teleop={hooks} />));
+     });
+ 
++    it("shows a read-only transcript in teleop mode without offering agent input", () => {
++      const spec = {
++        ...CHAT_SPEC,
++        params: { ...CHAT_SPEC.params, readOnly: true },
++      };
++      act(() => root.render(<ChatPanel spec={spec} store={store} teleop={hooks} />));
++      ingest(store, "mode", { mode: "teleop" });
++      expect(q<HTMLTextAreaElement>("chat-agent-input").disabled).toBe(true);
++      expect(q<HTMLButtonElement>("chat-agent-send").disabled).toBe(true);
++      expect(container.textContent).toContain("Read-only transcript");
++      expect(container.textContent).not.toContain(AGENT_MODE_NOTICE);
++      chat("ai", "Watching the world");
++      expect(container.textContent).toContain("Watching the world");
++    });
++
+     it("renders the humancli transcript from chat frames, with tool rows and the spinner", () => {
+       // An empty transcript invites a message; it must not look like the
+       // agent is still starting up.
+@@ -586,6 +602,74 @@ describe("startNavOverlay", () => {
+     vi.restoreAllMocks();
+   });
+ 
++  it("reframes both canvases when places change without another grid frame", async () => {
++    const base = document.createElement("canvas");
++    const overlay = document.createElement("canvas");
++    defineSize(base, 440, 240);
++    defineSize(overlay, 440, 240);
++    let baseTransform: MapTransform | undefined;
++    const handle = startNavOverlay(
++      store,
++      {
++        costmap: "global_costmap",
++        pose: "odom",
++        path: "path",
++        places: "places",
++        navState: "nav_state",
++      },
++      base,
++      overlay,
++      { lastDrawOkAtMs: 0, failures: 0 },
++      {
++        fitPlaces: true,
++        inflate: () => Promise.resolve(new Uint8Array(4)),
++        hidden: () => false,
++        onTransform: (t) => {
++          baseTransform = t;
++        },
++      },
++    );
++    stop = handle.stop;
++    ingest(store, "global_costmap", {
++      bytes: new Uint8Array([1]),
++      w: 2,
++      h: 2,
++      res: 1,
++      origin: [0, 0, 0],
++    });
++    await act(async () => {
++      await new Promise((resolve) => setTimeout(resolve, 0));
++    });
++    const [, baseSeq] = seqs;
++    baseSeq.length = 0;
++    const places = {
++      frame: "world",
++      rooms: [{ name: "studio", aliases: [], bounds: [10, 14, 20, 22], target: [12, 21, 0] }],
++      objects: [],
++      tagged: [],
++    };
++    ingest(store, "places", places);
++    expect(baseSeq).toContain("drawImage");
++    expect(handle.transform()).toEqual(baseTransform);
++    expect(handle.transform()?.scale).toBeCloseTo(100);
++    expect(handle.transform()?.originX).toBeCloseTo(9.8);
++
++    baseSeq.length = 0;
++    ingest(store, "places", {
++      ...places,
++      rooms: [{ ...places.rooms[0], bounds: [20, 24, 30, 32], target: [22, 31, 0] }],
++    });
++    expect(baseSeq).toContain("drawImage");
++    expect(handle.transform()).toEqual(baseTransform);
++    expect(handle.transform()?.originX).toBeCloseTo(19.8);
++
++    handle.stop();
++    stop = null;
++    baseSeq.length = 0;
++    ingest(store, "places", places);
++    expect(baseSeq).toEqual([]);
++  });
++
+   it("draws the pose on the overlay above the room labels, never on the base", async () => {
+     const base = document.createElement("canvas");
+     const overlay = document.createElement("canvas");
+diff --git i/web/cockpit/src/panels/navMapGeometry.test.ts w/web/cockpit/src/panels/navMapGeometry.test.ts
+index 14578c0..29f5da2 100644
+--- i/web/cockpit/src/panels/navMapGeometry.test.ts
++++ w/web/cockpit/src/panels/navMapGeometry.test.ts
+@@ -4,6 +4,7 @@ import {
+   clickToWorld,
+   FALLBACK_HALF_M,
+   fallbackTransform,
++  fitPlacesTransform,
+   GOAL_LIMIT_M,
+   goalPayload,
+   hitLabel,
+@@ -127,3 +128,60 @@ describe("readPlaces / readPath", () => {
+     expect(readPath({ frame: "world" })).toBeNull();
+   });
+ });
++
++describe("fitPlacesTransform", () => {
++  it("fits translated room bounds and keeps pixel clicks in world coordinates", () => {
++    const t = fitPlacesTransform(
++      {
++        frame: "world",
++        rooms: [{
++          name: "studio",
++          aliases: [],
++          bounds: [10, 14, 20, 22],
++          target: [12, 21, 0],
++        }],
++        objects: [],
++        tagged: [],
++      },
++      440,
++      240,
++    )!;
++    expect(t.scale).toBeCloseTo(100);
++    const [left, bottom] = worldToCanvas(t, 10, 20);
++    expect(left).toBeCloseTo(20);
++    expect(bottom).toBeCloseTo(220);
++    const [x, y] = canvasToWorld(t, 220, 120);
++    expect(x).toBeCloseTo(12);
++    expect(y).toBeCloseTo(21);
++  });
++
++  it("includes known landmarks and tagged places outside the rooms", () => {
++    const t = fitPlacesTransform(
++      {
++        frame: "world",
++        rooms: [],
++        objects: [{ name: "bench", x: -2, y: -1 }],
++        tagged: [{ name: "spot", x: 2, y: 1, yaw: 0 }],
++      },
++      440,
++      240,
++    )!;
++    expect(t.originX).toBeCloseTo(-2.2);
++    expect(t.originY).toBeCloseTo(-1.2);
++    expect(t.scale).toBeCloseTo(100);
++  });
++
++  it("leaves empty metadata to the existing grid fallback", () => {
++    expect(fitPlacesTransform(null, 400, 300)).toBeNull();
++    expect(fitPlacesTransform(
++      {
++        frame: "world",
++        rooms: [],
++        objects: [],
++        tagged: [],
++      },
++      400,
++      300,
++    )).toBeNull();
++  });
++});
+diff --git i/web/cockpit/src/panels/navMapGeometry.ts w/web/cockpit/src/panels/navMapGeometry.ts
+index 3368d6b..3d4815a 100644
+--- i/web/cockpit/src/panels/navMapGeometry.ts
++++ w/web/cockpit/src/panels/navMapGeometry.ts
+@@ -94,6 +94,46 @@ export interface Places {
+   tagged: TaggedPlace[];
+ }
+ 
++const PLACE_MARGIN_RATIO = 0.05;
++const MIN_PLACE_MARGIN_M = 0.1;
++
++/** Fit the declared places, with a small margin, independently of the scan grid. */
++export function fitPlacesTransform(
++  places: Places | null,
++  canvasW: number,
++  canvasH: number,
++): MapTransform | null {
++  if (places === null) return null;
++  let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
++  const include = (x: number, y: number): void => {
++    xmin = Math.min(xmin, x);
++    xmax = Math.max(xmax, x);
++    ymin = Math.min(ymin, y);
++    ymax = Math.max(ymax, y);
++  };
++  for (const room of places.rooms) {
++    include(room.bounds[0], room.bounds[2]);
++    include(room.bounds[1], room.bounds[3]);
++  }
++  for (const item of [...places.objects, ...places.tagged]) include(item.x, item.y);
++  if (!Number.isFinite(xmin)) return null;
++  const margin = Math.max(
++    MIN_PLACE_MARGIN_M,
++    Math.max(xmax - xmin, ymax - ymin) * PLACE_MARGIN_RATIO,
++  );
++  // This extent is only used for framing; it never replaces the actual grid.
++  return fitTransform(
++    {
++      w: xmax - xmin + 2 * margin,
++      h: ymax - ymin + 2 * margin,
++      res: 1,
++      origin: [xmin - margin, ymin - margin, 0],
++    },
++    canvasW,
++    canvasH,
++  );
++}
++
+ function numbers(v: unknown, count: number): number[] | null {
+   if (!Array.isArray(v) || v.length < count) return null;
+   const out: number[] = [];
+diff --git i/web/relay/registry.ts w/web/relay/registry.ts
+index 9fcbbdb..1abaa02 100644
+--- i/web/relay/registry.ts
++++ w/web/relay/registry.ts
+@@ -302,7 +302,13 @@ export class Registry {
+             });
+             break;
+           }
++          const replay = !viewer.subs.has(msg.ch) && entry.lastChs.includes(msg.ch) &&
++              entry.delivery.get(msg.ch) === "reliable"
++            ? msg.ch
++            : undefined;
+           viewer.subs.add(msg.ch);
++          this.#syncSubs(viewer.watched, false, replay);
++          break;
+         } else {
+           viewer.subs.delete(msg.ch);
+           viewer.policies.get(msg.ch)?.dispose();
+@@ -573,13 +579,18 @@ export class Registry {
+    * Recomputed from scratch on every mutation: no incremental refcounts to
+    * drift across watch switches, disconnects, and reconnects.
+    */
+-  #syncSubs(robotId: string, force = false): void {
++  #syncSubs(robotId: string, force = false, replay?: string): void {
+     const entry = this.#robots.get(robotId);
+     if (entry === undefined) return;
+     const chs = this.#activeChs(robotId, entry.delivery);
+-    if (!force && chs.join("\n") === entry.lastChs.join("\n")) return;
++    if (!force && replay === undefined && chs.join("\n") === entry.lastChs.join("\n")) return;
+     entry.lastChs = chs;
+-    entry.peer.sendControl({ t: "subs", chs, n: ++entry.n });
++    entry.peer.sendControl({
++      t: "subs",
++      chs,
++      n: ++entry.n,
++      ...(replay === undefined ? {} : { replay: [replay] }),
++    });
+     console.log(`[relay] robot ${robotId} active channels: [${chs.join(", ")}]`);
+   }
+ 
+diff --git i/web/relay/registry_test.ts w/web/relay/registry_test.ts
+index af3a8a8..f844bf2 100644
+--- i/web/relay/registry_test.ts
++++ w/web/relay/registry_test.ts
+@@ -1009,3 +1009,18 @@ Deno.test("tx before hello is rejected like any viewer command", () => {
+   assertEquals((viewer.replies[0] as { code: string }).code, "hello_required");
+   assertEquals(txMsgs(robot), []);
+ });
++
++Deno.test("late reliable viewers request replay once without changing the active set", () => {
++  const reg = new Registry();
++  const robot = new FakeRobot("r1", SPECS);
++  reg.registerRobot(robot);
++  attach(reg, "r1", ["odom"]);
++  const v2 = attach(reg, "r1", ["odom"]);
++  assertEquals(robot.lastSubs(), { t: "subs", chs: ["odom"], n: 3, replay: ["odom"] });
++  send(reg, v2, { t: "sub", ch: "odom" });
++  assertEquals(robot.subs().length, 3);
++  send(reg, v2, { t: "unsub", ch: "odom" });
++  assertEquals(robot.subs().length, 3);
++  send(reg, v2, { t: "sub", ch: "odom" });
++  assertEquals(robot.lastSubs(), { t: "subs", chs: ["odom"], n: 4, replay: ["odom"] });
++});
+diff --git i/web/relay/server.ts w/web/relay/server.ts
+index 6b5a31f..ac6cdca 100644
+--- i/web/relay/server.ts
++++ w/web/relay/server.ts
+@@ -7,10 +7,17 @@ import { PROTOCOL_VERSION } from "@dimos/shared";
+ import { fileURLToPath, pathToFileURL } from "node:url";
+ import { makeEphemeralCert } from "./cert.ts";
+ import { LATEST_STALE_MS } from "./forward.ts";
+-import { Registry } from "./registry.ts";
++import { Registry, type ViewerPeer } from "./registry.ts";
+ import { RobotSession, ViewerSession } from "./session.ts";
+ 
+ export interface RelayOptions {
++  /** Optional application registry and admission hooks; omitted in trusted local mode. */
++  registry?: Registry;
++  authorizeSession?: (url: URL) => boolean;
++  viewerConnected?: (viewer: ViewerPeer, url: URL, close: () => void) => void;
++  handleHttp?: (req: Request, info: { wtUrl: string; certHash: string; v: number }) =>
++    Response | null | Promise<Response | null>;
++
+   /** TCP port for the HTTP side. Default 7780; 0 picks an ephemeral port. */
+   port?: number;
+   /** Bind host for both listeners. The default is the only secure-context-friendly choice. */
+@@ -178,7 +185,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
+   const urlHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+   const wtUrl = `https://${urlHost}:${quicPort}`;
+ 
+-  const registry = new Registry();
++  const registry = options.registry ?? new Registry();
+   const sessions = new Set<WebTransport>();
+   let nextViewerId = 1;
+ 
+@@ -201,9 +208,18 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
+         const wt = await Deno.upgradeWebTransport(conn);
+         await wt.ready;
+         track(wt);
+-        const path = new URL(wt.url).pathname;
++        const url = new URL(wt.url);
++        const path = url.pathname;
++        if (options.authorizeSession && !options.authorizeSession(url)) {
++          wt.close({ closeCode: 1, reason: "session not authorized" });
++          return;
++        }
+         if (path === "/robot") new RobotSession(wt, conn, registry).start();
+-        else if (path === "/viewer") new ViewerSession(wt, nextViewerId++, registry).start();
++        else if (path === "/viewer") {
++          const viewer = new ViewerSession(wt, nextViewerId++, registry);
++          options.viewerConnected?.(viewer, url, () => wt.close());
++          viewer.start();
++        }
+         else {
+           console.log(`[relay] rejecting unknown WebTransport endpoint ${path}`);
+           wt.close({ closeCode: 1, reason: "unknown WebTransport endpoint" });
+@@ -216,6 +232,12 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
+ 
+   async function handleHttp(req: Request): Promise<Response> {
+     const url = new URL(req.url);
++    if (options.handleHttp) {
++      const response = await options.handleHttp(req, {
++        wtUrl: `${wtUrl}/viewer`, certHash: cert.certHashB64, v: PROTOCOL_VERSION,
++      });
++      if (response !== null) return response;
++    }
+     if (url.pathname === "/api/info") {
+       return Response.json({
+         wtUrl: `${wtUrl}/viewer`,
+diff --git i/web/relay/server_test.ts w/web/relay/server_test.ts
+index 22c5817..c1df63f 100644
+--- i/web/relay/server_test.ts
++++ w/web/relay/server_test.ts
+@@ -44,7 +44,7 @@ function certOpts(hashB64: string): WebTransportOptions {
+ }
+ 
+ function within<T>(promise: Promise<T>, what: string, ms = 8000): Promise<T> {
+-  let timer: number;
++  let timer: ReturnType<typeof setTimeout>;
+   const timeout = new Promise<T>((_, reject) => {
+     timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms);
+   });
+@@ -1151,7 +1151,6 @@ Deno.test({
+       v: PROTOCOL_VERSION,
+       role: "robot",
+       robot: ROBOT,
+-      channels: CHANNELS,
+       manifest: MANIFEST,
+     });
+     await nextOfType(robotDatagrams, "welcome", "robot welcome");
+diff --git i/web/shared/protocol.ts w/web/shared/protocol.ts
+index a2b24e5..4dcb7a0 100644
+--- i/web/shared/protocol.ts
++++ w/web/shared/protocol.ts
+@@ -148,6 +148,8 @@ export interface SubsMsg {
+   t: "subs";
+   chs: string[];
+   n: number;
++  /** A new viewer joined these already-active reliable channels. Older peers ignore it. */
++  replay?: string[];
+ }
+ 
+ // Teleop (T6). twist/stop ride datagrams viewer->relay->robot (loss-tolerant:
+@@ -337,7 +339,10 @@ const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean
+     (v.manifest === undefined || isRecord(v.manifest)),
+   robots: (v) => Array.isArray(v.robots) && v.robots.every(isRobotInfo),
+   manifest: (v) => v.manifest === undefined || isRecord(v.manifest),
+-  subs: (v) => Array.isArray(v.chs) && v.chs.every((c) => typeof c === "string"),
++  subs: (v) =>
++    Array.isArray(v.chs) && v.chs.every((c) => typeof c === "string") &&
++    (v.replay === undefined || (Array.isArray(v.replay) &&
++      v.replay.every((ch) => typeof ch === "string" && (v.chs as string[]).includes(ch)))),
+   twist: genAbsentOrNumber,
+   stop: genAbsentOrNumber,
+   teleop_start: genAbsentOrNumber,
+diff --git i/web/shared/protocol_test.ts w/web/shared/protocol_test.ts
+index 7873f51..fe072b4 100644
+--- i/web/shared/protocol_test.ts
++++ w/web/shared/protocol_test.ts
+@@ -444,3 +444,11 @@ Deno.test("peek rejects a frame whose total exceeds MAX_DATA_FRAME_BYTES", () =>
+   dv.setUint32(4, MAX_DATA_FRAME_BYTES, true); // payload pushes total over the cap
+   assertThrows(() => peekDataFrameLengths(bad));
+ });
++
++Deno.test("subscription replay hints are optional and name an active channel", () => {
++  const message: Msg = { t: "subs", chs: ["agent"], n: 3, replay: ["agent"] };
++  assertEquals(msgFromUnknown(message), message);
++  for (const replay of [null, 1, "agent", [1], ["unknown"]]) {
++    assertEquals(msgFromUnknown({ ...message, replay }), null);
++  }
++});

@@ -1,0 +1,18 @@
+[Unit]
+Description=microduck world gateway
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+WorkingDirectory=%h/projects/microduck-world
+ExecStart=%h/projects/microduck-world/gateway
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=mixed
+UMask=0077
+StandardOutput=append:%h/projects/microduck-world/logs/microduck-world-gateway.log
+StandardError=append:%h/projects/microduck-world/logs/microduck-world-gateway.log
+
+[Install]
+WantedBy=default.target

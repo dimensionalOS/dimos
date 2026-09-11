@@ -1,0 +1,193 @@
+{
+  "id": "football-club-v3",
+  "spawn_xy": [
+    -0.6,
+    3.25
+  ],
+  "rooms": {
+    "kitchen": {
+      "name": "kitchen",
+      "aliases": [
+        "space A"
+      ],
+      "bounds": [
+        8.3,
+        10.3,
+        -0.825,
+        1.175
+      ],
+      "target": [
+        9.5,
+        0.17500000000000004,
+        0.0
+      ]
+    },
+    "living": {
+      "name": "living",
+      "aliases": [
+        "space B",
+        "living room",
+        "lounge"
+      ],
+      "bounds": [
+        6.300000000000001,
+        8.3,
+        -0.825,
+        1.175
+      ],
+      "target": [
+        7.1000000000000005,
+        0.17500000000000004,
+        3.14159
+      ]
+    },
+    "bedroom": {
+      "name": "bedroom",
+      "aliases": [
+        "space C"
+      ],
+      "bounds": [
+        6.300000000000001,
+        8.3,
+        -2.825,
+        -0.825
+      ],
+      "target": [
+        7.1000000000000005,
+        -1.825,
+        3.14159
+      ]
+    },
+    "office": {
+      "name": "office",
+      "aliases": [
+        "space D",
+        "study"
+      ],
+      "bounds": [
+        8.3,
+        10.3,
+        -2.825,
+        -0.825
+      ],
+      "target": [
+        9.5,
+        -1.825,
+        0.0
+      ]
+    },
+    "football": {
+      "name": "football",
+      "aliases": [
+        "football field",
+        "pitch",
+        "soccer"
+      ],
+      "bounds": [
+        -3.25,
+        3.25,
+        2.1,
+        6.5
+      ],
+      "target": [
+        0,
+        3.05,
+        1.5707963268
+      ]
+    },
+    "red_lockers": {
+      "name": "red_lockers",
+      "aliases": [
+        "red locker room",
+        "red changing room"
+      ],
+      "bounds": [
+        -3.25,
+        -0.7,
+        0.375,
+        2
+      ],
+      "target": [
+        -1.6,
+        1.25,
+        0
+      ]
+    },
+    "blue_lockers": {
+      "name": "blue_lockers",
+      "aliases": [
+        "blue locker room",
+        "blue changing room"
+      ],
+      "bounds": [
+        0.7,
+        3.25,
+        0.375,
+        2
+      ],
+      "target": [
+        1.6,
+        1.25,
+        3.1415926536
+      ]
+    },
+    "player_tunnel": {
+      "name": "player_tunnel",
+      "aliases": [
+        "player entrance",
+        "tunnel"
+      ],
+      "bounds": [
+        -0.6,
+        0.6,
+        -0.575,
+        2
+      ],
+      "target": [
+        0,
+        1.25,
+        1.5707963268
+      ]
+    },
+    "benchmark_corridor": {
+      "name": "benchmark_corridor",
+      "aliases": [
+        "benchmark corridor",
+        "side corridor"
+      ],
+      "bounds": [
+        0.6,
+        6.2,
+        -0.575,
+        0.325
+      ],
+      "target": [
+        4,
+        -0.175,
+        0
+      ]
+    }
+  },
+  "objects": {
+    "red_box": [
+      9.8,
+      0.675
+    ],
+    "blue_box": [
+      6.800000000000001,
+      0.675
+    ],
+    "green_cylinder": [
+      6.800000000000001,
+      -2.325
+    ],
+    "yellow_pillar": [
+      9.8,
+      -2.325
+    ],
+    "orange_crate": [
+      8.9,
+      0.875
+    ]
+  }
+}

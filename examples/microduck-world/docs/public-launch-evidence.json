@@ -1,0 +1,71 @@
+{
+  "checked_date": "2026-09-09",
+  "scope": "Read-only inventory and existing statistics. No load test or deployment.",
+  "omarchy": {
+    "cpu": "Intel Core i9-10900",
+    "physical_cores": 10,
+    "hardware_threads": 20,
+    "installed_ram_gb": 64,
+    "os_reported_ram_gib": 62,
+    "gpu": "NVIDIA GeForce RTX 3070 Ti",
+    "vram_mib": 8192,
+    "driver": "610.57.04",
+    "occupied_players": 0,
+    "connected_players": 0,
+    "viewers": 0,
+    "world_service_memory_bytes": 2992111616,
+    "gateway_service_memory_bytes": 73293824,
+    "gpu_utilization_percent": 0,
+    "gpu_memory_used_mib": 863
+  },
+  "world_stream_accumulated": {
+    "frames_in": 183117,
+    "bytes_in": 1127451093,
+    "mean_frame_bytes": 6156.998492766919,
+    "configured_max_hz": 30,
+    "estimated_mbps_per_viewer_at_30hz": 1.4776796382640607,
+    "note": "Historical counters, not an active full-load bandwidth measurement. Excludes transport overhead, cameras, maps, chat and asset downloads."
+  },
+  "aws_price_query": {
+    "service": "AmazonEC2",
+    "region": "us-east-1",
+    "location": "US East (N. Virginia)",
+    "operating_system": "Linux",
+    "tenancy": "Shared",
+    "purchase": "OnDemand",
+    "preinstalled_software": "NA",
+    "capacity_status": "Used",
+    "records": [
+      {
+        "instance": "g6.2xlarge",
+        "vcpu": "8",
+        "memory": "32 GiB",
+        "usd_per_hour": "0.9776000000",
+        "usd_per_730_hours": "713.6480000000",
+        "sku": "XCA3J9EEM739PU6M",
+        "rate_code": "XCA3J9EEM739PU6M.JRTCKXETXF.6YS6EN2CT7",
+        "effective_date": "2026-09-01T00:00:00Z"
+      },
+      {
+        "instance": "g6.4xlarge",
+        "vcpu": "16",
+        "memory": "64 GiB",
+        "usd_per_hour": "1.3232000000",
+        "usd_per_730_hours": "965.9360000000",
+        "sku": "KXDXMVEY4HRJRGG4",
+        "rate_code": "KXDXMVEY4HRJRGG4.JRTCKXETXF.6YS6EN2CT7",
+        "effective_date": "2026-09-01T00:00:00Z"
+      },
+      {
+        "instance": "g6.8xlarge",
+        "vcpu": "32",
+        "memory": "128 GiB",
+        "usd_per_hour": "2.0144000000",
+        "usd_per_730_hours": "1470.5120000000",
+        "sku": "WDZZWUA642MPM79G",
+        "rate_code": "WDZZWUA642MPM79G.JRTCKXETXF.6YS6EN2CT7",
+        "effective_date": "2026-09-01T00:00:00Z"
+      }
+    ]
+  }
+}

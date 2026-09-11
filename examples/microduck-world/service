@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "$0")"
+project_root="$PWD"
+# The user manager reads the account's unit links, even from a project shell.
+unset XDG_CONFIG_HOME XDG_DATA_HOME
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+action="${1:-status}"
+target="${2:-all}"
+case "$target" in
+  all) units=(microduck-world.service microduck-world-gateway.service) ;;
+  world) units=(microduck-world.service) ;;
+  gateway) units=(microduck-world-gateway.service) ;;
+  *) printf 'Unknown service: %s\n' "$target" >&2; exit 2 ;;
+esac
+case "$action" in
+  install)
+    mkdir -p logs
+    systemd-analyze --user verify "$project_root/ops/systemd/"*.service
+    systemctl --user enable "$project_root/ops/systemd/"*.service
+    systemctl --user daemon-reload
+    systemctl --user start "${units[@]}"
+    ;;
+  start|stop|restart|status)
+    systemctl --user "$action" "${units[@]}" --no-pager
+    ;;
+  logs)
+    files=()
+    for unit in "${units[@]}"; do files+=("logs/${unit%.service}.log"); done
+    tail -n 50 -F "${files[@]}"
+    ;;
+  *)
+    printf 'Usage: %s {install|start|stop|restart|status|logs} [all|world|gateway]\n' "$0" >&2
+    exit 2
+    ;;
+esac

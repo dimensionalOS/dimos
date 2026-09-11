@@ -1,0 +1,18 @@
+<!-- Isolated upstream flat-floor fixture, verified 2026-09-08.
+     pollen-robotics/microduck-simulator revision e81974b932c7ca1819843b7bb3dcd42e2993e98e.
+     app/src/game/game.js adds these geoms outside the robot's named defaults.
+     app/src/game/constants.js supplies radius and timestep.
+     app/public/robot/mjlab/robot_allcollisions.xml has no root geom/option overrides.
+     Only the ball's horizontal parking position is changed for this test.
+     No terrain, walls, robot, policies or application physics helpers are loaded. -->
+<mujoco model="pollen_flat_ball_reference">
+  <option timestep="0.005"/>
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 0.05" pos="0 0 0"/>
+    <body name="ball" pos="0 0 0.05">
+      <freejoint name="ball_freejoint"/>
+      <geom name="ball_geom" type="sphere" size="0.05" mass="0.03"
+            friction="0.4 0.01 0.003" solref="0.03 0.4" condim="6"/>
+    </body>
+  </worldbody>
+</mujoco>

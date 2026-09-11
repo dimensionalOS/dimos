@@ -1,0 +1,172 @@
+.world {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #dfe8ed;
+}
+.viewport {
+  position: absolute;
+  inset: 0;
+}
+.viewport canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  outline: none;
+}
+.viewport canvas:focus-visible {
+  outline: 2px solid #2f81f7;
+  outline-offset: -3px;
+}
+.toolbar {
+  position: absolute;
+  bottom: 14px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  pointer-events: none;
+}
+.toolbar button {
+  pointer-events: auto;
+  border: 1px solid #bdc8cb;
+  border-radius: 5px;
+  background: #f3f6f4ed;
+  color: #263c42;
+  padding: 7px 11px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px #213c4214;
+}
+.toolbar button:hover {
+  background: #fff;
+}
+.toolbar button[aria-pressed="true"] {
+  color: #fff;
+  background: #345e69;
+  border-color: #345e69;
+}
+.toolbar button:focus-visible {
+  outline: 2px solid #2f81f7;
+  outline-offset: 2px;
+}
+.toolbar button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.help {
+  margin-left: auto;
+  color: #375057;
+  font-size: 11px;
+  padding: 7px 9px;
+  background: #f3f6f4cf;
+  border-radius: 4px;
+}
+.notice {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  text-align: center;
+  color: #29434b;
+  background: #dfe8eded;
+}
+@media (max-width: 800px) {
+  .help {
+    display: none;
+  }
+}
+
+.viewport[data-live="false"]::after {
+  content: "Waiting for simulation updates…";
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 7px 11px;
+  border-radius: 6px;
+  background: #fff4d8;
+  color: #6a481a;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.fps {
+  color: #9caeb8;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rendererSelect {
+  border: 1px solid #485460;
+  border-radius: 4px;
+  padding: 2px 5px;
+  color: #dce7ed;
+  background: #1b2b38;
+  font: inherit;
+  font-size: 11px;
+  max-width: 120px;
+}
+.rendererSelect:focus-visible {
+  outline: 2px solid #2f81f7;
+  outline-offset: 2px;
+}
+.jpeg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.world [hidden] {
+  display: none;
+}
+.pov .viewport:not([hidden]) {
+  display: grid;
+  place-items: center;
+  background: #000;
+}
+
+.score {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 5px;
+  background: #f3f6f4ed;
+  color: #183431;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.score b {
+  font-size: 18px;
+  letter-spacing: 2px;
+}
+.blueTeam {
+  color: #17658c;
+}
+.coralTeam {
+  color: #a13c28;
+}
+.nameTags { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.nameTag { position: absolute; top: 0; left: 0; display: flex; align-items: center; gap: 7px; max-width: 220px; padding: 5px 9px 5px 5px; border-radius: 7px; color: #f9fbfd; background: #132438ed; box-shadow: 0 2px 8px #10223835; border: 1px solid #ffffff40; font-size: 12px; font-weight: 600; white-space: nowrap; will-change: transform; }
+.nameTag > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.nameBadge { flex: none; color: #fff; background: var(--team); padding: 2px 4px; border-radius: 3px; font-size: 10px; }
+.playerSelect, .namesToggle { pointer-events: auto; color: #263c42; background: #f3f6f4ed; border: 1px solid #bdc8cb; border-radius: 5px; font: inherit; font-size: 12px; padding: 7px 9px; }
+.playerSelect { max-width: 225px; }
+.namesToggle { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.namesToggle input { margin: 0; accent-color: #345e69; }
+.playerSelect:focus-visible, .namesToggle:focus-within { outline: 2px solid #2f81f7; outline-offset: 2px; }
+
+.pov .jpeg{object-fit:contain}
+.pov .viewport{display:flex;align-items:center;justify-content:center;background:#080d10}

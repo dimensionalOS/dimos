@@ -1,0 +1,77 @@
+{
+  "date": "2026-09-09",
+  "publicDeployment": "live at https://sim.tule.world",
+  "tests": {
+    "python": 148,
+    "relay": 20,
+    "frontend": 14,
+    "cloudflare": 11
+  },
+  "nativeCameraSanityCheck": {
+    "mujoco": "3.10.0",
+    "device": "cuda",
+    "model": "yolo11n.pt",
+    "threshold": 0.25,
+    "frames": 102,
+    "visible_ball_frames": 96,
+    "detected_visible_frames": 78,
+    "empty_false_positive_frames": 0,
+    "inference_ms_p50": 7.84287101123482,
+    "inference_ms_p95": 8.024680020753294,
+    "matched_visible_frames_iou50": 78
+  },
+  "isolatedCapacity": {
+    "players": 6,
+    "spectators": 20,
+    "durationSeconds": 45.04383532999782,
+    "transport": "local DimOS WebTransport",
+    "cameraSubscriptions": 26,
+    "failures": [],
+    "realTimeFactor": {
+      "min": 0.9987795404958633,
+      "median": 0.9997402019935304,
+      "max": 1.0003852221605751
+    },
+    "worldHz": {
+      "min": 25.08667371953237,
+      "median": 25.619488028619784,
+      "max": 25.619488028619784
+    },
+    "cameraHz": {
+      "min": 1.820448889381995,
+      "median": 1.8870506780179217,
+      "max": 1.9314518704418728
+    },
+    "cameraAgeMax": {
+      "min": 0.07103109359741211,
+      "median": 0.08788347244262695,
+      "max": 0.1393885612487793
+    },
+    "aggregatePayloadMiBPerSecond": 4.855771277775277,
+    "unavailableCameraFrames": 0
+  },
+  "limitations": [
+    "Capacity was measured in a short local protocol load test; public browser functionality was verified separately.",
+    "All 18 YOLO misses were textured pitch balls at 0.3 m across all six head cameras.",
+    "Existing production world remained running alongside the isolated test."
+  ],
+  "cloudflareVersion": "40187f0e-0eec-4051-8c3a-be8e7c599018",
+  "publicChecks": {
+    "githubOAuth": "passed, public profile only",
+    "duckJoin": "passed, Red 1 named Tule",
+    "reload": "same participant generation retained",
+    "worldUpdateHzObserved": [
+      27,
+      29
+    ],
+    "policyCommands": "stand and walk reached MuJoCo",
+    "teleop": "control lease acquired",
+    "agentChat": "ready response received",
+    "humanCliTools": 20,
+    "anonymousControlStatus": 401,
+    "privateRobotInfoStatus": 404,
+    "logout": "cookie cleared and duck released",
+    "spectatorSignIn": "passed, live 28 Hz world with no player slot occupied",
+    "cloudflareStandardEnabled": true
+  }
+}

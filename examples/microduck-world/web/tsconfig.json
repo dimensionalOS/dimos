@@ -1,0 +1,53 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "vite/client",
+      "node"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@dimos/cockpit/*": [
+        "../vendor/dimos/web/cockpit/src/*"
+      ],
+      "@dimos/sdk": [
+        "../vendor/dimos/web/sdk/src/index.ts"
+      ],
+      "@dimos/sdk/react": [
+        "../vendor/dimos/web/sdk/src/react.ts"
+      ],
+      "@dimos/sdk/internal/teleop": [
+        "../vendor/dimos/web/sdk/src/internal/teleopMachine.ts"
+      ],
+      "@dimos/shared": [
+        "../vendor/dimos/web/shared/protocol.ts"
+      ],
+      "@dimos/shared/manifest": [
+        "../vendor/dimos/web/shared/manifest.ts"
+      ]
+    },
+    "resolveJsonModule": true
+  },
+  "include": [
+    "src",
+    "vite.config.ts"
+  ]
+}

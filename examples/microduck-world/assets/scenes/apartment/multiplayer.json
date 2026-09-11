@@ -1,0 +1,106 @@
+{
+  "scene": "football-club-v3",
+  "clearance": 0.5,
+  "robots": {
+    "duck1": {
+      "team": "red",
+      "number": 1,
+      "name": "Red 1",
+      "spawn": [
+        -0.6,
+        3.25
+      ],
+      "yaw": 1.5707963267948966,
+      "mcp_port": 9990
+    },
+    "duck2": {
+      "team": "red",
+      "number": 2,
+      "name": "Red 2",
+      "spawn": [
+        0.0,
+        3.25
+      ],
+      "yaw": 1.5707963267948966,
+      "mcp_port": 9991
+    },
+    "duck3": {
+      "team": "red",
+      "number": 3,
+      "name": "Red 3",
+      "spawn": [
+        0.6,
+        3.25
+      ],
+      "yaw": 1.5707963267948966,
+      "mcp_port": 9992
+    },
+    "duck4": {
+      "team": "blue",
+      "number": 1,
+      "name": "Blue 1",
+      "spawn": [
+        -0.6,
+        5.35
+      ],
+      "yaw": -1.5707963267948966,
+      "mcp_port": 9993
+    },
+    "duck5": {
+      "team": "blue",
+      "number": 2,
+      "name": "Blue 2",
+      "spawn": [
+        0.0,
+        5.35
+      ],
+      "yaw": -1.5707963267948966,
+      "mcp_port": 9994
+    },
+    "duck6": {
+      "team": "blue",
+      "number": 3,
+      "name": "Blue 3",
+      "spawn": [
+        0.6,
+        5.35
+      ],
+      "yaw": -1.5707963267948966,
+      "mcp_port": 9995
+    }
+  },
+  "spawns": [
+    [
+      -0.6,
+      3.25
+    ],
+    [
+      0.0,
+      3.25
+    ],
+    [
+      0.6,
+      3.25
+    ],
+    [
+      -0.6,
+      5.35
+    ],
+    [
+      0.0,
+      5.35
+    ],
+    [
+      0.6,
+      5.35
+    ]
+  ],
+  "colors": {
+    "duck1": "#e34d4e",
+    "duck2": "#e34d4e",
+    "duck3": "#e34d4e",
+    "duck4": "#418ee8",
+    "duck5": "#418ee8",
+    "duck6": "#418ee8"
+  }
+}

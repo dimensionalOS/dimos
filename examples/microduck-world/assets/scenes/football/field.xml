@@ -1,0 +1,282 @@
+<mujoco model="microduck_football_club">
+  <worldbody>
+    <geom name="football_floor" type="box" size="3.35 2.2 0.05" rgba="1 1 1 1" group="0" pos="0 4.3 -0.05" material="football_surface" />
+    <site name="football_goal_blue" type="box" pos="-1.306 4.3 0" size=".5 .48 .006" quat="0 0 0 1" rgba="0 0 0 0" group="5" />
+    <geom name="football_blue_post_-1" type="capsule" size="0.025" rgba="0.93 0.95 0.88 1" group="0" fromto="-1.3 3.775 0.025 -1.3 3.775 0.505" />
+    <geom name="football_blue_post_1" type="capsule" size="0.025" rgba="0.93 0.95 0.88 1" group="0" fromto="-1.3 4.825 0.025 -1.3 4.825 0.505" />
+    <geom name="football_blue_crossbar" type="capsule" size="0.025" rgba="0.93 0.95 0.88 1" group="0" fromto="-1.3 3.775 0.505 -1.3 4.825 0.505" />
+    <geom name="football_blue_net_0" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.775 0.005 -1.7 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_1" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.775 0.505 -1.7 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_2" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.825 0.005 -1.7 3.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_3" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.825 0.505 -1.7 3.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_4" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.875 0.005 -1.7 3.875 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_5" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.875 0.505 -1.7 3.875 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_6" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.925 0.005 -1.7 3.925 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_7" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.925 0.505 -1.7 3.925 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_8" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.975 0.005 -1.7 3.975 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_9" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.975 0.505 -1.7 3.975 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_10" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.025 0.005 -1.7 4.025 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_11" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.025 0.505 -1.7 4.025 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_12" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.075 0.005 -1.7 4.075 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_13" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.075 0.505 -1.7 4.075 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_14" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.125 0.005 -1.7 4.125 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_15" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.125 0.505 -1.7 4.125 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_16" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.175 0.005 -1.7 4.175 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_17" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.175 0.505 -1.7 4.175 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_18" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.225 0.005 -1.7 4.225 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_19" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.225 0.505 -1.7 4.225 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_20" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.275 0.005 -1.7 4.275 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_21" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.275 0.505 -1.7 4.275 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_22" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.325 0.005 -1.7 4.325 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_23" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.325 0.505 -1.7 4.325 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_24" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.375 0.005 -1.7 4.375 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_25" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.375 0.505 -1.7 4.375 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_26" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.425 0.005 -1.7 4.425 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_27" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.425 0.505 -1.7 4.425 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_28" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.475 0.005 -1.7 4.475 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_29" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.475 0.505 -1.7 4.475 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_30" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.525 0.005 -1.7 4.525 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_31" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.525 0.505 -1.7 4.525 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_32" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.575 0.005 -1.7 4.575 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_33" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.575 0.505 -1.7 4.575 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_34" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.625 0.005 -1.7 4.625 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_35" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.625 0.505 -1.7 4.625 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_36" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.675 0.005 -1.7 4.675 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_37" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.675 0.505 -1.7 4.675 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_38" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.725 0.005 -1.7 4.725 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_39" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.725 0.505 -1.7 4.725 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_40" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.775 0.005 -1.7 4.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_41" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.775 0.505 -1.7 4.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_42" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 4.825 0.005 -1.7 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_43" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.825 0.505 -1.7 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_44" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.775 0.005 -1.7 4.825 0.005" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_45" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.775 0.005 -1.7 3.775 0.005" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_46" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.825 0.005 -1.7 4.825 0.005" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_47" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.775 0.055 -1.7 4.825 0.055" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_48" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.775 0.055 -1.7 3.775 0.055" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_49" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.825 0.055 -1.7 4.825 0.055" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_50" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.775 0.105 -1.7 4.825 0.105" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_51" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.775 0.105 -1.7 3.775 0.105" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_52" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.825 0.105 -1.7 4.825 0.105" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_53" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.775 0.155 -1.7 4.825 0.155" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_54" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.775 0.155 -1.7 3.775 0.155" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_55" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.825 0.155 -1.7 4.825 0.155" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_56" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.775 0.205 -1.7 4.825 0.205" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_57" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.775 0.205 -1.7 3.775 0.205" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_58" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.825 0.205 -1.7 4.825 0.205" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_59" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.775 0.255 -1.7 4.825 0.255" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_60" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.775 0.255 -1.7 3.775 0.255" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_61" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.825 0.255 -1.7 4.825 0.255" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_62" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.775 0.305 -1.7 4.825 0.305" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_63" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.775 0.305 -1.7 3.775 0.305" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_64" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.825 0.305 -1.7 4.825 0.305" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_65" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.775 0.355 -1.7 4.825 0.355" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_66" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.775 0.355 -1.7 3.775 0.355" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_67" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.825 0.355 -1.7 4.825 0.355" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_68" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.775 0.405 -1.7 4.825 0.405" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_69" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.775 0.405 -1.7 3.775 0.405" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_70" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.825 0.405 -1.7 4.825 0.405" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_71" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.775 0.455 -1.7 4.825 0.455" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_72" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.775 0.455 -1.7 3.775 0.455" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_73" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.825 0.455 -1.7 4.825 0.455" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_74" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.7 3.775 0.505 -1.7 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_75" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 3.775 0.505 -1.7 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_76" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.3 4.825 0.505 -1.7 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_77" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.35 3.775 0.005 -1.35 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_78" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.4 3.775 0.005 -1.4 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_79" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.45 3.775 0.005 -1.45 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_80" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.5 3.775 0.005 -1.5 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_81" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.55 3.775 0.005 -1.55 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_82" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.6 3.775 0.005 -1.6 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_83" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.65 3.775 0.005 -1.65 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_84" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.35 4.825 0.005 -1.35 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_85" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.4 4.825 0.005 -1.4 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_86" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.45 4.825 0.005 -1.45 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_87" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.5 4.825 0.005 -1.5 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_88" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.55 4.825 0.005 -1.55 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_89" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.6 4.825 0.005 -1.6 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_blue_net_90" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="-1.65 4.825 0.005 -1.65 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <site name="football_goal_coral" type="box" pos="1.306 4.3 0" size=".5 .48 .006" quat="1 0 0 0" rgba="0 0 0 0" group="5" />
+    <geom name="football_coral_post_-1" type="capsule" size="0.025" rgba="0.93 0.95 0.88 1" group="0" fromto="1.3 3.775 0.025 1.3 3.775 0.505" />
+    <geom name="football_coral_post_1" type="capsule" size="0.025" rgba="0.93 0.95 0.88 1" group="0" fromto="1.3 4.825 0.025 1.3 4.825 0.505" />
+    <geom name="football_coral_crossbar" type="capsule" size="0.025" rgba="0.93 0.95 0.88 1" group="0" fromto="1.3 3.775 0.505 1.3 4.825 0.505" />
+    <geom name="football_coral_net_0" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.775 0.005 1.7 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_1" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.775 0.505 1.7 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_2" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.825 0.005 1.7 3.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_3" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.825 0.505 1.7 3.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_4" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.875 0.005 1.7 3.875 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_5" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.875 0.505 1.7 3.875 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_6" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.925 0.005 1.7 3.925 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_7" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.925 0.505 1.7 3.925 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_8" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.975 0.005 1.7 3.975 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_9" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.975 0.505 1.7 3.975 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_10" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.025 0.005 1.7 4.025 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_11" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.025 0.505 1.7 4.025 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_12" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.075 0.005 1.7 4.075 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_13" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.075 0.505 1.7 4.075 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_14" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.125 0.005 1.7 4.125 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_15" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.125 0.505 1.7 4.125 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_16" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.175 0.005 1.7 4.175 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_17" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.175 0.505 1.7 4.175 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_18" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.225 0.005 1.7 4.225 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_19" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.225 0.505 1.7 4.225 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_20" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.275 0.005 1.7 4.275 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_21" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.275 0.505 1.7 4.275 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_22" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.325 0.005 1.7 4.325 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_23" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.325 0.505 1.7 4.325 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_24" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.375 0.005 1.7 4.375 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_25" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.375 0.505 1.7 4.375 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_26" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.425 0.005 1.7 4.425 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_27" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.425 0.505 1.7 4.425 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_28" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.475 0.005 1.7 4.475 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_29" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.475 0.505 1.7 4.475 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_30" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.525 0.005 1.7 4.525 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_31" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.525 0.505 1.7 4.525 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_32" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.575 0.005 1.7 4.575 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_33" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.575 0.505 1.7 4.575 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_34" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.625 0.005 1.7 4.625 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_35" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.625 0.505 1.7 4.625 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_36" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.675 0.005 1.7 4.675 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_37" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.675 0.505 1.7 4.675 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_38" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.725 0.005 1.7 4.725 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_39" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.725 0.505 1.7 4.725 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_40" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.775 0.005 1.7 4.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_41" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.775 0.505 1.7 4.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_42" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 4.825 0.005 1.7 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_43" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.825 0.505 1.7 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_44" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.775 0.005 1.7 4.825 0.005" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_45" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.775 0.005 1.7 3.775 0.005" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_46" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.825 0.005 1.7 4.825 0.005" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_47" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.775 0.055 1.7 4.825 0.055" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_48" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.775 0.055 1.7 3.775 0.055" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_49" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.825 0.055 1.7 4.825 0.055" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_50" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.775 0.105 1.7 4.825 0.105" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_51" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.775 0.105 1.7 3.775 0.105" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_52" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.825 0.105 1.7 4.825 0.105" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_53" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.775 0.155 1.7 4.825 0.155" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_54" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.775 0.155 1.7 3.775 0.155" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_55" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.825 0.155 1.7 4.825 0.155" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_56" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.775 0.205 1.7 4.825 0.205" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_57" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.775 0.205 1.7 3.775 0.205" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_58" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.825 0.205 1.7 4.825 0.205" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_59" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.775 0.255 1.7 4.825 0.255" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_60" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.775 0.255 1.7 3.775 0.255" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_61" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.825 0.255 1.7 4.825 0.255" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_62" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.775 0.305 1.7 4.825 0.305" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_63" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.775 0.305 1.7 3.775 0.305" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_64" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.825 0.305 1.7 4.825 0.305" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_65" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.775 0.355 1.7 4.825 0.355" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_66" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.775 0.355 1.7 3.775 0.355" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_67" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.825 0.355 1.7 4.825 0.355" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_68" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.775 0.405 1.7 4.825 0.405" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_69" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.775 0.405 1.7 3.775 0.405" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_70" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.825 0.405 1.7 4.825 0.405" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_71" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.775 0.455 1.7 4.825 0.455" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_72" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.775 0.455 1.7 3.775 0.455" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_73" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.825 0.455 1.7 4.825 0.455" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_74" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.7 3.775 0.505 1.7 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_75" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 3.775 0.505 1.7 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_76" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.3 4.825 0.505 1.7 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_77" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.35 3.775 0.005 1.35 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_78" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.4 3.775 0.005 1.4 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_79" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.45 3.775 0.005 1.45 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_80" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.5 3.775 0.005 1.5 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_81" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.55 3.775 0.005 1.55 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_82" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.6 3.775 0.005 1.6 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_83" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.65 3.775 0.005 1.65 3.775 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_84" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.35 4.825 0.005 1.35 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_85" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.4 4.825 0.005 1.4 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_86" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.45 4.825 0.005 1.45 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_87" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.5 4.825 0.005 1.5 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_88" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.55 4.825 0.005 1.55 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_89" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.6 4.825 0.005 1.6 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_coral_net_90" type="capsule" size="0.0025" rgba="0.73 0.81 0.79 1" group="0" fromto="1.65 4.825 0.005 1.65 4.825 0.505" friction=".4 .005 .0001" solref=".03 1" />
+    <geom name="football_south_wing_-1" type="box" size="1.325 0.05 0.42" rgba="0.79 0.84 0.81 1" group="0" pos="-1.975 2.05 0.42" />
+    <geom name="football_side_wall_-1" type="box" size="0.05 2.2 0.25" rgba="0.79 0.84 0.81 1" group="0" pos="-3.3 4.3 0.25" />
+    <geom name="football_side_rail_-1" type="box" size="0.052 2.2 0.018" rgba="0.17 0.26 0.26 1" group="1" pos="-3.3 4.3 0.518" contype="0" conaffinity="0" />
+    <geom name="football_south_wing_1" type="box" size="1.325 0.05 0.42" rgba="0.79 0.84 0.81 1" group="0" pos="1.975 2.05 0.42" />
+    <geom name="football_side_wall_1" type="box" size="0.05 2.2 0.25" rgba="0.79 0.84 0.81 1" group="0" pos="3.3 4.3 0.25" />
+    <geom name="football_side_rail_1" type="box" size="0.052 2.2 0.018" rgba="0.17 0.26 0.26 1" group="1" pos="3.3 4.3 0.518" contype="0" conaffinity="0" />
+    <geom name="football_back_wall" type="box" size="3.35 0.05 0.66" rgba="0.79 0.84 0.81 1" group="0" pos="0 6.55 0.66" />
+    <geom name="football_back_wainscot" type="box" size="3.25 0.006 0.18" rgba="0.19 0.29 0.29 1" group="1" pos="0 6.494 0.18" contype="0" conaffinity="0" />
+    <geom name="football_back_coping" type="box" size="3.35 0.06 0.025" rgba="0.17 0.26 0.26 1" group="1" pos="0 6.55 1.345" contype="0" conaffinity="0" />
+    <geom name="football_wall_rib_0" type="box" size="0.015 0.014 0.45" rgba="0.72 0.78 0.75 1" group="1" pos="-3 6.485 0.86" contype="0" conaffinity="0" />
+    <geom name="football_wall_rib_1" type="box" size="0.015 0.014 0.45" rgba="0.72 0.78 0.75 1" group="1" pos="-2.5 6.485 0.86" contype="0" conaffinity="0" />
+    <geom name="football_wall_rib_2" type="box" size="0.015 0.014 0.45" rgba="0.72 0.78 0.75 1" group="1" pos="-2 6.485 0.86" contype="0" conaffinity="0" />
+    <geom name="football_wall_rib_3" type="box" size="0.015 0.014 0.45" rgba="0.72 0.78 0.75 1" group="1" pos="-1.5 6.485 0.86" contype="0" conaffinity="0" />
+    <geom name="football_wall_rib_4" type="box" size="0.015 0.014 0.45" rgba="0.72 0.78 0.75 1" group="1" pos="-1 6.485 0.86" contype="0" conaffinity="0" />
+    <geom name="football_wall_rib_5" type="box" size="0.015 0.014 0.45" rgba="0.72 0.78 0.75 1" group="1" pos="-0.5 6.485 0.86" contype="0" conaffinity="0" />
+    <geom name="football_wall_rib_6" type="box" size="0.015 0.014 0.45" rgba="0.72 0.78 0.75 1" group="1" pos="0 6.485 0.86" contype="0" conaffinity="0" />
+    <geom name="football_wall_rib_7" type="box" size="0.015 0.014 0.45" rgba="0.72 0.78 0.75 1" group="1" pos="0.5 6.485 0.86" contype="0" conaffinity="0" />
+    <geom name="football_wall_rib_8" type="box" size="0.015 0.014 0.45" rgba="0.72 0.78 0.75 1" group="1" pos="1 6.485 0.86" contype="0" conaffinity="0" />
+    <geom name="football_wall_rib_9" type="box" size="0.015 0.014 0.45" rgba="0.72 0.78 0.75 1" group="1" pos="1.5 6.485 0.86" contype="0" conaffinity="0" />
+    <geom name="football_wall_rib_10" type="box" size="0.015 0.014 0.45" rgba="0.72 0.78 0.75 1" group="1" pos="2 6.485 0.86" contype="0" conaffinity="0" />
+    <geom name="football_wall_rib_11" type="box" size="0.015 0.014 0.45" rgba="0.72 0.78 0.75 1" group="1" pos="2.5 6.485 0.86" contype="0" conaffinity="0" />
+    <geom name="football_wall_rib_12" type="box" size="0.015 0.014 0.45" rgba="0.72 0.78 0.75 1" group="1" pos="3 6.485 0.86" contype="0" conaffinity="0" />
+    <geom name="football_bench_-1" type="box" size="0.55 0.12 0.025" rgba="0.20 0.53 0.75 1" group="0" pos="-2 6.26 0.18" />
+    <geom name="football_bench_leg_-1_-0.43" type="box" size="0.025 0.09 0.0775" rgba="0.24 0.3 0.3 1" group="0" pos="-2.43 6.26 0.0775" />
+    <geom name="football_bench_leg_-1_0.43" type="box" size="0.025 0.09 0.0775" rgba="0.24 0.3 0.3 1" group="0" pos="-1.57 6.26 0.0775" />
+    <geom name="football_bench_1" type="box" size="0.55 0.12 0.025" rgba="0.88 0.37 0.27 1" group="0" pos="2 6.26 0.18" />
+    <geom name="football_bench_leg_1_-0.43" type="box" size="0.025 0.09 0.0775" rgba="0.24 0.3 0.3 1" group="0" pos="1.57 6.26 0.0775" />
+    <geom name="football_bench_leg_1_0.43" type="box" size="0.025 0.09 0.0775" rgba="0.24 0.3 0.3 1" group="0" pos="2.43 6.26 0.0775" />
+    <geom name="football_scoreboard_case" type="box" size="0.89 0.045 0.27" rgba="0.1 0.16 0.17 1" group="0" pos="0 6.45 0.96" />
+    <geom name="football_scoreboard_face" type="box" size="0.85 0.006 0.235" rgba="0.025 0.04 0.045 1" group="1" pos="0 6.398 0.96" contype="0" conaffinity="0" />
+    <geom name="football_scoreboard_blue_stripe" type="box" size="0.33 0.003 0.012" rgba="0.20 0.53 0.75 1" group="1" pos="-0.44 6.389 1.155" contype="0" conaffinity="0" />
+    <geom name="score_blue_0_a" type="box" size="0.053 0.003 0.009" rgba="0.20 0.53 0.75 1" group="1" pos="-0.61 6.389 1.085" contype="0" conaffinity="0" />
+    <geom name="score_blue_0_b" type="box" size="0.009 0.003 0.048" rgba="0.20 0.53 0.75 1" group="1" pos="-0.548 6.389 1.0225" contype="0" conaffinity="0" />
+    <geom name="score_blue_0_c" type="box" size="0.009 0.003 0.048" rgba="0.20 0.53 0.75 1" group="1" pos="-0.548 6.389 0.8975" contype="0" conaffinity="0" />
+    <geom name="score_blue_0_d" type="box" size="0.053 0.003 0.009" rgba="0.20 0.53 0.75 1" group="1" pos="-0.61 6.389 0.835" contype="0" conaffinity="0" />
+    <geom name="score_blue_0_e" type="box" size="0.009 0.003 0.048" rgba="0.20 0.53 0.75 1" group="1" pos="-0.672 6.389 0.8975" contype="0" conaffinity="0" />
+    <geom name="score_blue_0_f" type="box" size="0.009 0.003 0.048" rgba="0.20 0.53 0.75 1" group="1" pos="-0.672 6.389 1.0225" contype="0" conaffinity="0" />
+    <geom name="score_blue_0_g" type="box" size="0.053 0.003 0.009" rgba="0.20 0.53 0.75 1" group="1" pos="-0.61 6.389 0.96" contype="0" conaffinity="0" />
+    <geom name="score_blue_1_a" type="box" size="0.053 0.003 0.009" rgba="0.20 0.53 0.75 1" group="1" pos="-0.44 6.389 1.085" contype="0" conaffinity="0" />
+    <geom name="score_blue_1_b" type="box" size="0.009 0.003 0.048" rgba="0.20 0.53 0.75 1" group="1" pos="-0.378 6.389 1.0225" contype="0" conaffinity="0" />
+    <geom name="score_blue_1_c" type="box" size="0.009 0.003 0.048" rgba="0.20 0.53 0.75 1" group="1" pos="-0.378 6.389 0.8975" contype="0" conaffinity="0" />
+    <geom name="score_blue_1_d" type="box" size="0.053 0.003 0.009" rgba="0.20 0.53 0.75 1" group="1" pos="-0.44 6.389 0.835" contype="0" conaffinity="0" />
+    <geom name="score_blue_1_e" type="box" size="0.009 0.003 0.048" rgba="0.20 0.53 0.75 1" group="1" pos="-0.502 6.389 0.8975" contype="0" conaffinity="0" />
+    <geom name="score_blue_1_f" type="box" size="0.009 0.003 0.048" rgba="0.20 0.53 0.75 1" group="1" pos="-0.502 6.389 1.0225" contype="0" conaffinity="0" />
+    <geom name="score_blue_1_g" type="box" size="0.053 0.003 0.009" rgba="0.20 0.53 0.75 1" group="1" pos="-0.44 6.389 0.96" contype="0" conaffinity="0" />
+    <geom name="score_blue_2_a" type="box" size="0.053 0.003 0.009" rgba="0.20 0.53 0.75 1" group="1" pos="-0.27 6.389 1.085" contype="0" conaffinity="0" />
+    <geom name="score_blue_2_b" type="box" size="0.009 0.003 0.048" rgba="0.20 0.53 0.75 1" group="1" pos="-0.208 6.389 1.0225" contype="0" conaffinity="0" />
+    <geom name="score_blue_2_c" type="box" size="0.009 0.003 0.048" rgba="0.20 0.53 0.75 1" group="1" pos="-0.208 6.389 0.8975" contype="0" conaffinity="0" />
+    <geom name="score_blue_2_d" type="box" size="0.053 0.003 0.009" rgba="0.20 0.53 0.75 1" group="1" pos="-0.27 6.389 0.835" contype="0" conaffinity="0" />
+    <geom name="score_blue_2_e" type="box" size="0.009 0.003 0.048" rgba="0.20 0.53 0.75 1" group="1" pos="-0.332 6.389 0.8975" contype="0" conaffinity="0" />
+    <geom name="score_blue_2_f" type="box" size="0.009 0.003 0.048" rgba="0.20 0.53 0.75 1" group="1" pos="-0.332 6.389 1.0225" contype="0" conaffinity="0" />
+    <geom name="score_blue_2_g" type="box" size="0.053 0.003 0.009" rgba="0.20 0.53 0.75 1" group="1" pos="-0.27 6.389 0.96" contype="0" conaffinity="0" />
+    <geom name="score_blue_overflow_0" type="box" size="0.021 0.003 0.005" rgba="0.20 0.53 0.75 1" group="1" pos="-0.13 6.389 0.81" contype="0" conaffinity="0" />
+    <geom name="score_blue_overflow_1" type="box" size="0.005 0.003 0.021" rgba="0.20 0.53 0.75 1" group="1" pos="-0.13 6.389 0.81" contype="0" conaffinity="0" />
+    <geom name="football_scoreboard_coral_stripe" type="box" size="0.33 0.003 0.012" rgba="0.88 0.37 0.27 1" group="1" pos="0.44 6.389 1.155" contype="0" conaffinity="0" />
+    <geom name="score_coral_0_a" type="box" size="0.053 0.003 0.009" rgba="0.88 0.37 0.27 1" group="1" pos="0.27 6.389 1.085" contype="0" conaffinity="0" />
+    <geom name="score_coral_0_b" type="box" size="0.009 0.003 0.048" rgba="0.88 0.37 0.27 1" group="1" pos="0.332 6.389 1.0225" contype="0" conaffinity="0" />
+    <geom name="score_coral_0_c" type="box" size="0.009 0.003 0.048" rgba="0.88 0.37 0.27 1" group="1" pos="0.332 6.389 0.8975" contype="0" conaffinity="0" />
+    <geom name="score_coral_0_d" type="box" size="0.053 0.003 0.009" rgba="0.88 0.37 0.27 1" group="1" pos="0.27 6.389 0.835" contype="0" conaffinity="0" />
+    <geom name="score_coral_0_e" type="box" size="0.009 0.003 0.048" rgba="0.88 0.37 0.27 1" group="1" pos="0.208 6.389 0.8975" contype="0" conaffinity="0" />
+    <geom name="score_coral_0_f" type="box" size="0.009 0.003 0.048" rgba="0.88 0.37 0.27 1" group="1" pos="0.208 6.389 1.0225" contype="0" conaffinity="0" />
+    <geom name="score_coral_0_g" type="box" size="0.053 0.003 0.009" rgba="0.88 0.37 0.27 1" group="1" pos="0.27 6.389 0.96" contype="0" conaffinity="0" />
+    <geom name="score_coral_1_a" type="box" size="0.053 0.003 0.009" rgba="0.88 0.37 0.27 1" group="1" pos="0.44 6.389 1.085" contype="0" conaffinity="0" />
+    <geom name="score_coral_1_b" type="box" size="0.009 0.003 0.048" rgba="0.88 0.37 0.27 1" group="1" pos="0.502 6.389 1.0225" contype="0" conaffinity="0" />
+    <geom name="score_coral_1_c" type="box" size="0.009 0.003 0.048" rgba="0.88 0.37 0.27 1" group="1" pos="0.502 6.389 0.8975" contype="0" conaffinity="0" />
+    <geom name="score_coral_1_d" type="box" size="0.053 0.003 0.009" rgba="0.88 0.37 0.27 1" group="1" pos="0.44 6.389 0.835" contype="0" conaffinity="0" />
+    <geom name="score_coral_1_e" type="box" size="0.009 0.003 0.048" rgba="0.88 0.37 0.27 1" group="1" pos="0.378 6.389 0.8975" contype="0" conaffinity="0" />
+    <geom name="score_coral_1_f" type="box" size="0.009 0.003 0.048" rgba="0.88 0.37 0.27 1" group="1" pos="0.378 6.389 1.0225" contype="0" conaffinity="0" />
+    <geom name="score_coral_1_g" type="box" size="0.053 0.003 0.009" rgba="0.88 0.37 0.27 1" group="1" pos="0.44 6.389 0.96" contype="0" conaffinity="0" />
+    <geom name="score_coral_2_a" type="box" size="0.053 0.003 0.009" rgba="0.88 0.37 0.27 1" group="1" pos="0.61 6.389 1.085" contype="0" conaffinity="0" />
+    <geom name="score_coral_2_b" type="box" size="0.009 0.003 0.048" rgba="0.88 0.37 0.27 1" group="1" pos="0.672 6.389 1.0225" contype="0" conaffinity="0" />
+    <geom name="score_coral_2_c" type="box" size="0.009 0.003 0.048" rgba="0.88 0.37 0.27 1" group="1" pos="0.672 6.389 0.8975" contype="0" conaffinity="0" />
+    <geom name="score_coral_2_d" type="box" size="0.053 0.003 0.009" rgba="0.88 0.37 0.27 1" group="1" pos="0.61 6.389 0.835" contype="0" conaffinity="0" />
+    <geom name="score_coral_2_e" type="box" size="0.009 0.003 0.048" rgba="0.88 0.37 0.27 1" group="1" pos="0.548 6.389 0.8975" contype="0" conaffinity="0" />
+    <geom name="score_coral_2_f" type="box" size="0.009 0.003 0.048" rgba="0.88 0.37 0.27 1" group="1" pos="0.548 6.389 1.0225" contype="0" conaffinity="0" />
+    <geom name="score_coral_2_g" type="box" size="0.053 0.003 0.009" rgba="0.88 0.37 0.27 1" group="1" pos="0.61 6.389 0.96" contype="0" conaffinity="0" />
+    <geom name="score_coral_overflow_0" type="box" size="0.021 0.003 0.005" rgba="0.88 0.37 0.27 1" group="1" pos="0.75 6.389 0.81" contype="0" conaffinity="0" />
+    <geom name="score_coral_overflow_1" type="box" size="0.005 0.003 0.021" rgba="0.88 0.37 0.27 1" group="1" pos="0.75 6.389 0.81" contype="0" conaffinity="0" />
+    <geom name="football_scoreboard_separator_0.92" type="box" size="0.011 0.003 0.011" rgba="0.93 0.95 0.88 1" group="1" pos="0 6.389 0.92" contype="0" conaffinity="0" />
+    <geom name="football_scoreboard_separator_1.0" type="box" size="0.011 0.003 0.011" rgba="0.93 0.95 0.88 1" group="1" pos="0 6.389 1" contype="0" conaffinity="0" />
+    <site name="football_spawn_1" pos="-0.35 4.1 0.051" size="0.05" rgba="0 0 0 0" group="5" />
+    <site name="football_spawn_2" pos="0.375 4.475 0.051" size="0.05" rgba="0 0 0 0" group="5" />
+    <site name="football_spawn_3" pos="0 4.875 0.051" size="0.05" rgba="0 0 0 0" group="5" />
+  </worldbody>
+  <asset>
+    <texture name="football_surface" type="2d" file="../football/surface.png" />
+    <material name="football_surface" texture="football_surface" texrepeat="1 1" texuniform="false" specular="0.05" />
+  </asset>
+</mujoco>

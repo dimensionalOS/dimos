@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "$0")"
+source env.sh
+mkdir -p config cache tmp state tools/bin
+if [[ ! -f config/robots.json ]]; then
+  cp ops/robots.example.json config/robots.json
+fi
+install_target="."
+case "${1:-}" in
+  "") ;;
+  --test) install_target=".[test]" ;;
+  *) printf 'Usage: %s [--test]\n' "$0" >&2; exit 2 ;;
+esac
+if [[ "$(git -C vendor/dimos rev-parse HEAD)" != "$(cat dimos-revision.txt)" ]]; then
+  printf 'DimOS revision differs from dimos-revision.txt; review the pin and patches before setup.\n' >&2
+  exit 1
+fi
+# Shared fixes are reviewable project assets; never overwrite vendor changes.
+for patch in "$MICRODUCK_WORLD_ROOT"/patches/*.patch; do
+  [[ -e "$patch" ]] || continue
+  if git -C vendor/dimos apply --reverse --check "$patch" 2>/dev/null; then
+    continue
+  fi
+  git -C vendor/dimos apply --check "$patch"
+  git -C vendor/dimos apply "$patch"
+done
+uv sync --project vendor/dimos --frozen --no-default-groups --extra cpu --extra web --extra agents --extra sim
+# Required by mapping imports and Open3D, but missing from the vendor lock selection.
+uv pip install 'torch==2.7.1' --torch-backend cpu
+uv pip install 'ipywidgets==8.1.8'
+uv pip install --torch-backend cpu -e "$install_target"
+uv pip check
+
+# The project frontend reuses the pinned cockpit and adds its world panel.
+(cd web && deno install --frozen && deno task check && deno task build)

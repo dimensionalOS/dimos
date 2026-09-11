@@ -1,0 +1,16 @@
+{
+  "source_path": "scene.xml",
+  "package_dir": ".",
+  "alignment": {
+    "scale": 1.0,
+    "y_up": false
+  },
+  "artifact_frames": {
+    "mujoco": "dimos_world"
+  },
+  "artifacts": {
+    "mujoco_scene": "scene.xml",
+    "objects": "places.json"
+  },
+  "entities": []
+}

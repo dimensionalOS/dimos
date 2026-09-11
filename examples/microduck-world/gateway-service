@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Compatibility entry point; lifecycle is owned by the project service command.
+set -euo pipefail
+cd -- "$(dirname -- "$0")"
+exec ./service "${1:-status}" gateway

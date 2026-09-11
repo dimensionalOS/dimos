@@ -1,0 +1,107 @@
+<mujoco model="microduck_football_club">
+  <include file="../benchmark/scene.xml" />
+  <include file="../football/field.xml" />
+  <worldbody>
+    <geom name="club_floor" type="box" size="3.35 0.9125 0.05" pos="0 1.1875 -0.05" rgba="0.58 0.64 0.65 1" group="0" />
+    <geom name="tunnel_floor" type="box" size="0.6 0.45 0.05" pos="0 -0.125 -0.05" rgba="0.58 0.64 0.65 1" group="0" />
+    <geom name="corridor_floor" type="box" size="2.8 0.45 0.05" pos="3.4 -0.125 -0.05" rgba="0.57 0.64 0.65 1" group="0" />
+    <geom name="corridor_south" type="box" size="3.45 0.05 0.3" pos="2.85 -0.625 0.3" rgba="0.78 0.82 0.83 1" group="0" />
+    <geom name="corridor_north" type="box" size="1.45 0.05 0.3" pos="4.85 0.375 0.3" rgba="0.78 0.82 0.83 1" group="0" />
+    <geom name="tunnel_west" type="box" size="0.05 0.5 0.3" pos="-0.65 -0.125 0.3" rgba="0.78 0.82 0.83 1" group="0" />
+    <geom name="red_outer_wall" type="box" size="0.05 0.8375 0.42" pos="-3.3 1.1625 0.42" rgba="0.78 0.82 0.83 1" group="0" />
+    <geom name="red_south_wall" type="box" size="1.325 0.05 0.42" pos="-1.975 0.325 0.42" rgba="0.78 0.82 0.83 1" group="0" />
+    <geom name="red_inner_south" type="box" size="0.05 0.2125 0.42" pos="-0.65 0.5375 0.42" rgba="0.78 0.82 0.83 1" group="0" />
+    <geom name="red_inner_north" type="box" size="0.05 0.15 0.42" pos="-0.65 1.9 0.42" rgba="0.78 0.82 0.83 1" group="0" />
+    <geom name="floor_red_lockers" type="box" size="1.25 0.7875 0.001" pos="-1.95 1.1625 0.001" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_door_header" type="box" size="0.06 0.5 0.045" pos="-0.65 1.25 0.88" rgba="0.89 0.30 0.31 1" group="0" />
+    <geom name="red_locker_1" type="box" size="0.29 0.16 0.33" pos="-2.65 0.545 0.33" rgba="0.89 0.30 0.31 1" group="0" />
+    <geom name="red_locker_inset_1" type="box" size="0.25 0.007 0.26" pos="-2.65 0.714 0.33" rgba="0.13 0.18 0.22 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_locker_handle_1" type="box" size="0.015 0.015 0.045" pos="-2.49 0.73 0.35" rgba="0.75 0.80 0.82 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_vent_1_0" type="box" size="0.15 0.009 0.006" pos="-2.65 0.725 0.48" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_vent_1_1" type="box" size="0.15 0.009 0.006" pos="-2.65 0.725 0.515" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_vent_1_2" type="box" size="0.15 0.009 0.006" pos="-2.65 0.725 0.55" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_bench_1" type="box" size="0.28 0.115 0.022" pos="-2.65 0.955 0.14" rgba="0.66 0.47 0.29 1" group="0" />
+    <geom name="red_bench_leg_1_-0.2" type="box" size="0.018 0.075 0.059" pos="-2.85 0.955 0.059" rgba="0.13 0.18 0.22 1" group="0" />
+    <geom name="red_bench_leg_1_0.2" type="box" size="0.018 0.075 0.059" pos="-2.45 0.955 0.059" rgba="0.13 0.18 0.22 1" group="0" />
+    <geom name="red_bay_1_x-1" type="box" size="0.24 0.008 0.001" pos="-2.65 1.145 0.002" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_bay_1_y-1" type="box" size="0.008 0.23 0.001" pos="-2.89 1.375 0.002" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_bay_1_x1" type="box" size="0.24 0.008 0.001" pos="-2.65 1.605 0.002" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_bay_1_y1" type="box" size="0.008 0.23 0.001" pos="-2.41 1.375 0.002" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_locker_2" type="box" size="0.29 0.16 0.33" pos="-1.9 0.545 0.33" rgba="0.89 0.30 0.31 1" group="0" />
+    <geom name="red_locker_inset_2" type="box" size="0.25 0.007 0.26" pos="-1.9 0.714 0.33" rgba="0.13 0.18 0.22 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_locker_handle_2" type="box" size="0.015 0.015 0.045" pos="-1.74 0.73 0.35" rgba="0.75 0.80 0.82 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_vent_2_0" type="box" size="0.15 0.009 0.006" pos="-1.9 0.725 0.48" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_vent_2_1" type="box" size="0.15 0.009 0.006" pos="-1.9 0.725 0.515" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_vent_2_2" type="box" size="0.15 0.009 0.006" pos="-1.9 0.725 0.55" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_bench_2" type="box" size="0.28 0.115 0.022" pos="-1.9 0.955 0.14" rgba="0.66 0.47 0.29 1" group="0" />
+    <geom name="red_bench_leg_2_-0.2" type="box" size="0.018 0.075 0.059" pos="-2.1 0.955 0.059" rgba="0.13 0.18 0.22 1" group="0" />
+    <geom name="red_bench_leg_2_0.2" type="box" size="0.018 0.075 0.059" pos="-1.7 0.955 0.059" rgba="0.13 0.18 0.22 1" group="0" />
+    <geom name="red_bay_2_x-1" type="box" size="0.24 0.008 0.001" pos="-1.9 1.145 0.002" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_bay_2_y-1" type="box" size="0.008 0.23 0.001" pos="-2.14 1.375 0.002" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_bay_2_x1" type="box" size="0.24 0.008 0.001" pos="-1.9 1.605 0.002" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_bay_2_y1" type="box" size="0.008 0.23 0.001" pos="-1.66 1.375 0.002" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_locker_3" type="box" size="0.29 0.16 0.33" pos="-1.15 0.545 0.33" rgba="0.89 0.30 0.31 1" group="0" />
+    <geom name="red_locker_inset_3" type="box" size="0.25 0.007 0.26" pos="-1.15 0.714 0.33" rgba="0.13 0.18 0.22 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_locker_handle_3" type="box" size="0.015 0.015 0.045" pos="-0.99 0.73 0.35" rgba="0.75 0.80 0.82 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_vent_3_0" type="box" size="0.15 0.009 0.006" pos="-1.15 0.725 0.48" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_vent_3_1" type="box" size="0.15 0.009 0.006" pos="-1.15 0.725 0.515" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_vent_3_2" type="box" size="0.15 0.009 0.006" pos="-1.15 0.725 0.55" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_bench_3" type="box" size="0.28 0.115 0.022" pos="-1.15 0.955 0.14" rgba="0.66 0.47 0.29 1" group="0" />
+    <geom name="red_bench_leg_3_-0.2" type="box" size="0.018 0.075 0.059" pos="-1.35 0.955 0.059" rgba="0.13 0.18 0.22 1" group="0" />
+    <geom name="red_bench_leg_3_0.2" type="box" size="0.018 0.075 0.059" pos="-0.95 0.955 0.059" rgba="0.13 0.18 0.22 1" group="0" />
+    <geom name="red_bay_3_x-1" type="box" size="0.24 0.008 0.001" pos="-1.15 1.145 0.002" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_bay_3_y-1" type="box" size="0.008 0.23 0.001" pos="-1.39 1.375 0.002" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_bay_3_x1" type="box" size="0.24 0.008 0.001" pos="-1.15 1.605 0.002" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="red_bay_3_y1" type="box" size="0.008 0.23 0.001" pos="-0.91 1.375 0.002" rgba="0.89 0.30 0.31 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_outer_wall" type="box" size="0.05 0.8375 0.42" pos="3.3 1.1625 0.42" rgba="0.78 0.82 0.83 1" group="0" />
+    <geom name="blue_south_wall" type="box" size="1.325 0.05 0.42" pos="1.975 0.325 0.42" rgba="0.78 0.82 0.83 1" group="0" />
+    <geom name="blue_inner_south" type="box" size="0.05 0.2125 0.42" pos="0.65 0.5375 0.42" rgba="0.78 0.82 0.83 1" group="0" />
+    <geom name="blue_inner_north" type="box" size="0.05 0.15 0.42" pos="0.65 1.9 0.42" rgba="0.78 0.82 0.83 1" group="0" />
+    <geom name="floor_blue_lockers" type="box" size="1.25 0.7875 0.001" pos="1.95 1.1625 0.001" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_door_header" type="box" size="0.06 0.5 0.045" pos="0.65 1.25 0.88" rgba="0.25 0.56 0.91 1" group="0" />
+    <geom name="blue_locker_1" type="box" size="0.29 0.16 0.33" pos="2.65 0.545 0.33" rgba="0.25 0.56 0.91 1" group="0" />
+    <geom name="blue_locker_inset_1" type="box" size="0.25 0.007 0.26" pos="2.65 0.714 0.33" rgba="0.13 0.18 0.22 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_locker_handle_1" type="box" size="0.015 0.015 0.045" pos="2.81 0.73 0.35" rgba="0.75 0.80 0.82 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_vent_1_0" type="box" size="0.15 0.009 0.006" pos="2.65 0.725 0.48" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_vent_1_1" type="box" size="0.15 0.009 0.006" pos="2.65 0.725 0.515" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_vent_1_2" type="box" size="0.15 0.009 0.006" pos="2.65 0.725 0.55" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_bench_1" type="box" size="0.28 0.115 0.022" pos="2.65 0.955 0.14" rgba="0.66 0.47 0.29 1" group="0" />
+    <geom name="blue_bench_leg_1_-0.2" type="box" size="0.018 0.075 0.059" pos="2.45 0.955 0.059" rgba="0.13 0.18 0.22 1" group="0" />
+    <geom name="blue_bench_leg_1_0.2" type="box" size="0.018 0.075 0.059" pos="2.85 0.955 0.059" rgba="0.13 0.18 0.22 1" group="0" />
+    <geom name="blue_bay_1_x-1" type="box" size="0.24 0.008 0.001" pos="2.65 1.145 0.002" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_bay_1_y-1" type="box" size="0.008 0.23 0.001" pos="2.41 1.375 0.002" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_bay_1_x1" type="box" size="0.24 0.008 0.001" pos="2.65 1.605 0.002" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_bay_1_y1" type="box" size="0.008 0.23 0.001" pos="2.89 1.375 0.002" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_locker_2" type="box" size="0.29 0.16 0.33" pos="1.9 0.545 0.33" rgba="0.25 0.56 0.91 1" group="0" />
+    <geom name="blue_locker_inset_2" type="box" size="0.25 0.007 0.26" pos="1.9 0.714 0.33" rgba="0.13 0.18 0.22 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_locker_handle_2" type="box" size="0.015 0.015 0.045" pos="2.06 0.73 0.35" rgba="0.75 0.80 0.82 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_vent_2_0" type="box" size="0.15 0.009 0.006" pos="1.9 0.725 0.48" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_vent_2_1" type="box" size="0.15 0.009 0.006" pos="1.9 0.725 0.515" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_vent_2_2" type="box" size="0.15 0.009 0.006" pos="1.9 0.725 0.55" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_bench_2" type="box" size="0.28 0.115 0.022" pos="1.9 0.955 0.14" rgba="0.66 0.47 0.29 1" group="0" />
+    <geom name="blue_bench_leg_2_-0.2" type="box" size="0.018 0.075 0.059" pos="1.7 0.955 0.059" rgba="0.13 0.18 0.22 1" group="0" />
+    <geom name="blue_bench_leg_2_0.2" type="box" size="0.018 0.075 0.059" pos="2.1 0.955 0.059" rgba="0.13 0.18 0.22 1" group="0" />
+    <geom name="blue_bay_2_x-1" type="box" size="0.24 0.008 0.001" pos="1.9 1.145 0.002" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_bay_2_y-1" type="box" size="0.008 0.23 0.001" pos="1.66 1.375 0.002" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_bay_2_x1" type="box" size="0.24 0.008 0.001" pos="1.9 1.605 0.002" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_bay_2_y1" type="box" size="0.008 0.23 0.001" pos="2.14 1.375 0.002" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_locker_3" type="box" size="0.29 0.16 0.33" pos="1.15 0.545 0.33" rgba="0.25 0.56 0.91 1" group="0" />
+    <geom name="blue_locker_inset_3" type="box" size="0.25 0.007 0.26" pos="1.15 0.714 0.33" rgba="0.13 0.18 0.22 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_locker_handle_3" type="box" size="0.015 0.015 0.045" pos="1.31 0.73 0.35" rgba="0.75 0.80 0.82 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_vent_3_0" type="box" size="0.15 0.009 0.006" pos="1.15 0.725 0.48" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_vent_3_1" type="box" size="0.15 0.009 0.006" pos="1.15 0.725 0.515" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_vent_3_2" type="box" size="0.15 0.009 0.006" pos="1.15 0.725 0.55" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_bench_3" type="box" size="0.28 0.115 0.022" pos="1.15 0.955 0.14" rgba="0.66 0.47 0.29 1" group="0" />
+    <geom name="blue_bench_leg_3_-0.2" type="box" size="0.018 0.075 0.059" pos="0.95 0.955 0.059" rgba="0.13 0.18 0.22 1" group="0" />
+    <geom name="blue_bench_leg_3_0.2" type="box" size="0.018 0.075 0.059" pos="1.35 0.955 0.059" rgba="0.13 0.18 0.22 1" group="0" />
+    <geom name="blue_bay_3_x-1" type="box" size="0.24 0.008 0.001" pos="1.15 1.145 0.002" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_bay_3_y-1" type="box" size="0.008 0.23 0.001" pos="0.91 1.375 0.002" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_bay_3_x1" type="box" size="0.24 0.008 0.001" pos="1.15 1.605 0.002" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="blue_bay_3_y1" type="box" size="0.008 0.23 0.001" pos="1.39 1.375 0.002" rgba="0.25 0.56 0.91 1" group="1" contype="0" conaffinity="0" />
+    <geom name="tunnel_mark_-0.3" type="box" size="0.055 0.11 0.001" pos="0 -0.3 0.002" rgba="0.94 0.93 0.77 1" group="1" contype="0" conaffinity="0" />
+    <geom name="tunnel_mark_0.2" type="box" size="0.055 0.11 0.001" pos="0 0.2 0.002" rgba="0.94 0.93 0.77 1" group="1" contype="0" conaffinity="0" />
+    <geom name="tunnel_mark_0.7" type="box" size="0.055 0.11 0.001" pos="0 0.7 0.002" rgba="0.94 0.93 0.77 1" group="1" contype="0" conaffinity="0" />
+    <geom name="tunnel_mark_1.2" type="box" size="0.055 0.11 0.001" pos="0 1.2 0.002" rgba="0.94 0.93 0.77 1" group="1" contype="0" conaffinity="0" />
+    <geom name="tunnel_mark_1.7" type="box" size="0.055 0.11 0.001" pos="0 1.7 0.002" rgba="0.94 0.93 0.77 1" group="1" contype="0" conaffinity="0" />
+  </worldbody>
+</mujoco>

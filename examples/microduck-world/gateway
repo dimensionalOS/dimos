@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "$0")"
+source env.sh
+exec python -m microduck_world.gateway --config config/tailnet.json

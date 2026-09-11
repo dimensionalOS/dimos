@@ -1,0 +1,42 @@
+<mujoco model="benchmark_wing">
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
+    <global azimuth="150" elevation="-25" offwidth="1280" offheight="720" />
+  </visual>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.4 0.55 0.7" rgb2="0.05 0.05 0.1" width="512" height="3072" />
+    <texture type="2d" name="floortex" builtin="checker" mark="edge" rgb1="0.32 0.3 0.28" rgb2="0.24 0.22 0.2" markrgb="0.5 0.5 0.5" width="300" height="300" />
+    <material name="floormat" texture="floortex" texuniform="true" texrepeat="8 8" reflectance="0.15" />
+    <material name="wallmat" rgba="0.75 0.73 0.68 1" />
+    <material name="stubmat" rgba="0.62 0.6 0.56 1" />
+    <material name="kitchenmat" rgba="0.85 0.72 0.35 1" />
+    <material name="livingmat" rgba="0.35 0.62 0.85 1" />
+    <material name="bedroommat" rgba="0.62 0.42 0.78 1" />
+    <material name="officemat" rgba="0.42 0.75 0.48 1" />
+  </asset>
+  <worldbody>
+    <body name="benchmark_wing" pos="8.3 -0.825 0">
+      <light name="sun_a" pos="1.5 1.5 3.0" dir="-0.35 -0.35 -1" directional="true" diffuse="0.55 0.55 0.55" specular="0.1 0.1 0.1" />
+      <light name="sun_b" pos="-1.5 -1.5 3.0" dir="0.35 0.35 -1" directional="true" diffuse="0.45 0.45 0.45" specular="0.05 0.05 0.05" />
+      <geom name="floor" type="box" size="2.1 2.1 0.05" pos="0 0 -0.05" material="floormat" group="0" />
+      <geom name="floor_kitchen" type="box" size="0.98 0.98 0.001" pos="1 1 0.001" material="kitchenmat" contype="0" conaffinity="0" group="0" />
+      <geom name="floor_living" type="box" size="0.98 0.98 0.001" pos="-1 1 0.001" material="livingmat" contype="0" conaffinity="0" group="0" />
+      <geom name="floor_bedroom" type="box" size="0.98 0.98 0.001" pos="-1 -1 0.001" material="bedroommat" contype="0" conaffinity="0" group="0" />
+      <geom name="floor_office" type="box" size="0.98 0.98 0.001" pos="1 -1 0.001" material="officemat" contype="0" conaffinity="0" group="0" />
+      <geom name="wall_south" type="box" size="2.1 0.05 0.25" pos="0 -2.05 0.25" material="wallmat" group="0" />
+      <geom name="wall_east" type="box" size="0.05 2.0 0.25" pos="2.05 0 0.25" material="wallmat" group="0" />
+      <geom name="stub_east" type="box" size="0.6 0.05 0.25" pos="1.4 0 0.25" material="stubmat" group="0" />
+      <geom name="stub_west" type="box" size="0.6 0.05 0.25" pos="-1.4 0 0.25" material="stubmat" group="0" />
+      <geom name="stub_north" type="box" size="0.05 0.6 0.25" pos="0 1.4 0.25" material="stubmat" group="0" />
+      <geom name="stub_south" type="box" size="0.05 0.6 0.25" pos="0 -1.4 0.25" material="stubmat" group="0" />
+      <geom name="red_box" type="box" size="0.07 0.07 0.07" pos="1.5 1.5 0.07" rgba="0.85 0.1 0.1 1" group="0" />
+      <geom name="blue_box" type="box" size="0.07 0.07 0.07" pos="-1.5 1.5 0.07" rgba="0.1 0.25 0.85 1" group="0" />
+      <geom name="green_cylinder" type="cylinder" size="0.06 0.1" pos="-1.5 -1.5 0.1" rgba="0.1 0.7 0.2 1" group="0" />
+      <geom name="yellow_pillar" type="cylinder" size="0.05 0.14" pos="1.5 -1.5 0.14" rgba="0.95 0.85 0.1 1" group="0" />
+      <geom name="orange_crate" type="box" size="0.06 0.09 0.06" pos="0.6 1.7 0.06" rgba="0.95 0.5 0.1 1" group="0" />
+      <geom name="wall_north_west" type="box" size="2.1 0.05 0.25" pos="0 2.05 0.25" material="wallmat" group="0" />
+      <geom name="wall_west" type="box" size="0.05 1.125 0.25" pos="-2.05 -0.875 0.25" material="wallmat" group="0" />
+      <geom name="wall_west_upper" type="box" size="0.05 0.475 0.25" pos="-2.05 1.525 0.25" material="wallmat" group="0" />
+    </body>
+  </worldbody>
+</mujoco>

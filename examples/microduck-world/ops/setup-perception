@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Run with the world stopped. This creates a separate CUDA runtime; it does not
+# replace the project's pinned CPU/framework environment.
+set -euo pipefail
+cd -- "$(dirname -- "$0")/.."
+source env.sh
+test -x .venv/bin/python
+command -v nvidia-smi >/dev/null
+uv venv --allow-existing --python .venv/bin/python .venv-perception
+overlay_python="$PWD/.venv-perception/bin/python"
+overlay_site="$("$overlay_python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+rm -f "$overlay_site/microduck-base.pth"
+uv pip install --python "$overlay_python" --index-url https://download.pytorch.org/whl/cu128 \
+  torch==2.7.1 torchvision==0.22.1
+uv pip install --python "$overlay_python" --no-deps \
+  ultralytics==8.3.203 ultralytics-thop==2.0.18 numpy==2.3.5 pillow==12.2.0 polars==1.33.1
+base_site="$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+"$overlay_python" - "$base_site" "$overlay_site/microduck-base.pth" <<'PY'
+import pathlib
+import sys
+pathlib.Path(sys.argv[2]).write_text(f"import site; site.addsitedir({sys.argv[1]!r})\n")
+PY
+mkdir -p cache/models
+model_file=cache/models/yolo11n.pt
+if [[ ! -f "$model_file" ]]; then
+  curl --fail --location --output "$model_file.tmp" \
+    https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt
+  mv "$model_file.tmp" "$model_file"
+fi
+"$overlay_python" - <<'PY'
+import hashlib
+from importlib.metadata import distribution, version
+from pathlib import Path
+from packaging.requirements import Requirement
+import torch
+import mujoco
+path = Path("cache/models/yolo11n.pt")
+expected = "0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1"
+assert hashlib.sha256(path.read_bytes()).hexdigest() == expected, "Unexpected model checksum"
+assert torch.__version__ == "2.7.1+cu128", torch.__version__
+assert torch.cuda.is_available(), "CUDA is unavailable"
+assert mujoco.__version__ == "3.10.0", mujoco.__version__
+for name in ("torch", "torchvision", "ultralytics"):
+    for spec in distribution(name).requires or []:
+        required = Requirement(spec)
+        if required.marker and not required.marker.evaluate():
+            continue
+        # Omarchy already uses the contrib cv2 wheel required by DimOS.
+        package = "opencv-contrib-python" if required.name == "opencv-python" else required.name
+        actual = version(package)
+        assert required.specifier.contains(actual), f"{name}: {package} {actual} does not satisfy {required}"
+print("Perception ready:", torch.cuda.get_device_name(0), "MuJoCo", mujoco.__version__)
+PY

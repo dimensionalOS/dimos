@@ -1,0 +1,19 @@
+{
+  "name": "microduck-public-edge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "types": "wrangler types",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "wrangler deploy --dry-run --outdir dist"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.1.6",
+    "@types/node": "22.20.2",
+    "typescript": "5.9.2",
+    "vitest": "4.1.11",
+    "wrangler": "4.126.0"
+  }
+}

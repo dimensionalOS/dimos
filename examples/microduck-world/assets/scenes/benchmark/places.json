@@ -1,0 +1,121 @@
+{
+  "id": "apartment-v1",
+  "spawn_xy": [
+    0.0,
+    0.0
+  ],
+  "rooms": {
+    "kitchen": {
+      "name": "kitchen",
+      "aliases": [
+        "space A"
+      ],
+      "bounds": [
+        0.0,
+        2.0,
+        0.0,
+        2.0
+      ],
+      "target": [
+        1.2,
+        1.0,
+        0.0
+      ]
+    },
+    "living": {
+      "name": "living",
+      "aliases": [
+        "space B",
+        "living room",
+        "lounge"
+      ],
+      "bounds": [
+        -2.0,
+        0.0,
+        0.0,
+        2.0
+      ],
+      "target": [
+        -1.2,
+        1.0,
+        3.14159
+      ]
+    },
+    "bedroom": {
+      "name": "bedroom",
+      "aliases": [
+        "space C"
+      ],
+      "bounds": [
+        -2.0,
+        0.0,
+        -2.0,
+        0.0
+      ],
+      "target": [
+        -1.2,
+        -1.0,
+        3.14159
+      ]
+    },
+    "office": {
+      "name": "office",
+      "aliases": [
+        "space D",
+        "study"
+      ],
+      "bounds": [
+        0.0,
+        2.0,
+        -2.0,
+        0.0
+      ],
+      "target": [
+        1.2,
+        -1.0,
+        0.0
+      ]
+    },
+    "football": {
+      "name": "football",
+      "aliases": [
+        "football field",
+        "pitch",
+        "soccer"
+      ],
+      "bounds": [
+        -3.25,
+        3.25,
+        2.1,
+        6.5
+      ],
+      "target": [
+        0.9,
+        3.05,
+        0
+      ]
+    }
+  },
+  "objects": {
+    "red_box": [
+      1.5,
+      1.5
+    ],
+    "blue_box": [
+      -1.5,
+      1.5
+    ],
+    "green_cylinder": [
+      -1.5,
+      -1.5
+    ],
+    "yellow_pillar": [
+      1.5,
+      -1.5
+    ],
+    "orange_crate": [
+      0.6,
+      1.7
+    ]
+  }
+}

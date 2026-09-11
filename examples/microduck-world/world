@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "$0")"
+# Keep existing stop/restart commands under the service supervisor.
+if [[ "${MICRODUCK_WORLD_MANAGED:-0}" != 1 ]] && systemctl --user is-active --quiet microduck-world.service; then
+  case "${1:-}" in
+    stop|restart) exec ./service "$1" world ;;
+    run) printf 'World is already supervised. Use ./service restart world.\n' >&2; exit 1 ;;
+  esac
+fi
+source env.sh
+if [[ -f config/agent.env ]]; then
+  set -a
+  source config/agent.env
+  set +a
+fi
+# The CUDA overlay keeps the pinned base environment intact. Run the actual
+# DimOS CLI under that interpreter so its child processes use the same runtime.
+if [[ -x .venv-perception/bin/python ]]; then
+  export PYTHONPATH="$PWD/app${PYTHONPATH:+:$PYTHONPATH}"
+  export YOLO_CONFIG_DIR="$PWD/config/ultralytics"
+  exec .venv-perception/bin/python -c 'from dimos.cli.dimos import cli_main; cli_main()' "$@"
+fi
+exec dimos "$@"

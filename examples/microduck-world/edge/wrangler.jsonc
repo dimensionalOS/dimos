@@ -1,0 +1,47 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "microduck-world",
+  "account_id": "31e406a4d1dee577f3bb67abb10ef213",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-09",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "sim.tule.world", "custom_domain": true }],
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "vars": {
+    "PUBLIC_ORIGIN": "https://sim.tule.world",
+    "GITHUB_CLIENT_ID": "Ov23lifchwSuJsZK26hd",
+    "ADMIN_GITHUB_IDS": "6902572",
+    "MATCH_ID": "football-v1"
+  },
+  "secrets": { "required": ["GITHUB_CLIENT_SECRET", "HOST_SECRET"] },
+  "durable_objects": {
+    "bindings": [{ "name": "MATCH", "class_name": "MatchRelay" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MatchRelay"] }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "microduck-identity",
+      "database_id": "7c3f789e-b2d4-46b5-bbb9-f6180c684198",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "REQUEST_LIMITER",
+      "namespace_id": "26090901",
+      "simple": { "limit": 60, "period": 60 }
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 0.1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.01 }
+  }
+}

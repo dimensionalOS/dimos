@@ -1,0 +1,19 @@
+[Unit]
+Description=microduck world
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+Environment=MICRODUCK_WORLD_MANAGED=1
+WorkingDirectory=%h/projects/microduck-world
+ExecStart=%h/projects/microduck-world/world run microduck-world.cockpit --local-relay
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+KillMode=mixed
+UMask=0077
+StandardOutput=append:%h/projects/microduck-world/logs/microduck-world.log
+StandardError=append:%h/projects/microduck-world/logs/microduck-world.log
+
+[Install]
+WantedBy=default.target

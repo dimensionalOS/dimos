@@ -1,0 +1,184 @@
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0.4rem 0.5rem;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #d7dde3;
+}
+
+/* humancli layout: 19 fixed columns (space, HH:MM:SS, space, sender right-
+   aligned to 8, space), the bar, one space, then the content; wrapped and
+   explicit continuation lines fall under the content with the bar running
+   beside them. */
+.row {
+  display: grid;
+  grid-template-columns: 19ch minmax(0, 1fr);
+}
+
+.prefix {
+  white-space: pre;
+  color: #8b949e;
+}
+
+.text {
+  border-left: 1px solid #30363d;
+  padding-left: 1ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-height: 1.35em;
+}
+
+.row[data-kind="human"] .prefix,
+.row[data-kind="human"] .text {
+  color: #d7dde3;
+}
+
+.row[data-kind="agent"] .text {
+  color: #58a6ff;
+}
+
+.row[data-kind="stream_reply"] .text {
+  color: #58a6ff;
+  font-style: italic;
+}
+
+.row[data-kind="tool"] .text,
+.row[data-kind="stream"] .text {
+  color: #d29922;
+}
+
+.row[data-kind="tool_result"] .text {
+  color: #8b949e;
+}
+
+.row[data-kind="system"] .text {
+  color: #e3b341;
+}
+
+.row[data-kind="dim"] .text,
+.row[data-kind="thinking"] .text {
+  color: #8b949e;
+  font-style: italic;
+}
+
+.row[data-status="pending"] .text {
+  color: #8b949e;
+}
+
+.row[data-status="failed"] .text {
+  color: #d7dde3;
+}
+
+.failed {
+  color: #f85149;
+  margin-left: 0.5ch;
+}
+
+.retry {
+  margin-left: 0.5ch;
+  background: none;
+  border: 1px solid #f85149;
+  border-radius: 4px;
+  color: #f85149;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0 0.3rem;
+}
+
+.compose {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  border-top: 1px solid #30363d;
+  background: #14171a;
+}
+
+.input {
+  flex: 1;
+  resize: none;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #d7dde3;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 0.3rem 0.4rem;
+  min-width: 0;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #2f81f7;
+}
+
+.send {
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #d7dde3;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 0.7rem;
+}
+
+.send:disabled {
+  color: #8b949e;
+  cursor: default;
+}
+
+.error {
+  color: #f85149;
+  font-size: 12px;
+  padding: 0 0.5rem 0.3rem;
+}
+
+.notice,
+.hint {
+  color: #8b949e;
+  padding: 0.5rem;
+  text-align: center;
+}
+
+.chat{padding:10px;gap:8px;background:var(--mw-terminal);color:var(--mw-text)}
+.transcript{border:1px solid var(--mw-accent);background:var(--mw-terminal);color:var(--mw-text);padding:10px;container-type:inline-size}
+.ascii{font:clamp(3px,1.65cqw,8px)/1.1 ui-monospace,monospace;color:var(--mw-text);white-space:pre;margin:6px 0 22px}
+.compose{border:1px solid var(--mw-accent);background:var(--mw-terminal);padding:5px}
+.input{border:0;border-radius:0;background:var(--mw-terminal);color:var(--mw-text)}
+.input:focus{outline:none}.input:disabled{opacity:.6}
+.send{border-radius:0;background:var(--mw-raised);color:var(--mw-text);border-color:var(--mw-line)}
+.row{grid-template-columns:15ch minmax(0,1fr);margin:6px 0;font-size:11px}
+.prefix{color:var(--mw-muted)}.text{border-color:var(--mw-line)}
+.row[data-kind=human] .text,.row[data-kind=human] .prefix{color:var(--mw-text)}
+.row[data-kind=agent] .text,.row[data-kind=stream_reply] .text{color:var(--mw-agent)}
+.row[data-kind=tool]{border:1px solid var(--mw-tool);border-radius:5px;padding:6px;margin-top:10px}
+.row[data-kind=tool] .text,.row[data-kind=stream] .text{color:var(--mw-accent)}
+.row[data-kind=tool_result] .text{color:var(--mw-result)}
+.modeNotice{color:var(--mw-muted);font:11px ui-monospace,monospace}
+
+.chat,.transcript,.row,.compose,.input,.send{font-family:Menlo,Consolas,"Liberation Mono",monospace}
+.row{grid-template-columns:19ch minmax(0,1fr);font-size:12px;line-height:1.5;align-items:start}
+.prefix{font:inherit;white-space:pre;min-width:0}.text{font:inherit;min-width:0;overflow-wrap:anywhere;line-height:inherit}
+.ascii{display:block;width:100%;height:auto;max-height:96px;fill:var(--mw-text);margin:6px 0 22px;overflow:visible}
+.text code{font:inherit;color:var(--mw-accent);background:var(--mw-raised);padding:1px 3px;border-radius:2px}
+.row[data-kind=tool]{grid-template-columns:19ch minmax(0,1fr)}
+.row[data-kind=tool_result]{padding:4px 7px;border-left:2px solid var(--mw-tool)}
+@container (max-width: 430px){
+ .row,.row[data-kind=tool]{display:block}
+ .prefix{display:block;margin-bottom:3px;font-size:10px;white-space:normal}
+ .text{display:block;padding-left:9px;border-left:1px solid var(--mw-line)}
+}

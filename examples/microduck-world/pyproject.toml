@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "microduck-world"
+version = "0.1.0"
+description = "Persistent Microduck simulation hosted on Omarchy"
+requires-python = ">=3.12,<3.13"
+dependencies = ["dimos[cpu,web,agents,sim]==0.0.14b1", "torch==2.7.1", "ipywidgets==8.1.8", "httpx==0.28.1", "starlette==0.52.1", "uvicorn==0.40.0"]
+
+[project.scripts]
+microduck-robot = "microduck_world.run_robot:main"
+
+[project.optional-dependencies]
+perception = ["ultralytics==8.3.203", "torchvision==0.22.1"]
+test = ["pytest==8.3.5", "pytest-mock==3.15.1", "pytest-asyncio==0.26.0", "types-requests==2.33.0.20260712"]
+
+[project.entry-points."dimos.blueprints"]
+cockpit = "microduck_world.blueprints:cockpit_world"
+
+[tool.setuptools.packages.find]
+where = ["app"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+
+[[tool.mypy.overrides]]
+module = ["mujoco", "mujoco.*"]
+ignore_missing_imports = true

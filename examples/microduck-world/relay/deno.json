@@ -1,0 +1,21 @@
+{
+  "unstable": [
+    "net"
+  ],
+  "nodeModulesDir": "none",
+  "imports": {
+    "@std/assert": "jsr:@std/assert@^1",
+    "@std/cli": "jsr:@std/cli@^1",
+    "@peculiar/x509": "npm:@peculiar/x509@^2.0",
+    "reflect-metadata": "npm:reflect-metadata@^0.2",
+    "@dimos/shared": "../vendor/dimos/web/shared/protocol.ts",
+    "@dimos/shared/manifest": "../vendor/dimos/web/shared/manifest.ts"
+  },
+  "fmt": {
+    "lineWidth": 100
+  },
+  "tasks": {
+    "check": "deno check main.ts",
+    "test": "deno test -A ."
+  }
+}

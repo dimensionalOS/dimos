@@ -1,0 +1,88 @@
+{
+  "background": "#dfe8ed",
+  "ground": "#cbd8d9",
+  "exposure": 1.1,
+  "camera": {
+    "position": [
+      6,
+      -5,
+      8
+    ],
+    "target": [
+      0,
+      3.2,
+      0.12
+    ]
+  },
+  "colors": {
+    "floor_kitchen": "#e7cb84",
+    "floor_living": "#8fc4dc",
+    "floor_bedroom": "#b4a7dd",
+    "floor_office": "#9ebf9b",
+    "wall_south": "#d9ddd9",
+    "wall_east": "#d9ddd9",
+    "wall_west": "#d9ddd9",
+    "stub_east": "#b6c1bd",
+    "stub_west": "#b6c1bd",
+    "stub_north": "#b6c1bd",
+    "stub_south": "#b6c1bd",
+    "wall_north_west": "#d9ddd9",
+    "wall_north_east": "#d9ddd9",
+    "floor": "#cbd8d9",
+    "floor_red_lockers": "#bd6163",
+    "floor_blue_lockers": "#628ebd"
+  },
+  "views": {
+    "football": {
+      "position": [
+        4.7,
+        0.6,
+        4.8
+      ],
+      "target": [
+        0,
+        4.3,
+        0.12
+      ],
+      "extent": [
+        6.7,
+        4.5,
+        1.4
+      ]
+    },
+    "lockers": {
+      "position": [
+        4,
+        -5,
+        5
+      ],
+      "target": [
+        0,
+        1.15,
+        0.1
+      ],
+      "extent": [
+        6.7,
+        1.8,
+        1
+      ]
+    },
+    "benchmark": {
+      "position": [
+        13,
+        -8,
+        6
+      ],
+      "target": [
+        8.3,
+        -0.825,
+        0.1
+      ],
+      "extent": [
+        4.2,
+        4.2,
+        0.8
+      ]
+    }
+  }
+}
