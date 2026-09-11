@@ -21,6 +21,7 @@ Shared by the live ``Hyperspace`` module and the offline CLI.
 from __future__ import annotations
 
 import math
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -39,7 +40,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import MultiTBuffer
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from numpy.typing import NDArray
 
@@ -69,12 +70,26 @@ class TfCache:
     def update(self) -> None:
         if self.stream_name not in self.store.list_streams():
             return
+        # Newest id first, stopping at the last one seen, so a pass over an
+        # unchanging recording reads one row rather than the whole stream --
+        # answering a query used to re-scan every tf observation. Ids are
+        # assigned in write order, so a transform republished for an old stamp
+        # still arrives here (that is how a loop closure rewrites the past).
+        stream = self.store.stream(self.stream_name, TFMessage)
+        batch: Iterable[Any]
+        if self.last_id < 0:
+            batch = stream.order_by("ts")  # first pass: read it all, in order
+        else:
+            tail = []
+            for obs in stream.order_by("id", desc=True):
+                if obs.id <= self.last_id:
+                    break
+                tail.append(obs)
+            if not tail:
+                return
+            batch = sorted(tail, key=lambda o: o.ts)
         fresh, replaced = [], False
-        # Observations past the last seen id are decoded; the rest are skipped
-        # before their payload is touched, so this scan is cheap.
-        for obs in self.store.stream(self.stream_name, TFMessage).order_by("ts"):
-            if obs.id <= self.last_id:
-                continue
+        for obs in batch:
             self.last_id = max(self.last_id, obs.id)
             for transform in obs.data.transforms:
                 key = (transform.frame_id, transform.child_frame_id, float(transform.ts))
@@ -199,11 +214,23 @@ class HyperspaceQuery:
             return self.pooled_hot_patches(queries)
         query = queries[0]
         backgrounds = self._relevant_backgrounds(0, query)
-        hits = (
-            self.store.stream(PATCH_STREAM, dict)
-            .search(Embedding(vector=query), k=min(self.config.max_hot_patches, VEC0_MAX_K))
-            .to_list()
-        )
+        try:
+            hits = (
+                self.store.stream(PATCH_STREAM, dict)
+                .search(Embedding(vector=query), k=min(self.config.max_hot_patches, VEC0_MAX_K))
+                .to_list()
+            )
+        except sqlite3.OperationalError as error:
+            if "imension" not in str(error):
+                raise
+            # A store written before member specs were recorded, read back with
+            # a differently shaped model: say so instead of leaking sqlite-vec's
+            # "expected 1152 received 768".
+            raise ValueError(
+                f"{error}: this store was embedded with differently shaped "
+                "checkpoints than the ones querying it. Pass the checkpoints it "
+                "was written with (--models), or re-embed it (--no-reuse)."
+            ) from error
         hot: list[hs.HotPatch] = []
         gate = self.structural_cells() if self.config.structural_gate else None
         exempt = any(label in self._query_text.lower() for label in STRUCTURAL_LABELS)

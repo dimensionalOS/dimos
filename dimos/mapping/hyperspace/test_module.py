@@ -31,7 +31,7 @@ from dimos.mapping.hyperspace.ingest import (
     IngestConfig,
     PatchIngestor,
 )
-from dimos.mapping.hyperspace.query import HyperspaceQuery
+from dimos.mapping.hyperspace.query import HyperspaceQuery, TfCache
 from dimos.mapping.hyperspace.segments import SEGMENT_STREAM
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.models.embedding.base import Embedding
@@ -223,6 +223,61 @@ def test_rewriting_tf_moves_the_answer(store: SqliteStore) -> None:
         )
     after = np.asarray(engine.answer("object", 2)["best"][0]["xyz"])
     assert abs((after - before)[0] - 1.0) < 0.15, (before, after)
+
+
+class CountingStream:
+    """Forwards to a real stream, tallying the observations pulled from it."""
+
+    def __init__(self, inner: object, tally: list[int]) -> None:
+        self.inner, self.tally = inner, tally
+
+    def __getattr__(self, name: str) -> object:
+        attribute = getattr(self.inner, name)
+        if not callable(attribute):
+            return attribute
+
+        def call(*args: object, **kwargs: object) -> object:
+            result = attribute(*args, **kwargs)
+            return CountingStream(result, self.tally) if hasattr(result, "__iter__") else result
+
+        return call
+
+    def __iter__(self):  # type: ignore[no-untyped-def]
+        for observation in self.inner:
+            self.tally[0] += 1
+            yield observation
+
+
+def test_tf_is_read_once_not_on_every_query(store: SqliteStore) -> None:
+    ingestor = fill(store, ring(3, 2.5))
+    cache = TfCache(store)
+    cache.update()
+    tally = [0]
+    original = store.stream
+    store.stream = lambda *a, **k: CountingStream(original(*a, **k), tally)  # type: ignore[method-assign]
+    try:
+        cache.update()
+        assert tally[0] <= 1, "an unchanged tf stream should not be re-scanned"
+        placed = len(cache.latest)
+        ingestor.add_tf(
+            TFMessage(
+                Transform(
+                    translation=Vector3(9.0, 0.0, 0.0),
+                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    frame_id=WORLD,
+                    child_frame_id="extra",
+                    ts=99.0,
+                )
+            ),
+            ts=99.0,
+        )
+        tally[0] = 0
+        cache.update()
+        # The one new observation is read (plus the row the scan stops on).
+        assert tally[0] <= 2, tally[0]
+        assert len(cache.latest) == placed + 1
+    finally:
+        store.stream = original  # type: ignore[method-assign]
 
 
 def test_scene_voxels_come_from_depth_thumbnails(store: SqliteStore) -> None:
