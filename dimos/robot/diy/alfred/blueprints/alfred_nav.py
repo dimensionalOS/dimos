@@ -25,7 +25,8 @@ ControlCoordinator for the pillar and the OpenArms (Damiao CAN when OPENARM_LEFT
 OPENARM_RIGHT_CAN are set, mock otherwise), planned through viser on the alfred_v1 model.
 Teleop comes from the viewer (dimos-viewer keyboard through RerunWebSocketServer publishes
 tele_cmd_vel, which MovementManager prefers over nav_cmd_vel); the robot computer is headless.
-Point-LIO reads DIMOS_POINTLIO_HOST_IP; the lidar address is ALFRED.mid360_ip.
+Point-LIO reads DIMOS_POINTLIO_HOST_IP; the lidar address is ALFRED.mid360_ip. The transport
+is pinned to LCM because the Point-LIO C++ native does not speak zenoh.
 """
 
 from __future__ import annotations
@@ -230,5 +231,6 @@ alfred_nav = (
         ),
     )
     .transports(dict(PILLAR_MOTOR_TRANSPORTS))
-    .global_config(n_workers=12, robot_model="alfred")
+    # Point-LIO is a C++ native and speaks LCM only; the Rust natives accept either.
+    .global_config(n_workers=12, robot_model="alfred", transport="lcm")
 )
