@@ -64,3 +64,4 @@ def _profile(
 OPENYAM_QUEST_COLLECTION = _profile(
     "openyam-quest", "applied_joint_position_command", action_source_kind="joint_position_updates"
 )
+OPENYAM_TEACH_COLLECTION = _profile("openyam-teach", "coordinator_joint_state")
