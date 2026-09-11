@@ -149,8 +149,9 @@ def test_streamed_path_arms_on_the_first_tick_with_a_pose():
     assert task.get_state() == "tracking"
 
 
-def test_streamed_speed_applies_before_the_path():
+def test_streamed_speed_applies_until_the_path_arms():
     task = _task()
+    task.on_path(straight_rotate(), t_now=0.0)  # separate streams: speed may land second
     task.on_speed(Float32(data=0.8), t_now=0.0)
     assert task._config.speed == pytest.approx(0.8)
 
