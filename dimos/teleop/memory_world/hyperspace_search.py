@@ -81,6 +81,9 @@ EVIDENCE_PER_CLUSTER = 2
 # city-scale map a broad question lights thousands of voxels kilometres apart, so
 # only the best ones are refined (the rest never made a cluster anyway).
 REFINE_MAX_VOXELS = 3000
+# ... and its grids cover the heat's bounding box: past this extent (metres, any axis)
+# the sparse components here answer instead, or the box would be gigabytes.
+REFINE_MAX_EXTENT_M = 60.0
 MAX_PYRAMIDS = 240
 
 
@@ -529,6 +532,14 @@ class HyperspaceSearch:
             keep = np.zeros_like(keep)
             keep[ranked] = True
         index = result.index[keep]
+        extent = (index.max(axis=0) - index.min(axis=0)) * self.voxel_size
+        if float(extent.max()) > REFINE_MAX_EXTENT_M:
+            logger.info(
+                "refine skipped: heat spans %.0f m (limit %.0f); sparse components instead",
+                float(extent.max()),
+                REFINE_MAX_EXTENT_M,
+            )
+            return None
         heat = hs.Heatmap(
             frame=self.world_frame,
             voxel_size=self.voxel_size,
