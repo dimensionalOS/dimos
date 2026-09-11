@@ -60,3 +60,37 @@ commands so the most recent target runs after the active move completes.
 `app.PillarConnection.stop_motion()` maps to the firmware's ramped `x` stop.
 It is not an emergency stop. A future firmware e-stop should stop step pulses,
 engage the SSR brake, abort homing, and invalidate the position reference.
+
+## Whole-robot URDF, sim, and navigation
+
+The robot description (FlowBase, pillar lift, bimanual OpenArm v2.0, Mid-360, D455, D435)
+is the LFS archive `alfred_description`: `alfred_v1.urdf` (casters welded) and
+`alfred_v2.urdf` (eight steer/drive caster joints), built from the Onshape CAD by the
+bundled `build_alfred_urdf.py`; its README has the frame table. `alfred_model.py` wraps it
+with the coordinator joint names. `pillar/lift` is zero at the top limit switch, positive
+up, range -0.500 .. -0.002 m, the same convention as the firmware.
+
+```bash
+uv sync --extra misc --extra alfred --extra manipulation
+
+# Simulation: viser planner on alfred_v2 with mock lift, arms and casters.
+dimos run alfred-sim
+
+# Robot. Point-LIO reads the host address on the lidar link; arms are real only with both
+# CAN ports (Alfred: left can2, right can3, `dimos hardware can setup <if>` first).
+export DIMOS_POINTLIO_HOST_IP=192.168.1.100
+OPENARM_LEFT_CAN=can2 OPENARM_RIGHT_CAN=can3 dimos --rerun-host 0.0.0.0 run alfred-nav \
+    --pillarconnection.device-path /dev/serial/by-id/<nano>
+
+# Laptop viewer (click to navigate, keyboard teleop) and viser through a tunnel.
+dimos-viewer --connect rerun+http://<robot>:9877/proxy --ws-url ws://<robot>:3030/ws
+ssh -L 8095:127.0.0.1:8095 <robot>
+
+# Tools that attach from another terminal must use the blueprint's transport.
+DIMOS_TRANSPORT=lcm dimos shell     # app.PillarConnection.home() before planning the lift
+```
+
+`alfred-nav` keeps the base out of the coordinator: `AlfredHighLevel` is the only FlowBase
+writer and `MovementManager` muxes teleop over navigation. `AlfredLidarMountTf` publishes
+the mount tree rooted at `mid360_link` because Point-LIO owns the lidar's parent edge. The
+planner publishes no tf. Jeff's dimSLAM blueprints (`alfred-mls-nav*`) are untouched.

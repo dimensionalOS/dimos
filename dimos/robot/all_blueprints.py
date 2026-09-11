@@ -20,6 +20,7 @@ all_blueprints = {
     "alfred-keyboard-teleop": "dimos.robot.diy.alfred.blueprints.alfred_keyboard_teleop:alfred_keyboard_teleop",
     "alfred-mls-nav": "dimos.robot.diy.alfred.blueprints.alfred_mls_nav:alfred_mls_nav",
     "alfred-mls-nav-lidar": "dimos.robot.diy.alfred.blueprints.alfred_mls_nav_lidar:alfred_mls_nav_lidar",
+    "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
     "alfred-pillar": "dimos.robot.diy.alfred.blueprints.pillar:alfred_pillar",
     "alfred-sim": "dimos.robot.diy.alfred.blueprints.alfred_sim:alfred_sim",
     "coordinator-a1z": "dimos.robot.manipulators.a1z.blueprints.basic:coordinator_a1z",
