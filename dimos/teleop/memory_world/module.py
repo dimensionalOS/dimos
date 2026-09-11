@@ -16,30 +16,37 @@
 
 On WebSocket connect we:
 
-1. Accumulate the recording's lidar stream into a voxel map and push it as one
-   binary frame (positions + per-point RGB).
+1. Push the latest voxel map from the ray tracing mapper as one binary frame
+   (positions + per-point RGB), and again whenever the mapper grows it.
 2. Sample the ``color_image`` stream and push each capture pose as a
    Street-View-style marker. The headset can later pinch one to surface the
    image at that location.
-3. Push the odom trail as a polyline.
+3. Push the camera trail as a polyline.
+
+Routes come from the MLS planner. A goal set through the navigation skills is
+planned from the robot's last recorded pose, and every path the planner emits
+is drawn on the active answer.
 
 All locomotion (smooth walk, snap turn, teleport, scale) is client-side —
-the server is a one-shot data push plus diagnostics.
+the server is a data push plus diagnostics.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
+import functools
 import io
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
 import threading
 import time
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeVar
 import uuid
 
 import cv2
@@ -49,15 +56,18 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 import numpy as np
 from pydantic import Field as PydanticField
+from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In
 from dimos.memory.store.base import Store
 from dimos.memory.transform import throttle
-from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
+from dimos.msgs.nav_msgs.Path import Path as NavPath
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.teleop.memory_world.messages import (
     MSG_IMAGE_POSES,
     MSG_IMAGE_THUMBNAIL,
@@ -77,7 +87,7 @@ from dimos.teleop.memory_world.query import (
     MemoryQueryResult,
 )
 from dimos.teleop.memory_world.recording import detect_streams, open_recording
-from dimos.teleop.memory_world.replay import VoxelReplay, build_replay_streams
+from dimos.teleop.memory_world.replay import ReplayRecorder, VoxelReplay
 from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix
 from dimos.teleop.memory_world.visual_search import (
     SIGLIP2_MODEL_NAME,
@@ -91,6 +101,7 @@ from dimos.teleop.memory_world.visual_search import (
     patch_world_position,
     search_phrase,
 )
+from dimos.types.robot_location import RobotLocation
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
@@ -98,6 +109,20 @@ from dimos.web.robot_web_interface import RobotWebInterface
 logger = setup_logger()
 
 STATIC_DIR = Path(__file__).parent / "web" / "static"
+MAX_QUERY_FRAMES = 12
+ROUTE_LIFT_M = 0.08
+
+
+def _xyz_text(position: tuple[float, float, float]) -> str:
+    return "({:.1f}, {:.1f}, {:.1f})".format(*position)
+
+
+def _heading(
+    position: tuple[float, float, float], orientation: tuple[float, float, float, float]
+) -> float:
+    """Yaw of an optical camera pose's forward axis, in world radians."""
+    forward = pose_matrix(position, orientation)[:3, 2]
+    return float(np.arctan2(forward[1], forward[0]))
 
 
 class _RevalidatedStaticFiles(StaticFiles):
@@ -147,6 +172,22 @@ OPTICAL_FROM_BODY = pose_matrix((0.0, 0.0, 0.0), (-0.5, 0.5, -0.5, 0.5))
 # of the wheel only, so yellow, orange, red and green stay free for
 # highlights; the hue moves as well as the brightness because the lit voxel
 # material flattens brightness alone.
+T = TypeVar("T")
+
+
+def _serialized(method: Callable[..., T]) -> Callable[..., T]:
+    """Run one search at a time; the index is read on one store connection."""
+
+    @functools.wraps(method)
+    def wrapper(self: MemoryWorldModule, *args: Any, **kwargs: Any) -> T:
+        with self._search_lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
+# A timeline whose last snapshot is this close to the recording's end counts as complete.
+REPLAY_COMPLETE_MARGIN_S = 15.0
 HEIGHT_COLOR_STOPS = np.array([[120.0, 20.0, 150.0], [40.0, 80.0, 235.0], [120.0, 245.0, 255.0]])
 
 
@@ -162,18 +203,10 @@ class MemoryWorldConfig(ModuleConfig):
     voxel_size: float = 0.05
     # Hard cap so an unexpectedly dense map doesn't try to ship 5M points.
     max_points: int = 250_000
-    # Which lidar stream to accumulate and how many scans to sample. <= 0 means
-    # use every lidar frame (densest map, slowest build).
-    # The output cloud is deduped by voxel_size, so more scans improves the
-    # map without growing the wire payload — only build time goes up.
+    # The lidar stream the timeline replay is built from.
     lidar_stream_name: str = "lidar"
-    n_voxel_scans: int = 150
-    # Set True if the stored lidar scans are ALREADY in the map/world frame
-    # (e.g. SLAM-registered). Then we must NOT re-apply each scan's pose —
-    # doing so double-transforms them into scattered noise. Leave False if
-    # scans are in the sensor frame and need their pose applied. None detects
-    # this from the point cloud frame_id.
-    lidar_world_frame: bool | None = None
+    # Viewers get the mapper's latest map at most this often.
+    map_push_interval_s: float = PydanticField(default=10.0, gt=0.0)
     # Z slab applied at load time to drop the floor/ceiling from the cloud.
     # The user stands on the floor in VR; rendering it as points is just noise.
     map_z_min: float = -0.2
@@ -207,7 +240,7 @@ class MemoryWorldConfig(ModuleConfig):
     camera_time_offset_s: float = 0.0
     # The camera's path is drawn as a polyline sampled from tf.
     n_trail_samples: int = 400
-    # Top-down density map (GTA-style minimap + ground projection). Computed
+    # Top-down density map for the HUD minimap. Computed
     # from the same point cloud — Z-slab histogram into a square image.
     map_image_size: int = 512
     map_z_min_floor: float = 0.05  # avoid floor speckle
@@ -250,8 +283,7 @@ class MemoryWorldConfig(ModuleConfig):
     # Keyframe and per-scan diff streams written into the recording once (see
     # replay.py); the viewer scrubs by fetching one keyframe's segment at a
     # time. A longer interval means fewer, larger segments.
-    replay_keyframe_interval_s: float = PydanticField(default=5.0, gt=0.0)
-    build_replay_on_start: bool = True
+    replay_keyframe_interval_s: float = PydanticField(default=30.0, gt=0.0)
     # The camera frame shown while scrubbing, fetched one at a time.
     replay_frame_max_size: int = 480
     replay_frame_jpeg_quality: int = 60
@@ -264,6 +296,9 @@ class MemoryWorldModule(Module):
     """
 
     config: MemoryWorldConfig
+
+    global_map: In[PointCloud2]
+    path: In[NavPath]
 
     def __init__(self, **kwargs: Any) -> None:
         self._world_clients: set[_ClientConn] = set()
@@ -280,6 +315,7 @@ class MemoryWorldModule(Module):
         self._viewer_position: tuple[float, float, float] | None = None
         self._visual_index: VisualMemoryIndex | None = None
         self._index_lock = threading.Lock()
+        self._search_lock = threading.Lock()
         # The world caches are built lazily by whichever client connects first;
         # without this, two clients arriving together each voxelise the whole
         # recording.
@@ -289,6 +325,10 @@ class MemoryWorldModule(Module):
         self._tf_tree_cache: TfTree | None = None
         self._tf_missing = False
         self._replay: VoxelReplay | None = None
+        self._recorder: ReplayRecorder | None = None
+        self._replay_complete = False
+        self._replay_floor = 0.0
+        self._replay_frames_json: list[float] | None = None
         self._replay_lock = threading.Lock()
         # The store's sqlite connection is not safe to read from two threads
         # at once, and a scrubbing viewer fetches segments and frames together.
@@ -300,6 +340,13 @@ class MemoryWorldModule(Module):
         self._active_query_result: dict[str, Any] | None = None
         self._active_query_images: list[tuple[dict[str, Any], bytes]] = []
         self._query_revision = 0
+        self._last_route: HighlightPath | None = None
+        self._map_push_lock = threading.Lock()
+        self._map_push_timer: threading.Timer | None = None
+        self._latest_map: np.ndarray | None = None
+        self._last_map_push = float("-inf")
+        self._tagged_locations: dict[str, RobotLocation] = {}
+        self._recording_start_ts: float | None = None
         self._web_server: RobotWebInterface | None = None
         self._web_server_thread: threading.Thread | None = None
         self._prepare_thread: threading.Thread | None = None
@@ -370,10 +417,13 @@ class MemoryWorldModule(Module):
             replay = await asyncio.to_thread(self._ensure_replay)
             if not 0 <= number < len(replay.index.keyframe_scan):
                 raise HTTPException(status_code=404, detail="no such segment")
+            start, end = replay.index.segment_scans(number)
+            headers = self._replay_cache_headers(replay, f"{number}-{end - start}")
+            if request.headers.get("if-none-match") == headers["ETag"]:
+                return Response(status_code=304, headers=headers)
             raw, gzipped = await asyncio.to_thread(
                 self._replay_read, replay.encoded_segment, number
             )
-            headers = {"Cache-Control": "max-age=3600"}
             if "gzip" in request.headers.get("accept-encoding", ""):
                 headers["Content-Encoding"] = "gzip"
                 return Response(
@@ -382,17 +432,18 @@ class MemoryWorldModule(Module):
             return Response(content=raw, media_type="application/octet-stream", headers=headers)
 
         @app.get(f"{self.config.client_route}/replay/frame")  # type: ignore[misc]
-        async def memory_world_replay_frame(t: float) -> Response:
+        async def memory_world_replay_frame(t: float, request: Request) -> Response:
             """The camera frame nearest *t* as JPEG; its pose rides in a header."""
+            replay = await asyncio.to_thread(self._ensure_replay)
             found = await asyncio.to_thread(self._replay_read, self._replay_frame, t)
             if found is None:
                 raise HTTPException(status_code=404, detail="no frame near that time")
             jpeg, meta = found
-            return Response(
-                content=jpeg,
-                media_type="image/jpeg",
-                headers={"X-Camera-Pose": json.dumps(meta), "Cache-Control": "max-age=3600"},
-            )
+            headers = self._replay_cache_headers(replay, meta["ts"])
+            if request.headers.get("if-none-match") == headers["ETag"]:
+                return Response(status_code=304, headers=headers)
+            headers["X-Camera-Pose"] = json.dumps(meta)
+            return Response(content=jpeg, media_type="image/jpeg", headers=headers)
 
         @app.post(f"{self.config.client_route}/voice")  # type: ignore[misc]
         async def memory_world_voice(audio: UploadFile) -> dict[str, Any]:
@@ -500,12 +551,8 @@ class MemoryWorldModule(Module):
             )
 
     def _ensure_world_cache(self) -> None:
-        """Build the cloud, top-down map, markers and trail once, whoever asks first."""
+        """Build the markers and trail once, whoever asks first. The map comes from the mapper."""
         with self._world_cache_lock:
-            if self._cached_cloud is None:
-                self._cached_cloud = self._build_cloud()
-            if self._cached_top_down is None:
-                self._cached_top_down = self._build_top_down_map(self._cached_cloud)
             if self._cached_image_poses is None:
                 self._cached_image_poses, self._cached_thumbnails = self._build_image_poses()
             if self._cached_odom is None:
@@ -514,18 +561,14 @@ class MemoryWorldModule(Module):
     def _send_initial_payload(self, conn: _ClientConn) -> None:
         try:
             self._ensure_world_cache()
-            assert self._cached_cloud is not None  # built above; narrows the type
             assert self._cached_image_poses is not None
             assert self._cached_odom is not None
-            cloud_header, cloud_payload = self._cached_cloud
-            conn.send_threadsafe(encode_text("world_summary", **cloud_header))
-            conn.send_threadsafe(encode_binary(MSG_POINT_CLOUD, cloud_header, cloud_payload))
-
-            # Send top-down map next — both the ground plane and the HUD
-            # minimap need it, so render asap on the client.
-            if self._cached_top_down is not None:
-                map_header, map_payload = self._cached_top_down
-                conn.send_threadsafe(encode_binary(MSG_TOP_DOWN_MAP, map_header, map_payload))
+            with self._world_cache_lock:
+                cloud, top_down = self._cached_cloud, self._cached_top_down
+            # Before the mapper's first emission there is no map yet; it
+            # reaches this client with the next push.
+            if cloud is not None:
+                self._send_map(conn.send_threadsafe, cloud, top_down)
 
             poses_header, poses_payload = self._cached_image_poses
             conn.send_threadsafe(encode_binary(MSG_IMAGE_POSES, poses_header, poses_payload))
@@ -551,86 +594,77 @@ class MemoryWorldModule(Module):
             logger.exception("failed to build/send world payload")
             conn.send_threadsafe(encode_text("error", message="world load failed"))
 
-    def _build_cloud(self) -> tuple[dict[str, Any], bytes]:
-        """Build a voxel cloud from the recording's lidar stream."""
-        built = self._build_voxel_cloud_from_lidar()
-        if built is None:
-            raise RuntimeError("voxel-from-lidar produced no cloud")
-        return built
+    # ---- map from the mapper ----------------------------------------------
 
-    def _build_voxel_cloud_from_lidar(self) -> tuple[dict[str, Any], bytes] | None:
-        """Accumulate a voxel map from the lidar stream and pack it for the wire.
-
-        Each lidar scan is transformed into the world frame by a tf lookup at
-        its stamp, then fed to :class:`VoxelMapTransformer`. The final accumulated cloud
-        is height-coloured (violet low → red high) so the user gets depth cues
-        without true RGB.
-        """
-        from dimos.mapping.voxels.module import VoxelMapTransformer
-        from dimos.memory.transform import FnTransformer
-
+    def _on_global_map(self, cloud: PointCloud2) -> None:
+        xyz, _ = cloud.as_numpy()
+        if xyz is None or xyz.size == 0:
+            return
+        with self._map_push_lock:
+            self._latest_map = np.asarray(xyz, dtype=np.float32)
+        self._schedule_map_push()
         try:
-            store = self._ensure_store()
-            stream = store.streams[self.config.lidar_stream_name]
-            first, last = stream.first(), stream.last()
-            span = max(float(last.ts) - float(first.ts), 1e-3)
-            n_scans = int(self.config.n_voxel_scans)
-            use_all = n_scans <= 0
-            lidar_world_frame = self.config.lidar_world_frame
-            if lidar_world_frame is None:
-                frame_id = str(getattr(first.data, "frame_id", "")).lower().lstrip("/")
-                lidar_world_frame = frame_id in {"map", "odom", "world"}
-                logger.info(
-                    "lidar frame %r detected as %s",
-                    frame_id,
-                    "world-aligned" if lidar_world_frame else "sensor-relative",
-                )
-
-            def to_world_frame(obs: Any) -> Any:
-                # If scans are already registered to the map frame, applying
-                # a pose again double-transforms them into scattered noise.
-                if lidar_world_frame:
-                    return obs
-                cloud = self._scan_to_world(obs)
-                return None if cloud is None else obs.derive(data=cloud)
-
-            # emit_every=0 → only yield the final accumulated map on exhaustion.
-            # Throttle to n_scans unless use_all (then feed every frame).
-            pipeline = stream if use_all else stream.transform(throttle(span / n_scans))
-            result = (
-                pipeline.transform(FnTransformer(to_world_frame))
-                .transform(VoxelMapTransformer(emit_every=0, voxel_size=self.config.voxel_size))
-                .last()
-            )
-            if result is None or result.data is None:
-                return None
-            xyz, _ = result.data.as_numpy()
-            if xyz is None or xyz.size == 0:
-                return None
-
-            z = xyz[:, 2]
-            m = (z >= self.config.map_z_min) & (z <= self.config.map_z_max)
-            xyz = xyz[m]
-            if xyz.size == 0:
-                return None
-            if xyz.shape[0] > self.config.max_points:
-                stride = xyz.shape[0] // self.config.max_points + 1
-                xyz = xyz[::stride]
-
-            positions = np.ascontiguousarray(xyz.astype(np.float32))
-            # Lidar has no RGB, so always height-colour.
-            rgb = self._height_colors(positions)
-            header = self._cloud_header(positions)
-            payload = positions.tobytes() + rgb.tobytes()
-            logger.info(
-                "built voxel cloud (%s scans): n=%d",
-                "all" if use_all else str(n_scans),
-                positions.shape[0],
-            )
-            return header, payload
+            self._record_snapshot(self._latest_map, float(cloud.ts))
         except Exception:
-            logger.exception("voxel-from-lidar build failed")
+            logger.exception("recording the mapper snapshot into the timeline failed")
+
+    def _schedule_map_push(self) -> None:
+        """Push the latest map to every viewer, at most every map_push_interval_s."""
+        with self._map_push_lock:
+            if self._map_push_timer is not None:
+                return
+            delay = self.config.map_push_interval_s - (time.monotonic() - self._last_map_push)
+            self._map_push_timer = threading.Timer(max(0.0, delay), self._push_map)
+            self._map_push_timer.daemon = True
+            self._map_push_timer.start()
+
+    def _push_map(self) -> None:
+        """Pack the mapper's latest map, cache it for new viewers, and send it to the current ones."""
+        with self._map_push_lock:
+            self._map_push_timer = None
+            self._last_map_push = time.monotonic()
+            xyz, self._latest_map = self._latest_map, None
+        if xyz is None:
+            return
+        packed = self._pack_cloud(xyz)
+        if packed is None:
+            return
+        top_down = self._build_top_down_map(packed)
+        with self._world_cache_lock:
+            first = self._cached_cloud is None
+            self._cached_cloud = packed
+            self._cached_top_down = top_down
+        if first:
+            logger.info("first map from the mapper: n=%d", packed[0]["n"])
+        self._send_map(self._broadcast, packed, top_down)
+
+    @staticmethod
+    def _send_map(
+        send: Callable[[bytes | str], None],
+        cloud: tuple[dict[str, Any], bytes],
+        top_down: tuple[dict[str, Any], bytes] | None,
+    ) -> None:
+        header, payload = cloud
+        send(encode_text("world_summary", **header))
+        send(encode_binary(MSG_POINT_CLOUD, header, payload))
+        if top_down is not None:
+            map_header, map_payload = top_down
+            send(encode_binary(MSG_TOP_DOWN_MAP, map_header, map_payload))
+
+    def _pack_cloud(self, xyz: np.ndarray) -> tuple[dict[str, Any], bytes] | None:
+        """Clip a world-frame cloud to the height slab, cap it, and pack it for the wire."""
+        z = xyz[:, 2]
+        xyz = xyz[(z >= self.config.map_z_min) & (z <= self.config.map_z_max)]
+        if xyz.size == 0:
             return None
+        if xyz.shape[0] > self.config.max_points:
+            stride = xyz.shape[0] // self.config.max_points + 1
+            xyz = xyz[::stride]
+        positions = np.ascontiguousarray(xyz.astype(np.float32))
+        # Lidar has no RGB, so always height-color.
+        rgb = self._height_colors(positions)
+        header = self._cloud_header(positions)
+        return header, positions.tobytes() + rgb.tobytes()
 
     def _height_colors(self, positions: np.ndarray) -> np.ndarray:
         """Map Z (robot up) onto a purple-blue-cyan ramp.
@@ -751,8 +785,7 @@ class MemoryWorldModule(Module):
     ) -> tuple[dict[str, Any], bytes] | None:
         """Render a top-down density map from the same point cloud shown in VR.
 
-        Used for two things on the client: a GTA-style HUD minimap and a
-        ground-pasted texture (so the user sees walls "drawn" on the floor).
+        The client shows it as the GTA-style HUD minimap.
         """
         cloud_header, cloud_payload = cloud
         n = int(cloud_header.get("n", 0))
@@ -851,8 +884,7 @@ class MemoryWorldModule(Module):
         ``focus_point`` [x,y,z], ``regions`` (polygon point lists),
         ``evidence_paths`` (path point lists), ``points``, and
         ``observation_ids``. Every point must be [x,y,z] in the world frame.
-        A route from the current VR position is added automatically when
-        ``focus_point`` and ``global_costmap`` are available.
+        The planner's current route, if any, is drawn on every result.
 
         Args:
             code: Complete Python source that assigns the result dictionary.
@@ -895,7 +927,6 @@ class MemoryWorldModule(Module):
             )
         try:
             result = MemoryQueryResult.model_validate_json(encoded)
-            self._add_route_to_result(result)
         except Exception as exc:
             return SkillResult.fail("EXECUTION_FAILED", f"Invalid memory result: {exc}")
 
@@ -925,6 +956,7 @@ class MemoryWorldModule(Module):
         with self._clients_lock:
             query_id = uuid.uuid4().hex
             self._query_revision += 1
+            result.route = self._last_route
             payload = result.model_dump(mode="json")
             payload.update(query_id=query_id, revision=self._query_revision)
             self._active_query_result = payload
@@ -971,12 +1003,13 @@ class MemoryWorldModule(Module):
         logger.info("voice query path warm")
 
     @skill
+    @_serialized
     def find_in_memory(self, query: str) -> SkillResult:
-        """Find the distinct places something was seen and highlight them in VR.
+        """Find where something was seen, and when it was last seen, and highlight it in VR.
 
-        Answers questions like "where did I see a car" by comparing the phrase
-        against precomputed SigLIP 2 embeddings of the recording's camera
-        frames, then reducing the matches to one marker per distinct location.
+        Answers "where did I see X" and "when did you last see X" by comparing
+        the phrase against precomputed SigLIP 2 embeddings of the recording's
+        camera frames, reduced to one marker per distinct location.
 
         Args:
             query: What to look for, e.g. "a car" or "a whiteboard".
@@ -985,30 +1018,207 @@ class MemoryWorldModule(Module):
         phrase = search_phrase(query)
         if not phrase:
             return SkillResult.fail("INVALID_QUERY", "The query text is empty")
+        not_ready = self._index_not_ready()
+        if not_ready is not None:
+            return not_ready
 
-        index = self._ensure_visual_index()
-        if index.count() == 0:
-            return SkillResult.fail(
-                "INDEX_NOT_READY",
-                f"The SigLIP index for {self.config.store_path} holds no frames "
-                f"({self._index_progress}). Build it with "
-                f"`python -m dimos.teleop.memory_world.visual_search {self.config.store_path}`.",
-            )
-
-        places = self._locate_objects(phrase)
-        located = bool(places)
-        if not located:
-            # No depth or extrinsics: answer with the poses the frames were taken from.
-            places = cluster_places(
-                index.search(phrase, k=self.config.search_top_k),
-                radius=self.config.place_radius_m,
-                max_places=self.config.max_places,
-            )
+        places, located = self._search_places(phrase)
         if not places:
             return SkillResult.fail("NOT_FOUND", f"Nothing in the recording matches {phrase!r}")
 
+        latest = max(places, key=lambda place: place.ts)
+        answer = (
+            f"Found {phrase} in {len(places)} place(s), best match {places[0].similarity:+.3f}. "
+            f"Last seen {self._describe_time(latest.ts)} at {_xyz_text(latest.position)}."
+        )
+        query_id = self._show_places(phrase, places, located, answer)
+
+        return SkillResult(
+            success=True,
+            message=answer,
+            duration_ms=(time.monotonic() - started) * 1000,
+            metadata={
+                "query_id": query_id,
+                "query": phrase,
+                "places": [
+                    {
+                        "position": place.position,
+                        "similarity": place.similarity,
+                        "views": place.views,
+                        "ts": place.ts,
+                        "offset_s": self._offset_s(place.ts),
+                        "frame_id": place.source_id,
+                    }
+                    for place in places
+                ],
+                "located": located,
+                "last_seen": {
+                    "ts": latest.ts,
+                    "offset_s": self._offset_s(latest.ts),
+                    "frame_id": latest.source_id,
+                    "position": latest.position,
+                },
+            },
+        )
+
+    @skill
+    @_serialized
+    def show_frames_in_memory(self, query: str, count: int = 5) -> SkillResult:
+        """Show the camera frames that best match a query, each hung where its camera stood.
+
+        Answers "show me the top N images of X". Frames are ranked by SigLIP 2
+        patch similarity, so neighboring frames of one view can rank together.
+
+        Args:
+            query: What to look for, e.g. "a fountain".
+            count: How many frames to show, 1 to 12.
+        """
+        started = time.monotonic()
+        phrase = search_phrase(query)
+        if not phrase:
+            return SkillResult.fail("INVALID_QUERY", "The query text is empty")
+        not_ready = self._index_not_ready()
+        if not_ready is not None:
+            return not_ready
+
+        count = max(1, min(int(count), MAX_QUERY_FRAMES))
+        frames = self._ensure_visual_index().search(phrase, k=count)
+        if not frames:
+            return SkillResult.fail("NOT_FOUND", f"Nothing in the recording matches {phrase!r}")
+
+        newest = max(frames, key=lambda frame: frame.ts)
+        answer = (
+            f"Showing the {len(frames)} frames that best match {phrase}; "
+            f"the most recent is from {self._describe_time(newest.ts)}."
+        )
         result = MemoryQueryResult(
-            answer=f"Found {phrase} in {len(places)} place(s), best match {places[0].similarity:+.3f}",
+            answer=answer,
+            focus_point=frames[0].position,
+            points=[
+                HighlightPoint(
+                    position=frame.position,
+                    label=f"{phrase} #{rank} ({frame.similarity:+.3f}, {self._describe_time(frame.ts)})",
+                )
+                for rank, frame in enumerate(frames, 1)
+            ],
+            observation_ids=self._markers_near([frame.position for frame in frames]),
+        )
+        query_id = self._publish_query_result(result)
+        self._publish_query_images(query_id, phrase, frames)
+
+        return SkillResult(
+            success=True,
+            message=answer,
+            duration_ms=(time.monotonic() - started) * 1000,
+            metadata={
+                "query_id": query_id,
+                "query": phrase,
+                "frames": [
+                    {
+                        "rank": rank,
+                        "frame_id": frame.source_id,
+                        "ts": frame.ts,
+                        "offset_s": self._offset_s(frame.ts),
+                        "similarity": frame.similarity,
+                        "position": frame.position,
+                    }
+                    for rank, frame in enumerate(frames, 1)
+                ],
+            },
+        )
+
+    # ---- spatial memory interface ------------------------------------------
+
+    @rpc
+    @_serialized
+    def query_by_text(self, text: str, limit: int = 5) -> list[dict]:  # type: ignore[type-arg]
+        """The places matching a text, best first, as spatial memory results.
+
+        Each result carries a distance of 1 - similarity and one metadata entry
+        with the world position and heading of the camera that saw it. The
+        places are highlighted in the viewer as a side effect.
+        """
+        phrase = search_phrase(text)
+        if not phrase or self._index_not_ready() is not None:
+            return []
+        places, located = self._search_places(phrase)
+        if not places:
+            return []
+        self._show_places(
+            phrase,
+            places,
+            located,
+            f"Found {phrase} in {len(places)} place(s), best match {places[0].similarity:+.3f}.",
+        )
+        return [
+            {
+                "id": place.source_id,
+                "distance": 1.0 - place.similarity,
+                "metadata": [
+                    {
+                        "pos_x": place.position[0],
+                        "pos_y": place.position[1],
+                        "pos_z": place.position[2],
+                        "rot_z": _heading(place.position, place.orientation),
+                        "ts": place.ts,
+                        "frame_id": place.source_id,
+                    }
+                ],
+            }
+            for place in places[:limit]
+        ]
+
+    @rpc
+    def tag_location(self, robot_location: RobotLocation) -> bool:
+        self._tagged_locations[robot_location.name.strip().lower()] = robot_location
+        return True
+
+    @rpc
+    def query_tagged_location(self, query: str) -> RobotLocation | None:
+        return self._tagged_locations.get(query.strip().lower())
+
+    def _index_not_ready(self) -> SkillResult | None:
+        """Why a search cannot run yet, or None when the index is complete.
+
+        A search reads the index stream on the connection the builder is
+        writing to, so nothing is served while the build runs.
+        """
+        progress = self._index_progress
+        if progress.startswith("building"):
+            return SkillResult.fail(
+                "INDEX_NOT_READY",
+                f"The SigLIP index for {self.config.store_path} is still being built "
+                f"({progress}); the terminal reports when it is ready.",
+            )
+        if progress.startswith("failed"):
+            return SkillResult.fail(
+                "INDEX_FAILED", f"The SigLIP index build {progress}; restart to rebuild it."
+            )
+        if self._ensure_visual_index().count() > 0:
+            return None
+        return SkillResult.fail(
+            "INDEX_NOT_READY",
+            f"The SigLIP index for {self.config.store_path} holds no frames "
+            f"({progress}). Build it with "
+            f"`python -m dimos.teleop.memory_world.visual_search {self.config.store_path}`.",
+        )
+
+    def _search_places(self, phrase: str) -> tuple[list[Place], bool]:
+        """Distinct places for a phrase: on the object through depth, else where it was seen from."""
+        places = self._locate_objects(phrase)
+        if places:
+            return places, True
+        places = cluster_places(
+            self._ensure_visual_index().search(phrase, k=self.config.search_top_k),
+            radius=self.config.place_radius_m,
+            max_places=self.config.max_places,
+        )
+        return places, False
+
+    def _show_places(self, phrase: str, places: list[Place], located: bool, answer: str) -> str:
+        """Highlight the places and the frames behind them in every viewer."""
+        result = MemoryQueryResult(
+            answer=answer,
             focus_point=places[0].position,
             points=[
                 HighlightPoint(
@@ -1021,28 +1231,19 @@ class MemoryWorldModule(Module):
             ],
             observation_ids=self._markers_near([place.position for place in places]),
         )
-        self._add_route_to_result(result)
         query_id = self._publish_query_result(result)
         self._publish_query_images(query_id, phrase, places)
+        return query_id
 
-        return SkillResult(
-            success=True,
-            message=result.answer,
-            duration_ms=(time.monotonic() - started) * 1000,
-            metadata={
-                "query_id": query_id,
-                "query": phrase,
-                "places": [
-                    {
-                        "position": place.position,
-                        "similarity": place.similarity,
-                        "views": place.views,
-                    }
-                    for place in places
-                ],
-                "located": located,
-            },
-        )
+    def _offset_s(self, ts: float) -> float:
+        if self._recording_start_ts is None:
+            images = self._ensure_store().streams[self.config.image_stream_name]
+            self._recording_start_ts = float(images.first().ts)
+        return ts - self._recording_start_ts
+
+    def _describe_time(self, ts: float) -> str:
+        minutes, seconds = divmod(int(self._offset_s(ts)), 60)
+        return f"{minutes}:{seconds:02d} into the recording"
 
     def _publish_query_images(self, query_id: str, phrase: str, places: list[Place]) -> None:
         """Send the frame behind each place, posed where its camera stood.
@@ -1109,23 +1310,6 @@ class MemoryWorldModule(Module):
         first = self._ensure_store().streams[self.config.image_stream_name].first()
         return str(getattr(first.data, "frame_id", "") or "").lstrip("/")
 
-    def _scan_to_world(self, obs: Any) -> Any:
-        """A sensor-frame lidar scan moved into the world frame, or None.
-
-        The pose is a tf lookup at the scan's stamp; only a recording without
-        any tf stream falls back to the pose stamped on the observation.
-        """
-        from dimos.msgs.geometry_msgs.Transform import Transform
-
-        scan_frame = str(getattr(obs.data, "frame_id", "") or "").lstrip("/")
-        matrix = self._frame_pose_at(scan_frame, float(obs.ts))
-        if matrix is None:
-            pose = getattr(obs, "pose_tuple", None)
-            if pose is None or self._tf_tree() is not None:
-                return None
-            matrix = pose_matrix(tuple(pose[:3]), tuple(pose[3:7]))
-        return obs.data.transform(Transform.from_matrix(matrix))
-
     def _camera_hfov(self) -> float:
         """Horizontal field of view of the image stream, from camera_info when present."""
         if self._camera_hfov_deg is None:
@@ -1141,69 +1325,102 @@ class MemoryWorldModule(Module):
     # ---- timeline replay -----------------------------------------------------
 
     def _ensure_replay(self) -> VoxelReplay:
-        """The recording's replay streams, built on first use if missing."""
+        """The recorded timeline, or LookupError until the mapper has produced one."""
+        with self._replay_lock:
+            if self._replay is None:
+                raise LookupError(f"replay {self._replay_progress}")
+            return self._replay
+
+    def _open_replay(self) -> None:
+        """Keep the timeline of an earlier run when it covers the whole recording."""
+        store = self._ensure_store()
         with self._replay_lock:
             if self._replay is not None:
-                return self._replay
-            store = self._ensure_store()
-            if not VoxelReplay.available(
+                return
+            self._replay_progress = "waiting for the mapper"
+            if not VoxelReplay.matches(
                 store,
                 voxel_size=self.config.voxel_size,
-                lidar_stream_name=self.config.lidar_stream_name,
+                keyframe_interval_s=self.config.replay_keyframe_interval_s,
             ):
-                self._replay_progress = "building"
-                logger.info("building the voxel replay streams into %s", self.config.store_path)
-                stats = build_replay_streams(
-                    store,
-                    lidar_stream_name=self.config.lidar_stream_name,
-                    to_world=self._scan_to_world,
-                    voxel_size=self.config.voxel_size,
-                    keyframe_interval_s=self.config.replay_keyframe_interval_s,
-                )
-                logger.info(
-                    "voxel replay built: %d scans, %d keyframes, +%d/-%d edits in %.1f s",
-                    stats.scans,
-                    stats.keyframes,
-                    stats.added,
-                    stats.removed,
-                    stats.seconds,
-                )
-            self._replay = VoxelReplay(
-                store, z_min=self.config.map_z_min, z_max=self.config.map_z_max
-            )
-            # Listing every camera stamp is a pass over the image stream (on
-            # an mcap that decompresses every chunk), so it is done here, once.
-            self._replay_index = self._build_replay_index_json(self._replay)
+                return
+            replay = VoxelReplay(store, z_min=self.config.map_z_min, z_max=self.config.map_z_max)
+            if not replay.covers(self._recording_end() - REPLAY_COMPLETE_MARGIN_S):
+                return
+            self._replay = replay
+            self._replay_complete = True
+            self._replay_floor = self._floor_of(replay.keyframes.last().data.points_f32())
             self._replay_progress = "ready"
-            return self._replay
+            logger.info("timeline from an earlier run covers the recording, keeping it")
+
+    def _record_snapshot(self, xyz: np.ndarray, ts: float) -> None:
+        """Fold a mapper snapshot into the timeline, unless a complete one is on disk."""
+        with self._replay_lock:
+            if self._replay_complete:
+                return
+            store = self._ensure_store()
+            with self._replay_read_lock:
+                if self._recorder is None:
+                    self._recorder = ReplayRecorder(
+                        store,
+                        voxel_size=self.config.voxel_size,
+                        keyframe_interval_s=self.config.replay_keyframe_interval_s,
+                    )
+                    self._replay_progress = "recording"
+                    logger.info("recording the mapper's timeline into %s", self.config.store_path)
+                keyframe = self._recorder.add_snapshot(xyz, ts)
+                if keyframe:
+                    self._replay_floor = self._floor_of(xyz)
+                if self._replay is None:
+                    self._replay = VoxelReplay(
+                        store, z_min=self.config.map_z_min, z_max=self.config.map_z_max
+                    )
+                else:
+                    self._replay.extend(ts, keyframe)
+
+    def _recording_end(self) -> float:
+        """Stamp of the last lidar scan, or infinity without a lidar stream."""
+        store = self._ensure_store()
+        if self.config.lidar_stream_name not in store.list_streams():
+            return math.inf
+        return float(store.streams[self.config.lidar_stream_name].last().ts)
+
+    @staticmethod
+    def _floor_of(points: np.ndarray) -> float:
+        return float(np.percentile(points[:, 2], 7)) if len(points) else 0.0
+
+    @staticmethod
+    def _replay_cache_headers(replay: VoxelReplay, key: object) -> dict[str, str]:
+        """Browsers revalidate against the build stamp, so a rebuilt timeline is never stale."""
+        built_at = replay.index.stream_tags["built_at"]
+        return {"ETag": f'"{built_at}-{key}"', "Cache-Control": "no-cache"}
 
     def _replay_read(self, fn: Any, *args: Any) -> Any:
         """Run one store-reading replay call at a time."""
         with self._replay_read_lock:
             return fn(*args)
 
-    def _build_replay(self) -> None:
-        try:
-            self._ensure_replay()
-        except Exception as error:
-            self._replay_progress = f"failed: {error}"
-            logger.exception("voxel replay build failed")
-
     def _replay_index_json(self) -> dict[str, Any]:
-        self._ensure_replay()
-        assert self._replay_index is not None  # set together with _replay
-        return self._replay_index
-
-    def _build_replay_index_json(self, replay: VoxelReplay) -> dict[str, Any]:
-        images = self._ensure_store().streams[self.config.image_stream_name]
+        """Scan and keyframe stamps plus what the viewer needs to draw and seek."""
+        replay = self._ensure_replay()
+        store = self._ensure_store()
+        if self._replay_frames_json is None:
+            # Listing every camera stamp is a pass over the image stream, so once.
+            frames: list[float] = []
+            if self.config.image_stream_name in store.list_streams():
+                images = store.streams[self.config.image_stream_name]
+                frames = [round(float(obs.ts), 4) for obs in images]
+            self._replay_frames_json = frames
         payload = replay.index.to_json()
-        # Frame stamps let the viewer ask for exact frames, so its cache hits.
-        payload["frames"] = [round(float(obs.ts), 4) for obs in images]
+        payload["complete"] = self._replay_complete or replay.covers(
+            self._recording_end() - REPLAY_COMPLETE_MARGIN_S
+        )
+        payload["frames"] = self._replay_frames_json
         payload["hfov_deg"] = self._camera_hfov()
-        # The viewer colours replayed voxels itself, on the static map's ramp.
-        final = replay.keyframes.last().data.points_f32()
-        floor = float(np.percentile(final[:, 2], 7)) if len(final) else 0.0
-        payload["height"] = {"floor": floor, "span": float(self.config.height_ramp_span_m)}
+        payload["height"] = {
+            "floor": self._replay_floor,
+            "span": float(self.config.height_ramp_span_m),
+        }
         payload["colors"] = (HEIGHT_COLOR_STOPS / 255.0).round(4).tolist()
         return payload
 
@@ -1352,34 +1569,39 @@ class MemoryWorldModule(Module):
             return output
         return output[:limit] + f"\n... [truncated, {len(output)} chars total]"
 
-    def _add_route_to_result(self, result: MemoryQueryResult) -> None:
-        # Routes are server-owned: only the planner may label one collision-aware.
-        result.route = None
+    # ---- route from the planner --------------------------------------------
+
+    def _on_path(self, path: NavPath) -> None:
+        """Draw the planner's latest route on the active answer. An empty path clears it."""
+        points = [
+            (pose.position.x, pose.position.y, pose.position.z + ROUTE_LIFT_M)
+            for pose in path.poses
+        ]
+        route = (
+            HighlightPath(points=points, label="Route to answer", color="#64ff8f")
+            if len(points) >= 2
+            else None
+        )
         with self._clients_lock:
-            viewer_position = self._viewer_position
-        if result.focus_point is None or viewer_position is None:
-            return
-        try:
-            store = self._ensure_store()
-            if "global_costmap" not in store.list_streams():
+            if route == self._last_route:
                 return
-            costmap = store.streams.global_costmap.last().data
-            route = min_cost_astar(
-                costmap,
-                goal=result.focus_point[:2],
-                start=viewer_position[:2],
+            self._last_route = route
+            active = self._active_query_result
+        logger.info("route from the planner: %s", f"{len(points)} waypoints" if route else "none")
+        if active is None:
+            self._publish_query_result(
+                MemoryQueryResult(answer="Route to the goal" if route else "No route to the goal")
             )
-            if route is None:
-                return
-            points = [(pose.x, pose.y, pose.z + 0.08) for pose in route.poses]
-            if len(points) >= 2:
-                result.route = HighlightPath(
-                    points=points,
-                    label="Route to answer",
-                    color="#64ff8f",
-                )
-        except Exception:
-            logger.exception("failed to build route to memory query result")
+            return
+        with self._clients_lock:
+            self._query_revision += 1
+            payload = dict(
+                active,
+                route=route.model_dump(mode="json") if route is not None else None,
+                revision=self._query_revision,
+            )
+            self._active_query_result = payload
+        self._broadcast(encode_text("query_result", **payload))
 
     def _on_client_message(self, conn: _ClientConn, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
@@ -1431,6 +1653,10 @@ class MemoryWorldModule(Module):
             port=self.config.server_port,
         )
         self._setup_routes()
+        if self.global_map.transport is not None:
+            self.register_disposable(Disposable(self.global_map.subscribe(self._on_global_map)))
+        if self.path.transport is not None:
+            self.register_disposable(Disposable(self.path.subscribe(self._on_path)))
         self._web_server_thread = threading.Thread(
             target=self._web_server.run,
             kwargs={"ssl": True, "ssl_certs_dir": DIMOS_PROJECT_ROOT / "assets" / "teleop_certs"},
@@ -1460,13 +1686,19 @@ class MemoryWorldModule(Module):
             self._ensure_world_cache()
         except Exception:
             logger.exception("world cache build failed")
-        if self.config.build_replay_on_start:
-            self._build_replay()
+        try:
+            self._open_replay()
+        except Exception:
+            logger.exception("opening the recorded timeline failed")
         if self.config.build_image_index_on_start:
             self._build_visual_index()
 
     @rpc
     def stop(self) -> None:
+        with self._map_push_lock:
+            if self._map_push_timer is not None:
+                self._map_push_timer.cancel()
+                self._map_push_timer = None
         try:
             if self._web_server is not None:
                 self._web_server.shutdown()

@@ -32,8 +32,10 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -48,14 +50,19 @@ class MovementManagerConfig(ModuleConfig):
     tele_cmd_vel_scaling: Twist = Twist(Vector3(1, 1, 1), Vector3(1, 1, 1))
 
 
-class MovementManager(Module):
-    """Combine tele_cmd_vel (keyboard controls) and nav_cmd_vel in a sane way, output cmd_vel"""
+class MovementManager(Module, NavigationInterface):
+    """Combine tele_cmd_vel (keyboard controls) and nav_cmd_vel in a sane way, output cmd_vel.
+
+    Also the navigation interface of the planner it feeds: goals go out on the
+    goal topic and arrival comes back on goal_reached from the path follower.
+    """
 
     config: MovementManagerConfig
 
     clicked_point: In[PointStamped]
     nav_cmd_vel: In[Twist]
     tele_cmd_vel: In[Twist]
+    goal_reached: In[Bool]
 
     goal: Out[PointStamped]
     way_point: Out[PointStamped]
@@ -67,6 +74,8 @@ class MovementManager(Module):
         self._lock = threading.Lock()
         self._teleop_active = False
         self._last_teleop_time = 0.0
+        self._state = NavigationState.IDLE
+        self._goal_reached = False
 
     @rpc
     def start(self) -> None:
@@ -74,6 +83,8 @@ class MovementManager(Module):
         self.register_disposable(Disposable(self.clicked_point.subscribe(self._on_click)))
         self.register_disposable(Disposable(self.nav_cmd_vel.subscribe(self._on_nav)))
         self.register_disposable(Disposable(self.tele_cmd_vel.subscribe(self._on_teleop)))
+        if self.goal_reached.transport is not None:
+            self.register_disposable(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
 
     @rpc
     def stop(self) -> None:
@@ -94,10 +105,52 @@ class MovementManager(Module):
             return
 
         logger.debug("Goal", x=round(msg.x, 1), y=round(msg.y, 1), z=round(msg.z, 1))
+        with self._lock:
+            self._state = NavigationState.FOLLOWING_PATH
+            self._goal_reached = False
         self.way_point.publish(msg)
         self.goal.publish(msg)
 
+    def _on_goal_reached(self, msg: Bool) -> None:
+        if not msg.data:
+            return
+        with self._lock:
+            self._state = NavigationState.IDLE
+            self._goal_reached = True
+
+    @rpc
+    def set_goal(self, goal: PoseStamped) -> bool:
+        self._on_click(
+            PointStamped(
+                ts=goal.ts or time.time(),
+                frame_id=goal.frame_id,
+                x=goal.position.x,
+                y=goal.position.y,
+                z=goal.position.z,
+            )
+        )
+        with self._lock:
+            return self._state == NavigationState.FOLLOWING_PATH
+
+    @rpc
+    def get_state(self) -> NavigationState:
+        with self._lock:
+            return self._state
+
+    @rpc
+    def is_goal_reached(self) -> bool:
+        with self._lock:
+            return self._goal_reached
+
+    @rpc
+    def cancel_goal(self) -> bool:
+        self._cancel_goal()
+        return True
+
     def _cancel_goal(self) -> None:
+        with self._lock:
+            self._state = NavigationState.IDLE
+            self._goal_reached = False
         self.stop_movement.publish(Bool(data=True))
         # NOTE: this NaN goal is more of a safety fallback.
         # It can be REALLY bad if a robot is supposed to stop moving but wont

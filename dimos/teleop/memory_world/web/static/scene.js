@@ -950,6 +950,7 @@ export class WorldScene {
         });
         const points = new THREE.Points(geometry, material);
         points.frustumCulled = false; // the bounding sphere would be recomputed on every compaction
+        points.visible = !this._replayGroup.visible;
         this._pointsObj = points;
         this._frameRotate.add(this._pointsObj);
         this._highlightedVoxels = [];

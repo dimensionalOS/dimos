@@ -16,6 +16,7 @@ import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms } from '/sta
 const OP_ADD = 1;
 const OP_REMOVE = 2;
 const SEGMENT_CACHE = 6;            // parsed segments kept, ~2 MB each
+const GROWTH_POLL_MS = 5000;        // how often a still-recording timeline is re-read
 const FRAME_TOLERANCE_S = 0.25;     // no camera frame closer than this: show none
 const FRESH_COLOR = [1.0, 0.55, 0.2];
 
@@ -181,11 +182,47 @@ export class ReplayController {
         this.layer = new ReplayLayer(this.index.voxel_size, this.index.height, this.index.colors);
         this.scene.attachReplay(this.layer, this.index.hfov_deg);
         this._bindUi();
+        this._watchGrowth();
         this.diag('replay_index_loaded', {
             scans: this.index.scans.length, keyframes: this.index.keyframes.length,
             frames: this.index.frames.length, seconds: Number((this.t1 - this.t0).toFixed(1)),
         });
         return this.index;
+    }
+
+    /** While the mapper is still recording the timeline, pick up its new scans every few seconds. */
+    _watchGrowth() {
+        if (this.index.complete || this._growthTimer) return;
+        this._growthTimer = setTimeout(async () => {
+            this._growthTimer = null;
+            try {
+                await this.refresh();
+            } catch (e) {
+                this.diag('replay_refresh_failed', { error: String(e.message || e) });
+            }
+            this._watchGrowth();
+        }, GROWTH_POLL_MS);
+    }
+
+    /** Re-read the index; the segment that was still open is fetched again on the next seek. */
+    async refresh() {
+        const response = await fetch(`${this.baseUrl}/replay/index`);
+        if (!response.ok) throw new Error(`replay index: ${response.status}`);
+        const index = await response.json();
+        index.keyframeScans = index.keyframes.map((k) => k.scan);
+        const before = this.index;
+        this.index = index;
+        this.t0 = index.scans[0];
+        this.t1 = index.scans[index.scans.length - 1];
+        this.layer.material.uniforms.floorZ.value = index.height.floor;
+        if (index.scans.length > before.scans.length) {
+            const open = before.keyframes.length - 1;
+            this.segments.delete(open);
+            if (this.segment && this.segment.number === open) this.segment = null;
+            if (this.ui) this.ui.scrub.max = index.scans.length - 1;
+            this._updateTimeline();
+            this.diag('replay_index_grew', { scans: index.scans.length, complete: index.complete });
+        }
     }
 
     // ---- seeking -------------------------------------------------------------
@@ -379,7 +416,8 @@ export class ReplayController {
     play(on = !this.playing) {
         this.playing = on && Boolean(this.index);
         if (this.playing) {
-            if (this.targetScan >= this.index.scans.length - 1) this.seekScan(0);
+            // Only a finished timeline wraps to the start; a growing one keeps playing at its edge.
+            if (this.index.complete && this.targetScan >= this.index.scans.length - 1) this.seekScan(0);
             this._playTime = this.index.scans[Math.max(0, this.targetScan)];
             this._playClock = performance.now();
         }
@@ -392,7 +430,7 @@ export class ReplayController {
         const now = performance.now();
         this._playTime += (now - this._playClock) / 1000;
         this._playClock = now;
-        if (this._playTime >= this.t1) { this._playTime = this.t1; this.playing = false; }
+        if (this._playTime >= this.t1) { this._playTime = this.t1; if (this.index.complete) this.playing = false; }
         const scan = this.scanAt(this._playTime);
         if (scan !== this.targetScan) this.seekScan(scan);
         else this._updateTimeline();

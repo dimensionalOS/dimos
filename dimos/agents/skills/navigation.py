@@ -20,7 +20,7 @@ from reactivex.disposable import Disposable
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.models.qwen.bbox import BBox
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -38,11 +38,17 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+class NavigationSkillContainerConfig(ModuleConfig):
+    # Semantic map matches below this similarity are not navigated to.
+    similarity_threshold: float = 0.23
+
+
 class NavigationSkillContainer(Module):
+    config: NavigationSkillContainerConfig
+
     _latest_image: Image | None = None
     _latest_odom: PoseStamped | None = None
     _skill_started: bool = False
-    _similarity_threshold: float = 0.23
 
     _spatial_memory: SpatialMemorySpec
     _navigation: NavigationInterfaceSpec
@@ -54,17 +60,16 @@ class NavigationSkillContainer(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._skill_started = False
-
-        # Here to prevent unwanted imports in the file.
-        from dimos.models.vl.qwen import QwenVlModel
-
-        self._vl_model = QwenVlModel()
+        self._vl_model: Any = None
 
     @rpc
     def start(self) -> None:
         super().start()
-        self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
-        self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
+        # Both are optional: a replayed memory has no live camera or odometry.
+        if self.color_image.transport is not None:
+            self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
+        if self.odom.transport is not None:
+            self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
         self._skill_started = True
 
     @rpc
@@ -231,6 +236,11 @@ class NavigationSkillContainer(Module):
         if self._latest_image is None:
             return None
 
+        if self._vl_model is None:
+            # Here to prevent unwanted imports in the file.
+            from dimos.models.vl.qwen import QwenVlModel
+
+            self._vl_model = QwenVlModel()
         return get_object_bbox_from_image(self._vl_model, self._latest_image, query)
 
     def _navigate_using_semantic_map(self, query: str) -> str:
@@ -266,9 +276,9 @@ class NavigationSkillContainer(Module):
 
     def _get_goal_pose_from_result(self, result: dict[str, Any]) -> PoseStamped | None:
         similarity = 1.0 - (result.get("distance") or 1)
-        if similarity < self._similarity_threshold:
+        if similarity < self.config.similarity_threshold:
             logger.warning(
-                f"Match found but similarity score ({similarity:.4f}) is below threshold ({self._similarity_threshold})"
+                f"Match found but similarity score ({similarity:.4f}) is below threshold ({self.config.similarity_threshold})"
             )
             return None
 
@@ -278,10 +288,11 @@ class NavigationSkillContainer(Module):
         first = metadata[0]
         pos_x = first.get("pos_x", 0)
         pos_y = first.get("pos_y", 0)
+        pos_z = first.get("pos_z", 0)
         theta = first.get("rot_z", 0)
 
         return PoseStamped(
-            position=make_vector3(pos_x, pos_y, 0),
+            position=make_vector3(pos_x, pos_y, pos_z),
             orientation=Quaternion.from_euler(make_vector3(0, 0, theta)),
             frame_id="map",
         )

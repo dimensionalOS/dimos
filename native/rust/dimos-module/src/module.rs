@@ -68,6 +68,15 @@ pub(crate) fn init_tracing() {
 const INPUT_CHANNEL_CAPACITY: usize = 128;
 const PUBLISH_CHANNEL_CAPACITY: usize = 32;
 
+/// Per-module transport settings that ride beside the topics on stdin.
+#[derive(Clone, Debug, Default)]
+pub struct IoSettings {
+    /// Queue depth per input port. Ports not listed keep `INPUT_CHANNEL_CAPACITY`.
+    pub queues: HashMap<String, usize>,
+    /// Seconds of history each tf edge keeps. `None` keeps the framework default.
+    pub tf_window_secs: Option<f64>,
+}
+
 // Each input() call produces a TypedRoute that decodes its message type
 // and forwards it to the right Input's mpsc channel.
 pub(crate) trait Route: Send + Sync {
@@ -78,6 +87,7 @@ struct TypedRoute<T: Send + 'static> {
     topic: String,
     decode: fn(&[u8]) -> io::Result<T>,
     sender: mpsc::Sender<T>,
+    queue_cap: usize,
     drop_count: AtomicU64,
     last_log_ns: AtomicU64,
 }
@@ -98,7 +108,7 @@ impl<T: Send + 'static> Route for TypedRoute<T> {
                         warn!(
                             topic = %self.topic,
                             dropped = n,
-                            queue_cap = INPUT_CHANNEL_CAPACITY,
+                            queue_cap = self.queue_cap,
                             "Dispatcher could not send message because handler was full.",
                         );
                     }
@@ -195,6 +205,38 @@ pub(crate) fn parse_config_value<C: DeserializeOwned + Serialize>(
     enforce_one_to_one(config_value, &config)?;
 
     Ok((topics, config))
+}
+
+/// The optional `queues` and `tf_window_secs` entries of a module's stdin section.
+pub(crate) fn parse_io_settings(json: &serde_json::Value) -> io::Result<IoSettings> {
+    let mut settings = IoSettings::default();
+    if let Some(queues) = json.get("queues").filter(|v| !v.is_null()) {
+        let entries = queues.as_object().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "`queues` must be a port -> depth object",
+            )
+        })?;
+        for (port, depth) in entries {
+            let depth = depth.as_u64().filter(|d| *d > 0).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("`queues.{port}` must be a positive integer"),
+                )
+            })?;
+            settings.queues.insert(port.clone(), depth as usize);
+        }
+    }
+    if let Some(window) = json.get("tf_window_secs").filter(|v| !v.is_null()) {
+        let secs = window.as_f64().filter(|s| *s > 0.0).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "`tf_window_secs` must be a positive number",
+            )
+        })?;
+        settings.tf_window_secs = Some(secs);
+    }
+    Ok(settings)
 }
 
 fn object_keys(value: &serde_json::Value) -> BTreeSet<String> {
@@ -312,16 +354,18 @@ pub struct Builder {
     // One publish queue per output channel, drained by its own worker.
     outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
     tf: Option<crate::tf::Tf>,
+    settings: IoSettings,
 }
 
 impl Builder {
-    pub(crate) fn new(topics: HashMap<String, String>) -> Self {
+    pub(crate) fn new(topics: HashMap<String, String>, settings: IoSettings) -> Self {
         Self {
             topics,
             requested: BTreeSet::new(),
             routes: HashMap::new(),
             outputs: Vec::new(),
             tf: None,
+            settings,
         }
     }
 
@@ -353,10 +397,17 @@ impl Builder {
 
     fn add_route<T: Send + 'static>(
         &mut self,
+        port: &str,
         topic: &str,
         decode: fn(&[u8]) -> io::Result<T>,
     ) -> mpsc::Receiver<T> {
-        let (tx, rx) = mpsc::channel(INPUT_CHANNEL_CAPACITY);
+        let queue_cap = self
+            .settings
+            .queues
+            .get(port)
+            .copied()
+            .unwrap_or(INPUT_CHANNEL_CAPACITY);
+        let (tx, rx) = mpsc::channel(queue_cap);
         self.routes
             .entry(topic.to_string())
             .or_default()
@@ -364,6 +415,7 @@ impl Builder {
                 topic: topic.to_string(),
                 decode,
                 sender: tx,
+                queue_cap,
                 drop_count: AtomicU64::new(0),
                 last_log_ns: AtomicU64::new(0),
             }));
@@ -382,7 +434,7 @@ impl Builder {
         decode: fn(&[u8]) -> io::Result<T>,
     ) -> Input<T> {
         let topic = self.topic_for(port);
-        let receiver = self.add_route(&topic, decode);
+        let receiver = self.add_route(port, &topic, decode);
         Input { topic, receiver }
     }
 
@@ -404,7 +456,7 @@ impl Builder {
         encode: fn(&T) -> Vec<u8>,
     ) -> Io<T> {
         let topic = self.topic_for(port);
-        let receiver = self.add_route(&topic, decode);
+        let receiver = self.add_route(port, &topic, decode);
         let sender = self.add_publisher(&topic);
         Io {
             topic,
@@ -424,8 +476,11 @@ impl Builder {
         }
         let topic = self.topic_for("tf");
         let sender = self.add_publisher(&topic);
-        let (tf, route) =
-            crate::tf::tf_subscription(topic.clone(), crate::tf::DEFAULT_TF_WINDOW_SECS, sender);
+        let window_secs = self
+            .settings
+            .tf_window_secs
+            .unwrap_or(crate::tf::DEFAULT_TF_WINDOW_SECS);
+        let (tf, route) = crate::tf::tf_subscription(topic.clone(), window_secs, sender);
         self.routes.entry(topic).or_default().push(route);
         self.tf = Some(tf.clone());
         tf
@@ -515,6 +570,7 @@ where
 pub(crate) async fn run_module_core<M, T>(
     transport: Arc<T>,
     topics: HashMap<String, String>,
+    settings: IoSettings,
     config: M::Config,
     mut shutdown: watch::Receiver<bool>,
 ) -> io::Result<()>
@@ -522,7 +578,7 @@ where
     M: Module,
     T: Transport,
 {
-    let mut builder = Builder::new(topics);
+    let mut builder = Builder::new(topics, settings);
     let mut module = M::build(&mut builder, config);
     builder.enforce_topics_match_ports()?;
 
@@ -571,6 +627,7 @@ where
     T: Transport,
 {
     let (topics, config) = parse_config_value::<M::Config>(&json)?;
+    let settings = parse_io_settings(&json)?;
     validate_config(&config)?;
     transport.set_publisher_qos(json.get("qos").unwrap_or(&serde_json::Value::Null));
 
@@ -583,7 +640,7 @@ where
         }
     });
 
-    run_module_core::<M, T>(Arc::new(transport), topics, config, rx).await
+    run_module_core::<M, T>(Arc::new(transport), topics, settings, config, rx).await
 }
 
 #[cfg(unix)]
@@ -910,7 +967,7 @@ mod tests {
     }
 
     fn builder_with_topics(pairs: &[(&str, &str)]) -> Builder {
-        Builder::new(topics(pairs))
+        Builder::new(topics(pairs), IoSettings::default())
     }
 
     #[test]
@@ -1063,7 +1120,10 @@ mod tests {
         // set publishing to take 200ms
         publish_delay_ms.store(200, Ordering::Relaxed);
 
-        let mut builder = Builder::new(topics(&[("data", "/data"), ("out", "/out")]));
+        let mut builder = Builder::new(
+            topics(&[("data", "/data"), ("out", "/out")]),
+            IoSettings::default(),
+        );
         let _input = builder.input("data", |b| Ok(b.to_vec()));
         let output = builder.output("out", |b: &Vec<u8>| b.clone());
 
@@ -1103,7 +1163,10 @@ mod tests {
         let inbound_notify = transport.inbound_notify.clone();
         let dispatch_entered = transport.dispatch_entered.clone();
 
-        let mut builder = Builder::new(topics(&[("slow", "/slow"), ("out", "/out")]));
+        let mut builder = Builder::new(
+            topics(&[("slow", "/slow"), ("out", "/out")]),
+            IoSettings::default(),
+        );
 
         // block the delivery loop in decode until the test releases it
         static RECV_RELEASE: AtomicBool = AtomicBool::new(false);
@@ -1165,7 +1228,10 @@ mod tests {
             delivered: Arc::clone(&delivered),
         });
 
-        let mut builder = Builder::new(topics(&[("block_out", "/block"), ("fast_out", "/fast")]));
+        let mut builder = Builder::new(
+            topics(&[("block_out", "/block"), ("fast_out", "/fast")]),
+            IoSettings::default(),
+        );
         let block_out = builder.output("block_out", |b: &Vec<u8>| b.clone());
         let fast_out = builder.output("fast_out", |b: &Vec<u8>| b.clone());
         let _pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
@@ -1258,6 +1324,7 @@ mod tests {
             topic: "/test".to_string(),
             decode: |b| Ok(b.to_vec()),
             sender: tx,
+            queue_cap: 1,
             drop_count: AtomicU64::new(0),
             last_log_ns: AtomicU64::new(0),
         };
@@ -1301,7 +1368,7 @@ mod tests {
 
         #[tokio::test]
         async fn io_field_is_wired_to_its_handler_and_can_publish() {
-            let mut builder = Builder::new(topics(&[("cmd", "/robot/cmd")]));
+            let mut builder = Builder::new(topics(&[("cmd", "/robot/cmd")]), IoSettings::default());
             let mut echo = Echo::build(&mut builder, NoConfig);
 
             builder.routes["/robot/cmd"][0].try_dispatch(b"ping");
@@ -1313,5 +1380,44 @@ mod tests {
             assert_eq!(topic, "/robot/cmd");
             assert_eq!(rx.recv().await.expect("handler reply"), b"pong");
         }
+    }
+}
+
+#[cfg(test)]
+mod io_settings_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn stdin_section_carries_queue_depths_and_tf_window() {
+        let settings =
+            parse_io_settings(&json!({"queues": {"lidar": 3}, "tf_window_secs": 60.0})).unwrap();
+        assert_eq!(settings.queues.get("lidar"), Some(&3));
+        assert_eq!(settings.tf_window_secs, Some(60.0));
+        assert!(parse_io_settings(&json!({})).unwrap().queues.is_empty());
+        assert_eq!(
+            parse_io_settings(&json!({"queues": null, "tf_window_secs": null}))
+                .unwrap()
+                .tf_window_secs,
+            None
+        );
+        assert!(parse_io_settings(&json!({"queues": {"lidar": 0}})).is_err());
+        assert!(parse_io_settings(&json!({"tf_window_secs": -1.0})).is_err());
+    }
+
+    #[test]
+    fn a_listed_port_queues_that_many_messages() {
+        let mut settings = IoSettings::default();
+        settings.queues.insert("lidar".to_string(), 2);
+        let topics = HashMap::from([("lidar".to_string(), "/lidar".to_string())]);
+        let mut builder = Builder::new(topics, settings);
+        let mut input = builder.input::<Vec<u8>>("lidar", |bytes| Ok(bytes.to_vec()));
+        let route = &builder.routes["/lidar"][0];
+        for _ in 0..3 {
+            route.try_dispatch(b"x");
+        }
+        assert!(input.receiver.try_recv().is_ok());
+        assert!(input.receiver.try_recv().is_ok());
+        assert!(input.receiver.try_recv().is_err());
     }
 }

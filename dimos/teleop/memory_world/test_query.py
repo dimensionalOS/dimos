@@ -23,6 +23,7 @@ import pytest
 import pytest_mock
 
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.teleop.memory_world.module import MemoryWorldModule
 from dimos.teleop.memory_world.query import MemoryQueryResult
 
@@ -84,13 +85,24 @@ def test_bare_store_name_resolves_through_data_registry(
         module.stop()
 
 
-def test_lidar_cloud_failure_is_reported(
-    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+def test_pack_cloud_clips_to_the_height_slab_and_caps_points(
+    memory_world: MemoryWorldModule,
 ) -> None:
-    monkeypatch.setattr(memory_world, "_build_voxel_cloud_from_lidar", lambda: None)
+    memory_world.config.map_z_min = 0.0
+    memory_world.config.map_z_max = 1.0
+    memory_world.config.max_points = 2
+    xyz = np.asarray(
+        [[0, 0, -1.0], [1, 0, 0.5], [2, 0, 0.6], [3, 0, 0.7], [4, 0, 5.0]], dtype=np.float32
+    )
 
-    with pytest.raises(RuntimeError, match="produced no cloud"):
-        memory_world._build_cloud()
+    packed = memory_world._pack_cloud(xyz)
+
+    assert packed is not None
+    header, payload = packed
+    assert header["n"] == 2
+    kept = np.frombuffer(payload, dtype=np.float32, count=6).reshape(2, 3)
+    assert kept[:, 0].tolist() == [1.0, 3.0]
+    assert memory_world._pack_cloud(np.asarray([[0, 0, 9.0]], dtype=np.float32)) is None
 
 
 def test_top_down_map_uses_the_rendered_cloud(memory_world: MemoryWorldModule) -> None:
@@ -214,35 +226,50 @@ def test_viewer_pose_accepts_only_finite_xyz(memory_world: MemoryWorldModule) ->
     assert memory_world._viewer_position == (1.0, 2.5, 3.0)
 
 
-def test_route_is_generated_by_server(
-    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+def test_planner_path_becomes_the_route_of_the_active_answer(
+    memory_world: MemoryWorldModule,
 ) -> None:
-    planned_path = SimpleNamespace(
-        poses=[SimpleNamespace(x=1.0, y=2.0, z=0.0), SimpleNamespace(x=3.0, y=4.0, z=0.0)]
-    )
-    costmap_stream = SimpleNamespace(last=lambda: SimpleNamespace(data="costmap"))
-    store = SimpleNamespace(
-        list_streams=lambda: ["global_costmap"],
-        streams=SimpleNamespace(global_costmap=costmap_stream),
-    )
-    monkeypatch.setattr(memory_world, "_ensure_store", lambda: store)
-    monkeypatch.setattr(
-        "dimos.teleop.memory_world.module.min_cost_astar",
-        lambda costmap, *, goal, start: planned_path,
-    )
-    memory_world._viewer_position = (0.0, 0.0, 0.0)
-    result = MemoryQueryResult.model_validate(
-        {
-            "answer": "Route ready",
-            "focus_point": [3, 4, 0],
-            "route": {"points": [[90, 90, 0], [91, 91, 0]]},
-        }
+    sent: list[str] = []
+    memory_world._broadcast = sent.append  # type: ignore[method-assign]
+    memory_world._publish_query_result(MemoryQueryResult(answer="Fountain found"))
+    path = SimpleNamespace(
+        poses=[
+            SimpleNamespace(position=SimpleNamespace(x=1.0, y=2.0, z=0.0)),
+            SimpleNamespace(position=SimpleNamespace(x=3.0, y=4.0, z=0.0)),
+        ]
     )
 
-    memory_world._add_route_to_result(result)
+    memory_world._on_path(path)  # type: ignore[arg-type]
 
-    assert result.route is not None
-    assert result.route.points == [(1.0, 2.0, 0.08), (3.0, 4.0, 0.08)]
+    assert memory_world._active_query_result is not None
+    route = memory_world._active_query_result["route"]
+    assert route["points"] == [[1.0, 2.0, 0.08], [3.0, 4.0, 0.08]]
+    assert memory_world._active_query_result["answer"] == "Fountain found"
+    assert len(sent) == 2
+
+    memory_world._on_path(SimpleNamespace(poses=[]))  # type: ignore[arg-type]
+
+    assert memory_world._active_query_result["route"] is None
+    assert len(sent) == 3
+
+
+def test_later_answers_keep_the_planner_route(memory_world: MemoryWorldModule) -> None:
+    memory_world._broadcast = lambda message: None  # type: ignore[method-assign]
+    path = SimpleNamespace(
+        poses=[
+            SimpleNamespace(position=SimpleNamespace(x=0.0, y=0.0, z=0.0)),
+            SimpleNamespace(position=SimpleNamespace(x=1.0, y=1.0, z=0.0)),
+        ]
+    )
+    memory_world._on_path(path)  # type: ignore[arg-type]
+
+    memory_world._publish_query_result(MemoryQueryResult(answer="Another answer"))
+
+    assert memory_world._active_query_result is not None
+    assert memory_world._active_query_result["route"]["points"] == [
+        [0.0, 0.0, 0.08],
+        [1.0, 1.0, 0.08],
+    ]
 
 
 def test_height_colours_stay_in_the_blue_band(memory_world: MemoryWorldModule) -> None:
@@ -271,14 +298,12 @@ def test_concurrent_clients_build_the_world_once(
 
     builds = []
 
-    def slow_cloud() -> tuple[dict[str, object], bytes]:
+    def slow_poses() -> tuple[tuple[dict[str, object], bytes], list[bytes]]:
         builds.append(threading.get_ident())
         time.sleep(0.05)
-        positions = np.asarray([[0.0, 0.0, 0.0]], dtype=np.float32)
-        return {"n": 1}, positions.tobytes() + np.zeros((1, 3), dtype=np.uint8).tobytes()
+        return ({"n": 0}, b""), []
 
-    monkeypatch.setattr(memory_world, "_build_cloud", slow_cloud)
-    monkeypatch.setattr(memory_world, "_build_image_poses", lambda: (({"n": 0}, b""), []))
+    monkeypatch.setattr(memory_world, "_build_image_poses", slow_poses)
     monkeypatch.setattr(memory_world, "_build_trail", lambda: ({"n": 0}, b""))
 
     threads = [threading.Thread(target=memory_world._ensure_world_cache) for _ in range(4)]
@@ -288,4 +313,50 @@ def test_concurrent_clients_build_the_world_once(
         thread.join()
 
     assert len(builds) == 1
-    assert memory_world._cached_top_down is not None
+    assert memory_world._cached_image_poses is not None
+
+
+def _map(points: list[list[float]], ts: float) -> PointCloud2:
+    return PointCloud2.from_numpy(np.asarray(points, np.float32), frame_id="odom", timestamp=ts)
+
+
+def test_mapper_snapshots_become_the_timeline(memory_world: MemoryWorldModule) -> None:
+    memory_world.config.replay_keyframe_interval_s = 1.0
+
+    memory_world._on_global_map(_map([[0, 0, 0], [1, 0, 0]], 10.0))
+    memory_world._on_global_map(_map([[0, 0, 0], [2, 0, 0]], 11.5))
+
+    index = memory_world._replay_index_json()
+    assert index["scans"] == [10.0, 11.5]
+    assert [keyframe["scan"] for keyframe in index["keyframes"]] == [0, 1]
+    assert index["complete"] is False
+    assert memory_world._replay_progress == "recording"
+    assert memory_world._ensure_replay().segment(1)[0]["scans"] == [
+        {"index": 1, "ts": 11.5, "n": 2}
+    ]
+
+
+def test_a_timeline_covering_the_recording_is_kept_across_starts(tmp_path: Path) -> None:
+    db_path = tmp_path / "recording.db"
+    store = SqliteStore(path=str(db_path))
+    store.start()
+    store.stream("lidar", PointCloud2).append(_map([[0, 0, 0]], 11.0), ts=11.0)
+    store.stop()
+
+    first = MemoryWorldModule(store_path=str(db_path))
+    try:
+        first._on_global_map(_map([[0, 0, 0]], 10.0))
+        first._on_global_map(_map([[0, 0, 0], [1, 0, 0]], 11.0))
+        assert first._replay_index_json()["complete"] is True
+    finally:
+        first.stop()
+
+    second = MemoryWorldModule(store_path=str(db_path))
+    try:
+        second._open_replay()
+        assert second._replay_progress == "ready"
+        second._on_global_map(_map([[5, 5, 5]], 10.0))
+        assert second._recorder is None
+        assert second._replay_index_json()["scans"] == [10.0, 11.0]
+    finally:
+        second.stop()

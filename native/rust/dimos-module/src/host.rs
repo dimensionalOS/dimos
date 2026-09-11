@@ -32,8 +32,8 @@ use tracing::{error, info, warn};
 
 use crate::lcm::LcmTransport;
 use crate::module::{
-    init_tracing, log_wiring, parse_config_value, read_launch_config, run_module_core,
-    validate_config, Module,
+    init_tracing, log_wiring, parse_config_value, parse_io_settings, read_launch_config,
+    run_module_core, validate_config, Module,
 };
 use crate::transport::{SharedTransport, Transport};
 use crate::zenoh::{ZenohTransport, SESSION_KEY};
@@ -93,6 +93,7 @@ impl ModuleEntry {
 
 fn prepare_module<M: Module>(section: &Value) -> io::Result<Prepared> {
     let (topics, config) = parse_config_value::<M::Config>(section)?;
+    let settings = parse_io_settings(section)?;
     validate_config(&config)?;
     let module_topics = topics.clone();
     Ok(Prepared {
@@ -101,6 +102,7 @@ fn prepare_module<M: Module>(section: &Value) -> io::Result<Prepared> {
             Box::pin(run_module_core::<M, SharedTransport>(
                 transport,
                 module_topics,
+                settings,
                 config,
                 shutdown,
             ))
@@ -333,6 +335,8 @@ fn prepare_all(spec: &HostSpec, stdin: &Value) -> io::Result<Vec<Prepared>> {
         let merged = json!({
             "topics": merge_topics(defaults.get(entry.name), section.get("topics")),
             "config": section.get("config").cloned().unwrap_or(Value::Null),
+            "queues": section.get("queues").cloned().unwrap_or(json!({})),
+            "tf_window_secs": section.get("tf_window_secs").cloned(),
         });
         let one = (entry.prepare)(&merged)
             .map_err(|e| invalid(format!("module `{}`: {e}", entry.name)))?;

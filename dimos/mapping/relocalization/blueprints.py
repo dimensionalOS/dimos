@@ -30,61 +30,14 @@ badly are the same bug.
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
-from dimos.memory.replay import ReplayStream
-from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.utils.data import resolve_named_path
-from dimos.utils.logging_config import setup_logger
+from dimos.memory.recording_player import RecordingPlayer
 from dimos.visualization.vis_module import vis_module
-
-logger = setup_logger()
 
 # The walk, and a premap built from the same walk's second half. Overlapping
 # but not identical: the relocalizer has to place the live scans, not
 WORLD = "odom"
-
-
-class RecordingPlayerConfig(ModuleConfig):
-    dataset: str = "go2_mid360_sf_office_outdoors_2026-05-29"  # recording stem or path; `.db`, LFS-fetched on miss
-    stream: str = "pointlio_lidar"
-    speed: float = 1.0
-    seek: float | None = None
-    duration: float | None = None
-
-
-class RecordingPlayer(Module):
-    """Replay a recording's lidar and tf exactly as the sensors published them."""
-
-    config: RecordingPlayerConfig
-    lidar: Out[PointCloud2]
-    tf: Out[TFMessage]
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-        path = resolve_named_path(self.config.dataset, ".db")
-        store = self.register_disposable(SqliteStore(path=str(path), must_exist=True))
-        store.start()
-        replay = store.replay(
-            speed=self.config.speed,
-            seek=self.config.seek,
-            duration=self.config.duration,
-        )
-        lidar: ReplayStream[PointCloud2] = replay.stream(self.config.stream)
-        logger.info(
-            f"Replaying {path.name}:{self.config.stream} "
-            f"({lidar.count()} frames at {self.config.speed}x)"
-        )
-        self.register_disposable(lidar.observable().subscribe(self.lidar.publish))
-
-        tf: ReplayStream[TFMessage] = replay.stream("tf")
-        self.register_disposable(tf.observable().subscribe(self.tf.publish))
 
 
 def _fine_points(cloud: Any) -> Any:

@@ -10,21 +10,25 @@ The registered blueprint starts the viewer, MCP server, and MCP agent together:
 
 ```bash
 uv run dimos run memory-world-agent \
-  --store-path hk_building_park.db \
+  --store-path recording.db \
+  --dataset recording.db \
   --background-mode passthrough
 ```
+
+The recording is opened twice: the viewer reads it, and a recording player
+replays its lidar and tf into the ray tracing mapper and the MLS planner, so
+the voxel map and the routes come from the same modules a robot runs.
 
 Set the API key required by the configured model, then run `uv run dimos
 humancli` in another terminal. The agent analyzes mem2 streams in a time-limited
 subprocess and sends only validated result geometry to the viewer. Answers can
 include highlighted regions and points, historical evidence paths, supporting
-image observations, and a collision-aware route when the recording contains a
-`global_costmap` stream.
+image observations, and the route the MLS planner finds from the robot's last
+recorded pose to a navigation goal.
 
-Useful configuration flags include `--voxel-size`, `--max-points`,
-`--n-voxel-scans`, `--n-image-markers`, and
-`--background-mode {black,passthrough}`. Set `--n-voxel-scans 0` to consume
-every lidar frame.
+Useful configuration flags include `--speed` (replay rate), `--max-points`,
+`--map-z-min`, `--map-z-max`, `--n-image-markers`, and
+`--background-mode {black,passthrough}`.
 
 ## Viewing in VR
 

@@ -204,8 +204,18 @@ class Store(Configurable, CompositeResource):
         return list(self._streams.keys())
 
     def summary(self) -> str:
-        """One line per stream — name, count, ts range. See :meth:`Stream.summary`."""
-        return "\n".join(stream.summary() for _, stream in self.streams.items())
+        """One line per stream — name, count, ts range. See :meth:`Stream.summary`.
+
+        A stream whose payload type this build cannot load is listed as
+        unavailable instead of failing the whole summary.
+        """
+        lines = []
+        for name in self.list_streams():
+            try:
+                lines.append(self.stream(name).summary())
+            except Exception as error:
+                lines.append(f"{name}: unavailable ({error})")
+        return "\n".join(lines)
 
     def delete_stream(self, name: str) -> None:
         """Delete a stream by name (from cache and underlying storage)."""

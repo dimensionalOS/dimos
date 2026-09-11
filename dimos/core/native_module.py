@@ -130,6 +130,11 @@ class NativeModuleConfig(ModuleConfig):
     auto_build: bool = False
 
     stdin_config: bool = False
+    # Queue depth per input port, for a module allowed to lag its publishers
+    # such as a mapper fed by a fast replay. Unlisted ports keep the native default.
+    input_queues: dict[str, int] = Field(default_factory=dict)
+    # Seconds of transform history the module keeps. None keeps the native default.
+    tf_window_s: float | None = None
 
     cli_exclude: frozenset[str] = frozenset()
     cli_name_override: dict[str, str] = Field(default_factory=dict)
@@ -278,6 +283,10 @@ class NativeModule(Module):
         qos = self._collect_output_qos()
         if qos:
             blob["qos"] = qos
+        if self.config.input_queues:
+            blob["queues"] = dict(self.config.input_queues)
+        if self.config.tf_window_s is not None:
+            blob["tf_window_secs"] = self.config.tf_window_s
         return json.dumps(blob).encode() + b"\n"
 
     @rpc

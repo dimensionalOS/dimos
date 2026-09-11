@@ -12,32 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Voxel replay: keyframes plus per-scan add/remove diffs, stored in the recording.
+"""Voxel replay: keyframes plus add/remove diffs, stored in the recording.
 
-Scrubbing a timeline needs the voxel map *as it was* at any moment. Rebuilding
-it from raw scans is far too slow for that, so two streams are written into the
-recording once:
+Scrubbing a timeline needs the voxel map *as it was* at any moment. The ray
+tracing mapper publishes its global map as the recording replays, and every
+snapshot is folded into two streams of the recording:
 
 ``voxel_keyframe``
     The whole voxel set, one PointCloud2 every ``keyframe_interval_s``.
 ``voxel_diff``
-    One PointCloud2 per lidar scan holding only the voxels that scan added
-    (tag ``TAG_ADDED``) or removed (tag ``TAG_REMOVED``).
+    One PointCloud2 per snapshot holding only the voxels it added (tag
+    ``TAG_ADDED``) or removed (tag ``TAG_REMOVED``) since the previous one.
 
 Any moment is then the nearest earlier keyframe plus the diffs up to it, and a
 viewer that already shows some moment reaches a neighbouring one by applying
 (or un-applying, since a diff is its own inverse with the tags swapped) a few
-diffs. Voxels come from the same :class:`PackedVoxels` grid the static map is
-built with, so the replayed map converges on the map the viewer shows anyway.
-
-Run ``python -m dimos.teleop.memory_world.replay <recording.db>`` to build the
-streams ahead of time; the module builds them on first use otherwise.
+diffs. A timeline that covers the whole recording is kept across restarts.
 """
 
 from __future__ import annotations
 
-import argparse
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 import gzip
 import json
@@ -57,165 +52,98 @@ DIFF_STREAM = "voxel_diff"
 KEYFRAME_STREAM = "voxel_keyframe"
 TAG_ADDED = 1
 TAG_REMOVED = 2
-FORMAT_VERSION = 1
+FORMAT_VERSION = 3
 
 
-class ReplayGrid:
-    """A column-carving voxel set whose removals have hysteresis.
-
-    Same packed sorted-key layout as :class:`PackedVoxels`, but a voxel in a
-    column the current scan touches is only dropped after ``remove_after``
-    consecutive scans that touched its column without hitting it. With
-    ``remove_after=1`` this is plain column carving, which on a sweeping lidar
-    flickers every sparsely-sampled wall in and out at ~13k edits per scan;
-    a few misses of grace keeps the diffs small while people and doors still
-    disappear within a fraction of a second.
-    """
-
-    def __init__(self, voxel_size: float, remove_after: int = 1) -> None:
-        self.voxel_size = voxel_size
-        self.remove_after = max(1, int(remove_after))
-        self.keys = np.empty(0, dtype=np.int64)
-        self.health = np.empty(0, dtype=np.int16)
-
-    def add_scan(self, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Merge one world-frame scan; returns the (added, removed) sorted keys."""
-        empty = np.empty(0, dtype=np.int64)
-        if not len(points):
-            return empty, empty
-        vox = np.floor(points / np.float32(self.voxel_size)).astype(np.int64)
-        if np.abs(vox).max(initial=0) >= KEY_OFFSET:
-            raise ValueError(f"point outside +-{KEY_OFFSET * self.voxel_size:.0f} m packed range")
-        vox += KEY_OFFSET
-        new = np.unique((vox[:, 0] << (2 * FIELD_BITS)) | (vox[:, 1] << FIELD_BITS) | vox[:, 2])
-
-        keys, health = self.keys, self.health
-        # every existing voxel in a column the scan touched is a hit or a miss
-        columns = np.unique(new >> FIELD_BITS)
-        starts = np.searchsorted(keys, columns << FIELD_BITS, side="left")
-        ends = np.searchsorted(keys, (columns + 1) << FIELD_BITS, side="left")
-        delta = np.zeros(len(keys) + 1, dtype=np.int32)
-        np.add.at(delta, starts, 1)
-        np.add.at(delta, ends, -1)
-        in_column = np.cumsum(delta[:-1]) > 0
-
-        position = np.searchsorted(keys, new)
-        exists = position < len(keys)
-        exists[exists] = keys[position[exists]] == new[exists]
-        hit = np.zeros(len(keys), dtype=bool)
-        hit[position[exists]] = True
-        health = health.copy()
-        health[hit] = self.remove_after
-        missed = in_column & ~hit
-        health[missed] -= 1
-        gone = missed & (health <= 0)
-
-        inserted = new[~exists]
-        kept_keys, kept_health = keys[~gone], health[~gone]
-        where = np.searchsorted(kept_keys, inserted)
-        self.keys = np.insert(kept_keys, where, inserted)
-        self.health = np.insert(kept_health, where, np.int16(self.remove_after))
-        return inserted, keys[gone]
-
-    def centres(self, keys: np.ndarray | None = None) -> np.ndarray:
-        """Voxel centres, (N, 3) float32, of *keys* (default: the whole set)."""
-        k = self.keys if keys is None else keys
-        vox = np.empty((len(k), 3), dtype=np.float32)
-        vox[:, 0] = (k >> (2 * FIELD_BITS)) - KEY_OFFSET
-        vox[:, 1] = ((k >> FIELD_BITS) & FIELD_MASK) - KEY_OFFSET
-        vox[:, 2] = (k & FIELD_MASK) - KEY_OFFSET
-        return (vox + np.float32(0.5)) * np.float32(self.voxel_size)
+def _pack(points: np.ndarray, voxel_size: float) -> np.ndarray:
+    """Sorted unique packed keys of the voxels the points fall in."""
+    vox = np.floor(points / np.float32(voxel_size)).astype(np.int64)
+    if np.abs(vox).max(initial=0) >= KEY_OFFSET:
+        raise ValueError(f"point outside +-{KEY_OFFSET * voxel_size:.0f} m packed range")
+    vox += KEY_OFFSET
+    return np.unique((vox[:, 0] << (2 * FIELD_BITS)) | (vox[:, 1] << FIELD_BITS) | vox[:, 2])
 
 
-@dataclass
-class ReplayStats:
-    scans: int = 0
-    keyframes: int = 0
-    added: int = 0
-    removed: int = 0
-    final_voxels: int = 0
-    seconds: float = 0.0
+def _centres(keys: np.ndarray, voxel_size: float) -> np.ndarray:
+    """(N, 3) float32 voxel centres of packed keys."""
+    vox = np.stack(
+        [
+            (keys >> (2 * FIELD_BITS)) & FIELD_MASK,
+            (keys >> FIELD_BITS) & FIELD_MASK,
+            keys & FIELD_MASK,
+        ],
+        axis=1,
+    ).astype(np.float32)
+    vox -= np.float32(KEY_OFFSET)
+    return (vox + np.float32(0.5)) * np.float32(voxel_size)
 
 
-def build_replay_streams(
-    store: Any,
-    *,
-    lidar_stream_name: str,
-    to_world: Callable[[Any], PointCloud2 | None],
-    voxel_size: float,
-    keyframe_interval_s: float = 5.0,
-    remove_after: int = 1,
-    diff_stream_name: str = DIFF_STREAM,
-    keyframe_stream_name: str = KEYFRAME_STREAM,
-    dry_run: bool = False,
-) -> ReplayStats:
-    """Write the keyframe and diff streams for every scan of the lidar stream.
+class ReplayRecorder:
+    """Folds successive map snapshots into fresh keyframe and diff streams."""
 
-    ``to_world`` turns a lidar observation into a world-frame cloud (or None to
-    skip it). Existing streams of the same names are replaced. ``dry_run``
-    only gathers the statistics.
-    """
-    started = time.monotonic()
-    stream_tags = {
-        "voxel_size": float(voxel_size),
-        "lidar_stream": lidar_stream_name,
-        "keyframe_interval_s": float(keyframe_interval_s),
-        "remove_after": int(remove_after),
-        "format": FORMAT_VERSION,
-    }
-    diffs = keyframes = None
-    if not dry_run:
+    def __init__(
+        self,
+        store: Any,
+        *,
+        voxel_size: float,
+        keyframe_interval_s: float,
+        diff_stream_name: str = DIFF_STREAM,
+        keyframe_stream_name: str = KEYFRAME_STREAM,
+    ) -> None:
         for name in (diff_stream_name, keyframe_stream_name):
             if name in store.list_streams():
                 store.delete_stream(name)
-        diffs = store.stream(diff_stream_name, PointCloud2)
-        keyframes = store.stream(keyframe_stream_name, PointCloud2)
+        self.diffs = store.stream(diff_stream_name, PointCloud2)
+        self.keyframes = store.stream(keyframe_stream_name, PointCloud2)
+        self.voxel_size = voxel_size
+        self.keyframe_interval_s = keyframe_interval_s
+        self.tags: dict[str, Any] = {
+            "voxel_size": float(voxel_size),
+            "keyframe_interval_s": float(keyframe_interval_s),
+            "format": FORMAT_VERSION,
+            "built_at": round(time.time(), 3),
+        }
+        self.scans = 0
+        self._keys = np.empty(0, dtype=np.int64)
+        self._last_keyframe_ts: float | None = None
 
-    grid = ReplayGrid(voxel_size, remove_after)
-    stats = ReplayStats()
-    last_keyframe_ts: float | None = None
-    for obs in store.streams[lidar_stream_name]:
-        cloud = to_world(obs)
-        points = cloud.points_f32() if cloud is not None else np.zeros((0, 3), np.float32)
-        added, removed = grid.add_scan(points)
-        stats.added += len(added)
-        stats.removed += len(removed)
-        ts = float(obs.ts)
-        take_keyframe = last_keyframe_ts is None or ts - last_keyframe_ts >= keyframe_interval_s
+    def add_snapshot(self, points: np.ndarray, ts: float) -> bool:
+        """Record the map as of *ts*; returns whether a keyframe was written."""
+        keys = _pack(np.asarray(points, dtype=np.float32)[:, :3], self.voxel_size)
+        added = np.setdiff1d(keys, self._keys, assume_unique=True)
+        removed = np.setdiff1d(self._keys, keys, assume_unique=True)
+        self._keys = keys
+        if self.scans == 0:
+            centre = np.floor(_centres(keys, self.voxel_size).mean(axis=0) / self.voxel_size)
+            if len(keys) == 0:
+                centre = np.zeros(3)
+            self.tags["origin"] = [int(v) for v in centre]
+        take_keyframe = (
+            self._last_keyframe_ts is None
+            or ts - self._last_keyframe_ts >= self.keyframe_interval_s
+        )
+        centres = np.concatenate(
+            [_centres(added, self.voxel_size), _centres(removed, self.voxel_size)]
+        )
+        tags = np.concatenate(
+            [np.full(len(added), TAG_ADDED, np.uint8), np.full(len(removed), TAG_REMOVED, np.uint8)]
+        )
+        self.diffs.append(
+            PointCloud2.from_numpy(centres, frame_id="world", timestamp=ts, tags=tags),
+            ts=ts,
+            tags={**self.tags, "scan_index": self.scans},
+        )
         if take_keyframe:
-            last_keyframe_ts = ts
-            stats.keyframes += 1
-        if diffs is not None and keyframes is not None:
-            centres = np.concatenate([grid.centres(added), grid.centres(removed)])
-            tags = np.concatenate(
-                [
-                    np.full(len(added), TAG_ADDED, np.uint8),
-                    np.full(len(removed), TAG_REMOVED, np.uint8),
-                ]
-            )
-            diffs.append(
-                PointCloud2.from_numpy(centres, frame_id="world", timestamp=ts, tags=tags),
+            self._last_keyframe_ts = ts
+            self.keyframes.append(
+                PointCloud2.from_numpy(
+                    _centres(keys, self.voxel_size), frame_id="world", timestamp=ts
+                ),
                 ts=ts,
-                tags={**stream_tags, "scan_index": stats.scans},
+                tags={**self.tags, "scan_index": self.scans},
             )
-            if take_keyframe:
-                keyframes.append(
-                    PointCloud2.from_numpy(grid.centres(), frame_id="world", timestamp=ts),
-                    ts=ts,
-                    tags={**stream_tags, "scan_index": stats.scans},
-                )
-        stats.scans += 1
-        if stats.scans % 200 == 0:
-            logger.info(
-                "replay build: %d scans, %d voxels, +%d/-%d so far",
-                stats.scans,
-                len(grid.keys),
-                stats.added,
-                stats.removed,
-            )
-    stats.final_voxels = len(grid.keys)
-    stats.seconds = time.monotonic() - started
-    return stats
+        self.scans += 1
+        return take_keyframe
 
 
 # ---- reading ---------------------------------------------------------------
@@ -231,6 +159,13 @@ class ReplayIndex:
     keyframe_ts: np.ndarray  # (K,) float64
     origin: tuple[int, int, int]  # voxel index the int16 wire coordinates are relative to
     stream_tags: dict[str, Any] = field(default_factory=dict)
+
+    def extend(self, ts: float, keyframe: bool) -> None:
+        """Append one more scan, optionally a keyframe taken after it."""
+        self.scan_ts = np.append(self.scan_ts, float(ts))
+        if keyframe:
+            self.keyframe_scan = np.append(self.keyframe_scan, len(self.scan_ts) - 1)
+            self.keyframe_ts = np.append(self.keyframe_ts, float(ts))
 
     def scan_at(self, ts: float) -> int:
         """Index of the last scan at or before *ts* (0 before the first)."""
@@ -292,44 +227,45 @@ class VoxelReplay:
         self._encoded: dict[int, tuple[bytes, bytes]] = {}
 
     @staticmethod
-    def available(store: Any, *, voxel_size: float, lidar_stream_name: str) -> bool:
-        """True when both streams exist and were built for this grid and lidar."""
+    def matches(store: Any, *, voxel_size: float, keyframe_interval_s: float) -> bool:
+        """True when both streams exist and were recorded with these settings."""
         names = store.list_streams()
         if DIFF_STREAM not in names or KEYFRAME_STREAM not in names:
             return False
-        first = store.streams[KEYFRAME_STREAM].first()
-        tags = first.tags or {}
-        return (
-            tags.get("format") == FORMAT_VERSION
-            and abs(float(tags.get("voxel_size", 0.0)) - voxel_size) < 1e-9
-            and tags.get("lidar_stream") == lidar_stream_name
-        )
+        tags = store.streams[KEYFRAME_STREAM].first().tags or {}
+        wanted = {
+            "voxel_size": float(voxel_size),
+            "keyframe_interval_s": float(keyframe_interval_s),
+            "format": FORMAT_VERSION,
+        }
+        return all(tags.get(key) == value for key, value in wanted.items())
+
+    def covers(self, ts: float) -> bool:
+        """True when the recorded timeline reaches *ts*."""
+        return len(self.index.scan_ts) > 0 and float(self.index.scan_ts[-1]) >= ts
+
+    def extend(self, ts: float, keyframe: bool) -> None:
+        """Take in one more recorded snapshot; the open segment is rebuilt on demand."""
+        self.index.extend(ts, keyframe)
+        last = len(self.index.keyframe_scan) - 1
+        self._segments.pop(last, None)
+        self._encoded.pop(last, None)
+        if keyframe:
+            self._segments.pop(last - 1, None)
+            self._encoded.pop(last - 1, None)
 
     def _load_index(self) -> ReplayIndex:
-        first = self.keyframes.first()
-        tags = dict(first.tags or {})
-        voxel_size = float(tags["voxel_size"])
+        tags = dict(self.keyframes.first().tags or {})
         scan_ts = np.array([float(obs.ts) for obs in self.diffs], dtype=np.float64)
-        keyframe_scan: list[int] = []
-        keyframe_ts: list[float] = []
-        low = np.full(3, np.inf)
-        high = np.full(3, -np.inf)
-        for obs in self.keyframes:
-            keyframe_scan.append(int(obs.tags["scan_index"]))
-            keyframe_ts.append(float(obs.ts))
-            points = obs.data.points_f32()
-            if len(points):
-                low = np.minimum(low, points.min(axis=0))
-                high = np.maximum(high, points.max(axis=0))
-        if not np.all(np.isfinite(low)):
-            low = high = np.zeros(3)
-        centre = np.floor((low + high) / 2 / voxel_size).astype(np.int64)
+        keyframe_scan = [int(obs.tags["scan_index"]) for obs in self.keyframes]
+        keyframe_ts = [float(obs.ts) for obs in self.keyframes]
+        origin = [int(v) for v in tags["origin"]]
         return ReplayIndex(
-            voxel_size=voxel_size,
+            voxel_size=float(tags["voxel_size"]),
             scan_ts=scan_ts,
             keyframe_scan=np.array(keyframe_scan, dtype=np.int64),
             keyframe_ts=np.array(keyframe_ts, dtype=np.float64),
-            origin=(int(centre[0]), int(centre[1]), int(centre[2])),
+            origin=(origin[0], origin[1], origin[2]),
             stream_tags=tags,
         )
 
@@ -461,50 +397,3 @@ class VoxelReplay:
 
 
 # ---- command line ------------------------------------------------------------
-
-
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Build the voxel replay streams of a recording")
-    parser.add_argument("store_path")
-    parser.add_argument("--lidar-stream", default="lidar")
-    parser.add_argument("--tf-stream", default="tf")
-    parser.add_argument("--world-frame", default="world")
-    parser.add_argument("--voxel-size", type=float, default=0.05)
-    parser.add_argument("--keyframe-interval", type=float, default=5.0)
-    parser.add_argument("--tf-tolerance", type=float, default=0.1)
-    parser.add_argument("--remove-after", type=int, default=1, help="misses before a voxel goes")
-    parser.add_argument("--dry-run", action="store_true", help="only report the statistics")
-    args = parser.parse_args(argv)
-
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.teleop.memory_world.recording import open_recording
-    from dimos.teleop.memory_world.tf_tree import TfTree
-
-    store = open_recording(args.store_path)
-    tree = TfTree.from_stream(store.streams[args.tf_stream])
-
-    def to_world(obs: Any) -> PointCloud2 | None:
-        frame = str(getattr(obs.data, "frame_id", "") or "").lstrip("/")
-        matrix = tree.lookup(args.world_frame, frame, float(obs.ts), args.tf_tolerance)
-        if matrix is None:
-            return None
-        transformed: PointCloud2 = obs.data.transform(Transform.from_matrix(matrix))
-        return transformed
-
-    stats = build_replay_streams(
-        store,
-        lidar_stream_name=args.lidar_stream,
-        to_world=to_world,
-        voxel_size=args.voxel_size,
-        keyframe_interval_s=args.keyframe_interval,
-        remove_after=args.remove_after,
-        dry_run=args.dry_run,
-    )
-    print(
-        f"{stats.scans} scans, {stats.keyframes} keyframes, +{stats.added} / -{stats.removed} voxel "
-        f"edits, {stats.final_voxels} voxels at the end, {stats.seconds:.1f} s"
-    )
-
-
-if __name__ == "__main__":
-    main()

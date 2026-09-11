@@ -12,106 +12,85 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
 import json
+from pathlib import Path
 import struct
 
 import numpy as np
 import pytest
 
-from dimos.mapping.voxels.impl.packed import PackedVoxels
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.teleop.memory_world.replay import (
     TAG_ADDED,
     TAG_REMOVED,
-    ReplayGrid,
+    ReplayRecorder,
     VoxelReplay,
-    build_replay_streams,
 )
 
 VOXEL = 0.1
 
 
-def _scans(seed: int, count: int, points: int = 300) -> list[np.ndarray]:
-    """Random walls that drift a little, so scans overlap yet keep changing."""
+def _maps(seed: int, count: int, points: int = 300) -> list[np.ndarray]:
+    """Random walls that drift a little, so successive maps overlap yet keep changing."""
     rng = np.random.default_rng(seed)
-    scans = []
+    maps = []
     for i in range(count):
         base = rng.uniform(-2, 2, size=(points, 3)).astype(np.float32)
-        base[:, 2] = np.abs(base[:, 2])  # above the floor
+        base[:, 2] = np.abs(base[:, 2])
         base[:, 0] += 0.02 * i
-        scans.append(base)
-    return scans
+        maps.append(base)
+    return maps
 
 
-def test_replay_grid_matches_packed_voxels_when_carving_immediately() -> None:
-    grid = ReplayGrid(VOXEL, remove_after=1)
-    packed = PackedVoxels(voxel_size=VOXEL, carve_columns=True)
-    for scan in _scans(1, 12):
-        grid.add_scan(scan)
-        packed.add_frame(PointCloud2.from_numpy(scan, frame_id="world"))
-    np.testing.assert_array_equal(grid.keys, packed._keys)
-    np.testing.assert_allclose(grid.centres(), packed.points())
-
-
-def test_diffs_replay_to_the_same_set() -> None:
-    """Applying every (added, removed) pair from empty reproduces the grid."""
-    grid = ReplayGrid(VOXEL)
-    state: set[int] = set()
-    for scan in _scans(2, 10):
-        added, removed = grid.add_scan(scan)
-        assert not (set(added.tolist()) & set(removed.tolist()))
-        state -= set(removed.tolist())
-        state |= set(added.tolist())
-        assert state == set(grid.keys.tolist())
-
-
-def test_hysteresis_keeps_missed_voxels_for_a_while() -> None:
-    scans = _scans(3, 4)
-    quick = ReplayGrid(VOXEL, remove_after=1)
-    patient = ReplayGrid(VOXEL, remove_after=3)
-    removed_quick = removed_patient = 0
-    for scan in scans:
-        removed_quick += len(quick.add_scan(scan)[1])
-        removed_patient += len(patient.add_scan(scan)[1])
-    assert removed_patient < removed_quick
-    assert len(patient.keys) >= len(quick.keys)
+def _voxels(points: np.ndarray) -> set[tuple[int, ...]]:
+    return {tuple(int(v) for v in row) for row in np.floor(points / VOXEL).astype(int)}
 
 
 @pytest.fixture
-def store(tmp_path):  # type: ignore[no-untyped-def]
+def store(tmp_path: Path) -> Iterator[SqliteStore]:
     store = SqliteStore(path=str(tmp_path / "replay.db"))
-    lidar = store.stream("lidar", PointCloud2)
-    for i, scan in enumerate(_scans(4, 30)):
-        ts = 100.0 + i * 0.1
-        lidar.append(PointCloud2.from_numpy(scan, frame_id="world", timestamp=ts), ts=ts)
     yield store
     store.stop()
 
 
-def test_build_streams_and_serve_segments(store) -> None:  # type: ignore[no-untyped-def]
-    stats = build_replay_streams(
-        store,
-        lidar_stream_name="lidar",
-        to_world=lambda obs: obs.data,
-        voxel_size=VOXEL,
-        keyframe_interval_s=1.0,
-    )
-    assert stats.scans == 30
-    assert stats.keyframes == 3  # t=100.0, 101.0, 102.0
-    assert VoxelReplay.available(store, voxel_size=VOXEL, lidar_stream_name="lidar")
-    assert not VoxelReplay.available(store, voxel_size=VOXEL * 2, lidar_stream_name="lidar")
+def _record(store: SqliteStore, maps: list[np.ndarray], interval: float) -> ReplayRecorder:
+    recorder = ReplayRecorder(store, voxel_size=VOXEL, keyframe_interval_s=interval)
+    for i, snapshot in enumerate(maps):
+        recorder.add_snapshot(snapshot, 100.0 + i * 0.1)
+    return recorder
 
+
+def test_diffs_replay_to_each_snapshot(store: SqliteStore) -> None:
+    maps = _maps(2, 10)
+    _record(store, maps, interval=100.0)
+
+    state: set[tuple[int, ...]] = set()
+    for snapshot, diff in zip(maps, store.streams["voxel_diff"], strict=True):
+        points = diff.data.points_f32()
+        tags = diff.data.tags_u8()
+        state -= _voxels(points[tags == TAG_REMOVED])
+        state |= _voxels(points[tags == TAG_ADDED])
+        assert state == _voxels(snapshot)
+
+
+def test_record_and_serve_segments(store: SqliteStore) -> None:
+    _record(store, _maps(4, 30), interval=1.0)
+
+    assert VoxelReplay.matches(store, voxel_size=VOXEL, keyframe_interval_s=1.0)
+    assert not VoxelReplay.matches(store, voxel_size=VOXEL * 2, keyframe_interval_s=1.0)
+    assert not VoxelReplay.matches(store, voxel_size=VOXEL, keyframe_interval_s=5.0)
     diffs = list(store.streams["voxel_diff"])
     assert len(diffs) == 30
-    tags = diffs[5].data.tags_u8()
-    assert set(tags.tolist()) <= {TAG_ADDED, TAG_REMOVED}
+    assert store.streams["voxel_keyframe"].count() == 3  # t=100.0, 101.0, 102.0
 
     replay = VoxelReplay(store)
     index = replay.index
+    assert index.stream_tags["built_at"] > 0
     assert index.scan_at(100.55) == 5
     assert index.segment_of(5) == 0 and index.segment_of(10) == 1 and index.segment_of(29) == 2
     assert index.segment_scans(1) == (10, 20)
+    assert replay.covers(102.9) and not replay.covers(103.0)
 
     # replaying a segment's diffs on the viewer's terms reaches the next keyframe
     header, payload = replay.segment(1)
@@ -136,15 +115,32 @@ def test_build_streams_and_serve_segments(store) -> None:  # type: ignore[no-unt
         cursor += scan["n"]
     shown = {tuple(int(v) for v in row) for row in table[visible] + np.asarray(index.origin)}
 
-    def voxels(points: np.ndarray) -> set[tuple[int, ...]]:
-        return {tuple(int(v) for v in row) for row in np.floor(points / VOXEL).astype(int)}
-
     # the state after the last scan of segment 1 (scan 19) is one scan before keyframe 2 (scan 20)
     keyframe2 = store.streams["voxel_keyframe"].at(102.0, tolerance=1e-3).first().data.points_f32()
     scan20 = diffs[20].data
     tags20 = scan20.tags_u8()
     points20 = scan20.points_f32()
-    expected = voxels(keyframe2) - voxels(points20[tags20 == TAG_ADDED]) | voxels(
+    expected = _voxels(keyframe2) - _voxels(points20[tags20 == TAG_ADDED]) | _voxels(
         points20[tags20 == TAG_REMOVED]
     )
     assert shown == expected
+
+
+def test_extend_grows_the_open_segment(store: SqliteStore) -> None:
+    maps = _maps(5, 12)
+    recorder = _record(store, maps[:4], interval=0.5)
+    replay = VoxelReplay(store)
+    assert len(replay.index.scan_ts) == 4
+    stale_header, _ = replay.segment(0)
+
+    for i, snapshot in enumerate(maps[4:], start=4):
+        keyframe = recorder.add_snapshot(snapshot, 100.0 + i * 0.1)
+        replay.extend(100.0 + i * 0.1, keyframe)
+
+    assert len(replay.index.scan_ts) == 12
+    assert replay.index.keyframe_scan.tolist() == [0, 5, 10]
+    header, _ = replay.segment(0)
+    assert len(stale_header["scans"]) == 4
+    assert [scan["index"] for scan in header["scans"]] == [0, 1, 2, 3, 4]
+    assert [scan["index"] for scan in replay.segment(2)[0]["scans"]] == [10, 11]
+    assert replay.covers(101.1)

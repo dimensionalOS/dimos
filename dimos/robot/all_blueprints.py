@@ -299,7 +299,7 @@ all_modules = {
     "real-sense-mount-tf": "dimos.hardware.sensors.camera.realsense.blueprints.RealSenseMountTf",
     "receiver-module": "dimos.utils.demo_image_encoding.ReceiverModule",
     "recorder": "dimos.memory.module.Recorder",
-    "recording-player": "dimos.mapping.relocalization.blueprints.RecordingPlayer",
+    "recording-player": "dimos.memory.recording_player.RecordingPlayer",
     "reid-module": "dimos.perception.detection.reid.module.ReidModule",
     "relay-bridge-module": "dimos.web.relay_bridge.relay_bridge_module.RelayBridgeModule",
     "relocalization-module": "dimos.mapping.relocalization.module.RelocalizationModule",

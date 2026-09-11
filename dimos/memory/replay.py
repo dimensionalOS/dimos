@@ -23,6 +23,7 @@ advance together. Late subscribers skip past data already behind wall time.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 import threading
 import time
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
     from dimos.memory.stream import Stream
 
 T = TypeVar("T")
+U = TypeVar("U")
 
 _LOOP_GAP = 0.05  # min wall-time gap inserted between loop wraps (seconds)
 _LATE_TOLERANCE = 0.05  # don't skip frames within this many seconds of "now"
@@ -88,12 +90,15 @@ class Replay(Configurable):
         return ReplayStream(replay=self, name=name, autocast=autocast)
 
     def first_ts(self) -> float | None:
-        """Earliest first_ts across non-empty streams in the underlying store."""
+        """Earliest first_ts across non-empty streams in the underlying store.
+
+        Streams whose payload type this build cannot load do not count.
+        """
         candidates: list[float] = []
         for name in self.store.list_streams():
             try:
                 candidates.append(float(self.store.stream(name).first().ts))
-            except LookupError:
+            except (LookupError, ImportError):
                 continue
         return min(candidates) if candidates else None
 
@@ -213,6 +218,14 @@ class ReplayStream(Generic[T]):
         return self._decode(obs)
 
     def observable(self) -> Observable[T]:
+        """Timed Observable of the decoded messages. See :meth:`_timed`."""
+        return self._timed(lambda _ts, data: data)
+
+    def observable_ts(self) -> Observable[tuple[float, T]]:
+        """Timed Observable of ``(recorded ts, message)`` pairs. See :meth:`_timed`."""
+        return self._timed(lambda ts, data: (ts, data))
+
+    def _timed(self, project: Callable[[float, T], U]) -> Observable[U]:
         """Timed Observable scheduled against the Replay's shared anchor.
 
         The first subscribe across the whole :class:`Replay` pins
@@ -228,7 +241,7 @@ class ReplayStream(Generic[T]):
         base = self._base_stream
 
         def subscribe(
-            observer: ObserverBase[T],
+            observer: ObserverBase[U],
             scheduler: SchedulerBase | None = None,
         ) -> DisposableBase:
             sched = scheduler or TimeoutScheduler()
@@ -286,7 +299,7 @@ class ReplayStream(Generic[T]):
                     nonlocal wrap_offset, prev_ts
                     if is_disposed:
                         return None
-                    observer.on_next(data)
+                    observer.on_next(project(ts, data))
                     try:
                         nxt = next(iterator)
                     except StopIteration:

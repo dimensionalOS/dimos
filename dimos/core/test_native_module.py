@@ -330,6 +330,16 @@ def test_lcm_sends_no_session_settings(monkeypatch) -> None:
     assert _launch(monkeypatch, "lcm")["session"] == {}
 
 
+def test_queue_depths_and_tf_window_reach_the_launch_line(monkeypatch) -> None:
+    plain = _launch(monkeypatch, "zenoh")
+    assert "queues" not in plain and "tf_window_secs" not in plain
+
+    launch = _launch(monkeypatch, "zenoh", input_queues={"lidar": 20000}, tf_window_s=7200.0)
+    assert launch["queues"] == {"lidar": 20000}
+    assert launch["tf_window_secs"] == 7200.0
+    assert "input_queues" not in (launch["config"] or {})
+
+
 def test_a_pinned_mode_reaches_the_launch_line(monkeypatch) -> None:
     """A blueprint can give one native a different role, keeping the rest derived."""
     session = _launch(monkeypatch, "zenoh", session=ZenohConfig(mode="client"))["session"]
