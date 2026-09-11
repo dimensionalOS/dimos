@@ -169,6 +169,9 @@ class ManipulationModuleConfig(ModuleConfig):
     # Coordinator joint name -> model joint name, so a twist base's odometry
     # joints (chassis/vx, ...) can feed the model's planar base joints.
     joint_state_aliases: dict[str, str] = Field(default_factory=dict)
+    # Coordinator task that drives the planar base (a base_trajectory task).
+    # Without one, plans that move the planar base are preview-only.
+    base_trajectory_task: str | None = None
 
     @model_validator(mode="after")
     def _validate_joint_state_aliases(self) -> ManipulationModuleConfig:
@@ -1055,10 +1058,13 @@ class ManipulationModule(Module):
 
     def _initialize_execution(self) -> None:
         """Initialize coordinator access and planned execution policy."""
+        planar_base = self.config.model.model.planar_base
         self._execution_manager = PlanExecutionManager(
             joint_names=self.config.model.joint_names,
             coordinator=self._control_coordinator,
             default_timeout=self.config.execution_timeout,
+            base_task=self.config.base_trajectory_task,
+            base_joint_names=planar_base.joint_names if planar_base is not None else (),
         )
 
     @rpc
@@ -1076,8 +1082,10 @@ class ManipulationModule(Module):
             if plan_id is not None and target_plan.plan_id != plan_id:
                 return ExecutionResult(ExecutionStatus.REJECTED, "Pending plan was replaced")
             planar_base = self.config.model.model.planar_base
-            if planar_base is not None and set(planar_base.joint_names) & set(
-                target_plan.trajectory.joint_names
+            if (
+                self.config.base_trajectory_task is None
+                and planar_base is not None
+                and set(planar_base.joint_names) & set(target_plan.trajectory.joint_names)
             ):
                 message = (
                     "Planar-base trajectories support planning and preview only; "
@@ -1376,6 +1384,7 @@ class ManipulationModule(Module):
                     "Shutdown could not confirm coordinator trajectory safety: %s",
                     cancellation.message,
                 )
+            execution_manager.close()
 
         # Stop TF thread
         if self._tf_thread is not None:

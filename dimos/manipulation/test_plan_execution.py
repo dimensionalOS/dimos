@@ -135,6 +135,47 @@ def test_execute_rejects_planar_base_plan_but_keeps_it_for_preview(
     coordinator.execute_trajectory.assert_not_called()
 
 
+def test_execute_sends_planar_base_columns_to_the_base_task(module_factory) -> None:
+    coordinator = _coordinator()
+    state = TrajectoryState.EXECUTING
+    coordinator.task_invoke.side_effect = lambda task, method, args: (
+        TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+        if method == "execute"
+        else TrajectoryStatus(state=state)
+    )
+    module = _module_with_coordinator(coordinator, module_factory)
+    planar_base = PlanarBaseDefinition(
+        velocity_limits=(1.0, 1.0, 2.0),
+        acceleration_limits=(2.0, 2.0, 4.0),
+    )
+    module.config.model.model = module.config.model.model.with_planar_base(planar_base)
+    module.config.model.joint_names = [*planar_base.joint_names, "arm/j0"]
+    module.config.base_trajectory_task = "base_traj"
+    module._initialize_execution()
+    names = ["arm/j0", *planar_base.joint_names]
+    points = [
+        TrajectoryPoint(positions=[0.0] * 4, time_from_start=0.0),
+        TrajectoryPoint(positions=[1.0] * 4, time_from_start=1.0),
+    ]
+    module._last_plan = GeneratedPlan(
+        group_ids=("manipulator",),
+        trajectory=JointTrajectory(joint_names=names, points=points),
+        path=[JointState(name=names, position=point.positions) for point in points],
+        status=PlanningStatus.SUCCESS,
+    )
+
+    assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
+
+    assert coordinator.execute_trajectory.call_args.args[0].joint_names == ["arm/j0"]
+    task, _, args = next(
+        c.args for c in coordinator.task_invoke.call_args_list if c.args[1] == "execute"
+    )
+    assert task == "base_traj"
+    assert args["trajectory"].joint_names == list(planar_base.joint_names)
+    state = TrajectoryState.COMPLETED
+    assert module.wait_for_execution(timeout=1.0).status is ExecutionStatus.COMPLETED
+
+
 def test_execute_allows_arm_only_plan_from_planar_model(module_factory) -> None:
     coordinator = _coordinator()
     module = _module_with_coordinator(coordinator, module_factory)

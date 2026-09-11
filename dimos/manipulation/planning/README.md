@@ -159,10 +159,16 @@ give the arm a Cartesian goal while allowing the waist and planar base to
 participate as auxiliary IK degrees of freedom. Select both arms for a bimanual
 goal; RoboPlan composes the selected groups automatically.
 
-Planar-base trajectories support planning and preview only. `execute()` rejects
-a plan containing any generated base joint until a feedback-controlled base
-trajectory executor is implemented. Arm-only trajectories from the same model
-remain executable.
+A plan that moves the planar base executes when the module config names a
+`base_trajectory_task`, a coordinator task of type `base_trajectory` claiming
+the base's twist joints. The plan's base columns go to that task and the rest to
+the joint trajectory task, both driven by the coordinator's tick clock. A
+failure on either side cancels the other, because collision checking only covers
+the simultaneous motion the plan describes. Because the twist joints report
+odometry through their position fields, `joint_state_aliases` maps those
+coordinator joint names onto the model's generated base joints. Without a base
+task, `execute()` still rejects a plan containing a generated base joint, and
+arm-only trajectories from the same model remain executable.
 
 ## Path-to-Trajectory Lifecycle
 

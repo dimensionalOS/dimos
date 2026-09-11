@@ -20,6 +20,7 @@ import pytest
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
     TrajectoryExecutionResult,
@@ -127,3 +128,88 @@ def test_cancel_forwards_to_coordinator() -> None:
     result = _manager(coordinator).cancel()
     assert result.status is ExecutionStatus.NO_EXECUTION
     coordinator.cancel_trajectory.assert_called_once_with()
+
+
+BASE = ("base/x", "base/y", "base/yaw")
+
+
+class _WholeBody:
+    """A coordinator running a joint trajectory task and a base trajectory task."""
+
+    def __init__(self) -> None:
+        self.states = {
+            JOINT_TRAJECTORY_TASK_NAME: TrajectoryState.EXECUTING,
+            "base_traj": TrajectoryState.EXECUTING,
+        }
+        self.errors: dict[str, str] = {}
+        self.base_execute = TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+        self.base_trajectory: JointTrajectory | None = None
+        self.coordinator = _coordinator()
+        self.coordinator.task_invoke.side_effect = self._task_invoke
+        self.coordinator.cancel_trajectory.side_effect = self._cancel_joints
+
+    def _task_invoke(self, task, method, args):
+        if method == "execute":
+            self.base_trajectory = args["trajectory"]
+            return self.base_execute
+        if method == "cancel":
+            self.states[task] = TrajectoryState.ABORTED
+            return True
+        return TrajectoryStatus(state=self.states[task], error=self.errors.get(task, ""))
+
+    def _cancel_joints(self):
+        self.states[JOINT_TRAJECTORY_TASK_NAME] = TrajectoryState.ABORTED
+        return TrajectoryCancellationResult(TrajectoryCancellationStatus.CANCELLED)
+
+    def manager(self) -> PlanExecutionManager:
+        return PlanExecutionManager(
+            joint_names=("left/j1", *BASE),
+            coordinator=self.coordinator,
+            default_timeout=1.0,
+            poll_interval=0.01,
+            base_task="base_traj",
+            base_joint_names=BASE,
+        )
+
+
+def test_whole_body_plan_splits_into_joint_and_base_columns() -> None:
+    robot = _WholeBody()
+    manager = robot.manager()
+    plan = _plan(("base/yaw", "left/j1", "base/x", "base/y"))
+
+    assert manager.execute(plan, blocking=False).status is ExecutionStatus.ACCEPTED
+
+    joints = robot.coordinator.execute_trajectory.call_args.args[0]
+    assert joints.joint_names == ["left/j1"]
+    assert robot.base_trajectory.joint_names == list(BASE)
+    assert [p.time_from_start for p in robot.base_trajectory.points] == [0.0, 1.0]
+    robot.states = dict.fromkeys(robot.states, TrajectoryState.COMPLETED)
+    assert manager.wait().status is ExecutionStatus.COMPLETED
+
+
+@pytest.mark.parametrize("failing", [JOINT_TRAJECTORY_TASK_NAME, "base_traj"])
+def test_a_failing_leg_cancels_the_other_without_a_caller_polling(failing: str, wait_until) -> None:
+    robot = _WholeBody()
+    manager = robot.manager()
+    manager.execute(_plan(("left/j1", *BASE)), blocking=False)
+
+    robot.states[failing] = TrajectoryState.ABORTED
+    robot.errors[failing] = "preempted by teleop"
+    wait_until(lambda: manager.status is ExecutionStatus.ABORTED, timeout=2.0)
+
+    assert manager.status is ExecutionStatus.ABORTED
+    assert set(robot.states.values()) == {TrajectoryState.ABORTED}
+    assert "preempted by teleop" in manager.wait().message
+
+
+def test_a_refused_base_trajectory_cancels_the_joints() -> None:
+    robot = _WholeBody()
+    robot.base_execute = TrajectoryExecutionResult(
+        TrajectoryExecutionStatus.INVALID_TRAJECTORY, "too fast"
+    )
+
+    result = robot.manager().execute(_plan(("left/j1", *BASE)), blocking=False)
+
+    assert result.status is ExecutionStatus.REJECTED
+    assert "too fast" in result.message
+    robot.coordinator.cancel_trajectory.assert_called_once_with()
