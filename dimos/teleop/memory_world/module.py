@@ -546,12 +546,6 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         """
         present = set(store.list_streams())
         detected = detect_streams(store)
-        tree = self._tf_tree() if detected.get("tf") else None
-        if tree is not None and self.config.world_frame not in tree.frames:
-            root = tf_root(tree)
-            if root:
-                logger.info("world_frame: using %r (the tf root)", root)
-                self.config.world_frame = root
         # tf first: naming the lidar needs the tree.
         for role, setting in (
             ("tf", "tf_stream_name"),
@@ -580,6 +574,12 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
                 chosen,
                 "detected" if not configured else f"no {configured!r} in the recording",
             )
+        tree = self._tf_tree()  # named above, so the tree can be read now
+        if tree is not None and self.config.world_frame not in tree.frames:
+            root = tf_root(tree)
+            if root:
+                logger.info("world_frame: using %r (the tf root)", root)
+                self.config.world_frame = root
 
     def _ensure_world_cache(self) -> None:
         """Build the cloud, top-down map, markers and trail once, whoever asks first."""
