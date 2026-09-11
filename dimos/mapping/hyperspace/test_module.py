@@ -321,3 +321,149 @@ def test_segments_add_a_red_channel_on_top_of_the_patches(store: SqliteStore) ->
     assert "segment_hot_patches" not in off["stats"]
     assert not off["heatmap"].channels
     del ingestor
+
+
+class StubEnsemble:
+    """Two stub members on different grids. Member A (8x8) sees the object;
+    member B (4x4) sees it too but also hallucinates a hot cell in the top-left
+    corner that A does not have, so a per-cell minimum should drop it."""
+
+    specs = ["stub-a", "stub-b@16"]
+    tags = ["stub-a", "stub-b-16"]
+
+    def __init__(self) -> None:
+        self.pixel: tuple[float, float] | None = None
+
+    def _grid(self, side: int, hallucinate: bool) -> np.ndarray:
+        grid = np.zeros((side * side, DIM), dtype=np.float32)
+        grid[:, 1] = 1.0
+        assert self.pixel is not None
+        u, v = self.pixel
+        col, row = int(u * side / WIDTH), int(v * side / HEIGHT)
+        grid[row * side + col] = 0.0
+        grid[row * side + col, 0] = 1.0
+        if hallucinate:
+            grid[0] = 0.0
+            grid[0, 0] = 1.0
+        return grid
+
+    def embed_grids(self, image: Image) -> list[tuple[np.ndarray, tuple[int, int]]]:
+        return [(self._grid(8, False), (8, 8)), (self._grid(4, True), (4, 4))]
+
+    @staticmethod
+    def embed_text(text: str) -> list[np.ndarray]:
+        return [StubModel.embed_text(text), StubModel.embed_text(text)]
+
+
+def fill_ensemble(store: SqliteStore, poses: list[np.ndarray]) -> PatchIngestor:
+    model = StubEnsemble()
+    config = IngestConfig(
+        gate=hs.KeyframeGateConfig(
+            buffer_len=1, max_angular_velocity=None, max_dark_fraction=None, min_interval=None
+        ),
+        min_frame_interval_s=0.0,
+    )
+    ingestor = PatchIngestor(store, model, config)  # type: ignore[arg-type]
+    ingestor.add_camera_info(camera_info())
+    for index, pose in enumerate(poses):
+        ts = 10.0 + index
+        x, y, z, w = quaternion_of(pose[:3, :3])
+        transform = Transform(
+            translation=Vector3(*pose[:3, 3]),
+            rotation=Quaternion(x, y, z, w),
+            frame_id=WORLD,
+            child_frame_id=CAMERA,
+            ts=ts,
+        )
+        ingestor.add_tf(TFMessage(transform), ts=ts)
+        local = np.linalg.inv(pose) @ np.append(OBJECT, 1.0)
+        model.pixel = (local[0] / local[2] * 48.0 + 32.0, local[1] / local[2] * 48.0 + 24.0)
+        ingestor.add_depth(
+            Image.from_numpy(
+                np.full((HEIGHT, WIDTH), int(local[2] * 1000), dtype=np.uint16),
+                frame_id=CAMERA,
+                ts=ts,
+            )
+        )
+        ingestor.add_image(
+            Image.from_numpy(
+                np.full((HEIGHT, WIDTH, 3), 128, dtype=np.uint8), frame_id=CAMERA, ts=ts
+            )
+        )
+    ingestor.flush()
+    return ingestor
+
+
+def test_cell_matrix_spreads_and_averages_exactly() -> None:
+    identity = hs.cell_matrix((8, 8), (8, 8))
+    assert np.allclose(identity, np.eye(64))
+    up = hs.cell_matrix((2, 2), (4, 4))  # each source cell covers a 2x2 block of targets
+    assert up.shape == (16, 4)
+    assert np.allclose(up.sum(axis=1), 1.0)
+    assert up[0, 0] == 1.0 and up[15, 3] == 1.0
+    down = hs.cell_matrix((4, 4), (2, 2))  # each target averages a 2x2 block of sources
+    assert np.allclose(down[0, [0, 1, 4, 5]], 0.25)
+    odd = hs.cell_matrix((14, 14), (24, 24))  # grids that do not divide each other
+    assert odd.shape == (576, 196)
+    assert np.allclose(odd.sum(axis=1), 1.0)
+
+
+def test_pool_cells() -> None:
+    a = np.array([0.5, 0.1, 0.0], dtype=np.float32)
+    b = np.array([0.4, 0.3, 0.2], dtype=np.float32)
+    c = np.array([0.6, 0.0, 0.1], dtype=np.float32)
+    assert np.allclose(hs.pool_cells([a, b, c], "min"), [0.4, 0.0, 0.0])
+    assert np.allclose(hs.pool_cells([a, b, c], "2nd"), [0.5, 0.1, 0.1])
+    assert np.allclose(hs.pool_cells([a, b, c], "mean"), [0.5, 0.4 / 3, 0.1])
+    assert np.allclose(hs.pool_cells([a], "2nd"), a)  # one member: nothing to pool
+    with pytest.raises(ValueError):
+        hs.pool_cells([a, b], "median")
+
+
+def test_ensemble_keyframes_carry_every_member_and_pool_with_a_minimum(store: SqliteStore) -> None:
+    ingestor = fill_ensemble(store, ring(3, 2.5))
+    assert ingestor.stats["kept"] == 3
+    first = next(iter(store.stream(KEYFRAME_STREAM, dict).order_by("ts"))).data
+    assert first["members"] == ["stub-a", "stub-b-16"]
+    assert first["member_specs"] == ["stub-a", "stub-b@16"]
+    assert first["grid_shapes"] == [[8, 8], [4, 4]]
+    assert (first["rows"], first["cols"]) == (24, 24)
+    assert len(first["patch_depth"]) == 24 * 24
+    # the vector index holds the primary member only, on its own 8x8 grid
+    assert store.stream(PATCH_STREAM, dict).count() == 3 * 64
+
+    config = hs.QueryConfig(structural_gate=False, segment_weight=0.0, pool="min")
+    engine = HyperspaceQuery(store, StubEnsemble.embed_text, config, world_frame=WORLD)
+    assert engine.members() == ["stub-a", "stub-b-16"]
+    result = engine.heatmap("object")
+    assert result.voxels, "the object every member sees must light up"
+    best = (np.asarray(result.voxels[0][0]) + 0.5) * result.voxel_size
+    assert np.linalg.norm(best - OBJECT) < 0.35
+    # member B's corner hallucination is not in member A, so the minimum has no
+    # hot cell there: nothing is placed along the top-left rays
+    hot, _ = engine.hot_patches(StubEnsemble.embed_text("object"))
+    assert hot and all(h.patch != 0 for h in hot)
+
+    # "2nd" of two members is the maximum: the hallucination comes back
+    engine.config.pool = "2nd"
+    hot, _ = engine.hot_patches(StubEnsemble.embed_text("object"))
+    assert any(h.patch == 0 for h in hot)
+
+    # a query side with the wrong number of text towers is refused
+    with pytest.raises(ValueError):
+        engine.hot_patches([StubModel.embed_text("object")])
+
+
+def test_member_specs_and_tags() -> None:
+    from dimos.mapping.hyperspace.embedder import member_tag, parse_member
+
+    assert parse_member("google/siglip2-base-patch16-naflex@576") == (
+        "google/siglip2-base-patch16-naflex",
+        576,
+    )
+    assert parse_member("/models/siglip2-so400m-patch16-384") == (
+        "/models/siglip2-so400m-patch16-384",
+        None,
+    )
+    assert member_tag("google/siglip2-base-patch16-naflex@576") == "base-patch16-naflex-576"
+    assert member_tag("/models/siglip2-so400m-patch16-384") == "so400m-patch16-384"

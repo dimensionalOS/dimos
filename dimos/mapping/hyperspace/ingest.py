@@ -81,6 +81,21 @@ class IngestConfig:
     depth_max_dt: float = 0.05
     depth_history: int = 64
     depth_thumbnail_stride: int = 4
+    # The keyframe's cell grid: what patch_depth is measured on and what the
+    # query pools the members' scores onto. None = the model's own grid for a
+    # single fixed-resolution checkpoint (the original layout), else 24x24.
+    cell_grid: tuple[int, int] | None = None
+
+
+def grids_of(model: Any, image: Image) -> list[tuple[NDArray[np.float32], tuple[int, int]]]:
+    """One ``(grid, (rows, cols))`` per ensemble member, from an ensemble, a
+    single SigLIP2Patches, or any object with ``embed_patches`` and
+    ``patches_per_side`` (the test stubs)."""
+    if hasattr(model, "embed_grids"):
+        grids = model.embed_grids(image)
+        return grids if isinstance(grids, list) and grids and isinstance(grids[0], tuple) else grids
+    side = int(model.patches_per_side)
+    return [(model.embed_patches(image)[0], (side, side))]
 
 
 class PatchIngestor:
@@ -97,6 +112,10 @@ class PatchIngestor:
         self.store = store
         self.model = model
         self.config = config
+        # Ensemble bookkeeping, written with every keyframe so the query side
+        # can load the matching text towers: short tags and the full specs.
+        self.members: list[str] = list(getattr(model, "tags", []))
+        self.member_specs: list[str] = list(getattr(model, "specs", []))
         # target_from_source(target_frame, source_frame, ts) for the motion gate
         # and depth-to-colour alignment. None = no tf available (both skipped).
         self.lookup = lookup
@@ -155,7 +174,8 @@ class PatchIngestor:
             self.stats["gated"] += 1
             return False
         started = time.monotonic()
-        grid = self.model.embed_patches(image)[0]
+        grids = grids_of(self.model, image)
+        grid = grids[0][0]
         if self.stats["embedded"] == 0:
             logger.info(f"hyperspace ingest: first embed took {time.monotonic() - started:.2f}s")
         self.last_embedded = ts
@@ -169,7 +189,7 @@ class PatchIngestor:
                 ts=ts,
                 grid=grid.astype(np.float16),
                 quality=quality,
-                payload=(image.frame_id, depth),
+                payload=(image.frame_id, depth, grids),
             )
         )
         if kept is None:
@@ -205,13 +225,22 @@ class PatchIngestor:
             return None
         return hs.reproject_depth(metres, depth_intrinsics, color, color_from_depth)
 
+    def cell_grid(
+        self, grids: list[tuple[NDArray[np.float32], tuple[int, int]]]
+    ) -> tuple[int, int]:
+        if self.config.cell_grid is not None:
+            return self.config.cell_grid
+        # One fixed grid: keep the model's own layout, so the vector index's
+        # patch ids and the keyframe cells are the same thing.
+        return grids[0][1] if len(grids) == 1 else (24, 24)
+
     def _write_keyframe(self, kept: hs.BufferedFrame) -> None:
-        camera_frame, depth = kept.payload
+        camera_frame, depth, grids = kept.payload
         color = self.intrinsics.get(camera_frame)
         if color is None:
             logger.warning(f"hyperspace: no camera_info for {camera_frame!r} yet; keyframe dropped")
             return
-        rows = cols = self.model.patches_per_side
+        rows, cols = self.cell_grid(grids)
         if depth is None:
             self.stats["kept_without_depth"] += 1
             patch_depth = np.full(rows * cols, np.nan, dtype=np.float32)
@@ -220,22 +249,33 @@ class PatchIngestor:
             patch_depth = hs.per_patch_depth(depth, rows, cols)
             stride = max(self.config.depth_thumbnail_stride, 1)
             thumbnail = np.clip(depth[::stride, ::stride] * 1000.0, 0, 65535).astype(np.uint16)
-        keyframe = self.keyframes.append(
-            {
-                "camera_frame": camera_frame,
-                "ts": kept.ts,
-                "rows": rows,
-                "cols": cols,
-                "intrinsics": vars(color),
-                "grid": kept.grid,
-                "patch_depth": patch_depth,
-                "thumbnail_mm": thumbnail,
-                "thumbnail_stride": self.config.depth_thumbnail_stride,
-            },
-            ts=kept.ts,
-            tags={"camera_frame": camera_frame},
-        )
-        for index in range(rows * cols):
+        payload = {
+            "camera_frame": camera_frame,
+            "ts": kept.ts,
+            "rows": rows,
+            "cols": cols,
+            "intrinsics": vars(color),
+            # The primary member's grid, as before; ``grids`` carries every
+            # member (primary first) with its own shape when there is more
+            # than one, or when the one grid is not the cell grid.
+            "grid": kept.grid,
+            "patch_depth": patch_depth,
+            "thumbnail_mm": thumbnail,
+            "thumbnail_stride": self.config.depth_thumbnail_stride,
+        }
+        shapes = [shape for _, shape in grids]
+        if self.member_specs:
+            payload["members"] = self.members
+            payload["member_specs"] = self.member_specs
+        if len(grids) > 1 or shapes[0] != (rows, cols):
+            payload["grids"] = [grid.astype(np.float16) for grid, _ in grids]
+            payload["grid_shapes"] = [list(shape) for shape in shapes]
+            payload.setdefault("members", [f"member{i}" for i in range(len(grids))])
+        keyframe = self.keyframes.append(payload, ts=kept.ts, tags={"camera_frame": camera_frame})
+        # The vector index holds the primary member only, indexed on its own
+        # grid (``grid_shapes[0]``): a nearest-neighbour hook for single-grid
+        # tools, not what the ensemble query reads.
+        for index in range(len(kept.grid)):
             self.patches.append(
                 {"keyframe": keyframe.id, "patch": index},
                 ts=kept.ts,

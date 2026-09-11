@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
+from functools import lru_cache
 import math
 from typing import TYPE_CHECKING, Any
 
@@ -104,6 +105,37 @@ def grid_distance(grid: NDArray[np.floating], other: NDArray[np.floating]) -> tu
     cosine = np.einsum("pd,pd->p", grid.astype(np.float32), other.astype(np.float32))
     distance = 1.0 - cosine
     return float(distance.mean()), float(distance.max())
+
+
+@lru_cache(maxsize=64)
+def cell_matrix(source: tuple[int, int], target: tuple[int, int]) -> NDArray[np.float32]:
+    """``[target cells, source cells]`` map from one patch grid to another over
+    the same image: each target cell is the area-weighted mean of the source
+    cells under it (exact, via a raster both grids divide evenly). Identity
+    when the grids match; a 14x14 grid onto 24x24 spreads each patch over the
+    cells it covers."""
+    (sr, sc), (tr, tc) = source, target
+    if source == target:
+        return np.eye(tr * tc, dtype=np.float32)
+    matrix = np.zeros((tr * tc, sr * sc), dtype=np.float32)
+    rows = np.arange(sr * tr)
+    cols = np.arange(sc * tc)
+    source_index = (rows // tr)[:, None] * sc + (cols // tc)[None, :]
+    target_index = (rows // sr)[:, None] * tc + (cols // sc)[None, :]
+    np.add.at(matrix, (target_index.ravel(), source_index.ravel()), 1.0)
+    return matrix / matrix.sum(axis=1, keepdims=True)
+
+
+def pool_cells(contrasts: list[NDArray[np.float32]], pool: str) -> NDArray[np.float32]:
+    """Combine one ``[cells]`` contrast per ensemble member."""
+    stack = np.stack(contrasts)
+    if pool == "min" or len(stack) == 1:
+        return stack.min(axis=0)
+    if pool == "2nd":
+        return np.sort(stack, axis=0)[1]
+    if pool == "mean":
+        return stack.mean(axis=0)
+    raise ValueError(f"unknown pool {pool!r}; choose min, 2nd or mean")
 
 
 @dataclass
@@ -250,6 +282,13 @@ class Keyframe:
 class QueryConfig:
     hot_threshold: float = 0.02
     max_hot_patches: int = 6000
+    # Ensemble stores (several grids per keyframe): how the members' per-cell
+    # contrasts combine. "min" keeps only what every member sees, "2nd" the
+    # second lowest (one member may miss), "mean" averages. A minimum sits
+    # below every member's score, so it gets its own, lower threshold: 0.005
+    # matched the single model's recall at twice its precision (plan.md 7).
+    pool: str = "min"
+    pooled_hot_threshold: float = 0.005
     # Pyramids span this slice of the patch depth; 0.99-1.01 is a thin shell
     # at the depth itself (Jeff, 2026-09-10: tighter caps read better).
     cap_near: float = 0.99

@@ -118,8 +118,12 @@ class HyperspaceQuery:
         self._last_gated = 0
         self.world_frame = world_frame
         self.voxel_size = voxel_size
-        self._backgrounds: NDArray[np.float32] | None = None
+        self._backgrounds: list[NDArray[np.float32]] | None = None
         self._keyframes: dict[int, tuple[hs.Keyframe, NDArray[np.float16]]] = {}
+        # Ensemble stores: per keyframe id, the members' grids (primary first)
+        # with their shapes; empty for single-grid stores.
+        self._member_grids: dict[int, list[tuple[NDArray[np.float16], tuple[int, int]]]] = {}
+        self._members: list[str] = []
         self._labels: dict[str, NDArray[np.float32]] = {}
         self._labels_last_id = -1
         self.tf = TfCache(store)
@@ -143,22 +147,58 @@ class HyperspaceQuery:
                     patch_depth=np.asarray(payload["patch_depth"], dtype=np.float32),
                 )
                 self._keyframes[obs.id] = (keyframe, np.asarray(payload["grid"], dtype=np.float16))
+                if "grids" in payload:
+                    self._member_grids[obs.id] = [
+                        (np.asarray(grid, dtype=np.float16), (int(shape[0]), int(shape[1])))
+                        for grid, shape in zip(
+                            payload["grids"], payload["grid_shapes"], strict=True
+                        )
+                    ]
+                    self._members = list(payload.get("members", self._members))
         return self._keyframes.get(keyframe_id)
 
-    def backgrounds(self) -> NDArray[np.float32]:
+    def members(self) -> list[str]:
+        """The ensemble members the store was written with (tags, primary
+        first); empty for a single-grid store."""
+        self.keyframe(-1)
+        return self._members
+
+    def text_vectors(self, text: str) -> list[NDArray[np.float32]]:
+        """One unit vector per ensemble member (a single one for a single model)."""
+        vectors = self.embed_text(text)
+        if isinstance(vectors, np.ndarray) and vectors.ndim == 1:
+            vectors = [vectors]
+        return [np.asarray(v, dtype=np.float32) for v in vectors]
+
+    def backgrounds(self) -> list[NDArray[np.float32]]:
+        """Per member, the background prompt vectors as a ``[prompts, dim]`` array."""
         if self._backgrounds is None:
-            vectors = [self.embed_text(prompt) for prompt in self.config.background_prompts]
-            self._backgrounds = (
-                np.stack(vectors).astype(np.float32) if vectors else np.zeros((0, 1), np.float32)
-            )
+            per_prompt = [self.text_vectors(prompt) for prompt in self.config.background_prompts]
+            if not per_prompt:
+                self._backgrounds = [np.zeros((0, 1), np.float32)]
+            else:
+                self._backgrounds = [
+                    np.stack([vectors[m] for vectors in per_prompt]).astype(np.float32)
+                    for m in range(len(per_prompt[0]))
+                ]
         return self._backgrounds
 
-    def hot_patches(self, query: NDArray[np.float32]) -> tuple[list[hs.HotPatch], int]:
-        """Patches whose query score beats their best background prompt by the
-        hot threshold. Returns (hot patches, patches searched)."""
-        backgrounds = self.backgrounds()
+    def _relevant_backgrounds(self, member: int, query: NDArray[np.float32]) -> NDArray[np.float32]:
+        backgrounds = self.backgrounds()[min(member, len(self.backgrounds()) - 1)]
         if len(backgrounds):
             backgrounds = backgrounds[(backgrounds @ query) < self.config.background_synonym_cutoff]
+        return backgrounds
+
+    def hot_patches(self, queries: list[NDArray[np.float32]]) -> tuple[list[hs.HotPatch], int]:
+        """Patches whose query score beats their best background prompt by the
+        hot threshold, one text vector per ensemble member. Returns (hot
+        patches, patches searched). An ensemble store scores every keyframe's
+        grids directly; a single-grid store goes through the vector index."""
+        self.keyframe(-1)
+        if self._member_grids:
+            return self.pooled_hot_patches(queries)
+        query = queries[0]
+        backgrounds = self._relevant_backgrounds(0, query)
         hits = (
             self.store.stream(PATCH_STREAM, dict)
             .search(Embedding(vector=query), k=min(self.config.max_hot_patches, VEC0_MAX_K))
@@ -185,6 +225,50 @@ class HyperspaceQuery:
             hot.append(hs.HotPatch(keyframe=keyframe, patch=index, score=contrast))
         self._last_gated = gated
         return hot, len(hits)
+
+    def pooled_hot_patches(
+        self, queries: list[NDArray[np.float32]]
+    ) -> tuple[list[hs.HotPatch], int]:
+        """Every keyframe, every member: contrast on the member's own grid,
+        spread onto the keyframe's cell grid, then pooled across members
+        (``config.pool``); cells above ``pooled_hot_threshold`` are hot."""
+        members = len(next(iter(self._member_grids.values())))
+        if len(queries) != members:
+            raise ValueError(
+                f"the store was written with {members} ensemble members {self._members} "
+                f"but the query side embeds text with {len(queries)}"
+            )
+        backgrounds = [self._relevant_backgrounds(m, q) for m, q in enumerate(queries)]
+        gate = self.structural_cells() if self.config.structural_gate else None
+        exempt = any(label in self._query_text.lower() for label in STRUCTURAL_LABELS)
+        hot: list[hs.HotPatch] = []
+        searched = gated = 0
+        for keyframe_id, grids in self._member_grids.items():
+            keyframe, _ = self._keyframes[keyframe_id]
+            cells = (keyframe.rows, keyframe.cols)
+            contrasts = []
+            for (grid, shape), query, background in zip(grids, queries, backgrounds, strict=True):
+                vectors = grid.astype(np.float32)
+                searched += len(vectors)
+                contrast = vectors @ query
+                if len(background):
+                    contrast -= (background @ vectors.T).max(axis=0)
+                contrasts.append(hs.cell_matrix(shape, cells) @ contrast)
+            pooled = hs.pool_cells(contrasts, self.config.pool)
+            for index in np.flatnonzero(pooled > self.config.pooled_hot_threshold):
+                if (
+                    gate is not None
+                    and not exempt
+                    and self.is_structural(gate, keyframe, int(index))
+                ):
+                    gated += 1
+                    continue
+                hot.append(
+                    hs.HotPatch(keyframe=keyframe, patch=int(index), score=float(pooled[index]))
+                )
+        self._last_gated = gated
+        hot.sort(key=lambda h: -h.score)
+        return hot[: self.config.max_hot_patches], searched
 
     def structural_cells(self) -> dict[str, list[tuple[float, set[int]]]]:
         """Per camera frame, the (ts, grid cells) the segmenter labelled
@@ -239,7 +323,7 @@ class HyperspaceQuery:
             self._labels_last_id = max(self._labels_last_id, obs.id)
             name = obs.tags.get("name")
             if name and name not in self._labels:
-                self._labels[name] = np.asarray(self.embed_text(name), dtype=np.float32)
+                self._labels[name] = self.text_vectors(name)[0]
         return self._labels
 
     def label_scores(self, query: NDArray[np.float32]) -> dict[str, float]:
@@ -285,9 +369,12 @@ class HyperspaceQuery:
 
     def heatmap(self, text: str, frame: str | None = None) -> hs.Heatmap:
         target = frame or self.world_frame
-        query = np.asarray(self.embed_text(text), dtype=np.float32)
+        queries = self.text_vectors(text)
+        # The segment channel compares label text to query text within one
+        # tower: the primary member's.
+        query = queries[0]
         self._query_text = text
-        hot, searched = self.hot_patches(query)
+        hot, searched = self.hot_patches(queries)
         place = self.placer(target)
         result = hs.heatmap(hot, place, target, self.voxel_size, self.config)
         result.stats["patches_searched"] = searched
