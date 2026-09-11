@@ -732,7 +732,6 @@ class FastQuery:
         voxel_size: float,
         embed_texts: Callable[[list[str]], NDArray[np.float32]],
         with_segments: bool = True,
-        level_roll: bool = False,
     ) -> None:
         started = time.monotonic()
         self.config = engine.config
@@ -742,15 +741,6 @@ class FastQuery:
         self._text_cache: dict[str, NDArray[np.float32]] = {}
         engine.keyframe(-1)  # loads every keyframe
         place = engine.placer(world_frame)  # one tf pass
-        if level_roll:  # the recording's tf rolls the camera; see MemoryWorldConfig
-            from dimos.teleop.memory_world.tf_tree import level_camera_roll
-
-            placed = place
-
-            def place(keyframe: Any, _placed: Any = placed) -> Any:
-                matrix = _placed(keyframe)
-                return None if matrix is None else level_camera_roll(matrix)
-
         self.patches = PatchBank(list(engine._keyframes.values()), place)
         self.backgrounds = np.asarray(engine.backgrounds(), np.float32)
         self.patches.background_sims(self.backgrounds)

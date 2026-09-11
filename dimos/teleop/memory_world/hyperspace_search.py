@@ -346,7 +346,6 @@ class HyperspaceSearch:
         device: str = "cpu",
         config: Any | None = None,
         use_segments: bool = True,
-        level_roll: bool = False,
         refine: str = "default",
         scene: NDArray[np.floating] | None = None,
     ) -> None:
@@ -356,9 +355,6 @@ class HyperspaceSearch:
         self.voxel_size = voxel_size
         self.device = device
         self.use_segments = use_segments
-        # The cart recordings' tf rolls the camera; level it here too, so the evidence
-        # pictures and the patch projection agree with the capture markers.
-        self.level_roll = level_roll
         # "default" (Hyperspace's QueryConfig.refine chain, e.g. "occupancy,support,prior") or any
         # such chain; "occupancy": heat within a voxel of the map + connected components here;
         # "none": the raw map. When a chain keeps nothing, the occupancy path answers instead.
@@ -443,7 +439,6 @@ class HyperspaceSearch:
                 voxel_size=self.voxel_size,
                 embed_texts=lambda texts: model.embed_text_array(*texts),
                 with_segments=self.use_segments,
-                level_roll=self.level_roll,
             )
         except Exception:
             self._release()

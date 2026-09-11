@@ -284,41 +284,6 @@ def test_index_with_a_frame_on_one_side_only_is_accepted(sqlite_store: SqliteSto
     )
 
 
-def test_the_pose_convention_tag_names_the_roll_workaround(sqlite_store: SqliteStore) -> None:
-    plain = VisualMemoryIndex(sqlite_store, pose_of=lambda obs: None, model_name=GIANT)
-    levelled = VisualMemoryIndex(
-        sqlite_store, pose_of=lambda obs: None, model_name=GIANT, level_roll=True
-    )
-    assert plain._pose_frame_tag == POSE_FRAME_TAG
-    assert levelled._pose_frame_tag == POSE_FRAME_TAG + "+level_roll"
-
-
-def test_a_levelled_camera_reads_as_a_level_marker() -> None:
-    """Markers are built from the levelled optical pose; they must stand upright."""
-    from dimos.teleop.memory_world.tf_tree import level_camera_roll
-
-    forward = np.array([0.6, -0.8, 0.0])
-    down = np.array([0.0, 0.0, -1.0])
-    right = np.cross(down, forward)
-    roll = np.deg2rad(40.0)
-    y = np.cos(roll) * down + np.sin(roll) * right
-    rolled = np.eye(4)
-    rolled[:3, 0], rolled[:3, 1], rolled[:3, 2] = np.cross(y, forward), y, forward
-    q = body_style_quaternion(level_camera_roll(rolled))
-    # A body-style marker of a level camera has no roll: its own left stays horizontal.
-    left = pose_matrix((0.0, 0.0, 0.0), q)[:3, 1]
-    assert abs(float(left[2])) < 1e-9
-
-
-def test_index_built_under_the_roll_workaround_is_refused(sqlite_store: SqliteStore) -> None:
-    """Poses are stored, not recomputed, so the two conventions must not mix."""
-    _seed_index(sqlite_store, GIANT)  # plain camera_optical poses
-    with pytest.raises(ValueError, match="level_roll"):
-        _ = VisualMemoryIndex(
-            sqlite_store, pose_of=lambda obs: None, model_name=GIANT, level_roll=True
-        ).index_stream
-
-
 def test_index_built_in_another_world_frame_is_refused(sqlite_store: SqliteStore) -> None:
     sqlite_store.stream(index_stream_name_of(GIANT, "color_image"), PatchGrid).append(
         PatchGrid(source_id=7, rows=2, cols=2, patches=np.zeros((4, 2), dtype=np.float16)),
