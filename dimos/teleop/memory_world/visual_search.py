@@ -802,17 +802,21 @@ def main() -> None:
     parser.add_argument("--search", default=None, help="run this query after building")
     args = parser.parse_args()
 
-    from dimos.teleop.memory_world.recording import build_tf_tree
+    from dimos.teleop.memory_world.recording import build_tf_tree, tf_root
 
     store = open_recording(args.store_path)
     store.start()
     tree = build_tf_tree(store, args.tf_stream, args.world_frame)
+    # Like the module: a world frame tf does not know means the tf root.
+    world = (
+        args.world_frame if args.world_frame in tree.frames else tf_root(tree) or args.world_frame
+    )
     camera_frame = args.camera_frame or str(
         getattr(store.streams[args.image_stream].first().data, "frame_id", "")
     )
     index = VisualMemoryIndex(
         store,
-        pose_of=lambda obs: tree.lookup(args.world_frame, camera_frame, float(obs.ts)),
+        pose_of=lambda obs: tree.lookup(world, camera_frame, float(obs.ts)),
         image_stream_name=args.image_stream,
         index_stream_name=args.index_stream,
         model_name=args.model,

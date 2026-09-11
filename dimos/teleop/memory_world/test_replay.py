@@ -164,6 +164,10 @@ def test_build_streams_and_serve_segments(store) -> None:  # type: ignore[no-unt
     assert VoxelReplay.available(store, voxel_size=VOXEL, lidar_stream_name="lidar")
     assert not VoxelReplay.available(store, voxel_size=VOXEL * 2, lidar_stream_name="lidar")
     assert not VoxelReplay.available(store, voxel_size=VOXEL, lidar_stream_name="other_lidar")
+    # Built without a frame: accepted in any frame. Built in one: only that one.
+    assert VoxelReplay.available(
+        store, voxel_size=VOXEL, lidar_stream_name="lidar", world_frame="map"
+    )
 
     diffs = list(store.streams["voxel_diff"])
     assert len(diffs) == 30

@@ -408,12 +408,11 @@ class HyperspaceAnswers:
 
     def _resend_hyperspace(self, conn: Any) -> None:
         """A viewer that (re)connects gets the current heat map and pyramids after the result."""
-        with self._clients_lock:
-            heatmap, pyramids = self._active_heatmap, self._active_pyramids
-        if heatmap is not None:
-            conn.send_threadsafe(encode_binary(MSG_HEATMAP, *heatmap))
-        if pyramids is not None:
-            conn.send_threadsafe(pyramids)
+        with self._clients_lock:  # queued under the lock: they belong to the result just sent
+            if self._active_heatmap is not None:
+                conn.send_threadsafe(encode_binary(MSG_HEATMAP, *self._active_heatmap))
+            if self._active_pyramids is not None:
+                conn.send_threadsafe(self._active_pyramids)
         conn.send_threadsafe(encode_text("search_status", **self._search_status()))
 
     # ---- navigation --------------------------------------------------------

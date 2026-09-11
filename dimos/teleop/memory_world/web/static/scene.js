@@ -11,9 +11,6 @@
 // Locomotion strategy: we don't move the camera (WebXR drives it). Instead
 // we translate / rotate / scale `_worldGroup`, which contains everything the
 // user is looking at. Walking forward = world moves backward, etc.
-//
-// main.js drives the scene through its public methods; InputAdapter reads the
-// camera helpers (getCameraForwardXZ, getCameraPositionWorld, worldToRobot).
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
 import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms, viewportHeight, viewportHeightPx } from '/static_mw/voxel_sprites.js';
@@ -135,6 +132,8 @@ export class WorldScene {
 
         // Containers we (re)populate on payload receive.
         this._pointsObj = null;               // THREE.Points of sphere sprites
+        this._cloudWanted = true;             // the Voxel map box; the replay hides it meanwhile
+        this._replayActive = false;
         this._voxelsDrawn = 0;
         this._cloudData = null;               // {n, positions, colors, voxelSize}
         this._roofCut = { value: 1e9 };       // voxels above this robot z are not drawn
@@ -606,7 +605,8 @@ export class WorldScene {
 
     setReplayActive(active) {
         this._replayGroup.visible = active;
-        if (this._pointsObj) this._pointsObj.visible = !active;
+        this._replayActive = active;
+        if (this._pointsObj) this._pointsObj.visible = this._cloudWanted && !active;
         this._cameraPanel.visible = active && Boolean(this._cameraPanel.material.map);
         this._cameraFrustum.visible = active && this._cameraFrustum.userData.posed === true;
     }
@@ -991,6 +991,7 @@ export class WorldScene {
         const points = new THREE.Points(geometry, material);
         points.frustumCulled = false; // the bounding sphere would be recomputed on every compaction
         this._pointsObj = points;
+        points.visible = this._cloudWanted && !this._replayActive;
         this._frameRotate.add(this._pointsObj);
         this._highlightedVoxels = [];
         this._highlightVoxels(this._lastResultPoints);
@@ -1167,9 +1168,9 @@ export class WorldScene {
     }
 
     toggleCloud() {
-        if (!this._pointsObj) return;
-        this._pointsObj.visible = !this._pointsObj.visible;
-        this.diag('cloud_toggle', { visible: this._pointsObj.visible });
+        this._cloudWanted = !this._cloudWanted;
+        if (this._pointsObj) this._pointsObj.visible = this._cloudWanted && !this._replayActive;
+        this.diag('cloud_toggle', { visible: this._cloudWanted });
     }
 
     setImagePoses(header, payloadArrayBuffer) {

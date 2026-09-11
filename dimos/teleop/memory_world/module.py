@@ -1168,6 +1168,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 world = str(self.config.world_frame or "").lower().lstrip("/")
                 # Any other fixed frame goes through tf: map <- odom is not the identity.
                 aligned = frame_id == world or "corrected" in frame_id
+                if not aligned and frame_id in {"map", "odom", "world"} and self._tf_tree() is None:
+                    aligned = True  # no tf to place a fixed frame through: it is the world
                 logger.info(
                     "lidar frame %r detected as %s",
                     frame_id,
@@ -1308,6 +1310,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                     voxel_size=self.config.voxel_size,
                     lidar_stream_name=self.config.lidar_stream_name,
                     max_range=self.config.replay_max_range_m,
+                    world_frame=self.config.world_frame,
                 )
             if not available:
                 self._replay_progress = "building"
@@ -1320,6 +1323,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                     max_range=self.config.replay_max_range_m,
                     keyframe_interval_s=self.config.replay_keyframe_interval_s,
                     cancelled=self._stopping.is_set,
+                    world_frame=self.config.world_frame,
                 )
                 if self._stopping.is_set():  # cut short: the streams lack their last keyframe
                     raise RuntimeError("cancelled")

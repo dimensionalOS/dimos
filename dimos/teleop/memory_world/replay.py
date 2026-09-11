@@ -207,6 +207,7 @@ def build_replay_streams(
     keyframe_stream_name: str = KEYFRAME_STREAM,
     dry_run: bool = False,
     cancelled: Callable[[], bool] | None = None,
+    world_frame: str | None = None,
 ) -> ReplayStats:
     """Write the keyframe and diff streams for every scan of the lidar stream.
 
@@ -223,6 +224,7 @@ def build_replay_streams(
         "keyframe_interval_s": float(keyframe_interval_s),
         "builder": BUILDER,
         "format": FORMAT_VERSION,
+        "world_frame": world_frame,  # a different frame later means a rebuild
     }
     diffs = keyframes = None
     if not dry_run:
@@ -453,7 +455,12 @@ class VoxelReplay:
 
     @staticmethod
     def available(
-        store: Any, *, voxel_size: float, lidar_stream_name: str, max_range: float | None = None
+        store: Any,
+        *,
+        voxel_size: float,
+        lidar_stream_name: str,
+        max_range: float | None = None,
+        world_frame: str | None = None,
     ) -> bool:
         """True when both streams exist, were built for this grid, range and lidar,
         and the build reached the last scan."""
@@ -472,6 +479,8 @@ class VoxelReplay:
             "max_range": max_range is None
             or abs(float(tags.get("max_range", 0.0)) - max_range) < 1e-9,
             "lidar_stream": tags.get("lidar_stream") == lidar_stream_name,
+            # Streams from before the tag, or built without a frame, fit any frame.
+            "world_frame": world_frame is None or tags.get("world_frame") in (None, world_frame),
         }
         failed = [name for name, ok in checks.items() if not ok]
         if failed:  # a rebuild is half an hour: say why
@@ -660,25 +669,38 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--dry-run", action="store_true", help="only report the statistics")
     args = parser.parse_args(argv)
 
-    from dimos.teleop.memory_world.recording import build_tf_tree, open_recording
+    from dimos.teleop.memory_world.recording import build_tf_tree, open_recording, tf_root
 
     store = open_recording(args.store_path)
     first = store.streams[args.lidar_stream].first()
     frame = str(getattr(first.data, "frame_id", "") or "").lower().lstrip("/")
-    # The module's rule (MemoryWorldModule._lidar_world_aligned): the world frame
-    # itself, or a stitched *corrected* frame, holds world-aligned scans.
-    if frame == args.world_frame.lower().lstrip("/") or "corrected" in frame:
-        raise SystemExit(
-            f"{args.lidar_stream!r} is already in {frame!r}: its rays need the sensor"
-            " pose stamped on each scan, which only the module knows how to read"
-        )
+
+    def refuse_if_aligned(world: str) -> None:
+        # The module's rule (MemoryWorldModule._lidar_world_aligned): the world frame
+        # itself, or a stitched *corrected* frame, holds world-aligned scans.
+        if frame == world.lower().lstrip("/") or "corrected" in frame:
+            raise SystemExit(
+                f"{args.lidar_stream!r} is already in {frame!r}: its rays need the sensor"
+                " pose stamped on each scan, which only the module knows how to read"
+            )
+
+    refuse_if_aligned(args.world_frame)
     tree = build_tf_tree(store, args.tf_stream, args.world_frame)
+    # Like the module: a world frame tf does not know means the tf root.
+    world = (
+        args.world_frame if args.world_frame in tree.frames else tf_root(tree) or args.world_frame
+    )
+    if world != args.world_frame:
+        print(
+            f"--world-frame {args.world_frame!r} is not in tf; using its root {world!r}", flush=True
+        )
+        refuse_if_aligned(world)
 
     def to_scan(obs: Any) -> SensorScan | None:
         # Scans must be in their sensor frame here; a world-aligned stream
         # needs the module, which knows a frame to cast the rays from.
-        frame = str(getattr(obs.data, "frame_id", "") or "").lstrip("/")
-        matrix = tree.lookup(args.world_frame, frame, float(obs.ts), args.tf_tolerance)
+        scan_frame = str(getattr(obs.data, "frame_id", "") or "").lstrip("/")
+        matrix = tree.lookup(world, scan_frame, float(obs.ts), args.tf_tolerance)
         if matrix is None:
             return None
         return sensor_scan(obs.data.points_f32(), matrix, in_world=False)
@@ -691,7 +713,10 @@ def main(argv: list[str] | None = None) -> None:
         max_range=args.max_range,
         keyframe_interval_s=args.keyframe_interval,
         dry_run=args.dry_run,
+        world_frame=world,
     )
+    if stats.scans and stats.added == 0:
+        raise SystemExit(f"no scan could be placed in {world!r} through tf; the replay is empty")
     print(
         f"{stats.scans} scans, {stats.keyframes} keyframes, +{stats.added} / -{stats.removed} voxel "
         f"edits, {stats.final_voxels} voxels at the end, {stats.seconds:.1f} s"

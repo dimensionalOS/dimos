@@ -604,6 +604,7 @@ document.getElementById('answerBtn').addEventListener('click', () => window.app.
 async function ask(text) {
     text = (text || '').trim();
     if (!text) return null;
+    const session = ws;  // the answer belongs to this connection only
     askBtn.disabled = true;
     setStatus(`Asking: ${text}`);
     diag('ask', { text });
@@ -614,15 +615,15 @@ async function ask(text) {
             body: JSON.stringify({ text }),
         });
         const body = await response.json();
-        if (!ws) return null;  // answered after a disconnect: the status line is not ours
+        if (ws !== session) return null;  // answered after a disconnect: not our status line
         if (!response.ok) throw new Error(body.detail || response.status);
         setStatus(body.answer || 'No answer');
         return body;
     } catch (e) {
-        setStatus(`Question failed: ${e.message || e}`);
+        if (ws === session) setStatus(`Question failed: ${e.message || e}`);
         return null;
     } finally {
-        askBtn.disabled = false;
+        if (ws === session) askBtn.disabled = false;
     }
 }
 
@@ -707,16 +708,18 @@ const layerBoxes = {
 };
 layerBoxes.heat.addEventListener('change', () => heatmap && heatmap.setVisible(layerBoxes.heat.checked));
 layerBoxes.pyramids.addEventListener('change', () => pyramids && pyramids.setVisible(layerBoxes.pyramids.checked));
-layerBoxes.voxels.addEventListener('change', () => scene && scene._pointsObj && scene._pointsObj.visible !== layerBoxes.voxels.checked && scene.toggleCloud());
+layerBoxes.voxels.addEventListener('change', () => scene && scene._cloudWanted !== layerBoxes.voxels.checked && scene.toggleCloud());
 layerBoxes.photos.addEventListener('change', () => scene && scene._imageQuadGroup.visible !== layerBoxes.photos.checked && scene.toggleImages());
-layerBoxes.hud.addEventListener('change', () => scene && scene._hudPanel.visible !== layerBoxes.hud.checked && scene.toggleHud());
+layerBoxes.hud.addEventListener('change', () => {
+    if (scene && scene._hudPanel.visible !== layerBoxes.hud.checked) hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
+});
 
 /** Apply the boxes to the current scene: they keep their state across a reconnect, the scene does not. */
 function syncLayerBoxes() {
     if (heatmap) heatmap.setVisible(layerBoxes.heat.checked);
     if (pyramids) pyramids.setVisible(layerBoxes.pyramids.checked);
     if (!scene) return;
-    if (scene._pointsObj && scene._pointsObj.visible !== layerBoxes.voxels.checked) scene.toggleCloud();
+    if (scene._cloudWanted !== layerBoxes.voxels.checked) scene.toggleCloud();
     if (scene._imageQuadGroup && scene._imageQuadGroup.visible !== layerBoxes.photos.checked) scene.toggleImages();
     if (scene._hudPanel && scene._hudPanel.visible !== layerBoxes.hud.checked) {
         hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
