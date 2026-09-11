@@ -658,6 +658,11 @@ function applySearchStatus(status) {
         // The server works out why (a refused claim, a missing stream); saying so beats
         // a bare "retry" the user can only repeat.
         searchNote.textContent = `Prepare search failed: ${(searchStatus.prepare.progress || 'no reason given').slice(0, 120)}`;
+    } else if (searchStatus.error) {
+        // A db that exists and failed to load is not one still loading. Saying
+        // "loading Hyperspace…" for ever hides a reason the server already worked out
+        // (a model mismatch, a corrupt db) and leaves the user nothing to act on.
+        searchNote.textContent = `Search unavailable: ${String(searchStatus.error).slice(0, 160)}`;
     } else if (searchStatus.memory_db_present) {
         searchNote.textContent = 'Search: loading Hyperspace…';
     } else {
@@ -665,7 +670,10 @@ function applySearchStatus(status) {
             ? `Search unavailable: ${searchStatus.error}`
             : 'This recording has no Hyperspace embeddings yet.';
     }
-    prepareBtn.classList.toggle('hidden', !connected || ready || searchStatus.memory_db_present);
+    // A db that failed to load still needs rebuilding, so the button that rebuilds it
+    // has to be reachable: hiding it leaves the reason on screen and no way to act.
+    const usable = searchStatus.memory_db_present && !searchStatus.error;
+    prepareBtn.classList.toggle('hidden', !connected || ready || usable);
     prepareBtn.disabled = preparing;
     prepareBtn.textContent = preparing ? 'Preparing…' : (failed ? 'Prepare search failed — retry' : 'Prepare search (embed this recording)');
     if (failed && searchStatus.prepare.progress !== lastPrepareFailure) {
