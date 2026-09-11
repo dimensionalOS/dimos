@@ -16,14 +16,22 @@ const DIM_OTHER_CLUSTERS = 0.28;
 const DIM_UNCLUSTERED = 0.18;
 const SPRITE_SCALE = 1.35;   // drawn a little larger than the voxel so blobs read as solid
 
+// The answer breathes: size and brightness swell on a slow sine so the heat reads
+// as live, not as more map. `breath` runs 0..1 and is written every frame.
+const BREATH_PERIOD_S = 2.2;
+const BREATH_SIZE = 0.22;      // +/- fraction of the sprite size
+const BREATH_GLOW = 0.28;      // +/- fraction of the brightness
+
 const VERTEX_SHADER = `
     ${SPRITE_VERTEX_GLSL}
+    uniform float breath;
     attribute vec3 color;
     varying vec3 vColor;
     void main() {
-        vColor = color;
+        vColor = color * (1.0 + ${BREATH_GLOW.toFixed(2)} * (breath - 0.5) * 2.0);
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = spritePointSize(mvPosition) * ${SPRITE_SCALE.toFixed(2)};
+        float swell = 1.0 + ${BREATH_SIZE.toFixed(2)} * (breath - 0.5) * 2.0;
+        gl_PointSize = spritePointSize(mvPosition) * ${SPRITE_SCALE.toFixed(2)} * swell;
         gl_Position = projectionMatrix * mvPosition;
     }
 `;
@@ -56,6 +64,14 @@ export class HeatmapLayer {
         this.current = -1;
         this.header = null;
         this.visible = true;
+        this._breath = { value: 0.5 };
+        this._clock = 0;
+    }
+
+    /** Advance the breathing; call once per frame with the frame time in seconds. */
+    tick(dt) {
+        this._clock += dt || 0;
+        this._breath.value = 0.5 + 0.5 * Math.sin((this._clock / BREATH_PERIOD_S) * Math.PI * 2);
     }
 
     /** Replace the map with the voxels of a MSG_HEATMAP frame. */
@@ -78,7 +94,7 @@ export class HeatmapLayer {
         geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
         geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
         const material = new THREE.ShaderMaterial({
-            uniforms: spriteUniforms(header.voxel_size || 0.1),
+            uniforms: { ...spriteUniforms(header.voxel_size || 0.1), breath: this._breath },
             vertexShader: VERTEX_SHADER,
             fragmentShader: SPRITE_FRAGMENT_SHADER,
             transparent: false,

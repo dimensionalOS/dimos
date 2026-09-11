@@ -281,6 +281,7 @@ function buildScene() {
         pyramids = PyramidLayer ? new PyramidLayer(scene._frameRotate) : null;
         flight = Flight ? new Flight(scene) : null;
         if (flight) tickers.push((dt) => flight.tick(dt));
+        if (heatmap) tickers.push((dt) => heatmap.tick(dt));
         results = ResultsNav ? new ResultsNav({
             scene, heatmap, pyramids, flight, baseUrl, diag,
             ui: {
