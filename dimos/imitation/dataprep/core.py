@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -95,8 +95,8 @@ class FeatureSpec(BaseConfig):
 
 class SyncConfig(BaseConfig):
     anchor: str
-    rate_hz: float
-    tolerance_ms: float
+    rate_hz: float = Field(gt=0)
+    tolerance_ms: float = Field(ge=0)
 
 
 class QualityConfig(BaseConfig):
@@ -112,28 +112,21 @@ class OutputConfig(BaseConfig):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class DataPrepConfig(BaseConfig):
-    """Everything needed to turn a recording into a dataset.
+class DatasetSchema(BaseConfig):
+    """Dataset features, episode extraction, alignment, and quality rules."""
 
-    `source` is a recording `.db` or `.mcap`; `observation`/`action` map dataset feature
-    names to recorded streams; `sync` resamples them onto a common timeline;
-    `output` selects format + path. Consumed by `build.run_dataprep`.
-    """
-
-    source: str = ""
     episodes: EpisodeExtractor = EpisodeExtractor()
     observation: dict[str, FeatureSpec] = Field(default_factory=dict)
     action: dict[str, FeatureSpec] = Field(default_factory=dict)
     sync: SyncConfig = SyncConfig(anchor="image", rate_hz=DEFAULT_FPS, tolerance_ms=50.0)
     quality: QualityConfig = QualityConfig()
+
+
+class DataPrepConfig(DatasetSchema):
+    """Dataset interpretation plus this preparation's input and output paths."""
+
+    source: str = ""
     output: OutputConfig = OutputConfig(format="lerobot", path=STATE_DIR / "datasets" / "default")
-
-
-@runtime_checkable
-class DataPrepProfile(Protocol):
-    """A reusable template for one recording and dataset schema."""
-
-    def dataprep_config(self) -> DataPrepConfig: ...
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -571,7 +564,7 @@ def get_writer(format_name: str) -> Writer:
     if format_name == "lerobot":
         raise RuntimeError(
             "LeRobot conversion requires its isolated environment; "
-            "run it through `dimos dataprep build`"
+            "use `run_lerobot_dataprep()` or `dimos imitation prepare RECORDING_DIR`"
         )
     elif format_name == "hdf5":
         from dimos.imitation.dataprep.formats.hdf5.writer import write

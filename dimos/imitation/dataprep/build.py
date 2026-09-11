@@ -17,7 +17,7 @@
 `run_dataprep` (build) and `inspect_dataset` (read-back) own the I/O and side
 effects — open/close the store, drive the writer/reader, emit logs, write
 files; they compose the pure helpers in `core.py` and the per-format
-readers/writers. Exposed by the `dimos dataprep` subcommand.
+readers/writers. Built-in workflows expose it through `dimos imitation`.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from collections.abc import Iterator
 from itertools import chain
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from dimos.imitation.dataprep.core import (
     DataPrepConfig,
@@ -55,20 +55,9 @@ def _open_recording(path: str | Path) -> Store:
 
         return SqliteStore(path=str(source), must_exist=True)
     if source.suffix == ".mcap":
-        from dimos.memory.codecs.lcm import LcmCodec
         from dimos.memory.store.mcap import McapStore
-        from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
-        from dimos.msgs.protocol import DimosMsg
-        from dimos.msgs.sensor_msgs.JointState import JointState
 
-        return McapStore(
-            path=str(source),
-            codecs={
-                "coordinator_joint_state": LcmCodec(JointState),
-                "applied_joint_position_command": LcmCodec(JointState),
-                "status": LcmCodec(cast("type[DimosMsg]", EpisodeStatus)),
-            },
-        )
+        return McapStore(path=str(source), decode_native=True)
     raise ValueError(f"Unsupported recording {str(source)!r}: expected a .db or .mcap artifact")
 
 

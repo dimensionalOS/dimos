@@ -26,6 +26,9 @@ override-dependencies = [
     # LeRobot's headless OpenCV wheel owns the same cv2/ tree as DimOS's
     # opencv-contrib-python dependency. Contrib is the required superset.
     "opencv-python-headless; sys_platform == 'never'",
+    # LeRobot selects TorchCodec whenever it is importable, but its native wheel
+    # cannot load against newer system FFmpeg ABIs. Use LeRobot's PyAV backend.
+    "torchcodec; sys_platform == 'never'",
 ]
 
 [tool.setuptools.packages.find]

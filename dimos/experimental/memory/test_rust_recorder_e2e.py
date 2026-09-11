@@ -40,6 +40,10 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecordingStoreConfig,
     RustSqliteStoreConfig,
 )
+from dimos.imitation.collection.native_recorder import collection_recorder
+from dimos.imitation.collection.profile import CollectionFeature, CollectionProfile
+from dimos.imitation.collection.recording import RecordingSchema
+from dimos.imitation.dataprep.core import SyncConfig
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.store.mcap import McapStore
@@ -138,6 +142,55 @@ def test_rust_artifact_is_readable_by_python_memory2(
     store_kind: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _capture_native_artifact(tmp_path, rust_recorder_executable, store_kind, monkeypatch)
+
+
+@pytest.mark.parametrize("store_kind", ["sqlite", "mcap"])
+def test_native_collection_directory_preserves_schema_and_messages(
+    tmp_path,
+    rust_recorder_executable,
+    store_kind,
+    monkeypatch,
+):
+    camera = CollectionFeature(
+        stream="color_image",
+        message_type=Image,
+        field="data",
+        dtype="video",
+        shape=(16, 16, 3),
+        names=["height", "width", "channels"],
+    )
+    state = CollectionFeature(
+        stream="imu",
+        message_type=Imu,
+        field="angular_velocity",
+        dtype="float32",
+        shape=(3,),
+        names=["x", "y", "z"],
+    )
+    profile = CollectionProfile(
+        name="native-test",
+        robot_type="test",
+        observations={"image": camera, "state": state},
+        actions={"action": state},
+        sync=SyncConfig(anchor="image", rate_hz=30, tolerance_ms=20),
+    )
+    artifact = _capture_native_artifact(
+        tmp_path, rust_recorder_executable, store_kind, monkeypatch, profile
+    )
+    schema = RecordingSchema.read(artifact.parent)
+    assert schema.payload == artifact.name
+    assert schema.observation["state"].stream == "imu"
+    assert schema.name == "native-test"
+
+
+def _capture_native_artifact(
+    tmp_path: Path,
+    rust_recorder_executable: Path,
+    store_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+    profile: CollectionProfile | None = None,
+) -> Path:
     suffix = ".db" if store_kind == "sqlite" else ".mcap"
     artifact = tmp_path / f"recording{suffix}"
     store: RustRecordingStoreConfig
@@ -163,6 +216,20 @@ def test_rust_artifact_is_readable_by_python_memory2(
             connect_timeout=0,
         ),
     )
+    if profile is not None:
+        kwargs = {
+            "executable": str(rust_recorder_executable),
+            "encoding_threads": 2,
+            "stream_codecs": {"imu": "lz4+lcm"},
+            "session": recorder.config.session,
+        }
+        recorder.stop()
+        atom = collection_recorder(
+            profile=profile, recording=tmp_path / "session", format=store_kind
+        ).active_blueprints[0]
+        recorder = atom.module(**atom.kwargs, **kwargs)
+        artifact = Path(recorder.config.recording_store().path)
+        recorder.status.transport = FakeTransport("dimos/collection_status")
     session_pool = ZenohSessionPool()
     channel_suffix = uuid.uuid4().hex[:8]
     publisher: ZenohTransport[Imu] = ZenohTransport(
@@ -190,7 +257,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
     specs = recorder._stream_specs()
     recorder._prepare_store(specs)
     recorder.config.streams = specs
-    launch = recorder._stdin_blob({"imu": imu_topic, "color_image": image_topic})
+    launch = recorder._stdin_blob(recorder._collect_topics())
 
     env = {
         **os.environ,
@@ -258,6 +325,8 @@ def test_rust_artifact_is_readable_by_python_memory2(
             np.mean(np.abs(decoded_image.data.astype(float) - expected_image.data.astype(float)))
             < 5
         )
+
+    return artifact
 
 
 @pytest.mark.parametrize(

@@ -18,7 +18,7 @@ import cv2
 import numpy as np
 import pytest_mock
 
-from dimos.hardware.sensors.camera.module import CameraModuleConfig
+from dimos.hardware.sensors.camera.module import CameraModule, CameraModuleConfig
 from dimos.hardware.sensors.camera.webcam import Webcam, WebcamConfig
 
 
@@ -43,6 +43,14 @@ def test_camera_config_accepts_hardware_factory_and_instance() -> None:
 
     assert CameraModuleConfig(hardware=factory).hardware is factory
     assert CameraModuleConfig(hardware=webcam).hardware is webcam
+
+
+def test_camera_can_stop_before_start() -> None:
+    camera = CameraModule()
+
+    camera.stop()
+
+    assert camera._module_closed
 
 
 def test_start_requests_and_reports_camera_mode(mocker: pytest_mock.MockerFixture) -> None:

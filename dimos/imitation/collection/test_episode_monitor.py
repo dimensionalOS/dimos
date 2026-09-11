@@ -73,12 +73,10 @@ def _events(monitor: EpisodeMonitorModule) -> list[EpisodeStatus]:
 
 
 def _press(monitor: EpisodeMonitorModule, alias: str) -> None:
-    """Rising edge: release-then-press the given WebXR button alias."""
+    """Deliver one debounced WebXR button-press edge."""
     attr = BUTTON_ALIASES[alias]
-    released = Buttons()
     pressed = Buttons()
     pressed.set_attribute(attr, True)
-    monitor._on_buttons(released)
     monitor._on_buttons(pressed)
 
 
@@ -93,6 +91,46 @@ def test_toggle_starts_then_saves(make_monitor: Callable[..., EpisodeMonitorModu
     assert events[-1].episodes_saved == 1
     assert events[-1].episodes_discarded == 0
     assert events[-1].task_label == "pick up the block"
+
+
+def test_rpc_commands_use_the_same_state_machine(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+
+    recording = m.command("toggle")
+    saved = m.command("toggle")
+
+    assert [event.last_event for event in _events(m)] == ["start", "save"]
+    assert recording.state == "recording"
+    assert saved.state == "idle"
+    assert saved.episodes_saved == 1
+
+
+def test_get_status_does_not_publish(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    m.command("start")
+    event_count = len(_events(m))
+
+    status = m.get_status()
+
+    assert status.state == "recording"
+    assert status.last_event == "start"
+    assert len(_events(m)) == event_count
+
+
+def test_invalid_rpc_command_is_rejected_without_changing_state(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+
+    with pytest.raises(ValueError, match="unknown episode command"):
+        m.command("pause")  # type: ignore[arg-type]
+
+    assert m.get_status().state == "idle"
+    assert _events(m) == []
 
 
 def test_task_is_required(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
@@ -126,17 +164,6 @@ def test_start_while_recording_autocommits_previous(
     assert last.episodes_saved == 1  # the auto-committed one
 
 
-def test_no_event_without_rising_edge(
-    make_monitor: Callable[..., EpisodeMonitorModule],
-) -> None:
-    m = make_monitor()
-    pressed = Buttons()
-    pressed.right_secondary = True  # B held
-    m._on_buttons(pressed)
-    m._on_buttons(pressed)  # still held — no new edge
-    assert [e.last_event for e in _events(m)] == ["start"]
-
-
 def test_published_status_is_internally_consistent(
     make_monitor: Callable[..., EpisodeMonitorModule],
 ) -> None:
@@ -160,16 +187,18 @@ def test_published_status_is_internally_consistent(
     assert events[-1].episodes_discarded == 1
 
 
-def test_shutdown_discards_recording(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
+def test_shutdown_leaves_recording_incomplete(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
     m = make_monitor()
     _press(m, "B")
 
     m.stop()
 
     last = _events(m)[-1]
-    assert last.last_event == "discard"
-    assert last.state == "idle"
-    assert last.episodes_discarded == 1
+    assert last.last_event == "start"
+    assert last.state == "recording"
+    assert last.episodes_discarded == 0
 
 
 def test_invalid_button_mapping_fails_at_startup(

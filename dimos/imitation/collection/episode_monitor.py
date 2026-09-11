@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Single point of Quest-input → EpisodeStatus translation.
+"""Single point of operator-input → EpisodeStatus translation.
 
-Watches buttons, runs the start/save/discard state machine,
+Watches Quest buttons and accepts RPC commands, runs the episode state machine,
 publishes EpisodeStatus on every transition. RecordReplay (or whatever
 records the bus) captures that stream into session.db; DataPrep reads only
-the recorded EpisodeStatus events offline — never raw buttons.
+the recorded EpisodeStatus events offline — never raw operator input.
 """
 
 from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, Protocol, TypeAlias
 
 from pydantic import Field, field_validator
 from reactivex.abc import DisposableBase
@@ -38,6 +38,7 @@ from dimos.msgs.imitation_msgs.EpisodeStatus import (
     EpisodeStatus,
     RecordingState,
 )
+from dimos.spec.utils import Spec
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 from dimos.utils.logging_config import setup_logger
 
@@ -46,6 +47,11 @@ logger = setup_logger()
 # A button/keyboard press requests one of these; `toggle` resolves to
 # `start`/`save` based on the current state, so it never reaches the output.
 EpisodeCommand: TypeAlias = Literal["start", "save", "discard", "toggle"]
+
+
+class EpisodeControlSpec(Spec, Protocol):
+    def get_status(self) -> EpisodeStatus: ...
+    def command(self, event: EpisodeCommand) -> EpisodeStatus: ...
 
 
 def _default_button_map() -> dict[EpisodeCommand, str]:
@@ -85,7 +91,7 @@ class EpisodeMonitorModuleConfig(ModuleConfig):
 class EpisodeMonitorModule(Module):
     config: EpisodeMonitorModuleConfig
 
-    teleop_buttons: In[Buttons]
+    button_pressed: In[Buttons]
     status: Out[EpisodeStatus]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -93,7 +99,7 @@ class EpisodeMonitorModule(Module):
         self._state: RecordingState = "idle"
         self._saved: int = 0
         self._discarded: int = 0
-        self._prev_bits: dict[str, bool] = {}
+        self._last_event: EpisodeEvent = "init"
         self._lock = threading.Lock()
         self._transition_lock = threading.Lock()
         self._stopping = False
@@ -104,7 +110,7 @@ class EpisodeMonitorModule(Module):
         super().start()
         # Registered so the base Module.stop() disposes them on shutdown.
         self._input_subscriptions = [
-            self.register_disposable(Disposable(self.teleop_buttons.subscribe(self._on_buttons))),
+            self.register_disposable(Disposable(self.button_pressed.subscribe(self._on_buttons))),
         ]
         # Emit an initial idle status so subscribers (and recorders) have a
         # known starting point in the timeline.
@@ -116,57 +122,54 @@ class EpisodeMonitorModule(Module):
     def stop(self) -> None:
         with self._transition_lock:
             with self._lock:
-                if self._stopping:
-                    status = None
-                else:
-                    self._stopping = True
-                    if self._state == "recording":
-                        self._discarded += 1
-                        self._state = "idle"
-                        status = self._snapshot("discard", time.time())
-                    else:
-                        status = None
+                self._stopping = True
             for subscription in self._input_subscriptions:
                 subscription.dispose()
             self._input_subscriptions.clear()
-            if status is not None:
-                self._emit(status)
+            # Do not synthesize a save or discard. If the process is interrupted
+            # mid-take, DataPrep must see the unmatched start as incomplete.
         super().stop()
 
     # ── port handlers ────────────────────────────────────────────────────────
 
     def _on_buttons(self, msg: Buttons) -> None:
-        """Rising-edge detect against `config.button_map`; advance state machine."""
+        """Advance the state machine for configured button-press edges."""
         ts = time.time()
-        # Edge-detect under the lock, then fire transitions outside it.
         fired: list[EpisodeCommand] = []
         with self._lock:
             if self._stopping:
                 return
             for event_name, alias_or_attr in self.config.button_map.items():
                 attr = BUTTON_ALIASES.get(alias_or_attr, alias_or_attr)
-                try:
-                    pressed = bool(getattr(msg, attr))
-                except AttributeError:
-                    continue
-                prev = self._prev_bits.get(attr, False)
-                self._prev_bits[attr] = pressed
-                if pressed and not prev:  # rising edge
+                if bool(getattr(msg, attr)):
                     fired.append(event_name)
         for event_name in fired:
             self._transition(event_name, ts)
 
-    def _transition(self, event: EpisodeCommand, ts: float) -> None:
+    @rpc
+    def command(self, event: EpisodeCommand) -> EpisodeStatus:
+        """Apply an episode command from an attached operator interface."""
+        return self._transition(event, time.time())
+
+    @rpc
+    def get_status(self) -> EpisodeStatus:
+        """Return the latest episode state without publishing a new event."""
+        with self._lock:
+            return self._snapshot(self._last_event, time.time())
+
+    def _transition(self, event: EpisodeCommand, ts: float) -> EpisodeStatus:
         """State-machine transition. Publishes EpisodeStatus on every change.
 
         ``toggle`` resolves to ``start`` when idle and ``save`` when recording,
         so one button can begin and end a take. The resolved event is what gets
         published (DataPrep only ever sees start/save/discard).
         """
+        if event not in ("start", "save", "discard", "toggle"):
+            raise ValueError(f"unknown episode command: {event!r}")
         with self._transition_lock:
             with self._lock:
                 if self._stopping:
-                    return
+                    return self._snapshot(self._last_event, ts)
                 if event == "toggle":
                     event = "save" if self._state == "recording" else "start"
                 if event == "start":
@@ -182,9 +185,10 @@ class EpisodeMonitorModule(Module):
                     if self._state == "recording":
                         self._discarded += 1
                     self._state = "idle"
+                self._last_event = event
                 # Snapshot under the mutation's lock so the event matches the state.
                 status = self._snapshot(event, ts)
-            self._emit(status)
+            return self._emit(status)
 
     def _snapshot(self, last_event: EpisodeEvent, ts: float) -> EpisodeStatus:
         """Build a status from current state. Caller must hold `self._lock`."""
