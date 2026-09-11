@@ -9,11 +9,14 @@ Hyperspace answering questions in plain words with the pictures to prove it.
 memworld ~/datasets/lite_recorder/grocery.mcap   # or bike.mcap / park.mcap / any .db; ~/Commands/memworld
 ```
 
-- The cart recordings' own tf puts the camera 90 degrees out in yaw. Measure the
-  real mount against the lidar once per recording and everything after reads it:
-  `python -m dimos.teleop.memory_world.calibrate_static_tf <recording> --samples 20`.
-  It writes a `tf_static_corrected` stream into the recording's companion derived
-  db; the recording is never rewritten. Photos hang at the height the camera was.
+- If a recording's tf has the camera mount wrong, measure the real one against the
+  lidar and write it into the recording's own `tf_static`:
+  `python -m dimos.teleop.memory_world.calibrate_static_tf <recording> --samples 20 --write`
+  (without `--write` it only prints). Nothing reads it specially afterwards.
+  **Do this before building the search index**, not after: the index and the
+  Hyperspace memory db store poses as they were computed, so one built against the
+  old mount keeps the old poses. If you calibrate later, delete
+  `<recording>.hyperspace.db` and re-run Prepare search.
 - First start on a new recording builds the ray-traced replay (minutes on a
   long one); later starts take seconds. A build that places no scan (tf cannot
   reach the lidar frame, or everything is out of range) is thrown away and the

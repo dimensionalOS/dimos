@@ -324,6 +324,11 @@ def write_static_mount(store: Any, mount: str, child: str, matrix: np.ndarray, t
     from dimos.teleop.memory_world.recording import detect_streams
 
     name = detect_streams(store).get("tf_static") or "tf_static"
+    if name in getattr(getattr(store, "recording", None), "list_streams", list)():
+        raise SystemExit(
+            f"{name!r} belongs to the recording itself, which is read only. Fix the mount"
+            " where the recording is written, or convert it to a .db first."
+        )
     kept = [
         t
         for obs in (store.streams[name] if name in store.list_streams() else [])
@@ -403,6 +408,16 @@ def main() -> None:
         ).lstrip("/")
         ts = float(store.streams[streams["depth"]].first().ts)
 
+        if args.write:  # before six minutes of fitting, not after
+            static = detect_streams(store).get("tf_static")
+            if (
+                static
+                and static in getattr(getattr(store, "recording", None), "list_streams", list)()
+            ):
+                raise SystemExit(
+                    f"{static!r} belongs to {args.recording} itself, which is read only."
+                    " Fix the mount where the recording is written, or convert it to a .db."
+                )
         pairs = _pairs(store, streams, args.samples)
         if len(pairs) < 4:
             raise SystemExit(

@@ -269,18 +269,22 @@ def _ingest(
     def in_window(observation: Any) -> bool:
         return start_ts - 5.0 <= float(observation.ts) <= start_ts + max_seconds + 5.0
 
-    held = (
-        [t for obs in store.streams[streams["tf_static"]] for t in obs.data.transforms]
-        if streams.get("tf_static")
-        else []
-    )
+    # One sample per edge, the FIRST, which is the one TfTree.add keeps: a latched
+    # static edge republished with a different value would otherwise let Hyperspace pick
+    # a later sample than the viewer's tree does, and the two would place things apart.
+    first_static: dict[tuple[str, str], Any] = {}
+    if streams.get("tf_static"):
+        for obs in store.streams[streams["tf_static"]]:
+            for t in obs.data.transforms:
+                first_static.setdefault((str(t.frame_id), str(t.child_frame_id)), t)
+    held = list(first_static.values())
     # An edge tf_static declares is fixed for all time, so the recording's own moving
     # samples of it are dropped wherever they appear. A stitched recording republishes
     # its static edges inside the moving stream hundreds of times, and Hyperspace keeps
     # the LAST sample of an edge, so without this the static value is overwritten by a
     # stale one. TfTree.add does the same thing for the same reason, and the corrected
     # base poses displace the recorded edge below on the same principle.
-    superseded = {(str(t.frame_id), str(t.child_frame_id)) for t in held}
+    superseded = set(first_static)
     if corrected is not None:
         superseded.add((world, base))
 
