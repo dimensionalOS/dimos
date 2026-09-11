@@ -22,9 +22,8 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.mapping.relocalization.blueprints import RecordingPlayer
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
-from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.robot.unitree.go2.blueprints.navigation.unitree_go2_nav_3d import (
-    mls_planner_config,
+    mls_planner,
     nav_rerun_config,
     unitree_go2_nav_3d_relocalization,
 )
@@ -43,7 +42,5 @@ unitree_go2_nav_3d_relocalization_replay = autoconnect(
     ),
     RecordingPlayer.blueprint(),
     vis_module(viewer_backend=global_config.viewer, rerun_config=nav_rerun_config(planner_viz_hz)),
-    MLSPlannerNative.blueprint(
-        **{**mls_planner_config.model_dump(exclude_unset=True), "viz_publish_hz": planner_viz_hz}
-    ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
+    mls_planner(planner_viz_hz),
 ).global_config(n_workers=8)

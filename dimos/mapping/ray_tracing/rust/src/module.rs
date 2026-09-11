@@ -81,8 +81,6 @@ pub struct RayTracingVoxelMap {
     #[config]
     config: Config,
 
-    // Handlers only enqueue. The worker owns the mapper and does every
-    // lookup, map mutation, and publish, so the handle loop never blocks.
     jobs: Option<mpsc::Sender<Job>>,
     worker: Option<JoinHandle<()>>,
 }
@@ -394,11 +392,9 @@ impl Worker {
         tokio::task::block_in_place(|| mapper.clear_metric(points));
     }
 
-    /// Place the first loaded map on its own task, waiting for the transform
-    /// there and splitting the cloud into tiles off the worker. Later maps are
-    /// ignored: reseeding would resurrect voxels live rays have carved. The
-    /// lookup takes the latest transform, since the cloud keeps its original
-    /// stamp.
+    /// Place the first loaded map on its own task and tile it off the worker.
+    /// Later maps are ignored, since reseeding would resurrect voxels live
+    /// rays have carved.
     fn place_loaded_map(&self, state: &mut State, msg: PointCloud2) {
         if !matches!(state.seed, SeedState::Idle) {
             return;
@@ -664,6 +660,7 @@ mod tests {
         emit_points, metric_voxel_keys, update_map, LocalBounds, VoxelKey, VoxelMap,
     };
     use ahash::AHashSet;
+    use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
 
     fn test_config() -> Config {
         Config {
@@ -719,26 +716,24 @@ mod tests {
         )
     }
 
-    /// A loaded cloud in the map frame lands in the world through the same
-    /// decode and pose conversion the handler uses.
+    /// A prepared seed lands a map-frame cloud in the world through the tf
+    /// pose, tiled for the mapper.
     #[test]
-    fn loaded_map_round_trips_through_the_latest_transform() {
-        use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
-
+    fn prepared_seed_lands_loaded_map_in_world_frame() {
         // Yaw 90 deg at (10, 0, 0): map +x becomes world +y.
         let iso = Isometry3::from_parts(
             Translation3::new(10.0, 0.0, 0.0),
             UnitQuaternion::from_axis_angle(&Vector3::z_axis(), std::f64::consts::FRAC_PI_2),
         );
         let t = Transform::new("odom", "map", 0.0, iso);
-
         let cloud = points_to_cloud(&[3.5, 0.0, 0.5], "map", Time::default());
-        let points = extract_xyz(&cloud).unwrap_or_else(|e| panic!("loaded map must decode: {e}"));
 
-        let mut points = points;
-        register(&mut points, tf_to_pose(&t));
+        let part = prepare_seed(&cloud, tf_to_pose(&t), 1.0, (0.0, 0.0, 0.0))
+            .expect("loaded map must decode");
+        assert_eq!(part.voxels, 1);
         let mut mapper = Mapper::new(test_config());
-        assert_eq!(mapper.seed_points(&points), 1);
+        let created: usize = part.tiles.iter().map(|tile| mapper.seed_tile(tile)).sum();
+        assert_eq!(created, 1);
 
         let full = points_to_cloud(&mapper.full_points(), "odom", now());
         assert!(cloud_points(&full).contains(&voxel_center(10, 3, 0)));

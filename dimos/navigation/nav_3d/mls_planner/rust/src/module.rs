@@ -15,7 +15,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::mls_planner::{partition_cloud, CloudPartition, Config, MapTile, Planner, RegionBounds};
+use crate::mls_planner::{partition_cloud, CloudPartition, Config, MapLoad, Planner, RegionBounds};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 use dimos_module::time::now;
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
@@ -49,41 +49,10 @@ enum MapUpdate {
     },
 }
 
-/// What `ingest` applied, so the load tracker can react to it.
+/// What `ingest` applied.
 enum AppliedUpdate {
     Region(RegionBounds),
     Global,
-}
-
-/// An in-progress tiled full-map load, advanced one tile per worker cycle.
-struct MapLoad {
-    tiles: Vec<MapTile>,
-    next: usize,
-    /// Regions applied since the load started. Tiles overlapping them are
-    /// skipped, since the live content is fresher.
-    regions: Vec<RegionBounds>,
-}
-
-impl MapLoad {
-    /// Index of the next tile to apply, consuming skipped tiles.
-    fn next_tile_index(&mut self) -> Option<usize> {
-        while self.next < self.tiles.len() {
-            let i = self.next;
-            self.next += 1;
-            let overlapped = self
-                .regions
-                .iter()
-                .any(|r| cylinders_overlap(&self.tiles[i].bounds, r));
-            if !overlapped {
-                return Some(i);
-            }
-        }
-        None
-    }
-
-    fn finished(&self) -> bool {
-        self.next >= self.tiles.len()
-    }
 }
 
 /// Extract and partition a full-map cloud. None when unusable or empty.
@@ -103,17 +72,6 @@ fn extract_and_partition(msg: &PointCloud2, voxel_size: f32) -> Option<CloudPart
         return None;
     }
     Some(partition_cloud(&points, FULL_MAP_TILE_M, voxel_size))
-}
-
-/// Whether two region cylinders intersect.
-fn cylinders_overlap(a: &RegionBounds, b: &RegionBounds) -> bool {
-    if a.z_max < b.z_min || b.z_max < a.z_min {
-        return false;
-    }
-    let dx = a.origin_x - b.origin_x;
-    let dy = a.origin_y - b.origin_y;
-    let r = a.radius + b.radius;
-    dx * dx + dy * dy <= r * r
 }
 
 #[derive(Module)]
@@ -281,13 +239,16 @@ impl Worker {
         let mut last_path_at: Option<Instant> = None;
         let mut last_viz_at: Option<Instant> = None;
         loop {
-            // An in-progress load keeps cycling, one tile per pass, checking
-            // the mailboxes and goal between tiles. Live updates apply first.
-            if load.is_none() {
+            // Live updates apply before load tiles.
+            let woke = load.is_none();
+            if woke {
                 self.wake.notified().await;
             } else {
                 tokio::task::yield_now().await;
             }
+            // Tiles alone never trigger a replan, so a load cannot flood the
+            // path topic.
+            let mut replan = woke;
             let update = self.pending.lock().expect("pending mutex").take();
             if let Some(update) = update {
                 match self
@@ -296,11 +257,15 @@ impl Worker {
                 {
                     Some(AppliedUpdate::Region(bounds)) => {
                         if let Some(l) = load.as_mut() {
-                            l.regions.push(bounds);
+                            l.region_applied(bounds);
                         }
+                        replan = true;
                     }
                     // A full rebuild replaces everything a load would add.
-                    Some(AppliedUpdate::Global) => load = None,
+                    Some(AppliedUpdate::Global) => {
+                        load = None;
+                        replan = true;
+                    }
                     None => {}
                 }
             }
@@ -309,25 +274,26 @@ impl Worker {
                 load = Some(self.start_load(&planner, part));
             }
             if let Some(l) = load.as_mut() {
-                if let Some(i) = l.next_tile_index() {
-                    let tile = &l.tiles[i];
-                    let tile_start = Instant::now();
-                    tokio::task::block_in_place(|| {
-                        planner.update_region(&tile.points, &tile.bounds, &self.config)
-                    });
+                let tile_start = Instant::now();
+                let applied =
+                    tokio::task::block_in_place(|| l.apply_next_tile(&mut planner, &self.config));
+                if applied {
                     debug!(
-                        tile = i,
+                        remaining = l.remaining(),
                         tile_ms = tile_start.elapsed().as_secs_f64() * 1e3,
                         "full map tile applied"
                     );
                     self.publish_viz_if_due(&planner, &mut last_viz_at).await;
                 }
                 if l.finished() {
-                    info!("full map load finished");
+                    info!(load_s = l.elapsed().as_secs_f64(), "full map load finished");
                     load = None;
+                    replan = true;
                 }
             }
-            self.maybe_replan(&mut planner, &mut last_path_at).await;
+            if replan {
+                self.maybe_replan(&mut planner, &mut last_path_at).await;
+            }
         }
     }
 
@@ -338,11 +304,7 @@ impl Worker {
         let tiles =
             tokio::task::block_in_place(|| planner.finish_partition(part, center, &self.config));
         info!(tiles = tiles.len(), "full map load started");
-        MapLoad {
-            tiles,
-            next: 0,
-            regions: Vec::new(),
-        }
+        MapLoad::new(tiles)
     }
 
     /// Apply one live update and refresh the viz artifacts.
@@ -794,47 +756,6 @@ mod tests {
         Point { x, y, z }
     }
 
-    fn cyl(x: f32, y: f32, r: f32) -> RegionBounds {
-        RegionBounds {
-            origin_x: x,
-            origin_y: y,
-            radius: r,
-            z_min: -1.0,
-            z_max: 1.0,
-        }
-    }
-
-    #[test]
-    fn cylinders_overlap_by_distance_and_z() {
-        assert!(cylinders_overlap(&cyl(0.0, 0.0, 1.0), &cyl(1.5, 0.0, 1.0)));
-        assert!(!cylinders_overlap(&cyl(0.0, 0.0, 1.0), &cyl(3.0, 0.0, 1.0)));
-        let mut high = cyl(0.0, 0.0, 1.0);
-        high.z_min = 2.0;
-        high.z_max = 3.0;
-        assert!(!cylinders_overlap(&cyl(0.0, 0.0, 1.0), &high));
-    }
-
-    #[test]
-    fn map_load_skips_tiles_overlapping_applied_regions() {
-        let tile = |x: f32| MapTile {
-            bounds: cyl(x, 0.0, 1.0),
-            points: Vec::new(),
-        };
-        let mut load = MapLoad {
-            tiles: vec![tile(0.0), tile(2.0), tile(4.0)],
-            next: 0,
-            regions: Vec::new(),
-        };
-        assert_eq!(load.next_tile_index(), Some(0));
-        // A live region lands on the second tile before it applies.
-        load.regions.push(cyl(2.0, 0.0, 0.5));
-        assert_eq!(load.next_tile_index(), Some(2), "overlapped tile skipped");
-        assert!(load.finished());
-        assert_eq!(load.next_tile_index(), None);
-    }
-
-    /// The full-map slot is separate from the live-update slot, so a region
-    /// frame arriving before the worker wakes cannot clobber a pending load.
     #[test]
     fn goal_position_passes_finite_and_cancels_on_non_finite() {
         assert_eq!(goal_position(&point(1.0, 2.0, 3.0)), Some((1.0, 2.0, 3.0)));

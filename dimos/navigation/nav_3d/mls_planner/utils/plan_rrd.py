@@ -31,6 +31,11 @@ import typer
 
 from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
+from dimos.mapping.ray_tracing.utils.loaded_map import (
+    first_loaded_map,
+    log_loaded_map,
+    place_loaded_map,
+)
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF, tf_stream
 from dimos.memory.transform import FnTransformer
@@ -621,9 +626,7 @@ def main(
         ray_pipeline = pose_tagged.transform(ray)
         tf_sync = _TfSync(tf)
 
-        loaded_map: Observation[PointCloud2] | None = None
-        if loaded_map_stream in store.list_streams():
-            loaded_map = store.stream(loaded_map_stream, PointCloud2).order_by("ts").first()
+        loaded_map = first_loaded_map(store, loaded_map_stream)
         seeded_run = loaded_map is not None
         tiles_left = 0
         if loaded_map is not None:
@@ -705,23 +708,12 @@ def main(
                     crop,
                 )
                 if loaded_map is not None and ray_obs.ts >= loaded_map.ts:
-                    placement = tf_lookup.get(
-                        world_frame, loaded_map.data.frame_id, time_point=ray_obs.ts
-                    )
-                    if placement is None:
-                        raise RuntimeError(
-                            f"no {world_frame}->{loaded_map.data.frame_id} transform at "
-                            f"ts={ray_obs.ts:.3f} to place the loaded map"
-                        )
-                    seed_pts = loaded_map.data.transform(placement).points_f32()
+                    seed_pts = place_loaded_map(loaded_map, tf_lookup, world_frame, ray_obs.ts)
                     created = ray.mapper.seed_points(seed_pts)
                     full = ray.mapper.full_map()
                     for _, _, planner in planners:
                         tiles_left = planner.start_full_map_load(full, (start[0], start[1]), tile_m)
-                    rr.log(
-                        "world/loaded_map",
-                        rr.Points3D(seed_pts, colors=[[130, 130, 130]], radii=0.008),
-                    )
+                    log_loaded_map(seed_pts)
                     print(f"\nseeded {created} voxels, loading {tiles_left} tiles")
                     loaded_map = None
                 elif tiles_left:

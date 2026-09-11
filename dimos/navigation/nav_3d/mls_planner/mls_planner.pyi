@@ -67,7 +67,7 @@ class MLSPlanner:
     def apply_full_map_tile(self) -> int:
         """Apply the next pending tile through the region pipeline.
 
-        Returns how many tiles remain.
+        Tiles a later update_region fully covered are skipped. Returns how many remain.
         """
         ...
 

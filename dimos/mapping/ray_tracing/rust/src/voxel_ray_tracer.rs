@@ -270,9 +270,7 @@ impl VoxelMap {
         self.voxels.reserve(additional);
     }
 
-    /// Create a healthy seed voxel if absent, with its support counted, its
-    /// neighbors' counts bumped, and the chunk index updated. Returns whether
-    /// it was created.
+    /// Create a healthy seed voxel if absent. Returns whether it was created.
     fn insert_seed(&mut self, key: VoxelKey) -> bool {
         if self.voxels.contains_key(&key) {
             return false;
@@ -1078,10 +1076,8 @@ pub fn partition_seed(
     }
 }
 
-/// Seed one tile without ray tracing. Only absent voxels are created, each
-/// landing with its support, its neighbors' counts, and the chunk index
-/// already consistent, so live frames can interleave between tiles. Existing
-/// voxels keep their health and moments. Returns the created keys.
+/// Seed one tile without ray tracing, creating only absent voxels. Each lands
+/// fully indexed, so live frames can interleave. Returns the created keys.
 pub fn seed_tile(
     map: &mut VoxelMap,
     points: &[(f32, f32, f32)],

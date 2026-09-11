@@ -31,10 +31,14 @@ from numpy.typing import NDArray
 import typer
 
 from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
+from dimos.mapping.ray_tracing.utils.loaded_map import (
+    first_loaded_map,
+    log_loaded_map,
+    place_loaded_map,
+)
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
-from dimos.memory.type.observation import Observation
 from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import resolve_named_path
@@ -204,9 +208,8 @@ def main(
         if tf is None:
             raise typer.BadParameter(f"{db_path} has no tf stream to register clouds from")
 
-        loaded_map: Observation[PointCloud2] | None = None
-        if loaded_map_stream in store.list_streams():
-            loaded_map = store.stream(loaded_map_stream, PointCloud2).order_by("ts").first()
+        loaded_map = first_loaded_map(store, loaded_map_stream)
+        if loaded_map is not None:
             print(f"loaded_map at ts={loaded_map.ts:.3f}; seeding when reached")
 
         trajectory: list[tuple[float, float, float]] = []
@@ -231,19 +234,10 @@ def main(
             count += 1
 
             if loaded_map is not None and obs.ts >= loaded_map.ts:
-                placement = tf.get(world_frame, loaded_map.data.frame_id, time_point=obs.ts)
-                if placement is None:
-                    raise RuntimeError(
-                        f"no {world_frame}->{loaded_map.data.frame_id} transform at "
-                        f"ts={obs.ts:.3f} to place the loaded map"
-                    )
-                seed_pts = loaded_map.data.transform(placement).points_f32()
+                seed_pts = place_loaded_map(loaded_map, tf, world_frame, obs.ts)
                 created = {name: m.seed_points(seed_pts) for name, m in mappers.items()}
                 rr.set_time(TIMELINE, timestamp=obs.ts)
-                rr.log(
-                    "world/loaded_map",
-                    rr.Points3D(seed_pts, colors=[[130, 130, 130]], radii=0.008),
-                )
+                log_loaded_map(seed_pts)
                 print(f"\nseeded {created} voxels from {len(seed_pts)} points")
                 loaded_map = None
 

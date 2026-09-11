@@ -15,6 +15,7 @@
 //! Config and the owned-state Planner that builds and queries the MLS graph.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use ahash::{AHashMap, AHashSet};
 use dimos_module::{native_config, worker_pool};
@@ -156,6 +157,15 @@ impl RegionBounds {
         }
     }
 
+    /// Whether `other` lies entirely inside this cylinder.
+    fn contains(&self, other: &RegionBounds) -> bool {
+        if other.z_min < self.z_min || other.z_max > self.z_max {
+            return false;
+        }
+        let d = (other.origin_x - self.origin_x).hypot(other.origin_y - self.origin_y);
+        d + other.radius <= self.radius
+    }
+
     fn contains_voxel(&self, (kx, ky, kz): VoxelKey, voxel_size: f32) -> bool {
         let half = voxel_size * 0.5;
         let z = kz as f32 * voxel_size + half;
@@ -230,6 +240,57 @@ pub fn partition_cloud(
 /// cylinders cover the plane.
 fn tile_radius(s: f32, voxel_size: f32) -> f32 {
     s * std::f32::consts::FRAC_1_SQRT_2 + voxel_size
+}
+
+/// A tiled full-map load in progress. Live regions applied meanwhile are
+/// recorded, and a tile one of them fully covers is skipped as stale.
+pub struct MapLoad {
+    tiles: Vec<MapTile>,
+    next: usize,
+    regions: Vec<RegionBounds>,
+    started: Instant,
+}
+
+impl MapLoad {
+    pub fn new(tiles: Vec<MapTile>) -> Self {
+        MapLoad {
+            tiles,
+            next: 0,
+            regions: Vec::new(),
+            started: Instant::now(),
+        }
+    }
+
+    pub fn remaining(&self) -> usize {
+        self.tiles.len() - self.next
+    }
+
+    pub fn finished(&self) -> bool {
+        self.next >= self.tiles.len()
+    }
+
+    pub fn elapsed(&self) -> Duration {
+        self.started.elapsed()
+    }
+
+    /// Record a live region applied since the load started.
+    pub fn region_applied(&mut self, bounds: RegionBounds) {
+        self.regions.push(bounds);
+    }
+
+    /// Apply the next tile no applied region fully covers. Returns false once
+    /// every tile is consumed.
+    pub fn apply_next_tile(&mut self, planner: &mut Planner, config: &Config) -> bool {
+        while let Some(tile) = self.tiles.get(self.next) {
+            self.next += 1;
+            if self.regions.iter().any(|r| r.contains(&tile.bounds)) {
+                continue;
+            }
+            planner.update_region(&tile.points, &tile.bounds, config);
+            return true;
+        }
+        false
+    }
 }
 
 pub struct Planner {
@@ -1766,6 +1827,86 @@ mod region_tests {
                 )
         });
         assert!(covers_stale, "map-only cell got no sweeping tile");
+    }
+
+    fn cyl(x: f32, y: f32, r: f32) -> RegionBounds {
+        RegionBounds {
+            origin_x: x,
+            origin_y: y,
+            radius: r,
+            z_min: -1.0,
+            z_max: 1.0,
+        }
+    }
+
+    #[test]
+    fn region_contains_by_distance_and_z() {
+        let outer = cyl(0.0, 0.0, 2.0);
+        assert!(outer.contains(&cyl(0.5, 0.0, 1.0)));
+        assert!(
+            !outer.contains(&cyl(1.5, 0.0, 1.0)),
+            "grazing is not containment"
+        );
+        let mut high = cyl(0.0, 0.0, 1.0);
+        high.z_max = 3.0;
+        assert!(!outer.contains(&high));
+    }
+
+    #[test]
+    fn map_load_skips_only_tiles_inside_applied_regions() {
+        let cfg = test_config();
+        let mut p = Planner::new(cfg.worker_threads);
+        let tile = |x: f32| MapTile {
+            bounds: cyl(x, 0.0, 1.0),
+            points: Vec::new(),
+        };
+        let mut load = MapLoad::new(vec![tile(0.0), tile(2.0), tile(4.0), tile(6.0)]);
+        assert!(load.apply_next_tile(&mut p, &cfg));
+        assert_eq!(load.remaining(), 3);
+
+        // A region grazing the second tile does not cover it, so it applies.
+        load.region_applied(cyl(2.5, 0.0, 1.0));
+        assert!(load.apply_next_tile(&mut p, &cfg));
+        assert_eq!(load.remaining(), 2);
+
+        // A region covering the third tile makes it stale.
+        load.region_applied(cyl(4.0, 0.0, 1.5));
+        assert!(load.apply_next_tile(&mut p, &cfg));
+        assert_eq!(load.remaining(), 0, "covered tile skipped, last applied");
+        assert!(load.finished());
+        assert!(!load.apply_next_tile(&mut p, &cfg));
+    }
+
+    /// A live region landing mid-load leaves nothing unloaded: the tiles it
+    /// straddles still apply, so the map ends equal to the cloud.
+    #[test]
+    fn full_map_load_covers_around_a_live_region() {
+        let cfg = test_config();
+        let all = big_world();
+        let mut p = Planner::new(cfg.worker_threads);
+        let mut load = MapLoad::new(p.partition_full_map(&all, (4.0, 4.0), 2.0, &cfg));
+        assert!(load.apply_next_tile(&mut p, &cfg));
+
+        let live = RegionBounds {
+            origin_x: 4.0,
+            origin_y: 4.0,
+            radius: 3.0,
+            z_min: -0.1,
+            z_max: 2.0,
+        };
+        p.update_region(&slice(&all, &live, cfg.voxel_size), &live, &cfg);
+        load.region_applied(live);
+        while load.apply_next_tile(&mut p, &cfg) {}
+        assert!(load.finished());
+
+        let mut clean = Planner::new(cfg.worker_threads);
+        clean.update_global_map(&all, &cfg);
+        assert_eq!(
+            voxel_set(&p),
+            voxel_set(&clean),
+            "a tile straddling the live region went unloaded"
+        );
+        assert_eq!(surface_set(&p), surface_set(&clean));
     }
 
     #[test]

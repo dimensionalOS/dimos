@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from dimos.constants import RECORDINGS_DIR
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
@@ -156,6 +156,14 @@ mls_planner_config = MLSPlannerNativeConfig(
     viz_publish_hz=planner_viz_hz,
 )
 
+
+def mls_planner(viz_publish_hz: float) -> Blueprint:
+    """The planner on the incremental local_map + region_bounds pair alone."""
+    return MLSPlannerNative.blueprint(
+        **{**mls_planner_config.model_dump(exclude_unset=True), "viz_publish_hz": viz_publish_hz}
+    ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")])
+
+
 unitree_go2_nav_3d = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=nav_rerun_config(planner_viz_hz)),
     # "mcf" for stair traversal
@@ -181,11 +189,7 @@ unitree_go2_nav_3d = autoconnect(
         max_health=5,
         support_min=4,
     ),
-    # global_map is remapped off so the planner runs purely on the
-    # incremental local_map + region_bounds pair.
-    MLSPlannerNative.blueprint(**mls_planner_config.model_dump(exclude_unset=True)).remappings(
-        [(MLSPlannerNative, "global_map", "global_map_unused")]
-    ),
+    mls_planner(planner_viz_hz),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=1.5, max_angular=1.5),
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
