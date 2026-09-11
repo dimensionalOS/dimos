@@ -72,18 +72,22 @@ class DanDetector(Resource):
         """SigLIP-embedded, world-posed index over ``[after, before]``."""
         return embed_index(store, self.siglip, after, before, rig=rig or Rig.from_store(store))
 
-    def embed_live(self, store: Any, *, rig: Rig | None = None) -> Stream[Any, Any]:
+    def embed_live(
+        self, store: Any, *, rig: Rig | None = None, source: Stream[Any, Any] | None = None
+    ) -> Stream[Any, Any]:
         """Tail the colour stream into ``color_image_embedded`` on a background thread.
 
         Returns that named stream, which :meth:`localize` reads like a replay
-        index; it keeps filling for as long as the resource is open.
+        index; it keeps filling for as long as the resource is open. ``source``
+        is the raw feed to tail when it is not the rig's own colour stream.
         """
         from dimos.msgs.sensor_msgs.Image import Image
 
         rig = rig or Rig.from_store(store)
+        feed = source if source is not None else rig.color
         embedded: Stream[Any, Any] = store.stream("color_image_embedded", Image)
         pipeline = (
-            rig.color.live()
+            feed.live()
             .filter(lambda obs: obs.data.brightness > 0.1)
             .transform(QualityWindow(lambda img: img.sharpness, window=1.0 / rig.embed_hz))
             .map(lambda obs: obs.derive(data=obs.data, pose=rig.index_pose(obs)))
