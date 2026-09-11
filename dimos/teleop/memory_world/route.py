@@ -88,8 +88,8 @@ class Route:
     planner: str = "costmap"
 
 
-# How far a start or goal may be moved onto the nearest standable surface cell,
-# and how many nearby cells are tried before giving up.
+# How far a start or goal may be moved onto a graph node, and how many nearby
+# nodes are tried as the goal (the four nearest as the start) before giving up.
 MLS_SNAP_RADIUS_M = 4.0
 MLS_SNAP_CANDIDATES = 24
 # Above this many map voxels the MLS graph build is skipped (a city ride) and
@@ -109,9 +109,10 @@ class MlsRoutePlanner:
     """dimos's 3D multi-level-surface planner over the ray-traced voxel map.
 
     ``update_global_map`` (seconds on a building) runs once at construction;
-    ``plan`` snaps the start and the goal to the nearest standable surface cell
-    within :data:`MLS_SNAP_RADIUS_M` (an answer is usually inside the object
-    that was asked about) and returns the 3D waypoints.
+    ``plan`` tries the graph nodes near the start and the goal, nearest first by
+    planar distance plus twice the height gap, within :data:`MLS_SNAP_RADIUS_M`
+    (an answer is usually inside the object that was asked about), and returns
+    the 3D waypoints of the first pair that connects.
     """
 
     def __init__(
@@ -136,14 +137,10 @@ class MlsRoutePlanner:
             node_spacing_m=node_spacing_m,
         )
         self.planner.update_global_map(points)
-        self.surface = np.asarray(self.planner.surface_map(), dtype=np.float64).reshape(-1, 3)
+        self.surface_cells = len(self.planner.surface_map()) // 3  # for the log line
         # Plans start and end on graph nodes; the planner snaps a point to its nearest
         # node in 3D, which under a shelf is the shelf top. So candidates are nodes.
         self.nodes = np.asarray(self.planner.nodes(), dtype=np.float64).reshape(-1, 3)
-
-    @property
-    def surface_cells(self) -> int:
-        return len(self.surface)
 
     def candidates(self, xyz: tuple[float, float, float]) -> list[tuple[float, float, float]]:
         """Standable cells near *xyz*, nearest first by horizontal distance, cells at or
@@ -161,11 +158,6 @@ class MlsRoutePlanner:
         closeness = d[near] + 2.0 * np.abs(self.nodes[near, 2] - xyz[2])
         order = near[np.lexsort((closeness, above))][:MLS_SNAP_CANDIDATES]
         return [tuple(float(v) for v in self.nodes[i]) for i in order]  # type: ignore[misc]
-
-    def snap(self, xyz: tuple[float, float, float]) -> tuple[float, float, float] | None:
-        """The nearest graph node within reach of *xyz*."""
-        found = self.candidates(xyz)
-        return found[0] if found else None
 
     def plan(
         self, start: tuple[float, float, float], goal: tuple[float, float, float]
@@ -304,8 +296,7 @@ class RoutePlanner:
         """Height to draw a route at over *xy*."""
         row, col = self.cell_of(xy)
         h, w = self.floor.shape
-        value = self.floor[min(max(row, 0), h - 1), min(max(col, 0), w - 1)]
-        return float(value) if np.isfinite(value) else float(np.nanmedian(self.floor))
+        return float(self.floor[min(max(row, 0), h - 1), min(max(col, 0), w - 1)])
 
     def passable(self, row: int, col: int) -> bool:
         h, w = self.costs.shape

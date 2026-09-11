@@ -1049,12 +1049,12 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         with self._world_cache_lock, self._replay_lock, self._store_lock, self._index_lock:
             old = self._store
             self._store = open_recording(self.config.store_path)
-            self._name_streams(self._store)
             self._replay = None
             self._replay_index = None
             self._replay_frames.clear()
-            self._tf_tree_cache = None
+            self._tf_tree_cache = None  # before naming: the names are picked against the tree
             self._tf_missing = False
+            self._name_streams(self._store)
             self._lidar_world_aligned_cache = None
             self._camera_hfov_deg = None
             self._cached_cloud = self._cached_image_poses = self._cached_thumbnails = None
@@ -1187,6 +1187,10 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
 
     def _tf_tree(self) -> TfTree | None:
         """The recording's tf tree, loaded once; None when the recording has none."""
+        with self._store_lock:
+            return self._load_tf_tree()
+
+    def _load_tf_tree(self) -> TfTree | None:
         if self._tf_tree_cache is None and not self._tf_missing:
             store = self._ensure_store()
             if self.config.tf_stream_name not in store.list_streams():
@@ -1202,10 +1206,13 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         return self._tf_tree_cache
 
     def _camera_frame(self) -> str:
-        if self.config.camera_optical_frame:
-            return self.config.camera_optical_frame
-        first = self._ensure_store().streams[self.config.image_stream_name].first()
-        return str(getattr(first.data, "frame_id", "") or "").lstrip("/")
+        if not self.config.camera_optical_frame:  # read once: the replay build asks per scan
+            with self._store_lock:
+                first = self._ensure_store().streams[self.config.image_stream_name].first()
+            self.config.camera_optical_frame = str(
+                getattr(first.data, "frame_id", "") or ""
+            ).lstrip("/")
+        return self.config.camera_optical_frame
 
     def _lidar_world_aligned(self) -> bool:
         """Whether the lidar scans are stored already registered in the world frame."""
@@ -1399,7 +1406,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
             self.config.depth_stream_name,
             self.config.camera_info_stream_name,
         )
-        k = store.streams[info].first().data.K  # the depth camera's own intrinsics
+        with self._store_lock:
+            k = store.streams[info].first().data.K  # the depth camera's own intrinsics
         intrinsics = (float(k[0]), float(k[4]), float(k[2]), float(k[5]))
 
         hits: list[PatchHit] = []

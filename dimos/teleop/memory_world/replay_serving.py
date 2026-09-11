@@ -49,6 +49,7 @@ class ReplayServing:
 
     config: Any
     _replay_index: dict[str, Any] | None
+    _replay_lock: Any
     _replay_frames: OrderedDict[float, tuple[bytes, dict[str, Any]]]
 
     if TYPE_CHECKING:
@@ -59,13 +60,17 @@ class ReplayServing:
         def _frame_pose_at(self, frame: str, ts: float) -> Any: ...
         def _camera_frame(self) -> str: ...
         def _camera_hfov(self) -> float: ...
+        def _camera_pose_of(self, obs: Any) -> Any: ...
         @staticmethod
         def _encode_jpeg(img: Any, max_size: int, quality: int) -> bytes: ...
 
     def _replay_index_json(self) -> dict[str, Any]:
         self._ensure_replay()
-        assert self._replay_index is not None  # set together with _replay
-        return self._replay_index
+        with self._replay_lock:  # set together with _replay; cleared by a reopen
+            index = self._replay_index
+        if index is None:
+            raise RuntimeError("the recording was reopened")  # the route answers 503
+        return index
 
     def _build_replay_index_json(self, replay: VoxelReplay) -> dict[str, Any]:
         images = self._ensure_store().streams[self.config.image_stream_name]

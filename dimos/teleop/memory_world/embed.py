@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -121,17 +122,17 @@ class EmbeddingJob:
                     config_path = handle.name
                 command = [*command, config_path]
             logger.info("%s: %s", self.name, " ".join(command))
-            process = subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-            )
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             with self._lock:
                 self._process = process
                 if self._terminated:  # stop() came while the process was starting
                     process.terminate()
             assert process.stdout is not None
-            # Progress bars redraw with a carriage return, so split on both.
+            # Progress bars redraw with a carriage return, so split on both. os.read
+            # returns what is there instead of waiting to fill a buffer.
             pending = ""
-            for chunk in iter(lambda: process.stdout.read(256), ""):  # type: ignore[union-attr]
+            fd = process.stdout.fileno()
+            for chunk in iter(lambda: os.read(fd, 4096).decode("utf-8", "replace"), ""):
                 pending += chunk
                 *lines, pending = pending.replace("\r", "\n").split("\n")
                 for line in lines:
@@ -149,7 +150,8 @@ class EmbeddingJob:
             logger.exception("%s failed", self.name)
             self._set("failed", str(error)[-200:])
         finally:
-            self._process = None
+            with self._lock:
+                self._process = None
             if config_path is not None:
                 Path(config_path).unlink(missing_ok=True)
             if self._on_finished is not None:

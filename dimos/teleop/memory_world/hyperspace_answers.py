@@ -495,7 +495,8 @@ class HyperspaceAnswers:
             store = self._ensure_store()
             if "global_costmap" not in store.list_streams():
                 return
-            costmap = store.streams.global_costmap.last().data
+            with self._store_lock:
+                costmap = store.streams.global_costmap.last().data
             route = min_cost_astar(
                 costmap,
                 goal=result.focus_point[:2],

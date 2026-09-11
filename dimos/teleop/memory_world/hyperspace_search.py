@@ -83,7 +83,8 @@ EVIDENCE_PER_CLUSTER = 2
 REFINE_MAX_VOXELS = 3000
 # ... and its grids cover the heat's bounding box: past this extent (metres, any axis)
 # the sparse components here answer instead, or the box would be gigabytes.
-REFINE_MAX_EXTENT_M = 60.0
+REFINE_MAX_EXTENT_M = 60
+REFINE_MAX_CELLS = 50_000_000  # the dense box refine grids: 200 MB of float32.0
 MAX_PYRAMIDS = 240
 
 
@@ -321,8 +322,9 @@ def _use_the_cores() -> None:
 
     cores = os.cpu_count() or 4
     if torch.get_num_threads() < min(cores, 8):
+        before = torch.get_num_threads()
         torch.set_num_threads(min(cores, 8))
-        logger.info("torch threads %d -> %d", 1, torch.get_num_threads())
+        logger.info("torch threads %d -> %d", before, torch.get_num_threads())
 
 
 class HyperspaceSearch:
@@ -531,12 +533,16 @@ class HyperspaceSearch:
             keep = np.zeros_like(keep)
             keep[ranked] = True
         index = result.index[keep]
-        extent = (index.max(axis=0) - index.min(axis=0)) * self.voxel_size
-        if float(extent.max()) > REFINE_MAX_EXTENT_M:
+        span = index.max(axis=0) - index.min(axis=0) + 1  # in voxels; refine grids the box
+        extent = span * self.voxel_size
+        if float(extent.max()) > REFINE_MAX_EXTENT_M or float(np.prod(span)) > REFINE_MAX_CELLS:
             logger.info(
-                "refine skipped: heat spans %.0f m (limit %.0f); sparse components instead",
+                "refine skipped: heat spans %.0f m, %.0f M cells (limits %.0f m, %.0f M); "
+                "sparse components instead",
                 float(extent.max()),
+                float(np.prod(span)) / 1e6,
                 REFINE_MAX_EXTENT_M,
+                REFINE_MAX_CELLS / 1e6,
             )
             return None
         heat = hs.Heatmap(
