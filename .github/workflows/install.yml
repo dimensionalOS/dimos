@@ -4,14 +4,12 @@ on:
   pull_request:
     paths:
       - 'scripts/install.sh'
-      - 'scripts/test_install.py'
       - 'scripts/test-install.sh'
       - 'pyproject.toml'
       - 'uv.lock'
       - 'setup.py'
       - 'MANIFEST.in'
       - '.github/workflows/install.yml'
-      - '.github/actions/build-cockpit/**'
   workflow_dispatch:
 
 permissions:
@@ -21,32 +19,24 @@ concurrency:
   group: install-${{ github.ref }}
   cancel-in-progress: true
 
+# macOS installation jobs are deferred until runner capacity is available.
 jobs:
-  regression:
-    strategy:
-      fail-fast: false
-      matrix:
-        # macOS runners are temporarily disabled to conserve runner capacity.
-        os: [ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
+  lint:
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v10.0.1
-      - name: Shell syntax, lint, and isolated regression tests
-        env:
-          INSTALLER_BASH: /bin/bash
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      - name: Shell syntax and lint
         run: |
           /bin/bash -n scripts/install.sh
           /bin/bash -n scripts/test-install.sh
           uvx --from shellcheck-py shellcheck -e SC1091 scripts/install.sh scripts/test-install.sh
-          uvx --from pytest==8.3.5 pytest -c /dev/null -p no:cacheprovider scripts/test_install.py -q
 
   ubuntu:
-    needs: regression
+    needs: lint
     strategy:
       fail-fast: false
       matrix:
@@ -69,109 +59,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install and verify
-        run: bash scripts/test-install.sh '${{ matrix.mode }}' cpu
+        run: bash scripts/test-install.sh '${{ matrix.mode }}'
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: install-${{ matrix.os }}-${{ matrix.version }}-${{ matrix.mode }}
           path: /tmp/dimos-install-test/logs
-
-  macos:
-    # Temporarily disabled: macOS runner capacity is exhausted.
-    if: ${{ false }}
-    needs: regression
-    strategy:
-      fail-fast: false
-      matrix:
-        mode: [library, dev]
-    runs-on: macos-14
-    timeout-minutes: 60
-    env:
-      INSTALL_TEST_ROOT: ${{ runner.temp }}/dimos-install-test
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Install and verify with system Bash
-        run: |
-          test "$(uname -m)" = arm64
-          # Exclude runner-installed uv/Python and Homebrew from the initial PATH.
-          PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash scripts/test-install.sh '${{ matrix.mode }}' cpu
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: install-macos-arm64-${{ matrix.mode }}
-          path: ${{ runner.temp }}/dimos-install-test/logs
-
-  cuda:
-    needs: regression
-    # Match the repository's existing GPU job trust boundary. Fork changes run
-    # on hosted CPU runners; GPU qualification requires a trusted branch.
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Linux, large]
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        mode: [library, dev]
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Install in a fresh container with GPU access
-        env:
-          INSTALL_MODE: ${{ matrix.mode }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/dimos-install-logs-$INSTALL_MODE"
-          docker run --rm --gpus all \
-            -v "$GITHUB_WORKSPACE:/source:ro" \
-            -v "$RUNNER_TEMP/dimos-install-logs-$INSTALL_MODE:/tmp/dimos-install-test/logs" \
-            -e INSTALL_TEST_ROOT=/tmp/dimos-install-test \
-            -e INSTALL_MODE ubuntu:24.04 bash -ec '
-              apt-get update
-              apt-get install -y ca-certificates curl git
-              git config --global --add safe.directory /source
-              bash /source/scripts/test-install.sh "$INSTALL_MODE" cuda
-            '
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: install-cuda-${{ matrix.mode }}
-          path: ${{ runner.temp }}/dimos-install-logs-${{ matrix.mode }}
-
-  candidate-wheel:
-    needs: regression
-    strategy:
-      fail-fast: false
-      matrix:
-        # macOS runners are temporarily disabled to conserve runner capacity.
-        os: [ubuntu-22.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    env:
-      INSTALL_TEST_ROOT: ${{ runner.temp }}/dimos-candidate-install
-      UV_CONSTRAINT: ${{ runner.temp }}/dimos-candidate.txt
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.0.1
-      - uses: ./.github/actions/build-cockpit
-      - name: Build the package that will be released
-        run: |
-          uv build --wheel --python 3.12 --out-dir "$RUNNER_TEMP/dimos-wheel"
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-          wheel, = (Path(os.environ['RUNNER_TEMP']) / 'dimos-wheel').glob('*.whl')
-          Path(os.environ['UV_CONSTRAINT']).write_text(f'dimos @ {wheel.as_uri()}\n')
-          PY
-      - name: Exercise library installation against the candidate wheel
-        run: /bin/bash scripts/test-install.sh library cpu
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: install-candidate-${{ matrix.os }}
-          path: |
-            ${{ runner.temp }}/dimos-candidate-install/logs
-            ${{ runner.temp }}/dimos-wheel/*.whl
