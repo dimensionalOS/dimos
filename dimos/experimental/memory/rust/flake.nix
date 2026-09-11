@@ -38,7 +38,7 @@
         cargoLock = {
           lockFile = ../../../../Cargo.lock;
           outputHashes = {
-            "dimos-lcm-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
+            "dimos-lcm-0.1.0" = "sha256-Z0tKEjNb/VIyfJcYTeZjWhWWYMhQ8wtoe8TjhonPUns=";
           };
         };
 
