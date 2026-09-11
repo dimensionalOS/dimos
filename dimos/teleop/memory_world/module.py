@@ -85,7 +85,7 @@ from dimos.teleop.memory_world.replay import (
     sensor_scan,
 )
 from dimos.teleop.memory_world.replay_serving import HEIGHT_COLOR_STOPS, ReplayServing
-from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix
+from dimos.teleop.memory_world.tf_tree import TfTree, level_camera_roll, pose_matrix
 from dimos.teleop.memory_world.visual_answers import VisualAnswers
 from dimos.teleop.memory_world.visual_search import (
     SIGLIP2_MODEL_NAME,
@@ -107,26 +107,6 @@ STATIC_DIR = Path(__file__).parent / "web" / "static"
 # y down): the standard ROS optical rotation. Used only for recordings that
 # carry no tf tree and stamp body poses on their images.
 OPTICAL_FROM_BODY = pose_matrix((0.0, 0.0, 0.0), (-0.5, 0.5, -0.5, 0.5))
-
-
-def _level_roll(world_T_optical: np.ndarray) -> np.ndarray:
-    """The same camera, looking the same way, with its horizon level.
-
-    An optical frame is x right, y down, z forward. Keeping z and taking y from
-    world down removes any roll about the view axis. A camera looking straight up
-    or down has no roll to remove and is returned untouched.
-    """
-    levelled = np.array(world_T_optical, dtype=np.float64)
-    forward = levelled[:3, 2]
-    down = np.array([0.0, 0.0, -1.0])
-    y = down - float(down @ forward) * forward
-    norm = float(np.linalg.norm(y))
-    if norm < 1e-3:  # looking along the world's own up: every roll is as good
-        return levelled
-    y /= norm
-    levelled[:3, 1] = y
-    levelled[:3, 0] = np.cross(y, forward)
-    return levelled
 
 
 class MemoryWorldConfig(ModuleConfig):
@@ -1439,7 +1419,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             )
             if world_T_optical is None or not self.config.camera_level_roll:
                 return world_T_optical
-            return _level_roll(np.asarray(world_T_optical))
+            return level_camera_roll(np.asarray(world_T_optical))
         pose = getattr(obs, "pose_tuple", None)
         if pose is None:
             return None

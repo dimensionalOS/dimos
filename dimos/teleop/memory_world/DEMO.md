@@ -9,6 +9,9 @@ Hyperspace answering questions in plain words with the pictures to prove it.
 memworld ~/datasets/lite_recorder/grocery.mcap   # or bike.mcap / park.mcap / any .db; ~/Commands/memworld
 ```
 
+- Two workarounds for the cart recordings: `camera-level-roll` (on) levels the
+  camera, whose tf roll is 30-50 degrees out, and the capture-pose photos hang
+  at the height the camera was, not a fixed one. Both go once tf is fixed.
 - First start on a new recording builds the ray-traced replay (minutes on a
   long one); later starts take seconds. A build that places no scan (tf cannot
   reach the lidar frame, or everything is out of range) is thrown away and the

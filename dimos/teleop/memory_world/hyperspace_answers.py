@@ -155,6 +155,7 @@ class HyperspaceAnswers:
                     voxel_size=self.config.hyperspace_voxel_size,
                     device=self.config.hyperspace_device,
                     use_segments=self.config.hyperspace_segments,
+                    level_roll=self.config.camera_level_roll,
                     refine=self.config.hyperspace_refine,
                     scene=self._map_points(),
                 )

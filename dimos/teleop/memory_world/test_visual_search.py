@@ -260,7 +260,8 @@ def test_index_built_with_body_poses_is_refused(sqlite_store: SqliteStore) -> No
 
 
 def test_index_with_a_frame_on_one_side_only_is_accepted(sqlite_store: SqliteStore) -> None:
-    """An untagged (older) index fits any frame; a tagged one fits a caller with no preference."""
+    """Backward compatible: an index written before the tag fits any frame, and a
+    tagged one fits a caller that names no frame. Only two named frames can clash."""
     _seed_index(sqlite_store, GIANT)  # no world_frame tag
     assert (
         VisualMemoryIndex(

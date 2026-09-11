@@ -17,11 +17,41 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix, quaternion_from_matrix, slerp
+from dimos.teleop.memory_world.tf_tree import (
+    TfTree,
+    level_camera_roll,
+    pose_matrix,
+    quaternion_from_matrix,
+    slerp,
+)
 
 IDENTITY = (0.0, 0.0, 0.0, 1.0)
 YAW_90 = (0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5))
 YAW_180 = (0.0, 0.0, 1.0, 0.0)
+
+
+def test_levelling_keeps_the_view_and_takes_the_roll_from_the_world() -> None:
+    """The cart recordings' tf rolls the camera; levelling must keep where it looks."""
+    for roll_deg in (0.0, 35.0, -49.0, 179.0):
+        roll = np.deg2rad(roll_deg)
+        forward = np.array([0.6, -0.8, 0.0])  # optical z, level
+        down = np.array([0.0, 0.0, -1.0])
+        right = np.cross(down, forward)
+        y = np.cos(roll) * down + np.sin(roll) * right  # optical y, rolled
+        m = np.eye(4)
+        m[:3, 0], m[:3, 1], m[:3, 2], m[:3, 3] = np.cross(y, forward), y, forward, [1.0, 2.0, 3.0]
+        levelled = level_camera_roll(m)
+        assert np.allclose(levelled[:3, 2], forward)  # looks the same way
+        assert np.allclose(levelled[:3, 3], [1.0, 2.0, 3.0])  # stands in the same place
+        assert levelled[2, 1] < -0.99  # y is world down
+        r = levelled[:3, :3]
+        assert np.allclose(r.T @ r, np.eye(3), atol=1e-9) and np.linalg.det(r) > 0
+
+
+def test_levelling_leaves_a_camera_looking_straight_down_alone() -> None:
+    m = np.eye(4)
+    m[:3, 2] = [0.0, 0.0, -1.0]  # every roll is as good as any other
+    assert np.allclose(level_camera_roll(m), m)
 
 
 def test_static_chain_composes_parent_to_child() -> None:
