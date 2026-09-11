@@ -34,7 +34,6 @@ SUITE: Suite = [
             'Return JSON with "every_desk_has_monitor": true if yes, false if no.'
         ),
         environment=Dataset(_RECORDING),
-        # Human-reviewed reference: no.
         grade=lambda o: boolean(False, o.trajectory.final_answer, key="every_desk_has_monitor"),
         timeout_s=600.0,
         tags=frozenset({"sf-office", "recording", "desk", "monitor", "boolean"}),
@@ -50,7 +49,6 @@ SUITE: Suite = [
             "or an empty list if none qualify."
         ),
         environment=Dataset(_RECORDING),
-        # Intervals from opposite-retrace-review.json; B and C selected by the user.
         grade=lambda o: multi_select(
             ("B", "C"), o.trajectory.final_answer, options=("A", "B", "C", "D")
         ),
@@ -65,7 +63,6 @@ SUITE: Suite = [
             'height differences. Return JSON with "distance_m": a number in meters.'
         ),
         environment=Dataset(_RECORDING),
-        # Timestamp-ordered raw odometry endpoints: XY separation 0.21429127105414264 m.
         grade=lambda o: numeric(
             0.2143, o.trajectory.final_answer, key="distance_m", tolerance=0.05, band=0.30
         ),
@@ -82,8 +79,6 @@ SUITE: Suite = [
             'Return JSON with "clear": true if it can, false otherwise.'
         ),
         environment=Dataset(_RECORDING),
-        # Raw map #714: swept 0.10 m-radius disk is clear, including endpoints.
-        # Verified at <= 5 mm travel steps with an extra 2.5 mm clearance margin.
         grade=lambda o: boolean(True, o.trajectory.final_answer, key="clear"),
         timeout_s=600.0,
         tags=frozenset({"sf-office", "recording", "occupancy", "clearance", "boolean"}),
@@ -100,7 +95,6 @@ SUITE: Suite = [
             "Answer with only one letter: A, B, C, or D."
         ),
         environment=Dataset(_RECORDING),
-        # Human-labeled table from twist-collision-review.json; map contact at ~6.13 s.
         grade=lambda o: exact("A", o.trajectory.final_answer.strip().upper()),
         timeout_s=600.0,
         tags=frozenset({"sf-office", "recording", "collision", "motion-model", "multiple-choice"}),
@@ -114,9 +108,6 @@ SUITE: Suite = [
             'meters and radius in meters: {"center_m": [x, y], "radius_m": number}.'
         ),
         environment=Dataset(_RECORDING),
-        # Computed from raw map #714, blocked-cell boundaries, then visually approved.
-        # Subcell search radius 1.9524 m, optimality gap <= 0.005 m; rounded safe circle below.
-        # Independent fixed-reference scores; no map/validity check during grading.
         grade=lambda o: 0.7
         * numeric(1.95, o.trajectory.final_answer, key="radius_m", tolerance=0.10, band=0.75)
         + 0.3
@@ -135,7 +126,6 @@ SUITE: Suite = [
             "Answer with only one letter: A, B, C, D, or E."
         ),
         environment=Dataset(_RECORDING),
-        # Human preference from hiding-place-review.json: B, not a computed optimum.
         grade=lambda o: exact("B", o.trajectory.final_answer.strip().upper()),
         timeout_s=600.0,
         tags=frozenset({"sf-office", "recording", "occupancy", "concealment", "multiple-choice"}),
@@ -151,8 +141,6 @@ SUITE: Suite = [
             'Return JSON with "length_m": a number.'
         ),
         environment=Dataset(_RECORDING),
-        # User-reviewed three-point-loop export: 34.61909140176568 m.
-        # Conservative eight-connected grid route, not an exact continuous-space optimum.
         grade=lambda o: numeric(
             34.62, o.trajectory.final_answer, key="length_m", tolerance=1.5, band=10.0
         ),
@@ -169,8 +157,6 @@ SUITE: Suite = [
             'Return JSON with "intersection_count": an integer.'
         ),
         environment=Dataset(_RECORDING),
-        # Human-reviewed approximate count: 19 marks; full credit for 18-20.
-        # Linear partial credit outside that range, zero at 11 or 27 and beyond.
         grade=lambda o: numeric(
             19, o.trajectory.final_answer, key="intersection_count", tolerance=1, band=8
         ),
@@ -186,9 +172,6 @@ SUITE: Suite = [
             'and travel direction: {"time_s": number, "angle_deg": number}.'
         ),
         environment=Dataset(_RECORDING),
-        # Pose-derived reference: 313.1 s, 90.02 degrees (rounded target: 90).
-        # Centered 2 s displacement, speed >= 0.10 m/s, frozen pose preprocessing.
-        # Fixed-reference grading only; angle and time credits are independent.
         grade=lambda o: 0.7
         * numeric(90.0, o.trajectory.final_answer, key="angle_deg", tolerance=3.0, band=10.0)
         + 0.3 * numeric(313.1, o.trajectory.final_answer, key="time_s", tolerance=1.0, band=5.0),
@@ -204,7 +187,6 @@ SUITE: Suite = [
             "Answer with only one letter: A, B, C, D, or E."
         ),
         environment=Dataset(_RECORDING),
-        # Human-provided reference: United States.
         grade=lambda o: exact("A", o.trajectory.final_answer.strip().upper()),
         timeout_s=600.0,
         tags=frozenset({"sf-office", "recording", "flag", "recognition", "multiple-choice"}),
@@ -217,7 +199,6 @@ SUITE: Suite = [
             "Answer with only one letter: A, B, C, or D."
         ),
         environment=Dataset(_RECORDING),
-        # Human-provided reference: 8 inches, within option B.
         grade=lambda o: exact("B", o.trajectory.final_answer.strip().upper()),
         timeout_s=600.0,
         tags=frozenset({"sf-office", "recording", "height", "kitchen", "multiple-choice"}),
@@ -230,7 +211,6 @@ SUITE: Suite = [
             "Answer with only one letter: A, B, C, or D."
         ),
         environment=Dataset(_RECORDING),
-        # Human-provided reference: wood.
         grade=lambda o: exact("A", o.trajectory.final_answer.strip().upper()),
         timeout_s=600.0,
         tags=frozenset({"sf-office", "recording", "material", "kitchen", "multiple-choice"}),
@@ -242,7 +222,6 @@ SUITE: Suite = [
             'Return JSON with "feet_touching_ground": true if yes, false if no.'
         ),
         environment=Dataset(_RECORDING),
-        # Human-provided reference: not touching the ground.
         grade=lambda o: boolean(False, o.trajectory.final_answer, key="feet_touching_ground"),
         timeout_s=600.0,
         tags=frozenset({"sf-office", "recording", "spatial-relation", "g1", "boolean"}),
@@ -254,7 +233,6 @@ SUITE: Suite = [
             'Return JSON with "oven_open": true if open, false if closed.'
         ),
         environment=Dataset(_RECORDING),
-        # Human-provided reference: closed.
         grade=lambda o: boolean(False, o.trajectory.final_answer, key="oven_open"),
         timeout_s=600.0,
         tags=frozenset({"sf-office", "recording", "object-state", "oven", "boolean"}),
@@ -273,7 +251,6 @@ SUITE: Suite = [
             "or an empty list if none qualify."
         ),
         environment=Dataset(_RECORDING),
-        # Reviewed raw-map widths: A=1.69, B=0.43, C=2.49, D=0.78 meters.
         grade=lambda o: multi_select(
             ("A", "C"), o.trajectory.final_answer, options=("A", "B", "C", "D")
         ),
