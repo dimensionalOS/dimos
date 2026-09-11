@@ -83,13 +83,24 @@ class ReplayServing:
         payload["orbit"] = self._orbit_positions(replay.index.scan_ts)
         return payload
 
-    def _orbit_positions(self, stamps: np.ndarray) -> dict[str, Any]:
-        """Where the orbit frame was at each replay scan, for the viewer to circle."""
+    def _effective_orbit_frame(self) -> str:
+        """The frame actually orbited: the configured one, or the camera when tf lacks it.
+
+        Everything that starts from where the robot is -- the orbit, the route's start
+        pose -- has to agree on this, or Navigate 404s on a recording the viewer is
+        happily orbiting.
+        """
         tree = self._tf_tree()
         frame = self.config.orbit_frame
         if tree is not None and frame not in tree.frames:
-            logger.warning("orbit frame %r not in tf; orbiting the camera instead", frame)
+            logger.warning("orbit frame %r not in tf; using the camera instead", frame)
             frame = self._camera_frame()
+        return frame
+
+    def _orbit_positions(self, stamps: np.ndarray) -> dict[str, Any]:
+        """Where the orbit frame was at each replay scan, for the viewer to circle."""
+        tree = self._tf_tree()
+        frame = self._effective_orbit_frame()
         if tree is not None:
             positions = frame_positions(stamps, lambda ts: self._frame_pose_at(frame, ts))
         else:  # no tf: the pose stamped on the lidar scans is all there is

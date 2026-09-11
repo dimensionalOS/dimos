@@ -292,6 +292,7 @@ def test_writing_a_mount_removes_only_what_it_invalidated(tmp_path) -> None:  # 
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
     from dimos.teleop.memory_world.calibrate_static_tf import drop_what_the_mount_invalidates
     from dimos.teleop.memory_world.hyperspace_search import memory_db_for
+    from dimos.teleop.memory_world.visual_search import PatchGrid
 
     recording = tmp_path / "rec.db"
     store = SqliteStore(path=str(recording), must_exist=False)
@@ -306,8 +307,13 @@ def test_writing_a_mount_removes_only_what_it_invalidated(tmp_path) -> None:  # 
                 ts=1.0,
             )
         )
+        # An index is what it holds, not what it is called: one built with
+        # --index-stream can be named anything, and one missed here keeps poses from
+        # the mount that was just replaced.
+        grid = PatchGrid(source_id=1, rows=2, cols=2, patches=np.zeros((4, 2), dtype=np.float16))
+        for name in ("color_image_index_siglip2_so400m_p16_384", "camera_search"):
+            store.stream(name, PatchGrid).append(grid, ts=1.0)
         for name in (
-            "color_image_index_siglip2_so400m_p16_384",  # goes: poses from the old mount
             "voxel_keyframe",  # stays: the map is lidar, which the mount does not move
             "voxel_diff",
             "livox_lidar",
@@ -320,7 +326,11 @@ def test_writing_a_mount_removes_only_what_it_invalidated(tmp_path) -> None:  # 
 
         dropped = drop_what_the_mount_invalidates(store, str(recording))
 
-        assert set(dropped) == {memory_db.name, "color_image_index_siglip2_so400m_p16_384"}
+        assert set(dropped) == {
+            memory_db.name,
+            "color_image_index_siglip2_so400m_p16_384",
+            "camera_search",
+        }
         assert not memory_db.exists()
         assert not memory_db.with_name(memory_db.name + "-wal").exists()
         assert {

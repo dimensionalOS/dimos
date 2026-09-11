@@ -360,7 +360,6 @@ def drop_what_the_mount_invalidates(store: Any, recording: str) -> list[str]:
     camera.
     """
     from dimos.teleop.memory_world.hyperspace_search import memory_db_for
-    from dimos.teleop.memory_world.visual_search import index_stream_name_of
 
     dropped = []
     memory_db = memory_db_for(recording)
@@ -369,8 +368,15 @@ def drop_what_the_mount_invalidates(store: Any, recording: str) -> list[str]:
             path.unlink()
             if path == memory_db:
                 dropped.append(path.name)
-    marker = index_stream_name_of("", "")  # "_index_": what every index name carries
-    for name in [n for n in store.list_streams() if marker in n]:
+    # By payload, not by name: an index built with --index-stream can be called
+    # anything, and one missed here keeps poses from the mount that was just replaced.
+    for name in list(store.list_streams()):
+        try:
+            payload = type(store.streams[name].first().data).__name__
+        except Exception:  # empty or unreadable: nothing of the old mount in it
+            continue
+        if payload != "PatchGrid":
+            continue
         try:
             store.delete_stream(name)
         except ValueError:  # part of the recording itself: not ours to remove

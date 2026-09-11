@@ -1015,12 +1015,13 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         ids are almost never among them. Snapping here means the wire carries one id
         space and the viewer needs no rule for telling them apart.
         """
-        wanted = set(result.observation_ids or [])
         cached = self._cached_image_poses
-        if not wanted or cached is None:
+        # The engine says which space its ids are in; the two overlap numerically (marker
+        # 1 and observation 1 are both small integers), so guessing from the values would
+        # quietly highlight the wrong photo rather than fail.
+        if result.engine != "agent" or not result.observation_ids or cached is None:
             return list(result.observation_ids or [])
         header, _ = cached
-        markers = set(header.get("ids") or [])
         sources = {
             source: marker
             for source, marker in zip(
@@ -1028,8 +1029,6 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             )
             if source >= 0  # an mcap numbers each windowed read from zero: no real ids
         }
-        if wanted & markers and not (wanted - markers):
-            return list(result.observation_ids)
         snapped = [sources[i] for i in result.observation_ids if i in sources]
         if snapped:
             return snapped
