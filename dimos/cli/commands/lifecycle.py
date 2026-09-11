@@ -91,7 +91,10 @@ def run(
         help="Spawn a local cockpit relay and bridge this robot to it",
     ),
     relay_url: str | None = typer.Option(
-        None, "--relay-url", help="Bridge this robot to a running relay (wtUrl)"
+        None,
+        "--relay-url",
+        help="Bridge this robot to a relay started elsewhere (its HTTP URL, e.g. "
+        "http://localhost:7780)",
     ),
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:

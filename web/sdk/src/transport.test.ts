@@ -3,6 +3,7 @@ import { PROTOCOL_VERSION } from "@dimos/shared";
 import {
   backoffDelayMs,
   CONNECT_TIMEOUT_MS,
+  connectWebTransport,
   ReconnectingTransport,
   type RelayInfo,
   resolveInfoUrl,
@@ -11,7 +12,7 @@ import {
 } from "./transport.ts";
 
 const INFO: RelayInfo = {
-  wtUrl: "https://127.0.0.1:1234/viewer",
+  wtUrl: "https://127.0.0.1:1234",
   certHash: "aGFzaA==",
   v: PROTOCOL_VERSION,
 };
@@ -54,6 +55,28 @@ describe("backoffDelayMs", () => {
       8000,
       8000,
     ]);
+  });
+});
+
+describe("connectWebTransport", () => {
+  it("dials the viewer endpoint under the advertised base with the pinned hash", () => {
+    const calls: [string, WebTransportOptions][] = [];
+    vi.stubGlobal(
+      "WebTransport",
+      class {
+        constructor(url: string, options: WebTransportOptions) {
+          calls.push([url, options]);
+        }
+      },
+    );
+    try {
+      connectWebTransport(INFO);
+      expect(calls).toHaveLength(1);
+      expect(calls[0][0]).toBe("https://127.0.0.1:1234/viewer");
+      expect(calls[0][1].serverCertificateHashes?.[0]?.algorithm).toBe("sha-256");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

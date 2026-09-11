@@ -6,6 +6,7 @@
 import { PROTOCOL_VERSION } from "@dimos/shared";
 
 export interface RelayInfo {
+  /** WebTransport base URL (no path); connectWebTransport appends /viewer. */
   wtUrl: string;
   certHash: string;
   v: number;
@@ -100,9 +101,9 @@ export async function fetchRelayInfo(url: string, signal: AbortSignal): Promise<
   return data as unknown as RelayInfo;
 }
 
-function connectWebTransport(info: RelayInfo): WebTransportLike {
+export function connectWebTransport(info: RelayInfo): WebTransportLike {
   const hash = Uint8Array.from(atob(info.certHash), (c) => c.charCodeAt(0));
-  return new WebTransport(info.wtUrl, {
+  return new WebTransport(`${info.wtUrl}/viewer`, {
     serverCertificateHashes: [{ algorithm: "sha-256", value: hash }],
   });
 }

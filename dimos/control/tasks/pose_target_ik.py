@@ -45,6 +45,7 @@ from dimos.manipulation.planning.kinematics.pink_solver import (
     _seed_positions_for_mapping,
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.service.spec import BaseConfig
@@ -533,7 +534,9 @@ class PinkPoseTargetSolver(_PinkSolverCore):
             tuple(controlled_joints),
         )
         if cache_key not in self._control_contexts:
-            robot_context = self._build_robot_context(config, frames[0], controlled_joints)
+            robot_context = self._build_robot_context(
+                prepare_robot_model(config), frames[0], controlled_joints
+            )
             contexts = {frames[0]: robot_context}
             for frame_name in frames[1:]:
                 contexts[frame_name] = _PinkRobotContext(
@@ -542,6 +545,7 @@ class PinkPoseTargetSolver(_PinkSolverCore):
                     frame_id=_get_frame_id(robot_context.model, frame_name),
                     frame_name=frame_name,
                     mapping=robot_context.mapping,
+                    joint_space=robot_context.joint_space,
                 )
             self._control_contexts[cache_key] = _PinkControlContext(
                 robot=robot_context,
@@ -798,11 +802,15 @@ def _bounded_controlled_joint_limits(
         raise ValueError("Pink model position limits do not match its configuration dimension")
 
     bounded: list[tuple[str, int, float, float]] = []
-    for joint_name, q_index in zip(
-        context.mapping.dimos_joint_names,
-        context.mapping.idx_q,
-        strict=True,
+    for local_index, (joint_name, q_index) in enumerate(
+        zip(
+            context.mapping.dimos_joint_names,
+            context.mapping.idx_q,
+            strict=True,
+        )
     ):
+        if local_index in context.mapping.periodic_indices:
+            continue
         lower = float(lower_limits[q_index])
         upper = float(upper_limits[q_index])
         if (

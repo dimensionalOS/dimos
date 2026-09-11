@@ -19,6 +19,10 @@ the literal bytes sent to and received from the provider as
 ``<seq>-request.json`` / ``<seq>-response.json`` (auth header dropped). Give
 it to any OpenAI-backed chat model as ``http_client=``; every call becomes
 one pair of files, whole, not reconstructed from normalized messages.
+
+``write_normalized(dir, messages, result)`` is the fallback for providers
+that offer no HTTP hook: the same file pair built from LangChain's view of
+the call, marked ``"normalized": true`` so a reader knows it is not wire-exact.
 """
 
 from __future__ import annotations
@@ -82,6 +86,7 @@ def tracing_http_client(trace_dir: Path, **kwargs: Any) -> httpx.Client:
                 _write(
                     request_path(trace_dir, seq),
                     {
+                        "started_at": time.time(),
                         "method": request.method,
                         "url": str(request.url),
                         "headers": _headers(request.headers),
@@ -94,13 +99,13 @@ def tracing_http_client(trace_dir: Path, **kwargs: Any) -> httpx.Client:
     def on_response(response: httpx.Response) -> None:
         try:
             response.read()  # buffers the body; fine for the non-streaming calls this serves
-            seq, t0 = response.request.extensions.get("llm_trace", (_next_seq(trace_dir) - 1, 0.0))
+            seq, t0 = response.request.extensions["llm_trace"]
             with lock:
                 _write(
                     response_path(trace_dir, seq),
                     {
                         "status": response.status_code,
-                        "latency_s": time.monotonic() - t0 if t0 else None,
+                        "latency_s": time.monotonic() - t0,
                         "headers": _headers(response.headers),
                         "body": _body(response.content),
                     },
@@ -114,3 +119,31 @@ def tracing_http_client(trace_dir: Path, **kwargs: Any) -> httpx.Client:
         "response": [*hooks.get("response", []), on_response],
     }
     return httpx.Client(event_hooks=hooks, **kwargs)
+
+
+def write_normalized(trace_dir: Path, messages: list[Any], result: Any) -> tuple[int, Path, Path]:
+    """Record a call from LangChain's normalized view (no HTTP hook available)."""
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    seq = _next_seq(trace_dir)
+    req, resp = request_path(trace_dir, seq), response_path(trace_dir, seq)
+    _write(req, {"normalized": True, "messages": [m.model_dump() for m in messages]})
+    _write(resp, {"normalized": True, "result": result.model_dump()})
+    return seq, req, resp
+
+
+def list_llm_trace_pairs(trace_dir: Path) -> list[tuple[int, Path, Path]]:
+    """Completed request/response files, ordered by their numeric sequence."""
+    pairs: list[tuple[int, Path, Path]] = []
+    for request in trace_dir.glob(f"*{REQUEST_SUFFIX}"):
+        seq = request.name.removesuffix(REQUEST_SUFFIX)
+        response = request.with_name(f"{seq}{RESPONSE_SUFFIX}")
+        if seq.isdigit() and response.is_file():
+            pairs.append((int(seq), request, response))
+    return sorted(pairs)
+
+
+def latest_pair(trace_dir: Path, after: int) -> tuple[int, Path, Path] | None:
+    """The newest complete request/response pair with seq >= *after*, if any.
+    A retried call leaves several pairs; the newest is the one that answered."""
+    pairs = [pair for pair in list_llm_trace_pairs(trace_dir) if pair[0] >= after]
+    return pairs[-1] if pairs else None

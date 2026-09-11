@@ -410,7 +410,7 @@ Deno.test({
   await t.step("/api/info matches the handle; no cockpit dist -> 404 with a hint", async () => {
     const info = await (await fetch(`${httpBase}/api/info`)).json();
     assertEquals(info, {
-      wtUrl: `${relay.wtUrl}/viewer`,
+      wtUrl: relay.wtUrl,
       certHash: relay.certHash,
       v: PROTOCOL_VERSION,
     });

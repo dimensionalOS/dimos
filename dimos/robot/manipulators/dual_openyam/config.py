@@ -109,7 +109,7 @@ def _hardware_component(
 def dual_openyam_model_config() -> RobotModelConfig:
     """Build the combined arm-only planning model."""
     return RobotModelConfig(
-        model=DUAL_OPENYAM_MODEL,
+        model=DUAL_OPENYAM_MODEL.with_default_joint_acceleration_limit(1.0),
         joint_names=list(DUAL_OPENYAM_ARM_JOINTS),
         base_link="dual_openyam_base",
         planning_groups=[
@@ -128,7 +128,5 @@ def dual_openyam_model_config() -> RobotModelConfig:
         ],
         auto_convert_meshes=True,
         home_joints=list(DUAL_OPENYAM_HOME_JOINTS),
-        max_velocity=2.0,
-        max_acceleration=1.0,
         tf_extra_links=[],
     )

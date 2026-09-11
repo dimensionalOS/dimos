@@ -63,7 +63,7 @@ def g1_manipulation_model_config() -> RobotModelConfig:
     groups are eligible for planning and trajectory execution.
     """
     return RobotModelConfig(
-        model=G1_MANIPULATION_MODEL,
+        model=G1_MANIPULATION_MODEL.with_default_joint_acceleration_limit(2.0),
         joint_names=list(G1_MANIPULATION_JOINTS),
         base_link="pelvis",
         planning_groups=[
@@ -86,6 +86,4 @@ def g1_manipulation_model_config() -> RobotModelConfig:
             ("torso_link", "right_shoulder_yaw_link"),
             ("torso_link", "right_shoulder_roll_link"),
         ],
-        max_velocity=1.0,
-        max_acceleration=2.0,
     )
