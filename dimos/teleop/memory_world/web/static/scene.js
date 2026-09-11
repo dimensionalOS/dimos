@@ -1,8 +1,6 @@
 // Three.js scene — first-person walkthrough of a recorded point cloud.
 //
-// Coordinate frames:
-//   robot frame:  X forward, Y left, Z up   (data on the wire is in this frame)
-//   three.js:     X right,   Y up,    Z back (right-handed)
+// Frames: robot X forward, Y left, Z up (the wire format); three.js X right, Y up, Z back.
 //
 // We parent all world data under a "frame-rotate" group that applies a -90°
 // rotation around X, which maps (rx, ry, rz) -> (rx, rz, -ry). Outside that
@@ -30,7 +28,7 @@ const DESKTOP_SCALE_STEP = 1.08;              // per wheel notch
 const DESKTOP_MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE']);
 const TOUCH_LOOK_SENSITIVITY = 0.006;         // radians per CSS pixel of one-finger drag
 const TOUCH_WALK_GAIN = 40;                   // two-finger drag: a screen-height sweep = full stick x40
-// GTA-style HUD minimap — head-locked, sits at lower-left of view.
+// Head-locked HUD minimap, lower-left of view.
 const HUD_PANEL_SIZE = 0.22;          // metres (square)
 const HUD_MARKER_RADIUS = 0.008;
 const HUD_DISTANCE = 0.55;            // metres in front of head
@@ -45,19 +43,16 @@ const CAMERA_FRUSTUM_M = 0.5;         // how far the drawn frustum reaches from 
 const IMAGE_QUAD_W = 0.60;
 const IMAGE_QUAD_H = 0.34;            // 16:9-ish
 const IMAGE_QUAD_HEIGHT = 0.9;        // robot z (metres) — chest height in VR
-// Only poses within this radius of the viewer get a decoded thumbnail, and at
-// most this many exist at once. A recording has hundreds of poses; without a
-// budget every one becomes its own texture, material and draw call.
+// Thumbnails are decoded only near the viewer, and only this many at once:
+// a recording has hundreds of poses, each otherwise its own texture and draw call.
 const IMAGE_RENDER_DISTANCE_M = 12.0;
 const IMAGE_QUAD_BUDGET = 24;
 const IMAGE_LOD_INTERVAL_S = 0.2;     // how often the visible set is recomputed
 // Rolling window for the frame-time readout, ~4s at 60fps.
 const PERF_WINDOW = 240;
-// Quality governor. The loop time is measured on whatever device is running
-// (a Quest's 72 Hz loop, a laptop's 60 Hz one); when the recent median frame
-// is slower than QUALITY_STEP_DOWN_MS the next level down is applied, and a
-// level is regained after QUALITY_SETTLE_S of frames faster than
-// QUALITY_STEP_UP_MS. Level 0 is everything.
+// Quality governor: the level steps down when the recent median frame is slower
+// than QUALITY_STEP_DOWN_MS, and back up after QUALITY_SETTLE_S of fast frames.
+// Level 0 is everything.
 const QUALITY_LEVELS = [
     { voxel_fraction: 1.0, voxel_range_m: Infinity, quad_budget: 24, foveation: 0.0, resolution: 1.0 },
     { voxel_fraction: 0.75, voxel_range_m: 20, quad_budget: 16, foveation: 0.4, resolution: 0.9 },
@@ -436,6 +431,11 @@ export class WorldScene {
     }
 
     _onDesktopKey(event, isDown) {
+        const el = event.target;
+        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
+            this._desktopKeys.clear();  // typing: the keys are the box's, not the world's
+            return;
+        }
         this._desktopSprint = event.shiftKey;
         if (DESKTOP_MOVE_KEYS.has(event.code)) {
             event.preventDefault();
@@ -506,6 +506,7 @@ export class WorldScene {
 
     toggleHud() {
         this._hudPanel.visible = !this._hudPanel.visible;
+        this._hudGroup.visible = this._hudPanel.visible;  // the answer panel rides here too
         this.diag('hud_toggle', { visible: this._hudPanel.visible });
         if (this.onLayerChange) this.onLayerChange();
         return this._hudPanel.visible;
@@ -1535,7 +1536,7 @@ export class WorldScene {
         lines.slice(0, 4).forEach((text, i) => ctx.fillText(text, 42, 62 + i * 50));
         this._answerTexture.needsUpdate = true;
         this._answerPanel.visible = true;
-        this._hudGroup.visible = true; // the answer panel lives here; the minimap stays as it was
+        this._hudGroup.visible = true;  // the answer panel lives here
     }
 
     setTopDownMap(header, jpegArrayBuffer) {
