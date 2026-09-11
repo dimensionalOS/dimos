@@ -59,3 +59,4 @@ def _profile(name: str, action_stream: str) -> CollectionProfile:
 
 
 OPENYAM_QUEST_COLLECTION = _profile("openyam-quest", "applied_joint_position_command")
+OPENYAM_TEACH_COLLECTION = _profile("openyam-teach", "coordinator_joint_state")

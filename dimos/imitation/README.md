@@ -62,3 +62,16 @@ Use `openyam-lerobot-quest-rollout` for optional Quest takeover. The Blueprint
 uses the existing single-arm, single-camera LeRobot contract. Configure devices
 through standard module options. Python clients discover `RolloutControlSpec`
 and explicitly call preflight/start/stop; disconnecting is not a stop request.
+
+## OpenYAM hand-guided collection
+
+```bash
+dimos --can-port follower_l run openyam-teach-collection \
+  --recorder.recording recordings/teach-001 \
+  --episodes.task "pick up the cube"
+```
+
+Guide the arm and gripper by hand. This Blueprint uses gravity compensation,
+zero position stiffness, joint damping, and a passive gripper. State and action
+both project the measured joint positions. Use `EpisodeControlSpec` to start,
+save, or discard episodes; support the arm before stopping the runtime.
