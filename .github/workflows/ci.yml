@@ -849,6 +849,16 @@ jobs:
           max-jobs = 0
           EOF
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
+      - name: Put Nix on PATH (macOS)
+        if: matrix.os == 'macOS'
+        run: |
+          bin=/nix/var/nix/profiles/default/bin
+          if [ ! -x "$bin/nix-store" ]; then
+            echo "::error::Nix is not installed on this macOS runner host — install multi-user Nix and add the dimensionalos substituter to /etc/nix/nix.conf (see this step's comment)"
+            exit 1
+          fi
+          echo "$bin" >> "$GITHUB_PATH"
+          echo "NIX_CONFIG=experimental-features = nix-command flakes" >> "$GITHUB_ENV"
       - name: Restore publish marker
         id: native-marker
         uses: actions/cache/restore@v6
