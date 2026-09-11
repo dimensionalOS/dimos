@@ -5,37 +5,29 @@
 # Interactive installer for DimOS — the agentive operating system for generalist robotics.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/dev/scripts/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/dev/scripts/install.sh | bash -s -- --help
+#   curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --help
 #
 # Non-interactive:
-#   curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/dev/scripts/install.sh | bash -s -- --non-interactive --mode library --extras base,unitree
+#   curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --non-interactive --mode library --extras base,unitree
 #
+# Prompts read /dev/tty explicitly. Parse the entire script before main runs so
+# child processes cannot consume the script when invoked through curl | bash.
+{
 set -euo pipefail
-
-
-# ─── signal handling (must be early so Ctrl+C works everywhere) ────────────────
-trap 'printf "\n"; exit 130' INT
-
-# If piped from curl (stdin is not a TTY and $0 is the shell),
-# save to temp file and re-execute so interactive prompts get proper TTY input.
-if [ ! -t 0 ] && { [ "$0" = "bash" ] || [ "$0" = "-bash" ] || [ "$0" = "/bin/bash" ] || [ "$0" = "/usr/bin/bash" ] || [ "$0" = "sh" ] || [ "$0" = "/bin/sh" ]; }; then
-    TMPSCRIPT="$(mktemp /tmp/dimos-install.XXXXXX.sh)"
-    cat > "$TMPSCRIPT"
-    chmod +x "$TMPSCRIPT"
-    exec bash "$TMPSCRIPT" "$@"
-fi
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 INSTALLER_VERSION="0.3.0"
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
-UBUNTU_PACKAGES="curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev pre-commit libgl1 libegl1"
-MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo python pre-commit"
+UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg python3-dev pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config"
+MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo python pre-commit ffmpeg libsndfile pkg-config"
 
 INSTALL_MODE="${DIMOS_INSTALL_MODE:-}"
 EXTRAS="${DIMOS_EXTRAS:-}"
 NON_INTERACTIVE="${DIMOS_NO_PROMPT:-0}"
-GIT_BRANCH="${DIMOS_BRANCH:-dev}"
+GIT_BRANCH="${DIMOS_BRANCH:-main}"
 NO_CUDA="${DIMOS_NO_CUDA:-0}"
 NO_SYSCTL="${DIMOS_NO_SYSCTL:-0}"
 DRY_RUN="${DIMOS_DRY_RUN:-0}"
@@ -48,6 +40,9 @@ HAS_NIX=0
 SETUP_METHOD=""
 INSTALL_DIR=""
 GUM=""
+INSTALL_DEPS=1
+DEV_TOOLS=0
+CHILD_PID=""
 
 if [[ -t 1 ]] && command -v tput &>/dev/null && [[ $(tput colors 2>/dev/null || echo 0) -ge 8 ]]; then
     CYAN=$'\033[38;5;44m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'
@@ -63,14 +58,27 @@ err()   { printf "%s✗%s %s\n" "$RED" "$RESET" "$*" >&2; }
 die()   { err "$@"; exit 1; }
 # Cancelled exit code — used by prompt functions to signal Ctrl+C
 readonly CANCELLED_EXIT=130
-check_cancel() { [[ $? -eq $CANCELLED_EXIT ]] && { err "cancelled"; exit 1; }; return 0; }
 dim()   { printf "%s%s%s\n" "$DIM" "$*" "$RESET"; }
 
 run_cmd() {
     if [[ "$DRY_RUN" == "1" ]]; then dim "[dry-run] $*"; return 0; fi
     [[ "$VERBOSE" == "1" ]] && dim "$ $*"
-    eval "$@"
+    "$@"
 }
+
+# Execute argv in the selected environment without interpolating paths into code.
+project_cmd() (
+    if [[ "$DRY_RUN" == "1" ]]; then
+        dim "[dry-run] in $INSTALL_DIR: $*"
+        return
+    fi
+    cd "$INSTALL_DIR" || exit
+    if [[ "$USE_NIX" == "1" ]]; then
+        exec nix develop --command "$@"
+    else
+        exec "$@"
+    fi
+)
 
 has_cmd() { command -v "$1" &>/dev/null; }
 
@@ -111,13 +119,14 @@ prompt_select() {
     printf "\n" >/dev/tty
     if [[ -n "$GUM" ]]; then
         local tmpf; tmpf=$(mktemp)
+        local ec=0
         "$GUM" choose --header "$msg" \
             --cursor "● " --cursor.foreground="44" \
             --header.foreground="255" --header.bold \
             --selected.foreground="44" \
-            "${options[@]}" </dev/tty >"$tmpf"
-        local ec=$?; PROMPT_RESULT=$(<"$tmpf"); rm -f "$tmpf"
-        [[ $ec -ne 0 ]] && die "cancelled"
+            "${options[@]}" </dev/tty >"$tmpf" || ec=$?
+        PROMPT_RESULT=$(<"$tmpf"); rm -f "$tmpf"
+        if [[ $ec -ne 0 ]]; then die "cancelled"; fi
     else
         printf "%s%s%s\n" "$BOLD" "$msg" "$RESET" >/dev/tty
         local i=1
@@ -128,7 +137,8 @@ prompt_select() {
         printf "  choice [1]: " >/dev/tty
         local choice; read -r choice </dev/tty || die "cancelled"
         choice="${choice:-1}"
-        local idx=$((choice - 1))
+        [[ "$choice" =~ ^[0-9]+$ ]] || die "enter a menu number"
+        local idx=$((10#$choice - 1))
         if [[ $idx -ge 0 ]] && [[ $idx -lt ${#options[@]} ]]; then
             PROMPT_RESULT="${options[$idx]}"
         else
@@ -144,13 +154,14 @@ prompt_multi() {
     printf "\n" >/dev/tty
     if [[ -n "$GUM" ]]; then
         local tmpf; tmpf=$(mktemp)
+        local ec=0
         "$GUM" choose --no-limit --header "$msg  (space to toggle, enter to confirm)" \
             --cursor "❯ " --cursor.foreground="44" \
             --header.foreground="255" --header.bold \
             --selected.foreground="44" \
-            "${options[@]}" </dev/tty >"$tmpf"
-        local ec=$?; PROMPT_RESULT=$(<"$tmpf"); rm -f "$tmpf"
-        [[ $ec -ne 0 ]] && die "cancelled"
+            "${options[@]}" </dev/tty >"$tmpf" || ec=$?
+        PROMPT_RESULT=$(<"$tmpf"); rm -f "$tmpf"
+        if [[ $ec -ne 0 ]]; then die "cancelled"; fi
     else
         printf "%s%s%s (comma-separated, enter for all)\n" "$BOLD" "$msg" "$RESET" >/dev/tty
         local i=1
@@ -166,7 +177,9 @@ prompt_multi() {
             local out=""
             IFS=',' read -ra nums <<< "$sel"
             for n in "${nums[@]}"; do
-                n="${n// /}"; local idx=$((n - 1))
+                n="${n// /}"
+                [[ "$n" =~ ^[0-9]+$ ]] || die "enter comma-separated menu numbers"
+                local idx=$((10#$n - 1))
                 if [[ $idx -ge 0 ]] && [[ $idx -lt ${#options[@]} ]]; then
                     [[ -n "$out" ]] && out+=$'\n'
                     out+="${options[$idx]}"
@@ -194,18 +207,6 @@ prompt_confirm() {
         read -r yn </dev/tty || yn=""
         yn="${yn:-$([ "$default" == "yes" ] && echo "y" || echo "n")}"
         [[ "$yn" =~ ^[Yy] ]]
-    fi
-}
-
-prompt_spin() {
-    local title="$1"; shift
-    if [[ "$DRY_RUN" == "1" ]]; then dim "[dry-run] $*"; return 0; fi
-    if [[ -n "$GUM" ]] && [[ "$VERBOSE" != "1" ]]; then
-        "$GUM" spin --title "$title" --spinner dot --spinner.foreground="44" -- bash -c "$*"
-    else
-        [[ "$VERBOSE" == "1" ]] && dim "$ $*"
-        info "$title"
-        eval "$@"
     fi
 }
 
@@ -257,35 +258,40 @@ usage() {
 ${BOLD}DimOS Interactive Installer${RESET} v${INSTALLER_VERSION}
 
 ${BOLD}USAGE${RESET}
-    curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/dev/scripts/install.sh | bash
-    curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/dev/scripts/install.sh | bash -s -- [OPTIONS]
+    curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- [OPTIONS]
 
 ${BOLD}OPTIONS${RESET}
     --mode library|dev     Install mode (default: interactive prompt)
     --extras <list>        Comma-separated pip extras
-    --branch <branch>      Git branch for dev mode (default: dev)
+    --branch <branch>      Git branch for dev mode (default: main)
     --project-dir <path>   Project directory
     --non-interactive      Accept defaults, no prompts
-    --no-cuda              Force CPU-only
+    --no-cuda              Use CPU inference dependencies (skip CUDA extras)
     --no-sysctl            Skip LCM sysctl configuration
     --use-nix              Force Nix-based setup
     --no-nix               Skip Nix entirely
-    --skip-tests           Skip post-install verification
+    --skip-tests           Skip the optional replay smoke test
     --dry-run              Print commands without executing
     --verbose              Show all commands
     --help                 Show this help
 
 ${BOLD}EXAMPLES${RESET}
-    curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/dev/scripts/install.sh | bash
-    curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/dev/scripts/install.sh | bash -s -- --mode dev --no-cuda
-    curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/dev/scripts/install.sh | bash -s -- --non-interactive --extras base,unitree
-    curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/dev/scripts/install.sh | bash -s -- --dry-run
+    curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --mode dev --no-cuda
+    curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --non-interactive --extras base,unitree
+    curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --dry-run
 EOF
     exit 0
 }
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --mode|--extras|--branch|--project-dir)
+                [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || die "$1 requires a value"
+                ;;
+        esac
         case "$1" in
             --mode)            INSTALL_MODE="$2"; shift 2 ;;
             --extras)          EXTRAS="$2"; shift 2 ;;
@@ -300,9 +306,12 @@ parse_args() {
             --dry-run)         DRY_RUN=1; NON_INTERACTIVE=1; shift ;;
             --verbose)         VERBOSE=1; shift ;;
             --help|-h)         usage ;;
-            *)                 warn "unknown option: $1"; shift ;;
+            *)                 die "unknown option: $1" ;;
         esac
     done
+    case "$INSTALL_MODE" in ""|library|dev) ;; *) die "invalid mode: $INSTALL_MODE";; esac
+    [[ "$USE_NIX" != 1 || "$NO_NIX" != 1 ]] || die "--use-nix and --no-nix cannot be combined"
+    if [[ "$DRY_RUN" == 1 ]]; then NON_INTERACTIVE=1; fi
 }
 
 # ─── detection ────────────────────────────────────────────────────────────────
@@ -338,7 +347,7 @@ detect_os() {
 detect_gpu() {
     if [[ "$DETECTED_OS" == "macos" ]]; then
         [[ "$DETECTED_ARCH" == "arm64" ]] && DETECTED_GPU="apple-silicon" || DETECTED_GPU="none"
-    elif has_cmd nvidia-smi; then
+    elif has_cmd nvidia-smi && nvidia-smi --query-gpu=name --format=csv,noheader >/dev/null 2>&1; then
         DETECTED_GPU="nvidia"
         DETECTED_CUDA="$(nvidia-smi 2>/dev/null | grep -oP 'CUDA Version: \K[0-9.]+' || echo "")"
     else
@@ -352,7 +361,7 @@ detect_python() {
             local ver; ver="$("$cmd" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")"
             if [[ -n "$ver" ]]; then
                 local major minor; major="$(echo "$ver" | cut -d. -f1)"; minor="$(echo "$ver" | cut -d. -f2)"
-                if [[ "$major" -eq 3 ]] && [[ "$minor" -ge 10 ]]; then
+                if [[ "$major" -eq 3 ]] && [[ "$minor" -ge 10 && "$minor" -lt 13 ]]; then
                     DETECTED_PYTHON="$(command -v "$cmd")"; DETECTED_PYTHON_VER="$ver"; return
                 fi
             fi
@@ -365,7 +374,7 @@ detect_nix() {
     if has_cmd nix; then HAS_NIX=1
     elif [[ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]]; then
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
-        has_cmd nix && HAS_NIX=1
+        if has_cmd nix; then HAS_NIX=1; fi
     fi
 }
 
@@ -431,15 +440,11 @@ install_nix() {
         HAS_NIX=1; return
     fi
 
-    # Clean stale Nix backup files that block reinstall
-    for rc in /etc/bashrc /etc/bash.bashrc /etc/zshrc; do
-        if [[ -f "${rc}.backup-before-nix" ]]; then
-            sudo mv "${rc}.backup-before-nix" "$rc"
-        fi
-    done
-
-    # Run from /tmp (CWD may not exist) with TTY so nix installer can prompt
-    (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install) --daemon) </dev/tty
+    if [[ "$NON_INTERACTIVE" == 1 ]]; then
+        (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -fL https://nixos.org/nix/install) --daemon --yes)
+    else
+        (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -fL https://nixos.org/nix/install) --daemon) </dev/tty
+    fi
 
     [[ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]] && \
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
@@ -458,7 +463,9 @@ prompt_setup_method() {
     fi
     if [[ "$USE_NIX" == "1" ]]; then
         [[ "$HAS_NIX" == "1" ]] && { ok "Nix detected — using for system deps"; SETUP_METHOD="nix"; USE_NIX=1; return; }
-        install_nix; SETUP_METHOD="nix"; USE_NIX=1; return
+        install_nix
+        if [[ "$HAS_NIX" == 1 ]]; then SETUP_METHOD="nix"; else USE_NIX=0; fi
+        return
     fi
 
     local choice
@@ -490,7 +497,11 @@ prompt_setup_method() {
     case "$choice" in
         *Nix*|*nix*)
             [[ "$HAS_NIX" != "1" ]] && install_nix
-            SETUP_METHOD="nix"; USE_NIX=1; ok "will use Nix for system dependencies" ;;
+            if [[ "$HAS_NIX" == 1 ]]; then
+                SETUP_METHOD="nix"; USE_NIX=1; ok "will use Nix for system dependencies"
+            else
+                USE_NIX=0
+            fi ;;
         *Manual*)
             SETUP_METHOD="manual"
             info "see https://github.com/dimensionalOS/dimos/?tab=readme-ov-file#installation" ;;
@@ -500,18 +511,8 @@ prompt_setup_method() {
 }
 
 verify_nix_develop() {
-    local dir="$1"
-    info "verifying nix develop environment (first run downloads dependencies, may take a few minutes)..."
-    if [[ "$DRY_RUN" == "1" ]]; then ok "nix develop verification skipped (dry-run)"; return; fi
-    local tmpf; tmpf=$(mktemp)
-    # Run with live output so user sees download/build progress
-    (cd "$dir" && nix develop --command bash -c '
-        echo "python3=$(which python3 2>/dev/null || echo MISSING)"
-        echo "gcc=$(which gcc 2>/dev/null || echo MISSING)"
-    ' >"$tmpf") || true
-    local nix_check; nix_check=$(<"$tmpf"); rm -f "$tmpf"
-    echo "$nix_check" | grep -q "python3=MISSING" && warn "nix develop: python3 not found" || ok "nix develop: python3 available"
-    echo "$nix_check" | grep -q "gcc=MISSING" && warn "nix develop: gcc not found" || ok "nix develop: gcc available"
+    info "verifying nix develop environment..."
+    project_cmd sh -c 'command -v python3 && command -v gcc' || die "nix develop verification failed"
 }
 
 # ─── system dependencies ─────────────────────────────────────────────────────
@@ -520,45 +521,61 @@ install_system_deps() {
 
     case "$DETECTED_OS" in
         ubuntu|wsl)
-            local needed=""
+            local -a needed=() privilege=(env)
+            if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
             for pkg in $UBUNTU_PACKAGES; do
-                if ! dpkg -s "$pkg" &>/dev/null; then
-                    needed+=" $pkg"
+                if [[ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)" != "install ok installed" ]]; then
+                    needed+=("$pkg")
                 fi
             done
-            if [[ -z "$needed" ]]; then
+            if [[ ${#needed[@]} -eq 0 ]]; then
                 ok "all system dependencies already installed"
                 return
             fi
-            info "need to install:${needed}"
+            info "need to install: ${needed[*]}"
             if ! prompt_confirm "Install these packages via apt?" "yes"; then
                 warn "skipping system dependencies — some features may not work"
                 return
             fi
-            run_cmd "sudo apt-get update"
-            run_cmd "sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y $needed"
+            run_cmd "${privilege[@]}" apt-get update
+            run_cmd "${privilege[@]}" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y "${needed[@]}"
             ;;
         macos)
+            # Homebrew may exist outside PATH, including immediately after bootstrap.
+            if ! has_cmd brew; then
+                case "$DETECTED_ARCH" in
+                    arm64) export PATH="/opt/homebrew/bin:$PATH" ;;
+                    x86_64) export PATH="/usr/local/bin:$PATH" ;;
+                esac
+            fi
             if ! has_cmd brew; then
                 info "installing homebrew..."
-                run_cmd '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
-            fi
-            local needed=""
-            for pkg in $MACOS_PACKAGES; do
-                if ! brew list "$pkg" &>/dev/null 2>&1; then
-                    needed+=" $pkg"
+                if [[ "$DRY_RUN" == 1 ]]; then
+                    dim "[dry-run] install Homebrew"
+                else
+                    local installer
+                    installer=$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)
+                    if [[ "$NON_INTERACTIVE" == 1 ]]; then
+                        NONINTERACTIVE=1 /bin/bash -c "$installer"
+                    else
+                        /bin/bash -c "$installer" </dev/tty
+                    fi
                 fi
+            fi
+            local -a needed=()
+            for pkg in $MACOS_PACKAGES; do
+                if ! brew list --versions "$pkg" >/dev/null 2>&1; then needed+=("$pkg"); fi
             done
-            if [[ -z "$needed" ]]; then
+            if [[ ${#needed[@]} -eq 0 ]]; then
                 ok "all system dependencies already installed"
                 return
             fi
-            info "need to install via brew:${needed}"
+            info "need to install via brew: ${needed[*]}"
             if ! prompt_confirm "Install these packages via brew?" "yes"; then
                 warn "skipping system dependencies — some features may not work"
                 return
             fi
-            run_cmd "brew install $needed"
+            run_cmd brew install "${needed[@]}"
             ;;
         nixos)
             info "NixOS detected — system deps managed via nix develop"
@@ -574,17 +591,21 @@ install_system_deps() {
 }
 
 install_uv() {
-    if has_cmd uv; then ok "uv already installed ($(uv --version 2>/dev/null))"; return; fi
-    info "installing uv..."
-    run_cmd 'curl -LsSf https://astral.sh/uv/install.sh | sh'
-    export PATH="$HOME/.local/bin:$PATH"
-    if ! has_cmd uv; then
-        for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile" "$HOME/.cargo/env"; do
-            [[ -f "$rc" ]] && source "$rc" 2>/dev/null || true
-        done
+    local version=""
+    if has_cmd uv; then version=$(uv --version | awk '{print $2}'); fi
+    if [[ -n "$version" ]] && awk -v version="$version" 'BEGIN {
+        split(version, v, "."); exit !(v[1] > 0 || v[2] > 9 || (v[2] == 9 && v[3] >= 25))
+    }'; then
+        ok "uv already installed ($version)"
+        return
     fi
+    info "installing uv >=0.9.25..."
+    if [[ "$DRY_RUN" == 1 ]]; then dim "[dry-run] install uv"; return; fi
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+    hash -r
     has_cmd uv || die "uv installation failed — install manually: https://docs.astral.sh/uv/"
-    ok "uv installed ($(uv --version 2>/dev/null))"
+    ok "uv installed ($(uv --version))"
 }
 
 # ─── install mode + extras ───────────────────────────────────────────────────
@@ -633,7 +654,7 @@ prompt_extras() {
         extras_list+=("cpu")
     fi
 
-    prompt_confirm "Include development tools (ruff, pytest, mypy)?" "no" && extras_list+=("dev")
+    if prompt_confirm "Include development tools (ruff, pytest, mypy)?" "no"; then DEV_TOOLS=1; fi
 
     [[ ${#extras_list[@]} -eq 0 ]] && extras_list=("base")
     EXTRAS="$(IFS=,; echo "${extras_list[*]}")"
@@ -663,138 +684,100 @@ prompt_install_dir() {
 }
 
 # ─── installation ─────────────────────────────────────────────────────────────
+# Expand the aggregate so --no-cuda and platform restrictions also apply to all.
+resolve_extras() {
+    local requested="$EXTRAS" extra
+    local -a selected=() inputs=()
+    IFS=',' read -r -a inputs <<< "$requested"
+    for extra in "${inputs[@]}"; do
+        if [[ "$extra" == all ]]; then
+            selected+=(agents apriltag base drone manipulation misc perception sim unitree visualization web webrtc)
+            if [[ "$DETECTED_OS" != macos && "$DETECTED_ARCH" == aarch64 ]]; then
+                info "scene is unavailable on Linux ARM64; excluding it from all"
+            else
+                selected+=(scene)
+            fi
+        else
+            [[ "$extra" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || die "invalid extra: $extra"
+            if [[ "$extra" == scene && "$DETECTED_OS" != macos && "$DETECTED_ARCH" == aarch64 ]]; then
+                die "scene requires usd-core, which has no Linux ARM64 wheel"
+            fi
+            if [[ "$extra" == cuda && "$NO_CUDA" == 1 ]]; then continue; fi
+            selected+=("$extra")
+        fi
+    done
+    EXTRAS="$(IFS=,; echo "${selected[*]:-}")"
+    if [[ ",$EXTRAS," == *,cuda,* ]]; then
+        [[ "$DETECTED_OS" != macos && "$DETECTED_ARCH" == x86_64 ]] || die "CUDA installation requires Linux x86_64; Jetson CUDA is not supported"
+        [[ ",$EXTRAS," != *,cpu,* ]] || die "select either cpu or cuda, not both"
+    elif [[ ",$EXTRAS," != *,cpu,* ]]; then
+        if [[ "$NO_CUDA" != 1 && "$DETECTED_GPU" == nvidia && "$DETECTED_ARCH" == x86_64 ]]; then
+            EXTRAS="${EXTRAS:+$EXTRAS,}cuda"
+        else
+            EXTRAS="${EXTRAS:+$EXTRAS,}cpu"
+        fi
+    fi
+    info "installing extras: $EXTRAS"
+}
+
 do_install_library() {
     local dir="${PROJECT_DIR:-}"
-    if [[ -z "$dir" ]]; then dir=$(prompt_install_dir "$PWD/dimensional-applications" "library") || die "cancelled"; fi
+    if [[ -z "$dir" ]]; then dir=$(prompt_install_dir "$PWD/dimensional-applications" library) || die "cancelled"; fi
     INSTALL_DIR="$dir"
-    info "library install → ${dir}"
-    run_cmd "mkdir -p '$dir'"
-
-    # Show what we're about to do
-    printf "\n"
-    info "next step: create .venv and install Python packages"
-    if [[ "$USE_NIX" == "1" ]]; then
-        dim "  will run: ${CYAN}cd ${dir} && nix develop --command bash -c \"uv venv && uv pip install 'dimos[${EXTRAS}]'\"${RESET}"
-        dim "  nix develop provides system libraries (libGL, mesa, etc.)"
-    else
-        dim "  will run: ${CYAN}cd ${dir} && uv venv --python 3.12 && uv pip install \"dimos[${EXTRAS}]\"${RESET}"
-    fi
-    printf "\n"
-
-    if ! prompt_confirm "Install dependencies now?" "yes"; then
-        dim "  skipping dependency install"
-        printf "\n"
-        dim "  to install later, run:"
-        dim "    cd ${dir}"
-        if [[ "$USE_NIX" == "1" ]]; then
-            dim "    nix develop"
-            dim "    uv venv --python 3.12"
-            dim "    source .venv/bin/activate"
-            dim "    uv pip install \"dimos[${EXTRAS}]\""
-        else
-            dim "    uv venv --python 3.12"
-            dim "    source .venv/bin/activate"
-            dim "    uv pip install \"dimos[${EXTRAS}]\""
-        fi
-        ok "project directory created at ${dir}"
+    info "library install → $dir"
+    run_cmd mkdir -p "$dir"
+    if ! prompt_confirm "Install dependencies now?" yes; then
+        INSTALL_DEPS=0
+        dim "to install later: uv venv --python 3.12 && uv pip install 'dimos[$EXTRAS]'"
         return
     fi
-
-    if [[ "$USE_NIX" == "1" ]]; then
-        info "downloading flake files..."
-        local base="https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/${GIT_BRANCH}"
-        if [[ "$DRY_RUN" == "1" ]]; then dim "[dry-run] curl flake.nix + flake.lock"
+    if [[ "$USE_NIX" == 1 ]]; then
+        local base="https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/$GIT_BRANCH"
+        run_cmd curl -fsSL "$base/flake.nix" -o "$dir/flake.nix"
+        run_cmd curl -fsSL "$base/flake.lock" -o "$dir/flake.lock"
+        if [[ ! -e "$dir/.git" ]]; then run_cmd git -C "$dir" init -q; fi
+        run_cmd git -C "$dir" add flake.nix flake.lock
+        verify_nix_develop
+    fi
+    if [[ -d "$dir/.venv" && "$DRY_RUN" != 1 ]]; then
+        if prompt_confirm "Replace existing virtual environment?" no; then
+            project_cmd env UV_VENV_CLEAR=1 uv venv --python 3.12
         else
-            curl -fsSL "${base}/flake.nix" -o "${dir}/flake.nix"
-            curl -fsSL "${base}/flake.lock" -o "${dir}/flake.lock"
-        fi
-        [[ "$DRY_RUN" != "1" ]] && [[ ! -d "${dir}/.git" ]] && (cd "$dir" && git init -q && git add flake.nix flake.lock && git commit -q -m "init" --allow-empty)
-        verify_nix_develop "$dir"
-        info "installing dimos[${EXTRAS}] via nix develop..."
-        if [[ "$DRY_RUN" == "1" ]]; then dim "[dry-run] nix develop + uv venv + uv pip install"
-        else
-            local venv_flag=""
-            if [[ -d "${dir}/.venv" ]]; then
-                warn "existing .venv found in ${dir}/"
-                if prompt_confirm "Replace existing virtual environment?" "no"; then
-                    venv_flag="UV_VENV_CLEAR=1"
-                else
-                    info "keeping existing .venv"
-                    venv_flag="SKIP_VENV=1"
-                fi
-            fi
-            (cd "$dir" && nix develop --command bash -c "set -euo pipefail; [[ \"\${SKIP_VENV:-}\" != 1 ]] && ${venv_flag} uv venv --python 3.12; source .venv/bin/activate; uv pip install 'dimos[${EXTRAS}]'")
+            info "keeping existing .venv"
         fi
     else
-        if [[ -d "${dir}/.venv" ]] && [[ "$DRY_RUN" != "1" ]]; then
-            warn "existing .venv found in ${dir}/"
-            if prompt_confirm "Replace existing virtual environment?" "no"; then
-                info "replacing virtual environment..."
-                (cd "$dir" && UV_VENV_CLEAR=1 uv venv --python 3.12)
-            else
-                info "keeping existing .venv — skipping venv creation"
-            fi
-        else
-            info "creating virtual environment (python 3.12)..."
-            if [[ "$DRY_RUN" == "1" ]]; then dim "[dry-run] uv venv --python 3.12"
-            else pushd "$dir" >/dev/null && uv venv --python 3.12 && popd >/dev/null; fi
-        fi
-        info "installing dimos[${EXTRAS}]..."
-        if [[ "$DRY_RUN" == "1" ]]; then dim "[dry-run] uv pip install 'dimos[${EXTRAS}]'"
-        else pushd "$dir" >/dev/null && source .venv/bin/activate && uv pip install "dimos[${EXTRAS}]" && popd >/dev/null; fi
+        project_cmd uv venv --python 3.12
     fi
-    ok "dimos installed in ${dir}"
+    local backend=cpu
+    if [[ ",$EXTRAS," == *,cuda,* ]]; then backend=cu128; fi
+    project_cmd uv pip install --python .venv/bin/python --torch-backend "$backend" "dimos[$EXTRAS]"
+    if [[ "$DEV_TOOLS" == 1 ]]; then
+        project_cmd uv pip install --python .venv/bin/python ruff pytest mypy
+    fi
+    ok "dimos installed in $dir"
 }
 
 do_install_dev() {
     local dir="${PROJECT_DIR:-}"
-    if [[ -z "$dir" ]]; then dir=$(prompt_install_dir "$PWD/dimos" "dev") || die "cancelled"; fi
+    if [[ -z "$dir" ]]; then dir=$(prompt_install_dir "$PWD/dimos" dev) || die "cancelled"; fi
     INSTALL_DIR="$dir"
-    info "developer install → ${dir}"
-
-    # Step 1: Clone or pull
-    if [[ -d "$dir/.git" ]]; then
-        info "existing clone found, pulling latest..."
-        run_cmd "cd '$dir' && git pull --rebase origin $GIT_BRANCH"
+    info "developer install → $dir"
+    if [[ -e "$dir/.git" ]]; then
+        git -C "$dir" rev-parse --is-inside-work-tree >/dev/null || die "invalid Git checkout: $dir"
+        info "using existing checkout at $(git -C "$dir" rev-parse --short HEAD)"
     else
-        info "cloning dimos (branch: ${GIT_BRANCH})..."
-        run_cmd "GIT_LFS_SKIP_SMUDGE=1 git clone -b $GIT_BRANCH https://github.com/dimensionalOS/dimos.git '$dir'"
+        run_cmd env GIT_LFS_SKIP_SMUDGE=1 git clone -b "$GIT_BRANCH" https://github.com/dimensionalOS/dimos.git "$dir"
     fi
-
-    # Step 2: Install dependencies (ask first — this is the heavy part)
-    printf "\n"
-    info "next step: create .venv and install all Python dependencies"
-    if [[ "$USE_NIX" == "1" ]]; then
-        dim "  will run: ${CYAN}nix develop --command bash -c \"uv sync --extra all\"${RESET}"
-    else
-        dim "  will run: ${CYAN}cd ${dir} && uv sync --extra all${RESET}"
-    fi
-    dim "  this creates a .venv and installs ~430 packages (may take several minutes)"
-    printf "\n"
-
-    if ! prompt_confirm "Install dependencies now?" "yes"; then
-        dim "  skipping dependency install"
-        printf "\n"
-        dim "  to install later, run:"
-        dim "    cd ${dir}"
-        if [[ "$USE_NIX" == "1" ]]; then
-            dim "    nix develop --command bash -c \"uv sync --extra all\""
-        else
-            dim "    uv sync --extra all"
-        fi
-        ok "repository cloned to ${dir}"
-        return
-    fi
-
-    if [[ "$USE_NIX" == "1" ]]; then
-        verify_nix_develop "$dir"
-        if [[ "$DRY_RUN" == "1" ]]; then dim "[dry-run] nix develop + uv sync --extra all"
-        else (cd "$dir" && nix develop --command bash -c "set -euo pipefail && uv sync --extra all"); fi
-    else
-        if [[ "$DRY_RUN" == "1" ]]; then dim "[dry-run] uv sync --extra all"
-        else pushd "$dir" >/dev/null && uv sync --extra all && popd >/dev/null; fi
-    fi
-    ok "developer environment ready in ${dir}"
+    local -a sync_args=(--locked --python 3.12 --group tests --group lint)
+    local -a extras=()
+    local extra
+    IFS=',' read -r -a extras <<< "$EXTRAS"
+    for extra in "${extras[@]}"; do sync_args+=(--extra "$extra"); done
+    dim "will run: uv sync ${sync_args[*]}"
+    if ! prompt_confirm "Install dependencies now?" yes; then INSTALL_DEPS=0; return; fi
+    if [[ "$USE_NIX" == 1 ]]; then verify_nix_develop; fi
+    project_cmd uv sync "${sync_args[@]}"
+    ok "developer environment ready in $dir"
 }
 
 do_install() {
@@ -821,8 +804,8 @@ configure_system() {
     printf "\n"
 
     if prompt_confirm "Apply sysctl changes?" "yes"; then
-        run_cmd "sudo sysctl -w net.core.rmem_max=67108864"
-        run_cmd "sudo sysctl -w net.core.rmem_default=67108864"
+        run_cmd sudo sysctl -w net.core.rmem_max=67108864
+        run_cmd sudo sysctl -w net.core.rmem_default=67108864
         if prompt_confirm "Persist across reboots?" "yes"; then
             if [[ "$DRY_RUN" != "1" ]]; then
                 printf "# DimOS LCM transport buffers\nnet.core.rmem_max=67108864\nnet.core.rmem_default=67108864\n" | sudo tee /etc/sysctl.d/99-dimos.conf >/dev/null
@@ -833,78 +816,81 @@ configure_system() {
 }
 
 # ─── verification ─────────────────────────────────────────────────────────────
+# Python's timeout works on macOS too. Each command owns a process group so
+# timeout and interruption also stop workers started by a blueprint.
+run_bounded() {
+    project_cmd .venv/bin/python - "$@" <<'PYTHON' &
+import os
+import signal
+import subprocess
+import sys
+
+seconds = float(sys.argv[1])
+process = subprocess.Popen(sys.argv[2:], start_new_session=True)
+
+def interrupted(signum, frame):
+    raise SystemExit(128 + signum)
+
+signal.signal(signal.SIGINT, interrupted)
+signal.signal(signal.SIGTERM, interrupted)
+try:
+    try:
+        status = process.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        status = 124
+finally:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=5)
+    except ProcessLookupError:
+        pass
+    except subprocess.TimeoutExpired:
+        pass
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+sys.exit(status)
+PYTHON
+    CHILD_PID=$!
+    local status=0
+    wait "$CHILD_PID" || status=$?
+    CHILD_PID=""
+    return "$status"
+}
+
 verify_install() {
+    if [[ "$INSTALL_DEPS" != 1 || "$DRY_RUN" == 1 ]]; then return; fi
     info "verifying installation..."
-    local dir="$INSTALL_DIR"
-    if [[ "$DRY_RUN" == "1" ]]; then ok "verification skipped (dry-run)"; return; fi
-    local venv_python="${dir}/.venv/bin/python3"
-    [[ ! -f "$venv_python" ]] && { warn "venv not found, skipping verification"; return; }
-
-    if [[ "$USE_NIX" == "1" ]]; then
-        (cd "$dir" && nix develop --command bash -c "source .venv/bin/activate && python3 -c 'import dimos'" 2>/dev/null) && ok "python import: dimos ✓" || warn "import check failed"
-    else
-        "$venv_python" -c "import dimos" 2>/dev/null && ok "python import: dimos ✓" || warn "import check failed"
+    run_bounded 60 .venv/bin/dimos --help
+    run_bounded 60 .venv/bin/dimos list
+    run_bounded 60 .venv/bin/python -c 'import sqlite3, cv2, open3d; from turbojpeg import TurboJPEG; TurboJPEG()'
+    if [[ ",$EXTRAS," == *,cuda,* ]]; then
+        run_bounded 60 .venv/bin/python -c 'import torch; assert torch.cuda.is_available(); assert (torch.ones(1, device="cuda") + 1).item() == 2'
+    elif [[ "$NO_CUDA" == 1 ]]; then
+        run_bounded 60 .venv/bin/python -c 'import torch; assert (torch.ones(1, device="cpu") + 1).item() == 2'
     fi
-
-    [[ -x "${dir}/.venv/bin/dimos" ]] && ok "dimos CLI available" || dim "  activate venv for CLI: source .venv/bin/activate"
-
-    if [[ "$DETECTED_GPU" == "nvidia" ]] && [[ "$NO_CUDA" != "1" ]] && [[ "$EXTRAS" == *"cuda"* ]]; then
-        "$venv_python" -c "import torch; assert torch.cuda.is_available()" 2>/dev/null && ok "CUDA available" || dim "  CUDA not available in this environment"
-    fi
-    printf "\n"
+    ok "installation verified"
 }
 
 run_post_install_tests() {
-    [[ "$SKIP_TESTS" == "1" ]] && { dim "  skipping tests (--skip-tests)"; return; }
-    [[ "$DRY_RUN" == "1" ]] && { dim "[dry-run] would run post-install tests"; return; }
-
-    local dir="$INSTALL_DIR"
-    local venv="${dir}/.venv/bin/activate"
-    [[ ! -f "$venv" ]] && { warn "venv not found, skipping tests"; return; }
-
-    # Only offer smoke test if unitree extras installed
-    if ! { [[ "$EXTRAS" == *"unitree"* ]] || [[ "$EXTRAS" == "all" ]]; }; then
-        dim "  no smoke tests available for selected extras"
-        return
-    fi
-
-    if ! prompt_confirm "Run a quick smoke test? (starts unitree-go2 for 60s)" "yes"; then
-        dim "  skipping smoke test"
-        return
-    fi
-
-    printf "\n"; info "${BOLD}post-install smoke test${RESET}"; printf "\n"
-
-    local cmd
-    if [[ "$EXTRAS" == *"sim"* ]] || [[ "$EXTRAS" == "all" ]]; then
-        cmd="dimos --simulation run unitree-go2"
-    else
-        cmd="dimos --replay run unitree-go2"
-    fi
-
-    info "running: ${DIM}${cmd}${RESET} (Ctrl+C to stop)"
-
+    [[ "$INSTALL_DEPS" != 1 || "$SKIP_TESTS" == 1 || "$DRY_RUN" == 1 ]] && return 0
+    [[ ",$EXTRAS," == *,unitree,* ]] || return 0
+    prompt_confirm "Run a quick smoke test? (starts unitree-go2 replay for 60s)" yes || return 0
     local exit_code=0
-    pushd "$dir" >/dev/null
-    source "$venv"
-    $cmd &
-    local pid=$!
-    # wait allows bash to process INT trap immediately
-    wait $pid || exit_code=$?
-    popd >/dev/null
-
-    printf "\n"
-    if [[ $exit_code -eq 124 ]]; then ok "smoke test: ran 60s without crash ✓"
-    elif [[ $exit_code -eq 130 ]] || [[ $exit_code -eq 137 ]]; then
-        ok "smoke test: stopped by user"
-    elif [[ $exit_code -eq 0 ]]; then ok "smoke test: completed ✓"
-    else warn "smoke test exited with code ${exit_code} (may be expected headless)"
-    fi
+    run_bounded 60 .venv/bin/dimos --viewer none --replay run unitree-go2 || exit_code=$?
+    case "$exit_code" in
+        0|124) ok "smoke test passed" ;;
+        *) die "smoke test failed (exit $exit_code)" ;;
+    esac
 }
 
 # ─── quickstart ───────────────────────────────────────────────────────────────
 print_quickstart() {
     local dir="$INSTALL_DIR"
+    if [[ "$DRY_RUN" == 1 ]]; then info "dry-run complete; no installation performed"; return; fi
     printf "\n  %s%s🎉 installation complete!%s\n\n  %sget started:%s\n\n" "$BOLD" "$GREEN" "$RESET" "$BOLD" "$RESET"
 
     if [[ "$USE_NIX" == "1" ]]; then
@@ -935,14 +921,23 @@ print_quickstart() {
 # ─── cleanup ─────────────────────────────────────────────────────────────────
 cleanup() {
     local ec=$?
+    if [[ -n "$CHILD_PID" ]]; then
+        kill -TERM "$CHILD_PID" 2>/dev/null || true
+        wait "$CHILD_PID" 2>/dev/null || true
+    fi
     [[ $ec -eq 130 ]] && { warn "interrupted"; }
     [[ $ec -ne 0 ]] && [[ $ec -ne 130 ]] && { printf "\n"; err "installation failed (exit ${ec})"; err "help: https://github.com/dimensionalOS/dimos/issues"; }
+    return 0
 }
 trap cleanup EXIT
 
 # ─── main ─────────────────────────────────────────────────────────────────────
 main() {
     parse_args "$@"
+    if [[ "$NON_INTERACTIVE" != 1 ]] && ! (true </dev/tty) 2>/dev/null; then
+        die "no terminal available; use --non-interactive"
+    fi
+    export UV_PYTHON_PREFERENCE=only-managed
 
     if [[ "$NON_INTERACTIVE" != "1" ]]; then
         if install_gum 2>/dev/null; then
@@ -958,11 +953,15 @@ main() {
 
     if [[ "$DETECTED_OS" == "ubuntu" ]] || [[ "$DETECTED_OS" == "wsl" ]]; then
         local ver_major; ver_major="$(echo "$DETECTED_OS_VERSION" | cut -d. -f1)"
-        [[ "$ver_major" -lt 22 ]] 2>/dev/null && warn "Ubuntu ${DETECTED_OS_VERSION} — 22.04+ recommended"
+        if [[ "$ver_major" =~ ^[0-9]+$ ]] && [[ "$ver_major" -lt 22 ]]; then
+            warn "Ubuntu ${DETECTED_OS_VERSION} — 22.04+ recommended"
+        fi
     fi
     if [[ "$DETECTED_OS" == "macos" ]]; then
         local mac_major; mac_major="$(echo "$DETECTED_OS_VERSION" | cut -d. -f1)"
-        [[ "$mac_major" -lt 12 ]] 2>/dev/null && die "macOS ${DETECTED_OS_VERSION} too old — 12.6+ required"
+        if [[ "$mac_major" =~ ^[0-9]+$ ]] && [[ "$mac_major" -lt 12 ]]; then
+            die "macOS ${DETECTED_OS_VERSION} too old — 12.6+ required"
+        fi
     fi
 
     prompt_setup_method
@@ -990,11 +989,19 @@ main() {
     fi
 
     prompt_extras
+    resolve_extras
     do_install
+    if [[ "$INSTALL_DEPS" != 1 ]]; then
+        info "setup prepared; dependency installation was skipped"
+        return
+    fi
     configure_system
     verify_install
     run_post_install_tests
     print_quickstart
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
+    main "$@"
+fi
+}
