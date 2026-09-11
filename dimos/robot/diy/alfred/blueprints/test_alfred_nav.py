@@ -137,6 +137,9 @@ def test_alfred_model_uses_pillar_joint_convention() -> None:
     assert set(groups) == {"lift", "left_manipulator", "right_manipulator"}
 
 
+@pytest.mark.skipif(
+    not _lfs_archive_available(), reason="alfred_description LFS archive not pulled"
+)
 def test_home_pose_is_inside_every_joint_limit() -> None:
     """The lift's zero is the top switch, above its reachable range; Home must not send it."""
     for wheels in (False, True):

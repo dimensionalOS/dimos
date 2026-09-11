@@ -189,6 +189,7 @@ all_blueprints = {
 
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
+    "alfred-lidar-mount-tf": "dimos.robot.diy.alfred.mount_tf.AlfredLidarMountTf",
     "alfred-mount-tf": "dimos.robot.diy.alfred.mount_tf.AlfredMountTf",
     "arm-command-module": "dimos.teleop.hosted.arm_command.ArmCommandModule",
     "arm-pose-coordinator": "dimos.robot.manipulators.common.coordinators.ArmPoseCoordinator",
@@ -202,6 +203,7 @@ all_modules = {
     "camera-module": "dimos.hardware.sensors.camera.module.CameraModule",
     "camera-mux-module": "dimos.teleop.hosted.camera_mux.CameraMuxModule",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller.CartesianMotionController",
+    "caster-kinematics": "dimos.robot.diy.alfred.caster_kinematics.CasterKinematics",
     "cloud-relocalization": "dimos.mapping.relocalization.lidar.module.CloudRelocalization",
     "collection-recorder": "dimos.imitation.collection.recorder.CollectionRecorder",
     "control-coordinator": "dimos.control.coordinator.ControlCoordinator",
