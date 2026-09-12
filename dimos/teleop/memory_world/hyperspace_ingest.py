@@ -150,7 +150,6 @@ def ingest_recording(
             detected = detect_streams(store, image=chosen.get("image"))
             detected.update(chosen)
             present = set(store.list_streams())
-            had_a_tf_stream = "tf" in present
             missing = [
                 role
                 for role in ("image", "depth", "camera_info", "tf")
@@ -224,12 +223,12 @@ def ingest_recording(
                 )
             finally:
                 # Hyperspace's ingestor opens a stream called "tf" in the memory db, which
-                # here IS the recording. On a recording whose tf is called something else,
-                # that empty stream would outrank the real one in detect_streams from then
-                # on and the world would have no transforms at all.
+                # here IS the recording. On a recording whose tf is called something else
+                # that leaves an empty stream behind; it is swept up here, and detection
+                # ignores empty streams anyway, so a run killed outright is not permanent.
                 if (
                     memory is store
-                    and not had_a_tf_stream
+                    and detected["tf"] != "tf"
                     and "tf" in store.list_streams()
                     and not any(True for _ in store.streams["tf"])
                 ):

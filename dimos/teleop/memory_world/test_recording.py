@@ -826,3 +826,46 @@ def test_a_rebuild_that_died_before_writing_back_is_caught_at_detection(tmp_path
         assert "tf__rebuilt" in str(refusal.value)
     finally:
         store.stop()
+
+
+def test_an_empty_stream_never_takes_a_role_from_a_real_one(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """An ingest killed outright can leave a stream called `tf` behind with nothing in it.
+
+    It holds the right payload and the plainest name there is, so it outranks the
+    recording's own `robot_tf` from then on and the world has no transforms at all. An
+    empty stream cannot fill a role, so it is not a candidate for one.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import detect_streams
+
+    store = _tf_store(tmp_path)
+    try:
+        store.stream("robot_tf", TFMessage).append(
+            TFMessage(_edge("odom", "base", 1.0, 1.0)), ts=1.0
+        )
+        store.stream("tf", TFMessage)  # what a killed ingest leaves
+        assert detect_streams(store)["tf"] == "robot_tf"
+    finally:
+        store.stop()
+
+
+def test_a_static_folded_into_a_one_sample_tf_still_holds_for_all_time(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A recording whose odometry produced one tf message still has pictures all through it.
+
+    _Edge.at holds a single-sample series for all time, which is exactly what a static edge
+    means. Two samples at the same instant do not: they expire a tolerance either side. So
+    where the two ends of the span coincide, one copy goes in and not two.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, fold_static_tf
+
+    store = _tf_store(tmp_path)
+    try:
+        store.stream("tf", TFMessage).append(TFMessage(_edge("odom", "base", 1.0, 1.0)), ts=1.0)
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(_edge("base", "cam", 2.0, 1.0)), ts=1.0
+        )
+        fold_static_tf(store, "tf", "tf_static")
+        assert build_tf_tree(store, "tf").lookup("odom", "cam", 100.0)[0, 3] == 3.0
+    finally:
+        store.stop()

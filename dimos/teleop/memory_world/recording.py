@@ -599,13 +599,13 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
         )
     first = min(low for _, _, low, _ in rows)
     last = max(high for _, _, _, high in rows)
+    # One sample where the two ends coincide, and not two of it: _Edge.at holds a
+    # single-sample series for all time, which is what a static edge means, while two
+    # samples at one instant expire a tolerance either side of it.
+    at_end = {0: [first]} if first == last else {0: [first], len(rows) - 1: [last]}
     written = []
     for index, (ts, kept, _, _) in enumerate(rows):
-        ends = []
-        if index == 0:
-            ends.append(first)
-        if index == len(rows) - 1:
-            ends.append(last)
+        ends = at_end.get(index, [])
         written.append(
             (ts, TFMessage(*kept, *[_restamped(t, e) for e in ends for t in folded.values()]))
         )
@@ -690,10 +690,14 @@ def detect_streams(store: Store, image: str | None = None) -> dict[str, Any]:
             continue
         try:
             payload = store.stream(name).data_type
+            # An empty stream cannot fill a role, and it can lose one: a `tf` left behind
+            # empty by a killed ingest outranks the recording's own `robot_tf` on name
+            # alone, and the world then has no transforms at all.
+            if payload is None or not any(True for _ in store.streams[name]):
+                continue
         except Exception:  # a stream this build cannot open is not a candidate
             continue
-        if payload is not None:
-            by_type.setdefault(payload.__name__, []).append(name)
+        by_type.setdefault(payload.__name__, []).append(name)
 
     def rank(role: str, type_name: str) -> list[str]:
         """Candidates for a role, best-named first."""
