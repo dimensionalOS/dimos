@@ -93,7 +93,7 @@ class Replay(Configurable):
         for name in self.store.list_streams():
             try:
                 candidates.append(float(self.store.stream(name).first().ts))
-            except LookupError:
+            except (LookupError, ImportError, AttributeError):
                 continue
         return min(candidates) if candidates else None
 
@@ -103,6 +103,13 @@ class Replay(Configurable):
             if self._anchor is None:
                 self._anchor = (time.time(), candidate_first_ts)
             return self._anchor
+
+    def pin_anchor(self) -> None:
+        """Pin the anchor at the earliest recorded ts now, before any stream subscribes,
+        so streams that start earlier than the first-subscribed one keep their frames."""
+        first = self.first_ts()
+        if first is not None:
+            self._resolve_anchor(first)
 
     def reset_anchor(self) -> None:
         """Forget the pinned anchor. Next ``.observable()`` re-pins it."""
@@ -234,13 +241,13 @@ class ReplayStream(Generic[T]):
             sched = scheduler or TimeoutScheduler()
             is_disposed = False
 
-            def make_iterator() -> Iterator[tuple[float, T]]:
+            def make_iterator() -> Iterator[tuple[float, Any]]:
                 while True:
                     emitted = False
                     obs: Any
                     for obs in base():
                         emitted = True
-                        yield (obs.ts, decode(obs))
+                        yield (obs.ts, obs)  # decoded at emission, keeping subscribe cheap
                     if not loop or not emitted:
                         break
 
@@ -275,7 +282,7 @@ class ReplayStream(Generic[T]):
 
             prev_ts = first_ts
 
-            def schedule(message: tuple[float, T], wrap_off: float, prev: float) -> None:
+            def schedule(message: tuple[float, Any], wrap_off: float, prev: float) -> None:
                 ts, data = message
                 if ts < prev:
                     wrap_off += (prev - ts) + _LOOP_GAP
@@ -286,7 +293,7 @@ class ReplayStream(Generic[T]):
                     nonlocal wrap_offset, prev_ts
                     if is_disposed:
                         return None
-                    observer.on_next(data)
+                    observer.on_next(decode(data))
                     try:
                         nxt = next(iterator)
                     except StopIteration:
