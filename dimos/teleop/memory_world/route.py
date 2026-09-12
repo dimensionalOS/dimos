@@ -326,9 +326,17 @@ class RoutePlanner:
         if not ok.any():
             return None
         rows, cols = np.nonzero(ok)
-        d2 = (rows + r0 - row) ** 2 + (cols + c0 - col) ** 2
+        # Distance from the POINT that was asked about, not from the cell it fell in.
+        # Ranking by cell index makes every cell in a ring equidistant, so argmin took
+        # whichever came first in row-major order: asked for (0.1, 0.9) on a 1 m grid,
+        # this returned the centre 1.46 m away while one 0.72 m away sat in the ring too.
+        # It also made `radius_m` a bound on cell hops rather than on metres, so the cell
+        # handed back could be further than the caller allowed.
+        centres_x = self.origin_xy[0] + (cols + c0 + 0.5) * self.resolution
+        centres_y = self.origin_xy[1] + (rows + r0 + 0.5) * self.resolution
+        d2 = (centres_x - xy[0]) ** 2 + (centres_y - xy[1]) ** 2
         best = int(np.argmin(d2))
-        if math.sqrt(float(d2[best])) * self.resolution > radius_m:
+        if math.sqrt(float(d2[best])) > radius_m:
             return None
         return self.world_of(int(rows[best] + r0), int(cols[best] + c0))
 

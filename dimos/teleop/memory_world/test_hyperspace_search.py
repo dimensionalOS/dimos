@@ -498,8 +498,10 @@ def test_an_ingest_that_dies_part_way_leaves_no_half_built_index(tmp_path, monke
     the middle leaves a real, readable, wrong index: a few pictures presented as a whole
     recording.
 
-    The marker is what keeps that from reading as ready, and the keyframes are dropped so
-    a rerun starts from nothing rather than appending a second copy.
+    The KEYFRAMES being dropped is what keeps that from reading as ready, so a rerun starts
+    from nothing rather than appending a second copy. It is not the marker: nothing writes
+    COMPLETE_STREAM any more, as hyperspace_ingest says on this very path ("The marker is
+    never written on this path"), and it is only ever deleted.
     """
     from dimos.msgs.std_msgs.String import String
     from dimos.teleop.memory_world.hyperspace_ingest import ingest_recording

@@ -145,6 +145,66 @@ def test_unreachable_snap_returns_none() -> None:
     assert planner.snap((30.0, 30.0)) is None
 
 
+def test_snap_measures_from_the_point_asked_about_not_the_cell_it_fell_in() -> None:
+    """Every cell in a ring is the same number of hops away; they are not the same distance.
+
+    `snap` ranked candidates by CELL INDEX, so a diagonal neighbour and an orthogonal one
+    were 2 and 1 hops and argmin always took the orthogonal -- however far away it actually
+    was. `radius_m` was a bound on hops too, so the cell handed back could be further than
+    the caller allowed.
+
+    The grid is built by hand because the room fixtures cannot show it: `snap` returns the
+    point unchanged when its own cell is passable, and in a room the free neighbours of a
+    blocked cell are all on one side, where hops and metres happen to agree. Here the only
+    free cells are the diagonal at the corner the query sits in, and an orthogonal one on
+    the far side.
+    """
+    res = 1.0
+    costs = np.full((3, 3), LETHAL, dtype=np.int8)
+    costs[0, 0] = 0  # diagonal, up-left of centre
+    costs[1, 2] = 0  # orthogonal, to the right of centre
+    planner = RoutePlanner(costs, np.zeros((3, 3)), origin_xy=(0.0, 0.0), resolution=res)
+
+    # Hard against the up-left corner of the blocked centre cell, whose centre is (1.5,1.5).
+    asked = (1.05, 1.05)
+    diagonal = planner.world_of(0, 0)  # (0.5, 0.5)
+    orthogonal = planner.world_of(1, 2)  # (2.5, 1.5)
+    assert math.dist(asked, diagonal) < math.dist(asked, orthogonal), "fixture is not asymmetric"
+
+    got = planner.snap(asked, radius_m=5.0)
+
+    assert got == diagonal, (
+        f"snapped to {got} ({math.dist(asked, got):.2f} m) over {diagonal} "
+        f"({math.dist(asked, diagonal):.2f} m): ranked by hops, not metres"
+    )
+    # ...and radius_m bounds METRES: the nearest free cell is 0.78 m away, so 0.5 refuses.
+    assert planner.snap(asked, radius_m=0.5) is None, "returned a cell outside the radius asked for"
+
+
+def test_a_point_below_the_origin_lands_on_a_negative_cell() -> None:
+    """`cell_of` floors rather than truncating, and only negative coordinates show it.
+
+    Its own comment says why it exists: int() truncates toward zero, so a point up to one
+    cell BELOW the origin landed on cell 0 instead of -1 and then PASSED the bounds check
+    every caller makes. Every fixture in this file puts the origin below every query point,
+    where floor and int agree exactly, so swapping one for the other changed nothing any
+    test could see.
+    """
+    planner = RoutePlanner.from_voxels(
+        _floor(0, 2, 0, 2), _path((0.5, 0.5), (1.5, 1.5)), voxel_size=VOXEL
+    )
+    ox, oy = planner.origin_xy
+
+    # Half a cell below the origin on both axes: floor gives -1, int() gives 0.
+    row, col = planner.cell_of((ox - planner.resolution / 2, oy - planner.resolution / 2))
+
+    assert (row, col) == (-1, -1), "truncated toward zero, so an outside point read as inside"
+    # ...and a point that far out must NOT pass the bounds check every caller makes.
+    assert not planner.passable(row, col)
+    # world_of is floor's inverse, so a round trip lands back in the same cell.
+    assert planner.cell_of(planner.world_of(row, col)) == (row, col)
+
+
 def test_city_scale_map_plans_on_coarse_cells() -> None:
     # A 4 km straight road: at 10 cm cells the grid would be 40k cells across.
     road = _floor(0, 4000, 0, 4)
