@@ -142,15 +142,24 @@ def test_memory_db_ready_needs_both_streams(tmp_path) -> None:
     db.execute("CREATE TABLE _streams (name TEXT)")
     db.execute("INSERT INTO _streams VALUES ('hyperspace_keyframes')")
     db.execute("CREATE TABLE hyperspace_keyframes (id INTEGER)")
+    db.execute("INSERT INTO hyperspace_keyframes VALUES (1)")
+    # The patch TABLE exists and is populated while its `_streams` row does not: that is
+    # the ONLY state in which the registry check is what decides. The two weaker setups
+    # both pass on something else -- an empty keyframe table passes on the keyframe
+    # COUNT, and an ABSENT patch table passes because counting it raises -- and under
+    # either of them, cutting `if not wanted <= names:` to `if False:` left this green.
+    db.execute("CREATE TABLE hyperspace_patches (id INTEGER)")
+    db.execute("INSERT INTO hyperspace_patches VALUES (1)")
     db.commit()
-    assert not memory_db_ready(recording), "patches missing"
+    assert not memory_db_ready(recording), "the patch stream is not registered"
 
     db.execute("INSERT INTO _streams VALUES ('hyperspace_patches')")
-    db.execute("CREATE TABLE hyperspace_patches (id INTEGER)")
+    db.execute("DELETE FROM hyperspace_keyframes")
     db.commit()
     assert not memory_db_ready(recording), "no keyframes yet"
 
     db.execute("INSERT INTO hyperspace_keyframes VALUES (1)")
+    db.execute("DELETE FROM hyperspace_patches")
     db.commit()
     assert not memory_db_ready(recording), "keyframes but no patches is half an index"
 

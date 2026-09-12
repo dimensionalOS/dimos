@@ -300,6 +300,14 @@ class VisualAnswers:
         )
         if colour_size is None:
             colour_intrinsics = None  # half a calibration is the uncorrected path
+        if info == colour:
+            # No depth calibration: `depth_info_stream_for` fell back to the COLOUR info,
+            # so `k` above is the colour camera's. Correcting colour-to-colour round-trips
+            # uv back through the colour WIDTH and indexes that into the depth raster --
+            # with a 1280x720 info and an 848x480 depth image, uv 0.875 lands at column
+            # 1120 and is dropped, and everything below it samples ~1.5x too far right.
+            # One calibration means the streams are taken as aligned: the uncorrected path.
+            colour_intrinsics, colour_size = None, None
 
         hits: list[PatchHit] = []
         with self._store_lock:

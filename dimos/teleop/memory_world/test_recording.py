@@ -634,7 +634,13 @@ def test_the_raw_scans_win_over_an_icp_stitch(tmp_path) -> None:  # type: ignore
             ts=1.0,
         )
 
-        assert detect_streams(store)["lidar"] == "livox_lidar"  # not the stitched copy
+        detected = detect_streams(store)
+        assert detected["lidar"] == "livox_lidar"  # not the stitched copy
+        # The pick alone does not pin this: `<x>_corrected` is always the longer name, so
+        # rank()'s len(name) tiebreak decided it and cutting the disqualifier down to
+        # ("costmap",) left the whole suite green. The candidate list is what
+        # `name_streams` hands to pick_lidar, and it is where the stitch has to be absent.
+        assert "livox_lidar_corrected" not in detected["lidar_candidates"]
         base = build_tf_tree(store, "tf").lookup("odom", "base_link", 1.0, 0.1)
         assert [round(float(v), 3) for v in base[:3, 3]] == [5.0, 0.0, 0.0]  # the recording's own
     finally:

@@ -410,8 +410,11 @@ def _ingest(
             transforms += 1
         print(f"tf: {transforms} messages copied for the companion db", flush=True)
 
-    min_interval = 1.0 / hz if hz > 0 else 0.0
-    ingestor.config.min_frame_interval_s = max(min_interval, config.min_frame_interval_s)
+    # `config` IS `ingestor.config` -- PatchIngestor keeps the object it is handed -- so
+    # the max() here read `x = max(1.0 / hz, x)` against the dataclass default of 0.2.
+    # --hz could only ever LOWER the rate: 10 and 30 both ran at 5 Hz, silently, against
+    # a flag documented with no ceiling.
+    ingestor.config.min_frame_interval_s = 1.0 / hz if hz > 0 else 0.0
     first_ts: float | None = None
     started = time.monotonic()
     for pair in colors.align(depths, tolerance=config.depth_max_dt):

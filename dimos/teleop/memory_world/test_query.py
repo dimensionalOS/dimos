@@ -944,6 +944,37 @@ def test_a_global_map_stream_is_preferred_over_accumulating_the_scans(
     assert built is not None and built[0]["n"] == 1, "the off switch did not turn it off"
 
 
+def test_a_global_map_that_cannot_be_read_falls_through_to_the_next_source(
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The global map is the one source in the chain matched by NAME alone.
+
+    It never goes through `detect_streams`, so nothing checks its message type. A
+    recording whose `global_map` is a `nav_msgs/OccupancyGrid` -- an ordinary ROS name
+    for a 2-D map -- reached `.points_f32()` and raised. `from_replay` contains its own
+    failures and this source did not, so the error left the whole loop: the replay and
+    the accumulated scans were never tried and the viewer got "world load failed" with a
+    usable map sitting in the recording. Falling through is what the comment above the
+    loop already promised.
+    """
+    memory_world.config.build_replay_on_start = False
+    memory_world.config.map_z_min = None
+    memory_world.config.map_z_max = None
+    accumulated = np.array([[9.0, 9.0, 9.0]], dtype=np.float64)
+    monkeypatch.setattr(memory_world, "_accumulated_cloud", lambda: accumulated)
+
+    def not_a_cloud() -> np.ndarray:
+        raise AttributeError("'OccupancyGrid' object has no attribute 'points_f32'")
+
+    monkeypatch.setattr(memory_world, "_global_map_cloud", not_a_cloud)
+
+    built = memory_world._build_voxel_cloud_from_lidar()
+    assert built is not None, "an unreadable global_map took the whole world down"
+    assert built[0]["n"] == 1
+    assert memory_world._map_xyz is not None
+    assert memory_world._map_xyz.tolist() == [[9.0, 9.0, 9.0]]
+
+
 def test_a_global_map_in_another_frame_is_moved_into_the_world_frame(
     memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:

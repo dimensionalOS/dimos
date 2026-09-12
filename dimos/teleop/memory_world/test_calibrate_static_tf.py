@@ -98,6 +98,16 @@ def test_a_frame_counts_only_when_it_holds_still_against_the_camera() -> None:
     assert not rigidly_joined(tree, "odom", "camera_depth_optical_frame")
     assert not rigidly_joined(tree, "nowhere", "camera_depth_optical_frame")
 
+    # "Holds still" is two halves and every other test here only moved a frame. Changing
+    # the gate to `if moved > 1e-6:` left the whole suite green, so a capture where the
+    # rig turns in place -- near-zero translation ptp -- read as rigid and would have let
+    # `calibrate_static_tf --write` fit a mount against a frame that was rotating under it.
+    turning = TfTree()
+    turning.add("body", "cam", 0.0, (0.0, 0.0, 0.0), IDENTITY, static=True)
+    for ts, quat in ((0.0, IDENTITY), (1.0, (0.0, 0.0, 0.7071068, 0.7071068))):
+        turning.add("body", "spinner", ts, (0.0, 0.0, 0.0), quat)
+    assert not rigidly_joined(turning, "spinner", "cam")
+
 
 def test_a_lidar_above_the_body_still_holds_still_against_the_camera() -> None:
     """pointlio tracks the lidar on some rigs, so base_link hangs under it."""

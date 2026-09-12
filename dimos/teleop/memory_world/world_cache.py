@@ -106,7 +106,23 @@ class WorldCache:
                 return None
 
         def from_global_map() -> np.ndarray | None:
-            found = self._replay_read(self._global_map_cloud)
+            # Contained like `from_replay`, and for the same reason. This source is
+            # matched by NAME alone -- it never goes through detect_streams, so nothing
+            # checks its message type -- and a recording whose `global_map` is an
+            # OccupancyGrid (an ordinary ROS name for a 2-D map) raised straight out of
+            # the loop into the handler below. That returned None for the WHOLE build, so
+            # the replay and the accumulated scans were never tried and the viewer got
+            # "world load failed" with a usable map sitting in the recording.
+            try:
+                found = self._replay_read(self._global_map_cloud)
+            except Exception:
+                if self._stopping.is_set():
+                    raise
+                logger.exception(
+                    "the %s stream could not be read as a cloud; trying the next source",
+                    self.config.global_map_stream_name,
+                )
+                return None
             if found is not None:
                 logger.info(
                     "voxel cloud from the %s stream: %d voxels",
