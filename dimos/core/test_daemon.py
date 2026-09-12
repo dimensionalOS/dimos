@@ -43,6 +43,8 @@ def tmp_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def _make_entry(
     run_id: str = "20260306-120000-test",
     pid: int | None = None,
+    config_overrides: dict[str, object] | None = None,
+    original_argv: list[str] | None = None,
 ) -> RunEntry:
     return RunEntry(
         run_id=run_id,
@@ -51,7 +53,8 @@ def _make_entry(
         started_at="2026-03-06T12:00:00Z",
         log_dir="/tmp/test-logs",
         cli_args=["test"],
-        config_overrides={},
+        config_overrides=config_overrides or {},
+        original_argv=original_argv or [],
     )
 
 
@@ -83,6 +86,40 @@ class TestRunEntryCRUD:
         entry.save()
         entry.remove()
         entry.remove()  # already gone — still fine
+
+    def test_secrets_are_not_persisted_in_restart_metadata(self, tmp_registry: Path) -> None:
+        secrets = {
+            "relay_key": "relay-key-0123456789abcdef",
+            "dimos_api_key": "api-key-0123456789abcdef",
+            "unitree_aes_128_key": "aes-key-0123456789abcdef",
+        }
+        entry = _make_entry(
+            config_overrides={"viewer": "none", **secrets},
+            original_argv=[
+                "dimos",
+                "--relay-key",
+                secrets["relay_key"],
+                "run",
+                "unitree-go2",
+                f"--g.dimos-api-key={secrets['dimos_api_key']}",
+                "--unitree-aes-128-key",
+                secrets["unitree_aes_128_key"],
+                "--g.relay-key=another-relay-key-0123456789abcdef",
+                "--viewer",
+                "none",
+            ],
+        )
+
+        entry.save()
+
+        assert entry.config_overrides == {"viewer": "none"}
+        assert entry.original_argv == ["dimos", "run", "unitree-go2", "--viewer", "none"]
+        persisted = entry.registry_path.read_text()
+        for secret in (*secrets.values(), "another-relay-key-0123456789abcdef"):
+            assert secret not in persisted
+        loaded = RunEntry.load(entry.registry_path)
+        assert loaded.config_overrides == {"viewer": "none"}
+        assert loaded.original_argv == ["dimos", "run", "unitree-go2", "--viewer", "none"]
 
 
 class TestGenerateRunId:

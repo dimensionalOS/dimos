@@ -36,6 +36,9 @@ ZenohMode: TypeAlias = Literal["peer", "client", "router"]
 # process can hold, so it is pinned on the one session that owns that port.
 ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 
+# Never expose these in config dumps or persist their CLI values in run metadata.
+SECRET_CONFIG_FIELDS = frozenset({"dimos_api_key", "relay_key", "unitree_aes_128_key"})
+
 
 def _get_all_numbers(s: str) -> list[float]:
     return [float(x) for x in re.findall(r"-?\d+\.?\d*", s)]
@@ -133,6 +136,10 @@ class GlobalConfig(BaseSettings):
     """PEM CA bundle that signed the relay_url relay's certificate (mkcert, a
     private CA); replaces the default trust stores. Unset for a relay with a
     public certificate."""
+    relay_key: str | None = None
+    """Key that identifies this robot to a relay started with --auth-file
+    (bound to its robot id there). Prefer RELAY_KEY in the environment or
+    .env over the --relay-key flag, which shows in the process list."""
     dimos_cloud_url: str = "https://api.dimensional.org"
     dimos_api_key: str | None = None
     dimos_upload_codec: str = "lz4"

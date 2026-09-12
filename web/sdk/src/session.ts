@@ -13,6 +13,7 @@ import {
   encodeDatagram,
   type JsonValue,
   MAX_PUB_DATA_BYTES,
+  MAX_TOKEN_LEN,
   type Msg,
   PROTOCOL_VERSION,
   type RobotInfo,
@@ -52,6 +53,9 @@ export interface ConnectOptions {
   robot?: string;
   /** Decoder registry, captured for the session's lifetime. */
   decoders?: DecoderRegistry;
+  /** Viewer token for a relay started with --auth-file; sent in hello. A
+   * rejected token fails the transport for good (code auth_failed). */
+  token?: string;
   /** Period of the UI snapshot tick that feeds subscribe() callbacks. */
   uiTickMs?: number;
 }
@@ -229,6 +233,7 @@ class SessionImpl implements Session {
   readonly transport: ReconnectingTransport;
 
   #registry: DecoderRegistry;
+  #token: string | undefined;
   #ticker: ReturnType<typeof setInterval>;
   #closed = false;
 
@@ -298,6 +303,7 @@ class SessionImpl implements Session {
   constructor(options: ConnectOptions, deps: TransportDeps) {
     registerTeleopHooks(this, this.#teleop);
     this.#registry = options.decoders ?? createDecoderRegistry();
+    this.#token = options.token;
     this.#pinned = options.robot ?? null;
     const infoUrl = resolveInfoUrl(options.url);
     this.transport = new ReconnectingTransport(
@@ -558,7 +564,12 @@ class SessionImpl implements Session {
     this.#teleopDatagram = (msg) => {
       if (runId === this.#runId) void datagrams.write(encodeDatagram(msg)).catch(() => {});
     };
-    await send({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" });
+    await send({
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "viewer",
+      ...(this.#token !== undefined ? { token: this.#token } : {}),
+    });
     void this.#readUniStreams(wt, runId);
 
     const reader = control.readable.getReader();
@@ -647,8 +658,9 @@ class SessionImpl implements Session {
                 );
                 break;
               }
-              if (msg.code === "version_mismatch") {
-                this.transport.fail(msg.message);
+              if (msg.code === "version_mismatch" || msg.code === "auth_failed") {
+                // Terminal on purpose: a wrong token must not retry forever.
+                this.transport.fail(msg.message, msg.code);
               } else if (msg.code === "teleop_held") {
                 // A refused lease is the teleop panel's state, not a
                 // session-level error banner.
@@ -773,6 +785,13 @@ class SessionImpl implements Session {
 
 export function connect(options: ConnectOptions = {}, deps: TransportDeps = {}): Session {
   const session = new SessionImpl(options, deps);
-  session.transport.start();
+  if (options.token !== undefined && options.token.length > MAX_TOKEN_LEN) {
+    session.transport.fail(
+      `viewer token exceeds the ${MAX_TOKEN_LEN}-character limit`,
+      "auth_failed",
+    );
+  } else {
+    session.transport.start();
+  }
   return session;
 }

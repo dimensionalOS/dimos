@@ -49,6 +49,7 @@ describe("StatusBar", () => {
           page={null}
           onPageChange={() => {}}
           onSwitchRobot={null}
+          onLogOut={null}
           {...over}
         />,
       )
@@ -77,6 +78,16 @@ describe("StatusBar", () => {
     expect(testId("switch-robot").textContent).toBe("switch robot");
     expect(testId("robot").textContent).toBe("Go2 (go2)");
     act(() => (testId("switch-robot") as HTMLElement).click());
+    expect(clicks).toBe(1);
+  });
+
+  it("offers 'log out' only with a handler", () => {
+    render(makeStatus());
+    expect(container.querySelector('[data-testid="log-out"]')).toBeNull();
+    let clicks = 0;
+    render(makeStatus(), { onLogOut: () => clicks++ });
+    expect(testId("log-out").textContent).toBe("log out");
+    act(() => (testId("log-out") as HTMLElement).click());
     expect(clicks).toBe(1);
   });
 

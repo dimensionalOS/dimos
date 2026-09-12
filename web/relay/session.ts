@@ -29,6 +29,7 @@ import {
   type RobotInfo,
   type RobotManifest,
 } from "@dimos/shared";
+import type { Auth } from "./auth.ts";
 import { parseManifest } from "@dimos/shared/manifest";
 import { type CarrierStats, RobotCarrier } from "./carrier.ts";
 import {
@@ -84,11 +85,18 @@ export class RobotSession implements RobotPeer {
   readonly #registry: Registry;
   readonly #dgWriter: WritableStreamDefaultWriter<Uint8Array>;
   readonly #carrier: RobotCarrier;
+  readonly #auth: Auth | null;
 
-  constructor(wt: WebTransport, conn: Deno.QuicConn, registry: Registry) {
+  constructor(
+    wt: WebTransport,
+    conn: Deno.QuicConn,
+    registry: Registry,
+    auth: Auth | null = null,
+  ) {
     this.#wt = wt;
     this.#conn = conn;
     this.#registry = registry;
+    this.#auth = auth;
     this.#dgWriter = wt.datagrams.writable.getWriter();
     // The stream opens lazily on the first sendControl - the registration
     // baseline snapshot - so a rejected session never burns a stream.
@@ -235,6 +243,13 @@ export class RobotSession implements RobotPeer {
       );
       return;
     }
+    if (this.#auth !== null && !this.#auth.robotKeyOk(msg.robot.id, msg.token)) {
+      const message = msg.token === undefined ? "missing robot key" : "invalid robot key";
+      // Resends keep arriving until the close lands; log the first only.
+      if (this.closed === null) console.log(`[relay] robot ${msg.robot.id} rejected: ${message}`);
+      this.#reject("auth_failed", message, "auth failed");
+      return;
+    }
     // Manifest-less hellos are legal (transport tests); a declared manifest
     // must pass the domain rules (incl. the version gate) or duplicate/
     // bogus channels would be interpreted inconsistently downstream.
@@ -307,16 +322,20 @@ export class ViewerSession implements ViewerPeer {
   readonly subs = new Set<string>();
   readonly policies = new Map<string, ChannelPolicy>();
   greeted = false;
+  /** Viewer name from the auth file (auth on), for the log and /api/stats. */
+  name: string | null = null;
   readonly sink: ViewerSink;
   readonly #wt: WebTransport;
   readonly #registry: Registry;
+  readonly #auth: Auth | null;
   /** Push channel for robots events, chosen by whichever leg carried hello. */
   #push: ((msg: Msg) => void) | null = null;
 
-  constructor(wt: WebTransport, id: number, registry: Registry) {
+  constructor(wt: WebTransport, id: number, registry: Registry, auth: Auth | null = null) {
     this.#wt = wt;
     this.id = id;
     this.#registry = registry;
+    this.#auth = auth;
     let latestOrder = 1;
     this.sink = {
       sendFrame(bytes: Uint8Array): FrameSend {
@@ -416,11 +435,29 @@ export class ViewerSession implements ViewerPeer {
   }
 
   #dispatch(msg: Msg, reply: (msg: Msg) => void): boolean {
-    if (!this.#registry.onViewerMsg(this, msg, reply)) {
+    const authorized = msg.t !== "hello" || this.#authorize(msg, reply);
+    if (!authorized || !this.#registry.onViewerMsg(this, msg, reply)) {
       closeAfterFlush(this.#wt, "viewer handshake rejected");
       return false;
     }
     if (msg.t === "hello" && this.greeted) this.#push = reply;
+    return true;
+  }
+
+  /** With auth on, a hello must carry a known viewer token; the name sticks
+   * to the session. Version and role mismatches are left to the registry so
+   * their codes keep precedence over auth_failed. */
+  #authorize(msg: HelloMsg, reply: (msg: Msg) => void): boolean {
+    if (this.#auth === null || msg.v !== PROTOCOL_VERSION || msg.role !== "viewer") return true;
+    const name = this.#auth.viewerName(msg.token);
+    if (name === null) {
+      const message = msg.token === undefined ? "missing viewer token" : "invalid viewer token";
+      console.log(`[relay] viewer ${this.id} rejected: ${message}`);
+      reply({ t: "error", code: "auth_failed", message });
+      return false;
+    }
+    if (this.name === null) console.log(`[relay] viewer ${this.id} authenticated as ${name}`);
+    this.name = name;
     return true;
   }
 

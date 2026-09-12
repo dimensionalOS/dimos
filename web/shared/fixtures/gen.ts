@@ -73,6 +73,13 @@ const controlMsgs: Record<string, Msg> = {
     },
   },
   hello_viewer: { t: "hello", v: PROTOCOL_VERSION, role: "viewer" },
+  // The auth token (T12d) rides hello as one optional field; absent when off.
+  hello_viewer_token: {
+    t: "hello",
+    v: PROTOCOL_VERSION,
+    role: "viewer",
+    token: "viewer-token-fixture-0123456789abcdef",
+  },
   welcome: { t: "welcome", v: PROTOCOL_VERSION },
   ping: { t: "ping", n: 7, ts: 1752576000.5 },
   pong: { t: "pong", n: 7, ts: 1752576000.5 },

@@ -28,6 +28,7 @@ from dimos.web.relay_bridge.protocol import (
     MAX_HEADER_LEN,
     MAX_PUB_DATA_BYTES,
     MAX_REQUEST_ID_LEN,
+    MAX_TOKEN_LEN,
     PROTOCOL_VERSION,
     RESERVED_CHANNEL_PREFIX,
     ControlFrameReader,
@@ -402,6 +403,19 @@ def test_error_request_id_validation():
     for request_id in [None, "", "x" * (MAX_REQUEST_ID_LEN + 1), 7]:
         with pytest.raises(ProtocolError):
             msg_from_dict({"t": "error", "code": "c", "message": "m", "requestId": request_id})
+
+
+def test_hello_token_validation():
+    # The auth token (T12d) is optional, bounded, and never null on the wire;
+    # it trails the declared fields so the encoding matches gen.ts.
+    plain = msg_from_dict({"t": "hello", "v": PROTOCOL_VERSION, "role": "viewer"})
+    assert isinstance(plain, Hello) and plain.token is None
+    assert encode_datagram(Hello(v=1, role="viewer", token="tok-en")) == (
+        b'{"t":"hello","v":1,"role":"viewer","token":"tok-en"}'
+    )
+    for token in [None, "x" * (MAX_TOKEN_LEN + 1), 7]:
+        with pytest.raises(ProtocolError):
+            msg_from_dict({"t": "hello", "v": PROTOCOL_VERSION, "role": "viewer", "token": token})
 
 
 def test_manifest_dict_roundtrips_verbatim():

@@ -253,6 +253,10 @@ class RelayBridgeConfig(ModuleConfig):
     """PEM CA bundle that signed the relay_url relay's certificate (mkcert, a
     private CA). It replaces the default trust stores for both the /api/info
     fetch and QUIC, so leave it unset for a relay with a public certificate."""
+    relay_key: str | None = None
+    """Robot key for a relay_url relay started with --auth-file (bound to
+    robot_id there), sent in hello. Falls back to GlobalConfig.relay_key
+    (RELAY_KEY)."""
     local_port: int = 7780
     """HTTP port of the spawned local relay; 0 picks an ephemeral port (tests)."""
     open_browser: bool = True
@@ -558,6 +562,7 @@ class RelayBridgeModule(Module):
         self._session: _Session | None = None
         self._url: str | None = None
         self._ca: str | None = None
+        self._key: str | None = None
         # Last /api/info discovery (for logs and tests).
         self._relay_info: RelayInfo | None = None
         # Resolved config.serve_dir, kept for relay-child respawns.
@@ -676,6 +681,11 @@ class RelayBridgeModule(Module):
             self._url = self.config.relay_url or self.config.g.relay_url
             self._ca = (
                 (self.config.relay_ca or self.config.g.relay_ca) if self._url is not None else None
+            )
+            self._key = (
+                (self.config.relay_key or self.config.g.relay_key)
+                if self._url is not None
+                else None
             )
             if self._url is not None and self.config.serve_dir is not None:
                 raise RuntimeError(
@@ -981,7 +991,7 @@ class RelayBridgeModule(Module):
             info.wt_url, "robot", insecure=info.cert_hash is not None, cafile=self._ca
         )
         try:
-            await client.hello(robot=self._robot_info, manifest=self._manifest)
+            await client.hello(robot=self._robot_info, manifest=self._manifest, token=self._key)
             senders = self._build_senders(client)
         except BaseException:
             try:

@@ -12,17 +12,18 @@ and `dimos --local-relay` auto-downloads Deno via `ensure_deno()`.
 ```bash
 deno task dev            # relay on http://127.0.0.1:7780 (add --cockpit-dir cockpit/dist for the UI,
                          # --sdk-dir sdk/dist for /sdk.js, --serve-dir DIR for a custom page at /,
-                         # --cert PEM --key PEM for real TLS)
+                         # --cert PEM --key PEM for real TLS, --auth-file auth.json for auth)
 deno task test           # relay + shared tests (unit + loopback e2e)
 deno task check          # type-check relay + shared; deno fmt + deno lint for style (all of web/)
 ```
 
-The local relay deliberately answers `/api/info`, `/api/stats`, `/sdk.js`, and served JavaScript
-modules with wildcard CORS so any local origin (a Vite dev server, a `file:` page) can bootstrap
-against it; a remotely reachable relay is a different, fail-closed mode (W10) and must not inherit
-that. For the same reason `startRelay` refuses to bind a non-loopback host unless
-`--unsafe-non-loopback` explicitly acknowledges it (only sensible behind your own TLS and access
-control).
+The relay answers `/api/info`, `/sdk.js`, and served JavaScript modules with wildcard CORS so any
+origin can bootstrap against it (a Vite dev server, a `file:` page, a hosted relay's SDK): the
+viewer token, not CORS, is the access boundary. `/api/stats` is the exception: with auth on it needs
+`Authorization: Bearer <viewer token>` and carries no CORS header. `startRelay` binds a non-loopback
+host only with `--cert`, `--key`, and `--auth-file` together (and refuses `--serve-dir` there: a
+public relay serves only the built cockpit), or with `--unsafe-non-loopback` behind your own TLS and
+access control.
 
 ## SDK
 
@@ -89,9 +90,9 @@ dimos run <bp> --local-relay --serve-dir web/examples/minimal
 `--serve-dir` replaces the cockpit at `/` with the given directory (`/api/*` and `/sdk.js` keep
 precedence, and the relay's traversal/symlink guards apply); it needs the spawned local relay and is
 rejected with `--relay-url`. A page can also import the absolute `http://127.0.0.1:7780/sdk.js` and
-pass that base to `connect({url})` - from another local origin or straight from a `file:` page (both
-supported browsers permit WebTransport there; `dimos/e2e_tests/test_sdk_browser.py` pins all three
-forms).
+pass that base to `connect({url})` (plus `token` for a relay with `--auth-file`) - from another
+local origin or straight from a `file:` page (both supported browsers permit WebTransport there;
+`dimos/e2e_tests/test_sdk_browser.py` pins all three forms).
 
 A relay started by hand (`deno task dev` above) takes robots through `--relay-url`, given the
 relay's HTTP URL (`http://127.0.0.1:7780`): the bridge fetches `/api/info` on every connect, exactly
@@ -99,8 +100,23 @@ like the SDK, so a relay restart (new QUIC port, new ephemeral certificate) is t
 `docs/usage/web_sdk.md` has the recipe.
 
 With `--cert PEM --key PEM`, HTTPS and QUIC share `--port` and clients verify the certificate
-normally. A private CA reaches the robot as `--relay-ca`; non-loopback binding still needs
-`--unsafe-non-loopback` until relay auth lands.
+normally. A private CA reaches the robot as `--relay-ca`.
+
+`--auth-file auth.json` turns auth on: robot keys bound to robot ids, and viewer tokens. Secrets are
+16 to 256 characters (`openssl rand -hex 32`) and no secret appears twice:
+
+```json
+{
+  "robots": { "go2-lab": "<key>" },
+  "viewers": { "paul": "<token>" }
+}
+```
+
+A robot sends its key in hello (`RELAY_KEY=<key>` in its environment or `.env`, bound to its
+`--robot-id`); a viewer sends its token (the cockpit asks for it and keeps it in `localStorage`
+until "log out"; the SDK takes `connect({url, token})`). A wrong secret fails with `auth_failed`,
+which is terminal: neither client retries. `relay/auth.ts` compares in constant time and never logs
+a secret; edits to the file need a restart.
 
 ## Cockpit
 

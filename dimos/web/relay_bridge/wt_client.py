@@ -37,6 +37,7 @@ from dimos.web.relay_bridge._wt_session import SessionProtocol, make_quic_config
 from dimos.web.relay_bridge.protocol import (
     CONTROL_CHANNEL,
     MAX_CONTROL_PAYLOAD_BYTES,
+    MAX_TOKEN_LEN,
     PROTOCOL_VERSION,
     DataFrame,
     Delivery,
@@ -249,6 +250,7 @@ class RelayClient:
         *,
         robot: RobotInfo | None = None,
         manifest: RobotManifest | None = None,
+        token: str | None = None,
     ) -> None:
         """Register with the relay; returns once its welcome datagram arrives.
 
@@ -257,12 +259,17 @@ class RelayClient:
         datagrams (the test viewer's control plane). The welcome datagram is
         lossy either way, so the hello repeats every 200 ms; a robot resend
         first retires the previous hello stream if it is still in flight.
+        `token` is the robot key or viewer token for a relay started with
+        --auth-file (the relay answers auth_failed without a valid one).
         Raises ProtocolError if the encoded hello exceeds its transport
         budget, RelayRejectedError if the relay answers with an error
-        (version mismatch, missing robot id, ...), TimeoutError if nothing
-        answers within `timeout`.
+        (version mismatch, missing robot id, auth_failed, ...), TimeoutError
+        if nothing answers within `timeout`.
         """
-        msg = Hello(v=PROTOCOL_VERSION, role=self.role, robot=robot, manifest=manifest)
+        if token is not None and len(token) > MAX_TOKEN_LEN:
+            # Before the model: pydantic's error would quote the value.
+            raise ProtocolError(f"hello token is {len(token)} characters (limit {MAX_TOKEN_LEN})")
+        msg = Hello(v=PROTOCOL_VERSION, role=self.role, robot=robot, manifest=manifest, token=token)
         control_payload: bytes | None = None
         if self.role == "robot":
             control_payload = encode_datagram(msg)
