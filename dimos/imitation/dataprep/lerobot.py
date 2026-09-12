@@ -34,14 +34,13 @@ from dimos.imitation.dataprep._lerobot_protocol import (
     Result,
 )
 from dimos.imitation.dataprep.core import DataPrepConfig
-from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
+from dimos.imitation.policy.module import backend_project
 from dimos.utils.cache import cache_usage_guard
-from dimos.utils.data import get_project_root
 
 
 def lerobot_project() -> Path:
     """Locate the LeRobot project in the shared checkout."""
-    return get_project_root() / LeRobotPolicyModule.project_dir
+    return backend_project("lerobot")
 
 
 def _run(request: Request) -> Result:
