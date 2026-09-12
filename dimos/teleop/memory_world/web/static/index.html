@@ -88,12 +88,15 @@
         button:hover { filter: brightness(1.15); }
         button:active { transform: translateY(1px); }
         button:disabled { background: #2a3140; color: var(--muted); cursor: not-allowed; }
+        /* Secondary, not invisible: these sit over the 3D world once connected, and a
+           transparent one is text and a hairline floating on the scene. */
         button.secondary {
-            background: transparent;
-            color: var(--muted);
+            background: rgba(13, 20, 30, 0.92);
+            color: var(--accent);
             border: 1px solid var(--muted);
             margin-top: 14px;
         }
+        button.secondary:hover { background: var(--panel); border-color: var(--accent); }
         #micBtn.recording {
             background: #ff5f6d;
             border-color: #ff5f6d;

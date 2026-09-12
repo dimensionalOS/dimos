@@ -301,7 +301,7 @@ def test_an_ingest_that_fails_before_embedding_keeps_the_index_that_is_there(  #
     from dimos.teleop.memory_world.hyperspace_ingest import ingest_recording
 
     recording = tmp_path / "walk.db"
-    store = _tiny_recording(recording)
+    store = _tiny_recording(recording, with_static=True)
     store.stream(KEYFRAME_STREAM, String).append(String("from the last run"), ts=1.0)
     store.stream(PATCH_STREAM, String).append(String("from the last run"), ts=1.0)
     store.stream("hyperspace_complete", String).append(String("finished"), ts=1.0)
@@ -327,6 +327,17 @@ def test_an_ingest_that_fails_before_embedding_keeps_the_index_that_is_there(  #
         ingest_recording(recording, model_name="does-not-exist")
 
     assert memory_db_ready(recording), "the index that was there survived"
+
+    # And the recording's tf is untouched: folding rewrites it for good, so it waits
+    # behind everything that can fail without having written an embedding.
+    from dimos.memory.store.sqlite import SqliteStore
+
+    store = SqliteStore(path=str(recording), must_exist=True)
+    store.start()
+    try:
+        assert "tf_static" in store.list_streams()
+    finally:
+        store.stop()
 
 
 def test_the_empty_tf_hyperspace_opens_is_swept_up(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

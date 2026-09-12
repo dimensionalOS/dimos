@@ -176,15 +176,6 @@ def ingest_recording(
                 # keyframes by a different tree than the map and the markers place by. One
                 # tree, in one stream, before anything is embedded against it.
                 memory = store
-                if detected.get("tf_static"):
-                    moved = fold_static_tf(store, detected["tf"], detected["tf_static"])
-                    print(
-                        f"tf: {moved} static edge(s) folded into {detected['tf']!r}"
-                        if moved
-                        else f"tf: {detected['tf']!r} already carries every static edge",
-                        flush=True,
-                    )
-                    detected["tf_static"] = None  # folded away; reading it now is a KeyError
             else:
                 # An mcap cannot be written to, so its keyframes go in a companion, built
                 # beside the final name and moved into place at the end.
@@ -207,7 +198,12 @@ def ingest_recording(
             if memory is store:
                 # Only now, with everything that can fail before a single embedding already
                 # done: a bad stream name or an unreadable model must not cost the index
-                # that is already there. A rerun must not append a second copy either.
+                # that is already there, nor rewrite the recording's tf.
+                if detected.get("tf_static"):
+                    moved = fold_static_tf(store, detected["tf"], detected["tf_static"])
+                    detected["tf_static"] = None  # folded away; reading it now is a KeyError
+                    print(f"tf: {moved} static edge(s) folded into {detected['tf']!r}", flush=True)
+                # A rerun must not append a second copy of every keyframe.
                 for stream in (COMPLETE_STREAM, KEYFRAME_STREAM, PATCH_STREAM):
                     if stream in store.list_streams():
                         store.delete_stream(stream)

@@ -657,27 +657,54 @@ def test_folding_compares_every_sample_the_moving_stream_carries(tmp_path) -> No
         store.stop()
 
 
-def test_folding_an_agreeing_static_tf_rewrites_nothing(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """The common case: the rig already republishes its statics inside the moving stream.
+def test_a_static_edge_is_folded_even_where_the_moving_stream_agrees(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """An edge is static because it holds for all time. A moving stream that happens to
+    carry the same value in the samples it carries does not say that anywhere.
 
-    Rewriting sixteen thousand samples to say exactly what they already say is minutes of
-    work and a window in which the tf is being replaced, for no change at all.
+    A rig that republishes a mount for the first half of a recording and stops leaves the
+    second half with no mount at all, and comparing values would call that agreement and
+    delete the static stream that was the only thing making it hold throughout.
     """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, fold_static_tf
+
+    store = _tf_store(tmp_path)
+    try:
+        tf = store.stream("tf", TFMessage)
+        tf.append(
+            TFMessage(_edge("base", "cam", 2.0, 1.0), _edge("odom", "base", 1.0, 1.0)), ts=1.0
+        )
+        tf.append(TFMessage(_edge("odom", "base", 2.0, 2.0)), ts=2.0)  # the mount stops
+        tf.append(TFMessage(_edge("odom", "base", 3.0, 3.0)), ts=3.0)
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(_edge("base", "cam", 2.0, 1.0)), ts=1.0
+        )
+
+        assert fold_static_tf(store, "tf", "tf_static") == 1
+        assert "tf_static" not in store.list_streams()
+        tree = build_tf_tree(store, "tf")
+        assert tree.lookup("odom", "cam", 3.0)[0, 3] == 5.0  # placed where it had stopped
+        assert all(len(obs.data.transforms) == 2 for obs in store.streams["tf"])
+    finally:
+        store.stop()
+
+
+def test_folding_into_an_empty_tf_refuses_rather_than_destroying_the_statics(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """There is nowhere to fold into, and going ahead writes nothing while deleting the
+    static stream on the way out -- every mount in the recording, gone, reported as done."""
+    import pytest
+
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
     from dimos.teleop.memory_world.recording import fold_static_tf
 
     store = _tf_store(tmp_path)
     try:
-        tf = store.stream("tf", TFMessage)
-        for step in (1.0, 2.0):
-            tf.append(TFMessage(_edge("base", "cam", 2.0, step)), ts=step)
+        store.stream("tf", TFMessage)  # declared and empty
         store.stream("tf_static", TFMessage).append(
             TFMessage(_edge("base", "cam", 2.0, 1.0)), ts=1.0
         )
-
-        assert fold_static_tf(store, "tf", "tf_static") == 0
-        assert "tf_static" not in store.list_streams()  # the second source goes either way
-        assert [float(obs.ts) for obs in store.streams["tf"]] == [1.0, 2.0]
-        assert all(len(obs.data.transforms) == 1 for obs in store.streams["tf"])
+        with pytest.raises(SystemExit):
+            fold_static_tf(store, "tf", "tf_static")
+        assert "tf_static" in store.list_streams()
     finally:
         store.stop()

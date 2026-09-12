@@ -521,39 +521,13 @@ def rebuild_stream(store: Store, name: str, rows: list[tuple[float, Any]], paylo
     store.delete_stream(staged)
 
 
-def _same_transform(one: Any, other: Any) -> bool:
-    """Whether two tf messages say the same thing about the joint they describe."""
-    return bool(
-        np.allclose(
-            [
-                one.translation.x,
-                one.translation.y,
-                one.translation.z,
-                one.rotation.x,
-                one.rotation.y,
-                one.rotation.z,
-                one.rotation.w,
-            ],
-            [
-                other.translation.x,
-                other.translation.y,
-                other.translation.z,
-                other.rotation.x,
-                other.rotation.y,
-                other.rotation.z,
-                other.rotation.w,
-            ],
-        )
-    )
-
-
 def _restamped(transform: Any, ts: float) -> Any:
     """The same joint, said at another moment.
 
-    A static edge carries the one stamp it was latched at. Copied unchanged into every
-    sample of the moving stream it becomes a series of identical stamps -- a bounded one,
-    which stops holding the moment the recording moves past it -- rather than a joint that
-    holds throughout. So each copy is stamped where it is put.
+    A static edge carries the one stamp it was latched at, and means it for all time.
+    Copied unchanged into every sample of the moving stream it becomes a series of
+    identical stamps -- which holds at that instant and nowhere else -- so a camera mount
+    would expire seconds into a ten-minute recording and place nothing after that.
     """
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
     from dimos.msgs.geometry_msgs.Transform import Transform
@@ -577,36 +551,20 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
     is invisible to search while the map and the markers can see it -- and a stale copy in
     the moving stream quietly outvotes the static one. Either way the two disagree.
 
-    Returns the number of edges moved; zero means the moving stream already said exactly
-    what the static one did, in every sample, and only the redundant stream goes.
+    Every static edge goes into every sample, replacing whatever the moving stream said
+    about it. Nothing is compared first: an edge is static because it holds for all time,
+    and a moving stream that happens to agree in the samples it carries does not say that
+    anywhere. This runs once per recording, because afterwards there is no static stream
+    left to fold. Returns the number of edges moved.
     """
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
-    statics: dict[tuple[str, str], Any] = {}
+    folded: dict[tuple[str, str], Any] = {}
     for obs in store.streams[static_stream]:
         for t in obs.data.transforms:
             # The FIRST sample of an edge, which is the one TfTree.add keeps for a static.
-            statics.setdefault((str(t.frame_id), str(t.child_frame_id)), t)
-
-    # Every sample of the moving stream, not just the first: an edge it republishes gets
-    # a stale value somewhere often enough that checking one sample proves nothing.
-    seen: set[tuple[str, str]] = set()
-    disagrees: set[tuple[str, str]] = set()
-    for obs in store.streams[tf_stream]:
-        for t in obs.data.transforms:
-            edge = (str(t.frame_id), str(t.child_frame_id))
-            if edge in statics:
-                seen.add(edge)
-                if not _same_transform(t, statics[edge]):
-                    disagrees.add(edge)
-    folded = {
-        edge: transform
-        for edge, transform in statics.items()
-        if edge not in seen or edge in disagrees
-    }
+            folded.setdefault((str(t.frame_id), str(t.child_frame_id)), t)
     if not folded:
-        # Nothing to move, and rewriting sixteen thousand samples to say what they
-        # already say is not free. The stream goes because it is now a second source.
         store.delete_stream(static_stream)
         return 0
 
@@ -624,6 +582,12 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
         )
         for obs in store.streams[tf_stream]
     ]
+    if not rows:
+        # Folding into nothing would write nothing and destroy the statics on the way.
+        raise SystemExit(
+            f"{tf_stream!r} is empty, so there is nowhere to fold {static_stream!r} into."
+            " A recording with no moving tf has no tree to place anything in."
+        )
     rebuild_stream(store, tf_stream, rows, TFMessage)
     store.delete_stream(static_stream)
     return len(folded)
