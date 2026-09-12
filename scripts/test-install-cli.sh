@@ -68,13 +68,32 @@ run 'CAPABILITIES=navigation; DETECTED_OS=ubuntu; DETECTED_ARCH=x86_64; DETECTED
     NO_CUDA=0; DETECTED_ARCH=aarch64; resolve_capabilities; [[ "$BACKEND" == cpu ]]
     DETECTED_OS=macos; DETECTED_ARCH=arm64; DETECTED_GPU=apple-silicon
     resolve_capabilities; [[ "$BACKEND" == cpu ]]'
-run 'for os in ubuntu wsl macos linux nixos; do
+run 'NON_INTERACTIVE=1
+    prompt_select() { exit 99; }
+    for os in ubuntu wsl macos linux nixos; do
         DETECTED_OS=$os; HAS_NIX=1; USE_NIX=0; NO_NIX=0
         select_setup_method
         case "$os" in linux|nixos) [[ "$SETUP_METHOD" == nix ]] ;; *) [[ "$SETUP_METHOD" == system ]] ;; esac
     done
     DETECTED_OS=ubuntu; USE_NIX=1; select_setup_method; [[ "$SETUP_METHOD" == nix ]]
     USE_NIX=0; NO_NIX=1; DETECTED_OS=linux; select_setup_method; [[ "$SETUP_METHOD" == manual ]]'
+run 'NON_INTERACTIVE=0; HAS_NIX=1
+    for os in ubuntu wsl macos linux; do
+        DETECTED_OS=$os; USE_NIX=0; NO_NIX=0
+        prompt_select() { PROMPT_RESULT="$2"; }
+        select_setup_method
+        if [[ "$os" == linux ]]; then [[ "$SETUP_METHOD" == nix && "$USE_NIX" == 1 ]]
+        else [[ "$SETUP_METHOD" == system && "$USE_NIX" == 0 ]]; fi
+        USE_NIX=0
+        prompt_select() { PROMPT_RESULT="$3"; }
+        select_setup_method
+        if [[ "$os" == linux ]]; then [[ "$SETUP_METHOD" == manual && "$USE_NIX" == 0 ]]
+        else [[ "$SETUP_METHOD" == nix && "$USE_NIX" == 1 ]]; fi
+    done
+    prompt_select() { exit 99; }
+    DETECTED_OS=nixos; USE_NIX=0; select_setup_method; [[ "$SETUP_METHOD" == nix ]]
+    DETECTED_OS=ubuntu; USE_NIX=1; select_setup_method; [[ "$SETUP_METHOD" == nix ]]
+    USE_NIX=0; NO_NIX=1; select_setup_method; [[ "$SETUP_METHOD" == system ]]'
 pass 'backend and platform defaults and overrides'
 
 # Cover fresh machines without downloading a tool during the fast tests.
@@ -136,6 +155,24 @@ grep -F 'roboplan.core' "$work/output" >/dev/null
 if grep -E 'unitree_webrtc|--replay|from_file|\.build\(' "$work/output"; then exit 1; fi
 pass 'bounded failure propagation and capability-specific asset-free verification'
 
+for capabilities in navigation manipulation navigation,manipulation; do
+    for nix in 0 1; do
+        run "CAPABILITIES='$capabilities'; USE_NIX=$nix; INSTALL_DIR='/tmp/dimos example'; print_quickstart" >"$work/output"
+        if [[ ",$capabilities," == *,navigation,* ]]; then
+            grep -Fx '  dimos --replay run unitree-go2' "$work/output" >/dev/null
+        elif grep -F 'unitree-go2' "$work/output"; then exit 1; fi
+        if [[ ",$capabilities," == *,manipulation,* ]]; then
+            grep -Fx '  dimos run keyboard-teleop-xarm7' "$work/output" >/dev/null
+        elif grep -F 'keyboard-teleop-xarm7' "$work/output"; then exit 1; fi
+        if [[ "$nix" == 1 ]]; then grep -Fx '  nix develop' "$work/output" >/dev/null
+        elif grep -F 'nix develop' "$work/output"; then exit 1; fi
+        if grep -E -- '--viewer none|xarm-perception-sim' "$work/output"; then exit 1; fi
+    done
+done
+grep -F 'dimos --replay run unitree-go2' "$repo/README.md" >/dev/null
+grep -F 'dimos run keyboard-teleop-xarm7' "$repo/README.md" >/dev/null
+pass 'README examples and activation instructions for each capability/setup combination'
+
 # PTY tests exercise the built-in multi-select when Gum is unavailable.
 python3 - "$installer" <<'PYTHON'
 import errno
@@ -149,7 +186,7 @@ import time
 
 installer = sys.argv[1]
 
-def terminal_case(selection, expected):
+def terminal_case(selection, expected, setup=b'1\n'):
     pid, fd = pty.fork()
     if pid == 0:
         signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -188,7 +225,8 @@ main
                 break
             transcript += data
             for marker, response in [(b'choice [1]:', b'1\n'), (b'path [', b'/tmp/dimos cli test\n'),
-                                     (b'Space to toggle', selection), (b'Install this environment?', b'y\n')]:
+                                     (b'Space to toggle', selection), (b'How should we set up dependencies?', setup),
+                                     (b'Install this environment?', b'y\n')]:
                 if marker in transcript and marker not in sent:
                     sent.add(marker)
                     if response == b'\x03':
@@ -207,6 +245,9 @@ main
             assert f'Capabilities: {expected}'.encode() in transcript, transcript
             assert transcript.index(b'installation summary') < transcript.index(b'PACKAGES'), transcript
             assert b'VERIFIED' in transcript, transcript
+            assert transcript.count(b'How should we set up dependencies?') == 1, transcript
+            expected_setup = b'nix' if setup == b'2\n' else b'system'
+            assert b'System setup: ' + expected_setup in transcript, transcript
         else:
             assert b'PACKAGES' not in transcript, transcript
     finally:
@@ -222,6 +263,7 @@ terminal_case(b'\x1b[B \n', 'manipulation')
 terminal_case(b' \x1b[B \n', 'navigation,manipulation')
 terminal_case(b'\n \x1b[B \n', 'navigation,manipulation')
 terminal_case(b' \x1b[B \x1b[A \n', 'manipulation')
+terminal_case(b' \n', 'navigation', setup=b'2\n')
 terminal_case(b'\x03', None)
 
 # A detached process must not open /dev/tty or block when required choices are missing.

@@ -50,9 +50,11 @@ when a particular branch is requested. Existing checkouts keep their current bra
 - Always supply mode, directory, and capabilities explicitly. Non-interactive runs
   reject missing choices before changing the host. Add `--dry-run` when a preview
   helps inspect the proposed work; it requires the same explicit choices.
-- Let the installer select apt on Ubuntu/WSL, Homebrew on macOS, or Nix on other
-  Linux. `--use-nix` selects Nix explicitly. `--no-nix` on other Linux assumes native
-  prerequisites are already installed. Existing Nix needs flakes enabled.
+- Interactive installation offers native dependencies or Nix before confirmation;
+  unattended installation defaults to apt on Ubuntu/WSL, Homebrew on macOS, and Nix
+  on other Linux. Honor the user's setup preference with `--use-nix` or `--no-nix`;
+  both bypass the question. `--no-nix` on other Linux assumes native prerequisites
+  are already installed. NixOS uses Nix by default. Existing Nix needs flakes enabled.
 - Let the installer detect CUDA on supported Linux x86_64 hosts. Use `--no-cuda`
   when the user requests CPU execution or GPU access is unavailable. Jetson CUDA
   setup is outside this installer.
@@ -82,6 +84,13 @@ Report the absolute directory, mode, capabilities, backend, verification results
 and shell-quoted activation and next commands. Explain any remaining prerequisites
 relevant to the user's intended workflow. Do not claim robot readiness or complete
 GPU workload support from dependency checks alone.
+
+For next steps, use the README examples: `dimos --replay run unitree-go2` for
+navigation, with the normal Rerun viewer, and `dimos run keyboard-teleop-xarm7` for
+manipulation. Show both when both capabilities were selected, as separate examples.
+Replay may initially show a black viewer while its data downloads. Keyboard teleop
+uses mock hardware when no xArm address is configured; direct the user to its printed
+visualization URL. These are suggestions to run after setup, not verification steps.
 
 Do not launch blueprints or download models as part of environment verification.
 Even importing some manipulation blueprints resolves remote robot assets. G1 DDS,

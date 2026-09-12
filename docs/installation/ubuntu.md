@@ -6,7 +6,7 @@ Use the official installer on Ubuntu 22.04/24.04, on x86_64 or ARM64:
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-The installer automatically uses apt, the CI-tested path. The installer sets up apt dependencies, uv, Python 3.12, and dimOS, then verifies the CLI and native libraries.
+Choose **Native packages (apt)** for the CI-tested path, or choose Nix. Unattended installation defaults to apt. The installer sets up apt dependencies, uv, Python 3.12, and dimOS, then verifies the CLI and native libraries.
 
 Choose **library** for the published package or **dev** for a source checkout. For example:
 

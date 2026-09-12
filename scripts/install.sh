@@ -283,7 +283,8 @@ Usage: bash scripts/install.sh [OPTIONS]
     --verbose                Show commands
     --help                   Show this help
 
-Interactive: choose mode, directory, and capabilities, then confirm once.
+Interactive: choose mode, directory, capabilities, and native/Nix setup, then confirm once.
+Unattended setup uses platform defaults unless --use-nix or --no-nix is supplied.
 Both capabilities include agents, perception, visualization, and simulation.
 Developer mode also installs contributor test/lint dependencies.
 Verification checks dependencies and CLI; it does not start robots or download models.
@@ -490,7 +491,28 @@ select_setup_method() {
             ubuntu|wsl|macos) SETUP_METHOD="system" ;;
             *) SETUP_METHOD="manual" ;;
         esac
-    elif [[ "$USE_NIX" == 1 || "$DETECTED_OS" == nixos || "$DETECTED_OS" == linux ]]; then
+    elif [[ "$USE_NIX" == 1 || "$DETECTED_OS" == nixos ]]; then
+        SETUP_METHOD="nix"
+        USE_NIX=1
+    elif [[ "$NON_INTERACTIVE" != 1 ]]; then
+        local native
+        case "$DETECTED_OS" in
+            ubuntu|wsl) native="Native packages — apt (recommended)" ;;
+            macos) native="Native packages — Homebrew (recommended)" ;;
+            linux) native="Native dependencies — already installed manually" ;;
+        esac
+        if [[ "$DETECTED_OS" == linux ]]; then
+            prompt_select "How should we set up dependencies?" "Nix (recommended)" "$native"
+        else
+            prompt_select "How should we set up dependencies?" "$native" "Nix"
+        fi
+        case "$PROMPT_RESULT" in
+            Nix*) SETUP_METHOD="nix"; USE_NIX=1 ;;
+            *)
+                if [[ "$DETECTED_OS" == linux ]]; then SETUP_METHOD="manual"
+                else SETUP_METHOD="system"; fi ;;
+        esac
+    elif [[ "$DETECTED_OS" == linux ]]; then
         SETUP_METHOD="nix"
         USE_NIX=1
     else
@@ -862,12 +884,14 @@ print_quickstart() {
     if [[ "$USE_NIX" == 1 ]]; then printf '  nix develop\n'; fi
     printf '  source .venv/bin/activate\n\nNext commands:\n  dimos list\n'
     if [[ ",$CAPABILITIES," == *,navigation,* ]]; then
-        printf '  dimos --viewer none --replay run unitree-go2\n'
+        printf '\nTry navigation replay (Rerun viewer, no robot needed):\n  dimos --replay run unitree-go2\n'
+        dim "  On first run, Rerun may show a black window while about 75 MB of replay data downloads."
     fi
     if [[ ",$CAPABILITIES," == *,manipulation,* ]]; then
-        printf '  dimos --simulation run xarm-perception-sim\n'
+        printf '\nTry xArm7 keyboard teleop (mock hardware when no xArm address is configured):\n  dimos run keyboard-teleop-xarm7\n'
+        dim "  Open the visualization URL printed in the terminal to see the arm."
     fi
-    dim "Runtime commands may download models/assets; perception may require CUDA or MPS."
+    dim "Try each example separately. First runs may download robot assets."
     if [[ "$INSTALL_MODE" == dev ]]; then printf '  uv run --no-sync pytest dimos\n'; fi
     printf '\nSetup and hardware requirements: https://github.com/dimensionalOS/dimos/blob/main/docs/installation/index.md\n'
 }

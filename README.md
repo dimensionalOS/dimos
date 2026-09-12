@@ -145,7 +145,7 @@ Use the official installer to set up system dependencies, Python 3.12, and dimOS
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-Choose **navigation**, **manipulation**, or both. Each includes the agents, perception, visualization, and simulation dependencies for common workflows. The installer detects the system setup, shows a summary, then installs and verifies your environment.
+Choose **navigation**, **manipulation**, or both. Each includes the agents, perception, visualization, and simulation dependencies for common workflows. Choose native system packages or Nix, review the summary, then install and verify your environment. Unattended runs use platform defaults unless overridden.
 
 **Installing with an agent?** Give it the [setup-dimos skill](.agents/skills/setup-dimos/SKILL.md), which covers new projects and existing checkouts. See [unattended installation](docs/installation/index.md#agent-assisted-and-unattended-installation) for explicit commands, or run `bash scripts/install.sh --help`.
 
@@ -172,7 +172,7 @@ dimos --replay run unitree-go2
 ```
 
 ```bash
-# The installer's default extras include simulation support.
+# The navigation capability includes simulation support.
 # Run quadruped in MuJoCo simulation
 dimos --simulation run unitree-go2
 

@@ -6,7 +6,7 @@ The guided installer sets up system dependencies, uv, Python 3.12, and dimOS. Ru
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-Choose an installation mode, destination, and one or both capabilities. The installer detects the package manager and CPU/CUDA backend, shows the work it will perform, and asks for one confirmation. It then installs and verifies the environment. Existing checkouts and virtual environments are reused without clearing them or switching branches.
+Choose an installation mode, destination, and one or both capabilities. Choose native dependencies or Nix; the installer detects the CPU/CUDA backend, shows the work it will perform, and asks for one installation confirmation. It then installs and verifies the environment. Existing checkouts and virtual environments are reused without clearing them or switching branches.
 
 ## Choose capabilities
 
@@ -51,9 +51,13 @@ bash scripts/install.sh --non-interactive --mode dev --project-dir . \
 
 Use `--capabilities manipulation` for arms only. Add `--dry-run` to preview an explicit command without changes. Required system packages install automatically; unattended runs fail with instructions if administrator access is unavailable, rather than prompting for a password. An administrator can provision prerequisites first, or you can authenticate with `sudo -v` in a terminal and rerun where that authorization applies.
 
-Verification always checks the CLI, native libraries, selected capability dependencies, and PyTorch backend. It does not launch a blueprint or download model assets. The final summary includes activation instructions and next commands. In a checkout, use `uv run --no-sync` to preserve the selected environment; plain `uv run` may resync a different set of extras.
+Verification always checks the CLI, native libraries, selected capability dependencies, and PyTorch backend. It does not launch a blueprint or download model assets. The final summary includes activation instructions and examples from the [README](https://github.com/dimensionalOS/dimos#featured-runfiles): Go2 replay with its Rerun viewer for navigation, and xArm7 keyboard teleop for manipulation. Try the examples separately. Keyboard teleop uses mock hardware when no xArm address is configured; open its printed visualization URL. In a checkout, use `uv run --no-sync` to preserve the selected environment; plain `uv run` may resync a different set of extras.
 
 ## Platform setup and overrides
+
+Interactive runs ask how to provide system dependencies before the installation summary. Ubuntu/WSL offer native apt packages (recommended) or Nix; macOS offers native Homebrew packages (recommended) or Nix. Other Linux distributions offer Nix (recommended) or dependencies you have already installed manually. NixOS uses Nix.
+
+`--use-nix` and `--no-nix` bypass the question. Unattended runs use these platform defaults unless overridden:
 
 | Platform | Default setup | Validation |
 | --- | --- | --- |

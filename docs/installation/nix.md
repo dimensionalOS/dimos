@@ -11,7 +11,7 @@ source .venv/bin/activate
 
 The installation summary includes Nix bootstrap when needed; after confirmation, the installer provisions Nix and enables flakes. An existing Nix installation must already have flakes enabled. Choose library mode to install the published package instead; the installer downloads the flake files into that project.
 
-Nix is the default for NixOS, Arch Linux, and other Linux distributions whose package managers the installer does not handle. This path is not covered by installation CI. Native Arch dependency installation through pacman is not implemented.
+Nix is the default for NixOS. On Arch Linux and other Linux distributions whose package managers the installer does not handle, the interactive menu recommends Nix and also offers manually provisioned native dependencies; unattended runs default to Nix. This path is not covered by installation CI. Native Arch dependency installation through pacman is not implemented.
 
 On Ubuntu, prefer the [system-package path](/docs/installation/ubuntu.md), which is tested in CI. Nix libraries can conflict with PyPI wheels on Ubuntu 22.04.
 
