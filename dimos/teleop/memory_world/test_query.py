@@ -948,12 +948,8 @@ def test_the_capture_markers_are_built_from_the_poses_on_the_images(tmp_path: Pa
     try:
         (header, payload), thumbnails = module._build_image_poses()
         n = header["n"]
-        # EXACTLY one marker per frame. `>= 2` was the assertion here, which any count at
-        # all satisfies -- scaling n_image_markers by five changed nothing it could see.
-        # The sampler asks for n_image_markers evenly spaced stamps, and `after(ts).limit(1)`
-        # returns the last frame for every probe past the end, so this recording's three
-        # frames published two hundred markers -- 197 of them the same picture in the same
-        # place, each with its own JPEG encode.
+        # EXACTLY one per frame. `>= 2` passed for any count, so the duplicate-marker
+        # bug (200 markers, 200 JPEG encodes, three frames) was invisible here.
         assert n == 3, header
         assert len(payload) == n * 12 + n * 16  # xyz float32 then xyzw float32
         assert len(thumbnails) == n
@@ -970,11 +966,8 @@ def test_the_capture_markers_are_built_from_the_poses_on_the_images(tmp_path: Pa
 def test_n_image_markers_caps_the_markers_when_there_are_more_frames_than_that(
     tmp_path: Path,
 ) -> None:
-    """The dedup above makes the marker count the FRAME count when frames are scarce.
-
-    That is right, and it also means the test above can no longer see `n_image_markers`
-    at all: with three frames, every cap from three upwards gives three. The setting is a
-    ceiling, so the case that shows it is the other one -- more frames than markers.
+    """One marker per frame makes the CAP invisible to the test above: with three
+    frames, every setting from three upwards gives three. This is the other case.
     """
     from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 
@@ -1036,7 +1029,16 @@ def test_the_voxel_cloud_packs_what_survives_the_height_filter(
     # The planner gets the whole filtered map, not the strided copy the viewer gets.
     assert memory_world._map_xyz is not None and memory_world._map_xyz.shape == (2, 3)
 
+    # ...and that only means something when striding actually HAPPENS: max_points sat
+    # above the fixture's four points, so the branch never ran and the claim went untested.
+    memory_world.config.max_points = 1
+    header, payload = memory_world._build_voxel_cloud_from_lidar()  # type: ignore[misc]
+    assert header["n"] < 2, "max_points did not stride anything, so this proves nothing"
+    assert memory_world._map_xyz is not None
+    assert memory_world._map_xyz.shape == (2, 3), "the planner got the viewer's strided copy"
+
     # Nothing inside the band is not a cloud at all, rather than an empty one.
+    memory_world.config.max_points = 200_000
     monkeypatch.setattr(memory_world, "_accumulated_cloud", lambda: cloud[2:])
     assert memory_world._build_voxel_cloud_from_lidar() is None
 

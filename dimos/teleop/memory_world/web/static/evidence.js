@@ -90,11 +90,18 @@ export function addQueryImage(scene, header, jpegArrayBuffer) {
                 .addScaledVector(up, (0.5 - header.uv[1]) * height);
             const ring = new THREE.Mesh(
                 new THREE.RingGeometry(width * 0.02, width * 0.03, 24),
-                new THREE.MeshBasicMaterial({ color: colour, side: THREE.DoubleSide, depthTest: false }),
+                new THREE.MeshBasicMaterial({ color: colour, side: THREE.DoubleSide }),
             );
-            ring.position.copy(hit);
+            // Just in FRONT of its own photo, and depth-tested like everything else.
+            // `depthTest: false` also kept it in front of every OTHER photo, the voxels
+            // and the walls -- a ring floating over the whole scene with nothing to say
+            // which picture it belonged to, which is what it looked like on screen. The
+            // quad faces back towards the camera that took it, so -forward is the side
+            // the viewer reads it from; a hair off the plane is enough to stop the two
+            // z-fighting without lifting the ring off the picture.
+            ring.position.copy(hit).addScaledVector(forward, -width * 0.005);
             ring.quaternion.copy(quad.quaternion);
-            ring.renderOrder = 2;  // over its own photo, never hidden behind it
+            ring.renderOrder = 2;  // drawn after its photo, so it wins the tie on the plane
             if (header.cluster !== undefined) ring.userData.cluster = header.cluster;
             scene._highlightGroup.add(ring);
             // A ring marks a pixel on a photograph, so it belongs to that photograph:
