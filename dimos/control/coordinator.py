@@ -25,12 +25,14 @@ Features:
 - Aggregated preemption notifications
 """
 
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
+from functools import partial
 import inspect
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from dimos.control.components import (
     TWIST_SUFFIX_MAP,
@@ -157,6 +159,14 @@ class ControlCoordinator(Module):
     # Input: Streaming twist commands for velocity-commanded platforms
     twist_command: In[Twist]
 
+    twist_ports: ClassVar[Mapping[str, str]] = {"twist_command": "joint_command"}
+    """Twist input port -> the joint_command port its base velocities dispatch on.
+
+    A deployment that arbitrates between twist sources declares one entry per source and
+    binds a task to each joint port with ``TaskConfig.stream_bind``; sharing one port
+    would hand every task the same velocities and leave priority nothing to pick from.
+    """
+
     # Input: Normalized gripper opening (0.0 closed, 1.0 open).
     gripper_command: In[Float32]
 
@@ -197,7 +207,8 @@ class ControlCoordinator(Module):
         # dispatch. They must stay out of _dispatch: the twist mapper itself
         # dispatches joint_command, and _task_lock is not reentrant.
         self._stream_pre_hooks: dict[str, Callable[[Any], None]] = {
-            "twist_command": self._map_twist_to_base_joints,
+            twist_port: partial(self._map_twist_to_base_joints, joint_port)
+            for twist_port, joint_port in self.twist_ports.items()
         }
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
@@ -599,7 +610,7 @@ class ControlCoordinator(Module):
                     for hw in self._hardware.values()
                 )
             if has_base:
-                active.add("twist_command")
+                active.update(self.twist_ports)
             for stream in active - self._stream_unsubs.keys():
                 try:
                     unsub = getattr(self, stream).subscribe(self._make_stream_cb(stream))
@@ -676,8 +687,8 @@ class ControlCoordinator(Module):
                         stream=stream,
                     )
 
-    def _map_twist_to_base_joints(self, msg: Twist) -> None:
-        """Map Twist onto BASE virtual joints (base/vx ← linear.x, ...) via joint_command."""
+    def _map_twist_to_base_joints(self, joint_port: str, msg: Twist) -> None:
+        """Map Twist onto BASE virtual joints (base/vx ← linear.x, ...) via joint_port."""
         names: list[str] = []
         velocities: list[float] = []
 
@@ -698,7 +709,7 @@ class ControlCoordinator(Module):
 
         if names:
             joint_state = JointState(name=names, velocity=velocities)
-            self._dispatch("joint_command", joint_state)
+            self._dispatch(joint_port, joint_state)
 
     @rpc
     def set_estop(self, estopped: bool) -> bool:

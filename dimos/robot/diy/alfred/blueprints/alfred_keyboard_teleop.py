@@ -15,7 +15,8 @@
 """Alfred teleop with the Mid-360 (Point-LIO) and the mast D455, no navigation.
 
 Anything publishing tele_cmd_vel (web_ctrl's keyboard, dimos topic send) drives
-the base through MovementManager's teleop/nav mux.
+the base through the arbiter's teleop task. There is no navigation here, so nothing
+ever outranks it.
 
     dimos run alfred-keyboard-teleop
 """
@@ -24,7 +25,7 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
-from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.robot.diy.alfred.base_arbiter import alfred_base_arbiter_blueprint
 from dimos.robot.diy.alfred.blueprints.alfred_hardware import _alfred_hardware
 from dimos.robot.diy.alfred.config import ALFRED
 
@@ -38,5 +39,5 @@ alfred_keyboard_teleop = autoconnect(
             (PointLio, "odometry", "pointlio_odometry"),
         ]
     ),
-    MovementManager.blueprint(),
+    alfred_base_arbiter_blueprint(),
 ).global_config(n_workers=7, robot_model="alfred")
