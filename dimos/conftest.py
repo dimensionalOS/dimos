@@ -68,6 +68,10 @@ else:
     os.environ.setdefault("LCM_DEFAULT_URL", f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0")
     os.environ.setdefault("ZENOH_SCOUT_ADDR", f"224.0.0.224:{17700 + _BUCKET}")
 
+# GlobalConfig reads .env itself, so a developer's robot must be blanked, not just unset.
+for _k in ("ROBOT_IP", "ROBOT_IPS", "ZENOH_CONNECT"):
+    os.environ[_k] = ""
+
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,
 # the macOS default soft cap (~256) gets exhausted and tests fail with

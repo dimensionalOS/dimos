@@ -50,6 +50,8 @@ def test_default_environment_reads_dotenv_at_environment_precedence(
     config_path = tmp_path / "config.json"
     config_path.write_text('{"g":{"robot_ip":"config"},"primarymodule":{"speed":2}}')
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ROBOT_IP", raising=False)
+    monkeypatch.delenv("PRIMARYMODULE__SPEED", raising=False)
 
     parsed = BlueprintConfigParser(PrimaryModule.blueprint()).parse(
         config_path=config_path,
