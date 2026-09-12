@@ -24,6 +24,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from dimos.teleop.memory_world.visual_search import body_style_quaternion
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

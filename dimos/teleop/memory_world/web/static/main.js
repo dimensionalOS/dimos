@@ -351,7 +351,7 @@ function startPerfReadout() {
         perfEl.textContent = [
             `${s.fps.toFixed(1)} fps  (${s.median_ms.toFixed(1)} ms med, ${s.p95_ms.toFixed(1)} p95)`,
             `${s.draw_calls} draws  ${(s.triangles / 1000).toFixed(0)}k tris`,
-            `${s.textures} textures  ${s.live_quads} quads${s.images_visible ? '' : ' (resident, hidden)'}`,
+            `${s.textures} textures  ${s.live_quads} quads`,
             `quality ${s.quality}${s.quality_auto ? ' auto' : ' pinned'}  ${(s.voxels_drawn / 1000).toFixed(0)}k/${(s.voxels_total / 1000).toFixed(0)}k voxels`,
             `images ${s.images_visible ? 'on' : 'off'}  cloud ${s.cloud_visible ? 'on' : 'off'}`,
         ].join('\n');

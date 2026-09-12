@@ -19,6 +19,7 @@ import struct
 from types import SimpleNamespace
 from unittest import mock
 
+import cv2
 import numpy as np
 from pydantic import ValidationError
 import pytest
@@ -748,4 +749,48 @@ def test_a_second_start_does_not_orphan_the_server_that_is_serving(tmp_path: Pat
         assert len(started) == 1, "a second server was built over the first"
     finally:
         monkey.stop()
+        module.stop()
+
+
+def test_the_capture_markers_are_built_from_the_poses_on_the_images(tmp_path: Path) -> None:
+    """`_build_image_poses` end to end, because nothing else in this suite runs it.
+
+    It was moved to world_cache.py in the extraction that shrank module.py, and the move
+    dropped its `body_style_quaternion` import. Every test still passed, ruff still
+    passed -- this repo's config lists F821 in its ignore list, so an undefined name is
+    never reported -- and the live server logged "failed to build image poses" into a
+    swallowed exception. The suite could not see it because it never called this.
+    """
+    from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+
+    pixels = np.zeros((8, 12, 3), dtype=np.uint8)
+    pixels[:, :, 1] = 200
+    ok, encoded = cv2.imencode(".jpg", pixels)
+    assert ok
+
+    db_path = tmp_path / "poses.db"
+    store = SqliteStore(path=str(db_path))
+    store.start()
+    images = store.stream("color_image", CompressedImage)
+    for k in range(3):  # no tf stream: the pose on the observation is the one used
+        images.append(
+            CompressedImage(data=encoded.tobytes(), format="jpeg", frame_id="cam", ts=float(k)),
+            ts=float(k),
+            pose=(float(k), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
+        )
+    store.stop()
+
+    module = MemoryWorldModule(store_path=str(db_path))
+    try:
+        (header, payload), thumbnails = module._build_image_poses()
+        n = header["n"]
+        assert n >= 2, header
+        assert len(payload) == n * 12 + n * 16  # xyz float32 then xyzw float32
+        assert len(thumbnails) == n
+        assert any(thumbnails), "every thumbnail failed to encode"
+        xs = np.frombuffer(payload[: n * 12], dtype="<f4").reshape(n, 3)[:, 0]
+        assert xs[0] == pytest.approx(0.0) and xs[-1] > xs[0]  # walked along +x
+        quats = np.frombuffer(payload[n * 12 :], dtype="<f4").reshape(n, 4)
+        assert np.allclose(np.linalg.norm(quats, axis=1), 1.0, atol=1e-5)
+    finally:
         module.stop()
