@@ -17,6 +17,9 @@ from __future__ import annotations
 import contextlib
 from pathlib import Path
 import sqlite3
+import threading
+import time
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -32,6 +35,7 @@ from dimos.teleop.memory_world.hyperspace_search import (
     assign_points,
     cluster_voxels,
     memory_db_for,
+    memory_db_keyframes,
     memory_db_ready,
 )
 
@@ -433,7 +437,7 @@ def test_an_index_finished_after_startup_is_picked_up_by_the_status_poll() -> No
     from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
 
     loaded = threading.Event()
-    ready = False
+    keyframes = 0  # what the db holds; the adopt reads the COUNT, not a bare bool
 
     class Module(HyperspaceAnswers):
         def __init__(self) -> None:
@@ -453,14 +457,21 @@ def test_an_index_finished_after_startup_is_picked_up_by_the_status_poll() -> No
             return True
 
     module = Module()
-    with mock.patch(
-        "dimos.teleop.memory_world.hyperspace_answers.memory_db_ready", lambda _p: ready
+    with (
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_keyframes",
+            lambda _p: keyframes,
+        ),
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_ready",
+            lambda _p: keyframes > 0,
+        ),
     ):
         # Through the poll the viewer actually calls, not the helper: wiring it up is the
         # half that can be deleted without any test noticing.
         assert module._search_status()["ready"] is False
         assert not loaded.wait(0.2), "nothing to adopt yet"
-        ready = True
+        keyframes = 40
         module._search_status()
         assert loaded.wait(2.0), "the index that appeared was never loaded"
 
@@ -1098,3 +1109,79 @@ def test_the_ingest_hands_its_gate_settings_to_the_keyframe_gate(  # type: ignor
     assert recorded["gate"]["novelty_threshold"] == 0.037
     assert recorded["ingest"] is not None, "IngestConfig was never constructed"
     assert recorded["ingest"]["gate"] is not None, "the gate never reached the ingest config"
+
+
+def _index_db(path: Path, keyframes: int) -> None:
+    """A memory db holding *keyframes* keyframes, as an ingest part-way through leaves it."""
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE IF NOT EXISTS _streams (name TEXT)")
+    have = {row[0] for row in db.execute("SELECT name FROM _streams")}
+    for name in (KEYFRAME_STREAM, PATCH_STREAM):
+        if name not in have:
+            db.execute("INSERT INTO _streams VALUES (?)", (name,))
+    db.execute(f'CREATE TABLE IF NOT EXISTS "{KEYFRAME_STREAM}" (id INTEGER)')
+    db.execute(f'DELETE FROM "{KEYFRAME_STREAM}"')
+    db.executemany(f'INSERT INTO "{KEYFRAME_STREAM}" VALUES (?)', [(i,) for i in range(keyframes)])
+    db.commit()
+    db.close()
+
+
+def test_an_index_adopted_mid_ingest_is_loaded_again_once_it_grows(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Adopting a partial index must not be permanent.
+
+    Without a completion marker the FIRST keyframe flush makes the db read as ready, so an
+    ingest run from a terminal gets adopted a second or two in. The adopt used to latch on
+    `self._hyperspace is not None`, so the module then served that one frame as the whole
+    recording for the life of the process -- and rerunning the ingest could not fix it,
+    because nothing ever looked at the db again. The keyframe count is what tells us.
+    """
+    from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
+
+    recording = tmp_path / "walk.db"
+    _index_db(recording, 1)  # the ingest has flushed exactly one keyframe
+
+    loads: list[bool] = []
+
+    class Fake:
+        _hyperspace_error = None
+        _prepare_job = SimpleNamespace(status=lambda: {"embedding": "idle", "progress": ""})
+        config = SimpleNamespace(store_path=str(recording))
+
+        def __init__(self) -> None:
+            self._hyperspace = None
+            self._adopting = threading.Semaphore(1)
+
+        def _load_hyperspace(self, reload: bool = False) -> bool:
+            loads.append(reload)
+            self._hyperspace = SimpleNamespace(
+                keyframe_count=memory_db_keyframes(recording), segment_count=0
+            )
+            return True
+
+    fake = Fake()
+    adopt = HyperspaceAnswers._adopt_an_index_that_appeared
+
+    def settle() -> None:
+        for _ in range(200):
+            if fake._adopting.acquire(blocking=False):
+                fake._adopting.release()
+                return
+            time.sleep(0.01)
+
+    adopt(fake)
+    settle()
+    assert loads == [False], "the partial index was never adopted"
+    assert fake._hyperspace.keyframe_count == 1
+
+    adopt(fake)
+    settle()
+    assert loads == [False], "reloaded with nothing new written"
+
+    _index_db(recording, 40)  # the ingest finished
+    adopt(fake)
+    settle()
+    assert loads == [False, True], (
+        "the index grew from 1 keyframe to 40 and the module kept serving the one:"
+        " every answer would come from a single picture, for the life of the process"
+    )
+    assert fake._hyperspace.keyframe_count == 40

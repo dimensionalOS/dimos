@@ -752,16 +752,19 @@ def test_a_second_start_does_not_orphan_the_server_that_is_serving(tmp_path: Pat
         module.stop()
 
 
-def test_a_module_that_was_stopped_can_be_started_again(tmp_path: Path) -> None:
-    """start() after stop() must come back alive, not inert.
+def test_a_module_that_was_stopped_refuses_to_start_again(tmp_path: Path) -> None:
+    """start() after stop() must refuse, and must NOT bind a port.
 
-    stop() latches `_stopping`, and nothing clears it. That was invisible while stop()
-    also left `_web_server` set, because the guard at the top of start() made a restart
-    impossible -- the module refused with "already serving" and never got far enough to
-    care. Clearing `_web_server` in stop() fixed the refusal and exposed this: the second
-    start() built a server and served, but `_stopping` was still set, so `_prepare`
-    returned before loading search, `_build_replay` refused, and a replay request
-    answered "replay not built: stopping". A module that looked up and was not.
+    A stopped module is finished, not idle: our stop() calls super().stop(), which latches
+    core's `_module_closed`. Clearing `_web_server` in stop() was right -- "already
+    serving" is a lie once the server is down -- but it made a restart reachable for the
+    first time, and what came up was a module that bound the port and could do nothing.
+    `_stopping` stays set, so `_prepare` returns before loading search, `_build_replay`
+    refuses, and every replay and orbit request answers 503 "stopping".
+
+    That is the orphaned-listener hazard start()'s own guard was written against, because
+    `memworld`'s probe takes any answer on the port as success and would print its URLs
+    over a world that cannot answer. So the second start() builds NO server.
     """
     import socket
     import threading
@@ -796,13 +799,14 @@ def test_a_module_that_was_stopped_can_be_started_again(tmp_path: Path) -> None:
         module.start()
         module.stop()
         assert module._stopping.is_set(), "stop() is expected to latch it"
+        assert module._module_closed, "our stop() calls super().stop(), which closes it"
 
         module.start()
-        assert len(built) == 2, "the second start built no server"
-        assert not module._stopping.is_set(), (
-            "restarted while still marked stopping: prepare, replay and the visual index"
-            " all refuse to do anything in that state"
+        assert len(built) == 1, (
+            "a stopped module built a second web server: it binds the port and then"
+            " refuses every request, which memworld's probe reads as a healthy launch"
         )
+        assert module._web_server is None, "a refused start must leave no server handle"
     finally:
         monkey.stop()
         module.stop()

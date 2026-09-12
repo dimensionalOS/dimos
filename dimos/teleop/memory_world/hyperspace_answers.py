@@ -47,6 +47,7 @@ from dimos.teleop.memory_world.hyperspace_search import (
     HeatmapAnswer,
     HyperspaceSearch,
     memory_db_for,
+    memory_db_keyframes,
     memory_db_ready,
 )
 from dimos.teleop.memory_world.messages import (
@@ -205,18 +206,35 @@ class HyperspaceAnswers:
         viewer hides its Prepare button the moment the index is there, so without this the
         page waits on "loading Hyperspace" with no way to ask again.
         """
-        if self._hyperspace is not None or self._hyperspace_error is not None:
+        if self._hyperspace_error is not None:
             return
         if self._prepare_job.status()["embedding"] == "running":
             return  # our own ingest, which adopts on its own when it finishes
-        if not memory_db_ready(self.config.store_path):
+        on_disk = memory_db_keyframes(self.config.store_path)
+        if on_disk <= 0:
+            return
+        search = self._hyperspace
+        # An index that GREW is one we adopted while it was still being written. Without
+        # a completion marker the first keyframe flush makes the db read as ready, so a
+        # terminal ingest gets adopted a second or two in -- and this used to latch on
+        # `self._hyperspace is not None`, serving that one frame as the whole recording
+        # for the life of the process. Rerunning the ingest could not fix it, because
+        # nothing ever looked at the db again.
+        if search is not None and on_disk <= search.keyframe_count:
             return
         if not self._adopting.acquire(blocking=False):
             return  # already loading; warming takes seconds and must not block the poll
+        replacing = search is not None
+        if replacing:
+            logger.info(
+                "the index grew from %d keyframes to %d; loading it again",
+                search.keyframe_count,
+                on_disk,
+            )
 
         def load() -> None:
             try:
-                self._load_hyperspace()
+                self._load_hyperspace(reload=replacing)
             finally:
                 self._adopting.release()
 

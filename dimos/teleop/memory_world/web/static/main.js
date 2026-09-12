@@ -420,6 +420,12 @@ async function startReplay() {
     scene.onLayerChange = syncBoxesFromScene;
     // Polled while the server builds the replay streams (up to half an hour on a long
     // recording); a build the server remembers as failed will not change, so stop then.
+    // "not started" will not change either unless something asks for a build -- with
+    // build_replay_on_start off, or the voxel streams deleted, nothing ever will -- so it
+    // gets a bounded wait rather than the endless one that left a 503 in the console
+    // every five seconds for as long as the page was open.
+    const IDLE_ATTEMPTS = 12;   // ~1 min: a build that is going to start has started
+    let idle = 0;
     for (let attempt = 0; scene === owner; attempt++) {
         try {
             const index = await replay.load();
@@ -435,6 +441,12 @@ async function startReplay() {
             if (attempt === 0) diag('replay_waiting', { error: reason });
             if (reason.startsWith('replay build failed')) {
                 setStatus(`Timeline unavailable: ${reason}`);
+                return;
+            }
+            idle = reason.includes('not started') ? idle + 1 : 0;
+            if (idle >= IDLE_ATTEMPTS) {
+                diag('replay_gave_up', { error: reason, attempts: attempt + 1 });
+                setStatus('Timeline unavailable: this recording has no voxel replay');
                 return;
             }
             await new Promise((resolve) => setTimeout(resolve, 5000));

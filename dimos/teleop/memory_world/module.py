@@ -1327,11 +1327,19 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
         if self._web_server is not None:
             logger.warning("already serving on port %d; start() ignored", self.config.server_port)
             return
-        # stop() latches this and nothing else clears it. While stop() also left
-        # _web_server set, the guard above made a restart impossible and this could not
-        # be reached; clearing _web_server there made it reachable, and a restarted
-        # module came up inert -- _prepare returns before loading search, _build_replay
-        # refuses, and a replay request answers "replay not built: stopping".
+        # A stopped module is finished, not idle: our stop() calls super().stop(), which
+        # latches core's `_module_closed`. Refuse plainly rather than half-reviving one.
+        # Clearing `_web_server` in stop() (right, because "already serving" is a lie once
+        # the server is down) made this reachable for the first time, and what came up was
+        # a module that bound the port and could do nothing: `_stopping` stays set, so
+        # _prepare returns before loading search, _build_replay refuses, and every replay
+        # and orbit request answers 503 "stopping". Binding a port for a module that can
+        # never answer is the orphaned-listener hazard the guard above exists to prevent,
+        # because memworld's probe takes any answer on the port as success.
+        if getattr(self, "_module_closed", False):
+            logger.warning("this module was stopped; start a new one instead of restarting")
+            return
+        # Belt and braces for a start() that follows a stop() which died before closing.
         self._stopping.clear()
         super().start()
         self._web_server = RobotWebInterface(

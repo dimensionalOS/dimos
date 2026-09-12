@@ -372,22 +372,33 @@ def memory_db_ready(recording: str | Path) -> bool:
     rerun. Nothing writes the marker any more; :func:`drop_index` still deletes one it
     finds, so an old marker cannot vouch for keyframes that have since been dropped.
     """
+    return memory_db_keyframes(recording) > 0
+
+
+def memory_db_keyframes(recording: str | Path) -> int:
+    """How many keyframes the recording's memory db holds; 0 when it has no index.
+
+    The count, not just the fact, because without a completion marker it is the only
+    thing that distinguishes a half-written index from a finished one. A reader that
+    adopted an index mid-ingest can compare this against what it loaded and notice that
+    the ingest has since written more.
+    """
     path = memory_db_for(recording)
     if not path.is_file():
-        return False
+        return 0
     wanted = {KEYFRAME_STREAM, PATCH_STREAM}
     try:
         connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         try:
             names = {row[0] for row in connection.execute("SELECT name FROM _streams")}
             if not wanted <= names:
-                return False
+                return 0
             (count,) = connection.execute(f'SELECT count(*) FROM "{KEYFRAME_STREAM}"').fetchone()
-            return int(count) > 0
+            return int(count)
         finally:
             connection.close()
     except sqlite3.Error:
-        return False
+        return 0
 
 
 def _use_the_cores() -> None:
