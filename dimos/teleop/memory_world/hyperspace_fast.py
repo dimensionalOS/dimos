@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import hashlib
 import itertools
 import time
 from typing import TYPE_CHECKING, Any
@@ -712,14 +713,24 @@ def structural_mask(patches: PatchBank, segments: SegmentBank, config: Any) -> N
     return mask
 
 
-_VIEWPOINTS: dict[tuple[str, float], int] = {}
-
-
 def viewpoint_ids(camera_frames: list[str], stamps: NDArray[np.float64]) -> NDArray[np.int64]:
-    """One number per (camera, moment), stable within the process and across channels."""
+    """One number per (camera, moment), the same number wherever that pair turns up.
+
+    Derived FROM the pair, not handed out by a counter against a shared table. The patch
+    channel and the segment channel build their frames separately and have to agree about
+    which photograph is which, and a table that spans them is process-wide state: it grows
+    for the life of the server, it carries one recording's numbering into the next, and two
+    indexes loading at once hold different locks while they reach for it. None of that is
+    needed to answer "which camera, which moment" -- the pair already says.
+
+    56 bits of blake2b, so the number is positive in int64 and two different moments
+    collide with probability about 7e-10 over ten thousand frames.
+    """
     return np.asarray(
         [
-            _VIEWPOINTS.setdefault((frame, float(ts)), len(_VIEWPOINTS))
+            int.from_bytes(
+                hashlib.blake2b(f"{frame}@{float(ts)!r}".encode(), digest_size=7).digest(), "big"
+            )
             for frame, ts in zip(camera_frames, stamps, strict=True)
         ],
         dtype=np.int64,

@@ -263,3 +263,46 @@ def test_support_counts_viewpoints_not_records() -> None:
     # And two genuinely different moments still count as two.
     evidence.viewpoint = np.array([3, 3, 3, 4], dtype=np.int64)
     assert pool(evidence, config).frames.tolist() == [2]
+
+
+def test_two_channels_number_one_photograph_the_same_without_sharing_a_table() -> None:
+    """The patch channel and the segment channel build their frames separately.
+
+    They still have to agree about which photograph is which, or pooling cannot tell one
+    camera at one moment from two. That agreement used to come from a process-wide dict
+    handing out consecutive numbers, which grew for the life of the server, carried one
+    recording's numbering into the next, and was reached for under two different locks
+    when two indexes loaded at once. The number comes from the (camera, moment) pair now,
+    so agreement holds with no shared state at all.
+    """
+    import subprocess
+    import sys
+
+    import numpy as np
+
+    from dimos.teleop.memory_world.hyperspace_fast import viewpoint_ids
+
+    # What a clean interpreter makes of one photograph, with nothing numbered before it.
+    code = (
+        "import numpy as np;"
+        "from dimos.teleop.memory_world.hyperspace_fast import viewpoint_ids;"
+        "print(viewpoint_ids(['cam'], np.array([1234.5]))[0])"
+    )
+    alone = int(
+        subprocess.run(
+            [sys.executable, "-c", code], check=True, text=True, capture_output=True
+        ).stdout
+    )
+
+    # This process numbers twenty other photographs first. A counter against a shared
+    # table would hand the same photograph a different number here than there; the pair
+    # decides, so it does not.
+    viewpoint_ids([f"cam{i}" for i in range(20)], np.arange(20.0))
+    assert viewpoint_ids(["cam"], np.array([1234.5]))[0] == alone
+
+    # A second camera at the same moment, and the same camera at a second moment, are
+    # both other viewpoints.
+    three = viewpoint_ids(["cam", "other", "cam"], np.array([1234.5, 1234.5, 1234.6]))
+    assert len(set(three.tolist())) == 3
+    # Positive in int64, so nothing downstream that sorts or bincounts them trips.
+    assert (three > 0).all()

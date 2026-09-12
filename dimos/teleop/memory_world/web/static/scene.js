@@ -119,6 +119,7 @@ export class WorldScene {
         this._sightFrom = { value: new THREE.Vector3() };
         this._sightTo = { value: new THREE.Vector3() };
         this._sightRadius = { value: 0 };
+        this._sightLine = null;                       // which cut, once there is one
         this._imageQuadGroup = new THREE.Group();     // textured quads, toggleable
         this._imageQuadGroup.visible = false;
         this._frameRotate.add(this._imageQuadGroup);
@@ -1120,13 +1121,26 @@ export class WorldScene {
      *  looking at, so the picture hangs behind a wall of voxels and all you see is the
      *  wall. */
     setSightLine(from, to, radius) {
-        if (!from || !to || !(radius > 0)) {
+        // Remembered, not just applied: Photos off closes the cut, and Photos on has to
+        // open the same one again. Nulling it there left the viewer standing at the pose
+        // a picture was taken from, with the picture back and the wall back in front of
+        // it -- the exact state this carve exists to prevent.
+        this._sightLine = (from && to && radius > 0) ? { from, to, radius } : null;
+        this._showSightLine();
+    }
+
+    /** The cut is open exactly while the photograph it was made for is showing. */
+    _showSightLine() {
+        // With Photos off there is nothing to see past, so the cut is a hole in the map
+        // with nothing behind it.
+        const cut = this._imageQuadGroup.visible ? this._sightLine : null;
+        if (!cut) {
             this._sightRadius.value = 0;
             return;
         }
-        this._sightFrom.value.set(from[0], from[1], from[2]);
-        this._sightTo.value.set(to[0], to[1], to[2]);
-        this._sightRadius.value = radius;
+        this._sightFrom.value.set(cut.from[0], cut.from[1], cut.from[2]);
+        this._sightTo.value.set(cut.to[0], cut.to[1], cut.to[2]);
+        this._sightRadius.value = cut.radius;
     }
 
     /** Hide voxels above robot z `z` (Infinity/null shows all). */
@@ -1190,10 +1204,7 @@ export class WorldScene {
      */
     _applyQueryImageVisibility() {
         const photos = this._imageQuadGroup.visible;
-        // The corridor exists to show a photograph. With Photos off there is none, so the
-        // cut is a hole in the map with nothing behind it -- and turning them off is one
-        // of the ways to arrive there, not just arriving with them already off.
-        if (!photos) this.setSightLine(null);
+        this._showSightLine();
         const cursor = this._queryImageCursor;
         const filter = this.clusterFilter;
         this._queryImageMeshes.forEach((mesh, i) => {
