@@ -222,7 +222,7 @@ dimos stop                                # Shut down
 
 **dimTELE** is hosted teleoperation for DimOS robots: operate them remotely from any browser or Quest headset over WebRTC. The robot dials out to a hosted broker, so you don't need to open any inbound ports on the robot's network. It works behind a home router, on Wi-Fi, wired LAN, or cellular.
 
-1. Open [teleop.dimensionalos.com](https://teleop.dimensionalos.com), log in, and grab an API key (**API Keys → + New Key**).
+1. Open the [Dimensional console](https://console.dimensional.org/console/keys), sign in, and create an API key (**API keys → Create key**).
 2. Run a teleop blueprint on the robot, passing the key as `TRANSPORTS__BROKER__API_KEY`:
 
    ```bash
