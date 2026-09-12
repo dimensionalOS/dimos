@@ -149,7 +149,7 @@ function setupWebSocket() {
             flushPendingDiag();
             diag('ws_open');
             settled = true;
-            resolve();
+            resolve(socket);   // the caller cleans up THIS socket, never whatever `ws` is by then
         };
         ws.onerror = (e) => {
             if (ws !== socket) return;  // a stale socket's error must not touch the live status
@@ -976,9 +976,10 @@ micBtn.addEventListener('pointerleave', stopRecording);
 // ---- UI handlers -----------------------------------------------------------
 
 async function connect() {
+    let socket = null;
     try {
         connectBtn.disabled = true;
-        await setupWebSocket();
+        socket = await setupWebSocket();
         // Ask for the mic now, before VR starts (an immersive session cannot
         // show the prompt), but never make the world wait on the answer: an
         // unanswered prompt would otherwise leave the canvas black forever.
@@ -996,9 +997,16 @@ async function connect() {
         // runs, so anything startViewer throws (no WebXR, a scene that will not build)
         // used to leave it open and registered on the server, and the next Connect
         // opened a second one beside it.
-        if (ws) {
-            try { ws.close(); } catch (_) { /* ignore */ }
-            ws = null;
+        //
+        // Close OUR socket, not whatever the module-level `ws` happens to be now. A
+        // dropped connection auto-disconnects and re-offers the Connect button, so a
+        // second connect() can be well underway while this one is still suspended in
+        // startViewer(); closing `ws` there would kill the healthy new socket and null
+        // the handle out from under it, leaving the UI "connected" with nothing behind
+        // it. `ws` is only cleared when it is still the one we opened.
+        if (socket) {
+            try { socket.close(); } catch (_) { /* ignore */ }
+            if (ws === socket) ws = null;
         }
         console.error(e);
         setStatus(`Connection failed: ${e.message || e}`);
