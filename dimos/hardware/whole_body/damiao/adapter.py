@@ -78,6 +78,11 @@ class DamiaoWholeBodyAdapter(ABC):
         unknown_buses = config.bus_devices.keys() - set(self.bus_names)
         if unknown_buses:
             raise ValueError(f"unknown CAN bus overrides: {sorted(unknown_buses)}")
+        unknown_grippers = set(config.passive_grippers) - set(self.gripper_joints)
+        if unknown_grippers:
+            raise ValueError(f"unknown passive grippers: {sorted(unknown_grippers)}")
+        if len(config.passive_grippers) != len(set(config.passive_grippers)):
+            raise ValueError("passive_grippers contains duplicate names")
         if len(self.bus_names) != len(set(self.bus_names)):
             raise ValueError("Damiao topology contains duplicate logical bus names")
 
@@ -240,6 +245,13 @@ class DamiaoWholeBodyAdapter(ABC):
             for arm in self._arms.values():
                 arm.set_mode("mit")
             self._robot.enable()
+            for name in self._runtime_config.passive_grippers:
+                gripper = self._grippers[name]
+                gripper.set_mode("mit")
+                gripper.enable()
+                gripper.mit_control(0.0, 0.0, float(gripper.motor.position), 0.0, 0.0)
+            if self._runtime_config.passive_grippers:
+                self._robot.tick(self._runtime_config.tick_deadline_us)
             self._active = True
             self.read_motor_states()
             return True
@@ -335,6 +347,8 @@ class DamiaoWholeBodyAdapter(ABC):
                 commands[arm_count:],
                 strict=True,
             ):
+                if name in self._runtime_config.passive_grippers:
+                    continue
                 if not np.isfinite(command.q) or not 0.0 <= command.q <= 1.0:
                     raise ValueError(f"gripper {name!r} opening must be in [0, 1]")
 
@@ -363,7 +377,11 @@ class DamiaoWholeBodyAdapter(ABC):
 
             for name in self.gripper_joints:
                 opening = commands[offset].q
-                self._grippers[name].set_opening(opening)
+                if name in self._runtime_config.passive_grippers:
+                    gripper = self._grippers[name]
+                    gripper.mit_control(0.0, 0.0, float(gripper.motor.position), 0.0, 0.0)
+                else:
+                    self._grippers[name].set_opening(opening)
                 offset += 1
 
             self._robot.tick(self._runtime_config.tick_deadline_us)
