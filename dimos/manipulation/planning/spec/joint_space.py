@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 from itertools import pairwise
 import math
 from typing import Annotated, Literal
@@ -33,7 +33,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.trigonometry import angle_diff
 
 
-class CoordinateTopology(StrEnum):
+class CoordinateTopology(str, Enum):  # TODO(PY311): switch to enum.StrEnum
     """Topology of one public scalar joint coordinate."""
 
     INTERVAL = "interval"
