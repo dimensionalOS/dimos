@@ -145,11 +145,7 @@ class TransportTwistAdapter:
 
 
 def transport_lcm_factory(**kwargs: Any) -> TransportTwistAdapter:
-    """Factory for the ``transport_lcm`` adapter (see ``_registry.py``).
-
-    Despite the name it follows the active backend, so it meets the driver
-    module's blueprint-pinned topics, which are coerced the same way.
-    """
+    """Factory for the ``transport_lcm`` adapter (see ``_registry.py``)."""
     kwargs.setdefault("transport_cls", make_transport)
     return TransportTwistAdapter(**kwargs)
 
