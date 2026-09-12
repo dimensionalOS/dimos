@@ -88,7 +88,7 @@ dimcode run "inspect the app and explain its blueprint"
 
 Endpoints are explicit; ports are examples, not instance identities. Use `/reload` after changing endpoints. Every advertised skill is registered with its original schema, metadata and remote routing. Tool names are bounded and collision-resistant. There is no static copy of the robot's tools or a parallel lifecycle service.
 
-Terminal commands: `/new`, `/sessions`, `/resume ID`, `/models`, `/model PROVIDER MODEL`, `/login PROVIDER [oauth]`, `/logout PROVIDER`, `/abort`, `/steer TEXT`, `/follow TEXT`, `/reload`, `/image PATH`, `/panel N`, `/inspect PATH`, `/play`, `/pause`, `/seek SECONDS`, `/view`, `/expand`, `/exit`. Ctrl-C detaches. One terminal owns input; other viewers may observe. Detaching keeps the turn running. Restart restores Pi history and never automatically replays external actions. Very large histories show a bounded recent transcript with an omission notice; the complete agent history remains on disk. Session events carry their source identity so switching sessions cannot mix transcripts.
+Terminal commands: `/new`, `/sessions`, `/resume ID`, `/models`, `/model PROVIDER MODEL`, `/login PROVIDER [oauth]`, `/logout PROVIDER`, `/abort`, `/steer TEXT`, `/follow TEXT`, `/reload`, `/image PATH`, `/panel N`, `/inspect PATH`, `/view`, `/expand`, `/exit`. Ctrl-C detaches. One terminal owns input; other viewers may observe. Detaching keeps the turn running. Restart restores Pi history and never automatically replays external actions. Very large histories show a bounded recent transcript with an omission notice; the complete agent history remains on disk. Session events carry their source identity so switching sessions cannot mix transcripts.
 
 Pi owns context loading, skills, compaction, models and coding-tool behavior. Workspace instructions and configured Pi extensions load normally. Attached terminals support serialized dialogs/notifications; executable extension UI factories belong in the terminal renderer and cannot be sent through a socket.
 
@@ -126,12 +126,9 @@ Call `dimcode_render({path:"clip.json",title:"Memory · seconds 1–5"})`, or us
 
 ```text
 /inspect /absolute/path/to/clip.json
-/play
-/pause
-/seek 3
 ```
 
-The tool card plays once automatically; click Play to replay or click the timeline to scrub. Commands control the latest clip. `/seek` uses seconds relative to `timeOrigin`. Restored sessions begin paused. Leaving the session or closing the terminal stops playback. Point-cloud clips share one camera, bounds and height scale; mismatched coordinate frames must be aligned in DimOS first.
+The latest clip loops automatically, including after reconnect, with no player buttons or timeline. Ask the agent “show a single frame at 2 seconds” to inspect a still; it selects the timestamped result and renders that frame. A single-frame result stays static. Leaving the session or closing the terminal stops playback. Point-cloud clips share one camera, bounds and height scale; mismatched coordinate frames must be aligned in DimOS first.
 
 The terminal plays timestamped PNGs. A looping GIF is exported for sharing (GIF timing rounds to centiseconds); the model receives a contact sheet of up to six labeled frames. `dimcode_render({path:"clip.json",frame:17})` returns original zero-based frame 17 for closer inspection, even if preview sampling omitted it. The renderer reads saved files only and never repeats the source query.
 
@@ -141,7 +138,7 @@ The agent is instructed to visualize each meaningful sensor/memory operation. Wh
 
 Live tools select an existing relay/robot/channel. The terminal receives frames directly through the Web SDK and coalesces drawing to 10 Hz. The gateway retains one final snapshot for model context. Closing/cancelling the tool releases consumers; the last consumer closes the connection. MediaPool is generic over decoded SDK slots and accepts existing decoder registries. The initial live image renderer handles JPEG; other channel types use their owning decoder/renderer or saved exports.
 
-Graphics use Pi terminal-image support with text fallback. Derived PNGs/GIFs have a bounded 128 MiB cache; evicted previews show an explicit unavailable state and can be regenerated from retained exports; original DimOS recordings stay with DimOS. No recording, raw continuous video, new transport protocol or new DimOS gateway is introduced.
+Graphics use Pi terminal-image support with text fallback. In Warp, terminal images are rendered as complete cell-row slices so partial scrolling crops the image without compressing its aspect ratio. Derived PNGs/GIFs have a bounded 128 MiB cache; evicted previews show an explicit unavailable state and can be regenerated from retained exports; original DimOS recordings stay with DimOS. No recording, raw continuous video, new transport protocol or new DimOS gateway is introduced.
 
 ## Contributor development and validation
 
@@ -172,7 +169,7 @@ The Go2 E2E test starts the standard `unitree-go2` blueprint in **recorded-data 
 - One shared SDK connection, lazy subscriptions, continued cloud reception after video closes, then zero viewers/subscriptions after the last renderer closes.
 - Cleanup of the blueprint and relay, including failure paths.
 
-A separate memory test materializes seconds 1–5 once, exports full cloud/camera frames and a native DimOS plot, then checks GIF frame counts, shared time origin and every preview frame’s source hash. Playback unit tests cover seeking, completion, cancellation, stale files, RGB preservation and disposal.
+A separate memory test materializes seconds 1–5 once, exports full cloud/camera frames and a native DimOS plot, then checks GIF frame counts, shared time origin and every preview frame’s source hash. Playback unit tests cover looping, cancellation, stale files, RGB preservation and disposal. A scrolling regression checks exact visible pixels at multiple scroll positions and widths.
 
 Set `DIMCODE_TEST_REPORT=/absolute/path/report.json` to save measured counts. Without `DIMCODE_TEST_GO2_DB`, the large recording test is explicitly skipped. The Python and Deno variables separately enable the MCP-handler and QUIC relay tests. Unit/CLI tests also cover onboarding, private credentials, cancellation, `tui`, existing-gateway handling, session ownership, detach/recovery and renderer provenance.
 

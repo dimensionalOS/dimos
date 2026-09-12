@@ -53,7 +53,7 @@ test("preview timing is bounded and retains source indexes; projection uses shar
   assert.equal(camera.height, 3);
 });
 
-test("saved image/SVG clips preserve colors, timestamps and hashes; playback seeks, ends and disposes", async (t) => {
+test("saved image/SVG clips preserve colors, timestamps and hashes; playback loops without controls and disposes", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "dimcode-clips-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const p = paths({ XDG_CACHE_HOME: dir });
@@ -123,37 +123,29 @@ test("saved image/SVG clips preserve colors, timestamps and hashes; playback see
   });
   t.after(() => view.close());
   await view.ready;
-  view.seek(1.12);
-  assert.equal(view.frameIndex, 1);
-  assert.equal(view.playing, false);
   for (const width of [1, 20, 80])
     assert(view.render(width).every((line) => visibleWidth(line) <= width));
-  view.seek(-100);
-  assert.equal(view.frameIndex, 0);
-  view.seek(100);
-  assert.equal(view.frameIndex, 2);
-  const ended = new Promise<void>((resolve, reject) => {
+  assert.doesNotMatch(view.render(80).join("\n"), /Play|Pause|seek|timeline/);
+  const looped = new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(
-      () => reject(new Error("Playback did not finish")),
+      () => reject(new Error("Playback did not loop")),
       1500,
     );
+    let reachedLast = false;
     onChange = () => {
-      if (view.frameIndex === 2 && !view.playing) {
+      reachedLast ||= view.frameIndex === 2;
+      if (reachedLast && view.frameIndex === 0) {
         clearTimeout(timeout);
         resolve();
       }
     };
   });
-  view.play();
-  assert.equal(view.frameIndex, 0, "play at the end restarts");
-  await ended;
-  view.play();
+  await looped;
+  assert.equal(view.playing, true, "clips loop without controls");
   view.pause();
   assert.equal(view.playing, false);
   view.close();
   const closed = updates;
-  view.play();
-  view.seek(1);
   view.pause();
   assert.equal(updates, closed, "disposed views cannot notify or restart");
   const pausedWhileLoading = new Playback(clip, () => {}, true);

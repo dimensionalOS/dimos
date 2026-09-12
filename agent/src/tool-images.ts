@@ -1,5 +1,5 @@
+import { TerminalImage as Image } from "./terminal-image.js";
 import {
-  Image,
   Text,
   truncateToWidth,
   visibleWidth,
@@ -36,6 +36,8 @@ export class ResultImages implements Component {
   }
   close(): void {
     this.disposed = true;
+    this.overview?.close();
+    for (const panel of this.panels) panel.close();
   }
   invalidate(): void {
     this.overview?.invalidate();
@@ -51,6 +53,7 @@ export class ResultImages implements Component {
       "image/png",
       { fallbackColor: muted },
       { maxWidthCells: 120, maxHeightCells: 26 },
+      this.changed,
     );
   }
   private async prepare(): Promise<void> {

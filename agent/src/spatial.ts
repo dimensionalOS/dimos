@@ -1,7 +1,7 @@
+import { TerminalImage as Image } from "./terminal-image.js";
 import { basename } from "node:path";
 import {
   getCapabilities,
-  Image,
   matchesKey,
   Text,
   truncateToWidth,
@@ -57,6 +57,7 @@ export class SpatialView implements Component {
     this.disposed = true;
     this.revision++;
     clearInterval(this.animation);
+    this.image?.close();
   }
   private retained(i: number): boolean {
     return this.selected.has(i);
@@ -69,6 +70,7 @@ export class SpatialView implements Component {
       this.zoom,
     );
     if (this.disposed || revision !== this.revision) return;
+    this.image?.close();
     this.image = new Image(
       png.toString("base64"),
       "image/png",
@@ -77,6 +79,7 @@ export class SpatialView implements Component {
         maxHeightCells: this.expanded ? 30 : 20,
         maxWidthCells: this.expanded ? 150 : 100,
       },
+      this.changed,
     );
     this.changed();
   }
@@ -106,6 +109,7 @@ export class SpatialView implements Component {
       else if (key === "-") this.zoom = Math.max(0.25, this.zoom / 1.2);
       else if (key === "g") {
         this.graphics = !this.graphics;
+        this.image?.close();
         this.image = undefined;
       } else if (key === "d") this.details = !this.details;
       else if (key === "0") {
@@ -117,6 +121,7 @@ export class SpatialView implements Component {
   }
   setExpanded(value: boolean): void {
     this.expanded = value;
+    this.image?.close();
     this.image = undefined;
     this.refresh();
   }

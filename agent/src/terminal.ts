@@ -32,6 +32,7 @@ import { PromptEditor, commands } from "./input.js";
 import { SpatialView, readCloud } from "./spatial.js";
 import { paths } from "./config.js";
 import { Playback } from "./playback.js";
+import { needsImageSlices } from "./terminal-image.js";
 import { ResultImages } from "./tool-images.js";
 import { accent, clean, muted, StatusLine } from "./terminal-style.js";
 import type { Slot } from "@dimos/sdk";
@@ -174,7 +175,7 @@ export async function terminal(
         toolName,
         id,
         args,
-        { showImages: true },
+        { showImages: !needsImageSlices() },
         definitions.find((tool) => tool.name === toolName),
         tui,
         cwd,
@@ -239,7 +240,7 @@ export async function terminal(
       card.playback = new Playback(
         details.data.clip,
         () => tui.requestRender(),
-        !restoring,
+        true,
       );
       lastPlayback = card.playback;
     }
@@ -274,6 +275,8 @@ export async function terminal(
       card.block.addChild(
         new Text(muted(" " + clean(summary.slice(0, 220))), 0, 0),
       );
+    }
+    if ((!builtin && !card.expanded) || needsImageSlices()) {
       if (card.playback) card.block.addChild(card.playback);
       else if (card.spatial) card.block.addChild(card.spatial);
       else if (card.images) card.block.addChild(card.images);
@@ -341,6 +344,9 @@ export async function terminal(
               bytes.toString("base64"),
               "image/png",
               "LIVE · " + live.channel + " · seq " + slot.seq,
+              () => {
+                if (!disposed) tui.requestRender();
+              },
             ),
           );
           tui.requestRender();
@@ -601,9 +607,6 @@ export async function terminal(
           add(
             "/panel N: result view (0 overview) · /inspect PATH: saved result · /view: rotate/zoom · /expand: latest tool details",
           );
-          add(
-            "/play · /pause · /seek SECONDS: latest saved clip (click the timeline to scrub)",
-          );
           return;
         }
         if (value === "/sessions") {
@@ -641,7 +644,6 @@ export async function terminal(
           if (card) {
             const [id, tool] = card;
             tool.expanded = !tool.expanded;
-            if (tool.expanded) tool.playback?.pause();
             draw(id, tool.output, tool.toolName, tool.args);
           }
           return;
@@ -663,27 +665,6 @@ export async function terminal(
           )
             throw new Error(`Choose /panel 0–${lastImages.images.length}.`);
           lastImages.select(index);
-          return;
-        }
-        if (
-          value === "/play" ||
-          value === "/pause" ||
-          value.startsWith("/seek ")
-        ) {
-          if (!lastPlayback)
-            throw new Error(
-              "No saved clip yet. Use /inspect INDEX.json or ask the agent to render a sequence.",
-            );
-          if (value === "/play") lastPlayback.play();
-          else if (value === "/pause") lastPlayback.pause();
-          else {
-            const seconds = Number(value.slice(6).trim());
-            if (!Number.isFinite(seconds))
-              throw new Error(
-                "Use /seek SECONDS relative to the recording origin.",
-              );
-            lastPlayback.seek(seconds);
-          }
           return;
         }
         if (value.startsWith("/inspect ")) {

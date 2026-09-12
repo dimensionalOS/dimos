@@ -1,8 +1,9 @@
+import { TerminalImage as Image } from "./terminal-image.js";
 import { basename, extname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import { Container, Image, Text, type Component } from "@earendil-works/pi-tui";
+import { Container, Text, type Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { z } from "zod";
 import sharp from "sharp";
@@ -38,6 +39,7 @@ export function imageComponent(
   data: string,
   mimeType: string,
   summary = "",
+  changed: () => void = () => {},
 ): Component {
   const block = new Container();
   if (summary) block.addChild(new Text(summary, 0, 0));
@@ -47,6 +49,7 @@ export function imageComponent(
       mimeType,
       { fallbackColor: (text) => text },
       { maxHeightCells: 18, maxWidthCells: 80 },
+      changed,
     ),
   );
   return block;
