@@ -865,6 +865,21 @@ def test_intrinsics_are_scaled_to_the_raster_they_are_indexed_against() -> None:
     # Dead centre of an aligned depth image is dead ahead, whatever the raster.
     assert abs(scaled[0]) < 0.01 and abs(scaled[1]) < 0.01, scaled
     assert scaled[2] == pytest.approx(2.0)
+    # Off-axis, where fx matters and not just cx. Every assertion above is at the dead
+    # centre, and there u - cx is zero whatever fx is -- so scaling the principal point
+    # while leaving the focal length alone passed all of them, and the whole suite, while
+    # putting this patch 38 cm short at 2 m. That is the same order as the 43 cm error
+    # this scaling exists to remove, on the same query.
+    edge = patch_world_position(
+        (0.9, 0.5),
+        depth_mm,
+        colour_calibration,
+        np.eye(4),
+        window_px=8,
+        intrinsics_size=(1280, 720),
+    )
+    assert edge is not None
+    assert edge[0] == pytest.approx((0.9 * 1280 - 640) * 2.0 / 900.0, abs=0.01), edge
     # And without the scaling it is not: this is the error the scaling removes.
     assert abs(off[0]) > 0.4, off
 
