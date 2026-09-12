@@ -560,6 +560,12 @@ def test_every_place_the_answer_names_can_still_be_given_a_picture() -> None:
         MAX_CLUSTERS,
     )
 
+    # Narrow on purpose, and worth saying so: EVIDENCE_IMAGES_MAX is DEFINED as that
+    # product, so this is a constant against its own definition and can only fail if
+    # someone replaces the expression with a literal -- which is exactly how the 64 got
+    # there. The behaviour is guarded by
+    # test_hyperspace_search.py::test_the_last_place_an_answer_names_is_still_sent_its_pictures,
+    # which runs the publish loop; this one only pins the intent of the constant.
     assert EVIDENCE_IMAGES_MAX >= MAX_CLUSTERS * EVIDENCE_PER_CLUSTER, (
         "the last places an answer names would get no picture"
     )

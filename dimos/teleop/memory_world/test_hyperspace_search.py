@@ -928,3 +928,101 @@ def test_an_empty_required_stream_stops_the_ingest_before_the_deletes(  # type: 
             assert name in check.list_streams(), f"{name} was deleted for an empty {empty_role}"
     finally:
         check.stop()
+
+
+def test_the_last_place_an_answer_names_is_still_sent_its_pictures() -> None:
+    """Drive the publish loop, rather than asserting a constant against its own definition.
+
+    The budget is spent FIRST-COME down the cluster list, so when it was 64 and the answer
+    could name 12 places of 8 evidence each, the best places took it all and the last ones
+    got no photograph -- while `n_evidence` went on reporting how many they had. Measured
+    on sf_office1_2/main.db at the time: "a monitor" reported
+    [8,8,8,6,6,6,6,5,4,4,4,4] and published [8,8,8,6,6,6,6,5,4,4,3,0].
+
+    My first test for this asserted `EVIDENCE_IMAGES_MAX >= MAX_CLUSTERS *
+    EVIDENCE_PER_CLUSTER` -- which is what EVIDENCE_IMAGES_MAX is DEFINED as, so it
+    checked a constant against itself and could only fail if someone replaced the
+    expression with a literal. This runs the loop with the worst case it can be handed.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
+    from dimos.teleop.memory_world.hyperspace_search import (
+        EVIDENCE_PER_CLUSTER,
+        MAX_CLUSTERS,
+        Evidence,
+    )
+
+    def evidence(ts: float) -> Evidence:
+        return Evidence(
+            keyframe_id=int(ts),
+            camera_frame="cam",
+            ts=ts,
+            pose=np.eye(4),
+            score=0.5,
+            image_uv=(0.5, 0.5),
+            point=(0.0, 0.0, 0.0),
+        )
+
+    stamp = iter(range(1, 10_000))
+    clusters = [
+        Cluster(
+            index=i,
+            centre=(0.0, 0.0, 0.0),
+            radius=1.0,
+            score=1.0,
+            peak=1.0,
+            n_voxels=9,
+            evidence=[evidence(float(next(stamp))) for _ in range(EVIDENCE_PER_CLUSTER)],
+        )
+        for i in range(MAX_CLUSTERS)
+    ]
+
+    published: list[dict] = []
+    frame = SimpleNamespace(data=np.zeros((4, 4, 3), dtype=np.uint8))
+
+    class Module(HyperspaceAnswers):
+        def __init__(self) -> None:
+            self._store_lock = threading.RLock()
+            self._clients_lock = threading.RLock()
+            self._active_query_images: list = []
+            self._world_clients = ()
+            self.config = SimpleNamespace(
+                image_stream_name="color_image",
+                query_image_max_size=64,
+                thumbnail_jpeg_quality=70,
+                query_image_distance_m=2.0,
+            )
+
+        def _camera_hfov(self):  # type: ignore[no-untyped-def]
+            return 60.0
+
+        def _ensure_store(self):  # type: ignore[no-untyped-def]
+            at = SimpleNamespace(first=lambda: frame)
+            images = SimpleNamespace(at=lambda ts, tolerance: at)
+            return SimpleNamespace(streams={"color_image": images})
+
+        @staticmethod
+        def _encode_jpeg(img, max_size, quality):  # type: ignore[no-untyped-def]
+            return b"jpeg"
+
+        def _query_is_current(self, query_id: str) -> bool:
+            return True
+
+        def _broadcast(self, message) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+    answer = SimpleNamespace(clusters=clusters)
+    module = Module()
+    module._publish_cluster_images("qid", "a monitor", answer)  # type: ignore[arg-type]
+    published = [header for header, _ in module._active_query_images]
+
+    sent_per_cluster = [
+        sum(1 for header in published if header["cluster"] == cluster.index) for cluster in clusters
+    ]
+    assert sent_per_cluster == [EVIDENCE_PER_CLUSTER] * MAX_CLUSTERS, (
+        f"a place the answer named was sent no picture: {sent_per_cluster}"
+    )
