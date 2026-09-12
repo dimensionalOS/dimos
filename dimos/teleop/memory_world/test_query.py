@@ -363,3 +363,20 @@ def test_an_answers_ids_reach_the_viewer_as_marker_ids_whatever_the_engine_count
         points=[HighlightPoint(position=(0.0, 0.0, 0.0), label="x")],
     )
     assert snap(mcap, from_mcap) == [3]
+
+    # An answer can point somewhere and name no frame at all. The markers nearest where
+    # it points are still its evidence; returning nothing left it with no photograph.
+    by_focus = MemoryQueryResult(
+        answer="a", engine="agent", focus_point=(9.0, 9.0, 9.0), observation_ids=[]
+    )
+    assert snap(module, by_focus) == [7]
+    by_points = MemoryQueryResult(
+        answer="a",
+        engine="agent",
+        observation_ids=[],
+        points=[
+            HighlightPoint(position=(1.0, 0.0, 0.0), label="x"),
+            HighlightPoint(position=(2.0, 0.0, 0.0), label="y"),
+        ],
+    )
+    assert snap(module, by_points) == [7, 7]  # one marker per place it points at

@@ -400,3 +400,60 @@ def test_a_failed_write_puts_the_other_static_edges_back(tmp_path) -> None:  # t
         assert ("mount", "imu") in surviving and ("mount", "gps") in surviving
     finally:
         store.stop()
+
+
+def test_a_latched_static_tf_is_rewritten_with_one_copy_of_each_edge(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A rig that re-latches tf_static once a second must not be rewritten N times over.
+
+    Flattening every sample would turn a 1200-sample stream into one message holding
+    1200 copies of every edge, which every later build_tf_tree then decodes and walks.
+    """
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.calibrate_static_tf import write_static_mount
+
+    def edge(parent: str, child: str, x: float) -> Transform:
+        return Transform(
+            translation=Vector3(x, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id=parent,
+            child_frame_id=child,
+            ts=1.0,
+        )
+
+    store = SqliteStore(path=str(tmp_path / "rec.db"), must_exist=False)
+    store.start()
+    try:
+        latched = store.stream("tf_static", TFMessage)
+        for ts in range(5):  # the same two edges, re-latched
+            latched.append(
+                TFMessage(edge("mount", "cam", 9.0), edge("mount", "imu", 4.0)), ts=float(ts)
+            )
+
+        write_static_mount(store, "mount", "cam", np.eye(4), 1.0)
+
+        rows = list(store.streams["tf_static"])
+        assert len(rows) == 1
+        edges = [(str(t.frame_id), str(t.child_frame_id)) for t in rows[0].data.transforms]
+        assert sorted(edges) == [("mount", "cam"), ("mount", "imu")]  # one each, not five
+    finally:
+        store.stop()
+
+
+def test_answer_positions_reads_both_places_an_answer_can_point() -> None:
+    """It is the only input to the marker fallback, so both shapes have to reach it."""
+    from dimos.teleop.memory_world.query import HighlightPoint, MemoryQueryResult, answer_positions
+
+    assert answer_positions(MemoryQueryResult(answer="a")) == []
+    assert answer_positions(MemoryQueryResult(answer="a", focus_point=(1.0, 2.0, 3.0))) == [
+        (1.0, 2.0, 3.0)
+    ]
+    both = MemoryQueryResult(
+        answer="a",
+        focus_point=(9.0, 9.0, 9.0),
+        points=[HighlightPoint(position=(1.0, 0.0, 0.0), label="x")],
+    )
+    assert answer_positions(both) == [(1.0, 0.0, 0.0), (9.0, 9.0, 9.0)]
