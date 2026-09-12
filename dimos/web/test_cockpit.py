@@ -325,9 +325,10 @@ def test_channel_publish_policy_rules() -> None:
         Channel("goal", dict, dir="tx", publish="shared", required_scope="x" * 65)
 
 
-def test_channel_message_type_must_be_a_class() -> None:
+@pytest.mark.parametrize("message_type", ["str", list[int]])
+def test_channel_message_type_must_be_a_class(message_type) -> None:
     with pytest.raises(TypeError, match="message_type must be a class"):
-        Channel("note", "str")
+        Channel("note", message_type)
 
 
 @pytest.mark.parametrize(

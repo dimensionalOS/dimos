@@ -13,11 +13,41 @@
 # limitations under the License.
 
 import os
+from pathlib import Path
 import signal
 import subprocess
+import tempfile
 import time
 
 import requests
+
+from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+
+
+def wait_for_ready(call: "DimosCliCall", timeout: float = 120.0) -> None:
+    """Wait for completed blueprint startup, failing early when the CLI exits."""
+    if call.process is None:
+        raise RuntimeError("Cannot wait for a blueprint that has not been started")
+    started = time.monotonic()
+    deadline = started + timeout
+    while True:
+        returncode = call.process.poll()
+        elapsed = time.monotonic() - started
+        details = (
+            f"blueprint={call.demo_args}, pid={call.process.pid}, "
+            f"returncode={returncode}, elapsed={elapsed:.2f}s, log={call.log_path}"
+        )
+        if returncode is not None:
+            raise RuntimeError(f"DimOS exited before blueprint readiness: {details}")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"Blueprint startup timed out: {details}")
+        try:
+            connection = CoordinatorRPC.connect(timeout=min(1.0, remaining))
+        except TimeoutError:
+            continue
+        connection.stop()
+        return
 
 
 def wait_for_http(call: "DimosCliCall", url: str, timeout_s: float) -> None:
@@ -45,6 +75,7 @@ class DimosCliCall:
 
     def __init__(self) -> None:
         self.process = None
+        self.log_path: Path | None = None
         # Root-level CLI flags (before the subcommand), e.g. ["--robot-ip", "fake"].
         self.global_args: list[str] = []
         self.extra_env: dict[str, str] = {}
@@ -76,15 +107,26 @@ class DimosCliCall:
         if self.simulator is not None:
             global_overrides += ["--simulation", self.simulator]
 
-        self.process = subprocess.Popen(
-            [
-                "dimos",
-                *global_overrides,
-                *args,
-            ],
-            start_new_session=True,
-            env=env,
-        )
+        log_dir = Path(os.environ.get("DIMOS_TEST_LOG_DIR", tempfile.gettempdir()))
+        log_dir.mkdir(parents=True, exist_ok=True)
+        # File output cannot fill a pipe and block startup. Each invocation gets
+        # a distinct file, including repeated starts and xdist workers.
+        with tempfile.NamedTemporaryFile(
+            prefix="dimos-e2e-", suffix=".log", dir=log_dir, delete=False
+        ) as log:
+            self.log_path = Path(log.name)
+            log.write(
+                f"test={os.environ.get('PYTEST_CURRENT_TEST', '')} "
+                f"blueprint={self.demo_args!r}\n".encode()
+            )
+            log.flush()
+            self.process = subprocess.Popen(
+                ["dimos", *global_overrides, *args],
+                start_new_session=True,
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+            )
 
     def stop(self) -> None:
         # Detach before signalling so stop() is idempotent: once the first

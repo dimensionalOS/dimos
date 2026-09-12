@@ -23,9 +23,9 @@ import pytest
 def test_dimos_skills(lcm_spy, start_blueprint, wait_for_system_ready, human_input) -> None:
     lcm_spy.save_topic("/agent")
 
-    start_blueprint("run", "demo-skill")
+    call = start_blueprint("run", "demo-skill")
 
-    wait_for_system_ready()
+    wait_for_system_ready(call)
 
     human_input("what is 52983 + 587237")
 

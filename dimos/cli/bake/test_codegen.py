@@ -18,7 +18,7 @@ import json
 from pathlib import Path
 
 import pytest
-import tomllib
+import tomli
 
 from dimos.cli.bake.codegen import (
     check_host_name,
@@ -36,7 +36,7 @@ GRAPH = build_graph("go2-nav", [MAPPER, PLANNER], suppress=["local_map"])
 
 def test_cargo_toml_pins_absolute_paths_for_module_crates() -> None:
     toml = render_cargo_toml("go2-nav", [MAPPER, PLANNER], Path("/repo"))
-    parsed = tomllib.loads(toml)
+    parsed = tomli.loads(toml)
     assert '[[bin]]\nname = "go2-nav"' in toml
     assert 'dimos-module = { path = "/repo/native/rust/dimos-module" }' in toml
     assert 'crate-mapper = { path = "/crates/mapper" }' in toml
@@ -47,8 +47,8 @@ def test_cargo_toml_pins_absolute_paths_for_module_crates() -> None:
 
 
 def test_the_generated_crate_reuses_the_workspace_profiles() -> None:
-    root = tomllib.loads((DIMOS_PROJECT_ROOT / "Cargo.toml").read_text())
-    generated = tomllib.loads(render_cargo_toml("go2-nav", [MAPPER, PLANNER], Path("/repo")))
+    root = tomli.loads((DIMOS_PROJECT_ROOT / "Cargo.toml").read_text())
+    generated = tomli.loads(render_cargo_toml("go2-nav", [MAPPER, PLANNER], Path("/repo")))
     release = {k: v for k, v in generated["profile"]["release"].items() if k != "package"}
     assert release == root["profile"]["release"]
     assert generated["profile"]["dev"] == root["profile"]["dev"]

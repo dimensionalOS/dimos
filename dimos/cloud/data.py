@@ -404,11 +404,14 @@ def _tag(row: dict[str, Any]) -> str:
 
 
 def _blueprint(path: Path) -> str | None:
-    """Run dirs are named <stamp>-<blueprint> (generate_run_id)."""
-    m = re.fullmatch(r"\d{8}-\d{6}-(.+)", path.parent.name)
+    """Run dirs are named <stamp>-<uuid>-<blueprint> (generate_run_id)."""
+    m = re.fullmatch(r"\d{8}-\d{6}-[0-9a-f]{32}-(.+)", path.parent.name)
     return m.group(1) if m else None
 
 
 def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
     with path.open("rb") as f:
-        return hashlib.file_digest(f, "sha256").hexdigest()
+        while chunk := f.read(256 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()

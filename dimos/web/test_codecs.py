@@ -136,6 +136,10 @@ def _dec_none_return(value: dict[str, Any]) -> None:
     return None
 
 
+def _dec_generic_return(value: dict[str, Any]) -> list[int]:
+    return []
+
+
 def _dec_union_input(value: dict[str, Any] | list[Any] | None) -> _Point:
     return _Point(0.0, 0.0)
 
@@ -264,6 +268,8 @@ def test_decoder_signature_rejected() -> None:
         web_decoder("t.dec.noret.v1")(_dec_no_return)
     with pytest.raises(ValueError, match="return annotation must be the produced message class"):
         web_decoder("t.dec.noneret.v1")(_dec_none_return)
+    with pytest.raises(ValueError, match="return annotation must be the produced message class"):
+        web_decoder("t.dec.genericret.v1")(_dec_generic_return)
     with pytest.raises(ValueError, match="second parameter must be annotated PublishContext"):
         web_decoder("t.dec.badctx.v1")(_dec_bad_context)
     with pytest.raises(ValueError, match="first parameter must be annotated with the JSON value"):

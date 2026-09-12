@@ -35,7 +35,7 @@ def test_security_module(
     wait_for_system_ready: Callable[..., None],
     explore_office: Callable[[], None],
 ) -> None:
-    start_blueprint(
+    call = start_blueprint(
         "--mujoco-start-pos",
         "-10.75 -6.78",
         "--mujoco-camera-position",
@@ -50,7 +50,7 @@ def test_security_module(
     )
 
     lcm_spy.save_topic("/security_state#std_msgs.String")
-    wait_for_system_ready(timeout=120.0)
+    wait_for_system_ready(call, timeout=120.0)
 
     time.sleep(2)
 

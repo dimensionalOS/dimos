@@ -17,7 +17,7 @@
 import json
 from pathlib import Path
 
-import tomllib
+import tomli
 
 from dimos.core.native_module import NativeModuleConfig
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera, RealSenseCameraConfig
@@ -56,7 +56,7 @@ def test_ports_match_registry() -> None:
             if getattr(hint, "__origin__", None) is not None or "Out[" in str(hint)
         } - {"config"}
 
-    manifest = tomllib.loads(_RUST_MANIFEST.read_text())
+    manifest = tomli.loads(_RUST_MANIFEST.read_text())
     registry = manifest["package"]["metadata"]["dimos"]["module"]["realsense"]
     # The registry files a #[tf] port under inputs, as it subscribes too.
     assert set(registry["outputs"]) | set(registry["inputs"]) == ports(RealSenseCamera)

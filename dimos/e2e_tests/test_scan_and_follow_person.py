@@ -32,7 +32,7 @@ def test_scan_and_person_follow(
     start_person_track: StartPersonTrack,
     wait_for_system_ready: Callable[..., None],
 ) -> None:
-    start_blueprint(
+    call = start_blueprint(
         "--mujoco-start-pos",
         "-6.18 0.96",
         "run",
@@ -41,7 +41,7 @@ def test_scan_and_person_follow(
         "unitree-go2-agentic",
     )
 
-    wait_for_system_ready(timeout=120.0)
+    wait_for_system_ready(call, timeout=120.0)
 
     time.sleep(5)
 

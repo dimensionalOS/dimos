@@ -19,12 +19,12 @@ import pytest
 def test_go_to_the_bed(
     lcm_spy, start_blueprint, wait_for_system_ready, human_input, dim_sim, explore_house
 ) -> None:
-    start_blueprint(
+    call = start_blueprint(
         "run",
         "unitree-go2-agentic",
         simulator="dimsim",
     )
-    wait_for_system_ready(timeout=1200.0)
+    wait_for_system_ready(call, timeout=1200.0)
 
     explore_house()
 

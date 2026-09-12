@@ -291,7 +291,7 @@ def web_encoder(
         params = _signature_params(func, "web encoder")
         hints = get_type_hints(func)
         message_type = hints.get(params[0].name)
-        if not isinstance(message_type, type):
+        if not isinstance(message_type, type) or get_origin(message_type) is not None:
             raise ValueError(
                 f"web encoder {_describe(func)}: the first parameter must be annotated "
                 f"with the supported message class, got {message_type!r}"
@@ -327,7 +327,11 @@ def web_decoder(encoding: str) -> Callable[[_F], _F]:
                 f"of them), got {value_hint!r}"
             )
         message_type = hints.get("return")
-        if not isinstance(message_type, type) or message_type is type(None):
+        if (
+            not isinstance(message_type, type)
+            or get_origin(message_type) is not None
+            or message_type is type(None)
+        ):
             raise ValueError(
                 f"web decoder {_describe(func)}: the return annotation must be the "
                 f"produced message class, got {message_type!r}"

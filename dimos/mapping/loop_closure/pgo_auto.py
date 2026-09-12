@@ -56,10 +56,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, Any, TypedDict, TypeVar
 
 import numpy as np
 from scipy.spatial.transform import Rotation
+from typing_extensions import Unpack
 
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.stream import Stream
