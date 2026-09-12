@@ -23,7 +23,10 @@ import sys
 from unittest import mock
 
 import pytest
+import typer
+from typer.testing import CliRunner
 
+from dimos.cli.commands import lifecycle
 from dimos.core import run_registry
 from dimos.core.run_registry import (
     RunEntry,
@@ -489,3 +492,36 @@ class TestStopCommand:
         latest = get_most_recent(alive_only=True)
         assert latest is not None
         assert latest.run_id == "20260306-110000-second"
+
+
+@pytest.mark.parametrize("command", ["status", "stop", "restart"])
+def test_lifecycle_selects_exact_run(
+    command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "runs")
+    monkeypatch.setattr(run_registry, "is_pid_alive", lambda pid: True)
+    first = _make_entry("first", 17321)
+    second = _make_entry("second", 28543)
+    first.original_argv = ["dimos", "run", "first", "--daemon"]
+    first.save()
+    second.save()
+    stopped: list[str] = []
+    monkeypatch.setattr(
+        lifecycle,
+        "stop_entry",
+        lambda entry, force=False: (stopped.append(entry.run_id) or "stopped", True),
+    )
+    monkeypatch.setattr(lifecycle, "is_pid_alive", lambda pid: False)
+    monkeypatch.setattr(lifecycle.os, "execvp", lambda file, args: None)
+    app = typer.Typer()
+    app.command()(getattr(lifecycle, command))
+    result = CliRunner().invoke(app, ["--run", "first"])
+    assert result.exit_code == 0, result.output
+    if command == "status":
+        assert "17321" in result.output and "28543" not in result.output
+    else:
+        assert stopped == ["first"]
+    stopped.clear()
+    missing = CliRunner().invoke(app, ["--run", "missing"])
+    assert not stopped
+    assert "28543" not in missing.output

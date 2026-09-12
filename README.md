@@ -22,6 +22,7 @@
 [Hardware](#hardware) •
 [Installation](#installation) •
 [Agent CLI & MCP](#agent-cli-and-mcp) •
+[dimcode terminal agent](agent/README.md) •
 [Blueprints](#blueprints) •
 [dimTELE: Remote Teleop](#dimtele-remote-teleop) •
 [Development](#development)
