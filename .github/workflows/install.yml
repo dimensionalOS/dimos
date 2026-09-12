@@ -66,7 +66,8 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE/.git"
           bash scripts/test-install.sh '${{ matrix.mode }}'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: always()
+        # act has no GitHub artifact service; installation output stays in its log.
+        if: always() && !env.ACT
         with:
           name: install-${{ matrix.os }}-${{ matrix.version }}-${{ matrix.mode }}
           path: /tmp/dimos-install-test/logs
