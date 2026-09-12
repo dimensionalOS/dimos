@@ -761,6 +761,7 @@ function syncLayerBoxes() {
     // matches a fresh scene's default, which is exactly the "Photos off" case, and an
     // answer would then have switched them back on again after every reconnect.
     scene._photosPinnedOff = !wanted.photos;
+    scene._hudOff = !wanted.hud;  // same reason: the toggle below does not always run
     if (scene._hudPanel && scene._hudPanel.visible !== wanted.hud) {
         hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
     }

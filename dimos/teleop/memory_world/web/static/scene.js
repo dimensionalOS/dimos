@@ -147,6 +147,7 @@ export class WorldScene {
         this._queryImageMeshes = [];                  // their quads, so one can be shown alone
         this._queryMatchMarks = [];                   // the ring and link belonging to each
         this._photosPinnedOff = false;                // set when the user turns Photos off
+        this._hudOff = false;                         // likewise for the minimap and answer panel
         this._queryImageCursor = -1;
 
         // Top-down map: shared texture, used twice (ground projection + HUD).

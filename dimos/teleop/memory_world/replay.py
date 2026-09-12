@@ -184,7 +184,6 @@ class RayTracedGrid:
                 fresh = np.ones(len(added), dtype=bool)
                 fresh[held] = self.keys[at[held]] != added[held]
                 added, at = added[fresh], at[fresh]
-        if len(added):
             self.keys = np.insert(self.keys, at, added)
             self._centres = np.insert(
                 self._centres, at, unpack_centres(added, self.voxel_size), axis=0
