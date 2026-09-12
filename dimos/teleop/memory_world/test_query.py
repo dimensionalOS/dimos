@@ -1322,3 +1322,44 @@ def test_navigate_walks_to_the_photo_being_looked_at_not_the_middle_of_the_blob(
     with pytest.raises(HTTPException) as raised:
         memory_world._navigate_to(NavigateRequest(cluster=0, query_id=query_id, view=99))
     assert raised.value.status_code == 404
+
+
+def test_a_route_that_goes_nowhere_is_not_a_route(
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The planner can hand back a few identical points when it cannot connect.
+
+    The only guard was `len(points) < 2`, which those pass. Measured on the live demo:
+    three copies of (2.95, 2.15, 0.7), length_m 0.0, returned as HTTP 200 with the goal
+    2.45 m away -- the viewer draws a tube of no length and the person is told a route
+    exists. Refusing says what the planner meant.
+    """
+    from fastapi import HTTPException
+
+    from dimos.teleop.memory_world.hyperspace_answers import NavigateRequest
+
+    cluster = SimpleNamespace(index=0, centre=(5.0, 5.0, 0.0), radius=1.0)
+    memory_world._last_answer = (SimpleNamespace(clusters=[cluster]), "q1")
+    memory_world._active_query_result = {"query_id": "q1"}
+    memory_world._active_query_images = []
+
+    stuck = SimpleNamespace(points=[(2.95, 2.15, 0.7)] * 3, length_m=0.0, cells=3, planner="mls")
+    monkeypatch.setattr(memory_world, "_planner", lambda: SimpleNamespace(plan=lambda *a: stuck))
+    monkeypatch.setattr(memory_world, "_ground_under_viewer", lambda: (2.76, 1.88, 0.76))
+    monkeypatch.setattr(memory_world, "_broadcast", lambda *a, **k: None)
+
+    with pytest.raises(HTTPException) as raised:
+        memory_world._navigate_to(NavigateRequest(cluster=0, query_id="q1"))
+    assert raised.value.status_code == 422
+    assert "no route" in raised.value.detail
+
+    # A route that actually closes the distance is still a route.
+    moving = SimpleNamespace(
+        points=[(2.95, 2.15, 0.7), (4.0, 4.0, 0.2), (5.0, 5.0, 0.0)],
+        length_m=2.9,
+        cells=3,
+        planner="mls",
+    )
+    monkeypatch.setattr(memory_world, "_planner", lambda: SimpleNamespace(plan=lambda *a: moving))
+    payload = memory_world._navigate_to(NavigateRequest(cluster=0, query_id="q1"))
+    assert payload["length_m"] == 2.9

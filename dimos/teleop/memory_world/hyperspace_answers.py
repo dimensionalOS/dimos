@@ -719,6 +719,15 @@ class HyperspaceAnswers:
         points = [(float(x), float(y), float(z)) for x, y, z in route.points]
         if len(points) < 2:
             raise HTTPException(status_code=422, detail="already there")
+        # A route has to GO somewhere. The planner can return a handful of identical
+        # points when it cannot connect the start to the goal, and the count check above
+        # passes them: measured live at three copies of (2.95, 2.15, 0.7), length 0.0,
+        # reported as HTTP 200 with the goal 2.45 m away. The viewer then draws a tube of
+        # no length and the person is told a route exists. Refusing is the same answer the
+        # planner would have given by returning None, which is what it means.
+        reached = math.dist(points[-1], goal)
+        if reached >= math.dist(points[0], goal) - 1e-9:
+            raise HTTPException(status_code=422, detail="no route through the known free space")
         payload = {
             "query_id": query_id,
             "cluster": cluster.index,
