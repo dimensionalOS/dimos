@@ -621,3 +621,59 @@ def test_a_configured_stream_name_that_is_empty_is_refused_at_startup(tmp_path: 
         )
     finally:
         module.stop()
+
+
+@pytest.mark.parametrize(
+    ("seed_it", "expected"),
+    [(True, "empty"), (False, "not in the recording")],
+)
+def test_the_operator_is_told_which_way_their_named_stream_was_unusable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    seed_it: bool,
+    expected: str,
+) -> None:
+    """Absent and empty are different things to be told, and both were told as one.
+
+    Clearing an unusable configured name also clears the local the "using %r (%s)" line
+    reads, so its `no %r in the recording` arm became unreachable, and the replacement
+    warning said "is empty" for both cases. An operator who mistyped a stream name and one
+    whose recording was truncated by a killed ingest need different next steps.
+
+    The warnings are captured by replacing the module's logger, not with `caplog`: this
+    package logs through structlog, which does not go through the stdlib handlers pytest
+    installs. caplog sees nothing here and the test would pass for the wrong reason.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+
+    db_path = tmp_path / "recording.db"
+    store = SqliteStore(path=str(db_path))
+    store.start()
+    try:
+        if seed_it:
+            store.stream("front_camera", TFMessage)  # present, and holding nothing
+    finally:
+        store.stop()
+
+    said: list[str] = []
+
+    class Recorder:
+        def warning(self, message: str, *args: object) -> None:
+            said.append(message % args if args else message)
+
+        def __getattr__(self, _name: str):  # info, exception, ... are not under test
+            return lambda *a, **k: None
+
+    monkeypatch.setattr("dimos.teleop.memory_world.module.logger", Recorder())
+
+    module = MemoryWorldModule(store_path=str(db_path), image_stream_name="front_camera")
+    try:
+        module._name_streams(module._ensure_store())
+        about = [line for line in said if "front_camera" in line]
+        assert about, f"the operator was not told their flag was ignored; saw {said}"
+        assert expected in about[0], about[0]
+        # The other wording must not appear: telling them apart is the whole point.
+        other = "not in the recording" if expected == "empty" else "empty"
+        assert other not in about[0], about[0]
+    finally:
+        module.stop()
