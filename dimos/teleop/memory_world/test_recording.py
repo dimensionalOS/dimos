@@ -25,6 +25,7 @@ import json
 from pathlib import Path
 import sqlite3
 import struct
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -869,3 +870,98 @@ def test_a_static_folded_into_a_one_sample_tf_still_holds_for_all_time(tmp_path)
         assert build_tf_tree(store, "tf").lookup("odom", "cam", 100.0)[0, 3] == 3.0
     finally:
         store.stop()
+
+
+def test_an_unstamped_transform_does_not_move_the_folded_edge_past_the_first_frame(  # type: ignore[no-untyped-def]
+    tmp_path,
+) -> None:
+    """TfTree reads a transform's own stamp and falls back to the observation's when it is 0.
+
+    Measuring the span any other way makes the earliest stamp look like 0, the folded copy
+    is written there, and the reader turns that back into the recording stamp of the first
+    row -- later than the first frame the camera took, which is then placed nowhere.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, fold_static_tf
+
+    store = _tf_store(tmp_path)
+    try:
+        tf = store.stream("tf", TFMessage)
+        # One transform unstamped (the reader will call it 10, the row's own stamp) and one
+        # stamped at 5. The earliest moment the tree can be asked about is 5, not 0.
+        tf.append(
+            TFMessage(_edge("odom", "base", 1.0, 0.0), _edge("base", "wheel", 1.0, 5.0)),
+            ts=10.0,
+        )
+        tf.append(TFMessage(_edge("odom", "base", 2.0, 20.0)), ts=20.0)
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(_edge("base", "cam", 2.0, 1.0)), ts=1.0
+        )
+        assert build_tf_tree(store, "tf").lookup("base", "cam", 5.0)[0, 3] == 2.0
+
+        fold_static_tf(store, "tf", "tf_static")
+        assert build_tf_tree(store, "tf").lookup("base", "cam", 5.0)[0, 3] == 2.0
+    finally:
+        store.stop()
+
+
+def test_a_static_declared_twice_folds_the_first_value(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A latched static tf republished with a different value: the tree keeps the FIRST.
+
+    Folding has to keep the same one, or the recording means something different after it
+    was folded than it did before -- and an mcap, which is folded nowhere because it cannot
+    be written to, would then disagree with the .db beside it.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, fold_static_tf
+
+    store = _tf_store(tmp_path)
+    try:
+        tf = store.stream("tf", TFMessage)
+        for step in (1.0, 2.0):
+            tf.append(TFMessage(_edge("odom", "base", step, step)), ts=step)
+        latched = store.stream("tf_static", TFMessage)
+        latched.append(TFMessage(_edge("base", "cam", 2.0, 1.0)), ts=1.0)
+        latched.append(TFMessage(_edge("base", "cam", 9.0, 2.0)), ts=2.0)  # a later, different one
+        assert build_tf_tree(store, "tf").lookup("odom", "cam", 2.0)[0, 3] == 4.0
+
+        fold_static_tf(store, "tf", "tf_static")
+        assert build_tf_tree(store, "tf").lookup("odom", "cam", 2.0)[0, 3] == 4.0
+    finally:
+        store.stop()
+
+
+def test_a_recording_the_module_refuses_is_not_left_open_and_half_named(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Naming the streams can refuse the recording, and the refusal has to reach the user.
+
+    Publishing the store before naming it turned that into one traceback and a module that
+    went on serving with every role still empty -- logging "no '' stream; falling back to
+    the poses stamped on images", which is word for word the failure the refusal exists to
+    prevent.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    import pytest
+
+    from dimos.teleop.memory_world.module import MemoryWorldModule
+
+    stopped = []
+
+    class Module(MemoryWorldModule):
+        def __init__(self) -> None:
+            self._store = None
+            self._store_lock = threading.RLock()
+            self.config = SimpleNamespace(store_path=str(tmp_path / "walk.db"))
+
+        def _name_streams(self, store) -> None:  # type: ignore[no-untyped-def, override]
+            raise SystemExit("a rebuild died in this recording")
+
+    module = Module()
+    opened = SimpleNamespace(stop=lambda: stopped.append(True))
+    with mock.patch("dimos.teleop.memory_world.module.open_recording", lambda _p: opened):
+        for _ in range(2):  # and again: a refusal is not a thing you get past by retrying
+            with pytest.raises(SystemExit):
+                module._ensure_store()
+    assert module._store is None
+    assert stopped == [True, True]

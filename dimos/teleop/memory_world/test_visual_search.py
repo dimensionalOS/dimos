@@ -539,3 +539,18 @@ def test_a_colour_patch_is_sampled_at_the_depth_camera_s_own_pixel() -> None:
         patch_world_position((1.02, 0.5), depth_mm, depth, np.eye(4), color_intrinsics=colour)
         is None
     )
+
+
+def test_every_name_the_siglip_fallback_uses_resolves() -> None:
+    """The fallback answer moved out of module.py, and a moved method takes its names with it.
+
+    Nothing in the suite calls it -- it is the path for a recording with no Hyperspace
+    keyframes -- so a missing import would have shown up as a NameError in front of
+    whoever ran the demo on an unindexed recording, and nowhere before that. ruff does not
+    catch it either, because the names it wanted were declared under TYPE_CHECKING.
+    """
+    from dimos.teleop.memory_world.visual_answers import VisualAnswers
+
+    globals_of = VisualAnswers._find_with_siglip.__globals__
+    for name in ("SkillResult", "MemoryQueryResult", "HighlightPoint", "cluster_places"):
+        assert name in globals_of, f"{name} would be a NameError the first time this ran"

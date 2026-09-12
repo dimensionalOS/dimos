@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
+import contextlib
 import gzip
 import io
 import json
@@ -66,7 +67,6 @@ from dimos.teleop.memory_world.messages import (
 from dimos.teleop.memory_world.query import (
     MEMORY_ANALYSIS_BOOTSTRAP,
     RESULT_SENTINEL,
-    HighlightPoint,
     MemoryQueryResult,
     answer_positions,
 )
@@ -93,7 +93,6 @@ from dimos.teleop.memory_world.visual_search import (
     SIGLIP2_MODEL_NAME,
     VisualMemoryIndex,
     body_style_quaternion,
-    cluster_places,
     search_phrase,
 )
 from dimos.utils.data import get_data
@@ -492,9 +491,19 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
     def _ensure_store(self) -> Store:
         with self._store_lock:
             if self._store is None:
-                self._store = open_recording(self.config.store_path)
+                # Named before it is published, and dropped if naming refuses the
+                # recording. Publishing first turned a refusal into one traceback and a
+                # module that went on serving with every role still empty -- which is the
+                # failure detect_streams raises to prevent.
+                store = open_recording(self.config.store_path)
                 logger.info("opened memory store at %s", self.config.store_path)
-                self._name_streams(self._store)
+                try:
+                    self._name_streams(store)
+                except BaseException:
+                    with contextlib.suppress(Exception):
+                        store.stop()
+                    raise
+                self._store = store
             return self._store
 
     def _name_streams(self, store: Store) -> None:
@@ -1107,71 +1116,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             logger.exception("visual index query failed")
             return SkillResult.fail("QUERY_FAILED", f"The SigLIP index cannot answer: {error}")
 
-    def _find_with_siglip(self, phrase: str, started: float) -> SkillResult:
-        """The fallback answer: SigLIP frame search, placed by depth when it can be."""
-        with self._store_lock:  # resolved and counted together: a reopen swaps the store
-            indexed = self._ensure_visual_index().count()
-        if indexed == 0:
-            return SkillResult.fail(
-                "INDEX_NOT_READY",
-                f"The SigLIP index for {self.config.store_path} holds no frames "
-                f"({self._index_progress}). Build it with "
-                f"`python -m dimos.teleop.memory_world.visual_search {self.config.store_path}`.",
-            )
-
-        places = self._locate_objects(phrase)
-        located = bool(places)
-        if not located:
-            # No depth or extrinsics: answer with the poses the frames were taken from.
-            with self._store_lock:  # the index reads its stream; a reopen swaps the store
-                hits = self._ensure_visual_index().search(phrase, k=self.config.search_top_k)
-            places = cluster_places(
-                hits, radius=self.config.place_radius_m, max_places=self.config.max_places
-            )
-        if not places:
-            return SkillResult.fail("NOT_FOUND", f"Nothing in the recording matches {phrase!r}")
-
-        result = MemoryQueryResult(
-            engine="siglip",
-            query_text=phrase,
-            answer=f"Found {phrase} in {len(places)} place(s), best match {places[0].similarity:+.3f}",
-            focus_point=places[0].position,
-            points=[
-                HighlightPoint(
-                    position=place.position,
-                    label=f"{phrase[:80]} ({place.similarity:+.3f}, {place.views} view"
-                    f"{'s' if place.views != 1 else ''})",
-                    radius=self.config.object_radius_m if located else None,
-                )
-                for place in places
-            ],
-            observation_ids=self._markers_near([place.position for place in places]),
-        )
-        self._add_route_to_result(result)
-        query_id = self._publish_query_result(result)
-        self._publish_query_images(query_id, phrase, places)
-
-        return SkillResult(
-            success=True,
-            message=result.answer,
-            duration_ms=(time.monotonic() - started) * 1000,
-            metadata={
-                "query_id": query_id,
-                "query": phrase,
-                "places": [
-                    {
-                        "position": place.position,
-                        "similarity": place.similarity,
-                        "views": place.views,
-                    }
-                    for place in places
-                ],
-                "located": located,
-            },
-        )
-
-    # ---- poses -------------------------------------------------------------
-
+    # ---- poses: the tf tree ------------------------------------------------
     def _tf_tree(self) -> TfTree | None:
         """The recording's tf tree, loaded once; None when the recording has none."""
         with self._store_lock:

@@ -555,11 +555,12 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
     is invisible to search while the map and the markers can see it -- and a stale copy in
     the moving stream quietly outvotes the static one. Either way the two disagree.
 
-    Every static edge goes into every sample, replacing whatever the moving stream said
-    about it. Nothing is compared first: an edge is static because it holds for all time,
-    and a moving stream that happens to agree in the samples it carries does not say that
-    anywhere. This runs once per recording, because afterwards there is no static stream
-    left to fold. Returns the number of edges moved.
+    Every static edge replaces whatever the moving stream said about it, wherever it said
+    it, and is then stated once at each end of the span the stream covers -- twice in all,
+    or once when both ends fall in the same sample. Nothing is compared first: an edge is
+    static because it holds for all time, and a moving stream that happens to agree in the
+    samples it carries does not say that anywhere. This runs once per recording, because
+    afterwards there is no static stream left to fold. Returns the number of edges moved.
     """
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
@@ -589,7 +590,10 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
         kept = [
             t for t in obs.data.transforms if (str(t.frame_id), str(t.child_frame_id)) not in folded
         ]
-        said = [float(t.ts) for t in obs.data.transforms] + [float(obs.ts)]
+        # `or float(obs.ts)` because TfTree.from_stream reads the transform's own stamp
+        # and falls back to the observation's when it is 0. Measuring the span any other
+        # way puts the folded copy after the first frame the camera took.
+        said = [float(t.ts) or float(obs.ts) for t in obs.data.transforms] + [float(obs.ts)]
         rows.append((float(obs.ts), kept, min(said), max(said)))
     if not rows:
         # Folding into nothing would write nothing and destroy the statics on the way.
@@ -599,10 +603,13 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
         )
     first = min(low for _, _, low, _ in rows)
     last = max(high for _, _, _, high in rows)
-    # One sample where the two ends coincide, and not two of it: _Edge.at holds a
+    # One sample, not two, when both ends land in the same row: _Edge.at holds a
     # single-sample series for all time, which is what a static edge means, while two
-    # samples at one instant expire a tolerance either side of it.
-    at_end = {0: [first]} if first == last else {0: [first], len(rows) - 1: [last]}
+    # samples expire a tolerance past the later one.
+    if len(rows) == 1 or first == last:
+        at_end = {0: [first]}
+    else:
+        at_end = {0: [first], len(rows) - 1: [last]}
     written = []
     for index, (ts, kept, _, _) in enumerate(rows):
         ends = at_end.get(index, [])
