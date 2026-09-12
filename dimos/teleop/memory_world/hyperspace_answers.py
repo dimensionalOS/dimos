@@ -449,10 +449,13 @@ class HyperspaceAnswers:
                     "present" if mls_available() else "missing",
                     len(voxels),
                 )
-                path = np.asarray(
-                    self._orbit_positions_for(self._effective_orbit_frame()).get("positions") or [],
-                    dtype=np.float64,
-                ).reshape(-1, 3)
+                known = self._orbit_positions_for(self._effective_orbit_frame()).get("positions")
+                if not known:
+                    # The costmap's free corridor IS the robot's path. With no path there
+                    # is nothing to plan over, and a 500 out of RoutePlanner says less than
+                    # this does. An explicit start reaches here too, hence the check.
+                    raise HTTPException(status_code=503, detail="the robot's path is not known yet")
+                path = np.asarray(known, dtype=np.float64).reshape(-1, 3)
                 self._route_planner = RoutePlanner.from_voxels(voxels, path, voxel_size=voxel_size)
             return self._route_planner
 

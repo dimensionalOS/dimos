@@ -424,3 +424,18 @@ def test_a_voxel_already_held_is_never_inserted_twice() -> None:
     assert len(grid.keys) == 1
     assert grid._centres.shape == (1, 3)
     assert np.allclose(unpack_centres(grid.keys, grid.voxel_size)[0], centre, atol=grid.voxel_size)
+
+
+def test_a_path_nothing_could_place_is_empty_rather_than_a_line_of_origins() -> None:
+    """A tf frame can exist and still be unreachable from the world frame.
+
+    Every lookup then fails, and reporting the world origin for the whole recording
+    would put the robot somewhere it has never been for its entire run -- and the
+    costmap planner treats that path as the known free corridor, so a route would be
+    offered from it. Both callers already read an empty path as "not known yet".
+    """
+    from dimos.teleop.memory_world.replay import frame_positions, stamped_positions
+
+    assert frame_positions([1.0, 2.0, 3.0], lambda ts: None) == []
+    assert frame_positions([], lambda ts: None) == []
+    assert stamped_positions([SimpleNamespace(pose_tuple=None)] * 3) == []

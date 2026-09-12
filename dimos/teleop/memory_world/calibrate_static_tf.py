@@ -329,12 +329,15 @@ def write_static_mount(store: Any, mount: str, child: str, matrix: np.ndarray, t
             f"{name!r} belongs to the recording itself, which is read only. Fix the mount"
             " where the recording is written, or convert it to a .db first."
         )
-    original = [
-        t
-        for obs in (store.streams[name] if name in store.list_streams() else [])
-        for t in obs.data.transforms
-    ]
-    kept = [t for t in original if (str(t.frame_id), str(t.child_frame_id)) != (mount, child)]
+    # One entry per edge, first sample winning, which is what every reader resolves to
+    # anyway. Flattening every sample instead would rewrite a stream that latches its
+    # static tf once a second as one message holding N copies of every edge.
+    by_edge: dict[tuple[str, str], Any] = {}
+    for obs in store.streams[name] if name in store.list_streams() else []:
+        for t in obs.data.transforms:
+            by_edge.setdefault((str(t.frame_id), str(t.child_frame_id)), t)
+    original = list(by_edge.values())
+    kept = [t for edge, t in by_edge.items() if edge != (mount, child)]
     x, y, z, w = quaternion_from_matrix(matrix[:3, :3])
     corrected = Transform(
         translation=Vector3(*(float(v) for v in matrix[:3, 3])),

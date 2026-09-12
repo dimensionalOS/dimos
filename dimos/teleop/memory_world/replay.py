@@ -393,7 +393,13 @@ def _held_through_gaps(known: Iterable[list[float] | None]) -> list[list[float]]
     a consumer that reads this as a path never sees a place the robot was not.
     """
     positions = list(known)
-    first = next((p for p in positions if p is not None), [0.0, 0.0, 0.0])
+    first = next((p for p in positions if p is not None), None)
+    if first is None:
+        # Nothing is known, so there is nothing to hold. Returning origins here would
+        # report the robot at the world origin for a whole recording, which is exactly
+        # the invented place this function exists to avoid -- and /navigate would plan a
+        # route from it. Both callers already treat an empty path as "not known yet".
+        return []
     held: list[list[float]] = []
     last = first
     for position in positions:
