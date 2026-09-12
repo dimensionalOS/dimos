@@ -65,8 +65,11 @@ logger = setup_logger()
 
 KEYFRAME_STREAM = "hyperspace_keyframes"
 PATCH_STREAM = "hyperspace_patches"
-# Written last by the ingest and dropped first: the keyframes go into the recording one
-# at a time, so their presence alone cannot say the ingest finished.
+# NOT written any more, only deleted. It used to be written last by the ingest, so that
+# keyframes arriving one at a time could not be mistaken for a finished run; that was
+# dropped deliberately (see hyperspace_ingest, "Nothing marks the in-place index
+# finished"). It is still removed wherever it is found, because a recording indexed before
+# that change carries one and it would vouch for keyframes that have since been dropped.
 COMPLETE_STREAM = "hyperspace_complete"
 MEMORY_DB_SUFFIX = ".hyperspace.db"
 

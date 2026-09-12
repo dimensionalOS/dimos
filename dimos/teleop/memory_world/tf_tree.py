@@ -17,8 +17,11 @@
 Every transform in the recording's ``tf`` stream is kept, per parent-child
 edge, as a time-sorted series. A lookup walks the tree between two frames and
 composes each edge at the requested time: translation interpolated linearly,
-rotation by slerp, between the two bracketing samples. An edge published once
-(or whose samples never change) is simply static.
+rotation by slerp, between the two bracketing samples. `static` is a FLAG, set for edges
+that arrived on tf_static -- nothing inspects the samples to decide it, so an edge whose
+values never change is not static, and an edge published once is not either: it answers
+from its single sample forever forward, but only within `tolerance_s` backwards. `span`
+documents that rule and `recording.fold_static_tf` depends on it.
 
 Camera frames, sensor-relative lidar scans and the robot's path are placed by
 asking this tree. A scan already in the world frame (a corrected lidar stream)
