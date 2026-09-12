@@ -1498,9 +1498,13 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
                 if self._store_lock.acquire(timeout=5):
                     try:
                         with self._index_lock:
-                            if self._hyperspace is not None:
-                                self._hyperspace.close()
-                                self._hyperspace = None  # not a handle to a closed search
+                            # `_hyperspace_lock` too: the adopt thread publishes there,
+                            # and re-tests `_stopping` inside it, so one of the two always
+                            # sees the other.
+                            with self._hyperspace_lock:
+                                if self._hyperspace is not None:
+                                    self._hyperspace.close()
+                                    self._hyperspace = None  # not a handle to a closed one
                             if self._visual_index is not None:
                                 self._visual_index.stop()
                                 self._visual_index = None

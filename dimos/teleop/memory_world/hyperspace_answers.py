@@ -249,15 +249,23 @@ class HyperspaceAnswers:
             # stop() neither joins this thread nor holds `_hyperspace_lock`, so it sees
             # nothing to close and finishes, and publishing here would leave the model
             # and its store open in a stopped module until the process exits.
+            #
+            # The test and the swap have to be ONE step. They used to be two, and stop()
+            # clears `_hyperspace` under `_index_lock` while this publishes under
+            # `_hyperspace_lock` -- two locks that never exclude each other -- so a stop()
+            # landing between them published a live search into a stopped module and left
+            # the model and its store open until the process exited, which is the exact
+            # thing this guard exists to prevent. Driving stop() into that window
+            # reproduced it every time.
             stopping = getattr(self, "_stopping", None)  # a sibling mixin's, not ours
-            if (stopping is not None and stopping.is_set()) or getattr(
-                self, "_module_closed", False
-            ):
-                logger.info("stopped while the index was warming; closing it again")
-                with contextlib.suppress(Exception):
-                    search.close()
-                return False
             with self._hyperspace_lock:
+                if (stopping is not None and stopping.is_set()) or getattr(
+                    self, "_module_closed", False
+                ):
+                    logger.info("stopped while the index was warming; closing it again")
+                    with contextlib.suppress(Exception):
+                        search.close()
+                    return False
                 replaced = self._hyperspace
                 self._hyperspace = search
                 self._adopted_stamp = stamp
