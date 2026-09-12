@@ -477,6 +477,39 @@ def test_embedding_job_failure_keeps_the_last_line() -> None:
     assert status["embedding"] == "failed" and "no such stream" in status["progress"]
 
 
+def test_an_embedding_job_that_dies_without_an_exception_does_not_wedge_the_next_one() -> None:
+    """`start()` refuses to run while the state reads "running", so a state stuck there
+    is not one dead job -- it is every future job, for the life of the process, with the
+    viewer's readiness poll waiting on all of them.
+
+    `except Exception` is what sets "failed", and SystemExit and KeyboardInterrupt are
+    not Exceptions. `threading` swallows a SystemExit out of a thread without printing
+    anything, so the job goes quiet and the state never moves. `adopt` running inside the
+    try is the reachable version of this; the handler raising on its own is another.
+    """
+    import threading
+
+    from dimos.teleop.memory_world.embed import EmbeddingJob
+
+    finished = threading.Event()
+    job = EmbeddingJob(on_finished=lambda j: finished.set())
+
+    def adopt_and_exit() -> None:
+        raise SystemExit(1)
+
+    assert job.start(["true"], "", adopt=adopt_and_exit)
+    assert finished.wait(10)
+
+    status = job.status()
+    assert status["embedding"] == "failed", f"stuck at {status['embedding']!r}"
+
+    # The damage this actually does: nothing can be started afterwards.
+    finished.clear()
+    assert job.start(["true"], "", adopt=lambda: None), "a later job can never run"
+    assert finished.wait(10)
+    assert job.status()["embedding"] == "done"
+
+
 def test_embedding_job_failure_keeps_a_last_line_that_had_no_newline() -> None:
     """A process that dies mid-line never terminates it, and that line is the reason.
 
