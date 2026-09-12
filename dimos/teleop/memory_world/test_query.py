@@ -513,3 +513,30 @@ def test_the_agent_is_told_how_many_frames_were_actually_lit(
     empty = MemoryQueryResult.model_validate({"answer": "no frames, says the agent"})
     memory_world._publish_query_result(empty)
     assert empty.observation_ids == [7]
+
+
+def test_two_ids_naming_one_marker_light_and_count_as_one() -> None:
+    """The viewer selects through a Set; the direct translation did not.
+
+    `_selectedImageIds = new Set(result.observation_ids)` (scene.js), so an answer naming
+    one marker twice lights ONE photograph. The direct branch kept both, so `analyze_memory`
+    told the agent two frames were lit when one was -- the same wrong number the previous
+    commit fixed, one layer further in. The nearest-marker branch has always deduplicated;
+    this one now matches it.
+    """
+    module = SimpleNamespace(
+        _cached_image_poses=({"ids": [0, 1, 2], "source_ids": [0, 100, 200]}, b""),
+        _markers_near=lambda positions: [7] * len(positions),
+    )
+    snap = MemoryWorldModule._marker_ids_for
+
+    # The same observation twice, and two observations that are genuinely different.
+    twice = MemoryQueryResult(answer="a", engine="agent", observation_ids=[100, 100])
+    assert snap(module, twice) == [1], "one marker, named twice, is one lit photograph"
+
+    both = MemoryQueryResult(answer="a", engine="agent", observation_ids=[100, 200])
+    assert snap(module, both) == [1, 2], "two markers stay two"
+
+    # Order is the agent's own, and survives the deduplication.
+    reversed_order = MemoryQueryResult(answer="a", engine="agent", observation_ids=[200, 100, 200])
+    assert snap(module, reversed_order) == [2, 1]

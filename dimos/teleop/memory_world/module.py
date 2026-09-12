@@ -1044,7 +1044,11 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             )
             if source >= 0  # an mcap numbers each windowed read from zero: no real ids
         }
-        snapped = [sources[i] for i in result.observation_ids if i in sources]
+        # Deduplicated, like the nearest-marker branch below and for the same reason the
+        # VIEWER does it: `_selectedImageIds` is a Set, so two ids naming one marker light
+        # one photograph. Keeping both told the agent it had lit two. Order is kept because
+        # it is the agent's own; the set comprehension below has no order to lose.
+        snapped = list(dict.fromkeys(sources[i] for i in result.observation_ids if i in sources))
         if snapped:
             return snapped
         return self._markers_near(answer_positions(result))
