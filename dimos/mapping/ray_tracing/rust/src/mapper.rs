@@ -20,7 +20,8 @@ use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
     batch_local_bounds, coarse_of_fine, emit_points, emit_points_fine, global_normal_fits,
-    metric_voxel_keys, update_map, Config, Cylinder, FrameHits, LocalBounds, VoxelMap,
+    metric_voxel_keys, seed_points, seed_tile, update_map, Config, Cylinder, FrameHits,
+    LocalBounds, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -75,21 +76,39 @@ impl Mapper {
     /// Register a sensor-frame cloud into the world by `pose` and fold it into
     /// the map.
     pub fn add_frame(&mut self, mut sensor_points: Vec<Point>, pose: Pose) {
-        let (px, py, pz) = pose.position;
-        let (qx, qy, qz, qw) = pose.orientation;
-        let translation = Vector3::new(px, py, pz);
-        let rot =
-            UnitQuaternion::from_quaternion(Quaternion::new(qw, qx, qy, qz)).to_rotation_matrix();
-        for p in sensor_points.iter_mut() {
-            let w = rot * Vector3::new(p.0, p.1, p.2) + translation;
-            *p = (w.x, w.y, w.z);
-        }
+        register(&mut sensor_points, pose);
         self.ingest(sensor_points, pose.position);
     }
 
     /// Fold an already world-frame cloud into the map, raycasting from `origin`.
     pub fn add_frame_world(&mut self, world_points: Vec<Point>, origin: Point) {
         self.ingest(world_points, origin);
+    }
+
+    /// Bulk-seed a world-frame map cloud with no ray tracing, creating only
+    /// absent voxels. Returns how many voxels were created.
+    pub fn seed_points(&mut self, points: &[Point]) -> usize {
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| seed_points(&mut self.map, points, &self.config))
+            .len()
+    }
+
+    /// Make room for `additional` voxels ahead of a tiled seed load.
+    pub fn reserve_voxels(&mut self, additional: usize) {
+        self.map.reserve(additional);
+    }
+
+    /// Seed one tile of a partitioned world-frame cloud. Returns how many
+    /// voxels were created.
+    pub fn seed_tile(&mut self, tile: &[Point]) -> usize {
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| seed_tile(&mut self.map, tile, &self.config))
+            .len()
+    }
+
+    /// The last frame's sensor origin in the world frame.
+    pub fn last_origin(&self) -> Point {
+        self.last_origin
     }
 
     fn ingest(&mut self, points: Vec<Point>, origin: Point) {
@@ -161,6 +180,20 @@ impl Mapper {
         })
     }
 
+    /// Support-gated healthy voxel centers over the whole map, plus live
+    /// voxels, flat triples.
+    pub fn full_points(&self) -> Vec<f32> {
+        self.pool.install(|| {
+            emit_points(
+                &self.map,
+                self.config.voxel_size,
+                None,
+                self.config.support_min,
+                &self.live.coarse,
+            )
+        })
+    }
+
     /// Support-gated healthy voxel centers within `bounds`, plus live voxels,
     /// flat triples.
     pub fn local_points(&self, bounds: &LocalBounds) -> Vec<f32> {
@@ -227,6 +260,18 @@ impl Mapper {
         self.last_registered.clear();
         self.last_origin = (0.0, 0.0, 0.0);
         self.frame_count = 0;
+    }
+}
+
+/// Map points into the world frame by the pose, in place.
+pub fn register(points: &mut [Point], pose: Pose) {
+    let (px, py, pz) = pose.position;
+    let (qx, qy, qz, qw) = pose.orientation;
+    let translation = Vector3::new(px, py, pz);
+    let rot = UnitQuaternion::from_quaternion(Quaternion::new(qw, qx, qy, qz)).to_rotation_matrix();
+    for p in points.iter_mut() {
+        let w = rot * Vector3::new(p.0, p.1, p.2) + translation;
+        *p = (w.x, w.y, w.z);
     }
 }
 
@@ -383,6 +428,49 @@ mod tests {
 
         assert!(mapper.global_points().is_empty());
         assert_eq!(mapper.clear_metric([(5.5, 0.5, 0.5)]), 0);
+    }
+
+    /// Seeds reach both emitters and stay out of the region batch.
+    #[test]
+    fn seed_points_emits_without_batching_regions() {
+        let mut mapper = Mapper::new(config());
+        assert_eq!(mapper.seed_points(&[(5.5, 0.5, 0.5), (6.5, 0.5, 0.5)]), 2);
+
+        assert_eq!(mapper.global_points().len(), 6);
+        let bounds = LocalBounds {
+            origin_x: 5.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 100.0,
+            z_min: -5.0,
+            z_max: 5.0,
+        };
+        assert_eq!(mapper.local_points(&bounds).len(), 6);
+
+        let c = mapper.take_local_bounds();
+        assert_eq!(c.radius, 0.0, "a seed must not feed the region batch");
+
+        assert_eq!(mapper.seed_points(&[(5.5, 0.5, 0.5)]), 0);
+    }
+
+    /// full_points applies the support gate. global_points stays unfiltered.
+    #[test]
+    fn full_points_apply_support_gate() {
+        let cfg = Config {
+            support_min: 3,
+            ..config()
+        };
+        let mut mapper = Mapper::new(cfg);
+        let mut cloud: Vec<Point> = Vec::new();
+        for x in 0..3 {
+            for y in 0..3 {
+                cloud.push((x as f32 + 0.5, y as f32 + 0.5, 0.5));
+            }
+        }
+        cloud.push((20.5, 20.5, 0.5));
+        assert_eq!(mapper.seed_points(&cloud), 10);
+
+        assert_eq!(mapper.full_points().len(), 27, "isolated seed gated out");
+        assert_eq!(mapper.global_points().len(), 30);
     }
 
     #[test]

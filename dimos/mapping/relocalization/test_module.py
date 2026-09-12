@@ -115,6 +115,18 @@ def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
     disposables[0].dispose()
 
 
+def test_premap_stem_resolves_from_the_cwd(module, tmp_path, monkeypatch):
+    """A bare stem gets the suffix and is looked up beside the caller before the data dir."""
+    (tmp_path / "site.pc2.lcm").write_bytes(
+        PointCloud2.from_numpy(np.zeros((5, 3), dtype=np.float32), timestamp=0.0).lcm_encode()
+    )
+    monkeypatch.chdir(tmp_path)
+    m = module()
+    m.register_disposable = lambda d: None
+    m._load_premap("site")
+    assert m.premap is not None and len(m.premap) == 5
+
+
 def test_relocalizer_refuses_below_its_own_threshold(monkeypatch):
     """One config surface: the relocalizer holds the knobs and the accept decision."""
     from dimos.mapping.relocalization.lidar import relocalize as lidar
@@ -137,6 +149,38 @@ def test_relocalizer_refuses_below_its_own_threshold(monkeypatch):
     tf = relocalizer(0.3).relocalize(None, "world", "map")
     assert (tf.frame_id, tf.child_frame_id) == ("world", "map")
     np.testing.assert_allclose(tf.to_matrix(), np.linalg.inv(placement), atol=1e-9)
+
+
+def _fix(yaw_deg, x=0.0):
+    m = np.eye(4)
+    m[:3, :3] = Rotation.from_euler("z", yaw_deg, degrees=True).as_matrix()
+    m[0, 3] = x
+    return Transform.from_matrix(m, frame_id="world", child_frame_id="map")
+
+
+def test_a_fix_is_published_only_once_a_second_one_agrees(module):
+    """RANSAC lands wrong hypotheses in different places; two agreeing fixes are one place."""
+    cloud = PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32), timestamp=0.0)
+    answers = iter([_fix(0.0), _fix(120.0), _fix(121.0, x=0.05), _fix(120.5)])
+    m = module(LidarWindowRelocalization, relocalize_once=True)
+    m._relocalizer = SimpleNamespace(relocalize=lambda c, w, mp: next(answers))
+    got = fixes(m)
+
+    m._relocalize(cloud)
+    m._relocalize(cloud)
+    assert got == []  # 0 then 120 degrees: disagree, nothing believed yet
+    m._relocalize(cloud)
+    assert len(got) == 1 and not m.keep_relocalizing()
+    np.testing.assert_allclose(got[0].to_matrix(), _fix(121.0, x=0.05).to_matrix())
+
+
+def test_confirm_fixes_of_one_publishes_the_first_fix(module):
+    cloud = PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32), timestamp=0.0)
+    m = module(LidarWindowRelocalization, confirm_fixes=1)
+    m._relocalizer = SimpleNamespace(relocalize=lambda c, w, mp: _fix(45.0))
+    got = fixes(m)
+    m._relocalize(cloud)
+    assert len(got) == 1
 
 
 def test_no_config_without_naming_a_rig():

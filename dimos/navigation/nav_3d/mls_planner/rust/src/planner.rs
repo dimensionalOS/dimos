@@ -911,6 +911,7 @@ mod tests {
             step_threshold_m: 0.25,
             step_penalty_weight: 4.0,
             goal_tolerance: 0.3,
+            full_map_tile_m: 4.0,
             viz_publish_hz: 2.0,
             worker_threads: 4,
         };
@@ -940,6 +941,7 @@ mod tests {
             step_threshold_m: 0.25,
             step_penalty_weight: 4.0,
             goal_tolerance: 0.3,
+            full_map_tile_m: 4.0,
             viz_publish_hz: 2.0,
             worker_threads: 4,
         }

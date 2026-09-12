@@ -18,13 +18,14 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
-use dimos_mls_planner::mls_planner::{Config, Planner, RegionBounds};
+use dimos_mls_planner::mls_planner::{Config, MapLoad, Planner, RegionBounds};
 use dimos_mls_planner::voxel::{surface_point_xyz, VoxelKey};
 
 #[pyclass]
 pub struct MLSPlanner {
     config: Config,
     planner: Planner,
+    load: Option<MapLoad>,
 }
 
 /// Extract a (N, 3) float32 numpy array into xyz tuples, dropping any row with
@@ -61,6 +62,7 @@ impl MLSPlanner {
         voxel_size,
         robot_height,
         max_overhead_m = 2.0,
+        full_map_tile_m = 4.0,
         surface_closing_radius = 0.3,
         node_spacing_m = 1.0,
         wall_clearance_m = 0.1,
@@ -74,6 +76,7 @@ impl MLSPlanner {
         voxel_size: f32,
         robot_height: f32,
         max_overhead_m: f32,
+        full_map_tile_m: f32,
         surface_closing_radius: f32,
         node_spacing_m: f32,
         wall_clearance_m: f32,
@@ -100,6 +103,7 @@ impl MLSPlanner {
             step_penalty_weight,
             // Unused here. Only the binary's replan loop reads goal_tolerance.
             goal_tolerance: 1.0,
+            full_map_tile_m,
             // Unused here. Only the binary's worker publishes viz artifacts.
             viz_publish_hz: 1.0,
             worker_threads,
@@ -110,6 +114,7 @@ impl MLSPlanner {
         Ok(Self {
             planner: Planner::new(config.worker_threads),
             config,
+            load: None,
         })
     }
 
@@ -118,6 +123,8 @@ impl MLSPlanner {
         let config = &self.config;
         let planner = &mut self.planner;
         py.allow_threads(move || planner.update_global_map(&pts, config));
+        // A full rebuild replaces everything a load would add.
+        self.load = None;
         Ok(())
     }
 
@@ -145,8 +152,44 @@ impl MLSPlanner {
         );
         let config = &self.config;
         let planner = &mut self.planner;
-        py.allow_threads(move || planner.update_region(&pts, &bounds, config));
+        py.allow_threads(|| planner.update_region(&pts, &bounds, config));
+        if let Some(load) = self.load.as_mut() {
+            load.region_applied(bounds);
+        }
         Ok(())
+    }
+
+    /// Partition a whole-map cloud into pending tiles, ordered nearest
+    /// `center` first, replacing any pending tiles. Returns the tile count.
+    fn start_full_map_load(
+        &mut self,
+        py: Python<'_>,
+        points: &Bound<'_, PyAny>,
+        center: (f32, f32),
+    ) -> PyResult<usize> {
+        let pts = extract_points(points)?;
+        let config = &self.config;
+        let planner = &self.planner;
+        let tiles = py.allow_threads(|| planner.partition_full_map(&pts, center, config));
+        let count = tiles.len();
+        self.load = (count > 0).then(|| MapLoad::new(tiles));
+        Ok(count)
+    }
+
+    /// Apply the next pending tile through the region pipeline, skipping
+    /// what a later update_region covered. Returns how many remain.
+    fn apply_full_map_tile(&mut self, py: Python<'_>) -> usize {
+        let Some(load) = self.load.as_mut() else {
+            return 0;
+        };
+        let config = &self.config;
+        let planner = &mut self.planner;
+        py.allow_threads(|| load.apply_next_tile(planner, config));
+        if load.finished() {
+            self.load = None;
+            return 0;
+        }
+        load.remaining()
     }
 
     fn surface_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
@@ -275,6 +318,7 @@ impl MLSPlanner {
 
     fn clear(&mut self) {
         self.planner = Planner::new(self.config.worker_threads);
+        self.load = None;
     }
 
     fn __repr__(&self) -> String {

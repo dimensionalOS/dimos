@@ -59,6 +59,13 @@ class VoxelRayMapper:
         """Fold an already world-frame cloud into the map, raycasting from origin."""
         ...
 
+    def seed_points(self, points: NDArray[np.float32]) -> int:
+        """Bulk-seed a world-frame map cloud, creating only absent voxels.
+
+        Points are (N, 3) float32. Returns how many voxels were created.
+        """
+        ...
+
     def registered_points(self) -> NDArray[np.float32]:
         """Return the last frame's registered points as (N, 3) float32."""
         ...
@@ -73,6 +80,10 @@ class VoxelRayMapper:
 
     def global_map(self) -> NDArray[np.float32]:
         """Return the centers of all healthy voxels as (M, 3) float32."""
+        ...
+
+    def full_map(self) -> NDArray[np.float32]:
+        """Return the support-gated snapshot of the whole map as (M, 3) float32."""
         ...
 
     def global_map_normals(self) -> tuple[NDArray[np.float32], NDArray[np.float32]]:

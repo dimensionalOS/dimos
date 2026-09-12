@@ -264,6 +264,31 @@ impl VoxelMap {
         }
     }
 
+    /// Make room for `additional` voxels ahead of a bulk load, so the load
+    /// never pays a table rehash between tiles.
+    pub fn reserve(&mut self, additional: usize) {
+        self.voxels.reserve(additional);
+    }
+
+    /// Create a healthy seed voxel if absent. Returns whether it was created.
+    fn insert_seed(&mut self, key: VoxelKey) -> bool {
+        if self.voxels.contains_key(&key) {
+            return false;
+        }
+        let support = self.count_healthy_neighbors(key);
+        self.voxels.insert(
+            key,
+            Voxel {
+                health: SEED_HEALTH,
+                support,
+                ..Default::default()
+            },
+        );
+        self.update_health_index(key, false, true);
+        self.propagate_neighbor_support(key, 1);
+        true
+    }
+
     /// Register a ray hit: create the voxel at `min_health` if new, then bump its
     /// health. Keeps the healthy-chunk index and every neighbor's `support` count
     /// in sync. Returns whether the voxel was created.
@@ -1001,6 +1026,99 @@ pub fn update_map(
         coarse: hits,
         fine: fine_live,
     }
+}
+
+/// Health seeded voxels start at: healthy, but easily carved by live misses.
+const SEED_HEALTH: VoxelHealth = 1;
+
+/// One tile of a seed load: the world-frame points falling in one chunk.
+pub type SeedTile = Vec<(f32, f32, f32)>;
+
+/// A cloud split for seeding, with the distinct voxels it covers so the map
+/// can be sized once instead of rehashing mid-load.
+pub struct SeedPartition {
+    pub tiles: Vec<SeedTile>,
+    pub voxels: usize,
+}
+
+/// Split a world-frame cloud into one tile per chunk, nearest `origin` first,
+/// so a load applied tile by tile brings up the sensor's surroundings first.
+pub fn partition_seed(
+    points: &[(f32, f32, f32)],
+    voxel_size: f32,
+    origin: (f32, f32, f32),
+) -> SeedPartition {
+    let inv = 1.0 / voxel_size;
+    let mut tiles: AHashMap<ChunkKey, SeedTile> = AHashMap::new();
+    let mut keys: AHashSet<VoxelKey> = AHashSet::new();
+    for &(x, y, z) in points {
+        if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+            continue;
+        }
+        let key = world_to_voxel(x, y, z, inv);
+        keys.insert(key);
+        tiles.entry(chunk_of(key)).or_default().push((x, y, z));
+    }
+    let edge = CHUNK_SIZE as f32 * voxel_size;
+    let mut ordered: Vec<(f32, SeedTile)> = tiles
+        .into_iter()
+        .map(|(chunk, tile)| {
+            let dx = (chunk.0 as f32 + 0.5) * edge - origin.0;
+            let dy = (chunk.1 as f32 + 0.5) * edge - origin.1;
+            let dz = (chunk.2 as f32 + 0.5) * edge - origin.2;
+            (dx * dx + dy * dy + dz * dz, tile)
+        })
+        .collect();
+    ordered.sort_by(|a, b| a.0.total_cmp(&b.0));
+    SeedPartition {
+        tiles: ordered.into_iter().map(|(_, tile)| tile).collect(),
+        voxels: keys.len(),
+    }
+}
+
+/// Seed one tile without ray tracing, creating only absent voxels. Each lands
+/// fully indexed, so live frames can interleave. Returns the created keys.
+pub fn seed_tile(
+    map: &mut VoxelMap,
+    points: &[(f32, f32, f32)],
+    cfg: &Config,
+) -> AHashSet<VoxelKey> {
+    let inv = 1.0 / cfg.voxel_size;
+    let fine = cfg.fine_layer().map(|(d, _)| d as i32);
+
+    let mut created: AHashSet<VoxelKey> = AHashSet::new();
+    for &(x, y, z) in points {
+        if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+            continue;
+        }
+        let key = world_to_voxel(x, y, z, inv);
+        if map.insert_seed(key) {
+            created.insert(key);
+        } else if !created.contains(&key) {
+            continue;
+        }
+        map.accumulate((x, y, z), cfg.voxel_size, fine);
+    }
+    if !created.is_empty() {
+        refresh_voxels(map, &created, &[], cfg.voxel_size);
+    }
+    created
+}
+
+/// Bulk-load a whole world-frame cloud in one call, tile by tile. Returns the
+/// created keys.
+pub fn seed_points(
+    map: &mut VoxelMap,
+    points: &[(f32, f32, f32)],
+    cfg: &Config,
+) -> AHashSet<VoxelKey> {
+    let part = partition_seed(points, cfg.voxel_size, (0.0, 0.0, 0.0));
+    map.reserve(part.voxels);
+    let mut created = AHashSet::new();
+    for tile in &part.tiles {
+        created.extend(seed_tile(map, tile, cfg));
+    }
+    created
 }
 
 #[inline]

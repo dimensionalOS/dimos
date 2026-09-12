@@ -15,6 +15,8 @@
 """Replay a lidar .db through RayTraceMap and the MLS planner into rerun.
 
 Pass one or more --config clearance,buffer,weight to overlay each as a colored path.
+A loaded_map stream in the recording seeds the mapper at its timestamp and each
+planner then ingests the full map tile by tile, one tile per frame.
 """
 
 from __future__ import annotations
@@ -29,6 +31,11 @@ import typer
 
 from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
+from dimos.mapping.ray_tracing.utils.loaded_map import (
+    first_loaded_map,
+    log_loaded_map,
+    place_loaded_map,
+)
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF, tf_stream
 from dimos.memory.transform import FnTransformer
@@ -91,6 +98,8 @@ SIZE_SERIES = [
     ("edges", "3_edges", "edges", TURBO_GREEN),
     ("nodes", "4_nodes", "nodes", TURBO_BLUE),
 ]
+# Logged only on seeded runs.
+TILES_LEFT_SERIES = "metrics/size/5_tiles"
 
 
 class LocalCrop(NamedTuple):
@@ -384,6 +393,7 @@ def _build_planners(
     node_spacing: float,
     step_height: float,
     step_penalty_weight: float,
+    full_map_tile_m: float,
 ) -> list[tuple[str, list[int], MLSPlanner]]:
     planners: list[tuple[str, list[int], MLSPlanner]] = []
     for i, (clr, buf, wgt) in enumerate(configs):
@@ -398,6 +408,7 @@ def _build_planners(
             wall_buffer_weight=wgt,
             step_threshold_m=step_height,
             step_penalty_weight=step_penalty_weight,
+            full_map_tile_m=full_map_tile_m,
         )
         color = PATH_PALETTE[i % len(PATH_PALETTE)]
         label = f"cfg{i}_c{clr:g}_b{buf:g}_w{wgt:g}"
@@ -543,6 +554,14 @@ def main(
     goal: tuple[float, float, float] = typer.Option(
         (0.0, 0.0, 0.0), "--goal", help="Planner goal xyz; override per recording"
     ),
+    loaded_map_stream: str = typer.Option(
+        "loaded_map",
+        "--loaded-map-stream",
+        help="Stream holding a map cloud to seed at its timestamp, placed by tf, when present",
+    ),
+    tile_m: float = typer.Option(
+        4.0, "--tile-m", help="Tile grid spacing (m) for loading the seeded map into the planner"
+    ),
     live: bool = typer.Option(
         False, "--live", help="Also spawn the rerun viewer when --out is set"
     ),
@@ -596,21 +615,31 @@ def main(
             raise typer.BadParameter(f"{db_path} has no tf stream to register clouds from")
 
         pose_tagged = lidar.transform(_pose_from_tf(tf_lookup, world_frame))
-        ray_pipeline = pose_tagged.transform(
-            RayTraceMap(
-                voxel_size=voxel_size,
-                fine_divisor=fine_divisor,
-                max_range=max_range,
-                ray_subsample=ray_subsample,
-                shadow_depth=shadow_depth,
-                grace_depth=grace_depth,
-                emit_every=emit_every,
-                min_health=min_health,
-                max_health=max_health,
-                support_min=support_min,
-            )
+        ray = RayTraceMap(
+            voxel_size=voxel_size,
+            fine_divisor=fine_divisor,
+            max_range=max_range,
+            ray_subsample=ray_subsample,
+            shadow_depth=shadow_depth,
+            grace_depth=grace_depth,
+            emit_every=emit_every,
+            min_health=min_health,
+            max_health=max_health,
+            support_min=support_min,
         )
+        ray_pipeline = pose_tagged.transform(ray)
         tf_sync = _TfSync(tf)
+
+        loaded_map = first_loaded_map(store, loaded_map_stream)
+        seeded_run = loaded_map is not None
+        tiles_left = 0
+        if loaded_map is not None:
+            rr.log(
+                TILES_LEFT_SERIES,
+                rr.SeriesLines(colors=[[255, 255, 255]], names=["tiles_left"]),
+                static=True,
+            )
+            print(f"loaded_map at ts={loaded_map.ts:.3f}; seeding when reached")
 
         configs = _parse_configs(config, wall_clearance, wall_buffer, wall_buffer_weight)
         ref_clearance = configs[0][0]
@@ -623,6 +652,7 @@ def main(
             node_spacing,
             step_height,
             step_penalty_weight,
+            tile_m,
         )
 
         rr.log("world/goal", rr.Points3D([goal], colors=[[255, 0, 0]], radii=0.1), static=True)
@@ -682,6 +712,22 @@ def main(
                     ref_clearance,
                     crop,
                 )
+                if loaded_map is not None and ray_obs.ts >= loaded_map.ts:
+                    seed_pts = place_loaded_map(loaded_map, tf_lookup, world_frame, ray_obs.ts)
+                    created = ray.mapper.seed_points(seed_pts)
+                    full = ray.mapper.full_map()
+                    for _, _, planner in planners:
+                        tiles_left = planner.start_full_map_load(full, (start[0], start[1]))
+                    log_loaded_map(seed_pts)
+                    print(f"\nseeded {created} voxels, loading {tiles_left} tiles")
+                    loaded_map = None
+                elif tiles_left:
+                    for _, _, planner in planners:
+                        tiles_left = planner.apply_full_map_tile()
+                    if tiles_left == 0:
+                        print("\nfull map load finished")
+                if seeded_run:
+                    rr.log(TILES_LEFT_SERIES, rr.Scalars(float(tiles_left)))
                 _log_odometry(ray_obs.pose_tuple, ray_obs.ts, sensor_trail, base)
                 frame += 1
                 print(

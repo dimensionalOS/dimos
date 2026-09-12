@@ -88,3 +88,53 @@ def test_clear_drops_graph() -> None:
     planner.clear()
     assert len(planner.nodes()) == 0
     assert planner.plan((-2.0, -2.0, 0.0), (2.0, 2.0, 0.0)) is None
+
+
+def test_full_map_load_matches_full_rebuild() -> None:
+    cloud = flat_floor()
+    full = make_planner()
+    full.update_global_map(cloud)
+
+    tiled = make_planner()
+    left = tiled.start_full_map_load(cloud, (0.0, 0.0))
+    assert left > 1
+    while left:
+        left = tiled.apply_full_map_tile()
+
+    assert tiled.voxel_count() == full.voxel_count()
+    assert sorted(map(tuple, tiled.surface_map())) == sorted(map(tuple, full.surface_map()))
+
+
+def test_full_map_load_yields_to_a_covering_live_region() -> None:
+    floor = flat_floor()
+    box = np.asarray(
+        [
+            (1.0 + dx, 1.0 + dy, z)
+            for dx in np.arange(-0.2, 0.2, 0.1)
+            for dy in np.arange(-0.2, 0.2, 0.1)
+            for z in np.arange(0.1, 0.6, 0.1)
+        ],
+        dtype=np.float32,
+    )
+    ceiling = flat_floor() + np.asarray([0.0, 0.0, 3.0], dtype=np.float32)
+    snapshot = np.concatenate([floor, box, ceiling])
+
+    tiled = make_planner()
+    assert tiled.start_full_map_load(snapshot, (0.0, 0.0)) > 1
+    # The box is gone when a live region, capped below the ceiling, covers the floor.
+    tiled.update_region(floor, (0.0, 0.0), 10.0, -1.0, 4.0, 0.3)
+    while tiled.apply_full_map_tile():
+        pass
+
+    clean = make_planner()
+    clean.update_global_map(np.concatenate([floor, ceiling]))
+    assert tiled.voxel_count() == clean.voxel_count()
+    assert sorted(map(tuple, tiled.surface_map())) == sorted(map(tuple, clean.surface_map()))
+
+
+def test_clear_drops_a_pending_load() -> None:
+    planner = make_planner()
+    assert planner.start_full_map_load(flat_floor(), (0.0, 0.0)) > 1
+    planner.clear()
+    assert planner.apply_full_map_tile() == 0
+    assert planner.voxel_count() == 0

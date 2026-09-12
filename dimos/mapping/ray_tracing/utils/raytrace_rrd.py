@@ -31,6 +31,11 @@ from numpy.typing import NDArray
 import typer
 
 from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
+from dimos.mapping.ray_tracing.utils.loaded_map import (
+    first_loaded_map,
+    log_loaded_map,
+    place_loaded_map,
+)
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
@@ -148,6 +153,11 @@ def main(
     from_time: float | None = typer.Option(
         None, "--from-time", help="Start replay at this stream timestamp (s)"
     ),
+    loaded_map_stream: str = typer.Option(
+        "loaded_map",
+        "--loaded-map-stream",
+        help="Stream holding a map cloud to seed at its timestamp, placed by tf, when present",
+    ),
     viewer_memory: str = typer.Option(
         "25%",
         "--viewer-memory",
@@ -198,6 +208,10 @@ def main(
         if tf is None:
             raise typer.BadParameter(f"{db_path} has no tf stream to register clouds from")
 
+        loaded_map = first_loaded_map(store, loaded_map_stream)
+        if loaded_map is not None:
+            print(f"loaded_map at ts={loaded_map.ts:.3f}; seeding when reached")
+
         trajectory: list[tuple[float, float, float]] = []
         count = 0
         dropped = 0
@@ -218,6 +232,14 @@ def main(
             for mapper in mappers.values():
                 mapper.add_frame(raw, (x, y, z), (qx, qy, qz, qw))
             count += 1
+
+            if loaded_map is not None and obs.ts >= loaded_map.ts:
+                seed_pts = place_loaded_map(loaded_map, tf, world_frame, obs.ts)
+                created = {name: m.seed_points(seed_pts) for name, m in mappers.items()}
+                rr.set_time(TIMELINE, timestamp=obs.ts)
+                log_loaded_map(seed_pts)
+                print(f"\nseeded {created} voxels from {len(seed_pts)} points")
+                loaded_map = None
 
             if count % emit_every != 0:
                 continue
