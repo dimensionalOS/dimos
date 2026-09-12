@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest.mock import ANY, MagicMock
+
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
@@ -83,3 +86,17 @@ def test_trajectory_accepts_gripper(blueprint: Blueprint) -> None:
     trajectory = next(task for task in _coordinator_tasks(blueprint) if task.type == "trajectory")
 
     assert "arm/gripper" in trajectory.joint_names
+
+
+def test_teleop_coordinator_routes_browser_twists() -> None:
+    coordinator = TeleopControlCoordinator()
+    try:
+        task = MagicMock()
+        task.name = "eef_twist_arm"
+        coordinator._register_routes(task, "eef_twist")
+
+        command = MagicMock()
+        coordinator._dispatch("ee_twist_command", command)
+        task.on_ee_twist_command.assert_called_once_with(command, ANY)
+    finally:
+        coordinator.stop()
