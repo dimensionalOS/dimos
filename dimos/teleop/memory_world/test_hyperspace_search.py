@@ -444,6 +444,9 @@ def test_an_index_finished_after_startup_is_picked_up_by_the_status_poll() -> No
             self._hyperspace = None
             self._hyperspace_error = None
             self._adopting = threading.Lock()
+            self._failed_stamp = None
+            self._failed_count = 0
+            self._failed_at = 0.0
             self._prepare_job = SimpleNamespace(
                 status=lambda: {"embedding": "idle", "progress": 0.0}
             )
@@ -524,6 +527,9 @@ def test_a_search_that_exits_instead_of_raising_is_recorded_as_failed(tmp_path) 
             self._hyperspace_lock = threading.Lock()
             self._hyperspace_build_lock = threading.Lock()
             self._adopting = threading.Lock()
+            self._failed_stamp = None
+            self._failed_count = 0
+            self._failed_at = 0.0
             self._prepare_job = SimpleNamespace(
                 status=lambda: {"embedding": "idle", "progress": 0.0}
             )
@@ -1154,6 +1160,9 @@ def test_an_index_adopted_mid_ingest_is_loaded_again_once_it_grows(tmp_path) -> 
             self._hyperspace = None
             self._adopting = threading.Semaphore(1)
             self._adopted_stamp = (0, 0.0)
+            self._failed_stamp = None
+            self._failed_count = 0
+            self._failed_at = 0.0
 
         def _load_hyperspace(self, reload: bool = False) -> bool:
             loads.append(reload)
@@ -1215,6 +1224,9 @@ def test_an_index_replaced_by_a_smaller_one_is_still_picked_up(tmp_path) -> None
             self._hyperspace = None
             self._adopting = threading.Semaphore(1)
             self._adopted_stamp = (0, 0.0)
+            self._failed_stamp = None
+            self._failed_count = 0
+            self._failed_at = 0.0
 
         def _load_hyperspace(self, reload: bool = False) -> bool:
             loads.append(reload)
@@ -1276,6 +1288,9 @@ def test_a_search_that_finishes_warming_after_stop_is_closed_not_published(tmp_p
             self._hyperspace_lock = threading.Lock()
             self._hyperspace_build_lock = threading.Lock()
             self._adopting = threading.Lock()
+            self._failed_stamp = None
+            self._failed_count = 0
+            self._failed_at = 0.0
             self._stopping = threading.Event()
             self._prepare_job = SimpleNamespace(
                 status=lambda: {"embedding": "idle", "progress": 0.0}
@@ -1325,6 +1340,9 @@ def _loader_module(tmp_path, make_search):  # type: ignore[no-untyped-def]
             self._hyperspace_build_lock = threading.Lock()
             self._adopting = threading.Lock()
             self._adopted_stamp = (0, 0.0)
+            self._failed_stamp = None
+            self._failed_count = 0
+            self._failed_at = 0.0
             self._stopping = threading.Event()
             self._prepare_job = SimpleNamespace(
                 status=lambda: {"embedding": "idle", "progress": 0.0}
@@ -1509,6 +1527,8 @@ def test_a_reload_that_keeps_failing_does_not_retry_for_ever(tmp_path) -> None: 
     still gets a fresh attempt, which is the one case worth retrying.
     """
 
+    from dimos.teleop.memory_world.hyperspace_answers import RELOAD_ATTEMPTS
+
     class Search:
         keyframe_count = 1
         segment_count = 0
@@ -1554,14 +1574,17 @@ def test_a_reload_that_keeps_failing_does_not_retry_for_ever(tmp_path) -> None: 
             lambda _p: (2, 2.0),  # the db changed once and then stopped changing
         ),
         mock.patch("dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch", build_broken),
+        # Zero the spacing so this asserts the COUNT bound; the spacing is a separate
+        # property and asserting both here would only make the test slow.
+        mock.patch("dimos.teleop.memory_world.hyperspace_answers.RELOAD_BACKOFF_S", 0.0),
     ):
         for _ in range(10):
             adopt(module)
             settle()
 
-    assert len(attempts) == 1, (
-        f"a failing reload was retried {len(attempts)} times over 10 polls; each one loads"
-        " the text tower and every keyframe, and nothing is ever recorded or reported"
+    assert len(attempts) == RELOAD_ATTEMPTS, (
+        f"a failing reload was attempted {len(attempts)} times over 10 polls; it should"
+        f" get {RELOAD_ATTEMPTS} spaced tries, not one and not one per poll"
     )
     assert module._hyperspace is working, "the working search was lost"
     assert module._hyperspace_error is None, "the module is not broken; nothing should latch"
@@ -1576,4 +1599,84 @@ def test_a_reload_that_keeps_failing_does_not_retry_for_ever(tmp_path) -> None: 
     ):
         adopt(module)
         settle()
-    assert len(attempts) == 2, "a genuinely new index was not retried"
+    assert len(attempts) == RELOAD_ATTEMPTS + 1, (
+        "a genuinely NEW index was not retried: the attempt budget is per-index, not a"
+        " global give-up, so a db that changes again always gets a fresh look"
+    )
+
+
+def test_a_reload_that_fails_once_recovers_when_it_stops_failing(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A TRANSIENT failure must not be permanent.
+
+    The first fix for the infinite-retry bug recorded a failed stamp as simply "tried",
+    which made one unlucky warm -- an allocation that lost a race with another heavy
+    process -- permanent: the module went on answering from the older index for the life
+    of the process, reporting `ready: true` with no error, while a perfectly good index
+    sat on disk. Verified against that version with a single injected MemoryError: it
+    made one attempt and stayed on the stale index.
+
+    So the record is "attempted N times", not "tried", and the attempts are spaced.
+    """
+    from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
+
+    class Search:
+        def __init__(self, n: int) -> None:
+            self.keyframe_count = n
+            self.segment_count = 0
+
+        def warm(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    module = _loader_module(tmp_path, None)
+    with (
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (10, 10.0),
+        ),
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch",
+            lambda *a, **k: Search(10),
+        ),
+    ):
+        assert module._load_hyperspace() is True
+    assert module._hyperspace.keyframe_count == 10
+
+    calls: list[int] = []
+
+    def build_flaky(*a, **k):  # type: ignore[no-untyped-def]
+        calls.append(1)
+        if len(calls) == 1:
+            raise MemoryError("lost a race with another heavy process")
+        return Search(20)
+
+    def settle() -> None:
+        for _ in range(200):
+            if module._adopting.acquire(blocking=False):
+                module._adopting.release()
+                return
+            time.sleep(0.01)
+
+    adopt = HyperspaceAnswers._adopt_an_index_that_appeared
+    with (
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (20, 20.0),
+        ),
+        mock.patch("dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch", build_flaky),
+        mock.patch("dimos.teleop.memory_world.hyperspace_answers.RELOAD_BACKOFF_S", 0.0),
+    ):
+        adopt(module)  # fails
+        settle()
+        assert module._hyperspace.keyframe_count == 10, "the working index was lost"
+        adopt(module)  # and now it works
+        settle()
+
+    assert len(calls) == 2, f"the newer index was attempted {len(calls)} times, not 2"
+    assert module._hyperspace.keyframe_count == 20, (
+        "a single transient failure permanently suppressed the newer index: the module"
+        " keeps answering from the stale one, reporting ready with no error"
+    )
+    assert module._failed_stamp is None, "the failure record survived a success"

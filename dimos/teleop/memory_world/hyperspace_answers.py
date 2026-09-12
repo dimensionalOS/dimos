@@ -74,6 +74,11 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+# How many times a reload of the SAME index is retried before it is left alone, and the
+# unit of the widening gap between those tries.
+RELOAD_ATTEMPTS = 3
+RELOAD_BACKOFF_S = 10.0
+
 EVIDENCE_CLUSTERS = 16  # every place an answer names, in practice
 # The ceiling is what the answer can NAME, not a round number chosen beside it. At 64 the
 # budget was smaller than MAX_CLUSTERS x EVIDENCE_PER_CLUSTER and was spent first-come, so
@@ -135,6 +140,14 @@ class HyperspaceAnswers:
         self._hyperspace_error: str | None = None
         self._adopting = threading.Lock()  # held while a background load is in flight
         self._adopted_stamp: tuple[int, float] = (0, 0.0)  # the index the search was built from
+        # A reload that failed, and when. Neither extreme is right: retrying with nothing
+        # recorded starts a fresh warm on every status poll for ever, and recording it as
+        # simply "tried" makes ONE transient failure -- an allocation that lost a race
+        # with another heavy process -- permanent, leaving the module answering from a
+        # stale index with `ready: true` and no error. So: a few attempts, spaced out.
+        self._failed_stamp: tuple[int, float] | None = None
+        self._failed_count = 0
+        self._failed_at = 0.0
         self._prepare_job = EmbeddingJob(
             on_finished=lambda _job: self._broadcast_search_status(),
             name="hyperspace ingest",
@@ -210,10 +223,16 @@ class HyperspaceAnswers:
                     # have keeps answering, no error is latched (the module is not
                     # broken), and an index that changes AGAIN still gets a fresh attempt,
                     # which is the one case worth retrying.
+                    if self._failed_stamp == stamp:
+                        self._failed_count += 1
+                    else:
+                        self._failed_stamp, self._failed_count = stamp, 1
+                    self._failed_at = time.monotonic()
                     logger.warning(
-                        "keeping the index that is already loaded; not retrying this one"
+                        "keeping the index that is already loaded; attempt %d of %d on this one",
+                        self._failed_count,
+                        RELOAD_ATTEMPTS,
                     )
-                    self._adopted_stamp = stamp
                     return False
                 self._hyperspace_error = str(error)[-200:] or type(error).__name__
                 return False
@@ -234,6 +253,7 @@ class HyperspaceAnswers:
                 self._hyperspace = search
                 self._adopted_stamp = stamp
                 self._hyperspace_error = None
+                self._failed_stamp, self._failed_count = None, 0
         # Closed after the swap and OUTSIDE both locks: close() takes the search's own
         # lock, so it waits on any query still inside it, and by now every new query
         # goes to the replacement.
@@ -284,6 +304,14 @@ class HyperspaceAnswers:
         # whenever the keyframes are rewritten, in either direction.
         if search is not None and stamp == self._adopted_stamp:
             return
+        if stamp == self._failed_stamp:
+            # Tried and failed before. Give it a few more goes, spaced further apart each
+            # time, so a transient failure recovers and a permanent one stops costing a
+            # full text tower and every keyframe on every poll.
+            if self._failed_count >= RELOAD_ATTEMPTS:
+                return
+            if time.monotonic() - self._failed_at < RELOAD_BACKOFF_S * self._failed_count:
+                return
         if not self._adopting.acquire(blocking=False):
             return  # already loading; warming takes seconds and must not block the poll
         replacing = search is not None
