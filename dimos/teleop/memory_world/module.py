@@ -144,6 +144,12 @@ class MemoryWorldConfig(ModuleConfig):
     # stream whose poses agree with tf (recording.pick_lidar).
     lidar_stream_name: str = ""
     n_voxel_scans: int = 150
+    # A ray-traced global map written into the recording ahead of time. Preferred over
+    # both the replay's final keyframe and a plain accumulation when the stream is there,
+    # because it is the whole map cleared by every scan's rays rather than what one
+    # moment's keyframe held or what piling raw returns together happens to produce.
+    # "" turns the preference off.
+    global_map_stream_name: str = "global_map"
     # True: the scans are already in the world frame (SLAM output), so their poses
     # must not be applied twice. None detects it: a scan frame equal to world_frame or
     # a stitched *corrected* one counts as aligned, map/odom/world count as aligned

@@ -33,19 +33,49 @@ logger = setup_logger()
 class WorldCache:
     """The three builders behind the payloads every viewer gets on connect."""
 
+    def _global_map_cloud(self) -> np.ndarray | None:
+        """The ray-traced global map stored in the recording, when it has one.
+
+        One PointCloud2 holding the finished voxel set. Built ahead of time from a
+        deskewed, registered lidar stream, so it is the whole map with every scan's
+        rays already applied -- strictly better than the replay's final keyframe (which
+        is the same idea but only as far as the replay got) and far better than a plain
+        accumulation, which keeps every reflection and every person who walked past.
+        """
+        name = self.config.global_map_stream_name
+        if not name:
+            return None
+        store = self._ensure_store()
+        if name not in store.list_streams():
+            return None
+        try:
+            latest = store.streams[name].last()
+        except LookupError:  # declared but empty
+            return None
+        xyz = latest.data.points_f32()
+        if xyz is None or len(xyz) == 0:
+            return None
+        return np.asarray(xyz, dtype=np.float32)
+
     def _build_voxel_cloud_from_lidar(self) -> tuple[dict[str, Any], bytes] | None:
         """The voxel map, packed for the wire.
 
-        The map is the ray-traced replay's final keyframe: every scan cleared
-        the voxels its rays passed through, so what is left is what the last
-        look at each place saw (windows, people and reflections do not pile up
-        the way they do in a plain accumulation). Without the replay the scans
-        are simply accumulated with :class:`VoxelMapTransformer`. The cloud is
+        Preference, best first: a ``global_map`` stream written into the recording; the
+        ray-traced replay's final keyframe; a plain accumulation of the scans. The first
+        two are ray-traced -- every scan cleared the voxels its rays passed through, so
+        what is left is what the last look at each place saw, and windows, people and
+        reflections do not pile up the way they do in an accumulation. The cloud is
         height-coloured so the user gets depth cues without true RGB.
         """
         try:
-            xyz: np.ndarray | None
-            if self.config.build_replay_on_start:
+            xyz: np.ndarray | None = self._replay_read(self._global_map_cloud)
+            if xyz is not None:
+                logger.info(
+                    "voxel cloud from the %s stream: %d voxels",
+                    self.config.global_map_stream_name,
+                    len(xyz),
+                )
+            elif self.config.build_replay_on_start:
                 try:
                     replay = self._ensure_replay()
                     xyz = self._replay_read(lambda: replay.final_keyframe().data.points_f32())

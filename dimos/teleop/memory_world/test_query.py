@@ -894,6 +894,56 @@ def test_the_voxel_cloud_packs_what_survives_the_height_filter(
     assert memory_world._build_voxel_cloud_from_lidar() is None
 
 
+def test_a_global_map_stream_is_preferred_over_accumulating_the_scans(
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A recording that carries a ray-traced `global_map` must be shown THAT.
+
+    The walkable world used to come from the replay's final keyframe, falling back to a
+    plain accumulation of the raw scans. When the voxel replay streams were deleted from
+    grocery.db the map fell to the accumulation and got about three times thinner --
+    782,688 voxels to 253,496 -- and started keeping returns 26 m up that the ray tracing
+    had cleared. A global map built once, ahead of time, from a deskewed registered cloud
+    is better than either, so it wins when it is there.
+
+    The fallbacks are asserted too: an absent stream, and an EMPTY one, must both fall
+    through rather than showing the user a world with nothing in it.
+    """
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    memory_world.config.build_replay_on_start = False
+    memory_world.config.map_z_min = None
+    memory_world.config.map_z_max = None
+    accumulated = np.array([[9.0, 9.0, 9.0]], dtype=np.float64)
+    monkeypatch.setattr(memory_world, "_accumulated_cloud", lambda: accumulated)
+
+    # No global_map stream: the accumulation is what shows.
+    built = memory_world._build_voxel_cloud_from_lidar()
+    assert built is not None and built[0]["n"] == 1
+    assert memory_world._map_xyz is not None
+    assert memory_world._map_xyz.tolist() == [[9.0, 9.0, 9.0]], "fell through wrongly"
+
+    # Declared but empty: still the accumulation, not an empty world.
+    store = memory_world._ensure_store()
+    stream = store.stream(memory_world.config.global_map_stream_name, PointCloud2)
+    built = memory_world._build_voxel_cloud_from_lidar()
+    assert built is not None and built[0]["n"] == 1, "an empty global_map emptied the world"
+
+    # Written: the global map wins.
+    world = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=np.float32)
+    stream.append(PointCloud2.from_numpy(world, frame_id="world", timestamp=1.0), ts=1.0)
+    built = memory_world._build_voxel_cloud_from_lidar()
+    assert built is not None, "a global map with points must produce a cloud"
+    assert built[0]["n"] == 3, "the accumulation was shown over the global map"
+    assert memory_world._map_xyz is not None
+    assert sorted(float(v) for v in memory_world._map_xyz[:, 0]) == [0.0, 1.0, 2.0]
+
+    # Turned off by config: back to the accumulation even though the stream is there.
+    memory_world.config.global_map_stream_name = ""
+    built = memory_world._build_voxel_cloud_from_lidar()
+    assert built is not None and built[0]["n"] == 1, "the off switch did not turn it off"
+
+
 def test_the_camera_frame_comes_from_the_images_and_the_config_overrides_it(
     memory_world: MemoryWorldModule, tmp_path: Path
 ) -> None:
