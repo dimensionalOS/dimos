@@ -417,12 +417,23 @@ def test_precomputed_patch_grids_are_searched_patch_by_patch(sqlite_store: Sqlit
 
 
 def test_precomputed_raw_tower_tokens_are_refused(sqlite_store: SqliteStore) -> None:
-    """A stream siglipify wrote before it applied the head is not text-searchable."""
+    """A stream siglipify wrote before it applied the head is not text-searchable.
+
+    It used to be ADOPTED and counted, and only refused later by `load()`. That is what
+    told the viewer search was ready while every query failed -- and, on a recording that
+    also holds a freshly built index, it let 1108 unusable vectors outrank 5538 good ones,
+    because adoption asked how many rows there were and not whether they could be used.
+    Refused at adoption now, so `count()` reports the built index instead of these.
+    """
     _seed_precomputed(sqlite_store, [(1.0, 1, np.ones((4, 2), np.float32))], text_aligned=None)
     index = VisualMemoryIndex(sqlite_store, pose_of=_placed, model_name=GIANT)
-    assert index.count() == 1
+
+    assert index.precomputed_stream_name is None, "adopted vectors text cannot score"
+    assert index.count() == 0, "counted them as an index the viewer could search"
+
+    # ...and pointed straight at it, the loader still says why rather than scoring noise.
     with pytest.raises(ValueError, match="raw"):
-        index.load()
+        index._load_precomputed(embedding_stream_name("color_image", GIANT))
 
 
 def test_an_embeddings_stream_under_another_prefix_is_adopted_when_it_is_the_only_one(

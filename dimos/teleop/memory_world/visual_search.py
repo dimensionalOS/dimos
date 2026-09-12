@@ -597,21 +597,31 @@ class VisualMemoryIndex:
             # writer never created raises `no such table` here, where the old name lookup
             # simply returned. Turning a dormant trap into a live crash is how the FIRST
             # version of this fix went wrong; this is the same mistake one layer out.
-            has_rows = False
-            if name in self.store.list_streams():
-                try:
-                    has_rows = StoredEmbeddings(self.store, name).count() > 0
-                except Exception:
-                    logger.warning("embeddings stream %r cannot be read; not adopting", name)
+            has_rows = name in self.store.list_streams() and self._usable(name)
             if not has_rows:
                 name = self._embeddings_under_another_prefix() or name
-                has_rows = name in self.store.list_streams() and self._counts(name)
+                has_rows = name in self.store.list_streams() and self._usable(name)
             self._precomputed = name if has_rows else None
         return self._precomputed
 
-    def _counts(self, name: str) -> bool:
+    def _usable(self, name: str) -> bool:
+        """Rows AND vectors `_load_precomputed` will accept -- not just rows.
+
+        Counting alone said "present" for a stream that load() then refuses, so
+        `_index_status` told the viewer search was ready while every query failed. It also
+        let a stale siglipify stream of raw vision-tower tokens outrank a freshly built
+        index in this same recording: 1108 unusable vectors adopted over 5538 good ones.
+        """
         try:
-            return StoredEmbeddings(self.store, name).count() > 0
+            rows = StoredEmbeddings(self.store, name)
+            if rows.count() <= 0:
+                return False
+            if rows.text_aligned() is False:
+                logger.warning(
+                    "embeddings stream %r holds raw vision-tower tokens; not adopting", name
+                )
+                return False
+            return True
         except Exception:
             logger.warning("embeddings stream %r cannot be read; not adopting", name)
             return False
@@ -635,7 +645,7 @@ class VisualMemoryIndex:
         found = [
             name
             for name in self.store.list_streams()
-            if name.endswith(suffix) and "_index_" not in name
+            if name.endswith(suffix) and "_index_" not in name and self._usable(name)
         ]
         if len(found) != 1:
             if found:
