@@ -230,7 +230,10 @@ function handleControl(msg) {
             if (scene) scene.setQueryResult(msg);
             else pendingQueryResult = msg;
             if (results) results.setResult(msg);
-            setStatus(msg.answer || 'Memory result highlighted');
+            // The answer has its own element now (`#answerText`, set by scene.onAnswerText),
+            // which persists; the status line is transient and gets overwritten by the next
+            // thing that happens. Printing the answer in both showed it twice on screen.
+            setStatus('Answer ready — places highlighted');
             askBtn.disabled = false;
             break;
         case 'query_pyramids':
@@ -601,7 +604,7 @@ async function sendRecording(blob) {
         const response = await fetch(voiceUrl, { method: 'POST', body });
         const result = await response.json();
         diag('voice_answer', { transcript: result.transcript, success: result.success });
-        setStatus(result.answer || result.detail || 'No answer');
+        setStatus(result.detail || 'Answer ready');  // #answerText carries the answer
     } catch (e) {
         diag('voice_failed', { error: String(e.message || e) });
         setStatus(`Voice query failed: ${e.message || e}`);
@@ -691,7 +694,7 @@ async function ask(text) {
         const body = await response.json();
         if (ws !== session) return null;  // answered after a disconnect: not our status line
         if (!response.ok) throw new Error(body.detail || response.status);
-        setStatus(body.answer || 'No answer');
+        setStatus(body.answer ? 'Answer ready' : 'No answer');
         return body;
     } catch (e) {
         if (ws === session) setStatus(`Question failed: ${e.message || e}`);

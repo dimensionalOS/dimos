@@ -398,6 +398,19 @@
             overflow-wrap: anywhere;
         }
         #answerText[hidden] { display: none; }
+        /* On a narrow screen the header stack (title, status, connect row) is tall enough
+           to reach the answer's fixed top, and the two overlapped -- measured at 390px,
+           the answer ran 84..193 straight through the status line at 70..112. Below that
+           width it sits just above the results bar instead, which is what it describes
+           anyway. The two offsets track #results' own two positions. */
+        @media (max-width: 820px) {
+            #answerText {
+                top: auto;
+                bottom: 126px;
+                max-width: calc(100% - 24px);
+            }
+            body.desktop-view.touch #answerText { bottom: 360px; }
+        }
         #results[hidden] { display: none; }
         body:not(.desktop-view) #results { display: none; }
         body.desktop-view.touch #results { bottom: 308px; }    /* and clear of the timeline */
