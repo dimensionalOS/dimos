@@ -20,12 +20,11 @@ checkout. It installs `can-utils` on Ubuntu and `libusb` through Homebrew on
 macOS when needed. On other Linux distributions, it prints the missing system
 package instead of selecting a package manager for you.
 
-## Install into an existing environment
+## Add the vendor SDK to a library environment
 
-For a new library environment, use the [official installer](/docs/installation/index.md) with `--mode library --extras manipulation`. In an existing environment, add the bundle and vendor SDK with the package manager that owns it:
+Follow the [official installation guide](/docs/installation/index.md) and select the `manipulation` extra. In that environment, add the A1Z vendor SDK with the package manager that owns it:
 
 ```bash
-python -m pip install 'dimos[manipulation]'
 python -m pip install 'a1z @ git+https://github.com/userguide-galaxea/GALAXEA-A1Z.git@e931ecd0e25ad35df251097ba42921b3d2fa7224'
 ```
 
