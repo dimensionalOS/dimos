@@ -522,6 +522,7 @@ def test_a_search_that_exits_instead_of_raising_is_recorded_as_failed(tmp_path) 
             self._hyperspace = None
             self._hyperspace_error = None
             self._hyperspace_lock = threading.Lock()
+            self._hyperspace_build_lock = threading.Lock()
             self._adopting = threading.Lock()
             self._prepare_job = SimpleNamespace(
                 status=lambda: {"embedding": "idle", "progress": 0.0}
@@ -1273,6 +1274,7 @@ def test_a_search_that_finishes_warming_after_stop_is_closed_not_published(tmp_p
             self._hyperspace = None
             self._hyperspace_error = None
             self._hyperspace_lock = threading.Lock()
+            self._hyperspace_build_lock = threading.Lock()
             self._adopting = threading.Lock()
             self._stopping = threading.Event()
             self._prepare_job = SimpleNamespace(
@@ -1320,6 +1322,7 @@ def _loader_module(tmp_path, make_search):  # type: ignore[no-untyped-def]
             self._hyperspace = None
             self._hyperspace_error = None
             self._hyperspace_lock = threading.Lock()
+            self._hyperspace_build_lock = threading.Lock()
             self._adopting = threading.Lock()
             self._adopted_stamp = (0, 0.0)
             self._stopping = threading.Event()
@@ -1428,3 +1431,64 @@ def test_a_reload_keeps_answering_until_the_replacement_is_warm(tmp_path) -> Non
     assert module._hyperspace_error is None, (
         "a failed reload latched an error, and the adopt returns for ever once it is set"
     )
+
+
+def test_a_question_can_be_answered_while_a_replacement_warms(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Warming must not hold the lock questions are answered under.
+
+    The first fix stopped the reload from NULLING the search, but kept the warm inside
+    `_hyperspace_lock` -- and `_find_with_hyperspace` holds that same lock for the whole
+    of an answer. So every question blocked for the length of the warm instead of failing
+    fast. A hung request is not an improvement on a failed one, and the status poll
+    reporting `ready: true` throughout made it worse: the viewer had no reason to wait.
+    """
+
+    free_during_warm: list[bool] = []
+
+    class Search:
+        def __init__(self, tag: int) -> None:
+            self.tag = tag
+            self.keyframe_count = tag
+            self.segment_count = 0
+
+        def warm(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    module = _loader_module(tmp_path, None)
+    with (
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (1, 1.0),
+        ),
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch",
+            lambda *a, **k: Search(1),
+        ),
+    ):
+        assert module._load_hyperspace() is True
+
+    def build_second(*a, **k):  # type: ignore[no-untyped-def]
+        # What a question would find at the moment the replacement is being warmed.
+        got = module._hyperspace_lock.acquire(blocking=False)
+        free_during_warm.append(got)
+        if got:
+            module._hyperspace_lock.release()
+        return Search(2)
+
+    with (
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (2, 2.0),
+        ),
+        mock.patch("dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch", build_second),
+    ):
+        assert module._load_hyperspace(reload=True) is True
+
+    assert free_during_warm == [True], (
+        "the query lock was held while the replacement warmed: every question blocks for"
+        " the whole warm, and the status poll says ready throughout"
+    )
+    assert module._hyperspace is not None and module._hyperspace.tag == 2

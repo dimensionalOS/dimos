@@ -944,6 +944,86 @@ def test_a_global_map_stream_is_preferred_over_accumulating_the_scans(
     assert built is not None and built[0]["n"] == 1, "the off switch did not turn it off"
 
 
+def test_a_global_map_in_another_frame_is_moved_into_the_world_frame(
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cloud says which frame it is in, and it is not safe to assume that is ours.
+
+    Everything else in the world -- the capture poses, the trajectory, the planner's map
+    -- is in `world_frame`. Reading the global map's coordinates raw put a map written in
+    any other frame somewhere else entirely while looking perfectly reasonable: with a
+    10 m offset between the frames the voxels landed 10 m from the photographs of the same
+    place, and `_map_xyz` (which the planner routes on) went with them.
+
+    When tf cannot place the cloud's frame at all, it is REFUSED rather than placed
+    wrongly, and the next source is used.
+    """
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    memory_world.config.build_replay_on_start = False
+    memory_world.config.map_z_min = None
+    memory_world.config.map_z_max = None
+    memory_world.config.world_frame = "odom"
+    monkeypatch.setattr(
+        memory_world, "_accumulated_cloud", lambda: np.array([[9.0, 9.0, 9.0]], dtype=np.float64)
+    )
+
+    store = memory_world._ensure_store()
+    stream = store.stream(memory_world.config.global_map_stream_name, PointCloud2)
+    world = np.array([[0.0, 0.0, 1.0]], dtype=np.float32)
+    stream.append(PointCloud2.from_numpy(world, frame_id="map", timestamp=1.0), ts=1.0)
+
+    # tf knows where "map" is: the cloud is moved, not taken literally.
+    shifted = np.eye(4)
+    shifted[0, 3] = 10.0
+    monkeypatch.setattr(memory_world, "_frame_pose_at", lambda frame, ts: shifted)
+    built = memory_world._build_voxel_cloud_from_lidar()
+    assert built is not None and memory_world._map_xyz is not None
+    assert memory_world._map_xyz.tolist() == [[10.0, 0.0, 1.0]], (
+        "the global map was read in its own frame and placed 10 m from everything else"
+    )
+
+    # tf cannot place it: refuse and fall through rather than misplace it.
+    monkeypatch.setattr(memory_world, "_frame_pose_at", lambda frame, ts: None)
+    built = memory_world._build_voxel_cloud_from_lidar()
+    assert built is not None and memory_world._map_xyz is not None
+    assert memory_world._map_xyz.tolist() == [[9.0, 9.0, 9.0]], (
+        "an unplaceable global map was used anyway instead of falling back"
+    )
+
+
+def test_a_global_map_entirely_outside_the_height_band_falls_back(
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A global map whose voxels are all filtered out is as useless as an absent one.
+
+    The source was chosen BEFORE the height filter ran, so a global map sitting entirely
+    outside map_z_min/max returned no cloud at all -- and `_build_cloud` turns that into
+    "world load failed" for the viewer -- while the scans it could have accumulated were
+    sitting in the same recording.
+    """
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    memory_world.config.build_replay_on_start = False
+    memory_world.config.map_z_min = 0.0
+    memory_world.config.map_z_max = 2.0
+    memory_world.config.world_frame = "odom"
+    monkeypatch.setattr(
+        memory_world, "_accumulated_cloud", lambda: np.array([[3.0, 3.0, 1.0]], dtype=np.float64)
+    )
+
+    store = memory_world._ensure_store()
+    stream = store.stream(memory_world.config.global_map_stream_name, PointCloud2)
+    # Every voxel through the ceiling.
+    high = np.array([[0.0, 0.0, 10.0], [1.0, 0.0, 11.0]], dtype=np.float32)
+    stream.append(PointCloud2.from_numpy(high, frame_id="odom", timestamp=1.0), ts=1.0)
+
+    built = memory_world._build_voxel_cloud_from_lidar()
+    assert built is not None, "a filtered-out global map cost the viewer its whole world"
+    assert memory_world._map_xyz is not None
+    assert memory_world._map_xyz.tolist() == [[3.0, 3.0, 1.0]], "the fallback was not used"
+
+
 def test_the_camera_frame_comes_from_the_images_and_the_config_overrides_it(
     memory_world: MemoryWorldModule, tmp_path: Path
 ) -> None:

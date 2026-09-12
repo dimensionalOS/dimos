@@ -55,7 +55,27 @@ class WorldCache:
         xyz = latest.data.points_f32()
         if xyz is None or len(xyz) == 0:
             return None
-        return np.asarray(xyz, dtype=np.float32)
+        xyz = np.asarray(xyz, dtype=np.float32)
+        # The cloud says which frame it is in and it is NOT safe to assume that is ours.
+        # Everything else in the world -- the capture poses, the trajectory, the planner's
+        # map -- is in `world_frame`, so a map written in any other frame has to be moved
+        # into it or it sits somewhere else entirely while looking perfectly reasonable.
+        frame = str(getattr(latest.data, "frame_id", "") or "").lstrip("/")
+        if frame and frame != self.config.world_frame:
+            matrix = self._frame_pose_at(frame, float(latest.ts))
+            if matrix is None:
+                # Refuse rather than place it wrongly: the caller falls back to a source
+                # whose frame is known.
+                logger.warning(
+                    "%s is in %r and tf cannot place that in %r; ignoring it",
+                    name,
+                    frame,
+                    self.config.world_frame,
+                )
+                return None
+            logger.info("%s is in %r; moving it into %r", name, frame, self.config.world_frame)
+            xyz = (np.asarray(matrix) @ np.c_[xyz, np.ones(len(xyz))].T).T[:, :3]
+        return np.ascontiguousarray(xyz, dtype=np.float32)
 
     def _build_voxel_cloud_from_lidar(self) -> tuple[dict[str, Any], bytes] | None:
         """The voxel map, packed for the wire.
@@ -67,45 +87,68 @@ class WorldCache:
         reflections do not pile up the way they do in an accumulation. The cloud is
         height-coloured so the user gets depth cues without true RGB.
         """
-        try:
-            xyz: np.ndarray | None = self._replay_read(self._global_map_cloud)
-            if xyz is not None:
+
+        def from_replay() -> np.ndarray | None:
+            if not self.config.build_replay_on_start:
+                return None
+            try:
+                replay = self._ensure_replay()
+                found = self._replay_read(lambda: replay.final_keyframe().data.points_f32())
+                if found is None or found.size == 0:  # scans tf could not place
+                    raise RuntimeError("the replay's final keyframe is empty")
+                logger.info("voxel cloud from the ray-traced replay: %d voxels", len(found))
+                return found
+            except Exception:
+                if self._stopping.is_set():
+                    raise
+                # No seekable replay (a failed build, too few scans): the map still shows.
+                logger.exception("no replay for the cloud; accumulating the scans instead")
+                return None
+
+        def from_global_map() -> np.ndarray | None:
+            found = self._replay_read(self._global_map_cloud)
+            if found is not None:
                 logger.info(
                     "voxel cloud from the %s stream: %d voxels",
                     self.config.global_map_stream_name,
-                    len(xyz),
+                    len(found),
                 )
-            elif self.config.build_replay_on_start:
-                try:
-                    replay = self._ensure_replay()
-                    xyz = self._replay_read(lambda: replay.final_keyframe().data.points_f32())
-                    if xyz.size == 0:  # scans tf could not place: accumulate them instead
-                        raise RuntimeError("the replay's final keyframe is empty")
-                    logger.info("voxel cloud from the ray-traced replay: %d voxels", len(xyz))
-                except Exception:
-                    if self._stopping.is_set():
-                        raise
-                    # No seekable replay (a failed build, too few scans): the map still shows.
-                    logger.exception("no replay for the cloud; accumulating the scans instead")
-                    xyz = self._replay_read(self._accumulated_cloud)
-            else:
-                xyz = self._replay_read(self._accumulated_cloud)
-            if xyz is None or xyz.size == 0:
-                return None
+            return found
 
-            z = xyz[:, 2]
-            low = self.config.map_z_min if self.config.map_z_min is not None else -np.inf
-            high = self.config.map_z_max if self.config.map_z_max is not None else np.inf
-            m = (z >= low) & (z <= high)
-            logger.info(
-                "cloud z spans %.2f..%.2f; keeping %d of %d voxels",
-                float(z.min()),
-                float(z.max()),
-                int(m.sum()),
-                len(z),
-            )
-            xyz = xyz[m]
-            if xyz.size == 0:
+        try:
+            # Best first, and each source is tried THROUGH the height filter before the
+            # next is given up on: a global map whose points all sit outside
+            # map_z_min/max is as useless as an absent one, and committing to it there
+            # left the viewer with "world load failed" while the scans it could have
+            # accumulated were sitting in the recording.
+            xyz: np.ndarray | None = None
+            for source in (
+                from_global_map,
+                from_replay,
+                lambda: self._replay_read(self._accumulated_cloud),
+            ):
+                found = source()
+                if found is None or found.size == 0:
+                    continue
+                z = found[:, 2]
+                low = self.config.map_z_min if self.config.map_z_min is not None else -np.inf
+                high = self.config.map_z_max if self.config.map_z_max is not None else np.inf
+                keep = (z >= low) & (z <= high)
+                logger.info(
+                    "cloud z spans %.2f..%.2f; keeping %d of %d voxels",
+                    float(z.min()),
+                    float(z.max()),
+                    int(keep.sum()),
+                    len(z),
+                )
+                if not keep.any():
+                    logger.warning(
+                        "every voxel was outside the height band; trying the next source"
+                    )
+                    continue
+                xyz = found[keep]
+                break
+            if xyz is None or xyz.size == 0:
                 return None
             self._map_xyz = np.ascontiguousarray(
                 xyz.astype(np.float32)

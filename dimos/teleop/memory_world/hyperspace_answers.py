@@ -128,6 +128,10 @@ class HyperspaceAnswers:
     def _init_hyperspace(self) -> None:
         self._hyperspace: HyperspaceSearch | None = None
         self._hyperspace_lock = threading.Lock()
+        # Serialises BUILDS. Kept separate from _hyperspace_lock, which guards the
+        # published search and is held for the length of a question: warming under
+        # that lock makes every question block for the whole warm.
+        self._hyperspace_build_lock = threading.Lock()
         self._hyperspace_error: str | None = None
         self._adopting = threading.Lock()  # held while a background load is in flight
         self._adopted_stamp: tuple[int, float] = (0, 0.0)  # the index the search was built from
@@ -163,13 +167,19 @@ class HyperspaceAnswers:
             previous = self._hyperspace
             if previous is not None and not reload:
                 return True
-            # Build and warm the replacement BEFORE giving up the one we have. Closing
-            # first left `_hyperspace` None for the seconds a warm takes, and since a
-            # running ingest re-triggers the reload as soon as each one lands, the
-            # reloads chain: measured with a 12 s warm, 9 of 11 status polls answered
-            # `ready: false, keyframes: 0` and every question got "Hyperspace is
-            # reloading". The search was down for essentially the whole re-ingest --
-            # which is the exact workflow the reload was added for.
+        # Built and warmed OUTSIDE `_hyperspace_lock`. Two bugs live here and the first
+        # fix only moved the second one. Closing the old search first left `_hyperspace`
+        # None for the seconds a warm takes and every question answered "Hyperspace is
+        # reloading"; keeping it but warming under the lock meant every question BLOCKED
+        # for the warm instead, because `_find_with_hyperspace` holds the same lock for
+        # the length of an answer. A hung request is not an improvement on a failed one.
+        # The build lock serialises builds; the query lock is taken only to read and to
+        # swap.
+        with self._hyperspace_build_lock:
+            with self._hyperspace_lock:
+                previous = self._hyperspace  # re-read: another build may have published
+                if previous is not None and not reload:
+                    return True
             try:
                 search = HyperspaceSearch(
                     memory_db_for(self.config.store_path),
@@ -209,15 +219,17 @@ class HyperspaceAnswers:
                 with contextlib.suppress(Exception):
                     search.close()
                 return False
-            self._hyperspace = search
-            self._adopted_stamp = stamp
-            self._hyperspace_error = None
-        # Closed after the swap and OUTSIDE the lock: close() takes the search's own
+            with self._hyperspace_lock:
+                replaced = self._hyperspace
+                self._hyperspace = search
+                self._adopted_stamp = stamp
+                self._hyperspace_error = None
+        # Closed after the swap and OUTSIDE both locks: close() takes the search's own
         # lock, so it waits on any query still inside it, and by now every new query
         # goes to the replacement.
-        if previous is not None:
+        if replaced is not None and replaced is not search:
             with contextlib.suppress(Exception):
-                previous.close()
+                replaced.close()
         self._broadcast_search_status()
         return True
 
