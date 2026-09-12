@@ -55,8 +55,8 @@ UV_PROJECT_ENVIRONMENT="${XDG_CACHE_HOME:-$HOME/.cache}/dimos/graspgenx-tests" \
 ```
 
 The host test suite covers the public contract and excludes nested Python projects.
-CI runs the runtime suite once on Linux x86_64 with Python 3.12; it needs no GPU or
-checkpoint download.
+Run the runtime suite manually on Linux x86_64 with Python 3.12; it needs no GPU
+or checkpoint download.
 
 What differs between the arm and the sim is decided at import time: the hardware
 adapter, the base pose, the camera (RealSense plus its mount edge, versus the

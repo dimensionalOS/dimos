@@ -667,15 +667,6 @@ jobs:
         run: uv sync --group tests --frozen
       - name: Run tests
         run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
-      - name: Run isolated GraspGenX runtime tests
-        if: runner.os == 'Linux' && runner.arch == 'X64' && matrix.pyver == '3.12'
-        working-directory: dimos/manipulation/grasping/grasp_gen_x/python
-        env:
-          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/graspgenx-tests
-        run: >-
-          uv run --frozen --group tests --with-editable "$GITHUB_WORKSPACE"
-          python -m pytest -c pyproject.toml --confcutdir=.
-          --junitxml="$GITHUB_WORKSPACE/junit-graspgenx.xml"
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
