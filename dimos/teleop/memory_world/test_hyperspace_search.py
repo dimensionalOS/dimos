@@ -729,3 +729,26 @@ def test_one_camera_looking_once_is_one_viewpoint() -> None:
     assert views(one_frame_four_records) == 1
     assert views(two_real_photographs) == 2
     assert views(two_real_photographs) > views(one_frame_four_records)
+
+
+def test_one_photograph_is_offered_once_however_many_hits_it_produced() -> None:
+    """The pictures shown are pictures, so the same frame must not appear four times.
+
+    Segments carry their own synthetic ids, so one photograph that produced a patch hit and
+    three segment cells looked like four keyframes. `_publish_cluster_images` fetches each
+    by `ts`, so that is the same frame encoded four times and hung as four coincident,
+    z-fighting planes — and a place seen from eight real viewpoints could spend six of its
+    eight slots on copies of one picture.
+    """
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world.hyperspace_search import _pick_evidence
+
+    def hit(ident: int, ts: float, score: float):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(keyframe_id=ident, camera_frame="cam", ts=ts, score=score)
+
+    one_frame = [hit(1, 10.0, 0.9), hit(9001, 10.0, 0.8), hit(9002, 10.0, 0.7)]
+    picked = _pick_evidence([*one_frame, hit(2, 20.0, 0.6)])
+
+    assert [(e.camera_frame, e.ts) for e in picked] == [("cam", 10.0), ("cam", 20.0)]
+    assert picked[0].score == 0.9  # and it is the best hit of that frame that is kept

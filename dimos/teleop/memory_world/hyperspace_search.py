@@ -743,14 +743,23 @@ def viewpoints_of(hits: list[Evidence]) -> int:
 
 
 def _pick_evidence(members: list[Evidence]) -> list[Evidence]:
-    """The best-scoring hit per distinct keyframe, up to ``EVIDENCE_PER_CLUSTER``."""
+    """The best-scoring hit per distinct PICTURE, up to ``EVIDENCE_PER_CLUSTER``.
+
+    Keyed the same way :func:`viewpoints_of` counts, and for the same reason: segments
+    carry their own synthetic ids, so one photograph that produced a patch hit and three
+    segment cells looked like four keyframes here. `_publish_cluster_images` then fetches
+    each by `ts`, so it encodes the SAME frame four times and hangs four coincident planes
+    in the world -- and a place genuinely seen from eight viewpoints can spend six of its
+    eight slots on copies of one picture.
+    """
     members = sorted(members, key=lambda e: -e.score)
     out: list[Evidence] = []
-    seen: set[int] = set()
+    seen: set[tuple[str, float]] = set()
     for evidence in members:
-        if evidence.keyframe_id in seen:
+        picture = (evidence.camera_frame, evidence.ts)
+        if picture in seen:
             continue
-        seen.add(evidence.keyframe_id)
+        seen.add(picture)
         out.append(evidence)
         if len(out) >= EVIDENCE_PER_CLUSTER:
             break
