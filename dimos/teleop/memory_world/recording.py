@@ -480,12 +480,16 @@ def refuse_if_a_rebuild_is_half_done(store: Store, name: str) -> None:
     sitting right there under another name.
     """
     staged = name + STAGED_SUFFIX
-    if staged in store.list_streams():
-        raise SystemExit(
-            f"{staged!r} is already in the recording: an earlier run died holding the only"
-            f" copy of {name!r}. Check it, put it back as {name!r} and drop it before"
-            " running this again."
-        )
+    if staged not in store.list_streams():
+        return
+    held = sum(1 for _ in store.streams[staged])
+    there = sum(1 for _ in store.streams[name]) if name in store.list_streams() else 0
+    raise SystemExit(
+        f"an earlier rebuild of {name!r} died part way and left {staged!r} behind."
+        f" {name!r} has {there} samples and {staged!r} has {held}. If {name!r} is the"
+        f" short one it is the half-written copy: replace it with {staged!r}. Either way,"
+        f" drop {staged!r} before running this again."
+    )
 
 
 def rebuild_stream(store: Store, name: str, rows: list[tuple[float, Any]], payload: Any) -> None:
@@ -604,6 +608,10 @@ def build_tf_tree(store: Store, tf_stream: str) -> TfTree:
     """
     from dimos.teleop.memory_world.tf_tree import TfTree
 
+    # A rebuild that died leaves the real stream truncated and the whole copy beside it.
+    # Nothing else would notice: a short tf still loads, still answers, and places the
+    # second half of the recording nowhere.
+    refuse_if_a_rebuild_is_half_done(store, tf_stream)
     tree = TfTree.from_stream(store.streams[tf_stream])
     static = detect_streams(store).get("tf_static")
     if static is not None:
@@ -645,7 +653,9 @@ def detect_streams(store: Store, image: str | None = None) -> dict[str, Any]:
     """
     by_type: dict[str, list[str]] = {}
     for name in store.list_streams():
-        if name in DERIVED_STREAMS:
+        # A staged copy left by a rebuild that died is the same payload as the real
+        # stream, and would happily be picked as the role it is a copy of.
+        if name in DERIVED_STREAMS or name.endswith(STAGED_SUFFIX):
             continue
         try:
             payload = store.stream(name).data_type

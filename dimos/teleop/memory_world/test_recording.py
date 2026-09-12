@@ -708,3 +708,32 @@ def test_folding_into_an_empty_tf_refuses_rather_than_destroying_the_statics(tmp
         assert "tf_static" in store.list_streams()
     finally:
         store.stop()
+
+
+def test_a_tf_truncated_by_a_dead_rebuild_is_refused_rather_than_read(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A rebuild killed outright leaves the real stream short and the whole copy beside it.
+
+    Nothing else would notice: a truncated tf still loads, still answers, and places the
+    second half of the recording nowhere. It is the one tree everything reads, so the
+    reader everything goes through is where this has to stop.
+    """
+    import pytest
+
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, detect_streams
+
+    store = _tf_store(tmp_path)
+    try:
+        tf = store.stream("tf", TFMessage)
+        tf.append(TFMessage(_edge("odom", "base", 1.0, 1.0)), ts=1.0)  # what survived
+        staged = store.stream("tf__rebuilt", TFMessage)
+        for step in (1.0, 2.0, 3.0):
+            staged.append(TFMessage(_edge("odom", "base", step, step)), ts=step)
+
+        with pytest.raises(SystemExit) as refusal:
+            build_tf_tree(store, "tf")
+        assert "1 samples" in str(refusal.value) and "3" in str(refusal.value)
+        # And the copy is never mistaken for the recording's own tf.
+        assert detect_streams(store)["tf"] == "tf"
+    finally:
+        store.stop()

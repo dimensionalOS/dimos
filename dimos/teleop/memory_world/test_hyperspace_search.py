@@ -21,6 +21,7 @@ from unittest import mock
 import numpy as np
 import pytest
 
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.teleop.memory_world.hyperspace_search import (
     KEYFRAME_STREAM,
     PATCH_STREAM,
@@ -412,3 +413,36 @@ def test_an_index_finished_after_startup_is_picked_up_by_the_status_poll() -> No
         ready = True
         module._adopt_an_index_that_appeared()
         assert loaded.wait(2.0), "the index that appeared was never loaded"
+
+
+def test_an_ingest_that_dies_part_way_leaves_no_half_built_index(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Embedding writes keyframes into the recording one at a time, so a run that dies in
+    the middle leaves a real, readable, wrong index: a few pictures presented as a whole
+    recording.
+
+    The marker is what keeps that from reading as ready, and the keyframes are dropped so
+    a rerun starts from nothing rather than appending a second copy.
+    """
+    from dimos.msgs.std_msgs.String import String
+    from dimos.teleop.memory_world.hyperspace_ingest import ingest_recording
+
+    recording = tmp_path / "walk.db"
+    _tiny_recording(recording).stop()
+
+    def dying_ingest(store, memory, model, **kw):  # type: ignore[no-untyped-def]
+        memory.stream(KEYFRAME_STREAM, String).append(String("one of many"), ts=1.0)
+        memory.stream(PATCH_STREAM, String).append(String("one of many"), ts=1.0)
+        raise RuntimeError("the ingest died half way")
+
+    _stub_hyperspace(monkeypatch, dying_ingest)
+    with pytest.raises(RuntimeError):
+        ingest_recording(recording, model_name="stub")
+
+    assert not memory_db_ready(recording)
+    store = SqliteStore(path=str(recording), must_exist=True)
+    store.start()
+    try:
+        assert KEYFRAME_STREAM not in store.list_streams()
+        assert PATCH_STREAM not in store.list_streams()
+    finally:
+        store.stop()

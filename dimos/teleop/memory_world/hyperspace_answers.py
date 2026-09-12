@@ -162,9 +162,13 @@ class HyperspaceAnswers:
                     scene=self._map_points(),
                 )
                 search.warm()
-            except Exception as error:
+            except (Exception, SystemExit) as error:
+                # SystemExit is how this package reports an expected failure, and it is
+                # not an Exception. Letting it out leaves the search neither loaded nor
+                # failed, so the viewer hides its button and the status poll starts a
+                # fresh load thread every second, for ever, silently.
                 logger.exception("hyperspace failed to load")
-                self._hyperspace_error = str(error)[-200:]
+                self._hyperspace_error = str(error)[-200:] or type(error).__name__
                 return False
             self._hyperspace = search
             self._hyperspace_error = None
