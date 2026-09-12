@@ -35,7 +35,7 @@ from dimos.teleop.memory_world.hyperspace_search import (
     assign_points,
     cluster_voxels,
     memory_db_for,
-    memory_db_keyframes,
+    memory_db_index_stamp,
     memory_db_ready,
 )
 
@@ -459,12 +459,8 @@ def test_an_index_finished_after_startup_is_picked_up_by_the_status_poll() -> No
     module = Module()
     with (
         mock.patch(
-            "dimos.teleop.memory_world.hyperspace_answers.memory_db_keyframes",
-            lambda _p: keyframes,
-        ),
-        mock.patch(
-            "dimos.teleop.memory_world.hyperspace_answers.memory_db_ready",
-            lambda _p: keyframes > 0,
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (keyframes, float(keyframes)),
         ),
     ):
         # Through the poll the viewer actually calls, not the helper: wiring it up is the
@@ -551,7 +547,10 @@ def test_a_search_that_exits_instead_of_raising_is_recorded_as_failed(tmp_path) 
 
     module = Module()
     with (
-        mock.patch("dimos.teleop.memory_world.hyperspace_answers.memory_db_ready", lambda _p: True),
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (1, 1.0),
+        ),
         mock.patch("dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch", exiting_search),
     ):
         assert module._load_hyperspace() is False
@@ -1111,7 +1110,7 @@ def test_the_ingest_hands_its_gate_settings_to_the_keyframe_gate(  # type: ignor
     assert recorded["ingest"]["gate"] is not None, "the gate never reached the ingest config"
 
 
-def _index_db(path: Path, keyframes: int) -> None:
+def _index_db(path: Path, keyframes: int, first_ts: float = 1.0) -> None:
     """A memory db holding *keyframes* keyframes, as an ingest part-way through leaves it."""
     db = sqlite3.connect(path)
     db.execute("CREATE TABLE IF NOT EXISTS _streams (name TEXT)")
@@ -1119,9 +1118,12 @@ def _index_db(path: Path, keyframes: int) -> None:
     for name in (KEYFRAME_STREAM, PATCH_STREAM):
         if name not in have:
             db.execute("INSERT INTO _streams VALUES (?)", (name,))
-    db.execute(f'CREATE TABLE IF NOT EXISTS "{KEYFRAME_STREAM}" (id INTEGER)')
+    db.execute(f'CREATE TABLE IF NOT EXISTS "{KEYFRAME_STREAM}" (id INTEGER, ts REAL)')
     db.execute(f'DELETE FROM "{KEYFRAME_STREAM}"')
-    db.executemany(f'INSERT INTO "{KEYFRAME_STREAM}" VALUES (?)', [(i,) for i in range(keyframes)])
+    db.executemany(
+        f'INSERT INTO "{KEYFRAME_STREAM}" VALUES (?, ?)',
+        [(i, first_ts + i) for i in range(keyframes)],
+    )
     db.commit()
     db.close()
 
@@ -1150,12 +1152,13 @@ def test_an_index_adopted_mid_ingest_is_loaded_again_once_it_grows(tmp_path) -> 
         def __init__(self) -> None:
             self._hyperspace = None
             self._adopting = threading.Semaphore(1)
+            self._adopted_stamp = (0, 0.0)
 
         def _load_hyperspace(self, reload: bool = False) -> bool:
             loads.append(reload)
-            self._hyperspace = SimpleNamespace(
-                keyframe_count=memory_db_keyframes(recording), segment_count=0
-            )
+            stamp = memory_db_index_stamp(recording)
+            self._hyperspace = SimpleNamespace(keyframe_count=stamp[0], segment_count=0)
+            self._adopted_stamp = stamp
             return True
 
     fake = Fake()
@@ -1185,3 +1188,124 @@ def test_an_index_adopted_mid_ingest_is_loaded_again_once_it_grows(tmp_path) -> 
         " every answer would come from a single picture, for the life of the process"
     )
     assert fake._hyperspace.keyframe_count == 40
+
+
+def test_an_index_replaced_by_a_smaller_one_is_still_picked_up(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A drop_index and re-ingest must not leave the old search serving.
+
+    Comparing only "did the count grow" fixed the adopt-a-partial-index bug and left two
+    more: a rebuild landing on the SAME number of keyframes, or on FEWER, both kept the
+    module serving an index that no longer exists. The stamp is (count, newest keyframe
+    ts), so it moves whenever the keyframes are rewritten, in either direction.
+    """
+    from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
+
+    recording = tmp_path / "walk.db"
+    _index_db(recording, 40, first_ts=1000.0)
+
+    loads: list[bool] = []
+
+    class Fake:
+        _hyperspace_error = None
+        _prepare_job = SimpleNamespace(status=lambda: {"embedding": "idle", "progress": ""})
+        config = SimpleNamespace(store_path=str(recording))
+
+        def __init__(self) -> None:
+            self._hyperspace = None
+            self._adopting = threading.Semaphore(1)
+            self._adopted_stamp = (0, 0.0)
+
+        def _load_hyperspace(self, reload: bool = False) -> bool:
+            loads.append(reload)
+            stamp = memory_db_index_stamp(recording)
+            self._hyperspace = SimpleNamespace(keyframe_count=stamp[0], segment_count=0)
+            self._adopted_stamp = stamp
+            return True
+
+    fake = Fake()
+    adopt = HyperspaceAnswers._adopt_an_index_that_appeared
+
+    def settle() -> None:
+        for _ in range(200):
+            if fake._adopting.acquire(blocking=False):
+                fake._adopting.release()
+                return
+            time.sleep(0.01)
+
+    adopt(fake)
+    settle()
+    assert loads == [False] and fake._hyperspace.keyframe_count == 40
+
+    # dropped and re-ingested to FEWER keyframes, at a later time
+    _index_db(recording, 12, first_ts=5000.0)
+    adopt(fake)
+    settle()
+    assert loads == [False, True], (
+        "the index was rebuilt smaller and the module kept serving the old one:"
+        " every answer would come from keyframes that are no longer in the recording"
+    )
+    assert fake._hyperspace.keyframe_count == 12
+
+
+def test_a_search_that_finishes_warming_after_stop_is_closed_not_published(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Warming takes seconds and runs on its own thread; stop() does not wait for it.
+
+    stop() neither joins the adopt thread nor holds `_hyperspace_lock`, so a module stopped
+    while a search was warming saw nothing to close and finished. The loader then published
+    into the stopped module, leaving the model and its store open until the process exit.
+    """
+    from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
+
+    closed: list[str] = []
+
+    class Search:
+        keyframe_count = 40
+        segment_count = 0
+
+        def warm(self) -> None:
+            pass
+
+        def close(self) -> None:
+            closed.append("closed")
+
+    class Module(HyperspaceAnswers):
+        def __init__(self) -> None:
+            self._hyperspace = None
+            self._hyperspace_error = None
+            self._hyperspace_lock = threading.Lock()
+            self._adopting = threading.Lock()
+            self._stopping = threading.Event()
+            self._prepare_job = SimpleNamespace(
+                status=lambda: {"embedding": "idle", "progress": 0.0}
+            )
+            self.config = SimpleNamespace(
+                store_path=str(tmp_path / "walk.db"),
+                hyperspace_model_name="m",
+                world_frame="odom",
+                hyperspace_voxel_size=0.1,
+                hyperspace_device="cpu",
+                hyperspace_segments=False,
+                hyperspace_refine=False,
+            )
+
+        def _map_points(self):  # type: ignore[no-untyped-def]
+            return None
+
+        def _broadcast(self, message: bytes | str) -> None:
+            pass
+
+    module = Module()
+    module._stopping.set()  # stop() happened while this search was warming
+    with (
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (40, 40.0),
+        ),
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch",
+            lambda *a, **k: Search(),
+        ),
+    ):
+        assert module._load_hyperspace() is False, "published into a stopped module"
+    assert module._hyperspace is None, "a stopped module was left holding a live search"
+    assert closed == ["closed"], "the warmed search was neither published nor closed"

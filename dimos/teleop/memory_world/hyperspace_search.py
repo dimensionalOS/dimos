@@ -372,33 +372,47 @@ def memory_db_ready(recording: str | Path) -> bool:
     rerun. Nothing writes the marker any more; :func:`drop_index` still deletes one it
     finds, so an old marker cannot vouch for keyframes that have since been dropped.
     """
-    return memory_db_keyframes(recording) > 0
+    return memory_db_index_stamp(recording)[0] > 0
 
 
-def memory_db_keyframes(recording: str | Path) -> int:
-    """How many keyframes the recording's memory db holds; 0 when it has no index.
+def memory_db_index_stamp(recording: str | Path) -> tuple[int, float]:
+    """``(keyframes, latest keyframe stamp)`` for the recording's index; ``(0, 0.0)``
+    when it has none.
 
-    The count, not just the fact, because without a completion marker it is the only
-    thing that distinguishes a half-written index from a finished one. A reader that
-    adopted an index mid-ingest can compare this against what it loaded and notice that
-    the ingest has since written more.
+    Identity, not just size, because without a completion marker this is all a reader
+    has to tell one index from another. A count alone cannot see a ``drop_index`` and
+    re-ingest that lands on the same number of keyframes, nor one that lands on fewer --
+    and a reader comparing only "did it grow" would serve the deleted index for ever.
+    The newest stamp moves whenever the keyframes are rewritten, so the pair changes
+    whenever the index does.
     """
     path = memory_db_for(recording)
     if not path.is_file():
-        return 0
+        return (0, 0.0)
     wanted = {KEYFRAME_STREAM, PATCH_STREAM}
     try:
         connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         try:
             names = {row[0] for row in connection.execute("SELECT name FROM _streams")}
             if not wanted <= names:
-                return 0
+                return (0, 0.0)
             (count,) = connection.execute(f'SELECT count(*) FROM "{KEYFRAME_STREAM}"').fetchone()
-            return int(count)
+            latest = 0.0
+            try:
+                (newest,) = connection.execute(
+                    f'SELECT max(ts) FROM "{KEYFRAME_STREAM}"'
+                ).fetchone()
+                latest = float(newest or 0.0)
+            except sqlite3.Error:
+                # No `ts` column. Every store this package writes has one, so this is a
+                # hand-made or foreign table -- the count still identifies it, and
+                # reporting "no index" for a table full of keyframes would be worse.
+                pass
+            return (int(count), latest)
         finally:
             connection.close()
     except sqlite3.Error:
-        return 0
+        return (0, 0.0)
 
 
 def _use_the_cores() -> None:

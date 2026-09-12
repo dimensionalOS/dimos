@@ -29,6 +29,7 @@ file-size limit). It owns:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -47,7 +48,7 @@ from dimos.teleop.memory_world.hyperspace_search import (
     HeatmapAnswer,
     HyperspaceSearch,
     memory_db_for,
-    memory_db_keyframes,
+    memory_db_index_stamp,
     memory_db_ready,
 )
 from dimos.teleop.memory_world.messages import (
@@ -129,6 +130,7 @@ class HyperspaceAnswers:
         self._hyperspace_lock = threading.Lock()
         self._hyperspace_error: str | None = None
         self._adopting = threading.Lock()  # held while a background load is in flight
+        self._adopted_stamp: tuple[int, float] = (0, 0.0)  # the index the search was built from
         self._prepare_job = EmbeddingJob(
             on_finished=lambda _job: self._broadcast_search_status(),
             name="hyperspace ingest",
@@ -149,7 +151,11 @@ class HyperspaceAnswers:
         """Warm the search over the recording's memory db when it has one. Slow (seconds); off the request path.
         Not while the ingest is still writing that db (it would load a partial index); *reload*
         replaces a search already loaded, for when the ingest has just finished."""
-        if not memory_db_ready(self.config.store_path):
+        # Read BEFORE the search is built. An ingest that writes more while we warm must
+        # still read as a change at the next poll, which it would not if this were taken
+        # afterwards -- the stamp would describe a db newer than the search built from it.
+        stamp = memory_db_index_stamp(self.config.store_path)
+        if stamp[0] <= 0:
             return False
         if self._prepare_job.status()["embedding"] == "running" and not reload:
             return False
@@ -178,7 +184,20 @@ class HyperspaceAnswers:
                 logger.exception("hyperspace failed to load")
                 self._hyperspace_error = str(error)[-200:] or type(error).__name__
                 return False
+            # A module stopped while this was warming must not be handed a live search:
+            # stop() neither joins this thread nor holds `_hyperspace_lock`, so it sees
+            # nothing to close and finishes, and publishing here would leave the model
+            # and its store open in a stopped module until the process exits.
+            stopping = getattr(self, "_stopping", None)  # a sibling mixin's, not ours
+            if (stopping is not None and stopping.is_set()) or getattr(
+                self, "_module_closed", False
+            ):
+                logger.info("stopped while the index was warming; closing it again")
+                with contextlib.suppress(Exception):
+                    search.close()
+                return False
             self._hyperspace = search
+            self._adopted_stamp = stamp
             self._hyperspace_error = None
         self._broadcast_search_status()
         return True
@@ -210,26 +229,28 @@ class HyperspaceAnswers:
             return
         if self._prepare_job.status()["embedding"] == "running":
             return  # our own ingest, which adopts on its own when it finishes
-        on_disk = memory_db_keyframes(self.config.store_path)
-        if on_disk <= 0:
+        stamp = memory_db_index_stamp(self.config.store_path)
+        if stamp[0] <= 0:
             return
         search = self._hyperspace
-        # An index that GREW is one we adopted while it was still being written. Without
-        # a completion marker the first keyframe flush makes the db read as ready, so a
-        # terminal ingest gets adopted a second or two in -- and this used to latch on
-        # `self._hyperspace is not None`, serving that one frame as the whole recording
-        # for the life of the process. Rerunning the ingest could not fix it, because
-        # nothing ever looked at the db again.
-        if search is not None and on_disk <= search.keyframe_count:
+        # A DIFFERENT index, not merely a bigger one. Without a completion marker the
+        # first keyframe flush makes the db read as ready, so a terminal ingest gets
+        # adopted a second or two in -- and this used to latch on `self._hyperspace is
+        # not None`, serving that one frame as the whole recording for the life of the
+        # process. Comparing only "did it grow" fixed that case and left two others: a
+        # drop_index and re-ingest landing on the same count, or on fewer keyframes,
+        # would both keep serving an index that no longer exists. The stamp moves
+        # whenever the keyframes are rewritten, in either direction.
+        if search is not None and stamp == self._adopted_stamp:
             return
         if not self._adopting.acquire(blocking=False):
             return  # already loading; warming takes seconds and must not block the poll
         replacing = search is not None
         if replacing:
             logger.info(
-                "the index grew from %d keyframes to %d; loading it again",
-                search.keyframe_count,
-                on_disk,
+                "the index changed (%d keyframes -> %d); loading it again",
+                self._adopted_stamp[0],
+                stamp[0],
             )
 
         def load() -> None:

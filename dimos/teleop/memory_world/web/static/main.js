@@ -420,11 +420,14 @@ async function startReplay() {
     scene.onLayerChange = syncBoxesFromScene;
     // Polled while the server builds the replay streams (up to half an hour on a long
     // recording); a build the server remembers as failed will not change, so stop then.
-    // "not started" will not change either unless something asks for a build -- with
-    // build_replay_on_start off, or the voxel streams deleted, nothing ever will -- so it
-    // gets a bounded wait rather than the endless one that left a 503 in the console
-    // every five seconds for as long as the page was open.
-    const IDLE_ATTEMPTS = 12;   // ~1 min: a build that is going to start has started
+    // "not started" usually will not change -- with build_replay_on_start off, or the
+    // voxel streams deleted, nothing ever asks for a build -- and polling it every five
+    // seconds left a 503 in the console for as long as the page stayed open. So it backs
+    // OFF rather than giving up: "not started" is also what a worker blocked on the store
+    // lock reports before it reaches "building", and a recording whose first scan takes a
+    // minute to reach would have had its timeline declared missing while it was on its way.
+    const IDLE_ATTEMPTS = 12;   // ~1 min of five-second tries before slowing down
+    const SLOW_MS = 60000;
     let idle = 0;
     for (let attempt = 0; scene === owner; attempt++) {
         try {
@@ -444,12 +447,12 @@ async function startReplay() {
                 return;
             }
             idle = reason.includes('not started') ? idle + 1 : 0;
-            if (idle >= IDLE_ATTEMPTS) {
-                diag('replay_gave_up', { error: reason, attempts: attempt + 1 });
-                setStatus('Timeline unavailable: this recording has no voxel replay');
-                return;
+            const slow = idle >= IDLE_ATTEMPTS;
+            if (slow && idle === IDLE_ATTEMPTS) {   // say it once, on the way down
+                diag('replay_backing_off', { error: reason, attempts: attempt + 1 });
+                setStatus('No timeline for this recording yet; still checking');
             }
-            await new Promise((resolve) => setTimeout(resolve, 5000));
+            await new Promise((resolve) => setTimeout(resolve, slow ? SLOW_MS : 5000));
         }
     }
 }
