@@ -1309,3 +1309,122 @@ def test_a_search_that_finishes_warming_after_stop_is_closed_not_published(tmp_p
         assert module._load_hyperspace() is False, "published into a stopped module"
     assert module._hyperspace is None, "a stopped module was left holding a live search"
     assert closed == ["closed"], "the warmed search was neither published nor closed"
+
+
+def _loader_module(tmp_path, make_search):  # type: ignore[no-untyped-def]
+    """A HyperspaceAnswers with only what `_load_hyperspace` touches."""
+    from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
+
+    class Module(HyperspaceAnswers):
+        def __init__(self) -> None:
+            self._hyperspace = None
+            self._hyperspace_error = None
+            self._hyperspace_lock = threading.Lock()
+            self._adopting = threading.Lock()
+            self._adopted_stamp = (0, 0.0)
+            self._stopping = threading.Event()
+            self._prepare_job = SimpleNamespace(
+                status=lambda: {"embedding": "idle", "progress": 0.0}
+            )
+            self.config = SimpleNamespace(
+                store_path=str(tmp_path / "walk.db"),
+                hyperspace_model_name="m",
+                world_frame="odom",
+                hyperspace_voxel_size=0.1,
+                hyperspace_device="cpu",
+                hyperspace_segments=False,
+                hyperspace_refine=False,
+            )
+
+        def _map_points(self):  # type: ignore[no-untyped-def]
+            return None
+
+        def _broadcast(self, message: bytes | str) -> None:
+            pass
+
+    return Module()
+
+
+def test_a_reload_keeps_answering_until_the_replacement_is_warm(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The search must stay live while its replacement warms, and survive a failed reload.
+
+    The reload used to close the loaded search and set `_hyperspace = None` BEFORE
+    building the new one. Warming takes seconds, and a running ingest re-triggers the
+    reload as soon as each one lands, so the reloads chain: with a 12 s warm, 9 of 11
+    status polls answered `ready: false, keyframes: 0` and every question got
+    "Hyperspace is reloading". The search was down for essentially the whole re-ingest --
+    the exact workflow the reload exists to serve.
+
+    Worse, a FAILED reload was unrecoverable: the close had already happened, so the
+    error was latched with `_hyperspace` already None, and `_adopt_an_index_that_appeared`
+    returns for ever once `_hyperspace_error` is set.
+    """
+    closed: list[int] = []
+
+    class Search:
+        def __init__(self, tag: int) -> None:
+            self.tag = tag
+            self.keyframe_count = tag
+            self.segment_count = 0
+
+        def warm(self) -> None:
+            pass
+
+        def close(self) -> None:
+            closed.append(self.tag)
+
+    module = _loader_module(tmp_path, None)
+    seen_during_warm: list[object] = []
+
+    def build_first(*a, **k):  # type: ignore[no-untyped-def]
+        return Search(1)
+
+    with (
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (1, 1.0),
+        ),
+        mock.patch("dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch", build_first),
+    ):
+        assert module._load_hyperspace() is True
+    first = module._hyperspace
+    assert first is not None and first.tag == 1
+
+    # A reload whose warm observes what a query would see at that moment.
+    def build_second(*a, **k):  # type: ignore[no-untyped-def]
+        seen_during_warm.append(module._hyperspace)
+        return Search(2)
+
+    with (
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (2, 2.0),
+        ),
+        mock.patch("dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch", build_second),
+    ):
+        assert module._load_hyperspace(reload=True) is True
+    assert seen_during_warm == [first], (
+        "the old search was dropped before the new one was warm: every question in that"
+        " window answers 'Hyperspace is reloading' and the status poll reports 0 keyframes"
+    )
+    assert module._hyperspace is not None and module._hyperspace.tag == 2
+    assert closed == [1], "the replaced search was not closed after the swap"
+
+    # A reload that FAILS keeps the working search and does not latch an error.
+    def build_broken(*a, **k):  # type: ignore[no-untyped-def]
+        raise SystemExit("the memory db is from another model")
+
+    with (
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (3, 3.0),
+        ),
+        mock.patch("dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch", build_broken),
+    ):
+        assert module._load_hyperspace(reload=True) is False
+    assert module._hyperspace is not None and module._hyperspace.tag == 2, (
+        "a failed reload cost the module its working search"
+    )
+    assert module._hyperspace_error is None, (
+        "a failed reload latched an error, and the adopt returns for ever once it is set"
+    )

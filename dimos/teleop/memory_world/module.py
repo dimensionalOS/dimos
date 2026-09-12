@@ -1131,6 +1131,15 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
                     if self._stopping.is_set():
                         raise RuntimeError("replay not built: stopping")
                     if self._replay_thread is None or not self._replay_thread.is_alive():
+                        # Said HERE, not deeper in the build. `_replay_locked` only
+                        # reaches its own "building" when the streams are MISSING; on a
+                        # recording that already has them -- every run after the first --
+                        # it goes straight from "not started" to "ready", while this
+                        # thread is alive and every poll meanwhile fails the non-blocking
+                        # lock and answers 503 "replay not started". The viewer now reads
+                        # "not started" as settled, so the server was telling it "there
+                        # will never be a timeline" during the build it had just started.
+                        self._replay_progress = "building"
                         thread = threading.Thread(
                             target=self._build_replay, daemon=True, name="MemoryWorldReplay"
                         )

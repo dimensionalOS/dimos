@@ -25,6 +25,7 @@ import json
 from pathlib import Path
 import sqlite3
 import struct
+import time
 from unittest import mock
 
 import numpy as np
@@ -409,22 +410,58 @@ def test_siglipify_config_names_the_stream_and_model() -> None:
 
 
 def test_embedding_job_reports_progress_then_adopts() -> None:
-    """Progress bars redraw with carriage returns; each redraw is a progress line."""
+    """Progress bars redraw with carriage returns; each redraw is a progress line.
+
+    The fixture below is built entirely around the ``\\r`` splitting, but this used to
+    assert only that the job adopted and ended on its constant done_message -- so
+    deleting the `.replace("\\r", "\\n")` from embed.py left the whole suite green.
+    What that removes is user-visible: siglipify and the Hyperspace ingest both redraw a
+    bar with carriage returns and no newline, so without the split the viewer's
+    "Preparing search" line never moves off "starting siglipify" for the whole run.
+    So the progress is WATCHED here, not just the outcome.
+    """
     import threading
 
     from dimos.teleop.memory_world.embed import EmbeddingJob
 
     finished = threading.Event()
     seen: list[str] = []
+    progress: list[str] = []
     job = EmbeddingJob(on_finished=lambda j: finished.set())
-    script = "printf 'loading\\r10/20\\r20/20\\nappended 20\\n'; test -f \"$1\""
+    # A bar redrawing in place: no newline until the very end.
+    # Paced, because the point is that each redraw becomes its own progress line while
+    # the job runs -- printf'ing it all at once finishes before anything can observe it.
+    script = (
+        "printf 'loading\\r'; sleep 0.08;"
+        " printf '10/20\\r'; sleep 0.08;"
+        " printf '20/20\\r'; sleep 0.08;"
+        " printf '\\nappended 20\\n'; test -f \"$1\""
+    )
+
+    watching = threading.Event()
+
+    def watch() -> None:
+        while not watching.is_set():
+            line = job.status()["progress"]
+            if not progress or progress[-1] != line:
+                progress.append(line)
+            time.sleep(0.002)
+
+    watcher = threading.Thread(target=watch, daemon=True)
+    watcher.start()
     assert job.start(
         ["bash", "-c", script, "--"], "model = 'x'\n", adopt=lambda: seen.append("adopted")
     )
     assert not job.start(["true"], "", adopt=lambda: None)  # one at a time
     assert finished.wait(10)
+    watching.set()
+    watcher.join(2)
+
     assert seen == ["adopted"]
     assert job.status() == {"embedding": "done", "progress": "embeddings added"}
+    # Each redraw has to have been its own progress line. Without the carriage-return
+    # split the job reports "starting siglipify" until the first newline arrives.
+    assert "10/20" in progress and "20/20" in progress, progress
 
 
 def test_embedding_job_failure_keeps_the_last_line() -> None:

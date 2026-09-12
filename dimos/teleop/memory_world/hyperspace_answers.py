@@ -160,11 +160,16 @@ class HyperspaceAnswers:
         if self._prepare_job.status()["embedding"] == "running" and not reload:
             return False
         with self._hyperspace_lock:
-            if self._hyperspace is not None and not reload:
+            previous = self._hyperspace
+            if previous is not None and not reload:
                 return True
-            if self._hyperspace is not None:
-                self._hyperspace.close()
-                self._hyperspace = None
+            # Build and warm the replacement BEFORE giving up the one we have. Closing
+            # first left `_hyperspace` None for the seconds a warm takes, and since a
+            # running ingest re-triggers the reload as soon as each one lands, the
+            # reloads chain: measured with a 12 s warm, 9 of 11 status polls answered
+            # `ready: false, keyframes: 0` and every question got "Hyperspace is
+            # reloading". The search was down for essentially the whole re-ingest --
+            # which is the exact workflow the reload was added for.
             try:
                 search = HyperspaceSearch(
                     memory_db_for(self.config.store_path),
@@ -182,6 +187,14 @@ class HyperspaceAnswers:
                 # failed, so the viewer hides its button and the status poll starts a
                 # fresh load thread every second, for ever, silently.
                 logger.exception("hyperspace failed to load")
+                if previous is not None:
+                    # A reload that fails must not cost the working search. It used to:
+                    # the close happened first, so `_hyperspace` was already None, and
+                    # `_adopt_an_index_that_appeared` returns for ever once
+                    # `_hyperspace_error` is set -- so one failed reload permanently left
+                    # a module with no search and no way back.
+                    logger.warning("keeping the index that is already loaded")
+                    return False
                 self._hyperspace_error = str(error)[-200:] or type(error).__name__
                 return False
             # A module stopped while this was warming must not be handed a live search:
@@ -199,6 +212,12 @@ class HyperspaceAnswers:
             self._hyperspace = search
             self._adopted_stamp = stamp
             self._hyperspace_error = None
+        # Closed after the swap and OUTSIDE the lock: close() takes the search's own
+        # lock, so it waits on any query still inside it, and by now every new query
+        # goes to the replacement.
+        if previous is not None:
+            with contextlib.suppress(Exception):
+                previous.close()
         self._broadcast_search_status()
         return True
 

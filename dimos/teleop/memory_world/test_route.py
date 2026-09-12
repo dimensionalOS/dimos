@@ -119,10 +119,23 @@ def test_no_route_when_walled_off() -> None:
 
 
 def test_sparse_path_samples_still_make_one_corridor() -> None:
-    sparse = DOORWAY_DRIVE[::20]  # a metre between samples
+    """A path sampled far apart still has to carve ONE connected corridor.
+
+    `[::20]` leaves a 1.03 m gap, which CORRIDOR_M = 1.5 bridges on its own -- so
+    `densify` was a no-op for that fixture and the test passed with the whole function
+    replaced by `return path`. At `[::60]` the gap is 3.09 m, wider than the corridor,
+    and the samples become a chain of islands the planner cannot cross: measured route
+    length 11.27 m with densify against 12.70 m without, and at `[::100]` (5.03 m) there
+    is no route at all without it. So this samples where the behaviour is load-bearing.
+    """
+    sparse = DOORWAY_DRIVE[::60]  # ~3 m between samples: wider than CORRIDOR_M
     planner = RoutePlanner.from_voxels(_room_with_doorway(), sparse, voxel_size=VOXEL)
     route = planner.plan((1.0, 1.0), (9.0, 1.0))
     assert route is not None and route.length_m > 8
+    # The corridor is continuous, not a chain of islands bridged by a longer way round.
+    assert route.length_m < 12.0, (
+        f"route detoured around a gap densify should have filled: {route.length_m}"
+    )
 
 
 def test_unreachable_snap_returns_none() -> None:

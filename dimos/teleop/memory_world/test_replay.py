@@ -476,3 +476,53 @@ def test_a_viewer_request_cannot_build_a_replay_the_operator_turned_off(tmp_path
     assert module._replay_thread is None, "a build thread was started anyway"
     assert module._replay_lock.acquire(blocking=False), "the lock was not released"
     module._replay_lock.release()
+
+
+def test_a_started_build_reports_building_not_not_started(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """While a build thread is alive the status must not say "not started".
+
+    `_replay_locked` sets "building" only when the voxel streams are MISSING. On a
+    recording that already has them -- every run after the first -- it goes straight from
+    "not started" to "ready", while `_replay_if_ready` has already started the thread and
+    every poll for its whole duration fails the non-blocking lock and answers
+    503 "replay not started".
+
+    That was survivable while the viewer treated "not started" as "not yet". It is not
+    now: the viewer reads it as settled and prints "this recording has no timeline" over
+    a build that may be minutes from finishing -- and a first connection on a long mcap
+    is budgeted at about a minute.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world.module import MemoryWorldModule
+
+    started = threading.Event()
+    release = threading.Event()
+
+    module = MemoryWorldModule.__new__(MemoryWorldModule)
+    module._replay = None
+    module._replay_error = None
+    module._replay_index = None
+    module._replay_lock = threading.Lock()
+    module._workers_lock = threading.Lock()
+    module._stopping = threading.Event()
+    module._replay_thread = None
+    module._replay_progress = "not started"
+    module.config = SimpleNamespace(build_replay_on_start=True)
+    module._build_replay = lambda: (started.set(), release.wait(5))  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError) as first:
+        module._replay_if_ready()
+    assert started.wait(2), "no build thread was started"
+    assert "building" in str(first.value), str(first.value)
+
+    # And every poll while it runs says the same, rather than "not started".
+    with pytest.raises(RuntimeError) as again:
+        module._replay_if_ready()
+    assert "not started" not in str(again.value), (
+        f"a live build reported {str(again.value)!r}, which the viewer treats as settled"
+    )
+    release.set()
+    if module._replay_thread is not None:
+        module._replay_thread.join(5)
