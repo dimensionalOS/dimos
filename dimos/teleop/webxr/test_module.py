@@ -496,7 +496,7 @@ def test_go2_unknown_controller_identity_publishes_zero_velocity(
 
 def test_text_body_tracking_snapshot_is_published(
     module: WebXRTeleopModule,
-    mocker,
+    mocker: pytest_mock.MockerFixture,
 ) -> None:
     publish = mocker.patch.object(module.body_tracking, "publish")
     payload = json.dumps(
@@ -525,7 +525,7 @@ def test_text_body_tracking_snapshot_is_published(
 
 def test_malformed_text_message_is_dropped(
     module: WebXRTeleopModule,
-    mocker,
+    mocker: pytest_mock.MockerFixture,
 ) -> None:
     publish = mocker.patch.object(module.body_tracking, "publish")
 
@@ -537,7 +537,7 @@ def test_malformed_text_message_is_dropped(
 
 def test_binary_pose_dispatch_remains_on_existing_decoder(
     module: WebXRTeleopModule,
-    mocker,
+    mocker: pytest_mock.MockerFixture,
 ) -> None:
     body_publish = mocker.patch.object(module.body_tracking, "publish")
     pose = PoseStamped(ts=1.0, frame_id="left", position=[1.0, 2.0, 3.0])

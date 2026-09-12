@@ -52,10 +52,12 @@ export function Badge({ store, ch, health, staleMs, unit, testId }: {
   } else {
     text = `${stats.hz.toFixed(1)} ${unit}`;
   }
+  const state = stats.frames === 0 ? "waiting" : error ? "error" : stale ? "stale" : "live";
   return (
     <span
       className={error || stale ? styles.badgeStale : styles.badge}
       data-testid={testId}
+      data-state={state}
       data-stale={stale || undefined}
       data-error={error || undefined}
       role="status"
@@ -96,7 +98,21 @@ export function PanelFrame({ spec, badge, children }: {
             data-testid={`panel-${spec.id}-max`}
             onClick={() => setMaximized((v) => !v)}
           >
-            ⛶
+            <svg
+              aria-hidden="true"
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              {maximized
+                ? <path d="M4.5 1v3.5H1M7.5 1v3.5H11M4.5 11V7.5H1M7.5 11V7.5H11" />
+                : <path d="M1 4.5V1h3.5M11 4.5V1H7.5M1 7.5V11h3.5M11 7.5V11H7.5" />}
+            </svg>
           </button>
         </span>
       </div>

@@ -364,6 +364,24 @@ def test_qualified_global_relay_flag_is_applied_before_composition(
     assert stubbed_run["parsed_config"].global_config["local_relay"] is True
 
 
+def test_run_relay_ca_flag_is_applied_before_composition(
+    stubbed_run: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str | None] = []
+
+    def compose(blueprint: Any) -> Any:
+        observed.append(global_config.relay_ca)
+        return blueprint
+
+    monkeypatch.setattr(lifecycle, "_with_relay_bridge", compose)
+
+    result = CliRunner().invoke(main, ["run", "alpha", "--relay-ca", "/ca.pem"])
+
+    assert result.exit_code == 0, result.output
+    assert observed == ["/ca.pem"]
+
+
 def test_run_rejects_ambiguous_short_config_flag(stubbed_run: dict[str, Any]) -> None:
     result = CliRunner().invoke(main, ["run", "alpha", "beta", "--map-file", "office"])
 

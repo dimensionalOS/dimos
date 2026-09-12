@@ -117,7 +117,7 @@ def chromium_page() -> Iterator[Page]:
 def test_stats_tab_lists_every_process(stats_page_url: str, chromium_page: Page) -> None:
     chromium_page.goto(stats_page_url)
     # p0 is the video panel on the overview; p1 the page.
-    tab = chromium_page.get_by_test_id("tab-p1")
+    tab = chromium_page.get_by_test_id("tab-page-p1")
     expect(tab).to_have_text("Stats", timeout=120_000)
     tab.click()
     worker = chromium_page.get_by_test_id("stats-resource_stats-row-worker-0")

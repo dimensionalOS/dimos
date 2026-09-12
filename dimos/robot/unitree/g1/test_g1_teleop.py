@@ -42,7 +42,6 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import (
 )
 from dimos.robot.unitree.g1.manip_config import (
     G1_LEFT_ARM_JOINTS,
-    G1_MANIPULATION_MODEL,
     G1_RIGHT_ARM_JOINTS,
     g1_manipulation_model_config,
 )
@@ -170,7 +169,6 @@ def test_g1_teleop_wires_manipulation_to_existing_coordinator() -> None:
     model = manipulation_kwargs["model"]
 
     assert manipulation_kwargs["instance_name"] == "G1Manipulation"
-    assert model.model is G1_MANIPULATION_MODEL
     assert model.joint_names == g1_joints
     assert [group.name for group in model.planning_groups] == ["left_arm", "right_arm"]
     assert manipulation_kwargs["visualization"] == ViserVisualizationConfig(host="0.0.0.0")

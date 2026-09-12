@@ -33,11 +33,12 @@ except ImportError as exc:
         "Install the manipulation extra before selecting the roboplan backend."
     ) from exc
 
-from dimos.manipulation.planning.groups.models import PlanningGroupSelection
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanCartesianPathConfig,
     RoboPlanPlannerConfig,
 )
+from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.planners.selected_joint_space import normalize_selection_target
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import (
@@ -78,6 +79,7 @@ class RoboPlanPlanner:
             raise TypeError("RoboPlanPlanner requires a RoboPlanWorld")
         self._world = world
         self._config = config.model_copy(deep=True)
+        self._shared_rrt = RRTConnectPlanner()
 
     def plan_joint_path(
         self,
@@ -92,6 +94,27 @@ class RoboPlanPlanner:
                 status=PlanningStatus.NO_SOLUTION,
                 message="RoboPlan-native planner requires its RoboPlanWorld instance",
             )
+        if not self._world.is_ready():
+            return PlanningResult(
+                status=PlanningStatus.INVALID_START,
+                message="RoboPlan planning scene is not ready: authoritative state is incomplete",
+            )
+        prepared = self._world.get_prepared_model()
+        model_config = prepared.config
+        if not prepared.joint_space.is_interval_only:
+            all_joints = PlanningGroup(
+                id="all",
+                joint_names=tuple(model_config.joint_names),
+                base_link=model_config.base_link,
+            )
+            return self._shared_rrt.plan_selected_joint_path(
+                world,
+                PlanningGroupSelection.from_groups((all_joints,)),
+                start,
+                goal,
+                timeout,
+                5000,
+            )
         try:
             q_start = self._world.ordered_joint_positions(start)
         except ValueError as exc:
@@ -105,7 +128,7 @@ class RoboPlanPlanner:
                 status=PlanningStatus.INVALID_START,
                 message="RoboPlan planning scene is not ready: authoritative state is incomplete",
             )
-        config = self._world.get_model_config()
+        config = self._world.get_prepared_model().config
         group = self._world.all_planning_group()
         with self._world.scratch_context() as ctx:
             self._world.set_joint_state(
@@ -140,6 +163,20 @@ class RoboPlanPlanner:
             return PlanningResult(
                 status=PlanningStatus.INVALID_GOAL,
                 message="No planning groups selected",
+            )
+        if not self._world.is_ready():
+            return PlanningResult(
+                status=PlanningStatus.INVALID_START,
+                message="RoboPlan planning scene is not ready: authoritative state is incomplete",
+            )
+        if self._selection_requires_shared_planner(selection):
+            return self._shared_rrt.plan_selected_joint_path(
+                world,
+                selection,
+                start,
+                goal,
+                timeout,
+                max_iterations,
             )
         group = self._world.planning_group(selection.group_ids)
         if group is None:
@@ -185,6 +222,11 @@ class RoboPlanPlanner:
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
                 message="RoboPlan-native planner requires its RoboPlanWorld instance",
+            )
+        if self._selection_requires_shared_planner(selection):
+            return PlanningResult(
+                status=PlanningStatus.UNSUPPORTED,
+                message="Cartesian waypoint planning requires interval-only joint coordinates",
             )
         validation_error = self._validate_cartesian_request(selection, targets, auxiliary_groups)
         if validation_error is not None:
@@ -252,6 +294,13 @@ class RoboPlanPlanner:
     def get_name(self) -> str:
         """Get planner name."""
         return "RoboPlan"
+
+    def _selection_requires_shared_planner(self, selection: PlanningGroupSelection) -> bool:
+        return (
+            not self._world.get_prepared_model()
+            .joint_space.select(selection.joint_names)
+            .is_interval_only
+        )
 
     def _normalize_selection_start(
         self,
@@ -348,7 +397,7 @@ class RoboPlanPlanner:
 
     def _apply_selected_state(self, ctx: RoboPlanContext, state: JointState) -> None:
         positions = dict(zip(state.name, state.position, strict=True))
-        config = self._world.get_model_config()
+        config = self._world.get_prepared_model().config
         q = ctx.q.copy()
         for index, name in enumerate(config.joint_names):
             if name in positions:

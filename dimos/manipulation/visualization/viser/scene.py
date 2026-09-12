@@ -32,6 +32,7 @@ from yourdfpy import URDF  # type: ignore[import-untyped]
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import DEFAULT_OBSTACLE_RGBA, Obstacle
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.visualization.viser.animation import (
     PreviewAnimation,
@@ -52,6 +53,8 @@ try:
         FrameHandle,
         GridHandle,
         MeshHandle,
+        PointCloudHandle,
+        SceneApi,
         TransformControlsEvent,
         TransformControlsHandle,
         ViserServer,
@@ -97,7 +100,7 @@ OBSTACLE_FALLBACK_OPACITY = 0.55
 OBSTACLE_PROXY_COLOR = (255, 45, 25)
 
 
-class RobotDisplayMode(str, Enum):
+class RobotDisplayMode(str, Enum):  # TODO(PY311): switch to enum.StrEnum
     VISUAL = "visual"
     COLLISION = "collision"
     BOTH = "both"
@@ -219,6 +222,12 @@ class ViserManipulationScene:
                             self._obstacles_visible,
                         )
                     )
+                elif obstacle.obstacle_type == ObstacleType.OCTREE:
+                    handles.append(
+                        self._add_octree(
+                            scene, path, obstacle, color, position, wxyz, self._obstacles_visible
+                        )
+                    )
                 else:
                     raise ValueError(f"unsupported obstacle type: {obstacle.obstacle_type}")
             except Exception as error:
@@ -335,6 +344,37 @@ class ViserManipulationScene:
         ), float(color[3])
 
     @staticmethod
+    def _add_octree(
+        scene: SceneApi,
+        path: str,
+        obstacle: Obstacle,
+        color: tuple[int, int, int],
+        position: tuple[float, float, float],
+        wxyz: tuple[float, float, float, float],
+        visible: bool,
+    ) -> PointCloudHandle:
+        """Draw the occupied cells as a point cloud sized to the cell edge.
+
+        A mapped workspace is tens of thousands of cells, so one box per cell
+        would stall the browser. Square points at the cell edge read as the same
+        grid and cost one scene node.
+        """
+        points = np.asarray(obstacle.points, dtype=np.float32).reshape(-1, 3)
+        if not len(points):
+            raise ValueError("octree obstacle carries no occupied cells")
+        colors = np.tile(np.asarray(color, dtype=np.uint8), (len(points), 1))
+        return scene.add_point_cloud(
+            path,
+            points=points,
+            colors=colors,
+            point_size=float(obstacle.octree_resolution or 0.05),
+            point_shape="square",
+            position=position,
+            wxyz=wxyz,
+            visible=visible,
+        )
+
+    @staticmethod
     def _add_mesh(
         scene: Any,
         path: str,
@@ -397,8 +437,8 @@ class ViserManipulationScene:
         collision_scene = model.collision_scene
         return collision_scene is not None and bool(getattr(collision_scene, "geometry", True))
 
-    def _load_robot_model(self, config: RobotModelConfig) -> URDF:
-        description = self.loaded_robot_description(config)
+    def _load_robot_model(self, prepared: PreparedRobotModel) -> URDF:
+        description = self.loaded_robot_description(prepared)
         return URDF.load(
             BytesIO(description.xml.encode()),
             mesh_dir=str(description.source_path.parent),
@@ -417,13 +457,14 @@ class ViserManipulationScene:
         self._grid_visible = visible
         self._set_handle_visibility(self._grid_handle, visible)
 
-    def register_model(self, config: RobotModelConfig) -> None:
+    def register_model(self, prepared: PreparedRobotModel) -> None:
         """Register the one configured model."""
+        config = prepared.config
         if self._model_config is not None and self._model_config != config:
             raise ValueError("A different model is already registered")
         self._model_config = config
         if self._model is None:
-            self._model = self._load_robot_model(config)
+            self._model = self._load_robot_model(prepared)
         self._ensure_robot_urdfs(config)
 
     def set_target_active(self, active: bool) -> None:
@@ -729,9 +770,10 @@ class ViserManipulationScene:
                 mode in {RobotDisplayMode.COLLISION, RobotDisplayMode.BOTH},
             )
 
-    def loaded_robot_description(self, config: RobotModelConfig) -> LoadedRobotModel:
+    def loaded_robot_description(self, prepared: PreparedRobotModel) -> LoadedRobotModel:
+        config = prepared.config
         description = prepare_urdf_for_drake(
-            config.model.load(),
+            prepared.description,
             convert_meshes=bool(config.auto_convert_meshes),
         )
         description = self._strip_visualization_world_root_attachment(config, description)

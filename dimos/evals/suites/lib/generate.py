@@ -16,7 +16,7 @@
 
 Ground truth is computed analytically from a *privileged* modality; the emitted
 case quizzes a different (or lossily-encoded) surface. Rows are pure data —
-a suite module maps them onto typed :class:`PassiveEval` cases.
+a suite module maps them onto :class:`~dimos.evals.types.EvalCase` values.
 """
 
 from __future__ import annotations

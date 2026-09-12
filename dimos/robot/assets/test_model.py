@@ -26,8 +26,6 @@ from dimos.utils.data import LfsPath
 
 def _planar_base() -> robot_model.PlanarBaseDefinition:
     return robot_model.PlanarBaseDefinition(
-        workspace_lower=(-2.0, -3.0, -3.14),
-        workspace_upper=(2.0, 3.0, 3.14),
         velocity_limits=(0.5, 0.6, 1.0),
         acceleration_limits=(1.0, 1.2, 2.0),
     )
@@ -182,7 +180,9 @@ def test_with_fixed_frame_builds_ordered_model_chain_and_preserves_extensions(
     ]
 
 
-def test_with_planar_base_prepends_three_one_dof_joints(tmp_path: Path) -> None:
+def test_with_planar_base_prepends_unbounded_translation_and_continuous_yaw(
+    tmp_path: Path,
+) -> None:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(
         "<robot name='r'><link name='base'/><link name='tool'/>"
@@ -200,7 +200,7 @@ def test_with_planar_base_prepends_three_one_dof_joints(tmp_path: Path) -> None:
     assert [loaded.get_joint(name).type for name in planar.joint_names] == [
         "prismatic",
         "prismatic",
-        "revolute",
+        "continuous",
     ]
     assert [
         (
@@ -219,8 +219,6 @@ def test_with_planar_base_prepends_three_one_dof_joints(tmp_path: Path) -> None:
         "0 0 1",
     ]
     assert root.find("joint[@name='base/x']/limit").attrib == {
-        "lower": "-2.0",
-        "upper": "2.0",
         "effort": "1",
         "velocity": "0.5",
         "acceleration": "1.0",
@@ -248,8 +246,8 @@ def test_planar_base_can_be_extended_by_other_model_transforms(tmp_path: Path) -
 @pytest.mark.parametrize(
     ("update", "message"),
     [
-        ({"workspace_lower": (-1.0, -1.0)}, "Field required"),
-        ({"workspace_upper": (-3.0, 3.0, 3.14)}, "strictly increasing"),
+        ({"workspace_lower": (-1.0, -1.0, -1.0)}, "Unexpected keyword argument"),
+        ({"workspace_upper": (1.0, 1.0, 1.0)}, "Unexpected keyword argument"),
         ({"velocity_limits": (0.5, 0.0, 1.0)}, "greater than 0"),
         ({"acceleration_limits": (1.0, float("nan"), 2.0)}, "finite number"),
         ({"acceleration_limits": (1.0, float("inf"), 2.0)}, "finite number"),
@@ -263,8 +261,6 @@ def test_planar_base_rejects_invalid_configuration(
     message: str,
 ) -> None:
     values: dict[str, object] = {
-        "workspace_lower": (-2.0, -3.0, -3.14),
-        "workspace_upper": (2.0, 3.0, 3.14),
         "velocity_limits": (0.5, 0.6, 1.0),
         "acceleration_limits": (1.0, 1.2, 2.0),
     }
@@ -277,15 +273,11 @@ def test_planar_base_rejects_invalid_configuration(
 def test_planar_base_definition_coerces_config_values() -> None:
     definition = robot_model.PlanarBaseDefinition(
         **{
-            "workspace_lower": [-2, -3, -3.14],
-            "workspace_upper": [2, 3, 3.14],
             "velocity_limits": [1, 1, 2],
             "acceleration_limits": [2, 2, 4],
         }
     )
 
-    assert definition.workspace_lower == (-2.0, -3.0, -3.14)
-    assert definition.workspace_upper == (2.0, 3.0, 3.14)
     assert definition.velocity_limits == (1.0, 1.0, 2.0)
     assert definition.acceleration_limits == (2.0, 2.0, 4.0)
 

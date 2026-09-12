@@ -1,5 +1,4 @@
 .page {
-  background: #14171a;
   height: 100%;
   overflow: auto;
   transition: opacity 0.3s;
@@ -11,46 +10,56 @@
 }
 
 .hint {
-  color: #8b949e;
+  color: var(--fg-muted);
   display: block;
-  padding: 0.75rem;
+  font-size: 12px;
+  padding: 12px;
 }
 
 .error {
-  color: #f85149;
-  font-size: 12px;
-  padding: 0.3rem 0.75rem;
+  color: var(--danger);
+  font-size: 11px;
+  padding: 4px 8px;
 }
 
+/* separate + 0 spacing, not collapse: a sticky th keeps its border only when
+   the border is its own. */
 .table {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   width: 100%;
 }
 
 .table th {
-  border-bottom: 1px solid #30363d;
-  color: #8b949e;
-  font-size: 12px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--fg-muted);
+  font-size: 11px;
   font-weight: 500;
-  padding: 0.3rem 0.75rem;
+  padding: 4px 8px;
+  position: sticky;
   text-align: left;
+  top: 0;
   white-space: nowrap;
+  z-index: 1;
 }
 
 .table td {
-  border-bottom: 1px solid #21262d;
-  padding: 0.25rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  height: 24px;
+  padding: 3px 8px;
   vertical-align: middle;
   white-space: nowrap;
 }
 
 .table tbody tr:hover td {
-  background: #1b1f24;
+  background: var(--bg-2);
 }
 
 .table .num,
 .table .cpu {
-  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
   text-align: right;
 }
 
@@ -59,49 +68,54 @@
 }
 
 .name {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .pid {
-  color: #8b949e;
-  font-variant-numeric: tabular-nums;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
   font-weight: 400;
-  margin-left: 0.4rem;
+  margin-left: 5px;
 }
 
 .chip,
 .chipDead {
-  border: 1px solid #30363d;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
   border-radius: 999px;
-  color: #8b949e;
-  font-size: 11px;
-  font-weight: 400;
-  margin-left: 0.4rem;
-  padding: 0 0.45rem;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  line-height: 15px;
+  margin-left: 5px;
+  padding: 0 6px;
+  text-transform: uppercase;
   vertical-align: 1px;
 }
 
 .chipDead {
-  border-color: #f85149;
-  color: #f85149;
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .child .name {
-  color: #8b949e;
+  color: var(--fg-muted);
   font-weight: 400;
-  padding-left: 1.6rem;
+  padding-left: 24px;
 }
 
 .dead .name {
-  color: #f85149;
+  color: var(--danger);
 }
 
 .dead td {
-  color: #8b949e;
+  color: var(--fg-muted);
 }
 
 .modules {
-  color: #8b949e;
+  color: var(--fg-muted);
   max-width: 22rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -109,6 +123,6 @@
 
 .spark {
   display: block;
-  height: 20px;
+  height: 18px;
   width: 96px;
 }

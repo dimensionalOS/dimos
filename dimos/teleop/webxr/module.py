@@ -46,10 +46,7 @@ from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
-from dimos.teleop.webxr.body_tracking import (
-    BodyTrackingMode,
-    BodyTrackingSnapshot,
-)
+from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnapshot
 
 # Hand is re-exported for callers; it lives in controller_types.
 from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState

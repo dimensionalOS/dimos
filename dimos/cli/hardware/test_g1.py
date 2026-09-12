@@ -19,7 +19,7 @@ from typer.testing import CliRunner
 
 from dimos.cli import hardware_cli
 from dimos.cli.hardware import g1 as g1_cli
-from dimos.robot.unitree.g1.manip_config import G1_READY_JOINTS, G1_READY_SPEED_SCALE
+from dimos.robot.unitree.g1.ready_pose import G1_READY_JOINTS, G1_READY_SPEED_SCALE
 
 runner = CliRunner()
 
