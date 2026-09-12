@@ -247,8 +247,12 @@ export class ReplayController {
             // the thumb matters, so the others' downloads are dropped.
             this._abortPendingExcept(number);
             this._setLoading(true, number);
+            const exitedAt = this._exitedAt || 0;
             this._fetchSegment(number).then(() => {
-                // only the latest target matters once the data is here
+                // Only the latest target matters once the data is here -- and only while
+                // replay is still the thing the user is looking at. Exiting between the
+                // request and the response used to be undone by this line.
+                if ((this._exitedAt || 0) !== exitedAt || !this.active) return;
                 if (this.targetScan === scan || this.segmentOf(this.targetScan) === number) this.seekScan(this.targetScan);
             }).catch((e) => {
                 if (e && e.name === 'AbortError') return;
@@ -522,6 +526,12 @@ export class ReplayController {
     /** Leave replay: the full map comes back. */
     exit() {
         this.setActive(false);
+        // A download in flight would otherwise turn replay back ON when it lands, because
+        // its continuation calls seekScan. And the loading timer armed by _setLoading is
+        // not cancelled by going inactive: it fires on the exited bar and writes
+        // "loading 3/12…" into the label, where it stays until some later seek.
+        this._exitedAt = (this._exitedAt || 0) + 1;
+        this._setLoading(false);
     }
 
     play(on = !this.playing) {
