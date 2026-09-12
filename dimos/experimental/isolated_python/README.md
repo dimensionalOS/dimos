@@ -71,9 +71,18 @@ exists, Pixi supplies `uv`. If `uv.lock` exists, dimOS uses `--frozen` and treat
 the lockfile as the source of truth.
 
 Source checkouts make the current dimOS checkout available to the runtime.
-Installed hosts let `uv` resolve `dimos`, so the host and runtime versions may
-differ. The sibling project's `.python-version` and `requires-python` select its
-Python version.
+Installed hosts resolve `dimos==<installed version>`; that exact version must be
+available from the configured package source. Local wheel installations can supply
+the candidate wheel through `UV_FIND_LINKS`. The sibling project's `.python-version`
+and `requires-python` select its Python version. Environments are stored under the DimOS cache directory in
+`isolated-python/<project-path-hash>/.venv`, so projects do not share environments.
+Preparation also warms the DimOS overlay before starting the readiness deadline.
+
+For runtime sources shipped inside wheels, use a flat project with
+`[tool.uv] package = false` and include its sources, manifest, and lockfile as package
+data. Python imports the runtime from the project working directory, without an
+editable build writing metadata into `site-packages`. Load models and download
+checkpoints in the runtime's `start()`, keeping imports and construction lightweight.
 
 The host contract retains the public module name and forwards contract RPCs to a
 unique internal endpoint. Ordinary dimOS serialization and transport handle RPC

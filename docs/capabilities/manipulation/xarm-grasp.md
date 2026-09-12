@@ -20,12 +20,29 @@ Miss `--xarm7-ip` on hardware and the arm has no address to reach; leave
 `xarm-grasp-agent` and `xarm-grasp-graspgenx-agent` add an MCP agent over the
 top; drive those with `dimos agent-send "..."`.
 
-`xarm-grasp-graspgenx` needs the `graspgenx` extra and a CUDA GPU. Checkpoints
-download once from Hugging Face and cache under `~/.cache/huggingface`.
+`xarm-grasp-graspgenx` runs GraspGenX in an isolated Python 3.12 environment
+on Linux x86_64 with a CUDA GPU compatible with Torch 2.7.1 / CUDA 12.8.
+Install `uv >=0.9.25` on PATH. The first launch automatically prepares the separately
+locked dependencies;
+no GraspGenX extra is installed in the main DimOS environment. Virtual environments
+live under `~/.cache/dimos/isolated-python` (or `$XDG_CACHE_HOME/dimos/isolated-python`).
+Pinned checkpoints download from Hugging Face during module startup and reuse
+its normal cache under `~/.cache/huggingface`.
+
+Source checkouts supply their current DimOS code to the runtime. Wheel installations
+resolve the exact installed DimOS version from the configured package source; that
+version must be available there. For a locally built wheel, make it available through
+uv's `--find-links` configuration (`UV_FIND_LINKS`) before launching.
+
+To validate GPU proposals without moving a robot, run from a source checkout:
 
 ```bash
-uv sync --extra graspgenx
+uv run python -m dimos.manipulation.grasping.grasp_gen_x.demo_inference
 ```
+
+This checks the actual isolated environment, loads the model, proposes grasps for
+a recorded object cloud, and verifies output and process cleanup. Missing CUDA or
+failed model initialization fails the check.
 
 What differs between the arm and the sim is decided at import time: the hardware
 adapter, the base pose, the camera (RealSense plus its mount edge, versus the

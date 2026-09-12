@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
+from importlib.metadata import version
 import inspect
 import os
 from pathlib import Path
@@ -26,7 +28,7 @@ import threading
 import time
 from typing import Any, ClassVar
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import CACHE_DIR, DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -45,8 +47,7 @@ def isolated_python_run_command(project: Path, *command: str) -> list[str]:
     if (DIMOS_PROJECT_ROOT / "pyproject.toml").is_file():
         args.extend(("--with-editable", str(DIMOS_PROJECT_ROOT)))
     else:
-        # Installed hosts intentionally accept the newest compatible DimOS.
-        args.extend(("--with", "dimos"))
+        args.extend(("--with", f"dimos=={version('dimos')}"))
     args.extend(command)
     if (project / "pixi.toml").is_file():
         return ["pixi", "run", "--executable", *args]
@@ -162,24 +163,31 @@ class IsolatedPythonModule(NativeModule):
         env.pop("VIRTUAL_ENV", None)
         env.pop("UV_PYTHON", None)
         env.pop("UV_PROJECT_ENVIRONMENT", None)
+        project_key = sha256(str(self.runtime_project).encode()).hexdigest()[:16]
+        env["UV_PROJECT_ENVIRONMENT"] = str(CACHE_DIR / "isolated-python" / project_key / ".venv")
         env.update(self.config.extra_env)
         return env
 
     def _run_prepare(self) -> None:
-        command = self._prepare_command()
-        result = subprocess.run(
-            command,
-            cwd=self.runtime_project,
-            env=self._runtime_env(),
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode:
-            output = (result.stdout + "\n" + result.stderr).strip()
-            raise RuntimeError(
-                f"Isolated Python environment preparation failed (exit {result.returncode}): "
-                f"{output[-self.config.output_limit :]}"
+        # Resolve the DimOS overlay too, before the runtime's readiness deadline.
+        commands = [
+            self._prepare_command(),
+            isolated_python_run_command(self.runtime_project, "python", "-c", "pass"),
+        ]
+        for command in commands:
+            result = subprocess.run(
+                command,
+                cwd=self.runtime_project,
+                env=self._runtime_env(),
+                capture_output=True,
+                text=True,
             )
+            if result.returncode:
+                output = (result.stdout + "\n" + result.stderr).strip()
+                raise RuntimeError(
+                    f"Isolated Python environment preparation failed (exit {result.returncode}): "
+                    f"{output[-self.config.output_limit :]}"
+                )
 
     def _spawn_runtime(self) -> None:
         parent_read, child_write = os.pipe()

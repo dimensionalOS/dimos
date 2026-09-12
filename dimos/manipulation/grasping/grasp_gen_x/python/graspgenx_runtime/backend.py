@@ -22,7 +22,7 @@ from pathlib import Path
 from huggingface_hub import snapshot_download
 import numpy as np
 
-from dimos.manipulation.grasping.grasp_gen_x import (
+from dimos.manipulation.grasping.grasp_gen_x.module import (
     GRASPGENX_MODEL_REPO,
     GRASPGENX_MODEL_REVISION,
     GRASPGENX_MODEL_VERSION,
@@ -53,12 +53,12 @@ if not _gen_dir.is_dir() or not _dis_dir.is_dir():
 os.environ["GRASPGENX_CHECKPOINT_DIR"] = str(_snapshot_root)
 os.environ["GRASPGENX_GRIPPER_CFG_DIR"] = str(_snapshot_root)
 
-from graspgenx.grasp_server import (
+from graspgenx.grasp_server import (  # type: ignore[import-not-found]
     SWEEP_VOLUME_ONLY_BACKBONES,
     GraspGenXSampler,
 )
-from graspgenx.utils.checkpoint_io import load_model_cfg
-from graspgenx.x_grippers import make_sweep_volume_gripper_info
+from graspgenx.utils.checkpoint_io import load_model_cfg  # type: ignore[import-not-found]
+from graspgenx.x_grippers import make_sweep_volume_gripper_info  # type: ignore[import-not-found]
 
 _GRIPPER_TYPES = {
     "parallel_2f": 0,

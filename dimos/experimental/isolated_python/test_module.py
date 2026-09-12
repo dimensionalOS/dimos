@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
+import subprocess
 
 import pytest
 from pytest_mock import MockerFixture
@@ -21,6 +22,7 @@ from dimos.core.core import rpc
 from dimos.experimental.isolated_python.module import (
     IsolatedPythonModule,
     IsolatedPythonModuleConfig,
+    isolated_python_run_command,
 )
 
 
@@ -78,7 +80,7 @@ def test_uv_lock_enables_frozen_commands(tmp_path: Path, monkeypatch: pytest.Mon
         module.stop()
 
 
-def test_installed_host_uses_unversioned_dimos(
+def test_installed_host_uses_matching_dimos_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = tmp_path / "contract.py"
@@ -88,6 +90,7 @@ def test_installed_host_uses_unversioned_dimos(
     (project / "pyproject.toml").touch()
     installed_root = tmp_path / "site-packages"
     installed_root.mkdir()
+    monkeypatch.setattr("dimos.experimental.isolated_python.module.version", lambda _: "9.8.7")
     monkeypatch.setattr(
         "dimos.experimental.isolated_python.module.inspect.getfile", lambda _: str(source)
     )
@@ -98,7 +101,7 @@ def test_installed_host_uses_unversioned_dimos(
     try:
         command = module._launch_command(7)
 
-        assert command[:4] == ["uv", "run", "--with", "dimos"]
+        assert command[:4] == ["uv", "run", "--with", "dimos==9.8.7"]
         assert "--python" not in command
     finally:
         module.stop()
@@ -123,15 +126,37 @@ def test_pixi_supplies_uv_when_manifest_exists(
         module.stop()
 
 
-def test_runtime_environment_uses_sibling_virtualenv(
+def test_runtime_environment_uses_project_specific_cache(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("VIRTUAL_ENV", "/parent/.venv")
+    monkeypatch.setenv("UV_PYTHON", "3.10")
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", "/parent/.venv")
+    monkeypatch.setattr("dimos.experimental.isolated_python.module.CACHE_DIR", tmp_path / "cache")
+    project = tmp_path / "python"
+    project.mkdir()
+    (project / "pyproject.toml").touch()
+    monkeypatch.setattr(
+        "dimos.experimental.isolated_python.module.inspect.getfile",
+        lambda _: str(tmp_path / "contract.py"),
+    )
     module = Contract(extra_env={"EXAMPLE_SETTING": "configured"})
     try:
         env = module._runtime_env()
 
         assert "VIRTUAL_ENV" not in env
+        assert "UV_PYTHON" not in env
+        assert Path(env["UV_PROJECT_ENVIRONMENT"]).is_relative_to(tmp_path / "cache")
+        assert module._runtime_env()["UV_PROJECT_ENVIRONMENT"] == env["UV_PROJECT_ENVIRONMENT"]
+        other = tmp_path / "other"
+        (other / "python").mkdir(parents=True)
+        (other / "python/pyproject.toml").touch()
+        monkeypatch.setattr(
+            "dimos.experimental.isolated_python.module.inspect.getfile",
+            lambda _: str(other / "contract.py"),
+        )
+        assert module._runtime_env()["UV_PROJECT_ENVIRONMENT"] != env["UV_PROJECT_ENVIRONMENT"]
         assert env["EXAMPLE_SETTING"] == "configured"
     finally:
         module.stop()
@@ -166,6 +191,58 @@ def test_runtime_build_skips_environment_preparation(mocker: MockerFixture) -> N
         module.build()
 
         prepare.assert_not_called()
+        spawn.assert_not_called()
+    finally:
+        module.stop()
+
+
+@pytest.fixture
+def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    runtime = tmp_path / "python"
+    runtime.mkdir()
+    (runtime / "pyproject.toml").touch()
+    (runtime / "uv.lock").touch()
+    monkeypatch.setattr(
+        "dimos.experimental.isolated_python.module.inspect.getfile",
+        lambda _: str(tmp_path / "contract.py"),
+    )
+    return runtime
+
+
+def test_preparation_warms_the_launch_environment(project: Path, mocker: MockerFixture) -> None:
+    run = mocker.patch(
+        "dimos.experimental.isolated_python.module.subprocess.run",
+        return_value=subprocess.CompletedProcess([], 0, "", ""),
+    )
+    module = Contract()
+    try:
+        module._run_prepare()
+
+        assert [call.args[0] for call in run.call_args_list] == [
+            module._prepare_command(),
+            isolated_python_run_command(project, "python", "-c", "pass"),
+        ]
+        for call in run.call_args_list:
+            assert call.kwargs["cwd"] == project
+            assert call.kwargs["env"] == module._runtime_env()
+    finally:
+        module.stop()
+
+
+@pytest.mark.parametrize("failure_stage", [0, 1])
+def test_preparation_failure_prevents_launch(
+    project: Path, mocker: MockerFixture, failure_stage: int
+) -> None:
+    mocker.patch(
+        "dimos.experimental.isolated_python.module.subprocess.run",
+        side_effect=[subprocess.CompletedProcess([], 0, "", "")] * failure_stage
+        + [subprocess.CompletedProcess([], 1, "", "dependency unavailable")],
+    )
+    module = Contract()
+    spawn = mocker.patch.object(module, "_spawn_runtime")
+    try:
+        with pytest.raises(RuntimeError, match="dependency unavailable"):
+            module.build()
         spawn.assert_not_called()
     finally:
         module.stop()

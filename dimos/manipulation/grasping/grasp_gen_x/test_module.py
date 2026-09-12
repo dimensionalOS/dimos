@@ -25,12 +25,16 @@ import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.experimental.isolated_python.bootstrap import validate_runtime
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, LegacyGraspGenSpec
-import dimos.manipulation.grasping.grasp_gen_x as grasp_gen_x
-from dimos.manipulation.grasping.grasp_gen_x import (
+from dimos.manipulation.grasping.grasp_gen_x.module import (
     GraspGenXConfig,
     GraspGenXError,
     GraspGenXModule,
+)
+from dimos.manipulation.grasping.grasp_gen_x.python.graspgenx_runtime import runtime as grasp_gen_x
+from dimos.manipulation.grasping.grasp_gen_x.python.graspgenx_runtime.runtime import (
+    _GraspGenXRuntimeModule,
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
@@ -69,8 +73,8 @@ def test_public_adapter_import_does_not_load_optional_runtime() -> None:
             "-c",
             (
                 "import sys; "
-                "import dimos.manipulation.grasping.grasp_gen_x; "
-                "assert 'dimos.manipulation.grasping.grasp_gen_x_runtime' not in sys.modules"
+                "import dimos.manipulation.grasping.grasp_gen_x.module; "
+                "assert 'graspgenx' not in sys.modules; assert 'graspgenx_runtime.backend' not in sys.modules"
             ),
         ],
         check=False,
@@ -159,7 +163,7 @@ def test_rigid_transform_relational_validation() -> None:
 
 
 def test_start_is_synchronous_and_idempotent(runtime: Any) -> None:
-    module = GraspGenXModule(**module_args())
+    module = _GraspGenXRuntimeModule(_isolated_python_runtime=True, **module_args())
     try:
         module.start()
         module.start()
@@ -172,7 +176,7 @@ def test_start_is_synchronous_and_idempotent(runtime: Any) -> None:
 
 def test_start_failure_is_explicit(runtime: Any) -> None:
     runtime.side_effect = RuntimeError("CUDA unavailable")
-    module = GraspGenXModule(**module_args())
+    module = _GraspGenXRuntimeModule(_isolated_python_runtime=True, **module_args())
     try:
         with pytest.raises(GraspGenXError, match="initialize"):
             module.start()
@@ -196,7 +200,7 @@ def test_adapter_sorts_stably_truncates_and_applies_tcp_transform(runtime: Any) 
             (0.0, 0.0, 0.0, 1.0),
         ),
     )
-    module = GraspGenXModule(**module_args(cfg))
+    module = _GraspGenXRuntimeModule(_isolated_python_runtime=True, **module_args(cfg))
     try:
         module.start()
         result = module.propose_grasps(cloud())
@@ -214,7 +218,7 @@ def test_empty_backend_result_preserves_input_header(runtime: Any) -> None:
         np.empty((0, 4, 4), dtype=np.float32),
         np.empty(0, dtype=np.float32),
     )
-    module = GraspGenXModule(**module_args())
+    module = _GraspGenXRuntimeModule(_isolated_python_runtime=True, **module_args())
     try:
         module.start()
         result = module.propose_grasps(cloud())
@@ -235,7 +239,7 @@ def test_empty_backend_result_preserves_input_header(runtime: Any) -> None:
     ],
 )
 def test_invalid_cloud_points_are_rejected(runtime: Any, points: np.ndarray) -> None:
-    module = GraspGenXModule(**module_args())
+    module = _GraspGenXRuntimeModule(_isolated_python_runtime=True, **module_args())
     try:
         module.start()
         with pytest.raises(ValueError, match="pointcloud|XYZ"):
@@ -257,7 +261,7 @@ def test_invalid_backend_outputs_are_rejected(
     runtime: Any, backend: tuple[np.ndarray, np.ndarray]
 ) -> None:
     runtime.return_value.infer.return_value = backend
-    module = GraspGenXModule(**module_args())
+    module = _GraspGenXRuntimeModule(_isolated_python_runtime=True, **module_args())
     try:
         module.start()
         with pytest.raises(ValueError):
@@ -268,7 +272,7 @@ def test_invalid_backend_outputs_are_rejected(
 
 def test_inference_failure_is_wrapped(runtime: Any) -> None:
     runtime.return_value.infer.side_effect = RuntimeError("backend")
-    module = GraspGenXModule(**module_args())
+    module = _GraspGenXRuntimeModule(_isolated_python_runtime=True, **module_args())
     try:
         module.start()
         with pytest.raises(GraspGenXError, match="inference"):
@@ -278,7 +282,7 @@ def test_inference_failure_is_wrapped(runtime: Any) -> None:
 
 
 def test_not_started_and_missing_metadata_are_rejected(runtime: Any) -> None:
-    module = GraspGenXModule(**module_args())
+    module = _GraspGenXRuntimeModule(_isolated_python_runtime=True, **module_args())
     missing_frame = cloud()
     missing_frame.frame_id = ""
     missing_timestamp = cloud()
@@ -293,3 +297,10 @@ def test_not_started_and_missing_metadata_are_rejected(runtime: Any) -> None:
             module.propose_grasps(missing_timestamp)
     finally:
         module.stop()
+
+
+def test_runtime_implements_the_host_contract() -> None:
+    validate_runtime(GraspGenXModule, _GraspGenXRuntimeModule)
+    assert inspect.signature(GraspGenXModule.propose_grasps) == inspect.signature(
+        _GraspGenXRuntimeModule.propose_grasps
+    )
