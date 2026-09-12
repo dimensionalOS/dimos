@@ -24,6 +24,7 @@ import pytest
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.teleop.memory_world.hyperspace_search import (
+    COMPLETE_STREAM,
     KEYFRAME_STREAM,
     PATCH_STREAM,
     Cluster,
@@ -806,3 +807,68 @@ def test_the_frames_route_reads_the_store_off_the_event_loop() -> None:
     assert answer["default"] == "camera_optical"
     # ... and it was not read on the thread running the event loop.
     assert ran_on["thread"] != ran_on["loop"], "the store read happened on the event loop"
+
+
+def test_a_half_done_rebuild_is_refused_before_the_index_is_deleted(  # type: ignore[no-untyped-def]
+    tmp_path, monkeypatch
+) -> None:
+    """The ingest must refuse through `ingest_recording`, not merely be refusable.
+
+    `_ingest` calls `build_tf_tree`, which refuses a staged rebuild -- and a killed
+    calibration leaves exactly that, `tf` and `tf__rebuilt` both non-empty. `_ingest` runs
+    AFTER the COMPLETE/KEYFRAME/PATCH deletes, so such a recording used to lose the index
+    it already had and fail anyway. Rebuilding one is a long GPU run.
+
+    My first test for this called `refuse_if_a_rebuild_is_half_done` directly. That
+    function is unchanged, so the test passed with the preflight calls deleted -- it
+    pinned the helper, not the ORDER, and the order is the entire fix. This drives
+    `ingest_recording` and asserts the existing index is still there afterwards.
+    """
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.std_msgs.String import String
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.hyperspace_ingest import ingest_recording
+    from dimos.teleop.memory_world.recording import STAGED_SUFFIX
+
+    recording = tmp_path / "recording.db"
+    store = _tiny_recording(recording)
+    try:
+        # An index worth losing ...
+        store.stream(KEYFRAME_STREAM, String).append(String("a keyframe"), ts=1.0)
+        store.stream(PATCH_STREAM, String).append(String("a patch"), ts=1.0)
+        store.stream(COMPLETE_STREAM, String).append(String("done"), ts=1.0)
+        # ... and the wreckage a killed calibration leaves beside the tf it was rewriting.
+        store.stream("tf" + STAGED_SUFFIX, TFMessage).append(
+            TFMessage(
+                Transform(
+                    translation=Vector3(9.0, 0.0, 0.0),
+                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    frame_id="odom",
+                    child_frame_id="base",
+                    ts=1.0,
+                )
+            ),
+            ts=1.0,
+        )
+    finally:
+        store.stop()
+
+    def never_embedded(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("the ingest got past the preflight and started embedding")
+
+    _stub_hyperspace(monkeypatch, never_embedded)
+
+    with pytest.raises(SystemExit):
+        ingest_recording(recording, model_name="m", device="cpu")
+
+    # The index the run was about to replace is still there.
+    check = SqliteStore(path=str(recording))
+    check.start()
+    try:
+        for name in (KEYFRAME_STREAM, PATCH_STREAM, COMPLETE_STREAM):
+            assert name in check.list_streams(), f"{name} was deleted before the refusal"
+            assert any(True for _ in check.streams[name]), f"{name} was emptied"
+    finally:
+        check.stop()

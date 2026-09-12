@@ -528,9 +528,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         ):
             configured = getattr(self.config, setting)
             if configured and configured not in usable:
-                # Dropped, not just outranked: kept when detection had no replacement, an
-                # empty `tf` became a non-None zero-frame tree. `""` is what the
-                # missing-stream fallbacks look for.
+                # Why, and what "" means downstream: see usable_streams in recording.py.
+                logger.warning("%s: %r is empty in the recording; ignoring it", setting, configured)
                 setattr(self.config, setting, "")
                 configured = ""
             if configured or detected[role] is None:
