@@ -44,15 +44,24 @@ export function robotToWorldDir(worldGroup, direction) {
     );
 }
 
-/** The inverse of `robotToWorldOffset`, as robot (x, y) -- the two the map needs. */
-export function worldPosToRobotXY(worldGroup, worldPos) {
-    // Un-translate, un-scale, then the inverse rotation, which for R_y is its transpose:
-    // x = c*x' - s*z', z = s*x' + c*z'.
-    const s = worldGroup.scale.x || 1;
-    const dx = (worldPos.x - worldGroup.position.x) / s;
-    const dz = (worldPos.z - worldGroup.position.z) / s;
+/** A world-space DIRECTION as robot (x, y). Position and scale drop out of a direction,
+ *  so the HUD needle needs only this -- and needed it: it read the heading straight off
+ *  the world-space forward, which is the robot's heading turned by `rotation.y`. The dot
+ *  beside it goes through `worldPosToRobotXY` and does account for the spin, so after a
+ *  turn the needle pointed one way while the dot it sits on had moved another. */
+export function worldDirToRobotXY(worldGroup, dir) {
+    // The inverse rotation, which for R_y is its transpose: x = c*x' - s*z', z = s*x' + c*z'.
     const c = Math.cos(worldGroup.rotation.y);
     const sn = Math.sin(worldGroup.rotation.y);
     // Un-apply frame-rotate: three (x, y, z) -> robot (x, -z, y).
-    return [c * dx - sn * dz, -(sn * dx + c * dz)];
+    return [c * dir.x - sn * dir.z, -(sn * dir.x + c * dir.z)];
+}
+
+/** The inverse of `robotToWorldOffset`, as robot (x, y) -- the two the map needs. */
+export function worldPosToRobotXY(worldGroup, worldPos) {
+    const s = worldGroup.scale.x || 1;
+    return worldDirToRobotXY(worldGroup, {
+        x: (worldPos.x - worldGroup.position.x) / s,
+        z: (worldPos.z - worldGroup.position.z) / s,
+    });
 }

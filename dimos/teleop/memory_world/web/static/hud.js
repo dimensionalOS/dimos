@@ -5,7 +5,7 @@
 // the one that moves without dragging anything behind it. Same shape as evidence.js:
 // a function over the scene, not a class.
 import * as THREE from 'https://esm.sh/three@0.160.0';
-import { worldPosToRobotXY } from '/static_mw/world_frame.js';
+import { worldDirToRobotXY, worldPosToRobotXY } from '/static_mw/world_frame.js';
 
 export const HUD_PANEL_SIZE = 0.22;          // metres (square)
 const HUD_DISTANCE = 0.55;            // metres in front of head
@@ -78,9 +78,13 @@ export function placeHud(scene) {
             scene._hudMarker.position.x = (uv[0] - 0.5) * s;
             scene._hudMarker.position.y = (0.5 - uv[1]) * s;
             scene._hudHeading.position.copy(scene._hudMarker.position);
-            // The needle wants yaw in the map frame, not three's. After the
-            // frame-rotate, robot +X is three +X and robot +Y is three -Z.
-            const robotYaw = Math.atan2(fwd.x, -fwd.z);
+            // The needle wants yaw in the MAP's frame, not three's, and the two differ
+            // by the world spin -- which is why this used to read `atan2(fwd.x, -fwd.z)`
+            // straight off the world forward and point somewhere else than the dot it
+            // sits on the moment anyone turned. That expression is what this returns at
+            // rotation.y === 0.
+            const [fwdRx, fwdRy] = worldDirToRobotXY(scene._worldGroup, fwd);
+            const robotYaw = Math.atan2(fwdRx, fwdRy);
             scene._hudHeading.rotation.z = -robotYaw;
         }
     }
