@@ -880,6 +880,19 @@ def test_intrinsics_are_scaled_to_the_raster_they_are_indexed_against() -> None:
     )
     assert edge is not None
     assert edge[0] == pytest.approx((0.9 * 1280 - 640) * 2.0 / 900.0, abs=0.01), edge
+    # And the SAME probe on the other axis, because one off-axis point only pins the axis
+    # it is off on: with this one horizontal, `fy * sy -> fy` still passed both intrinsics
+    # tests. Fixing x and leaving y is the same mistake one axis over.
+    down = patch_world_position(
+        (0.5, 0.9),
+        depth_mm,
+        colour_calibration,
+        np.eye(4),
+        window_px=8,
+        intrinsics_size=(1280, 720),
+    )
+    assert down is not None
+    assert down[1] == pytest.approx((0.9 * 720 - 360) * 2.0 / 900.0, abs=0.01), down
     # And without the scaling it is not: this is the error the scaling removes.
     assert abs(off[0]) > 0.4, off
 
