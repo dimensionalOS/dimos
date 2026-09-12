@@ -166,8 +166,13 @@ def test_the_rotation_helper_is_a_rotation_and_turns_the_right_way() -> None:
 
 
 def test_thinning_keeps_one_point_per_cube_and_obeys_the_cap() -> None:
-    dense = np.repeat(np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]), 50, axis=0)
-    assert len(_thinned(dense, 0.5, 100)) == 3  # three cubes, however many points
+    # Two of these are CLOSER together than the cube, which is what pins the size. They
+    # used to be spaced 1.0 apart, so every size from 0.06 (what production passes) up to
+    # 1.0 gave the same three cubes and the size could be scaled by any factor in that
+    # range without this test noticing.
+    dense = np.repeat(np.array([[0.0, 0.0, 0.0], [0.3, 0.0, 0.0], [1.0, 0.0, 0.0]]), 50, axis=0)
+    assert len(_thinned(dense, 0.5, 100)) == 2  # 0.0 and 0.3 share a half-metre cube
+    assert len(_thinned(dense, 0.05, 100)) == 3  # a smaller cube separates them
     spread = np.arange(3000, dtype=np.float64).reshape(-1, 1) * [[1.0, 1.0, 1.0]]
     thinned = _thinned(spread, 0.5, 500)
     assert len(thinned) == 500  # capped, and every survivor is one of the originals

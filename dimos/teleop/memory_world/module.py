@@ -442,7 +442,18 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
         @app.get(f"{self.config.client_route}/replay/frame")  # type: ignore[misc]
         async def memory_world_replay_frame(t: float) -> Response:
             """The camera frame nearest *t* as JPEG; its pose rides in a header."""
-            found = await asyncio.to_thread(self._replay_read, self._replay_frame, t)
+            # Guarded like its two siblings above. Without this a recording with no image
+            # stream -- `image_stream_name` left as "" -- raises KeyError('') out of the
+            # handler and FastAPI turns it into a bare 500, where the same route answers
+            # a plain 404 when it merely has no frame near *t*.
+            try:
+                found = await asyncio.to_thread(self._replay_read, self._replay_frame, t)
+            except HTTPException:
+                raise
+            except Exception as error:
+                raise HTTPException(
+                    status_code=503, detail=f"replay {self._replay_progress}"
+                ) from error
             if found is None:
                 raise HTTPException(status_code=404, detail="no frame near that time")
             jpeg, meta = found
@@ -767,6 +778,18 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
         marker = completed.stdout.rfind(RESULT_SENTINEL)
         if marker < 0:
             detail = (completed.stderr or completed.stdout or "analysis returned no result").strip()
+            return SkillResult.fail("EXECUTION_FAILED", self._cap_analysis_output(detail))
+
+        # A result on stdout is not the same as a run that worked. The child can print the
+        # sentinel and THEN die -- a teardown that raises, a segfault in a native library
+        # closing its handles -- and everything below this point would have accepted the
+        # printed answer and reported success, losing the failure entirely. Measured: a
+        # recording stub whose cleanup raised gave returncode 1, a RuntimeError on stderr,
+        # and `success=True` out of this method.
+        if completed.returncode != 0:
+            detail = (completed.stderr or "").strip() or (
+                f"analysis exited with status {completed.returncode} after printing a result"
+            )
             return SkillResult.fail("EXECUTION_FAILED", self._cap_analysis_output(detail))
 
         encoded = completed.stdout[marker + len(RESULT_SENTINEL) :].splitlines()[0]

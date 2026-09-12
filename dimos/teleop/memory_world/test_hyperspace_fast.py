@@ -232,8 +232,13 @@ def test_combine_keeps_support_when_one_channel_is_empty() -> None:
         ),
         hs.QueryConfig(),
     )
+    # BOTH orders. Only `combine(a, empty)` was checked, so computing support solely from
+    # the non-empty side's position in the argument list passed -- the reverse case
+    # returned frames=None, bins=None.
     got = combine(a, empty, weight=1.0)
     assert got.frames.tolist() == [3] and got.bins.tolist() == [2]
+    flipped = combine(empty, a, weight=1.0)
+    assert flipped.frames.tolist() == [3] and flipped.bins.tolist() == [2]
 
 
 def test_support_counts_viewpoints_not_records() -> None:

@@ -668,8 +668,16 @@ class HyperspaceAnswers:
         on claiming the viewer's position.
 
         The robot drove its path, so every height along it is one the planner can stand
-        at. Restrict to the samples on the viewer's own floor, then take the nearest of
-        those in x and y and use its z.
+        at. Restrict to the samples in the storey-deep band below the camera, then take
+        the nearest of those in x and y and use its z.
+
+        That band is not the same thing as the viewer's floor, and on a map with two
+        levels less than a storey apart it can hold both -- a viewer on a platform at 1.4
+        with their camera at 3.0 gets the 0.3 floor underneath it if that is nearer in x
+        and y. Separating those two needs a prior on how tall the person is, which is
+        exactly the guess this function exists to avoid; a storey-deep band is the widest
+        rule that needs no such guess. Single-level maps, which is every map this demo
+        runs on, are unaffected.
         """
         with self._clients_lock:
             viewer = self._viewer_position
@@ -749,7 +757,14 @@ class HyperspaceAnswers:
         # while a 3.48 m route to the second photo of the first place existed the whole
         # time. The closest photo the robot can still reach is a better answer than
         # refusing, and saying WHICH one it picked keeps it honest.
-        others = [i for i in range(len(images)) if i != request.view and pose_of(i) is not None]
+        # Nearest first. `images` is in publication (score) order, and taking the first
+        # routable one in THAT order hands back a photo 10 m away when a reachable one
+        # 1 m away was in the same list -- which is not what the paragraph above promises
+        # and not what someone pressing Navigate wants to walk.
+        others = sorted(
+            (i for i in range(len(images)) if i != request.view and pose_of(i) is not None),
+            key=lambda i: math.dist(start, pose_of(i)),  # type: ignore[arg-type]
+        )
         candidates: list[tuple[int | None, tuple[float, float, float]]] = []
         if request.view is not None and asked is not None:
             candidates.append((request.view, asked))

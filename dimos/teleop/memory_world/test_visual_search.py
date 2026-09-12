@@ -452,13 +452,21 @@ def test_patch_over_a_depth_hole_has_no_position() -> None:
 
 
 def test_hot_patches_keep_the_object_blob_not_only_the_stray_peak() -> None:
-    similarity = torch.full((4,), 0.02)
+    """The threshold is the HIGHER of the floor and the ratio of the frame's best.
+
+    One patch below sits between the two -- above the 0.10 floor, below 0.75 x 0.164 --
+    and it is the whole point of the fixture. Without it the floor and the ratio select
+    the same patches, so `max(floor, best * ratio)` could be written `min(...)`, dropping
+    the ratio entirely, and this test still passed.
+    """
+    similarity = torch.full((6,), 0.02)
     similarity[0] = 0.164  # a stray picture frame
+    similarity[1] = 0.110  # over the floor, under the ratio: kept only by a MIN
     similarity[2] = 0.158  # the cone
     similarity[3] = 0.135  # more cone
-    kept = hot_patches(similarity, rows=2, cols=2, floor=0.10, ratio=0.75)
+    kept = hot_patches(similarity, rows=2, cols=3, floor=0.10, ratio=0.75)
     assert [round(score, 3) for _, score in kept] == [0.164, 0.158, 0.135]
-    assert kept[1][0] == (0.25, 0.75)  # index 2 = row 1, col 0
+    assert kept[1][0] == pytest.approx((2.5 / 3, 0.25))  # index 2 = row 0, col 2
 
 
 def test_hot_patches_respect_the_absolute_floor() -> None:
@@ -906,6 +914,35 @@ def test_intrinsics_are_scaled_to_the_raster_they_are_indexed_against() -> None:
         intrinsics_size=(848, 480),
     )
     assert same is not None and abs(same[0]) < 0.01 and abs(same[1]) < 0.01
+
+    # A raster whose ASPECT differs from the calibration's, which is what actually tells
+    # the two scale factors apart. Everything above runs 848x480 against 1280x720, where
+    # sx = 0.6625 and sy = 0.6667 -- 0.6% apart, or about 9 mm at 2 m, well inside the
+    # 1 cm tolerances. So scaling y by sx, the exact mistake the paragraph above says it
+    # exists to catch, passed all of it. 4:3 against 16:9 puts sx at 0.5 and sy at 0.667.
+    four_by_three = np.full((480, 640), 2.0, dtype=np.float32)
+    across = patch_world_position(
+        (0.9, 0.5),
+        four_by_three,
+        colour_calibration,
+        np.eye(4),
+        window_px=8,
+        intrinsics_size=(1280, 720),
+    )
+    assert across is not None
+    # fx scales by sx alone: fx = 450, cx = 320.
+    assert across[0] == pytest.approx((0.9 * 640 - 320) * 2.0 / 450.0, abs=0.01), across
+    downward = patch_world_position(
+        (0.5, 0.9),
+        four_by_three,
+        colour_calibration,
+        np.eye(4),
+        window_px=8,
+        intrinsics_size=(1280, 720),
+    )
+    assert downward is not None
+    # ...and fy by sy alone: fy = 600, cy = 240.
+    assert downward[1] == pytest.approx((0.9 * 480 - 240) * 2.0 / 600.0, abs=0.01), downward
 
 
 def test_a_crop_is_not_a_resize_and_only_a_resize_scales_the_focal_length() -> None:

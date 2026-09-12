@@ -173,6 +173,32 @@ def test_analyze_memory_rejects_missing_result(memory_world: MemoryWorldModule) 
     assert "must assign a dictionary" in outcome.message
 
 
+def test_analyze_memory_reports_a_child_that_died_after_printing_its_answer(
+    memory_world: MemoryWorldModule,
+) -> None:
+    """A result on stdout is not the same as a run that worked.
+
+    The result is read off the child's stdout and its EXIT STATUS was never looked at, so
+    a child that printed the sentinel and then died -- a teardown that raises, a native
+    library faulting as it closes its handles -- came back from this method as
+    `success=True` with the failure discarded. The `atexit` below is the cheap way to
+    stage exactly that ordering: the answer is printed first, the process dies after.
+    """
+    code = (
+        "import atexit, os, sys\n"
+        # Flush FIRST: the answer has to reach the parent's stdout, otherwise this stages
+        # the already-covered "no result at all" case instead of the one under test.
+        "atexit.register(lambda: (sys.stdout.flush(), os._exit(3)))\n"
+        "result = {'answer': 'ok'}"
+    )
+
+    outcome = memory_world.analyze_memory(code, timeout=10)
+
+    assert not outcome.success, "a child that died after printing was reported as success"
+    assert outcome.error_code == "EXECUTION_FAILED"
+    assert "3" in outcome.message
+
+
 def test_analyze_memory_times_out(memory_world: MemoryWorldModule) -> None:
     outcome = memory_world.analyze_memory("import time; time.sleep(1)", timeout=0.01)
 
@@ -1439,62 +1465,92 @@ def test_navigate_tries_every_viewpoint_before_saying_there_is_no_route(
     cluster = SimpleNamespace(index=0, centre=(5.0, 5.0, 0.0), radius=1.0)
     memory_world._last_answer = (SimpleNamespace(clusters=[cluster]), "q1")
     memory_world._active_query_result = {"query_id": "q1"}
+    # TWELVE photos, and their publication order is deliberately not their distance
+    # order. The count matters: this test used three, so every cap from 4 upwards
+    # survived it and the 8 that actually shipped was invisible to it. With twelve and
+    # only the LAST candidate reachable there are 13 candidates in the list, so any cap
+    # at all fails.
+    distances = [12.0, 3.0, 7.0, 1.0, 9.0, 2.0, 11.0, 4.0, 8.0, 5.0, 10.0, 6.0]
     memory_world._active_query_images = [
-        ({"query_id": "q1", "cluster": 0, "index": 0, "position": [1.0, 1.0, 0.5]}, b""),
-        ({"query_id": "q1", "cluster": 0, "index": 1, "position": [2.0, 2.0, 0.5]}, b""),
-        ({"query_id": "q1", "cluster": 0, "index": 2, "position": [3.0, 3.0, 0.5]}, b""),
+        ({"query_id": "q1", "cluster": 0, "index": i, "position": [d, 0.0, 0.5]}, b"")
+        for i, d in enumerate(distances)
     ]
     monkeypatch.setattr(memory_world, "_ground_under_viewer", lambda: (0.0, 0.0, 0.0))
     monkeypatch.setattr(memory_world, "_broadcast", lambda *a, **k: None)
 
-    # Only the THIRD photo can be reached: not the one asked for, not the centre.
-    reachable = (3.0, 3.0)
+    # Only the FARTHEST photo can be reached: not the one asked for, not the centre.
+    reachable = 12.0
     tried: list[tuple] = []
 
     class Picky:
         def plan(self, start, goal):  # type: ignore[no-untyped-def]
             tried.append(tuple(round(float(v), 3) for v in goal))
-            if tuple(round(float(v), 3) for v in goal[:2]) != reachable:
+            if round(float(goal[0]), 3) != reachable:
                 return None
             return SimpleNamespace(
-                points=[(0.0, 0.0, 0.0), (3.0, 3.0, 0.0)], length_m=4.2, cells=5, planner="mls"
+                points=[(0.0, 0.0, 0.0), (12.0, 0.0, 0.0)], length_m=4.2, cells=5, planner="mls"
             )
 
     monkeypatch.setattr(memory_world, "_planner", lambda: Picky())
 
-    payload = memory_world._navigate_to(NavigateRequest(cluster=0, query_id="q1", view=0))
-    assert payload["view"] == 2, "gave up instead of trying the other viewpoints"
-    assert payload["goal"] == [3.0, 3.0, 0.5]
+    # Photo 3 is the one asked for, at distance 1 -- and unreachable.
+    payload = memory_world._navigate_to(NavigateRequest(cluster=0, query_id="q1", view=3))
+    assert payload["view"] == 0, "gave up instead of trying the other viewpoints"
+    assert payload["goal"] == [12.0, 0.0, 0.5]
     assert payload["length_m"] == 4.2
     # The one asked for is tried FIRST, and the centre before the rest.
-    assert tried[0][:2] == (1.0, 1.0), tried
+    assert tried[0][0] == 1.0, tried
     assert tried[1][:2] == (5.0, 5.0), tried
+    assert len(tried) == 13, f"stopped early after {len(tried)} candidates"
+    # ...and the remaining photos are tried NEAREST FIRST, not in publication order.
+    rest = [t[0] for t in tried[2:]]
+    assert rest == sorted(rest), f"tried the photos in publication order, not by distance: {rest}"
 
-    # A place with twelve photographs where only the NINTH can be reached. A cap of 8 on
-    # the attempts refused this while a 9 m route existed -- the very failure the loop
-    # exists to prevent, reintroduced by an arbitrary constant. The test above cannot see
-    # it: with only three photos it passes with the cap set to 4.
-    memory_world._active_query_images = [
-        ({"query_id": "q1", "cluster": 0, "index": i, "position": [float(i), 0.0, 0.0]}, b"")
-        for i in range(12)
-    ]
-    far = (8.0, 0.0)
-
-    class OnlyTheNinth:
-        def plan(self, start, goal):  # type: ignore[no-untyped-def]
-            if tuple(round(float(v), 3) for v in goal[:2]) != far:
-                return None
-            return SimpleNamespace(
-                points=[(0.0, 0.0, 0.0), (8.0, 0.0, 0.0)], length_m=9.0, cells=9, planner="mls"
-            )
-
-    monkeypatch.setattr(memory_world, "_planner", lambda: OnlyTheNinth())
-    payload = memory_world._navigate_to(NavigateRequest(cluster=0, query_id="q1", view=0))
-    assert payload["view"] == 8, "stopped before reaching the only viewpoint that works"
-    assert payload["length_m"] == 9.0
-
-    # When nothing at all can be reached it still refuses, rather than inventing one.
+    # When nothing at all can be reached it still refuses, rather than inventing a route.
     monkeypatch.setattr(memory_world, "_planner", lambda: SimpleNamespace(plan=lambda *a: None))
     with pytest.raises(HTTPException) as raised:
-        memory_world._navigate_to(NavigateRequest(cluster=0, query_id="q1", view=0))
+        memory_world._navigate_to(NavigateRequest(cluster=0, query_id="q1", view=3))
     assert raised.value.status_code == 422
+
+
+def test_navigate_walks_to_the_nearest_reachable_photo_not_the_first_published(
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two reachable photos, and the person has to walk to one of them.
+
+    `_active_query_images` is in publication (score) order, so taking the first routable
+    entry in that order handed back a photo 10 m away while an equally reachable one 1 m
+    away sat later in the same list. Nothing caught it: the exhaustiveness test above
+    makes exactly ONE candidate reachable, which cannot distinguish "first that works"
+    from "best that works".
+    """
+    from dimos.teleop.memory_world.hyperspace_answers import NavigateRequest
+
+    cluster = SimpleNamespace(index=0, centre=(50.0, 50.0, 0.0), radius=1.0)
+    memory_world._last_answer = (SimpleNamespace(clusters=[cluster]), "q1")
+    memory_world._active_query_result = {"query_id": "q1"}
+    # Published far-first: the 10 m photo scored better than the 1 m one.
+    memory_world._active_query_images = [
+        ({"query_id": "q1", "cluster": 0, "index": 0, "position": [10.0, 0.0, 0.5]}, b""),
+        ({"query_id": "q1", "cluster": 0, "index": 1, "position": [1.0, 0.0, 0.5]}, b""),
+    ]
+    monkeypatch.setattr(memory_world, "_ground_under_viewer", lambda: (0.0, 0.0, 0.0))
+    monkeypatch.setattr(memory_world, "_broadcast", lambda *a, **k: None)
+
+    class Reachable:
+        def plan(self, start, goal):  # type: ignore[no-untyped-def]
+            if round(float(goal[0]), 3) == 50.0:
+                return None  # the centre is inside a wall, as centres tend to be
+            return SimpleNamespace(
+                points=[(0.0, 0.0, 0.0), (float(goal[0]), 0.0, 0.0)],
+                length_m=float(goal[0]),
+                cells=5,
+                planner="mls",
+            )
+
+    monkeypatch.setattr(memory_world, "_planner", lambda: Reachable())
+
+    payload = memory_world._navigate_to(NavigateRequest(cluster=0, query_id="q1"))
+    assert payload["view"] == 1, "walked to the far photo because it was published first"
+    assert payload["goal"] == [1.0, 0.0, 0.5]
+    assert payload["length_m"] == 1.0

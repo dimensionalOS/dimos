@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import math
 from pathlib import Path
 import struct
 from types import SimpleNamespace
@@ -77,10 +78,20 @@ def test_keys_round_trip_through_centres() -> None:
 
 
 def test_sensor_scan_moves_a_world_scan_back_to_the_sensor() -> None:
-    world_from_sensor = pose_matrix((10.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
-    scan = sensor_scan(np.array([[12.0, 1.0, 0.5]], np.float32), world_from_sensor, in_world=True)
-    np.testing.assert_allclose(scan.points, [[2.0, 1.0, 0.5]])
+    """Back to the sensor means UNROTATED as well as untranslated.
+
+    This used to pose the sensor with an identity quaternion, so subtracting the
+    translation and doing nothing else passed it -- the half of the transform that turns
+    the scan could be deleted outright and the test stayed green. The sensor below is
+    yawed 90 degrees, which no translation can imitate.
+    """
+    yaw_90 = (0.0, 0.0, math.sqrt(0.5), math.sqrt(0.5))
+    world_from_sensor = pose_matrix((10.0, 0.0, 0.0), yaw_90)
+    # 1 m to the sensor's LEFT in the world is 1 m straight AHEAD of a sensor yawed 90.
+    scan = sensor_scan(np.array([[10.0, 1.0, 0.5]], np.float32), world_from_sensor, in_world=True)
+    np.testing.assert_allclose(scan.points, [[1.0, 0.0, 0.5]], atol=1e-6)
     assert scan.position == (10.0, 0.0, 0.0)
+    # Already in the sensor's frame: kept exactly, neither turned nor moved.
     kept = sensor_scan(np.array([[2.0, 1.0, 0.5]], np.float32), world_from_sensor, in_world=False)
     np.testing.assert_allclose(kept.points, [[2.0, 1.0, 0.5]])
 
