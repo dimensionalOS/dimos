@@ -16,10 +16,15 @@
 
 import json
 from pathlib import Path
+import sys
 
 from pydantic import ValidationError
 import pytest
-import tomllib
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 from dimos.core.native_module import NativeModuleConfig
 from dimos.hardware.sensors.lidar.livox.module import Mid360, Mid360Config, _resolved_host_ip

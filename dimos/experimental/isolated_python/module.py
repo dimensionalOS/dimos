@@ -157,7 +157,11 @@ class IsolatedPythonModule(NativeModule):
 
     def _runtime_env(self) -> dict[str, str]:
         env = dict(os.environ)
+        # The isolated project picks its own interpreter and venv; host pins
+        # (e.g. setup-uv exporting UV_PYTHON on CI matrix legs) must not leak in.
         env.pop("VIRTUAL_ENV", None)
+        env.pop("UV_PYTHON", None)
+        env.pop("UV_PROJECT_ENVIRONMENT", None)
         env.update(self.config.extra_env)
         return env
 
