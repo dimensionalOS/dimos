@@ -2,6 +2,12 @@
 
 `uv run` syncs the project deps + `tests` group on demand, so the default test suite needs no upfront install: `uv run pytest --numprocesses=auto dimos` (xdist parallelizes across cores).
 
+Before the first run:
+
+- `bin/fetch-test-data` pulls the LFS archives tests use. Tests otherwise pull lazily, and a slow link trips the 600 s per-test timeout.
+- `uv run playwright install chromium firefox` for the browser tests.
+- On a laptop pass `--numprocesses=8`. `auto` starts one worker per core and can exhaust memory.
+
 Self-hosted tests need the heavy optional extras (LFS data, perception models, simulation, hardware SDKs, …). Sync them explicitly before running:
 
 ```bash

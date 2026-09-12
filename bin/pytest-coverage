@@ -5,6 +5,7 @@ set -euo pipefail
 rm -f .coverage .coverage.*
 
 bin/build-test-natives
+bin/fetch-test-data
 
 export _DIMOS_COV=1
 
