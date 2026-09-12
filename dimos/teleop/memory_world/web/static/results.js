@@ -82,6 +82,9 @@ export class ResultsNav {
         if (this.pyramids) this.pyramids.setCurrent(index);
         this._showEvidence(index);
         let viewpoint = null;
+        // Cleared whether or not we fly: the tour steps through places with fly:false, and
+        // a corridor left from the last one is a wedge missing for the rest of the tour.
+        if (this.scene.setSightLine) this.scene.setSightLine(null);
         if (fly && this.flight) {
             // Stand where the first picture of this place was taken, looking the way it
             // looked. Flying to the voxels instead put the camera at an arbitrary
@@ -98,8 +101,6 @@ export class ResultsNav {
                     this.scene.setSightLine(viewpoint.position, viewpoint.at, viewpoint.radius);
                 }
             } else {
-                // No picture for this place, so nothing to see past: the map goes back.
-                if (this.scene.setSightLine) this.scene.setSightLine(null);
                 const distance = Math.max(MIN_VIEW_DISTANCE_M, Math.min(MAX_VIEW_DISTANCE_M, cluster.radius * 3 + 1.5));
                 this.flight.lookAt(cluster.centre, { distance, yaw: this._yawFromEvidence(index) });
             }
@@ -262,7 +263,9 @@ export class ResultsNav {
         const k = this.current;
         ui.counter.textContent = k < 0 ? `${n} place${n === 1 ? '' : 's'}` : `${k + 1} / ${n}`;
         const cluster = k < 0 ? this.clusters[0] : this.clusters[k];
-        const views = cluster.n_evidence;
+        // n_views, not n_evidence: the latter is how many pictures are shown, capped, so
+        // it read 8 for every strong place while the answer above it said 66.
+        const views = cluster.n_views ?? cluster.n_evidence;
         ui.label.textContent = k < 0
             ? `${this.queryText} — press ▶ to visit the best`
             : `${this.queryText} · ${cluster.peak.toFixed(2)} · ${views} view${views === 1 ? '' : 's'}`;

@@ -757,7 +757,6 @@ class FastQuery:
         self._text_cache: dict[str, NDArray[np.float32]] = {}
         engine.keyframe(-1)  # loads every keyframe
         place = engine.placer(world_frame)  # one tf pass
-        self.patches = PatchBank(list(engine._keyframes.values()), place)
         # How many members the STORE holds, which is the question. Counting the arrays
         # engine.backgrounds() returns counts what the EMBEDDER produced, and this module
         # hands it a single-model embedder -- so an ensemble store passed that test and
@@ -770,6 +769,7 @@ class FastQuery:
                 f"({', '.join(members)}), and the fast path holds one grid per keyframe."
                 " Re-ingest with a single model, or query through the engine."
             )
+        self.patches = PatchBank(list(engine._keyframes.values()), place)
         backgrounds = engine.backgrounds()
         self.backgrounds = np.asarray(backgrounds[0] if len(backgrounds) else [], np.float32)
         self.patches.background_sims(self.backgrounds)

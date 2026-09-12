@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 import sqlite3
 from unittest import mock
@@ -517,13 +518,26 @@ def test_an_ensemble_store_is_refused_by_the_fast_path() -> None:
 
     from dimos.teleop.memory_world.hyperspace_fast import FastQuery
 
+    # With a real keyframe in it, whose member grid also differs from its cell grid: the
+    # earlier version of this test had an EMPTY store, so it passed even while the members
+    # check ran too late to be the thing that fired. An ensemble store has to be diagnosed
+    # as an ensemble store, not by the grid mismatch its members happen to also produce.
+    keyframe = SimpleNamespace(
+        id=0,
+        rows=24,
+        cols=24,
+        camera_frame="cam",
+        ts=1.0,
+        intrinsics=SimpleNamespace(fx=1.0, fy=1.0, cx=0.0, cy=0.0, width=24.0, height=24.0),
+        patch_depth=np.ones(24 * 24, np.float32),
+    )
     engine = SimpleNamespace(
         members=lambda: ["base-patch16-224-2x3", "base-patch16-256-2x3"],
         backgrounds=lambda: [np.zeros((8, 768), np.float32)],  # ONE, from one embedder
         config=SimpleNamespace(),
         keyframe=lambda _n: None,
-        placer=lambda _frame: (lambda _kf: None),
-        _keyframes={},
+        placer=lambda _frame: (lambda _kf: np.eye(4)),
+        _keyframes={0: (keyframe, np.zeros((14 * 14, 4), np.float16))},
         store=None,
     )
     with pytest.raises(SystemExit) as refusal:
@@ -616,3 +630,54 @@ def test_a_store_whose_model_grid_is_not_its_cell_grid_is_refused() -> None:
     # And the ordinary store, where they agree, is built without complaint.
     bank = PatchBank([keyframe(0, 24, 24, 24 * 24)], place)
     assert len(bank.patch_cell) == 576
+
+
+def test_the_dense_refine_never_keeps_occupancy() -> None:
+    """Occupancy in the dense chain is handed `scene=[]`, on which it keeps nothing.
+
+    This used to be left in whenever there was no scene, meaning to avoid grounding an
+    answer nowhere. What it actually did was delete the answer: every voxel dropped, and
+    the caller fell back to raw ungrounded components — the very outcome the branch was
+    written to prevent. Grounding happens on sparse keys in `_query`, where there is a
+    scene to do it with.
+    """
+    from types import SimpleNamespace
+    from unittest import mock
+
+    import numpy as np
+
+    from dimos.mapping.hyperspace import refine as rf
+    from dimos.teleop.memory_world.hyperspace_search import FastResult, HyperspaceSearch
+
+    search = object.__new__(HyperspaceSearch)  # no model, no store: only _refine is under test
+    search.refine = "default"
+    search.voxel_size = 0.1
+    search._scene_keys = None  # the case that used to keep occupancy
+    search.world_frame = "odom"
+    search._fast = SimpleNamespace(config=SimpleNamespace(refine="occupancy,support,prior"))
+
+    result = FastResult(
+        index=np.array([[0, 0, 0], [1, 0, 0]], dtype=np.int64),
+        score=np.array([0.9, 0.8], dtype=np.float64),
+        frames=np.array([1, 1], dtype=np.int64),
+        bins=np.array([1, 1], dtype=np.int64),
+        patches=None,
+        segments=None,
+        patch_points=np.zeros((0, 3)),
+        segment_points=np.zeros((0, 3)),
+        stats={},
+    )
+    seen = {}
+
+    class CapturedError(Exception):
+        """Stops at the call under test; what refine does after it is not the point."""
+
+    def capture(_heat, config, **kwargs):  # type: ignore[no-untyped-def]
+        seen["methods"] = list(config.methods)
+        raise CapturedError
+
+    with mock.patch.object(rf, "refine", capture), contextlib.suppress(CapturedError):
+        search._refine("a basket", result, np.array([True, True]))
+
+    assert seen["methods"], "refine was never reached, so this proves nothing"
+    assert "occupancy" not in seen["methods"], seen["methods"]
