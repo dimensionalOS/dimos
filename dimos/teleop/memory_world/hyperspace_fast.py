@@ -49,7 +49,6 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-VEC0_MAX_K = 4096
 SEGMENT_STREAM = "hyperspace_segments"
 # Voxel indices are packed into one int64 key; this many voxels each side of
 # the origin (105 km at 10 cm) fit.
@@ -500,14 +499,21 @@ class PatchBank:
         gate: NDArray[np.bool_] | None = None,
     ) -> tuple[Patches, int]:
         """Patches whose query score beats their best background by ``hot_threshold``,
-        among the ``min(max_hot_patches, VEC0_MAX_K)`` most similar; those *gate*
+        among the ``max_hot_patches`` most similar; those *gate*
         marks (structural: floor/wall/ceiling) are dropped."""
         if len(self) == 0:
             return Patches(
                 np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros(0), np.zeros(0)
             ), 0
         sims = self.similarities(query[None, :])[:, 0]
-        k = min(int(config.max_hot_patches), VEC0_MAX_K, len(sims))
+        # No VEC0_MAX_K here. That is sqlite-vec's ceiling on a knn query, and this
+        # module exists precisely to NOT use sqlite-vec -- the docstring above says so:
+        # "the top-k pre-filter runs over every patch instead of sqlite-vec's approximate
+        # index". Clamping to it silently cut the operator's `max_hot_patches` from its
+        # 6000 default to 4096, so the configured value was never the value used. The
+        # search here is a torch matmul and an argpartition over resident arrays; its
+        # cost is linear in the bank, not in k.
+        k = min(int(config.max_hot_patches), len(sims))
         top = np.argpartition(-sims, k - 1)[:k] if k < len(sims) else np.arange(len(sims))
         contrast = sims[top].astype(np.float64)
         if len(backgrounds):
