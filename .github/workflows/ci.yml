@@ -23,6 +23,28 @@ env:
   UV_NO_SYNC: "1"
 
 jobs:
+  commit-messages:
+    name: No AI co-authors
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check incoming commit messages
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          PRE_COMMIT_FROM_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PRE_COMMIT_TO_REF: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          : "${PRE_COMMIT_FROM_REF:?Missing base SHA}"
+          : "${PRE_COMMIT_TO_REF:?Missing head SHA}"
+          python3 bin/hooks/filter_commit_message.py --check
+
   compute-ros-pin:
     # Extracts the ros-dev image digest pinned in docker/ros-dev-pin/Dockerfile
     # so downstream jobs can reference it from their `container:` field.
@@ -181,6 +203,8 @@ jobs:
           prune-cache: true
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
+      - name: Test commit message check
+        run: uv run pytest -c /dev/null --rootdir . --noconftest bin/hooks/test_filter_commit_message.py
       - name: Mypy
         run: uv run mypy
 
@@ -1032,6 +1056,7 @@ jobs:
     if: always()
 
     needs:
+    - commit-messages
     - lint
     - rust
     - native
