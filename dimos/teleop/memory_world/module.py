@@ -1560,17 +1560,18 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                         with self._index_lock:
                             if self._hyperspace is not None:
                                 self._hyperspace.close()
+                                self._hyperspace = None  # not a handle to a closed search
                             if self._visual_index is not None:
                                 self._visual_index.stop()
                                 self._visual_index = None
                             store, self._store = self._store, None
+                            if store is not None:
+                                try:
+                                    store.stop()
+                                except Exception:
+                                    logger.exception("error closing memory store")
                     finally:
                         self._store_lock.release()
-                    if store is not None:
-                        try:
-                            store.stop()
-                        except Exception:
-                            logger.exception("error closing memory store")
                 else:
                     logger.warning("a read is still in flight; the store is left to exit")
             super().stop()
