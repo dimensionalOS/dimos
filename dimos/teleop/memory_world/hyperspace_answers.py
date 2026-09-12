@@ -640,42 +640,42 @@ class HyperspaceAnswers:
         raise HTTPException(status_code=503, detail="the robot's path is not known yet")
 
     def _ground_under_viewer(self) -> tuple[float, float, float] | None:
-        """The floor under the viewer -- where their feet are.
+        """Where the viewer is standing, at a height the planner can actually use.
 
         A route has to start where the person asking for it is standing. It used to start
         where the ROBOT stopped at the end of the recording, so walking anywhere and
-        pressing Navigate drew a green tube that began somewhere else entirely -- across
-        the shop, in the grocery map, up to 30 m from the viewer.
+        pressing Navigate drew a green tube that began somewhere else entirely.
 
-        Only the viewer's x and y are used, because only those exist: the viewer sends
-        `getViewerRobotPosition()`, which is `[x, y, 0]` -- the z is a literal zero, not a
-        head height. The first version of this compared map voxels against `viewer[2]` and
-        took the highest one at or below it, reasoning about a camera at eye height that
-        this application never reports. Against a real viewer that test was `z <= 0.32` on
-        a floor at 0.7, so it matched nothing and the answer came from the fallback branch
-        every time -- right by accident, and wrong the moment the column held a ceiling,
-        which the fallback would then have picked in a room with no floor below zero.
+        Only the viewer's x and y are used, because only those exist: the client sends
+        `getViewerRobotPosition()`, which is `[x, y, 0]` -- a literal zero for z, not a
+        head height.
 
-        So: the lowest surface in a small column around the viewer's x and y. That is the
-        floor under them, whatever is stacked above it. Nothing in the column at all (off
-        the edge of the map) is not an error worth refusing -- the caller falls back.
+        The height comes from the nearest sample of the robot's own path, and that is the
+        point of this function. Two earlier versions took it from the map voxels in a
+        column around the viewer and both were wrong in a way only the live demo showed:
+        the highest voxel at or below `viewer[2]` is a test against zero, which on a floor
+        at 0.7 matched nothing; and the LOWEST voxel in the column is a stray return under
+        the floor, measured at z=-1.24 and -1.56 on the office recording. A start at an
+        impossible height is worse than a wrong one -- the planner snapped it to some far
+        corner of its graph and returned the SAME 47-point route for two viewers 2 m
+        apart, beginning 4 m from either of them, while the payload's `start` field went
+        on claiming the viewer's position.
+
+        The robot drove its path, so every height along it is one the planner can stand
+        at. Nearest in x and y, then take that z.
         """
         with self._clients_lock:
             viewer = self._viewer_position
         if viewer is None:
             return None
-        found = self._map_points()
-        if found is None or len(found) == 0:
+        known = self._orbit_positions_for(self._effective_orbit_frame()).get("positions")
+        if not known:
             return None
-        radius = max(float(self.config.voxel_size) * 4.0, 0.25)
-        near = (np.abs(found[:, 0] - viewer[0]) <= radius) & (
-            np.abs(found[:, 1] - viewer[1]) <= radius
-        )
-        if not near.any():
+        path = np.asarray(known, dtype=np.float64).reshape(-1, 3)
+        if not len(path):
             return None
-        column = found[near]
-        pick = column[np.argmin(column[:, 2])]
-        return (float(pick[0]), float(pick[1]), float(pick[2]))
+        nearest = int(np.argmin(np.hypot(path[:, 0] - viewer[0], path[:, 1] - viewer[1])))
+        return (float(viewer[0]), float(viewer[1]), float(path[nearest, 2]))
 
     def _navigate_to(self, request: NavigateRequest) -> dict[str, Any]:
         with self._clients_lock:

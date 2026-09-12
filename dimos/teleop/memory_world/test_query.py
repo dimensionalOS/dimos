@@ -1207,56 +1207,54 @@ def test_the_client_route_is_normalised_the_way_the_viewer_normalises_it(
 
 
 def test_a_route_starts_under_the_viewer_not_where_the_robot_stopped(
-    memory_world: MemoryWorldModule,
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The person asking for the route is the one who has to walk it.
 
-    The start used to be `_robot_end_pose()` unconditionally, so walking anywhere in the
-    world and pressing Navigate drew a green tube beginning wherever the robot happened
-    to stop recording -- up to 30 m away in the grocery map, and never at the viewer's
-    feet. The viewer's position was already being tracked for the costmap route; this
-    path just never read it.
+    The start used to be `_robot_end_pose()` unconditionally, so walking anywhere and
+    pressing Navigate drew a green tube beginning wherever the robot stopped recording --
+    up to 30 m away in the grocery map, and never at the viewer's feet.
 
-    The camera floats at eye height, so the start is the map voxel UNDER it: the surface
-    being stood on, not the camera itself and not the lowest thing in the column.
+    The viewer's x and y are all that exist to go on: the client sends
+    `getViewerRobotPosition()`, which is `[x, y, 0]` with a literal zero for z. The HEIGHT
+    comes from the nearest sample of the robot's own path, because the robot drove there
+    and so the planner can stand there. Two earlier versions took it from the map voxels
+    instead -- the highest at or below `viewer[2]` (a test against zero, matching nothing
+    on a floor at 0.7) and then the lowest in the column (a stray return under the floor,
+    z=-1.24 live). Both are covered below, because both looked reasonable and neither was.
     """
-    # A shelf top and a ceiling above the viewer, the floor below them, and a far patch
-    # that must not win however low it is.
-    memory_world._map_xyz = np.array(
-        [
-            [4.05, 4.0, 1.2],  # a shelf top, above the floor
-            [4.0, 4.05, 2.4],  # a ceiling
-            [4.0, 4.0, 0.7],  # the floor under the viewer
-            # Far away and LOWER than that floor: without the radius filter this wins
-            # outright and the route starts across the room. A far patch merely higher
-            # cannot show that, which is why an earlier version of this test passed with
-            # the filter removed.
-            [30.0, 30.0, -5.0],
-        ],
-        dtype=np.float32,
-    )
-    # The viewer's z is always a literal zero -- `getViewerRobotPosition()` returns
-    # [x, y, 0] -- so nothing here may depend on it. An earlier version compared map
-    # voxels against it as if it were a head height, which against a real viewer matched
-    # nothing and reached the right answer only through its fallback branch.
-    memory_world._viewer_position = (4.0, 4.0, 0.0)
+    path = [
+        [0.0, 0.0, 0.70],
+        [1.0, 0.0, 0.72],
+        [4.0, 4.0, 0.66],  # the sample nearest the viewer below
+        [9.0, 9.0, 0.80],
+    ]
+    monkeypatch.setattr(memory_world, "_orbit_positions_for", lambda frame: {"positions": path})
+    monkeypatch.setattr(memory_world, "_effective_orbit_frame", lambda: "odom")
+    # A map whose column under the viewer holds a ceiling AND a stray return below the
+    # floor. Neither may reach the answer: heights come from the path, not from here.
+    memory_world._map_xyz = np.array([[4.0, 4.0, 2.4], [4.02, 4.0, -1.24]], dtype=np.float32)
+    memory_world._viewer_position = (4.1, 3.9, 0.0)
 
     under = memory_world._ground_under_viewer()
     assert under is not None
-    assert under == pytest.approx((4.0, 4.0, 0.7), abs=1e-5), "not the floor of this column"
+    # The viewer's own x and y, kept exactly...
+    assert under[0] == pytest.approx(4.1) and under[1] == pytest.approx(3.9)
+    # ...and the height of the nearest thing the robot actually stood on.
+    assert under[2] == pytest.approx(0.66), "took a height from the voxels, not the path"
 
-    # A nonsense z must change nothing, because the real viewer never sends one.
-    memory_world._viewer_position = (4.0, 4.0, 99.0)
-    assert memory_world._ground_under_viewer() == pytest.approx((4.0, 4.0, 0.7), abs=1e-5)
+    # A nonsense z from the client must change nothing, because the real one is always 0.
+    memory_world._viewer_position = (4.1, 3.9, 99.0)
+    assert memory_world._ground_under_viewer()[2] == pytest.approx(0.66)
 
-    # A column holding only a ceiling still answers with the lowest thing in it, and the
-    # route starts there rather than nowhere -- but it must never be the 2.4 ceiling when
-    # a floor is present, which the first assertion above is what pins.
-    # Off the edge of the map entirely: no answer, so the caller falls back.
-    memory_world._viewer_position = (100.0, 100.0, 0.0)
+    # Somewhere else entirely: the nearest path sample is a different one.
+    memory_world._viewer_position = (8.9, 9.1, 0.0)
+    assert memory_world._ground_under_viewer()[2] == pytest.approx(0.80)
+
+    # No path known yet, and no viewer connected: both decline so the caller falls back.
+    monkeypatch.setattr(memory_world, "_orbit_positions_for", lambda frame: {"positions": []})
     assert memory_world._ground_under_viewer() is None
-
-    # And with no viewer connected at all there is nothing to stand on.
+    monkeypatch.setattr(memory_world, "_orbit_positions_for", lambda frame: {"positions": path})
     memory_world._viewer_position = None
     assert memory_world._ground_under_viewer() is None
 
