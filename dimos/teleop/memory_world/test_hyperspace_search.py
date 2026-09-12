@@ -872,3 +872,59 @@ def test_a_half_done_rebuild_is_refused_before_the_index_is_deleted(  # type: ig
             assert any(True for _ in check.streams[name]), f"{name} was emptied"
     finally:
         check.stop()
+
+
+@pytest.mark.parametrize("empty_role", ["image", "depth", "tf"])
+def test_an_empty_required_stream_stops_the_ingest_before_the_deletes(  # type: ignore[no-untyped-def]
+    tmp_path, monkeypatch, empty_role: str
+) -> None:
+    """The preflight grew from two names to five; these are the three that were missing.
+
+    `_ingest` reads image, depth, camera_info, tf and the depth intrinsics AFTER the
+    COMPLETE/KEYFRAME/PATCH deletes, so an empty one of ANY of them costs the index that
+    is already there.
+
+    The stream is named ON THE COMMAND LINE here, and that is the whole point. Detection
+    skips empty streams, so a merely-detected empty one is caught by the `missing` check
+    long before the deletes -- my first version of this test relied on that and passed
+    with the preflight trimmed back to two names, which is the seventh test in this loop
+    that could not fail. `chosen` overrides detection, and `missing` only asks whether the
+    given name is PRESENT, so an operator-named empty stream reaches the deletes. That is
+    the case these three names guard.
+    """
+    from dimos.msgs.std_msgs.String import String
+    from dimos.teleop.memory_world.hyperspace_ingest import ingest_recording
+
+    names = {"image": "color_image", "depth": "depth_image", "tf": "tf"}
+    recording = tmp_path / f"{empty_role}.db"
+    store = _tiny_recording(recording)
+    try:
+        store.stream(KEYFRAME_STREAM, String).append(String("a keyframe"), ts=1.0)
+        store.stream(PATCH_STREAM, String).append(String("a patch"), ts=1.0)
+        store.stream(COMPLETE_STREAM, String).append(String("done"), ts=1.0)
+        # Emptied, not removed: the name stays in the registry with its own payload type,
+        # which is what a killed writer leaves. Read the type BEFORE deleting it.
+        name = names[empty_role]
+        payload = store.streams[name].data_type
+        store.delete_stream(name)
+        store.stream(name, payload)
+    finally:
+        store.stop()
+
+    def never_embedded(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError(f"an empty {empty_role!r} got past the preflight")
+
+    _stub_hyperspace(monkeypatch, never_embedded)
+
+    with pytest.raises(SystemExit):
+        ingest_recording(
+            recording, model_name="m", device="cpu", streams={empty_role: names[empty_role]}
+        )
+
+    check = SqliteStore(path=str(recording))
+    check.start()
+    try:
+        for name in (KEYFRAME_STREAM, PATCH_STREAM, COMPLETE_STREAM):
+            assert name in check.list_streams(), f"{name} was deleted for an empty {empty_role}"
+    finally:
+        check.stop()
