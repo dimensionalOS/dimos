@@ -8,21 +8,36 @@ description: Install and verify a DimOS environment for navigation, manipulation
 Use the repository installer to provision system packages, Python, and a project
 environment. Finish with verified dependencies and concrete next commands.
 
-## Determine the installation
+## Guide the user through setup
 
-- Inspect the OS/architecture, available GPU, intended directory, and any existing
-  checkout or `.venv`. Do not modify another project or replace its environment.
-- Infer capabilities from the user's task: `navigation` for Unitree, mapping,
-  simulation, and MAVLink; `manipulation` for arm control/planning; or
-  `navigation,manipulation` for both. Both include agents, perception, visualization,
-  web interfaces, and simulation. Ask if intent is missing; do not silently select both.
-- Use `dev` for work on DimOS itself or an existing DimOS checkout. It includes
-  test/lint dependencies. Use `library` for applications using the published package.
-  Resolve the destination from the user's request or clarify it before installing.
-- Read the installer's `--help` for the version being used. For an existing checkout,
-  use its installer. Before cloning, download `scripts/install.sh` from the same
-  DimOS revision as these instructions (normally `main`). No skill installation is
-  required to read and follow this file.
+Start with a read-only inspection of the OS/architecture, GPU, intended directory,
+and any existing checkout or `.venv`. Then ask about the unresolved choices below,
+in a short batch with suggested answers. Explain recommendations in everyday terms.
+Do not silently infer a capability or installation mode from an ambiguous request.
+Reuse choices the user already gave; an explicit unattended setup request does not
+need another interview.
+
+| Ask the user | Explain the choices |
+| --- | --- |
+| What do you want to build? | Navigation for mobile robots, mapping, simulation, and MAVLink; manipulation for arms and planning; both for both workflows. Both bundles include agents, perception, visualization, and simulation dependencies. |
+| Use DimOS in an application, or develop DimOS itself? | Library uses the published package; developer uses a source checkout and adds test/lint tools. Recommend developer for an existing DimOS checkout. |
+| Where should it be installed? | Suggest an absolute path, such as `./dimos-app` for an application or `./dimos` for a new checkout. Identify existing projects before reusing them. |
+| Native dependencies or Nix? | Recommend apt on Ubuntu/WSL, Homebrew on macOS, and Nix on other Linux. Native setup on other Linux requires manually provisioned prerequisites. NixOS uses Nix. |
+
+Mention the detected GPU and recommend automatic backend selection; offer CPU-only
+when relevant. Explain that required system packages and a missing package manager
+will be installed. Leave persistent LCM network tuning off unless requested or
+established as necessary and authorized.
+
+Once choices are resolved, show a compact summary with mode, absolute destination,
+capabilities, native/Nix setup, and CPU/GPU preference. Continue under the user's
+existing setup authorization; do not ask them to approve the same choices again.
+The conversation supplies the interactivity: run the installer with explicit flags
+and `--non-interactive` so the agent never needs to operate its terminal menus.
+
+Read the installer's `--help` for the version being used. Inside a checkout, use its
+installer. Before cloning, download `scripts/install.sh` from the same revision as
+this skill (normally `main`). No skill installation is required to follow this file.
 
 ## Run the installer
 
@@ -54,7 +69,7 @@ when a particular branch is requested. Existing checkouts keep their current bra
   unattended installation defaults to apt on Ubuntu/WSL, Homebrew on macOS, and Nix
   on other Linux. Honor the user's setup preference with `--use-nix` or `--no-nix`;
   both bypass the question. `--no-nix` on other Linux assumes native prerequisites
-  are already installed. NixOS uses Nix by default. Existing Nix needs flakes enabled.
+  are already installed. NixOS uses Nix by default. The installer enables the required Nix features for its commands.
 - Let the installer detect CUDA on supported Linux x86_64 hosts. Use `--no-cuda`
   when the user requests CPU execution or GPU access is unavailable. Jetson CUDA
   setup is outside this installer.
@@ -75,7 +90,7 @@ only a preview. On failure, identify the failed step and resolve its cause befor
 retrying. Do not clear an existing environment, change branches, or broaden the
 capability selection as a repair shortcut.
 
-Use the printed activation instructions. In Nix environments, enter `nix develop`
+Use the printed activation instructions. In Nix environments, enter `nix --extra-experimental-features "nix-command flakes" develop`
 first. In a contributor checkout, `uv run --no-sync` preserves the installed extras;
 plain `uv run` can resync a different environment. Use the project `.venv` explicitly
 when invoking commands without activation.

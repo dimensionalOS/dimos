@@ -1,5 +1,19 @@
 # Installation
 
+## Install with an agent (recommended)
+
+Ask your coding agent to guide you through setup. Copy this prompt:
+
+> Read https://raw.githubusercontent.com/dimensionalOS/dimos/main/.agents/skills/setup-dimos/SKILL.md and help me install DimOS. Ask me about the installation options before running setup, then verify the environment and show me how to get started.
+
+The agent checks your host, asks about capabilities, installation mode, destination,
+and native/Nix setup, then runs the installer with your choices and reports the
+verification results. The [setup skill](https://github.com/dimensionalOS/dimos/blob/main/.agents/skills/setup-dimos/SKILL.md)
+works before cloning or inside an existing checkout; no separate skill installation
+is needed. Include any known preferences in your request to skip those questions.
+
+## Install from a terminal
+
 The guided installer sets up system dependencies, uv, Python 3.12, and dimOS. Run it from a terminal:
 
 ```sh skip
@@ -65,7 +79,7 @@ Interactive runs ask how to provide system dependencies before the installation 
 | [macOS 14+](/docs/installation/osx.md), Apple Silicon | Homebrew | CI paused; local testing needed |
 | [NixOS / other Linux](/docs/installation/nix.md), including Arch | Nix | Not covered by installation CI |
 
-The summary identifies any Homebrew/Nix bootstrap. `--use-nix` selects Nix explicitly; `--no-nix` selects apt/Homebrew on supported platforms or preinstalled system dependencies on other Linux distributions. Existing Nix installations need flakes enabled. Library mode reuses existing flake files or downloads missing ones; developer mode uses the checkout's flake.
+The summary identifies any Homebrew/Nix bootstrap. `--use-nix` selects Nix explicitly; `--no-nix` selects apt/Homebrew on supported platforms or preinstalled system dependencies on other Linux distributions. The installer enables `nix-command` and `flakes` for its Nix commands without changing your Nix configuration. Library mode reuses existing flake files or downloads missing ones; developer mode uses the checkout's flake.
 
 CUDA selection requires a detected NVIDIA GPU on Linux x86_64. `--no-cuda` selects CPU dependencies. Jetson CUDA setup is not supported. PyTorch verification does not qualify complete GPU workloads or promise GPU execution for every inference backend.
 

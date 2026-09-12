@@ -137,7 +137,18 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 # Installation
 
-## Guided installation (recommended)
+## Install with an agent (recommended)
+
+Give your coding agent this prompt. It will ask about your intended workflow,
+installation mode, destination, and native/Nix preference, then install and verify
+DimOS:
+
+> Read https://raw.githubusercontent.com/dimensionalOS/dimos/main/.agents/skills/setup-dimos/SKILL.md and help me install DimOS. Ask me about the installation options before running setup, then verify the environment and show me how to get started.
+
+The [setup skill](.agents/skills/setup-dimos/SKILL.md) works before cloning and inside
+an existing checkout. No separate skill installation is needed.
+
+## Install from a terminal
 
 Use the official installer to set up system dependencies, Python 3.12, and dimOS:
 
@@ -147,7 +158,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 Choose **navigation**, **manipulation**, or both. Each includes the agents, perception, visualization, and simulation dependencies for common workflows. Choose native system packages or Nix, review the summary, then install and verify your environment. Unattended runs use platform defaults unless overridden.
 
-**Installing with an agent?** Give it the [setup-dimos skill](.agents/skills/setup-dimos/SKILL.md), which covers new projects and existing checkouts. See [unattended installation](docs/installation/index.md#agent-assisted-and-unattended-installation) for explicit commands, or run `bash scripts/install.sh --help`.
+See [unattended installation](docs/installation/index.md#agent-assisted-and-unattended-installation) for automation commands, or run `bash scripts/install.sh --help`.
 
 See [installer options](docs/installation/index.md), or platform notes:
 

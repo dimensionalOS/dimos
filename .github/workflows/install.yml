@@ -5,7 +5,6 @@ on:
     paths:
       - 'scripts/install.sh'
       - 'scripts/test-install.sh'
-      - 'scripts/test-install-cli.sh'
       - 'pyproject.toml'
       - 'uv.lock'
       - 'setup.py'
@@ -34,10 +33,9 @@ jobs:
         run: |
           /bin/bash -n scripts/install.sh
           /bin/bash -n scripts/test-install.sh
-          /bin/bash -n scripts/test-install-cli.sh
-          uvx --from shellcheck-py shellcheck -e SC1091 scripts/install.sh scripts/test-install.sh scripts/test-install-cli.sh
+          uvx --from shellcheck-py shellcheck -e SC1091 scripts/install.sh scripts/test-install.sh
       - name: Installer behavior
-        run: bash scripts/test-install-cli.sh
+        run: bash scripts/test-install.sh
 
   ubuntu:
     needs: lint
@@ -47,19 +45,6 @@ jobs:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
         version: ['22.04', '24.04']
         mode: [library, dev]
-        include:
-          - os: ubuntu-24.04
-            version: '22.04'
-            capabilities: navigation
-          - os: ubuntu-24.04
-            version: '24.04'
-            capabilities: manipulation
-          - os: ubuntu-24.04-arm
-            version: '22.04'
-            capabilities: navigation,manipulation
-          - os: ubuntu-24.04-arm
-            version: '24.04'
-            capabilities: navigation,manipulation
     runs-on: ${{ matrix.os }}
     container: ubuntu:${{ matrix.version }}
     timeout-minutes: 60
@@ -81,7 +66,7 @@ jobs:
           # container's later steps need to trust this mounted checkout too.
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config --global --add safe.directory "$GITHUB_WORKSPACE/.git"
-          bash scripts/test-install.sh '${{ matrix.mode }}' '${{ matrix.capabilities }}'
+          bash scripts/test-install.sh '${{ matrix.mode }}'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
