@@ -64,11 +64,16 @@ export class ResultsNav {
     clear() {
         this.clusters = [];
         this.current = -1;
+        this.queryId = null;   // there is no answer, so there is no answer to belong to
         if (this.scene.clearAnswer) this.scene.clearAnswer();
         this.clearRoute();
         this.scene.clusterFilter = -1;
         if (this.heatmap) this.heatmap.clear();
         if (this.pyramids) this.pyramids.clear();
+        // The status line is the last thing that happened, and closing the answer IS the
+        // last thing. Left alone it went on reading "Route to #1: 23.14 m" over an empty
+        // world -- the route, the places and the pictures all gone.
+        this._status('Answer closed');
         this._render();
     }
 
@@ -222,6 +227,13 @@ export class ResultsNav {
 
     /** Draw a route (the `route` message or the /navigate reply). */
     setRoute(msg) {
+        // A route belongs to the answer it was planned for, and planning takes seconds.
+        // Close the answer in those seconds and the tube arrives anyway, pointing into an
+        // empty world at a place that is no longer lit. The server refuses to plan for a
+        // REPLACED answer, but it cannot see a viewer close one, and its own check and its
+        // broadcast are not one step -- so the answer on screen decides here.
+        if (!this.clusters.length) return;
+        if (msg && msg.query_id && msg.query_id !== this.queryId) return;
         this.clearRoute();
         const points = (msg && msg.points) || [];
         if (points.length < 2) return;
