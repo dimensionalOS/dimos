@@ -198,7 +198,16 @@ def ingest_recording(
                 # whose camera_info is empty lost the index it already had and then failed
                 # -- which is exactly what the comment below promises cannot happen. A
                 # promise in a comment is not a guard; this is the guard.
-                for name in (detected["camera_info"], depth_info):
+                # ALL five names _ingest reads after the deletes, not the two I checked
+                # when I wrote this guard last round -- the same stop-short shape, in the
+                # commit that wrote the principle down.
+                for name in (
+                    detected["image"],
+                    detected["depth"],
+                    detected["camera_info"],
+                    detected["tf"],
+                    depth_info,
+                ):
                     if next(iter(store.streams[name].order_by("ts")), None) is None:
                         raise SystemExit(f"stream {name!r} is empty")
                 # Only now, with everything that can fail before a single embedding already

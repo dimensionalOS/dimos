@@ -76,6 +76,7 @@ from dimos.teleop.memory_world.recording import (
     open_recording,
     pick_lidar,
     tf_root,
+    usable_streams,
 )
 from dimos.teleop.memory_world.replay import (
     DIFF_STREAM,
@@ -514,9 +515,9 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         whichever point-cloud stream agrees with tf, the world frame from the tf
         root; a name given on the command line is kept when the recording has it.
         """
-        present = set(store.list_streams())
         # A configured colour stream keeps its own camera_info paired to it.
         detected = detect_streams(store, image=self.config.image_stream_name or None)
+        usable = usable_streams(store)  # named is not enough; see the note at the check below
         # tf first: naming the lidar needs the tree.
         for role, setting in (
             ("tf", "tf_stream_name"),
@@ -526,7 +527,9 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             ("lidar", "lidar_stream_name"),
         ):
             configured = getattr(self.config, setting)
-            if (configured and configured in present) or detected[role] is None:
+            # `usable`, not merely named: detect_streams has already refused an empty one,
+            # and taking it back from the raw list threw that correction away.
+            if (configured and configured in usable) or detected[role] is None:
                 continue
             chosen = detected[role]
             if role == "lidar" and len(detected["lidar_candidates"]) > 1:

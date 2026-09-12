@@ -437,6 +437,24 @@ def open_recording(path: str | Path) -> Store:
 # ---- naming a recording's streams -------------------------------------------
 
 
+def usable_streams(store: Any) -> set[str]:
+    """The recording's streams that actually hold something this build can read.
+
+    The same test :func:`detect_streams` applies to the candidates it picks from, lifted
+    out so a caller checking a name the OPERATOR gave applies it too. A name is not its
+    contents: a killed ingest leaves the name behind, and an empty `tf` accepted from the
+    raw list builds a non-None, zero-frame tree that defeats every `tree is None` fallback.
+    """
+    usable = set()
+    for name in store.list_streams():
+        try:
+            if any(True for _ in store.streams[name]):
+                usable.add(name)
+        except Exception:  # a stream this build cannot open is not usable either
+            continue
+    return usable
+
+
 def depth_info_stream_for(store: Any, depth_stream: str, camera_info: str) -> str:
     """The depth camera's own ``camera_info`` when the recording has a USABLE one.
 

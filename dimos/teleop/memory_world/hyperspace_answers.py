@@ -42,6 +42,8 @@ from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.teleop.memory_world.embed import EmbeddingJob
 from dimos.teleop.memory_world.hyperspace_ingest import ingest_command
 from dimos.teleop.memory_world.hyperspace_search import (
+    EVIDENCE_PER_CLUSTER,
+    MAX_CLUSTERS,
     HeatmapAnswer,
     HyperspaceSearch,
     memory_db_for,
@@ -71,7 +73,13 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 EVIDENCE_CLUSTERS = 16  # every place an answer names, in practice
-EVIDENCE_IMAGES_MAX = 64  # a ceiling, so one question cannot decode the whole recording
+# The ceiling is what the answer can NAME, not a round number chosen beside it. At 64 the
+# budget was smaller than MAX_CLUSTERS x EVIDENCE_PER_CLUSTER and was spent first-come, so
+# the best places took it all and the last places an answer named got no picture at all --
+# while still reporting, in `n_evidence`, how many they had. Measured on
+# sf_office1_2/main.db: "a monitor" reports [8,8,8,6,6,6,6,5,4,4,4,4] and published
+# [8,8,8,6,6,6,6,5,4,4,3,0]. Still bounded, which was the point of having a ceiling.
+EVIDENCE_IMAGES_MAX = MAX_CLUSTERS * EVIDENCE_PER_CLUSTER
 
 
 class AskRequest(BaseModel):
