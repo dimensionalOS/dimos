@@ -360,7 +360,7 @@ def memory_db_for(recording: str | Path) -> Path:
 
 
 def memory_db_ready(recording: str | Path) -> bool:
-    """True when the keyframes and patches are there and at least one keyframe is written.
+    """True when the index has keyframes AND patches; either alone cannot answer.
 
     A companion db is built beside its final name and moved into place, so its mere
     existence says the ingest finished. Keyframes written into the recording itself have
@@ -395,6 +395,27 @@ def memory_db_index_stamp(recording: str | Path) -> tuple[int, float]:
         try:
             names = {row[0] for row in connection.execute("SELECT name FROM _streams")}
             if not wanted <= names:
+                return (0, 0.0)
+            # BOTH halves, not just the keyframes. It takes two streams to answer a
+            # question -- the patches are the searchable content and the keyframes only
+            # say where each was seen from -- so keyframes alone is not an index, it is
+            # the half that cannot answer anything.
+            #
+            # Seen for real: an ingest reported a clean summary ending `kept: 3462`,
+            # wrote 3,462 keyframes and ZERO patches, and left a stream whose name,
+            # presence and plausible count all said "index". Counting keyframes alone
+            # would have loaded it and reported `ready: true` with 3,462 keyframes while
+            # answering nothing at all.
+            #
+            # That particular index was not broken -- it was an ENSEMBLE one, whose
+            # keyframes carry every member's grid inline and which is scored without ever
+            # opening the patch stream, so leaving it empty was deliberate. Do not loosen
+            # this check on that account: `hyperspace_fast` REFUSES an ensemble store
+            # outright (it holds one grid per keyframe), so for this reader an index it
+            # cannot search is an index it should decline at the door rather than load
+            # and fail on every question.
+            (patches,) = connection.execute(f'SELECT count(*) FROM "{PATCH_STREAM}"').fetchone()
+            if int(patches) <= 0:
                 return (0, 0.0)
             (count,) = connection.execute(f'SELECT count(*) FROM "{KEYFRAME_STREAM}"').fetchone()
             latest = 0.0

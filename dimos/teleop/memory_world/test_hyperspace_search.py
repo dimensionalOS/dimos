@@ -146,10 +146,15 @@ def test_memory_db_ready_needs_both_streams(tmp_path) -> None:
     assert not memory_db_ready(recording), "patches missing"
 
     db.execute("INSERT INTO _streams VALUES ('hyperspace_patches')")
+    db.execute("CREATE TABLE hyperspace_patches (id INTEGER)")
     db.commit()
     assert not memory_db_ready(recording), "no keyframes yet"
 
     db.execute("INSERT INTO hyperspace_keyframes VALUES (1)")
+    db.commit()
+    assert not memory_db_ready(recording), "keyframes but no patches is half an index"
+
+    db.execute("INSERT INTO hyperspace_patches VALUES (1)")
     db.commit()
     db.close()
     assert memory_db_ready(recording)
@@ -173,6 +178,8 @@ def test_keyframes_in_the_recording_are_ready_without_a_completion_marker(tmp_pa
     db.execute("CREATE TABLE _streams (name TEXT)")
     db.execute("INSERT INTO _streams VALUES ('hyperspace_keyframes'), ('hyperspace_patches')")
     db.execute("CREATE TABLE hyperspace_keyframes (id INTEGER)")
+    db.execute("CREATE TABLE hyperspace_patches (id INTEGER)")
+    db.execute("INSERT INTO hyperspace_patches VALUES (1)")
     db.commit()
     assert not memory_db_ready(recording), "no keyframes written yet"
 
@@ -197,6 +204,8 @@ def test_an_old_completion_marker_does_not_make_an_empty_index_ready(tmp_path) -
         " ('hyperspace_keyframes'), ('hyperspace_patches'), ('hyperspace_complete')"
     )
     db.execute("CREATE TABLE hyperspace_keyframes (id INTEGER)")
+    db.execute("CREATE TABLE hyperspace_patches (id INTEGER)")
+    db.execute("INSERT INTO hyperspace_patches VALUES (1)")
     db.commit()
     assert not memory_db_ready(recording), "a marker over an empty keyframe table"
 
@@ -1131,6 +1140,10 @@ def _index_db(path: Path, keyframes: int, first_ts: float = 1.0) -> None:
         f'INSERT INTO "{KEYFRAME_STREAM}" VALUES (?, ?)',
         [(i, first_ts + i) for i in range(keyframes)],
     )
+    # An index is BOTH halves: keyframes alone no longer read as one.
+    db.execute(f'CREATE TABLE IF NOT EXISTS "{PATCH_STREAM}" (id INTEGER)')
+    db.execute(f'DELETE FROM "{PATCH_STREAM}"')
+    db.executemany(f'INSERT INTO "{PATCH_STREAM}" VALUES (?)', [(i,) for i in range(keyframes * 2)])
     db.commit()
     db.close()
 
@@ -1680,3 +1693,36 @@ def test_a_reload_that_fails_once_recovers_when_it_stops_failing(tmp_path) -> No
         " keeps answering from the stale one, reporting ready with no error"
     )
     assert module._failed_stamp is None, "the failure record survived a success"
+
+
+def test_keyframes_without_patches_are_not_an_index(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """An index whose patch stream is empty must not read as ready.
+
+    It takes two streams to answer a question: the patches are the searchable content and
+    the keyframes only say where each was seen from. Counting keyframes alone made
+    "the keyframe stream is not empty" mean "ready".
+
+    Seen for real on grocery.db, which is why this exists: an ingest reported a clean
+    summary ending `kept: 3462`, wrote 3,462 keyframes and ZERO patches, and left a
+    stream whose name, presence and entirely plausible count all said "index". Loading it
+    would have reported `ready: true` with 3,462 keyframes and answered nothing.
+    """
+    recording = tmp_path / "half.db"
+    db = sqlite3.connect(recording)
+    db.execute("CREATE TABLE _streams (name TEXT)")
+    db.execute(f"INSERT INTO _streams VALUES ('{KEYFRAME_STREAM}'), ('{PATCH_STREAM}')")
+    db.execute(f'CREATE TABLE "{KEYFRAME_STREAM}" (id INTEGER, ts REAL)')
+    db.execute(f'CREATE TABLE "{PATCH_STREAM}" (id INTEGER)')
+    db.executemany(
+        f'INSERT INTO "{KEYFRAME_STREAM}" VALUES (?, ?)', [(i, 100.0 + i) for i in range(3462)]
+    )
+    db.commit()
+
+    assert not memory_db_ready(recording), "keyframes with no patches read as a whole index"
+    assert memory_db_index_stamp(recording) == (0, 0.0), "a half index got an identity"
+
+    db.executemany(f'INSERT INTO "{PATCH_STREAM}" VALUES (?)', [(i,) for i in range(10)])
+    db.commit()
+    db.close()
+    assert memory_db_ready(recording), "a complete index was refused"
+    assert memory_db_index_stamp(recording)[0] == 3462
