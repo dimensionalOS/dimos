@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Callable, Generator, Iterator
 import subprocess
 import sys
 import threading
 import time
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -33,6 +36,11 @@ from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 from dimos.simulation.mujoco.person_on_track import PersonTrackPublisher
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Page
+
+    from dimos.core.coordination.blueprints import Blueprint
 
 
 @pytest.fixture(autouse=True)
@@ -54,6 +62,83 @@ def playwright_browsers() -> None:
     subprocess.run(
         [sys.executable, "-m", "playwright", "install", "chromium", "firefox"], check=True
     )
+
+
+@pytest.fixture
+def chromium_page() -> Iterator[Page]:
+    # Playwright ships with the browser-tests group only; the other e2e tests
+    # in this package must still collect without it.
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            yield browser.new_page()
+        finally:
+            browser.close()
+
+
+@pytest.fixture(scope="module")
+def serve_channel() -> Iterator[Callable[..., str]]:
+    """Start a cockpit(channels=[...]) bridge in-process on its own local relay
+    (an ephemeral port, so it cannot clash with test_sdk_browser's stack on
+    :7780 in the same CI job), one stream fed from a bus topic on which
+    `message` is republished every 100 ms (frames flow only once the bridge
+    lazily subscribes); returns the relay's URL. Everything started stops after
+    the module's tests."""
+    # The web extra is optional for the other e2e tests in this package.
+    from dimos.web.relay_bridge.e2e_support import stop_module
+
+    stops: list[Callable[[], None]] = []
+
+    def start(
+        blueprint: Blueprint,
+        *,
+        stream: str,
+        topic: str,
+        message: Any,
+        robot_id: str,
+        serve_dir: str | None = None,
+    ) -> str:
+        (atom,) = blueprint.blueprints
+        module = atom.module(
+            local_port=0,
+            open_browser=False,
+            robot_id=robot_id,
+            serve_dir=serve_dir,
+            **atom.kwargs,
+        )
+        bridge_transport = make_transport(topic)
+        bridge_transport.start()
+        getattr(module, stream).transport = bridge_transport
+        publisher = make_transport(topic)
+        publisher.start()
+        stop = threading.Event()
+
+        def republish() -> None:
+            while not stop.is_set():
+                publisher.publish(message)
+                time.sleep(0.1)
+
+        thread = threading.Thread(target=republish, daemon=True)
+        thread.start()
+
+        def stop_all() -> None:
+            stop.set()
+            thread.join(timeout=2)
+            stop_module(module)
+            publisher.stop()
+            bridge_transport.stop()
+
+        stops.append(stop_all)
+        module.start()  # builds web dists if stale, spawns the relay, registers
+        relay = module._relay
+        assert relay is not None and relay.info is not None
+        return relay.info.open_url
+
+    yield start
+    for stop_all in reversed(stops):
+        stop_all()
 
 
 def _pose(x: float, y: float, theta: float) -> PoseStamped:

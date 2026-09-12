@@ -262,6 +262,23 @@ const chStats = {
   delivery: "latest",
   maxHz: 2.5,
 };
+// A *.lcm.v1 channel's params carry its LCM schema: nested lists with nulls
+// must round-trip untouched on both sides.
+const chLcmPose = {
+  ch: "lcm_pose",
+  encoding: "geometry_msgs.PoseStamped.lcm.v1",
+  delivery: "reliable",
+  maxHz: 20.5,
+  params: {
+    lcm: {
+      type: "t.P",
+      fp: "6a82696458c279a0",
+      structs: {
+        "t.P": [["x", "double", null], ["cov", "double", [9]], ["names", "string", ["n"]]],
+      },
+    },
+  },
+};
 const pCamera = { id: "camera", kind: "video", channels: ["color_image"] };
 const pStats = { id: "stats", kind: "stats", channels: ["resource_stats"] };
 const pChat = {
@@ -339,6 +356,7 @@ const manifestCases: Record<string, unknown> = {
     channels: [{ ...chOdom, publish: "shared", requiredScope: "" }],
   },
   channel_params_roundtrip: { version: 1, channels: [chImageFull] },
+  lcm_channel_params_roundtrip: { version: 1, channels: [chLcmPose] },
   channel_params_not_object: { version: 1, channels: [{ ...chOdom, params: 1.5 }] },
   panels_not_list: { version: 1, channels: [chOdom], panels: {} },
   null_panels: { version: 1, channels: [chOdom], panels: null },

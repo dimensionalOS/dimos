@@ -934,6 +934,95 @@
       }
     },
     {
+      "name": "lcm_channel_params_roundtrip",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "lcm_pose",
+            "encoding": "geometry_msgs.PoseStamped.lcm.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {
+              "lcm": {
+                "type": "t.P",
+                "fp": "6a82696458c279a0",
+                "structs": {
+                  "t.P": [
+                    [
+                      "x",
+                      "double",
+                      null
+                    ],
+                    [
+                      "cov",
+                      "double",
+                      [
+                        9
+                      ]
+                    ],
+                    [
+                      "names",
+                      "string",
+                      [
+                        "n"
+                      ]
+                    ]
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "lcm_pose",
+            "dir": "rx",
+            "encoding": "geometry_msgs.PoseStamped.lcm.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {
+              "lcm": {
+                "type": "t.P",
+                "fp": "6a82696458c279a0",
+                "structs": {
+                  "t.P": [
+                    [
+                      "x",
+                      "double",
+                      null
+                    ],
+                    [
+                      "cov",
+                      "double",
+                      [
+                        9
+                      ]
+                    ],
+                    [
+                      "names",
+                      "string",
+                      [
+                        "n"
+                      ]
+                    ]
+                  ]
+                }
+              }
+            },
+            "publish": "none",
+            "requiredScope": null
+          }
+        ],
+        "panels": [],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
       "name": "channel_params_not_object",
       "data": {
         "version": 1,

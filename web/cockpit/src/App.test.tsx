@@ -35,6 +35,18 @@ const IMAGE: ChannelSpec = {
   requiredScope: null,
 };
 
+// A *.lcm.v1 channel decodes from the schema in its params; one without a
+// usable schema has no decoder at all.
+const LCM_POSE: ChannelSpec = {
+  ...ODOM,
+  ch: "lcm_pose",
+  encoding: "geometry_msgs.PoseStamped.lcm.v1",
+  params: {
+    lcm: { type: "t.P", fp: "0011223344556677", structs: { "t.P": [["x", "double", null]] } },
+  },
+};
+const LCM_BROKEN: ChannelSpec = { ...ODOM, ch: "lcm_bad", encoding: "t.Q.lcm.v1" };
+
 function mf(channels: ChannelSpec[], panels: PanelSpec[] = []): Manifest {
   return { version: 1, channels, panels, layout: null, pages: [] };
 }
@@ -94,6 +106,29 @@ describe("App session states", () => {
   };
   const switchButton = () => container.querySelector<HTMLElement>('[data-testid="switch-robot"]');
   const panel = () => container.querySelector('[data-testid="panel-cam"]');
+
+  it("shows *.lcm.v1 rows from their manifest schema, not a registered decoder", () => {
+    act(() => {
+      status.update({ watchedRobot: ROBOT, robots: [ROBOT] });
+      status.update({ manifest: mf([LCM_POSE, LCM_BROKEN]) });
+      channels.ingest(
+        "lcm_pose",
+        { ch: "lcm_pose", seq: 3, ts: 0.3, delivery: "reliable" },
+        { x: 1.5 },
+        true,
+        "{x: 1.5}",
+      );
+      channels.publishUi();
+    });
+    view("channels");
+    expect(container.querySelector('[data-testid="ch-lcm_pose-seq"]')!.textContent).toBe("3");
+    expect(container.querySelector('[data-testid="ch-lcm_pose-value"]')!.textContent).toContain(
+      "{x: 1.5}",
+    );
+    expect(container.querySelector('[data-testid="ch-lcm_bad-value"]')!.textContent).toContain(
+      "no decoder for t.Q.lcm.v1",
+    );
+  });
 
   it("waits for a robot, shows its channels, and clears them when it leaves", () => {
     expect(container.textContent).toContain("Waiting for a robot");

@@ -17,6 +17,13 @@ import {
   type Session,
 } from "./session.ts";
 import { PublishError } from "./errors.ts";
+import lcmFrames from "../../shared/fixtures/lcm_frames.json";
+
+// The pose_stamped golden vector (Python-generated): the schema a robot puts
+// in params.lcm plus the exact frame bytes.
+const POSE_LCM = (lcmFrames as { vectors: { schema: unknown; payload_b64: string }[] })
+  .vectors[0];
+const poseLcmPayload = () => Uint8Array.from(atob(POSE_LCM.payload_b64), (c) => c.charCodeAt(0));
 import {
   FakeRelayEnd,
   INFO,
@@ -752,6 +759,53 @@ describe("Session over a fake WebTransport", () => {
     const slot = handle.store.get("nav_path")!;
     expect(slot.value).toEqual({ n: 2, points: [{ x: 1.5, y: -2.5 }, { x: 3.5, y: 4.5 }] });
     expect(slot.preview).toBe("2 points");
+  });
+
+  it("decodes a *.lcm.v1 channel with the schema from the manifest", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle, ROBOT_A, [
+      spec({
+        ch: "lcm_pose",
+        encoding: "geometry_msgs.PoseStamped.lcm.v1",
+        params: { lcm: POSE_LCM.schema },
+      }),
+    ]);
+    handle.subscribe("lcm_pose", () => {});
+    await until(() => relay.subs().includes("lcm_pose"), "sub");
+    relay.pushRaw(1, poseLcmPayload(), "lcm_pose");
+    await until(() => handle.store.get("lcm_pose") !== null, "frame");
+    const slot = handle.store.get("lcm_pose")!;
+    const value = slot.value as { pose: { position: { x: number } }; header: { frame_id: string } };
+    expect(value.pose.position.x).toBe(1.5);
+    expect(value.header.frame_id).toBe("map");
+    expect(slot.preview).toContain("position: {x: 1.5, y: -2.5, z: 0.25}");
+
+    // Another fingerprint is a decode error; the last good value stays.
+    const foreign = poseLcmPayload();
+    foreign[0] ^= 0xff;
+    relay.pushRaw(2, foreign, "lcm_pose");
+    await until(() => {
+      handle.store.publishUi();
+      return handle.store.getUiSnapshot("lcm_pose").stats.frames === 2;
+    }, "bad frame counted");
+    expect(handle.store.get("lcm_pose")!.seq).toBe(1);
+    expect(handle.store.getUiSnapshot("lcm_pose").stats.decodeErrors).toBe(1);
+  });
+
+  it("counts frames of an lcm channel without a usable schema, storing no value", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle, ROBOT_A, [
+      spec({ ch: "lcm_pose", encoding: "geometry_msgs.PoseStamped.lcm.v1", params: {} }),
+    ]);
+    handle.subscribe("lcm_pose", () => {});
+    await until(() => relay.subs().includes("lcm_pose"), "sub");
+    relay.pushRaw(1, poseLcmPayload(), "lcm_pose");
+    await until(() => {
+      handle.store.publishUi();
+      return handle.store.getUiSnapshot("lcm_pose").stats.frames === 1;
+    }, "frame counted");
+    expect(handle.store.get("lcm_pose")?.value).toBeUndefined();
+    expect(handle.store.getUiSnapshot("lcm_pose").stats.decodeErrors).toBe(0);
   });
 
   it("retries the watch when the robot reappears after unknown_robot", async () => {

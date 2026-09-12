@@ -46,6 +46,8 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
+from dimos.web.codecs import is_generic_lcm_encoding
+from dimos.web.lcm_codec import default_encoding, export_schema, schema_class_for
 from dimos.web.relay_bridge.manifest import (
     MANIFEST_VERSION,
     MAX_MANIFEST_ID_LEN,
@@ -161,9 +163,12 @@ class Channel:
     delivery, and params must agree exactly, max_hz takes the max.
 
     `encoding` names a codec: a registered @web_encoder (dimos.web.codecs)
-    whose message type must match `message_type`, or the generic "json.v1"
-    for JSON-shaped types and dataclasses (rx) / JSON scalars, lists and
-    dicts (tx decode).
+    whose message type must match `message_type`, the generic "json.v1" for
+    JSON-shaped types and dataclasses (rx) / JSON scalars, lists and dicts
+    (tx decode), or `<msg_name>.lcm.v1` for rx DimOS messages with a
+    dimos_lcm schema (the frame is `lcm_encode()`, the schema rides
+    params["lcm"]). None picks the default: `<msg_name>.lcm.v1` for rx
+    DimOS messages, "json.v1" otherwise.
 
     A dir="tx" channel is a generic browser publish input: it must declare
     publish="shared" (any authorized viewer may publish; the bridge decodes
@@ -177,7 +182,7 @@ class Channel:
     stream: str
     message_type: type[Any]
     dir: Dir = field(default="rx", kw_only=True)
-    encoding: str = field(default="json.v1", kw_only=True)
+    encoding: str | None = field(default=None, kw_only=True)
     delivery: Delivery = field(default="reliable", kw_only=True)
     max_hz: float = field(default=10.0, kw_only=True)
     params: Mapping[str, Any] | None = field(default=None, kw_only=True)
@@ -199,6 +204,8 @@ class Channel:
             raise TypeError(f"message_type must be a class, got {self.message_type!r}")
         if self.dir not in ("rx", "tx"):
             raise ValueError(f"dir must be 'rx' or 'tx', got {self.dir!r}")
+        if self.encoding is None:
+            object.__setattr__(self, "encoding", default_encoding(self.message_type, self.dir))
         if not isinstance(self.encoding, str) or not 1 <= len(self.encoding) <= MAX_MANIFEST_ID_LEN:
             raise ValueError(
                 f"encoding must be 1..{MAX_MANIFEST_ID_LEN} chars, got {self.encoding!r}"
@@ -254,14 +261,20 @@ class Channel:
 
 def _request_of(channel: Channel) -> ChannelRequest:
     """The manifest request a declaration compiles to."""
+    assert channel.encoding is not None  # resolved in __post_init__
+    # Deep plain copy: the manifest and specs must not alias the (frozen)
+    # authoring record's nested values.
+    params = _thaw_params(channel.params or {})
+    if is_generic_lcm_encoding(channel.encoding):
+        if "lcm" in params:
+            raise ValueError("params key 'lcm' is reserved for the LCM schema")
+        params["lcm"] = export_schema(schema_class_for(channel.message_type))
     return ChannelRequest(
         channel.stream,
         channel.dir,
         channel.encoding,
         channel.max_hz,
-        # Deep plain copy: the manifest and specs must not alias the (frozen)
-        # authoring record's nested values.
-        _thaw_params(channel.params or {}),
+        params,
         delivery=channel.delivery,
         publish=channel.publish,
         required_scope=channel.required_scope,
@@ -789,6 +802,13 @@ def cockpit(
                     f"{previous!r} vs {channel!r}"
                 )
 
+    requests: list[ChannelRequest] = []
+    for channel in declared.values():
+        try:
+            requests.append(_request_of(channel))
+        except ValueError as e:
+            raise ValueError(f"channel {channel.stream!r}: {e}") from e
+
     atom = RelayBridgeModule.blueprint().blueprints[0]
     port_types = {s.name: s.type for s in atom.streams}
     builtin_by_ch = {b.ch: b for b in BUILTIN_CHANNELS}
@@ -798,7 +818,7 @@ def cockpit(
         registry={b.ch: (b.encoding, b.delivery) for b in BUILTIN_CHANNELS},
         tx_streams={s.name for s in atom.streams if s.direction == "out"},
         tx_registry={ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS},
-        channels=tuple(_request_of(c) for c in declared.values()),
+        channels=tuple(requests),
     )
     # The domain parser is the authority; authoring bugs must fail at
     # blueprint definition time, not at robot start.
