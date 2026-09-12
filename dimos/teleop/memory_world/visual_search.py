@@ -370,6 +370,7 @@ def patch_world_position(
     intrinsics: tuple[float, float, float, float],
     camera_to_world: np.ndarray,
     window_px: int = 16,
+    color_intrinsics: tuple[float, float, float, float] | None = None,
 ) -> tuple[float, float, float] | None:
     """Back-project the centre of the winning patch through the depth image.
 
@@ -377,19 +378,36 @@ def patch_world_position(
     centre (zeros are holes), lifts it with the pinhole model in the optical
     frame (x right, y down, z forward), and moves it into the world with
     *camera_to_world*. None when the window holds no valid depth.
+
+    *image_uv* is normalised in the COLOUR image and the depth camera is a different
+    camera: on a d455 its fx differs by about 1% and its principal point by several
+    pixels, which sampling at the same normalised position turns into centimetres of
+    error at a few metres. Given *color_intrinsics* the patch is turned into a ray and
+    the ray into the depth camera's own pixel, which is exact apart from the ~1.5 cm
+    baseline between the two -- under the voxel size, and not correctable without
+    already knowing the depth.
     """
     if depth_mm.dtype.kind == "f":  # 32FC1 depth is metres
         depth_mm = depth_mm * 1000.0
     height, width = depth_mm.shape
-    u = round(image_uv[0] * width)
-    v = round(image_uv[1] * height)
+    fx, fy, cx, cy = intrinsics
+    if color_intrinsics is not None:
+        cfx, cfy, ccx, ccy = color_intrinsics
+        ray_x = (image_uv[0] * width - ccx) / cfx
+        ray_y = (image_uv[1] * height - ccy) / cfy
+        u = round(ray_x * fx + cx)
+        v = round(ray_y * fy + cy)
+    else:  # no colour calibration: the normalised position is all there is
+        u = round(image_uv[0] * width)
+        v = round(image_uv[1] * height)
+    if not (0 <= u < width and 0 <= v < height):
+        return None  # the patch does not fall inside the depth camera's view
     half = window_px // 2
     window = depth_mm[max(v - half, 0) : v + half, max(u - half, 0) : u + half]
     valid = window[np.isfinite(window) & (window > 0)]
     if valid.size == 0:
         return None
     depth_m = float(np.median(valid)) / 1000.0
-    fx, fy, cx, cy = intrinsics
     optical = np.array([(u - cx) * depth_m / fx, (v - cy) * depth_m / fy, depth_m, 1.0])
     world = camera_to_world @ optical
     return (float(world[0]), float(world[1]), float(world[2]))

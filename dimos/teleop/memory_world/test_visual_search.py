@@ -508,3 +508,34 @@ def test_body_style_quaternion_puts_x_on_the_optical_axis() -> None:
     frame = pose_matrix((0, 0, 0), body_style_quaternion(optical))
     assert frame[:3, 0] == pytest.approx((0.0, 0.0, -1.0), abs=1e-6)
     assert frame[:3, 2] == pytest.approx((1.0, 0.0, 0.0), abs=1e-6)
+
+
+def test_a_colour_patch_is_sampled_at_the_depth_camera_s_own_pixel() -> None:
+    """The patch coordinates are the colour camera's; the depth image is another camera.
+
+    On the demo rig the two differ by about 1% in fx and several pixels in principal
+    point, which sampling at the same normalised position turns into centimetres of
+    error at a few metres. Real grocery_stitch.db numbers are used here.
+    """
+    from dimos.teleop.memory_world.visual_search import patch_world_position
+
+    colour = (644.07, 643.06, 642.15, 363.14)  # camera_info
+    depth = (651.56, 651.56, 647.83, 356.01)  # depth_camera_info
+    # A wall two metres away, filling the frame, so any pixel reads 2 m.
+    depth_mm = np.full((720, 1280), 2000, dtype=np.uint16)
+    uv = (0.75, 0.5)
+
+    corrected = patch_world_position(uv, depth_mm, depth, np.eye(4), color_intrinsics=colour)
+    naive = patch_world_position(uv, depth_mm, depth, np.eye(4))
+    assert corrected is not None and naive is not None
+
+    # The truth is the colour camera's own ray at two metres.
+    truth_x = (uv[0] * 1280 - colour[2]) / colour[0] * 2.0
+    assert abs(corrected[0] - truth_x) < 0.005  # within the pixel rounding
+    assert abs(naive[0] - truth_x) > 0.025  # what it used to be: 2.9 cm at two metres
+
+    # A patch whose ray leaves the depth camera's view has no depth to read.
+    assert (
+        patch_world_position((1.02, 0.5), depth_mm, depth, np.eye(4), color_intrinsics=colour)
+        is None
+    )

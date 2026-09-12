@@ -234,7 +234,21 @@ class VisualAnswers:
                 return []
             if not (k[0] and k[4]):  # uncalibrated: nothing to raycast through
                 return []
+            # The patch coordinates are the COLOUR camera's, so its intrinsics are what
+            # turns them into a ray; without them the depth is sampled at the wrong pixel.
+            colour = self.config.camera_info_stream_name
+            try:
+                ck = (
+                    store.streams[colour].first().data.K if colour in store.list_streams() else None
+                )
+            except LookupError:
+                ck = None
         intrinsics = (float(k[0]), float(k[4]), float(k[2]), float(k[5]))
+        colour_intrinsics = (
+            (float(ck[0]), float(ck[4]), float(ck[2]), float(ck[5]))
+            if ck is not None and ck[0] and ck[4]
+            else None
+        )
 
         hits: list[PatchHit] = []
         with self._store_lock:
@@ -253,7 +267,13 @@ class VisualAnswers:
                 continue
             camera_to_world = pose_matrix(frame.position, frame.orientation)
             for image_uv, score in hot_patches(frame.similarity, frame.rows, frame.cols):
-                position = patch_world_position(image_uv, depth_mm, intrinsics, camera_to_world)
+                position = patch_world_position(
+                    image_uv,
+                    depth_mm,
+                    intrinsics,
+                    camera_to_world,
+                    color_intrinsics=colour_intrinsics,
+                )
                 if position is not None:
                     hits.append(
                         PatchHit(
