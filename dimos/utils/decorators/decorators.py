@@ -33,9 +33,9 @@ class CachedMethod(Protocol[_CacheResult_co]):
     def invalidate_cache(self, instance: Any) -> None: ...
 
 
-def limit(  # type: ignore[no-untyped-def, type-arg]
+def limit(  # type: ignore[no-untyped-def]
     max_freq: float,
-    accumulator: Accumulator | None = None,
+    accumulator: Accumulator | None = None,  # type: ignore[type-arg]
     *,
     clock: Callable[[], float] = time.time,
 ):
