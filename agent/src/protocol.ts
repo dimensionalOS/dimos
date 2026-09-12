@@ -65,6 +65,7 @@ export type Event =
   | { type: "auth_info"; info: AuthEvent }
   | { type: "idle" };
 export interface Snapshot {
+  model?: { provider: string; id: string };
   sessionId: string;
   cwd: string;
   seq: number;

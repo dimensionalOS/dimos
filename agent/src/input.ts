@@ -1,4 +1,79 @@
-import { Input, truncateToWidth, type Component } from "@earendil-works/pi-tui";
+import {
+  CombinedAutocompleteProvider,
+  Editor,
+  Input,
+  matchesKey,
+  truncateToWidth,
+  type Component,
+  type TUI,
+} from "@earendil-works/pi-tui";
+import { getSelectListTheme } from "@earendil-works/pi-coding-agent";
+import { accent } from "./terminal-style.js";
+
+export const commands = [
+  "help",
+  "new",
+  "sessions",
+  "resume",
+  "models",
+  "model",
+  "login",
+  "logout",
+  "abort",
+  "steer",
+  "follow",
+  "reload",
+  "image",
+  "inspect",
+  "view",
+  "panel",
+  "expand",
+  "exit",
+];
+
+/** Pi owns editing, multiline paste, history and file/command completion. */
+export class PromptEditor extends Editor {
+  private credential = new ChatInput();
+  secret = false;
+  onEscape?: () => void;
+  constructor(tui: TUI) {
+    super(
+      tui,
+      { selectList: getSelectListTheme(), borderColor: accent },
+      { paddingX: 1 },
+    );
+  }
+  setWorkspace(cwd: string): void {
+    this.setAutocompleteProvider(
+      new CombinedAutocompleteProvider(
+        commands.map((name) => ({ name })),
+        cwd,
+      ),
+    );
+  }
+  getValue(): string {
+    return this.secret ? this.credential.getValue() : this.getExpandedText();
+  }
+  setValue(value: string): void {
+    this.credential.secret = this.secret;
+    this.credential.setValue(value);
+    if (!this.secret) this.setText(value);
+  }
+  override handleInput(data: string): void {
+    if (matchesKey(data, "escape") && !this.isShowingAutocomplete()) {
+      this.onEscape?.();
+      return;
+    }
+    if (this.secret) {
+      this.credential.onSubmit = (value) => this.onSubmit?.(value);
+      this.credential.handleInput(data);
+    } else super.handleInput(data);
+  }
+  override render(width: number): string[] {
+    if (this.secret) return this.credential.render(width);
+    return super.render(width);
+  }
+}
 
 export class ChatInput implements Component {
   private editor = new Input({

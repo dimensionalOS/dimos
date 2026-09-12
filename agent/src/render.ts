@@ -7,9 +7,10 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { Container, Image, Text, type Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { z } from "zod";
@@ -43,6 +44,12 @@ export const renderDetails = z.object({
   source: z.string(),
   sha256: z.string().optional(),
   summary: z.string(),
+  title: z.string().optional(),
+  views: z
+    .array(
+      z.object({ label: z.string(), source: z.string(), sha256: z.string() }),
+    )
+    .optional(),
   live: z
     .object({
       url: z.string(),
@@ -185,6 +192,63 @@ export function imageComponent(
   );
   return block;
 }
+
+/** Rasterize DimOS's own exports; never evaluate or reinterpret a memory query. */
+export async function renderFiles(
+  paths: Paths,
+  cwd: string,
+  views: Array<{ path: string; label: string }>,
+  title?: string,
+  signal?: AbortSignal,
+): Promise<{
+  content: Array<TextContent | ImageContent>;
+  details: RenderDetails;
+}> {
+  if (!views.length || views.length > 6)
+    throw new Error("Choose 1–6 saved views from the same operation.");
+  const content: Array<TextContent | ImageContent> = [];
+  const sources: NonNullable<RenderDetails["views"]> = [];
+  for (const view of views) {
+    signal?.throwIfAborted();
+    const source = resolve(cwd, view.path);
+    if ((await stat(source)).size > 32 * 1024 * 1024)
+      throw new Error(
+        "Export exceeds 32 MiB; select a smaller view while retaining the original source.",
+      );
+    const bytes = await readFile(source);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const png = await sharp(bytes, { density: 144 })
+      .resize({
+        width: 1600,
+        height: 1200,
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .flatten({ background: "#101b21" })
+      .png()
+      .toBuffer();
+    signal?.throwIfAborted();
+    const preview = await cacheImage(paths, png);
+    sources.push({ label: view.label, source, sha256 });
+    content.push(
+      {
+        type: "text",
+        text: `${view.label}\nSource: ${source}\nSHA-256: ${sha256}\nPreview: ${preview}`,
+      },
+      { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+    );
+  }
+  return {
+    content,
+    details: {
+      source: sources[0].source,
+      sha256: sources[0].sha256,
+      title,
+      views: sources,
+      summary: `${sources.length} saved views · original exports retained`,
+    },
+  };
+}
 export const renderExtension =
   (paths: Paths): ExtensionFactory =>
   (pi) => {
@@ -194,7 +258,7 @@ export const renderExtension =
       name: "dimcode_render",
       label: "Inspect sensor result",
       description:
-        "Render an actual saved result in the terminal and return a selected image to the model. image: existing image path. points: JSON {points:[[x,y,z]], frame?, timestamp?}. series: JSON {series:[{name,values:[[time,value]]}]}. These are exports of an already evaluated operation: never rerun a query just to render it. live: explicit existing relay URL, robot and channel; the terminal receives live frames directly, and only one final snapshot goes into model context.",
+        "Display an existing operation's results in its terminal tool card. image: path or views [{path,label}] for up to 6 related SVG/PNG exports, with an optional title. For memory queries prefer DimOS Space/Plot SVGs and selected frames from the same materialized query; all views are returned to the model together. points: JSON {points:[[x,y,z]], frame?, timestamp?, selectedIndices?}. series: JSON {series:[{name,values:[[time,value]]}]}. Never rerun or reimplement memory analysis just to render it. live: explicit existing relay URL, robot and channel; terminal frames stream directly and only one final snapshot enters model context.",
       parameters: Type.Object({
         kind: Type.Union([
           Type.Literal("image"),
@@ -203,12 +267,30 @@ export const renderExtension =
           Type.Literal("live"),
         ]),
         path: Type.Optional(Type.String()),
+        title: Type.Optional(Type.String()),
+        views: Type.Optional(
+          Type.Array(
+            Type.Object({ path: Type.String(), label: Type.String() }),
+            { minItems: 1, maxItems: 6 },
+          ),
+        ),
         url: Type.Optional(Type.String()),
         robot: Type.Optional(Type.String()),
         channel: Type.Optional(Type.String()),
         seconds: Type.Optional(Type.Number({ minimum: 1, maximum: 30 })),
       }),
       execute: async (_id, args, signal, update, ctx) => {
+        if (args.kind === "image")
+          return renderFiles(
+            paths,
+            ctx.cwd,
+            args.views ??
+              (args.path
+                ? [{ path: args.path, label: basename(args.path) }]
+                : []),
+            args.title,
+            signal,
+          );
         let png: Buffer,
           source: string,
           summary: string,
@@ -285,22 +367,10 @@ export const renderExtension =
           const bytes = await readFile(source);
           signal?.throwIfAborted();
           digest = createHash("sha256").update(bytes).digest("hex");
-          if (args.kind === "image") {
-            png = await sharp(bytes)
-              .resize({
-                width: 1280,
-                height: 960,
-                fit: "inside",
-                withoutEnlargement: true,
-              })
-              .png()
-              .toBuffer();
-            summary = "Preview of saved image; original file retained.";
-          } else
-            ({ png, summary } = await plot(
-              JSON.parse(bytes.toString("utf8")),
-              args.kind,
-            ));
+          ({ png, summary } = await plot(
+            JSON.parse(bytes.toString("utf8")),
+            args.kind,
+          ));
         }
         const preview = await cacheImage(paths, png);
         return {
@@ -325,14 +395,14 @@ export const renderExtension =
         };
       },
       renderResult: (result) => {
-        const image = result.content.find((item) => item.type === "image");
-        const text = result.content
-          .filter((item) => item.type === "text")
-          .map((item) => item.text)
-          .join("\n");
-        return image
-          ? imageComponent(image.data, image.mimeType, text)
-          : new Text(text, 0, 0);
+        const block = new Container();
+        for (const item of result.content)
+          block.addChild(
+            item.type === "image"
+              ? imageComponent(item.data, item.mimeType)
+              : new Text(item.text, 0, 0),
+          );
+        return block;
       },
     });
   };

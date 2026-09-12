@@ -11,6 +11,21 @@ dimcode setup
 dimcode
 ```
 
+`dimcode` opens the fullscreen Pi-based terminal: scrollable chat, a multiline editor with command/file completion, compact tool output, and a persistent model/status footer. Shift+Enter adds a line; Ctrl-C detaches from the running gateway.
+
+Memory results appear **inside the agent's tool card**, with an overview combining DimOS's timeline, spatial map and selected frames. Click a panel label or enter `/panel 1`, `/panel 2`, etc. to see a larger individual view; `/panel 0` returns to the overview. `/expand` shows the latest tool's full output and source hashes. Use a terminal with image support (such as Kitty) for the SVG/PNG views; other terminals show image metadata.
+
+To inspect a saved cloud without a model call, enter these commands **inside dimcode**:
+
+```text
+/inspect /absolute/path/to/cloud.json
+/view
+```
+
+Cloud exports use `{ "points": [[x, y, z]], "frame": "world", "timestamp": 123.45 }`. In the inspector, **←/→** rotates, **+/-** zooms, **g** switches graphics/Braille, **d** shows source/hash, **0** resets the view, and **Esc** returns to chat. An export can supply `selectedIndices` to highlight the exact selection produced by its owning operation. Rotation and zoom change the view only; memory analysis and filtering stay in DimOS.
+
+Point-cloud results from `dimcode_render` open the same inspector through `/view`. The terminal verifies the source hash before loading interactive geometry; if the file changed, the original tool preview remains available. `/expand` toggles details for the latest tool. Images use supported terminal graphics; Braille supports point-cloud inspection without image support.
+
 `dimcode setup` walks through:
 
 1. Provider and authentication: paste an API key into a masked field, use existing credentials, or sign in with a ChatGPT subscription.
@@ -73,13 +88,21 @@ dimcode run "inspect the app and explain its blueprint"
 
 Endpoints are explicit; ports are examples, not instance identities. Use `/reload` after changing endpoints. Every advertised skill is registered with its original schema, metadata and remote routing. Tool names are bounded and collision-resistant. There is no static copy of the robot's tools or a parallel lifecycle service.
 
-Terminal commands: `/new`, `/sessions`, `/resume ID`, `/models`, `/model PROVIDER MODEL`, `/login PROVIDER [oauth]`, `/logout PROVIDER`, `/abort`, `/steer TEXT`, `/follow TEXT`, `/reload`, `/image PATH`, `/expand`, `/exit`. Ctrl-C detaches. One terminal owns input; other viewers may observe. Detaching keeps the turn running. Restart restores Pi history and never automatically replays external actions. Very large histories show a bounded recent transcript with an omission notice; the complete agent history remains on disk. Session events carry their source identity so switching sessions cannot mix transcripts.
+Terminal commands: `/new`, `/sessions`, `/resume ID`, `/models`, `/model PROVIDER MODEL`, `/login PROVIDER [oauth]`, `/logout PROVIDER`, `/abort`, `/steer TEXT`, `/follow TEXT`, `/reload`, `/image PATH`, `/panel N`, `/inspect PATH`, `/view`, `/expand`, `/exit`. Ctrl-C detaches. One terminal owns input; other viewers may observe. Detaching keeps the turn running. Restart restores Pi history and never automatically replays external actions. Very large histories show a bounded recent transcript with an omission notice; the complete agent history remains on disk. Session events carry their source identity so switching sessions cannot mix transcripts.
 
 Pi owns context loading, skills, compaction, models and coding-tool behavior. Workspace instructions and configured Pi extensions load normally. Attached terminals support serialized dialogs/notifications; executable extension UI factories belong in the terminal renderer and cannot be sent through a socket.
 
 ## Tool rendering
 
-`dimcode_render` displays existing image, point-cloud or numeric-series exports and returns the selected PNG to the model. Point clouds use XYZ rows; series use timestamp/value pairs. See the bundled Dimensional skill for formats. The original file, SHA-256, selection metadata and display decimation remain explicit. The renderer never repeats a memory query.
+DimOS memory owns video/frame/point-cloud analysis. Evaluate the memory operation once with `materialize()`, then use its existing `Space.to_svg()` / `Plot.to_svg()` and selected-frame exports. Pass those exports together to `dimcode_render`:
+
+```json
+{"kind":"image","title":"Memory · plant search","views":[{"label":"Timeline","path":"timeline.svg"},{"label":"Spatial","path":"space.svg"},{"label":"Frames","path":"frames.png"}]}
+```
+
+The tool rasterizes the original SVG/PNG views for terminal display and model context. Every view reaches the model; the terminal presents a selectable overview. Each export retains its source path and SHA-256. MCP tool results containing multiple images also appear together automatically. No query or filter runs inside the renderer. Existing skills that return only a pose or JSON still require an explicit export; the harness does not invent missing views.
+
+`dimcode_render` also accepts single `image` paths and saved `points` / `series` JSON. Point clouds use XYZ rows; series use timestamp/value pairs. Selection metadata and display decimation remain explicit. See the bundled Dimensional skill for formats.
 
 Live tools select an existing relay/robot/channel. The terminal receives frames directly through the Web SDK and coalesces drawing to 10 Hz. The gateway retains one final snapshot for model context. Closing/cancelling the tool releases consumers; the last consumer closes the connection. MediaPool is generic over decoded SDK slots and accepts existing decoder registries. The initial live image renderer handles JPEG; other channel types use their owning decoder/renderer or saved exports.
 

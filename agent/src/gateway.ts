@@ -246,6 +246,9 @@ export class Gateway {
   private snapshot(entry: Entry, socket: Socket): Snapshot {
     const session = entry.handle.session;
     const snapshot: Snapshot = {
+      model: session.model
+        ? { provider: session.model.provider, id: session.model.id }
+        : undefined,
       sessionId: session.sessionId,
       cwd: session.sessionManager.getCwd(),
       seq: entry.seq,

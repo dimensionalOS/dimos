@@ -1,12 +1,16 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import {
   Container,
   Markdown,
   Spacer,
   ProcessTerminal,
   Text,
-  TuiMainScreen,
+  TuiAltScreen,
+  ScrollView,
+  VStack,
+  matchesKey,
+  type Component,
 } from "@earendil-works/pi-tui";
 import sharp from "sharp";
 import {
@@ -24,7 +28,10 @@ import { z } from "zod";
 import { Connection, type Event, type Snapshot } from "./protocol.js";
 import { imageComponent, renderDetails } from "./render.js";
 import { MediaPool, type MediaLease } from "./media.js";
-import { ChatInput } from "./input.js";
+import { PromptEditor, commands } from "./input.js";
+import { SpatialView, readCloud } from "./spatial.js";
+import { ResultImages } from "./tool-images.js";
+import { accent, clean, muted, StatusLine } from "./terminal-style.js";
 import type { Slot } from "@dimos/sdk";
 
 const resultSchema = z.object({
@@ -49,10 +56,51 @@ export async function terminal(
   initTheme("dark", false);
   const client = new Connection(socket),
     pool = new MediaPool();
-  const tui = new TuiMainScreen(new ProcessTerminal()),
+  const tui = new TuiAltScreen(new ProcessTerminal()),
     transcript = new Container();
   const status = new Text("Connecting…", 0, 0),
-    input = new ChatInput();
+    input = new PromptEditor(tui);
+  let lastSpatial: SpatialView | undefined;
+  let lastImages: ResultImages | undefined;
+  let inspectorOpen = false;
+  let layout: VStack;
+  const localViews = new Set<SpatialView>();
+  const inspect = (view = lastSpatial) => {
+    if (!view) {
+      notice(
+        "No point cloud yet. Use /inspect PATH or ask the agent to render one.",
+      );
+      return;
+    }
+    inspectorOpen = true;
+    view.setExpanded(true);
+    const expanded = {
+      render: (width) => view.render(width),
+      invalidate: () => view.invalidate(),
+      handleInput: (data) => {
+        if (matchesKey(data, "escape")) {
+          view.setExpanded(false);
+          inspectorOpen = false;
+          tui.setLayoutRoot(layout);
+          tui.setFocus(input);
+        } else view.handleInput(data);
+      },
+    } satisfies Component;
+    tui.setLayoutRoot(
+      new VStack([
+        new StatusLine(() => [
+          accent("⠿ dimcode / spatial inspector"),
+          muted("Esc returns to chat"),
+        ]),
+        {
+          component: new ScrollView(expanded, { primary: true }),
+          basis: 0,
+          grow: 1,
+        },
+      ]),
+    );
+    tui.setFocus(expanded);
+  };
   const cards = new Map<
     string,
     {
@@ -60,6 +108,11 @@ export async function terminal(
       component: ToolExecutionComponent;
       output: unknown;
       expanded: boolean;
+      toolName: string;
+      args: unknown;
+      spatial?: SpatialView;
+      images?: ResultImages;
+      loading?: boolean;
       lease?: MediaLease<Slot>;
       close?: () => void;
     }
@@ -77,16 +130,21 @@ export async function terminal(
     assistant.addChild(new Markdown(value, 1, 1, getMarkdownTheme()));
   };
   const ready = () =>
-    "  " +
-    (current.writable ? "Ready" : "Read-only") +
-    " · " +
-    current.sessionId.slice(0, 8);
+    "  " + (current.writable ? "Ready" : "Read-only") + " · /help commands";
   const notice = (error: unknown) => {
     add(String(error));
     tui.requestRender();
   };
   const closeCards = () => {
-    for (const card of cards.values()) card.close?.();
+    for (const card of cards.values()) {
+      card.close?.();
+      card.spatial?.close();
+      card.images?.close();
+    }
+    for (const view of localViews) view.close();
+    localViews.clear();
+    lastSpatial = undefined;
+    lastImages = undefined;
     cards.clear();
   };
   const draw = (
@@ -117,7 +175,14 @@ export async function terminal(
       );
       component.markExecutionStarted();
       component.setArgsComplete();
-      card = { block: new Container(), component, output, expanded: false };
+      card = {
+        block: new Container(),
+        component,
+        output,
+        expanded: false,
+        toolName,
+        args,
+      };
       cards.set(id, card);
       transcript.addChild(card.block);
     }
@@ -125,15 +190,99 @@ export async function terminal(
     card.close = undefined;
     card.output = output;
     card.block.clear();
-    card.block.addChild(card.component);
     const result = resultSchema.safeParse(output);
+    const details = renderDetails.safeParse(
+      result.success ? result.data.details : undefined,
+    );
+    const named = z
+      .object({ tool: z.string() })
+      .safeParse(result.success ? result.data.details : undefined);
+    const title =
+      (details.success && details.data.title) ||
+      (named.success && named.data.tool) ||
+      card.toolName;
+    const builtin = ["bash", "read", "edit", "write"].includes(card.toolName);
+    if (builtin || card.expanded) card.block.addChild(card.component);
+    else {
+      card.block.addChild(new Spacer(1));
+      card.block.addChild(
+        new Text(
+          accent(" ↳ ") +
+            clean(title) +
+            muted(isError ? " · failed" : partial ? " · running" : " · done"),
+          0,
+          0,
+        ),
+      );
+    }
     if (!result.success) {
       card.block.addChild(new Text("Running…", 0, 0));
       return;
     }
-    const details = renderDetails.safeParse(result.data.details);
     card.component.updateResult({ ...result.data, isError }, partial);
     card.component.setExpanded(card.expanded);
+    const images = result.data.content.filter((item) => item.type === "image");
+    if (
+      images.length &&
+      !card.spatial &&
+      (!card.images ||
+        images.length !== card.images.images.length ||
+        images.some((image, i) => image.data !== card.images?.images[i].data))
+    ) {
+      card.images?.close();
+      card.images = new ResultImages(
+        images.map((image, i) => ({
+          ...image,
+          label:
+            (details.success && details.data.views?.[i].label) ||
+            `Image ${i + 1}`,
+        })),
+        () => tui.requestRender(),
+      );
+      lastImages = card.images;
+    }
+    if (!builtin && !card.expanded) {
+      const summary = details.success
+        ? details.data.summary.split(";")[0]
+        : result.data.content
+            .filter((item) => item.type === "text")
+            .map((item) => item.text)
+            .join("\n");
+      card.block.addChild(
+        new Text(muted(" " + clean(summary.slice(0, 220))), 0, 0),
+      );
+      if (card.spatial) card.block.addChild(card.spatial);
+      else if (card.images) card.block.addChild(card.images);
+    }
+    const pointArgs = z
+      .object({ kind: z.literal("points") })
+      .safeParse(card.args);
+    if (
+      details.success &&
+      pointArgs.success &&
+      !partial &&
+      !isError &&
+      !card.spatial &&
+      !card.loading
+    ) {
+      card.loading = true;
+      const held = card;
+      void readCloud(details.data.source, details.data.sha256)
+        .then(({ cloud, sha256 }) => {
+          if (stopped || cards.get(id) !== held) return;
+          held.spatial = new SpatialView(
+            cloud,
+            details.data.source,
+            sha256,
+            () => tui.requestRender(),
+          );
+          lastSpatial = held.spatial;
+          draw(id, held.output, held.toolName, held.args);
+        })
+        .catch((error) => {
+          if (!stopped && cards.get(id) === held) notice(error);
+        });
+    }
     if (details.success && details.data.live && !card.close) {
       const live = details.data.live,
         held = card;
@@ -280,7 +429,10 @@ export async function terminal(
       );
     else if (event.type === "notice" || event.type === "turn_error")
       notice(event.message);
-    else if (event.type === "idle") status.setText(ready());
+    else if (event.type === "idle") {
+      current.busy = false;
+      status.setText(ready());
+    }
     tui.requestRender();
   };
   client.onEvent = (seq, event, sessionId) => {
@@ -291,13 +443,19 @@ export async function terminal(
     closeCards();
     transcript.clear();
     current = snapshot;
-    add("\x1b[1;36m  dimcode\x1b[0m  ·  Dimensional agent");
-    add("\x1b[2m  " + current.cwd + "\x1b[0m");
+    input.setWorkspace(current.cwd);
     if (!current.messages.length) {
       transcript.addChild(new Spacer(1));
-      add("  Build apps. Run blueprints. Explore sensor memory.");
+      add(accent("  ⠿ Build apps. Run blueprints. Explore sensor memory."));
       add(
-        "\x1b[2m  Try: inspect this workspace, or show available DimOS blueprints.\x1b[0m",
+        muted(
+          "  Ask about this workspace, or show available DimOS blueprints.",
+        ),
+      );
+      add(
+        muted(
+          "  Memory results appear inside tool cards · /panel selects a view",
+        ),
       );
       transcript.addChild(new Spacer(1));
     }
@@ -367,19 +525,36 @@ export async function terminal(
           : { type: "new_session", cwd: options.cwd },
       ),
     );
-    tui.addChild(transcript);
-    tui.addChild(new Spacer(1));
-    tui.addChild(status);
-    tui.addChild(input);
-    tui.addChild(
-      new Text(
-        "\x1b[2m  /help commands · /models choose model · Esc cancel · Ctrl-C detach\x1b[0m",
-        0,
-        0,
-      ),
-    );
+    layout = new VStack([
+      new Spacer(1),
+      new StatusLine(() => [
+        accent("⠿ dimcode") + "   " + clean(basename(current.cwd)),
+        muted(current.writable ? "GATEWAY ATTACHED" : "VIEW ONLY"),
+      ]),
+      new StatusLine(() => [muted(clean(current.cwd)), ""]),
+      new Spacer(1),
+      {
+        component: new ScrollView(transcript, {
+          follow: "end",
+          primary: true,
+        }),
+        basis: 0,
+        grow: 1,
+        minSize: 1,
+      },
+      status,
+      input,
+      new StatusLine(() => [
+        current.model
+          ? clean(current.model.provider + " / " + current.model.id)
+          : muted("/models choose model"),
+        muted("Shift+Enter newline · Ctrl-C detach"),
+      ]),
+    ]);
+    tui.setLayoutRoot(layout);
     tui.setFocus(input);
     input.onSubmit = (value) => {
+      if (!auth && value.trim()) input.addToHistory(value);
       input.setValue("");
       if (auth) {
         const promptId = auth.promptId;
@@ -396,8 +571,10 @@ export async function terminal(
           return;
         }
         if (value === "/help") {
+          add(commands.map((command) => "/" + command).join(" · "));
+          add("/resume ID · /model PROVIDER MODEL · /login PROVIDER [oauth]");
           add(
-            "/new · /sessions · /resume ID · /model PROVIDER MODEL · /models · /login PROVIDER [oauth] · /logout PROVIDER · /abort · /steer TEXT · /follow TEXT · /reload · /image PATH · /expand · /exit",
+            "/panel N: result view (0 overview) · /inspect PATH: saved XYZ · /view: rotate/zoom · /expand: latest tool details",
           );
           return;
         }
@@ -432,10 +609,42 @@ export async function terminal(
           return;
         }
         if (value === "/expand") {
-          for (const card of cards.values()) {
-            card.expanded = !card.expanded;
-            card.component.setExpanded(card.expanded);
+          const card = [...cards.entries()].at(-1);
+          if (card) {
+            const [id, tool] = card;
+            tool.expanded = !tool.expanded;
+            draw(id, tool.output, tool.toolName, tool.args);
           }
+          return;
+        }
+        if (value === "/view") {
+          inspect();
+          return;
+        }
+        if (value.startsWith("/panel ")) {
+          const index = Number(value.slice(7).trim());
+          if (!lastImages)
+            throw new Error(
+              "No image result yet. Ask the agent to display the memory query's existing exports.",
+            );
+          if (
+            !Number.isInteger(index) ||
+            index < 0 ||
+            index > lastImages.images.length
+          )
+            throw new Error(`Choose /panel 0–${lastImages.images.length}.`);
+          lastImages.select(index);
+          return;
+        }
+        if (value.startsWith("/inspect ")) {
+          const source = resolve(current.cwd, value.slice(9).trim());
+          const { cloud, sha256 } = await readCloud(source);
+          const view = new SpatialView(cloud, source, sha256, () =>
+            tui.requestRender(),
+          );
+          lastSpatial = view;
+          localViews.add(view);
+          transcript.addChild(view);
           return;
         }
         if (value === "/abort") {
@@ -470,6 +679,7 @@ export async function terminal(
         }
         if (command === "/model") {
           await client.call({ type: "set_model", provider, modelId: option });
+          current.model = { provider, id: option };
           return;
         }
         if (command === "/steer" || command === "/follow") {
@@ -500,6 +710,7 @@ export async function terminal(
           return;
         }
         if (value.trim()) {
+          current.busy = true;
           status.setText("  Running · Esc to cancel");
           await client.call({ type: "prompt", message: value });
         }
@@ -517,6 +728,7 @@ export async function terminal(
       } else void client.call({ type: "abort" }).catch(notice);
     };
     tui.addInputListener((data) => {
+      if (inspectorOpen && data !== "\x03") return undefined;
       if (data === "\x03") {
         stop();
         return { consume: true };
