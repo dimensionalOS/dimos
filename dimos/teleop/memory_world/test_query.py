@@ -1251,6 +1251,25 @@ def test_a_route_starts_under_the_viewer_not_where_the_robot_stopped(
     memory_world._viewer_position = (8.9, 9.1, 0.0)
     assert memory_world._ground_under_viewer()[2] == pytest.approx(0.80)
 
+    # A mezzanine: the viewer upstairs must not be given a start on the ground floor.
+    # Nearest-in-plane does exactly that -- the ground sample is directly below them and
+    # so wins on x and y alone -- and the route then fails or starts where they are not.
+    upstairs = [
+        [5.0, 2.0, 0.05],  # directly below the viewer, on the ground floor
+        [5.4, 2.3, 3.10],  # the mezzanine, a little further in x and y
+    ]
+    monkeypatch.setattr(memory_world, "_orbit_positions_for", lambda frame: {"positions": upstairs})
+    memory_world._viewer_position = (5.0, 2.0, 3.0)  # standing upstairs
+    assert memory_world._ground_under_viewer()[2] == pytest.approx(3.10), (
+        "put the start on the floor below the viewer"
+    )
+    # And standing on the ground floor at the same x and y still gets the ground floor.
+    memory_world._viewer_position = (5.0, 2.0, 0.0)
+    assert memory_world._ground_under_viewer()[2] == pytest.approx(0.05)
+
+    monkeypatch.setattr(memory_world, "_orbit_positions_for", lambda frame: {"positions": path})
+    memory_world._viewer_position = (4.1, 3.9, 0.0)
+
     # No path known yet, and no viewer connected: both decline so the caller falls back.
     monkeypatch.setattr(memory_world, "_orbit_positions_for", lambda frame: {"positions": []})
     assert memory_world._ground_under_viewer() is None
@@ -1384,3 +1403,62 @@ def test_a_route_that_goes_nowhere_is_not_a_route(
     )
     payload = memory_world._navigate_to(NavigateRequest(cluster=0, query_id="q1"))
     assert payload["length_m"] == 0.2, "a descending route to the right place was refused"
+
+
+def test_navigate_tries_every_viewpoint_before_saying_there_is_no_route(
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A place you cannot reach by one photo you can often reach by another.
+
+    Measured on the office recording from one standing position: the cluster centre was
+    unreachable, only 2 of cluster 0's 12 views could be routed to, and the FIRST photo of
+    all 12 places was unreachable -- so Navigate answered "no route" for every place on
+    screen while a 3.48 m route to the second photo of the first place existed the whole
+    time. 0 of 12 places reachable, with routes available for most of them.
+
+    The closest viewpoint the planner can still reach is a better answer than refusing,
+    and the reply says which one it used so the viewer is not lied to.
+    """
+    from fastapi import HTTPException
+
+    from dimos.teleop.memory_world.hyperspace_answers import NavigateRequest
+
+    cluster = SimpleNamespace(index=0, centre=(5.0, 5.0, 0.0), radius=1.0)
+    memory_world._last_answer = (SimpleNamespace(clusters=[cluster]), "q1")
+    memory_world._active_query_result = {"query_id": "q1"}
+    memory_world._active_query_images = [
+        ({"query_id": "q1", "cluster": 0, "index": 0, "position": [1.0, 1.0, 0.5]}, b""),
+        ({"query_id": "q1", "cluster": 0, "index": 1, "position": [2.0, 2.0, 0.5]}, b""),
+        ({"query_id": "q1", "cluster": 0, "index": 2, "position": [3.0, 3.0, 0.5]}, b""),
+    ]
+    monkeypatch.setattr(memory_world, "_ground_under_viewer", lambda: (0.0, 0.0, 0.0))
+    monkeypatch.setattr(memory_world, "_broadcast", lambda *a, **k: None)
+
+    # Only the THIRD photo can be reached: not the one asked for, not the centre.
+    reachable = (3.0, 3.0)
+    tried: list[tuple] = []
+
+    class Picky:
+        def plan(self, start, goal):  # type: ignore[no-untyped-def]
+            tried.append(tuple(round(float(v), 3) for v in goal))
+            if tuple(round(float(v), 3) for v in goal[:2]) != reachable:
+                return None
+            return SimpleNamespace(
+                points=[(0.0, 0.0, 0.0), (3.0, 3.0, 0.0)], length_m=4.2, cells=5, planner="mls"
+            )
+
+    monkeypatch.setattr(memory_world, "_planner", lambda: Picky())
+
+    payload = memory_world._navigate_to(NavigateRequest(cluster=0, query_id="q1", view=0))
+    assert payload["view"] == 2, "gave up instead of trying the other viewpoints"
+    assert payload["goal"] == [3.0, 3.0, 0.5]
+    assert payload["length_m"] == 4.2
+    # The one asked for is tried FIRST, and the centre before the rest.
+    assert tried[0][:2] == (1.0, 1.0), tried
+    assert tried[1][:2] == (5.0, 5.0), tried
+
+    # When nothing at all can be reached it still refuses, rather than inventing one.
+    monkeypatch.setattr(memory_world, "_planner", lambda: SimpleNamespace(plan=lambda *a: None))
+    with pytest.raises(HTTPException) as raised:
+        memory_world._navigate_to(NavigateRequest(cluster=0, query_id="q1", view=0))
+    assert raised.value.status_code == 422

@@ -77,6 +77,8 @@ logger = setup_logger()
 
 # How many times a reload of the SAME index is retried before it is left alone, and the
 # unit of the widening gap between those tries.
+# How many of a place's viewpoints to try before giving up on reaching it at all.
+NAVIGATE_ATTEMPTS = 8
 RELOAD_ATTEMPTS = 3
 RELOAD_BACKOFF_S = 10.0
 
@@ -674,7 +676,20 @@ class HyperspaceAnswers:
         path = np.asarray(known, dtype=np.float64).reshape(-1, 3)
         if not len(path):
             return None
-        nearest = int(np.argmin(np.hypot(path[:, 0] - viewer[0], path[:, 1] - viewer[1])))
+        # Nearest in THREE dimensions, not in the plane. The viewer's own height differs
+        # from the path's by a roughly constant offset -- eye against sensor -- which adds
+        # the same amount to every candidate and so cannot change the ranking within one
+        # level. Across levels it is the only thing that separates them: on a map with a
+        # mezzanine, nearest-in-plane hands a viewer standing upstairs a start on the
+        # ground floor, three metres below their feet, and the route then fails or begins
+        # somewhere they are not.
+        nearest = int(
+            np.argmin(
+                (path[:, 0] - viewer[0]) ** 2
+                + (path[:, 1] - viewer[1]) ** 2
+                + (path[:, 2] - viewer[2]) ** 2
+            )
+        )
         return (float(viewer[0]), float(viewer[1]), float(path[nearest, 2]))
 
     def _navigate_to(self, request: NavigateRequest) -> dict[str, Any]:
@@ -691,53 +706,80 @@ class HyperspaceAnswers:
         # Where the viewer is, then where the robot ended. An explicit start still wins:
         # the request carries one when the caller knows better than either.
         start = request.start or self._ground_under_viewer() or self._robot_end_pose()
-        goal, goal_view = tuple(cluster.centre), None
+        with self._clients_lock:
+            images = list(self._active_query_images)
+
+        def pose_of(index: int) -> tuple[float, float, float] | None:
+            header = images[index][0]
+            if header.get("query_id") != query_id or header.get("cluster") != cluster.index:
+                return None
+            try:
+                where = tuple(float(v) for v in (header.get("position") or []))
+            except (TypeError, ValueError):
+                return None
+            if len(where) != 3 or not all(math.isfinite(v) for v in where):
+                return None
+            return where  # type: ignore[return-value]
+
         if request.view is not None:
-            # The centre of a cluster is a weighted mean of voxels, so it can sit inside
-            # the shelf the thing is ON. Stepping to a picture and pressing Navigate
-            # routed to that mean anyway, which is neither where you are looking nor
-            # anywhere you can stand. A picture's camera pose is somewhere a body already
-            # was, so it is reachable by construction.
-            with self._clients_lock:
-                images = list(self._active_query_images)
             if not 0 <= request.view < len(images):
                 raise HTTPException(status_code=404, detail="no such view in the last answer")
-            header = images[request.view][0]
-            if header.get("query_id") != query_id or header.get("cluster") != cluster.index:
+            asked = pose_of(request.view)
+            if asked is None:
                 raise HTTPException(status_code=409, detail="that view is not in this place")
-            position = header.get("position") or []
-            try:
-                where = tuple(float(v) for v in position)
-            except (TypeError, ValueError):
-                where = ()
-            if len(where) != 3 or not all(math.isfinite(v) for v in where):
-                raise HTTPException(status_code=422, detail="that view has no usable pose")
-            goal, goal_view = where, request.view
+
+        # The candidates, in order of what the person asked for. The centre of a cluster
+        # is a weighted mean of its voxels, so for a thing on a wall it is INSIDE the
+        # wall: neither where the viewer is looking nor anywhere a body can stand. A
+        # photo's camera pose is somewhere the robot already stood.
+        #
+        # Every one of them is tried, and that is the point. Measured on the office
+        # recording from one standing position: the centre was unreachable, only 2 of
+        # cluster 0's 12 views could be routed to, and the FIRST photo of all 12 places
+        # was unreachable -- so Navigate answered "no route" for every place on screen
+        # while a 3.48 m route to the second photo of the first place existed the whole
+        # time. The closest photo the robot can still reach is a better answer than
+        # refusing, and saying WHICH one it picked keeps it honest.
+        others = [i for i in range(len(images)) if i != request.view and pose_of(i) is not None]
+        candidates: list[tuple[int | None, tuple[float, float, float]]] = []
+        if request.view is not None:
+            candidates.append((request.view, asked))
+        candidates.append((None, tuple(cluster.centre)))
+        candidates.extend((i, pose) for i in others if (pose := pose_of(i)) is not None)
+
         planner = self._planner()
-        route = (
-            planner.plan(tuple(start), tuple(goal))
-            if isinstance(planner, MlsRoutePlanner)
-            else planner.plan(start[:2], goal[:2])
-        )
-        if route is None:
+        goal, goal_view, points = None, None, []
+        for view_index, candidate in candidates[:NAVIGATE_ATTEMPTS]:
+            route = (
+                planner.plan(tuple(start), tuple(candidate))
+                if isinstance(planner, MlsRoutePlanner)
+                else planner.plan(start[:2], candidate[:2])
+            )
+            if route is None:
+                continue
+            found = [(float(x), float(y), float(z)) for x, y, z in route.points]
+            if len(found) < 2:
+                continue
+            if math.dist(found[0], found[-1]) <= 1e-9:
+                continue  # went nowhere; see below
+            goal, goal_view, points = candidate, view_index, found
+            break
+        if goal is None:
             raise HTTPException(status_code=422, detail="no route through the known free space")
-        points = [(float(x), float(y), float(z)) for x, y, z in route.points]
-        if len(points) < 2:
-            raise HTTPException(status_code=422, detail="already there")
-        # A route has to GO somewhere. The planner can return a handful of identical
-        # points when it cannot connect the start to the goal, and the count check above
-        # passes them: measured live at three copies of (2.95, 2.15, 0.7), length 0.0,
-        # reported as HTTP 200 with the goal 2.45 m away. The viewer then draws a tube of
-        # no length and the person is told a route exists. Refusing is the same answer the
-        # planner would have given by returning None, which is what it means.
-        # Measured in the PLANE, not in 3-D. The goal is a camera pose, so it sits at
-        # head height above the floor the route runs on, and that constant offset is in
-        # both distances. In 3-D a legitimate route that reaches the goal's exact x and y
-        # while descending 0.1 m reads as going backwards -- measured 1.612 -> 1.700 --
-        # and was refused. Height is not what "did it get closer" means here.
-        reached = math.dist(points[-1][:2], goal[:2])
-        if reached >= math.dist(points[0][:2], goal[:2]) - 1e-9:
-            raise HTTPException(status_code=422, detail="no route through the known free space")
+        # The "went nowhere" test in the loop above: a route has to GO somewhere. The
+        # planner can return a handful of identical points when it cannot connect the
+        # start to the goal, and a length check alone passes them -- measured live at
+        # three copies of (2.95, 2.15, 0.7), length 0.0, returned as HTTP 200 with the
+        # goal 2.45 m away, so the viewer drew a tube of no length and the person was
+        # told a route existed.
+        #
+        # It tests the route's own EXTENT, not its progress toward the goal, because
+        # extent is what actually failed. Comparing distances to the goal imports that
+        # goal's height into the verdict: a real 0.5 m route down a 15 cm step, to a
+        # camera pose 1.8 m up, closed 0.38 m of horizontal gap and was still refused,
+        # since 3-D it read 1.856 -> 1.951. The plane fixes that particular case and
+        # still asks a question the planner was never posed -- in the costmap branch z is
+        # not even an input. Zero extent is unambiguous and needs nothing but the points.
         payload = {
             "query_id": query_id,
             "cluster": cluster.index,

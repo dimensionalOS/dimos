@@ -779,8 +779,14 @@ export class WorldScene {
     }
 
     getViewerRobotPosition() {
-        const xy = this._worldPosToRobotXY(this.getCameraPositionWorld());
-        return [xy[0], xy[1], 0];
+        // The z was a hard-coded 0 from the first commit of this package onwards, and
+        // the server spent three attempts trying to work out a height without one. Three
+        // y IS the robot's z (the frame-rotate is R_x(-pi/2)) and the world group's yaw
+        // does not touch it, so the height costs one subtraction and a divide.
+        const world = this.getCameraPositionWorld();
+        const xy = this._worldPosToRobotXY(world);
+        const wg = this._worldGroup;
+        return [xy[0], xy[1], (world.y - wg.position.y) / (wg.scale.x || 1)];
     }
 
     _rotateWorldAround(pivot, angle) {
