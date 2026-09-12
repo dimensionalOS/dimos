@@ -435,3 +435,53 @@ def test_stop_does_not_close_the_store_under_a_read_in_flight(tmp_path: Path) ->
     finally:
         may_finish.set()
         reader.join(timeout=5)
+
+
+def test_the_store_is_closed_while_the_lock_is_still_held(tmp_path: Path) -> None:
+    """Not just swapped out under the lock and closed after it.
+
+    Dropping `self._store` under the lock and then calling `store.stop()` outside it leaves
+    a window where a thread waking in `_ensure_store()` sees None, reopens the recording,
+    and closes the old handle beside it. Nothing observable came of it during shutdown, but
+    the comment above the block claims the close is covered, and a comment that is not true
+    is how the next reader gets it wrong. The test the round-41 fix came with cannot see
+    this: it asserts WHAT was torn down, not WHERE.
+    """
+    import threading
+
+    db_path = tmp_path / "recording.db"
+    _empty_store(db_path)
+    module = MemoryWorldModule(store_path=str(db_path))
+    real_store = module._ensure_store()
+    assert real_store is not None
+
+    held_during_close: dict[str, bool] = {}
+
+    def is_the_lock_free_right_now() -> None:
+        # From ANOTHER thread, because an RLock is re-entrant for its owner and would say
+        # yes to stop()'s own thread whether or not it holds it.
+        if module._store_lock.acquire(blocking=False):
+            held_during_close["held"] = False
+            module._store_lock.release()  # same thread that took it, as an RLock requires
+        else:
+            held_during_close["held"] = True
+
+    class StoreThatLooksAtTheLockAsItCloses:
+        def __init__(self, inner: object) -> None:
+            self._inner = inner
+
+        def stop(self) -> None:
+            probe = threading.Thread(target=is_the_lock_free_right_now, name="probe")
+            probe.start()
+            probe.join(5)
+            self._inner.stop()  # type: ignore[attr-defined]
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+    module._store = StoreThatLooksAtTheLockAsItCloses(real_store)  # type: ignore[assignment]
+    module.stop()
+
+    assert held_during_close.get("held") is True, (
+        "the store was closed after the lock was released, not while it was held"
+    )
