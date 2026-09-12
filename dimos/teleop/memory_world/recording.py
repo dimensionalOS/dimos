@@ -521,66 +521,109 @@ def rebuild_stream(store: Store, name: str, rows: list[tuple[float, Any]], paylo
     store.delete_stream(staged)
 
 
+def _same_transform(one: Any, other: Any) -> bool:
+    """Whether two tf messages say the same thing about the joint they describe."""
+    return bool(
+        np.allclose(
+            [
+                one.translation.x,
+                one.translation.y,
+                one.translation.z,
+                one.rotation.x,
+                one.rotation.y,
+                one.rotation.z,
+                one.rotation.w,
+            ],
+            [
+                other.translation.x,
+                other.translation.y,
+                other.translation.z,
+                other.rotation.x,
+                other.rotation.y,
+                other.rotation.z,
+                other.rotation.w,
+            ],
+        )
+    )
+
+
+def _restamped(transform: Any, ts: float) -> Any:
+    """The same joint, said at another moment.
+
+    A static edge carries the one stamp it was latched at. Copied unchanged into every
+    sample of the moving stream it becomes a series of identical stamps -- a bounded one,
+    which stops holding the moment the recording moves past it -- rather than a joint that
+    holds throughout. So each copy is stamped where it is put.
+    """
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+    p, q = transform.translation, transform.rotation
+    return Transform(
+        translation=Vector3(float(p.x), float(p.y), float(p.z)),
+        rotation=Quaternion(float(q.x), float(q.y), float(q.z), float(q.w)),
+        frame_id=str(transform.frame_id),
+        child_frame_id=str(transform.child_frame_id),
+        ts=ts,
+    )
+
+
 def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
     """Move a recording's static tf edges into its moving tf, and drop the static stream.
 
     One tf tree. :func:`build_tf_tree` lays the static edges over the moving stream, but
     Hyperspace reads the moving stream ALONE, so an edge that lives only in the static one
-    is invisible to search while the map and the markers can see it -- and a stale static
-    copy of an edge the moving stream also carries quietly outvotes it. Either way the two
-    disagree. Returns the number of edges moved; zero means there was nothing to move.
+    is invisible to search while the map and the markers can see it -- and a stale copy in
+    the moving stream quietly outvotes the static one. Either way the two disagree.
+
+    Returns the number of edges moved; zero means the moving stream already said exactly
+    what the static one did, in every sample, and only the redundant stream goes.
     """
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-    from dimos.teleop.memory_world.tf_tree import TfTree
 
-    moving = TfTree.from_stream(store.streams[tf_stream])
     statics: dict[tuple[str, str], Any] = {}
     for obs in store.streams[static_stream]:
         for t in obs.data.transforms:
+            # The FIRST sample of an edge, which is the one TfTree.add keeps for a static.
             statics.setdefault((str(t.frame_id), str(t.child_frame_id)), t)
-    if not statics:
-        store.delete_stream(static_stream)
-        return 0
 
-    def already_there(edge: tuple[str, str], transform: Any) -> bool:
-        p, q = transform.translation, transform.rotation
-        held = moving.lookup(edge[0], edge[1], 0.0, float("inf"))
-        if held is None:
-            return False
-        want = TfTree()
-        want.add(
-            edge[0],
-            edge[1],
-            0.0,
-            (float(p.x), float(p.y), float(p.z)),
-            (float(q.x), float(q.y), float(q.z), float(q.w)),
-            static=True,
-        )
-        return bool(np.allclose(np.asarray(held), np.asarray(want.lookup(*edge, 0.0))))
-
-    # A static edge the moving stream already carries, with the same value, is not moved:
-    # the tree already agrees with itself, and rewriting sixteen thousand samples to say
-    # what they already say is not free.
-    moving_edges = {
-        (str(t.frame_id), str(t.child_frame_id))
-        for obs in store.streams[tf_stream]
-        for t in obs.data.transforms
-    }
+    # Every sample of the moving stream, not just the first: an edge it republishes gets
+    # a stale value somewhere often enough that checking one sample proves nothing.
+    seen: set[tuple[str, str]] = set()
+    disagrees: set[tuple[str, str]] = set()
+    for obs in store.streams[tf_stream]:
+        for t in obs.data.transforms:
+            edge = (str(t.frame_id), str(t.child_frame_id))
+            if edge in statics:
+                seen.add(edge)
+                if not _same_transform(t, statics[edge]):
+                    disagrees.add(edge)
     folded = {
         edge: transform
         for edge, transform in statics.items()
-        if edge not in moving_edges or not already_there(edge, transform)
+        if edge not in seen or edge in disagrees
     }
     if not folded:
+        # Nothing to move, and rewriting sixteen thousand samples to say what they
+        # already say is not free. The stream goes because it is now a second source.
         store.delete_stream(static_stream)
         return 0
 
-    rows = []
-    for obs in store.streams[tf_stream]:
-        kept = [
-            t for t in obs.data.transforms if (str(t.frame_id), str(t.child_frame_id)) not in folded
-        ]
-        rows.append((float(obs.ts), TFMessage(*kept, *folded.values())))
+    rows = [
+        (
+            float(obs.ts),
+            TFMessage(
+                *[
+                    t
+                    for t in obs.data.transforms
+                    if (str(t.frame_id), str(t.child_frame_id)) not in folded
+                ],
+                *[_restamped(t, float(obs.ts)) for t in folded.values()],
+            ),
+        )
+        for obs in store.streams[tf_stream]
+    ]
     rebuild_stream(store, tf_stream, rows, TFMessage)
     store.delete_stream(static_stream)
     return len(folded)

@@ -580,3 +580,104 @@ def test_the_raw_scans_win_over_an_icp_stitch(tmp_path) -> None:  # type: ignore
         assert [round(float(v), 3) for v in base[:3, 3]] == [5.0, 0.0, 0.0]  # the recording's own
     finally:
         store.stop()
+
+
+def _tf_store(tmp_path):  # type: ignore[no-untyped-def]
+    from dimos.memory.store.sqlite import SqliteStore
+
+    store = SqliteStore(path=str(tmp_path / "rec.db"), must_exist=False)
+    store.start()
+    return store
+
+
+def _edge(parent: str, child: str, x: float, ts: float = 1.0):  # type: ignore[no-untyped-def]
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+    return Transform(
+        translation=Vector3(x, 0.0, 0.0),
+        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        frame_id=parent,
+        child_frame_id=child,
+        ts=ts,
+    )
+
+
+def test_a_folded_static_edge_still_holds_at_the_end_of_the_recording(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A static edge carries the one stamp it was latched at, and says it holds for all time.
+
+    Copied into the moving stream unchanged, it stops being a statement for all time and
+    becomes a series of identical stamps -- which holds at that instant and nowhere else.
+    A camera mount that expires five seconds into a ten-minute recording places nothing.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, fold_static_tf
+
+    store = _tf_store(tmp_path)
+    try:
+        tf = store.stream("tf", TFMessage)
+        for step in (1.0, 2.0, 3.0):
+            tf.append(TFMessage(_edge("odom", "base", step, step)), ts=step)
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(_edge("base", "cam", 0.5, 1.0)), ts=1.0
+        )
+        assert build_tf_tree(store, "tf").lookup("odom", "cam", 3.0)[0, 3] == 3.5
+
+        assert fold_static_tf(store, "tf", "tf_static") == 1
+        tree = build_tf_tree(store, "tf")
+        assert tree.lookup("odom", "cam", 3.0)[0, 3] == 3.5  # still placed at the far end
+        assert tree.lookup("odom", "cam", 1.0)[0, 3] == 1.5
+    finally:
+        store.stop()
+
+
+def test_folding_compares_every_sample_the_moving_stream_carries(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A rig that republishes its mounts gets a stale one in there often enough that
+    checking the first sample proves nothing about the rest.
+
+    Leaving such an edge alone and deleting the static stream that disagreed with it is the
+    one outcome that loses the right answer outright.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, fold_static_tf
+
+    store = _tf_store(tmp_path)
+    try:
+        tf = store.stream("tf", TFMessage)
+        tf.append(TFMessage(_edge("base", "cam", 2.0, 1.0)), ts=1.0)  # agrees
+        tf.append(TFMessage(_edge("base", "cam", 9.0, 2.0)), ts=2.0)  # and then does not
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(_edge("base", "cam", 2.0, 1.0)), ts=1.0
+        )
+
+        assert fold_static_tf(store, "tf", "tf_static") == 1
+        assert build_tf_tree(store, "tf").lookup("base", "cam", 2.0)[0, 3] == 2.0
+    finally:
+        store.stop()
+
+
+def test_folding_an_agreeing_static_tf_rewrites_nothing(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The common case: the rig already republishes its statics inside the moving stream.
+
+    Rewriting sixteen thousand samples to say exactly what they already say is minutes of
+    work and a window in which the tf is being replaced, for no change at all.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import fold_static_tf
+
+    store = _tf_store(tmp_path)
+    try:
+        tf = store.stream("tf", TFMessage)
+        for step in (1.0, 2.0):
+            tf.append(TFMessage(_edge("base", "cam", 2.0, step)), ts=step)
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(_edge("base", "cam", 2.0, 1.0)), ts=1.0
+        )
+
+        assert fold_static_tf(store, "tf", "tf_static") == 0
+        assert "tf_static" not in store.list_streams()  # the second source goes either way
+        assert [float(obs.ts) for obs in store.streams["tf"]] == [1.0, 2.0]
+        assert all(len(obs.data.transforms) == 1 for obs in store.streams["tf"])
+    finally:
+        store.stop()

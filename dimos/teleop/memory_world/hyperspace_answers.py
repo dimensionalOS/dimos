@@ -119,6 +119,7 @@ class HyperspaceAnswers:
         self._hyperspace: HyperspaceSearch | None = None
         self._hyperspace_lock = threading.Lock()
         self._hyperspace_error: str | None = None
+        self._adopting = threading.Lock()  # held while a background load is in flight
         self._prepare_job = EmbeddingJob(
             on_finished=lambda _job: self._broadcast_search_status(),
             name="hyperspace ingest",
@@ -185,8 +186,34 @@ class HyperspaceAnswers:
     def _hyperspace_ready(self) -> bool:
         return self._hyperspace is not None
 
+    def _adopt_an_index_that_appeared(self) -> None:
+        """Load a memory db that finished being written after this module started.
+
+        The keyframes are in the recording now, so an ingest run from a terminal finishes
+        into the very file this process already has open, with nothing to tell it. The
+        viewer hides its Prepare button the moment the index is there, so without this the
+        page waits on "loading Hyperspace" with no way to ask again.
+        """
+        if self._hyperspace is not None or self._hyperspace_error is not None:
+            return
+        if self._prepare_job.status()["embedding"] == "running":
+            return  # our own ingest, which adopts on its own when it finishes
+        if not memory_db_ready(self.config.store_path):
+            return
+        if not self._adopting.acquire(blocking=False):
+            return  # already loading; warming takes seconds and must not block the poll
+
+        def load() -> None:
+            try:
+                self._load_hyperspace()
+            finally:
+                self._adopting.release()
+
+        threading.Thread(target=load, name="hyperspace adopt", daemon=True).start()
+
     def _search_status(self) -> dict[str, Any]:
         """What the viewer shows: which engine answers, whether it is ready, and how preparing is going."""
+        self._adopt_an_index_that_appeared()
         search = self._hyperspace
         status: dict[str, Any] = {
             "engine": "hyperspace" if search is not None else None,

@@ -184,6 +184,7 @@ def ingest_recording(
                         else f"tf: {detected['tf']!r} already carries every static edge",
                         flush=True,
                     )
+                    detected["tf_static"] = None  # folded away; reading it now is a KeyError
             else:
                 # An mcap cannot be written to, so its keyframes go in a companion, built
                 # beside the final name and moved into place at the end.

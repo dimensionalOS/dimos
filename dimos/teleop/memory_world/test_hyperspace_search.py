@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sqlite3
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -256,6 +257,11 @@ def test_the_keyframes_are_written_into_the_recording_and_no_companion_appears( 
 
     def fake_ingest(store, memory, model, **kw):  # type: ignore[no-untyped-def]
         assert memory is store, "the recording IS the memory db"
+        # The real ingest reads every stream it is named. The fold deleted tf_static, so
+        # naming it here is a KeyError -- after the old index has already been dropped.
+        for role, name in kw["streams"].items():
+            if name:
+                assert name in store.list_streams(), f"{role} names {name!r}, which is gone"
         memory.stream(KEYFRAME_STREAM, String).append(String("a keyframe"), ts=1.0)
         memory.stream(PATCH_STREAM, String).append(String("a patch"), ts=1.0)
         return {"images": 1, "kept": 1}
@@ -355,3 +361,43 @@ def test_the_empty_tf_hyperspace_opens_is_swept_up(tmp_path, monkeypatch) -> Non
         assert "robot_tf" in store.list_streams()
     finally:
         store.stop()
+
+
+def test_an_index_finished_after_startup_is_picked_up_by_the_status_poll() -> None:
+    """An ingest run from a terminal finishes into the very file this process has open.
+
+    Nothing tells the module, and the viewer hides its Prepare button the moment the index
+    is there, so the page waits on "loading Hyperspace" for good. One db makes this the
+    ordinary case rather than a corner: there is no companion file appearing to notice.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
+
+    loaded = threading.Event()
+    ready = False
+
+    class Module(HyperspaceAnswers):
+        def __init__(self) -> None:
+            self._hyperspace = None
+            self._hyperspace_error = None
+            self._adopting = threading.Lock()
+            self._prepare_job = SimpleNamespace(
+                status=lambda: {"embedding": "idle", "progress": 0.0}
+            )
+            self.config = SimpleNamespace(store_path="/nowhere/walk.db")
+
+        def _load_hyperspace(self, reload: bool = False) -> bool:  # type: ignore[override]
+            loaded.set()
+            return True
+
+    module = Module()
+    with mock.patch(
+        "dimos.teleop.memory_world.hyperspace_answers.memory_db_ready", lambda _p: ready
+    ):
+        module._adopt_an_index_that_appeared()
+        assert not loaded.wait(0.2), "nothing to adopt yet"
+        ready = True
+        module._adopt_an_index_that_appeared()
+        assert loaded.wait(2.0), "the index that appeared was never loaded"

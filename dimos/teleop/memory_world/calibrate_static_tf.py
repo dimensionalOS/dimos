@@ -378,7 +378,7 @@ def _drop_edge_from_static_tf(store: Any, mount: str, child: str) -> None:
     would look like it had done nothing.
     """
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-    from dimos.teleop.memory_world.recording import detect_streams
+    from dimos.teleop.memory_world.recording import detect_streams, rebuild_stream
 
     static = detect_streams(store).get("tf_static")
     if not static or static not in store.list_streams():
@@ -396,12 +396,12 @@ def _drop_edge_from_static_tf(store: Any, mount: str, child: str) -> None:
             kept.append((float(obs.ts), surviving))
     if not dropped:
         return  # it never declared this edge
-    store.delete_stream(static)
     if not kept:
-        return  # that edge was all it held
-    written = store.stream(static, TFMessage)
-    for ts, transforms in kept:
-        written.append(TFMessage(*transforms), ts=ts)
+        store.delete_stream(static)  # that edge was all it held
+        return
+    # Staged like every other rewrite: the other mounts in here -- the imu, the gps -- are
+    # not ours to lose to a full disk.
+    rebuild_stream(store, static, [(ts, TFMessage(*ts_and)) for ts, ts_and in kept], TFMessage)
 
 
 def drop_what_the_mount_invalidates(store: Any, recording: str) -> list[str]:
