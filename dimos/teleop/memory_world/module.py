@@ -29,11 +29,9 @@ import io
 import json
 import math
 from pathlib import Path
-import subprocess
-import sys
 import threading
 import time
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 import uuid
 
 import cv2
@@ -50,6 +48,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.memory.store.base import Store
 from dimos.memory.transform import throttle
+from dimos.teleop.memory_world.analysis import MemoryAnalysis
 from dimos.teleop.memory_world.clients import ClientConn, RevalidatedStaticFiles
 from dimos.teleop.memory_world.embed import EmbeddingJob
 from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
@@ -66,8 +65,6 @@ from dimos.teleop.memory_world.messages import (
     encode_text,
 )
 from dimos.teleop.memory_world.query import (
-    MEMORY_ANALYSIS_BOOTSTRAP,
-    RESULT_SENTINEL,
     MemoryQueryResult,
     answer_positions,
 )
@@ -267,7 +264,9 @@ class MemoryWorldConfig(ModuleConfig):
     replay_frame_jpeg_quality: int = 60
 
 
-class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCache, Module):
+class MemoryWorldModule(
+    HyperspaceAnswers, ReplayServing, VisualAnswers, MemoryAnalysis, WorldCache, Module
+):
     """VR memory-world module.
 
     See :mod:`dimos.teleop.memory_world` for the architectural overview.
@@ -728,107 +727,6 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
             return {"n": 0}, b""
 
     @skill
-    def analyze_memory(
-        self,
-        code: str,
-        timeout: Annotated[float, PydanticField(gt=0.0, le=100.0)] = 100.0,
-    ) -> SkillResult:
-        """Analyze the recorded memory and display validated spatial results in VR.
-
-        Run complete Python code in a fresh process with ``store`` (the recording,
-        a mem2 store), ``np`` (NumPy), and ``viewer_position`` available. Inspect
-        streams with ``store.list_streams()``, ``store.summary()``, and
-        ``store.streams[name]``. Observations expose ``pose_tuple``, ``data``,
-        and ``id``. ``store.read_stream`` does not exist. For a bounded xyz
-        trajectory use ``sample_pose_path("odom", max_points=200)``. Assign a
-        dictionary to ``result`` with a required ``answer`` and optional fields:
-        ``focus_point`` [x,y,z], ``regions`` (polygon point lists),
-        ``evidence_paths`` (path point lists), ``points``, and
-        ``observation_ids``. Every point must be [x,y,z] in the world frame.
-        A route from the current VR position is added automatically when
-        ``focus_point`` and ``global_costmap`` are available.
-
-        Args:
-            code: Complete Python source that assigns the result dictionary.
-            timeout: Maximum execution time in seconds, up to 100 seconds.
-        """
-        started = time.monotonic()
-        with self._clients_lock:
-            viewer_position = self._viewer_position
-        try:
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    "-c",
-                    MEMORY_ANALYSIS_BOOTSTRAP,
-                    self.config.store_path,
-                    json.dumps(viewer_position),
-                ],
-                input=code,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired:
-            return SkillResult.fail(
-                "EXECUTION_TIMEOUT", f"Memory analysis timed out after {timeout:g} seconds"
-            )
-
-        # The bootstrap prints the sentinel at the START of its own line, so that is how
-        # it is looked for. `rfind` over the whole of stdout searched INSIDE the printed
-        # JSON too, and since the JSON follows the marker on the same line, an answer whose
-        # own text contained the sentinel won the search -- a valid result came back as
-        # EXECUTION_FAILED. It also indexed `splitlines()[0]` on whatever followed, which
-        # for a marker at the very end of stdout is an empty list: IndexError, uncaught.
-        encoded = None
-        for line in reversed(completed.stdout.splitlines()):
-            if line.startswith(RESULT_SENTINEL):
-                encoded = line[len(RESULT_SENTINEL) :]
-                break
-        if encoded is None:
-            detail = (completed.stderr or completed.stdout or "analysis returned no result").strip()
-            return SkillResult.fail("EXECUTION_FAILED", self._cap_analysis_output(detail))
-
-        # A result on stdout is not the same as a run that worked. The child can print the
-        # sentinel and THEN die -- a teardown that raises, a segfault in a native library
-        # closing its handles -- and everything below this point would have accepted the
-        # printed answer and reported success, losing the failure entirely. Measured: a
-        # recording stub whose cleanup raised gave returncode 1, a RuntimeError on stderr,
-        # and `success=True` out of this method.
-        if completed.returncode != 0:
-            detail = (completed.stderr or "").strip() or (
-                f"analysis exited with status {completed.returncode} after printing a result"
-            )
-            return SkillResult.fail("EXECUTION_FAILED", self._cap_analysis_output(detail))
-
-        if len(encoded) > self.config.memory_analysis_max_output_chars:
-            return SkillResult.fail(
-                "RESULT_TOO_LARGE",
-                "Memory result exceeds the configured output limit of "
-                f"{self.config.memory_analysis_max_output_chars} characters",
-            )
-        try:
-            result = MemoryQueryResult.model_validate_json(encoded)
-            self._add_route_to_result(result)
-        except Exception as exc:
-            return SkillResult.fail("EXECUTION_FAILED", f"Invalid memory result: {exc}")
-
-        query_id = self._publish_query_result(result)
-
-        return SkillResult(
-            success=True,
-            message=result.answer,
-            duration_ms=(time.monotonic() - started) * 1000,
-            metadata={
-                "query_id": query_id,
-                "regions": len(result.regions),
-                "evidence_paths": len(result.evidence_paths),
-                "observation_ids": len(result.observation_ids),
-                "route": result.route is not None,
-            },
-        )
-
     def _broadcast(self, message: bytes | str) -> None:
         with self._clients_lock:
             clients = tuple(self._world_clients)
@@ -939,6 +837,12 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
             self._store_lock,
             self._index_lock,
         ):
+            # Inside the locks: an adoption that waited on `_planner_lock` through stop()
+            # would otherwise open a fresh store into a closed module, and stop() neither
+            # joins that thread nor closes what it installs.
+            if self._stopping.is_set() or getattr(self, "_module_closed", False):
+                logger.info("stopped while a reopen was waiting; leaving the store closed")
+                return
             # Replay bookkeeping first: the open below is slow, and a viewer polling
             # /replay/index meanwhile must not read a stale "build failed".
             self._replay = None
@@ -1330,12 +1234,6 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
         samples = decode_audio(io.BytesIO(audio), sampling_rate=16_000)
         segments, _ = self.whisper.transcribe(samples, language="en")
         return " ".join(segment.text for segment in segments).strip()
-
-    def _cap_analysis_output(self, output: str) -> str:
-        limit = self.config.memory_analysis_max_output_chars
-        if len(output) <= limit:
-            return output
-        return output[:limit] + f"\n... [truncated, {len(output)} chars total]"
 
     def _on_client_message(self, conn: ClientConn, msg: dict[str, Any]) -> None:
         kind = msg.get("type")

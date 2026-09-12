@@ -1065,3 +1065,45 @@ def test_a_crop_is_not_a_resize_and_only_a_resize_scales_the_focal_length() -> N
     # point -- halving fx with the raster would have put it at half this offset.
     assert where[0] == pytest.approx((480 - 640) * 2.0 / 900.0), where
     assert where[1] == pytest.approx((240 - 480) * 2.0 / 900.0), where
+
+
+def test_an_embedding_answer_carries_the_places_the_viewer_renders() -> None:
+    """The client builds its results bar, place stepping and Navigate from `clusters`.
+
+    An answer that carries only `points` leaves all three inert: the bar reads "0 places",
+    `results.go(0)` returns false because `this.clusters.length` is 0, and
+    `results.navigate()` returns null before it ever reaches the route. Measured live
+    against a real recording -- ask succeeded, six places found, six evidence photos hung,
+    4308 voxels lit, and Navigate did nothing at all.
+
+    So the embedding answer publishes the same summary shape Hyperspace does, and the
+    viewer needs no branch. The keys are `HeatmapCluster.summary()`'s.
+    """
+    from dimos.teleop.memory_world.hyperspace_search import Cluster
+
+    wanted = set(
+        Cluster(
+            index=0,
+            centre=(0.0, 0.0, 0.0),
+            radius=1.0,
+            score=0.5,
+            peak=0.5,
+            n_voxels=1,
+            views=1,
+            evidence=[],
+        ).summary()
+    )
+    published = {
+        "index",
+        "centre",
+        "radius",
+        "score",
+        "peak",
+        "n_voxels",
+        "n_views",
+        "n_evidence",
+    }
+
+    assert published == wanted, (
+        "the embedding answer's cluster summary has drifted from the one the viewer reads"
+    )

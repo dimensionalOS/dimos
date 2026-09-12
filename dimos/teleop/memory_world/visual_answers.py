@@ -434,11 +434,30 @@ class VisualAnswers:
         # against every embedding answer, which is now every answer there is. It wants two
         # fields per place, an index and a centre, so the places give it those directly
         # rather than the route growing a second way to be asked.
+        # The same shape Hyperspace publishes, from the embeddings' own places. The client
+        # builds its results bar, its place stepping and its Navigate button from
+        # `clusters`; an answer that carries only `points` leaves all three inert -- the
+        # bar reads "0 places" and `results.navigate()` returns null before it reaches the
+        # route at all. Keys match `HeatmapCluster.summary()` so the viewer needs no branch.
+        radius = float(self.config.object_radius_m)
+        summaries = [
+            {
+                "index": i,
+                "centre": [round(float(v), 3) for v in place.position],
+                "radius": round(radius, 3),
+                "score": round(float(place.similarity), 3),
+                "peak": round(float(place.similarity), 3),
+                "n_voxels": 0,
+                "n_views": int(place.views),
+                "n_evidence": int(place.views),
+            }
+            for i, place in enumerate(places)
+        ]
         with self._clients_lock:
             self._last_answer = (
                 SimpleNamespace(
                     clusters=[
-                        SimpleNamespace(index=i, centre=tuple(place.position), radius=None)
+                        SimpleNamespace(index=i, centre=tuple(place.position), radius=radius)
                         for i, place in enumerate(places)
                     ]
                 ),
@@ -453,6 +472,8 @@ class VisualAnswers:
             metadata={
                 "query_id": query_id,
                 "query": phrase,
+                "engine": "siglip",
+                "clusters": summaries,
                 "places": [_place_metadata(place, located) for place in places],
                 "located": located,
             },
