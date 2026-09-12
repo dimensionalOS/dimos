@@ -491,19 +491,20 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
     def _ensure_store(self) -> Store:
         with self._store_lock:
             if self._store is None:
-                # Named before it is published, and dropped if naming refuses the
-                # recording. Publishing first turned a refusal into one traceback and a
-                # module that went on serving with every role still empty -- which is the
-                # failure detect_streams raises to prevent.
-                store = open_recording(self.config.store_path)
+                # Published before it is named, because naming reads the tf tree and
+                # that calls straight back in here -- publishing afterwards opened the
+                # recording again for every such read, to a RecursionError. Withdrawn
+                # again if naming refuses the recording, so that a refusal is not left
+                # behind as a module serving with every role empty.
+                self._store = open_recording(self.config.store_path)
                 logger.info("opened memory store at %s", self.config.store_path)
                 try:
-                    self._name_streams(store)
+                    self._name_streams(self._store)
                 except BaseException:
+                    store, self._store = self._store, None
                     with contextlib.suppress(Exception):
                         store.stop()
                     raise
-                self._store = store
             return self._store
 
     def _name_streams(self, store: Store) -> None:

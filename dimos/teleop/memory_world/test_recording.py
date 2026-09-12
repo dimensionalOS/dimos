@@ -932,13 +932,47 @@ def test_a_static_declared_twice_folds_the_first_value(tmp_path) -> None:  # typ
         store.stop()
 
 
+def test_naming_the_streams_can_read_the_store_it_is_naming(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """_name_streams reads the tf tree to pick the lidar, and that calls _ensure_store.
+
+    Publishing the store only after naming it therefore opened the recording again for
+    every such read, and again, until RecursionError -- on the ordinary first start of a
+    module, which is every start.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world.module import MemoryWorldModule
+
+    opens = []
+
+    class Module(MemoryWorldModule):
+        def __init__(self) -> None:
+            self._store = None
+            self._store_lock = threading.RLock()
+            self.config = SimpleNamespace(store_path=str(tmp_path / "walk.db"))
+
+        def _name_streams(self, store) -> None:  # type: ignore[no-untyped-def, override]
+            # What _tf_tree does, which is what naming the lidar needs.
+            assert self._ensure_store() is store
+
+    module = Module()
+    with mock.patch(
+        "dimos.teleop.memory_world.module.open_recording",
+        lambda path: opens.append(path) or SimpleNamespace(stop=lambda: None),
+    ):
+        store = module._ensure_store()
+    assert len(opens) == 1
+    assert module._store is store
+
+
 def test_a_recording_the_module_refuses_is_not_left_open_and_half_named(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """Naming the streams can refuse the recording, and the refusal has to reach the user.
 
-    Publishing the store before naming it turned that into one traceback and a module that
-    went on serving with every role still empty -- logging "no '' stream; falling back to
-    the poses stamped on images", which is word for word the failure the refusal exists to
-    prevent.
+    Leaving the store published after a refusal means every later _ensure_store hands back
+    a store with every role still empty, and the module goes on logging "no '' stream;
+    falling back to the poses stamped on images" -- word for word the failure the refusal
+    exists to prevent.
     """
     import threading
     from types import SimpleNamespace
@@ -966,6 +1000,33 @@ def test_a_recording_the_module_refuses_is_not_left_open_and_half_named(tmp_path
                 module._ensure_store()
     assert module._store is None
     assert stopped == [True, True]
+
+
+def test_a_static_latched_before_the_robot_moved_still_holds_at_that_moment(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A rig latches its mounts and then starts moving, so pictures exist in the gap.
+
+    Stamping the folded copy at the earliest MOVING sample puts the mount after those, and
+    a photograph whose whole path to the camera is static -- which used to resolve at any
+    time at all -- is placed nowhere.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, fold_static_tf
+
+    store = _tf_store(tmp_path)
+    try:
+        store.stream("tf", TFMessage).append(
+            TFMessage(_edge("base", "wheel", 1.0, 10.0)), ts=10.0
+        )  # nothing moves until 10
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(_edge("world", "base", 1.0, 1.0), _edge("base", "cam", 2.0, 1.0)), ts=1.0
+        )
+        assert build_tf_tree(store, "tf").lookup("world", "cam", 1.0)[0, 3] == 3.0
+
+        fold_static_tf(store, "tf", "tf_static")
+        assert build_tf_tree(store, "tf").lookup("world", "cam", 1.0)[0, 3] == 3.0
+        assert build_tf_tree(store, "tf").lookup("world", "cam", 100.0)[0, 3] == 3.0
+    finally:
+        store.stop()
 
 
 def test_a_folded_mount_outlives_the_tf_the_way_a_static_did(tmp_path) -> None:  # type: ignore[no-untyped-def]

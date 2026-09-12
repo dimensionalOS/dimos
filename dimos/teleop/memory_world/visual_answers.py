@@ -20,6 +20,7 @@ one the demo uses, this one answers when a recording has no Hyperspace memory.""
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np

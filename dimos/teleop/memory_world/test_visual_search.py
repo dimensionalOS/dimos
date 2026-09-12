@@ -541,16 +541,60 @@ def test_a_colour_patch_is_sampled_at_the_depth_camera_s_own_pixel() -> None:
     )
 
 
-def test_every_name_the_siglip_fallback_uses_resolves() -> None:
-    """The fallback answer moved out of module.py, and a moved method takes its names with it.
+def test_the_siglip_fallback_answers_end_to_end() -> None:
+    """Run the fallback answer, rather than checking a list of names I thought of.
 
-    Nothing in the suite calls it -- it is the path for a recording with no Hyperspace
-    keyframes -- so a missing import would have shown up as a NameError in front of
-    whoever ran the demo on an unindexed recording, and nowhere before that. ruff does not
-    catch it either, because the names it wanted were declared under TYPE_CHECKING.
+    It moved out of module.py, and a moved method takes its names with it. Nothing else in
+    the suite calls it -- it is the path for a recording with no Hyperspace keyframes -- so
+    a missing import surfaces in front of whoever runs the demo on an unindexed recording
+    and nowhere before that; ruff does not see it, because the names were declared under
+    TYPE_CHECKING. My first attempt at this listed four names and missed `time`, which only
+    a SUCCESSFUL answer reaches.
     """
-    from dimos.teleop.memory_world.visual_answers import VisualAnswers
+    import threading
+    from types import SimpleNamespace
 
-    globals_of = VisualAnswers._find_with_siglip.__globals__
-    for name in ("SkillResult", "MemoryQueryResult", "HighlightPoint", "cluster_places"):
-        assert name in globals_of, f"{name} would be a NameError the first time this ran"
+    from dimos.teleop.memory_world.visual_answers import VisualAnswers
+    from dimos.teleop.memory_world.visual_search import Place
+
+    place = Place(position=(1.0, 2.0, 3.0), similarity=0.42, source_id=3, ts=1.0)
+    published = {}
+
+    class Module(VisualAnswers):
+        def __init__(self) -> None:
+            self._store_lock = threading.RLock()
+            self.config = SimpleNamespace(
+                store_path="/nowhere/walk.db",
+                search_top_k=5,
+                place_radius_m=1.0,
+                max_places=3,
+                object_radius_m=0.25,
+            )
+
+        def _ensure_visual_index(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(count=lambda: 7, search=lambda *a, **k: [])
+
+        def _locate_objects(self, phrase):  # type: ignore[no-untyped-def]
+            return [place]
+
+        def _markers_near(self, positions):  # type: ignore[no-untyped-def]
+            return [11]
+
+        def _add_route_to_result(self, result) -> None:  # type: ignore[no-untyped-def]
+            published["routed"] = True
+
+        def _publish_query_result(self, result) -> str:  # type: ignore[no-untyped-def]
+            published["result"] = result
+            return "qid"
+
+        def _publish_query_images(self, query_id, phrase, places) -> None:  # type: ignore[no-untyped-def]
+            published["images"] = (query_id, phrase, places)
+
+    outcome = Module()._find_with_siglip("a basket", 0.0)
+
+    assert outcome.success, outcome.message
+    assert outcome.metadata["query_id"] == "qid"
+    assert outcome.metadata["places"][0]["position"] == (1.0, 2.0, 3.0)
+    assert outcome.duration_ms > 0  # time.monotonic(), which the name list did not cover
+    assert published["result"].engine == "siglip"
+    assert published["result"].observation_ids == [11]

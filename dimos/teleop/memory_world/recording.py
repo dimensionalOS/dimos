@@ -597,7 +597,17 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
             f"{tf_stream!r} is empty, so there is nowhere to fold {static_stream!r} into."
             " A recording with no moving tf has no tree to place anything in."
         )
-    first = min(low for _, _, low in rows)
+    # The earliest moment the recording's tf data claims, not just the earliest the
+    # MOVING stream does: a rig latches its statics before it starts moving, and a picture
+    # taken in that gap has an all-static path to the camera that used to resolve.
+    first = min(
+        [low for _, _, low in rows]
+        + [
+            float(t.ts) or float(obs.ts)
+            for obs in store.streams[static_stream]
+            for t in obs.data.transforms
+        ]
+    )
     written = [
         (
             ts,
