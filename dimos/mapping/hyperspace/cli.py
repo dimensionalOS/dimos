@@ -44,7 +44,7 @@ from dimos.mapping.hyperspace.ingest import (
     PatchIngestor,
     transform_to_matrix,
 )
-from dimos.mapping.hyperspace.module import store_members
+from dimos.mapping.hyperspace.module import depth2depth_model_of, store_members
 from dimos.mapping.hyperspace.query import HyperspaceQuery
 from dimos.mapping.hyperspace.refine import METHODS, refine_config_of
 from dimos.memory.tf import StreamTF
@@ -385,6 +385,11 @@ def main(
     ),
     device: str = typer.Option("auto", help="cuda, mps, cpu, or auto"),
     max_depth: float = typer.Option(10.0, help="Depth readings beyond this many meters are holes"),
+    depth2depth: str = typer.Option(
+        "",
+        help="Fill the depth holes from the colour frame before measuring patch depth: "
+        "'default', a depth-anything checkpoint, or '' for raw sensor depth",
+    ),
     color_stream: str = typer.Option("", help="Colour image stream (auto-detected by name)"),
     depth_stream: str = typer.Option("", help="Depth image stream (auto-detected by name)"),
     color_info_stream: str = typer.Option("", help="Colour camera_info stream"),
@@ -425,6 +430,7 @@ def main(
             config=IngestConfig(
                 gate=hs.KeyframeGateConfig(max_angular_velocity=None),
                 max_depth_m=max_depth,
+                depth2depth_model=depth2depth_model_of(depth2depth),
             ),
         )
         typer.echo(f"ingest: {stats}")

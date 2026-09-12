@@ -85,6 +85,11 @@ class IngestConfig:
     # query pools the members' scores onto. None = the model's own grid for a
     # single fixed-resolution checkpoint (the original layout), else 24x24.
     cell_grid: tuple[int, int] | None = None
+    # Fill the depth holes from the colour frame before measuring patch depth
+    # (dimos.perception.depth2depth). Stereo returns nothing off glass, shiny
+    # floors and dark shelves, and reads *through* a freezer door -- so a patch
+    # in front of one is placed metres too far. "" = raw sensor depth only.
+    depth2depth_model: str = ""
 
 
 def grids_of(model: Any, image: Image) -> list[tuple[NDArray[np.float32], tuple[int, int]]]:
@@ -124,6 +129,9 @@ class PatchIngestor:
         self.depths: deque[tuple[float, str, NDArray[np.float32]]] = deque(
             maxlen=config.depth_history
         )
+        # Built on the first colour frame: loading the model costs seconds and
+        # an ingest without depth2depth should never pay for it.
+        self.fuser: Any = None
         self.keyframes: Stream[Any] = store.stream(KEYFRAME_STREAM, dict)
         self.patches: Stream[Any] = store.stream(PATCH_STREAM, dict)
         self.tf_stream: Stream[TFMessage] = store.stream(TF_STREAM, TFMessage)
@@ -184,6 +192,8 @@ class PatchIngestor:
         # Pair depth now, while its frame is still in the short depth history:
         # the buffer judges this frame ~5 embedded frames later.
         depth = self._paired_depth(image.frame_id, ts)
+        if depth is not None and self.config.depth2depth_model:
+            depth = self._fused_depth(rgb, depth)
         kept = self.buffer.push(
             hs.BufferedFrame(
                 ts=ts,
@@ -202,6 +212,24 @@ class PatchIngestor:
         for frame in kept:
             self._write_keyframe(frame)
         return len(kept)
+
+    def _fused_depth(
+        self, rgb: NDArray[np.uint8], depth: NDArray[np.float32]
+    ) -> NDArray[np.float32]:
+        """Depth with its holes filled from the colour frame. Shapes must match:
+        the pairing has already put the depth on the colour camera's grid."""
+        from dimos.perception.depth2depth.fusion import Depth2Depth, FuseConfig
+
+        if self.fuser is None:
+            self.fuser = Depth2Depth(
+                config=FuseConfig(far_m=self.config.max_depth_m),
+                model_name=self.config.depth2depth_model,
+            )
+            self.fuser.start()
+            logger.info(f"hyperspace ingest: depth2depth on {self.fuser.device}")
+        if rgb.shape[:2] != depth.shape[:2]:
+            return depth
+        return self.fuser.fuse(rgb, depth).fused
 
     def _paired_depth(self, camera_frame: str, ts: float) -> NDArray[np.float32] | None:
         best = None

@@ -74,6 +74,15 @@ def pick_device(device: str, *, allow_mps: bool = True) -> str:
     return "cpu"
 
 
+def depth2depth_model_of(name: str) -> str:
+    """ "" = off, "default" = the package's checkpoint, anything else verbatim."""
+    if name != "default":
+        return name
+    from dimos.perception.depth2depth.fusion import DEPTH_MODEL_NAME
+
+    return DEPTH_MODEL_NAME
+
+
 class HyperspacePatchesConfig(MemoryModuleConfig):
     # The checkpoints that embed every keyframe, Hugging Face ids or local
     # directories, NaFlex ones optionally with "@<patch budget>". More than
@@ -103,6 +112,10 @@ class HyperspacePatchesConfig(MemoryModuleConfig):
     # Depth readings beyond this (m) are holes: RealSense frames carry 65535 mm
     # "no reading" sentinels and occasional 20-40 m glitches.
     max_depth_m: float = 10.0
+    # Fill those holes from the colour frame before measuring patch depth: a
+    # depth-anything checkpoint id (see dimos.perception.depth2depth), or ""
+    # for raw sensor depth. "default" takes the package's own checkpoint.
+    depth2depth_model: str = ""
     # A colour frame pairs with the depth frame within this many seconds of it.
     depth_max_dt: float = 0.05
     depth_history: int = 64
@@ -193,6 +206,7 @@ class HyperspacePatches(MemoryModule):
                 motion_reference_frame=self.config.motion_reference_frame,
                 min_frame_interval_s=self.config.min_frame_interval_s,
                 max_depth_m=self.config.max_depth_m,
+                depth2depth_model=depth2depth_model_of(self.config.depth2depth_model),
                 depth_max_dt=self.config.depth_max_dt,
                 depth_history=self.config.depth_history,
                 depth_thumbnail_stride=self.config.depth_thumbnail_stride,

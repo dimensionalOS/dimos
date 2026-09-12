@@ -207,6 +207,7 @@ all_modules = {
     "demo-robot": "dimos.agents.skills.demo_robot.DemoRobot",
     "demo-robot-actions": "dimos.agents.demos.demo_capabilities.DemoRobotActions",
     "demo-sensors": "dimos.agents.demos.demo_capabilities.DemoSensors",
+    "depth2-depth": "dimos.perception.depth2depth.module.Depth2Depth",
     "desk-static-tf-module": "dimos.perception.fiducial.blueprints.desk_marker_tf.DeskStaticTfModule",
     "detection2-d-module": "dimos.perception.detection.module2D.Detection2DModule",
     "detection3-d-module": "dimos.perception.detection.module3D.Detection3DModule",
