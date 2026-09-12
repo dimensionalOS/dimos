@@ -88,7 +88,7 @@ dimcode run "inspect the app and explain its blueprint"
 
 Endpoints are explicit; ports are examples, not instance identities. Use `/reload` after changing endpoints. Every advertised skill is registered with its original schema, metadata and remote routing. Tool names are bounded and collision-resistant. There is no static copy of the robot's tools or a parallel lifecycle service.
 
-Terminal commands: `/new`, `/sessions`, `/resume ID`, `/models`, `/model PROVIDER MODEL`, `/login PROVIDER [oauth]`, `/logout PROVIDER`, `/abort`, `/steer TEXT`, `/follow TEXT`, `/reload`, `/image PATH`, `/panel N`, `/inspect PATH`, `/view`, `/expand`, `/exit`. Ctrl-C detaches. One terminal owns input; other viewers may observe. Detaching keeps the turn running. Restart restores Pi history and never automatically replays external actions. Very large histories show a bounded recent transcript with an omission notice; the complete agent history remains on disk. Session events carry their source identity so switching sessions cannot mix transcripts.
+Terminal commands: `/new`, `/sessions`, `/resume ID`, `/models`, `/model PROVIDER MODEL`, `/login PROVIDER [oauth]`, `/logout PROVIDER`, `/abort`, `/steer TEXT`, `/follow TEXT`, `/reload`, `/image PATH`, `/panel N`, `/inspect PATH`, `/play`, `/pause`, `/seek SECONDS`, `/view`, `/expand`, `/exit`. Ctrl-C detaches. One terminal owns input; other viewers may observe. Detaching keeps the turn running. Restart restores Pi history and never automatically replays external actions. Very large histories show a bounded recent transcript with an omission notice; the complete agent history remains on disk. Session events carry their source identity so switching sessions cannot mix transcripts.
 
 Pi owns context loading, skills, compaction, models and coding-tool behavior. Workspace instructions and configured Pi extensions load normally. Attached terminals support serialized dialogs/notifications; executable extension UI factories belong in the terminal renderer and cannot be sent through a socket.
 
@@ -104,13 +104,44 @@ DimOS memory owns video/frame/point-cloud analysis. Evaluate the memory operatio
 
 The tool rasterizes the original SVG/PNG views for terminal display and model context. Every view reaches the model; the terminal presents a selectable overview. Each export retains its source path and SHA-256. MCP tool results containing multiple images also appear together automatically. No query or filter runs inside the renderer. Existing skills that return only a pose or JSON still require an explicit export; the harness does not invent missing views.
 
-`dimcode_render` also accepts single `image` paths and saved `points` / `series` JSON. Point clouds use XYZ rows; series use timestamp/value pairs. Selection metadata and display decimation remain explicit. See the bundled Dimensional skill for formats.
+Built-in presentation stays constrained to **point clouds and images/SVGs**, with one player for finite sequences of either. `dimcode_render({path:"result.json"})` detects a cloud or frame index; other image paths are rasterized. Numeric plots and graphs use DimOS/Python SVG exports, not a harness plotting engine. Cloud JSON may also supply `colors: [[r,g,b]]` (0–255) and `selectedIndices`; source RGB is preserved and explicit selections are highlighted.
+
+For a memory/replay interval, materialize the selection in DimOS and export an index alongside the existing frames:
+
+```json
+{
+  "type": "points",
+  "timeOrigin": 1766747348.2995782,
+  "source": "Go2 memory · lidar · seconds 1–5",
+  "frames": [
+    {"path":"cloud-0.json","timestamp":1766747349.3433642},
+    {"path":"cloud-1.json","timestamp":1766747349.4723642}
+  ]
+}
+```
+
+Use `type:"image"` for PNG/JPEG frames or any custom SVG animation. Paths are relative to the index, timestamps are seconds and must increase; optional per-frame `sha256` checks the original exports. Use one recording origin for synchronized camera/cloud windows. This file indexes already exported results; it is not a new query or transport API.
+
+Call `dimcode_render({path:"clip.json",title:"Memory · seconds 1–5"})`, or use these commands **inside dimcode** without a model call:
+
+```text
+/inspect /absolute/path/to/clip.json
+/play
+/pause
+/seek 3
+```
+
+The tool card plays once automatically; click Play to replay or click the timeline to scrub. Commands control the latest clip. `/seek` uses seconds relative to `timeOrigin`. Restored sessions begin paused. Leaving the session or closing the terminal stops playback. Point-cloud clips share one camera, bounds and height scale; mismatched coordinate frames must be aligned in DimOS first.
+
+The terminal plays timestamped PNGs. A looping GIF is exported for sharing (GIF timing rounds to centiseconds); the model receives a contact sheet of up to six labeled frames. `dimcode_render({path:"clip.json",frame:17})` returns original zero-based frame 17 for closer inspection, even if preview sampling omitted it. The renderer reads saved files only and never repeats the source query.
+
+Previews are bounded to 60 seconds, at most 120 frames and approximately 10 Hz, retaining first/last timestamps and original indexes. Source-frame gaps remain visible in playback. Per-file reads are limited to 32 MiB, a selected clip to 128 MiB/two million points, generated PNGs to 64 MiB and GIFs to 32 MiB. If a limit is reached, export a smaller preview with DimOS. Individual clouds label point display sampling. Original recordings and exports remain unchanged.
 
 The agent is instructed to visualize each meaningful sensor/memory operation. When no supported type or existing visualizer applies, it generates a self-contained SVG with inline Python from the evaluated result and displays it through `dimcode_render({kind:"image",path:"result.svg"})`. This supports arbitrary plots, images, simple graphs and labeled proposed overlays. The same rendered image is returned to the model for visual inspection. Rendering failures remain explicit.
 
 Live tools select an existing relay/robot/channel. The terminal receives frames directly through the Web SDK and coalesces drawing to 10 Hz. The gateway retains one final snapshot for model context. Closing/cancelling the tool releases consumers; the last consumer closes the connection. MediaPool is generic over decoded SDK slots and accepts existing decoder registries. The initial live image renderer handles JPEG; other channel types use their owning decoder/renderer or saved exports.
 
-Graphics use Pi terminal-image support with text fallback. Derived PNGs have a bounded 128 MiB cache; original DimOS recordings stay with DimOS. No recording, raw continuous video, new transport protocol or new DimOS gateway is introduced.
+Graphics use Pi terminal-image support with text fallback. Derived PNGs/GIFs have a bounded 128 MiB cache; evicted previews show an explicit unavailable state and can be regenerated from retained exports; original DimOS recordings stay with DimOS. No recording, raw continuous video, new transport protocol or new DimOS gateway is introduced.
 
 ## Contributor development and validation
 
@@ -141,6 +172,8 @@ The Go2 E2E test starts the standard `unitree-go2` blueprint in **recorded-data 
 - One shared SDK connection, lazy subscriptions, continued cloud reception after video closes, then zero viewers/subscriptions after the last renderer closes.
 - Cleanup of the blueprint and relay, including failure paths.
 
+A separate memory test materializes seconds 1–5 once, exports full cloud/camera frames and a native DimOS plot, then checks GIF frame counts, shared time origin and every preview frame’s source hash. Playback unit tests cover seeking, completion, cancellation, stale files, RGB preservation and disposal.
+
 Set `DIMCODE_TEST_REPORT=/absolute/path/report.json` to save measured counts. Without `DIMCODE_TEST_GO2_DB`, the large recording test is explicitly skipped. The Python and Deno variables separately enable the MCP-handler and QUIC relay tests. Unit/CLI tests also cover onboarding, private credentials, cancellation, `tui`, existing-gateway handling, session ownership, detach/recovery and renderer provenance.
 
-A video stream here means consecutive JPEG frames over WebTransport. This does not claim an H.264/WebCodecs decoder, browser UI coverage, or a physical robot test. The harness's initial live terminal renderer displays JPEG; saved point clouds and series render from exact exported results. Other live types can plug into the generic SDK codec registry.
+A video stream here means consecutive JPEG frames over WebTransport. This does not claim an H.264/WebCodecs decoder, browser UI coverage, or a physical robot test. The harness's initial live terminal renderer displays JPEG; saved point clouds, timed sequences and SVGs render from exported results. Other live types can plug into the generic SDK codec registry.

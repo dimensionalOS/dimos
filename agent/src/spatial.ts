@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import {
   getCapabilities,
@@ -9,51 +7,16 @@ import {
   truncateToWidth,
   type Component,
 } from "@earendil-works/pi-tui";
-import sharp from "sharp";
-import { z } from "zod";
+import {
+  fitClouds,
+  paintCloud,
+  projectPoint,
+  POINT_LIMIT,
+  type Cloud,
+  type Camera,
+} from "./points.js";
+export { readCloud } from "./points.js";
 import { accent, amber, clean, muted, StatusLine } from "./terminal-style.js";
-
-export const cloudSchema = z
-  .object({
-    points: z
-      .array(
-        z.tuple([
-          z.number().finite(),
-          z.number().finite(),
-          z.number().finite(),
-        ]),
-      )
-      .min(1)
-      .max(1_000_000),
-    frame: z.string().optional(),
-    timestamp: z.number().finite().optional(),
-    selectedIndices: z.array(z.number().int().nonnegative()).optional(),
-  })
-  .refine(
-    (cloud) =>
-      cloud.selectedIndices?.every((i) => i < cloud.points.length) ?? true,
-    "Selection index outside point cloud",
-  );
-type Cloud = z.infer<typeof cloudSchema>;
-type XYZ = Cloud["points"][number];
-
-export async function readCloud(
-  path: string,
-  digest?: string,
-): Promise<{ cloud: Cloud; sha256: string }> {
-  if ((await stat(path)).size > 32 * 1024 * 1024)
-    throw new Error("Point-cloud export exceeds 32 MiB");
-  const bytes = await readFile(path);
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
-  if (digest && digest !== sha256)
-    throw new Error(
-      "Source changed since the agent inspected it; showing the saved result instead",
-    );
-  return {
-    cloud: cloudSchema.parse(JSON.parse(bytes.toString("utf8"))),
-    sha256,
-  };
-}
 
 /** A presentation of one immutable observation. View controls never execute a DimOS query. */
 export class SpatialView implements Component {
@@ -65,10 +28,7 @@ export class SpatialView implements Component {
   private revision = 0;
   private disposed = false;
   private animation?: ReturnType<typeof setInterval>;
-  private readonly center: XYZ;
-  private readonly extent: number;
-  private readonly floor: number;
-  private readonly height: number;
+  private readonly camera: Camera;
   private readonly selected: Set<number>;
   private readonly step: number;
   private readonly heading: StatusLine;
@@ -79,19 +39,9 @@ export class SpatialView implements Component {
     readonly sha256: string,
     private readonly changed: () => void,
   ) {
-    const low: XYZ = [Infinity, Infinity, Infinity],
-      high: XYZ = [-Infinity, -Infinity, -Infinity];
-    for (const point of cloud.points)
-      for (let i = 0; i < 3; i++) {
-        low[i] = Math.min(low[i], point[i]);
-        high[i] = Math.max(high[i], point[i]);
-      }
-    this.center = low.map((n, i) => (n + high[i]) / 2) as XYZ;
-    this.floor = low[2];
-    this.height = Math.max(high[2] - low[2], 0.001);
-    this.extent = Math.max(...high.map((n, i) => n - low[i]), 0.001);
+    this.camera = fitClouds([cloud]);
     this.selected = new Set(cloud.selectedIndices);
-    this.step = Math.max(1, Math.ceil(cloud.points.length / 20_000));
+    this.step = Math.max(1, Math.ceil(cloud.points.length / POINT_LIMIT));
     this.heading = new StatusLine(() => [
       accent("⠿ PointCloud") + muted("  " + clean(basename(source))),
       muted(
@@ -111,53 +61,13 @@ export class SpatialView implements Component {
   private retained(i: number): boolean {
     return this.selected.has(i);
   }
-  private project(point: XYZ, width: number, height: number): [number, number] {
-    const [x, y, z] = point.map((v, i) => v - this.center[i]);
-    const c = Math.cos(this.angle),
-      s = Math.sin(this.angle);
-    const scale =
-      (Math.min(width / 1.65, height / 1.2) / this.extent) * this.zoom;
-    return [
-      width / 2 + (x * c - y * s) * scale,
-      height / 2 + (x * s + y * c) * scale * 0.5 - z * scale,
-    ];
-  }
   private async raster(revision: number): Promise<void> {
-    const masked = !!this.cloud.selectedIndices;
-    const circles: string[] = [];
-    for (let i = 0; i < this.cloud.points.length; i += this.step) {
-      const [x, y] = this.project(this.cloud.points[i], 900, 400);
-      const keep = this.retained(i);
-      const elevation = (this.cloud.points[i][2] - this.floor) / this.height;
-      circles.push(
-        `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${keep ? 1.8 : 1}" fill="${keep ? "#f5c078" : "#6ae5cf"}" opacity="${masked && !keep ? 0.09 : keep ? 0.9 : 0.12 + elevation * 0.75}"/>`,
-      );
-    }
-    const grid: string[] = [];
-    for (let i = -3; i <= 3; i++)
-      for (const axis of [0, 1]) {
-        const a = [...this.center] as XYZ,
-          b = [...this.center] as XYZ;
-        a[axis] += (i * this.extent) / 6;
-        b[axis] = a[axis];
-        a[1 - axis] -= this.extent / 2;
-        b[1 - axis] += this.extent / 2;
-        a[2] = this.floor;
-        b[2] = a[2];
-        const start = this.project(a, 900, 400),
-          end = this.project(b, 900, 400);
-        grid.push(
-          `<path d="M${start.join(" ")}L${end.join(" ")}" stroke="#284047"/>`,
-        );
-      }
-    const png = await sharp(
-      Buffer.from(
-        `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="400"><rect width="900" height="400" fill="#101b21"/>${grid.join("")}${circles.join("")}<path d="M30 365h25M30 365v-25M30 365l-14 12" stroke="#8ba4a8"/><g fill="#8ba4a8" font-family="monospace" font-size="12"><text x="59" y="370">x</text><text x="26" y="334">z</text><text x="7" y="389">y</text></g></svg>`,
-      ),
-    )
-      .removeAlpha()
-      .png()
-      .toBuffer();
+    const png = await paintCloud(
+      this.cloud,
+      this.camera,
+      this.angle,
+      this.zoom,
+    );
     if (this.disposed || revision !== this.revision) return;
     this.image = new Image(
       png.toString("base64"),
@@ -223,7 +133,14 @@ export class SpatialView implements Component {
       [64, 128],
     ];
     for (let i = 0; i < this.cloud.points.length; i += this.step) {
-      const [px, py] = this.project(this.cloud.points[i], cols * 2, rows * 4);
+      const [px, py] = projectPoint(
+        this.cloud.points[i],
+        this.camera,
+        cols * 2,
+        rows * 4,
+        this.angle,
+        this.zoom,
+      );
       const x = Math.floor(px),
         y = Math.floor(py);
       if (x < 0 || y < 0 || x >= cols * 2 || y >= rows * 4) continue;

@@ -26,10 +26,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { z } from "zod";
 import { Connection, type Event, type Snapshot } from "./protocol.js";
-import { imageComponent, renderDetails } from "./render.js";
+import { imageComponent, renderDetails, renderSaved } from "./render.js";
 import { MediaPool, type MediaLease } from "./media.js";
 import { PromptEditor, commands } from "./input.js";
 import { SpatialView, readCloud } from "./spatial.js";
+import { paths } from "./config.js";
+import { Playback } from "./playback.js";
 import { ResultImages } from "./tool-images.js";
 import { accent, clean, muted, StatusLine } from "./terminal-style.js";
 import type { Slot } from "@dimos/sdk";
@@ -62,9 +64,10 @@ export async function terminal(
     input = new PromptEditor(tui);
   let lastSpatial: SpatialView | undefined;
   let lastImages: ResultImages | undefined;
+  let lastPlayback: Playback | undefined;
+  let localRender: AbortController | undefined;
   let inspectorOpen = false;
   let layout: VStack;
-  const localViews = new Set<SpatialView>();
   const inspect = (view = lastSpatial) => {
     if (!view) {
       notice(
@@ -112,6 +115,7 @@ export async function terminal(
       args: unknown;
       spatial?: SpatialView;
       images?: ResultImages;
+      playback?: Playback;
       loading?: boolean;
       lease?: MediaLease<Slot>;
       close?: () => void;
@@ -136,15 +140,17 @@ export async function terminal(
     tui.requestRender();
   };
   const closeCards = () => {
+    localRender?.abort();
+    localRender = undefined;
     for (const card of cards.values()) {
       card.close?.();
       card.spatial?.close();
       card.images?.close();
+      card.playback?.close();
     }
-    for (const view of localViews) view.close();
-    localViews.clear();
     lastSpatial = undefined;
     lastImages = undefined;
+    lastPlayback = undefined;
     cards.clear();
   };
   const draw = (
@@ -183,6 +189,7 @@ export async function terminal(
         toolName,
         args,
       };
+      lastPlayback?.pause();
       cards.set(id, card);
       transcript.addChild(card.block);
     }
@@ -221,10 +228,26 @@ export async function terminal(
     }
     card.component.updateResult({ ...result.data, isError }, partial);
     card.component.setExpanded(card.expanded);
+    if (
+      details.success &&
+      details.data.clip &&
+      !partial &&
+      !isError &&
+      !card.playback
+    ) {
+      lastPlayback?.pause();
+      card.playback = new Playback(
+        details.data.clip,
+        () => tui.requestRender(),
+        !restoring,
+      );
+      lastPlayback = card.playback;
+    }
     const images = result.data.content.filter((item) => item.type === "image");
     if (
       images.length &&
       !card.spatial &&
+      !card.playback &&
       (!card.images ||
         images.length !== card.images.images.length ||
         images.some((image, i) => image.data !== card.images?.images[i].data))
@@ -251,7 +274,8 @@ export async function terminal(
       card.block.addChild(
         new Text(muted(" " + clean(summary.slice(0, 220))), 0, 0),
       );
-      if (card.spatial) card.block.addChild(card.spatial);
+      if (card.playback) card.block.addChild(card.playback);
+      else if (card.spatial) card.block.addChild(card.spatial);
       else if (card.images) card.block.addChild(card.images);
     }
     const pointArgs = z
@@ -259,7 +283,8 @@ export async function terminal(
       .safeParse(card.args);
     if (
       details.success &&
-      pointArgs.success &&
+      (details.data.kind === "points" ||
+        (!details.data.kind && pointArgs.success)) &&
       !partial &&
       !isError &&
       !card.spatial &&
@@ -574,7 +599,10 @@ export async function terminal(
           add(commands.map((command) => "/" + command).join(" · "));
           add("/resume ID · /model PROVIDER MODEL · /login PROVIDER [oauth]");
           add(
-            "/panel N: result view (0 overview) · /inspect PATH: saved XYZ · /view: rotate/zoom · /expand: latest tool details",
+            "/panel N: result view (0 overview) · /inspect PATH: saved result · /view: rotate/zoom · /expand: latest tool details",
+          );
+          add(
+            "/play · /pause · /seek SECONDS: latest saved clip (click the timeline to scrub)",
           );
           return;
         }
@@ -613,6 +641,7 @@ export async function terminal(
           if (card) {
             const [id, tool] = card;
             tool.expanded = !tool.expanded;
+            if (tool.expanded) tool.playback?.pause();
             draw(id, tool.output, tool.toolName, tool.args);
           }
           return;
@@ -636,18 +665,56 @@ export async function terminal(
           lastImages.select(index);
           return;
         }
+        if (
+          value === "/play" ||
+          value === "/pause" ||
+          value.startsWith("/seek ")
+        ) {
+          if (!lastPlayback)
+            throw new Error(
+              "No saved clip yet. Use /inspect INDEX.json or ask the agent to render a sequence.",
+            );
+          if (value === "/play") lastPlayback.play();
+          else if (value === "/pause") lastPlayback.pause();
+          else {
+            const seconds = Number(value.slice(6).trim());
+            if (!Number.isFinite(seconds))
+              throw new Error(
+                "Use /seek SECONDS relative to the recording origin.",
+              );
+            lastPlayback.seek(seconds);
+          }
+          return;
+        }
         if (value.startsWith("/inspect ")) {
-          const source = resolve(current.cwd, value.slice(9).trim());
-          const { cloud, sha256 } = await readCloud(source);
-          const view = new SpatialView(cloud, source, sha256, () =>
-            tui.requestRender(),
-          );
-          lastSpatial = view;
-          localViews.add(view);
-          transcript.addChild(view);
+          const path = value.slice(9).trim();
+          localRender?.abort();
+          const controller = new AbortController();
+          localRender = controller;
+          try {
+            const output = await renderSaved(
+              paths(),
+              current.cwd,
+              path,
+              {},
+              controller.signal,
+              (done, total) => {
+                status.setText(`Rendering saved frames ${done}/${total}`);
+                tui.requestRender();
+              },
+            );
+            if (!controller.signal.aborted)
+              draw(crypto.randomUUID(), output, "dimcode_render", { path });
+          } finally {
+            if (localRender === controller) {
+              localRender = undefined;
+              status.setText(ready());
+            }
+          }
           return;
         }
         if (value === "/abort") {
+          localRender?.abort();
           await client.call({ type: "abort" });
           return;
         }

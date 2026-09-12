@@ -27,6 +27,9 @@ export const commands = [
   "inspect",
   "view",
   "panel",
+  "play",
+  "pause",
+  "seek",
   "expand",
   "exit",
 ];

@@ -1,40 +1,27 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import sharp from "sharp";
-import { plot } from "../src/render.js";
+import { cloudSchema, paintCloud } from "../src/points.js";
 import { ChatInput } from "../src/input.js";
 
-test("point projection and measured series produce real images without mutating inputs", async () => {
-  const input = {
+test("point presentation validates geometry without mutating source", async () => {
+  const input = cloudSchema.parse({
     points: [
       [0, 0, 0],
       [1, 0, 2],
       [1, 2, 3],
     ],
     frame: "map",
-  };
+  });
   const before = JSON.stringify(input);
-  const result = await plot(input, "points");
+  const png = await paintCloud(input);
   assert.equal(JSON.stringify(input), before);
-  assert.match(result.summary, /3 source samples/);
-  assert.equal((await sharp(result.png).metadata()).width, 800);
-  const compare = await plot(
-    {
-      series: [
-        {
-          name: "duration_ms",
-          values: [
-            [1, 12],
-            [2, 17],
-            [3, 4],
-          ],
-        },
-      ],
-    },
-    "series",
+  assert.equal((await sharp(png).metadata()).width, 900);
+  assert.throws(() => cloudSchema.parse({ points: [[NaN, 1, 2]] }));
+  assert.throws(() =>
+    cloudSchema.parse({ points: [[0, 1, 2]], selectedIndices: [1] }),
   );
-  assert.match(compare.summary, /duration_ms/);
-  await assert.rejects(plot({ points: [[NaN, 1, 2]] }, "points"));
+  assert.throws(() => cloudSchema.parse({ points: [[0, 1, 2]], colors: [] }));
 });
 test("credentials cannot return through input undo after auth", () => {
   const input = new ChatInput();
