@@ -9,6 +9,12 @@ Collect demonstrations, prepare a dataset, train a policy, then run a compatible
 checkpoint on the robot. The examples below use one OpenYAM arm and a wrist RGB
 camera. Direct hand teaching does not require Quest.
 
+The teaching stack starts gravity compensation as soon as the robot starts,
+including between episodes. Its hand-guiding task sends zero-stiffness motor
+commands on every control tick; the hardware adapter adds gravity torque and
+the configured damping. Episode start/save/discard only controls dataset
+boundaries. Support the arm before stopping the runtime.
+
 | Step | Command | Result |
 | --- | --- | --- |
 | Launch collection | `dimos run openyam-teach-collection --daemon` with module options | Running robot, camera, recorder, and episode controller |
