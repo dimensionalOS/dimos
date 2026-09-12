@@ -681,3 +681,75 @@ def test_an_unmeasured_view_count_does_not_reach_the_metadata_either() -> None:
     # The numbers that ARE measured on both branches stay on both.
     for located in (True, False):
         assert _place_metadata(place, located=located)["similarity"] == place.similarity
+
+
+def _siglip_module(places_from_depth: list, places_from_search: list):
+    """The fallback answer path with its two producers stubbed, nothing else changed."""
+    import threading
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world.visual_answers import VisualAnswers
+
+    published: dict = {}
+
+    class Module(VisualAnswers):
+        def __init__(self) -> None:
+            self._store_lock = threading.RLock()
+            self.config = SimpleNamespace(
+                store_path="/nowhere/walk.db",
+                search_top_k=5,
+                place_radius_m=1.0,
+                max_places=3,
+                object_radius_m=0.25,
+            )
+
+        def _ensure_visual_index(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(count=lambda: 7, search=lambda *a, **k: places_from_search)
+
+        def _locate_objects(self, phrase):  # type: ignore[no-untyped-def]
+            return places_from_depth
+
+        def _markers_near(self, positions):  # type: ignore[no-untyped-def]
+            return [11]
+
+        def _add_route_to_result(self, result) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def _publish_query_result(self, result) -> str:  # type: ignore[no-untyped-def]
+            published["result"] = result
+            return "qid"
+
+        def _publish_query_images(self, query_id, phrase, places) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+    return Module(), published
+
+
+def test_the_real_answer_path_says_which_producer_ranked_it() -> None:
+    """Through `_find_with_siglip`, not through the helper it calls.
+
+    The first version of this test called `_best_phrase` directly, so it could not see
+    whether production passes the right `located`. Flipping that argument in the source left
+    it green -- a test reaching around the code instead of through it, for the fifth time in
+    this loop, in the test written to guard against exactly that.
+    """
+    from dimos.teleop.memory_world.visual_search import Place
+
+    seen_three_ways = Place(position=(1.0, 2.0, 3.0), similarity=0.15, source_id=3, ts=1.0, views=3)
+    module, published = _siglip_module([seen_three_ways], [])
+    outcome = module._find_with_siglip("a basket", 0.0)
+    assert outcome.success, outcome.message
+    # Depth path: ranked by viewpoints, so the sentence names both numbers.
+    assert "best 0.150 from 3 views" in published["result"].answer.replace("+", "")
+    assert "best match" not in published["result"].answer
+    assert outcome.metadata["places"][0]["views"] == 3
+
+    # No depth: `cluster_places` really does rank by similarity, and `views` was never
+    # measured, so "best match" is true and the count must not be reported.
+    found_by_score = Place(position=(9.0, 9.0, 0.0), similarity=0.30, source_id=4, ts=2.0)
+    module, published = _siglip_module([], [found_by_score])
+    outcome = module._find_with_siglip("a basket", 0.0)
+    assert outcome.success, outcome.message
+    assert "best match" in published["result"].answer
+    assert "views" not in published["result"].answer
+    assert "views" not in outcome.metadata["places"][0]
