@@ -7,6 +7,7 @@
 // distance; and the target itself follows the robot as the timeline moves.
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
+import { robotToWorldOffset } from '/static_mw/world_frame.js';
 
 const ORBIT_DISTANCE_M = 6.0;
 const ORBIT_ZOOM_STEP = 1.12;
@@ -64,10 +65,8 @@ export class OrbitControl {
     /** Put the target `distance` metres straight ahead of the eye, along the current look direction. */
     apply(scene) {
         if (!this.active || !this.target) return;
-        const [x, y, z] = this.target;
         const scale = scene._worldGroup.scale.x;
-        // frameRotate maps robot (x, y, z) to three (x, z, -y); worldGroup then scales and moves it.
-        const local = new THREE.Vector3(x, z, -y).multiplyScalar(scale);
+        const local = robotToWorldOffset(scene._worldGroup, this.target);
         const head = scene.getCameraPositionWorld();
         const fwd = new THREE.Vector3();
         scene.camera.getWorldDirection(fwd);

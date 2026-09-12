@@ -597,14 +597,72 @@ class VisualMemoryIndex:
             # writer never created raises `no such table` here, where the old name lookup
             # simply returned. Turning a dormant trap into a live crash is how the FIRST
             # version of this fix went wrong; this is the same mistake one layer out.
-            has_rows = False
-            if name in self.store.list_streams():
-                try:
-                    has_rows = StoredEmbeddings(self.store, name).count() > 0
-                except Exception:
-                    logger.warning("embeddings stream %r cannot be read; not adopting", name)
+            has_rows = name in self.store.list_streams() and self._usable(name)
+            if not has_rows:
+                name = self._embeddings_under_another_prefix() or name
+                has_rows = name in self.store.list_streams() and self._usable(name)
             self._precomputed = name if has_rows else None
         return self._precomputed
+
+    def _usable(self, name: str) -> bool:
+        """Rows AND vectors `_load_precomputed` will accept -- not just rows.
+
+        Counting alone said "present" for a stream that load() then refuses, so
+        `_index_status` told the viewer search was ready while every query failed. It also
+        let a stale siglipify stream of raw vision-tower tokens outrank a freshly built
+        index in this same recording: 1108 unusable vectors adopted over 5538 good ones.
+        """
+        try:
+            rows = StoredEmbeddings(self.store, name)
+            if rows.count() <= 0:
+                return False
+            if rows.text_aligned() is False:
+                logger.warning(
+                    "embeddings stream %r holds raw vision-tower tokens; not adopting", name
+                )
+                return False
+            return True
+        except Exception:
+            logger.warning("embeddings stream %r cannot be read; not adopting", name)
+            return False
+
+    def _embeddings_under_another_prefix(self) -> str | None:
+        """A siglipify stream for this MODEL whose prefix is not this image stream's.
+
+        siglipify names its stream after the image stream it was pointed at, and that need
+        not be the name this recording's images carry: sf_office1_2 holds 1108 vectors in
+        `image_siglip2_giant_opt_p16_384` while the images are `realsense_color_image`, so
+        the strict name found nothing and the viewer offered to build an index that was
+        already sitting in the file.
+
+        Only when there is exactly ONE candidate. The strict rule exists because two
+        models' vectors are not comparable and two cameras' frames are not the same
+        evidence; with a single embeddings stream for this model in the recording there is
+        nothing it could be confused with, and with more than one there is, so this
+        declines rather than guessing which camera a prefix meant.
+        """
+        suffix = f"_{model_slug(self.model_name)}"
+        found = [
+            name
+            for name in self.store.list_streams()
+            if name.endswith(suffix) and "_index_" not in name and self._usable(name)
+        ]
+        if len(found) != 1:
+            if found:
+                logger.warning(
+                    "%d embeddings streams for %s and none named for %r; not guessing: %s",
+                    len(found),
+                    self.model_name,
+                    self.image_stream_name,
+                    ", ".join(sorted(found)),
+                )
+            return None
+        logger.info(
+            "adopting %r for images %r: the only embeddings stream for this model",
+            found[0],
+            self.image_stream_name,
+        )
+        return found[0]
 
     def count(self) -> int:
         """How many frames are already indexed."""

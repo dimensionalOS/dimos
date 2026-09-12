@@ -417,12 +417,64 @@ def test_precomputed_patch_grids_are_searched_patch_by_patch(sqlite_store: Sqlit
 
 
 def test_precomputed_raw_tower_tokens_are_refused(sqlite_store: SqliteStore) -> None:
-    """A stream siglipify wrote before it applied the head is not text-searchable."""
+    """A stream siglipify wrote before it applied the head is not text-searchable.
+
+    It used to be ADOPTED and counted, and only refused later by `load()`. That is what
+    told the viewer search was ready while every query failed -- and, on a recording that
+    also holds a freshly built index, it let 1108 unusable vectors outrank 5538 good ones,
+    because adoption asked how many rows there were and not whether they could be used.
+    Refused at adoption now, so `count()` reports the built index instead of these.
+    """
     _seed_precomputed(sqlite_store, [(1.0, 1, np.ones((4, 2), np.float32))], text_aligned=None)
     index = VisualMemoryIndex(sqlite_store, pose_of=_placed, model_name=GIANT)
-    assert index.count() == 1
+
+    assert index.precomputed_stream_name is None, "adopted vectors text cannot score"
+    assert index.count() == 0, "counted them as an index the viewer could search"
+
+    # ...and pointed straight at it, the loader still says why rather than scoring noise.
     with pytest.raises(ValueError, match="raw"):
-        index.load()
+        index._load_precomputed(embedding_stream_name("color_image", GIANT))
+
+
+def test_an_embeddings_stream_under_another_prefix_is_adopted_when_it_is_the_only_one(
+    sqlite_store: SqliteStore,
+) -> None:
+    """siglipify names its stream after the images it was POINTED at, not this rig's name.
+
+    sf_office1_2 holds 1108 vectors in `image_siglip2_giant_opt_p16_384` while its images
+    are `realsense_color_image`. The strict name found nothing, so the viewer offered to
+    spend minutes building an index that was already sitting in the file.
+    """
+    rows = [(1.0, 1, np.zeros((4, 2), np.float16)), (2.0, 2, np.zeros((4, 2), np.float16))]
+    seed_embedding_stream(sqlite_store.config.path, f"image_{model_slug(GIANT)}", GIANT, rows)
+
+    index = VisualMemoryIndex(
+        store=sqlite_store, image_stream_name="realsense_color_image", pose_of=lambda *a: None
+    )
+
+    assert index.precomputed_stream_name == f"image_{model_slug(GIANT)}"
+    assert index.count() == 2
+
+
+def test_two_embeddings_streams_for_one_model_are_not_guessed_between(
+    sqlite_store: SqliteStore,
+) -> None:
+    """The strict rule exists because two cameras' frames are not the same evidence.
+
+    With one candidate there is nothing to confuse it with; with two there is, and
+    picking either would attach one camera's vectors to the other camera's poses.
+    """
+    rows = [(1.0, 1, np.zeros((4, 2), np.float16))]
+    for camera in ("left_image", "right_image"):
+        seed_embedding_stream(
+            sqlite_store.config.path, f"{camera}_{model_slug(GIANT)}", GIANT, rows
+        )
+
+    index = VisualMemoryIndex(
+        store=sqlite_store, image_stream_name="realsense_color_image", pose_of=lambda *a: None
+    )
+
+    assert index.precomputed_stream_name is None, "guessed which camera the vectors were for"
 
 
 def test_precomputed_vectors_from_another_model_are_refused(sqlite_store: SqliteStore) -> None:
@@ -612,6 +664,10 @@ def test_the_siglip_fallback_answers_end_to_end() -> None:
     class Module(VisualAnswers):
         def __init__(self) -> None:
             self._store_lock = threading.RLock()
+            # The real host holds this and the answer path publishes `_last_answer` under
+            # it, so a stub without one is a stub that has drifted from the mixin's host.
+            self._clients_lock = threading.RLock()
+            self._last_answer = (None, None)
             self.config = SimpleNamespace(
                 store_path="/nowhere/walk.db",
                 search_top_k=5,
@@ -744,6 +800,10 @@ def _siglip_module(places_from_depth: list, places_from_search: list):
     class Module(VisualAnswers):
         def __init__(self) -> None:
             self._store_lock = threading.RLock()
+            # The real host holds this and the answer path publishes `_last_answer` under
+            # it, so a stub without one is a stub that has drifted from the mixin's host.
+            self._clients_lock = threading.RLock()
+            self._last_answer = (None, None)
             self.config = SimpleNamespace(
                 store_path="/nowhere/walk.db",
                 search_top_k=5,
@@ -1005,3 +1065,94 @@ def test_a_crop_is_not_a_resize_and_only_a_resize_scales_the_focal_length() -> N
     # point -- halving fx with the raster would have put it at half this offset.
     assert where[0] == pytest.approx((480 - 640) * 2.0 / 900.0), where
     assert where[1] == pytest.approx((240 - 480) * 2.0 / 900.0), where
+
+
+def test_an_embedding_answer_carries_the_places_the_viewer_renders() -> None:
+    """The client builds its results bar, place stepping and Navigate from `clusters`.
+
+    An answer that carries only `points` leaves all three inert: the bar reads "0 places",
+    `results.go(0)` returns false because `this.clusters.length` is 0, and
+    `results.navigate()` returns null before it ever reaches the route. Measured live
+    against a real recording -- ask succeeded, six places found, six evidence photos hung,
+    4308 voxels lit, and Navigate did nothing at all.
+
+    And it has to ride the RESULT. My first fix put the summaries in the SkillResult's
+    metadata, which is why this asserts on the payload `_publish_query_result` actually
+    broadcasts -- `result.model_dump(mode="json")` -- and not on the object in hand. The
+    live check came back with `resultsBarPlaces: 0` a second time.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world.hyperspace_search import Cluster
+    from dimos.teleop.memory_world.visual_answers import VisualAnswers
+    from dimos.teleop.memory_world.visual_search import Place
+
+    places = [
+        Place(position=(1.0, 2.0, 3.0), similarity=0.42, source_id=3, ts=1.0, views=2),
+        # Cosine similarity is signed. Bounds written for the heat map's [0, 1] score
+        # rejected this answer outright, and the viewer got no clusters for a second
+        # reason -- a pydantic error raised past the publish.
+        Place(position=(4.0, 5.0, 6.0), similarity=-0.11, source_id=4, ts=2.0, views=1),
+    ]
+    published: dict = {}
+
+    class Module(VisualAnswers):
+        def __init__(self) -> None:
+            self._store_lock = threading.RLock()
+            self._clients_lock = threading.RLock()
+            self._last_answer = (None, None)
+            self.config = SimpleNamespace(
+                store_path="/nowhere/walk.db",
+                search_top_k=5,
+                place_radius_m=1.0,
+                max_places=3,
+                object_radius_m=0.25,
+            )
+
+        def _ensure_visual_index(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(count=lambda: 7, search=lambda *a, **k: [])
+
+        def _locate_objects(self, phrase):  # type: ignore[no-untyped-def]
+            return places
+
+        def _markers_near(self, positions):  # type: ignore[no-untyped-def]
+            return []
+
+        def _add_route_to_result(self, result) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def _publish_query_result(self, result) -> str:  # type: ignore[no-untyped-def]
+            # What module.py broadcasts, byte for byte -- not the model.
+            published["payload"] = result.model_dump(mode="json")
+            return "qid"
+
+        def _publish_query_images(self, query_id, phrase, places) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+    outcome = Module()._find_with_siglip("a basket", 0.0)
+    assert outcome.success, outcome.message
+
+    broadcast = published["payload"]["clusters"]
+    assert len(broadcast) == len(places), "the viewer steps through `clusters`, one per place"
+    assert [c["centre"] for c in broadcast] == [list(p.position) for p in places]
+    assert broadcast[0]["n_views"] == 2  # `results.js` prints this beside the score
+    assert broadcast[1]["peak"] == pytest.approx(-0.11)  # not clamped to 0.00
+    assert all(c["radius"] > 0 for c in broadcast)  # `cluster.radius * 3 + 1.5` framing
+
+    # Keys match `Cluster.summary()`'s, so the viewer needs no per-engine branch.
+    wanted = set(
+        Cluster(
+            index=0,
+            centre=(0.0, 0.0, 0.0),
+            radius=1.0,
+            score=0.5,
+            peak=0.5,
+            n_voxels=1,
+            views=1,
+            evidence=[],
+        ).summary()
+    )
+    assert wanted <= set(broadcast[0]), (
+        "the embedding answer's cluster summary has drifted from the one the viewer reads"
+    )

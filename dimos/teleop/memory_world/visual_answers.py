@@ -21,6 +21,7 @@ one the demo uses, this one answers when a recording has no Hyperspace memory.""
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -28,7 +29,7 @@ import numpy as np
 from dimos.agents.skill_result import SkillResult
 from dimos.teleop.memory_world.embed import EmbeddingJob, siglipify_command, siglipify_config
 from dimos.teleop.memory_world.messages import MSG_QUERY_IMAGE, encode_binary
-from dimos.teleop.memory_world.query import HighlightPoint, MemoryQueryResult
+from dimos.teleop.memory_world.query import ClusterSummary, HighlightPoint, MemoryQueryResult
 from dimos.teleop.memory_world.recording import depth_info_stream_for
 from dimos.teleop.memory_world.tf_tree import pose_matrix
 from dimos.teleop.memory_world.visual_search import (
@@ -401,9 +402,32 @@ class VisualAnswers:
         if not places:
             return SkillResult.fail("NOT_FOUND", f"Nothing in the recording matches {phrase!r}")
 
+        # The same shape Hyperspace publishes, from the embeddings' own places. The client
+        # builds its results bar, its place stepping and its Navigate button from the
+        # answer's `clusters`; an answer that carries only `points` leaves all three inert
+        # -- the bar reads "0 places" and `results.navigate()` returns null before it
+        # reaches the route at all. It has to ride the RESULT, not the SkillResult's
+        # metadata: `_publish_query_result` broadcasts `result.model_dump()`, and nothing
+        # of the skill's metadata ever reaches the websocket.
+        radius = float(self.config.object_radius_m if located else self.config.place_radius_m)
+        clusters = [
+            ClusterSummary(
+                index=index,
+                centre=place.position,
+                radius=radius,
+                score=float(place.similarity),
+                peak=float(place.similarity),
+                n_views=int(place.views),
+                n_evidence=int(place.views),
+                label=f"{phrase[:80]} #{index + 1}",
+            )
+            for index, place in enumerate(places)
+        ]
+
         result = MemoryQueryResult(
             engine="siglip",
             query_text=phrase,
+            clusters=clusters,
             answer=f"Found {phrase} in {len(places)} place(s), {_best_phrase(places[0], located)}",
             focus_point=places[0].position,
             points=[
@@ -428,6 +452,21 @@ class VisualAnswers:
         )
         self._add_route_to_result(result)
         query_id = self._publish_query_result(result)
+        # Navigate reads the answer's PLACES off `_last_answer`, which only the Hyperspace
+        # path used to set -- so /navigate 409'd ("the last answer is not a Hyperspace one")
+        # against every embedding answer, which is now every answer there is. It wants two
+        # fields per place, an index and a centre, so the places give it those directly
+        # rather than the route growing a second way to be asked.
+        with self._clients_lock:
+            self._last_answer = (
+                SimpleNamespace(
+                    clusters=[
+                        SimpleNamespace(index=i, centre=tuple(place.position), radius=radius)
+                        for i, place in enumerate(places)
+                    ]
+                ),
+                query_id,
+            )
         self._publish_query_images(query_id, phrase, places)
 
         return SkillResult(
@@ -437,6 +476,8 @@ class VisualAnswers:
             metadata={
                 "query_id": query_id,
                 "query": phrase,
+                "engine": "siglip",
+                "clusters": [cluster.model_dump(mode="json") for cluster in clusters],
                 "places": [_place_metadata(place, located) for place in places],
                 "located": located,
             },

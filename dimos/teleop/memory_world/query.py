@@ -59,9 +59,14 @@ class ClusterSummary(BaseModel):
     index: int = Field(ge=0)
     centre: Point3
     radius: float = Field(gt=0.0)
-    score: float = Field(ge=0.0)
-    peak: float = Field(ge=0.0, le=1.0)
-    n_voxels: int = Field(ge=1)
+    # Hyperspace scores a voxel in [0, 1]; the embedding engine scores a place by cosine
+    # similarity, which is in [-1, 1] and is usually a small positive number. Bounds that
+    # only ever described the heat map rejected every embedding answer outright, and
+    # clamping instead would have printed the same 0.00 for -0.8 and for 0.
+    score: float
+    peak: float
+    # The embedding engine answers from frames, not from a voxel grid, so it has none.
+    n_voxels: int = Field(default=0, ge=0)
     n_views: int = Field(default=0, ge=0)
     n_evidence: int = Field(default=0, ge=0)
     label: str = Field(default="", max_length=120)

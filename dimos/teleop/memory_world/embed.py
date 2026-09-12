@@ -175,6 +175,16 @@ class EmbeddingJob:
             with self._lock:
                 if self._process is process:  # a job started after "done" owns the handle now
                     self._process = None
+                # A thread that leaves any other way leaves the state at "running" -- and
+                # `start()` refuses to run anything while it reads that, so the job would
+                # be dead, the viewer would wait for it forever, and no later attempt
+                # could replace it. `except Exception` does not cover SystemExit or
+                # KeyboardInterrupt, and the handler can raise on its own besides. No
+                # other run can be in this state: start() will not begin a second one
+                # while the first still says "running".
+                if self.state == "running":
+                    self.state = "failed"
+                    self.progress = f"{self.name} stopped without saying why"
             if config_path is not None:
                 Path(config_path).unlink(missing_ok=True)
             if self._on_finished is not None:

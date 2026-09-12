@@ -1171,10 +1171,22 @@ window.app = {
     resetPerf: () => scene && scene.resetPerf(),
     benchmark: (frames) => (scene ? scene.benchmarkRender(frames) : null),
     // Bring the i-th answer of the last result in front of the viewer (also key J).
-    jumpTo: (index = null) => (index === null
-        ? jumpToAnswer()
-        : scene && scene._lastResultPoints.length > index
-            && !scene.viewFrom(index) && scene.focusOn(scene._lastResultPoints[index].position)),
+    // Returns whether it actually took you anywhere. It used to end on either
+    // `!scene.viewFrom(index)` or `scene.focusOn(...)`, which are false and undefined
+    // respectively when the jump SUCCEEDS -- so the one thing this reports was wrong in
+    // both directions, and an automated check reading it saw every jump fail.
+    jumpTo: (index = null) => {
+        if (index === null) return jumpToAnswer();
+        const points = (scene && scene._lastResultPoints) || [];
+        // A negative index is not "from the end" here: points[-1] is undefined and the
+        // old length test let it through to a read of `.position`.
+        if (!Number.isInteger(index) || index < 0 || index >= points.length) return false;
+        // Standing at the photograph is the better answer; focusOn is what there is when
+        // this place has no photograph to stand at.
+        if (scene.viewFrom(index)) return true;
+        scene.focusOn(points[index].position);
+        return true;
+    },
     hud: () => scene && scene.toggleHud(),
     // Search readiness as the server last reported it, and the embed job's state.
     indexStatus: () => indexStatus,
