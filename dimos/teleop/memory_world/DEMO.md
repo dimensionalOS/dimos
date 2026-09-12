@@ -10,19 +10,22 @@ memworld ~/datasets/lite_recorder/grocery.mcap   # or bike.mcap / park.mcap / an
 ```
 
 - If a recording's tf has the camera mount wrong, measure the real one against the
-  lidar and write it into the recording's own `tf_static`:
+  lidar and write it into the recording's own `tf`:
   `python -m dimos.teleop.memory_world.calibrate_static_tf <recording> --samples 20 --write`
-  (without `--write` it only prints). Nothing reads it specially afterwards.
-  The search index and the Hyperspace memory db store poses as they were computed,
-  so `--write` deletes both: they held the old mount. The next start rebuilds the
-  index, and **Prepare search** rebuilds the memory db.
+  (without `--write` it only prints). It goes in the tf everything already reads, so
+  nothing needs to know about it afterwards. The search index and Hyperspace's
+  keyframes store poses as they were computed, so `--write` drops both: they held the
+  old mount. The next start rebuilds the index, and **Prepare search** rebuilds the
+  keyframes.
 - First start on a new recording builds the ray-traced replay (minutes on a
   long one); later starts take seconds. A build that places no scan (tf cannot
   reach the lidar frame, or everything is out of range) is thrown away and the
   timeline says "build failed"; the static map falls back to plain accumulation.
-- Search needs `<recording>.hyperspace.db` (SigLIP2 so400m keyframes +
-  patches). Without it the ☰ menu shows **Prepare search** which runs the
-  ingest in the background (≈ real time on the Mac's GPU), or run it ahead:
+- Search needs Hyperspace's keyframes and patches (SigLIP2 so400m). A `.db`
+  recording holds them itself, one file and one tf tree; only an mcap, which
+  cannot be written to, gets a `<recording>.hyperspace.db` beside it. Without
+  them the ☰ menu shows **Prepare search**, which runs the ingest in the
+  background (≈ real time on the Mac's GPU), or run it ahead:
 
   ```bash
   PYTHONPATH=$PWD python -m dimos.teleop.memory_world.hyperspace_ingest recording.mcap \
