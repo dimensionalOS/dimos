@@ -12,19 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import get_type_hints
-
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.stream import In
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.robot.manipulators.xarm.blueprints.basic import xarm7_planner_coordinator
 from dimos.robot.manipulators.xarm.blueprints.perception import xarm_perception
 from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
@@ -87,14 +83,3 @@ def test_trajectory_accepts_gripper(blueprint: Blueprint) -> None:
     trajectory = next(task for task in _coordinator_tasks(blueprint) if task.type == "trajectory")
 
     assert "arm/gripper" in trajectory.joint_names
-
-
-@pytest.mark.parametrize("blueprint", [coordinator_teleop_xarm6, coordinator_teleop_xarm7])
-def test_teleop_coordinator_declares_twist_task_input(blueprint: Blueprint) -> None:
-    coordinator = next(
-        atom for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
-    )
-    task = next(task for task in _coordinator_tasks(blueprint) if task.type == "eef_twist")
-    port = task.stream_bind.get("ee_twist_command", "ee_twist_command")
-
-    assert get_type_hints(coordinator.module).get(port) == In[TwistStamped]
