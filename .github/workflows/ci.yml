@@ -266,11 +266,32 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      # need liblcm installed for testing transport
+      # The SDK headers include both transports, so liblcm and zenoh are both
+      # needed to build at all. Zenoh has no apt package, so it comes from its
+      # release
       - name: Install system dependencies
+        env:
+          ZENOH_VERSION: 1.10.0
         run: |
           sudo apt-get update
-          sudo apt-get install -y liblcm-dev nlohmann-json3-dev
+          # lcm.pc carries `Requires: glib-2.0`, so pkg-config cannot resolve
+          # lcm at all without glib's own .pc file
+          sudo apt-get install -y liblcm-dev libglib2.0-dev nlohmann-json3-dev
+          base=https://github.com/eclipse-zenoh
+          curl -fsSL -o /tmp/zenoh-c.zip \
+            "$base/zenoh-c/releases/download/$ZENOH_VERSION/zenoh-c-$ZENOH_VERSION-x86_64-unknown-linux-gnu-standalone.zip"
+          curl -fsSL -o /tmp/zenoh-cpp.zip \
+            "$base/zenoh-cpp/releases/download/$ZENOH_VERSION/zenohcpp-$ZENOH_VERSION-standalone.zip"
+          # A release asset can be replaced in place, so the bytes are pinned too
+          printf '%s  /tmp/zenoh-c.zip\n%s  /tmp/zenoh-cpp.zip\n' \
+            1168b3dffa7f4f48ffabfd640a3878ec0527c0a612ce825aa6f93e2cd05762d1 \
+            7a50a74e98fd1e1e7ed8461b8490b30d67f878649f0727dea2cf0936501780af \
+            | sha256sum -c -
+          # The zips are laid out for /usr/local, where cmake and the loader
+          # already look
+          sudo unzip -q /tmp/zenoh-c.zip -d /usr/local
+          sudo unzip -q /tmp/zenoh-cpp.zip -d /usr/local
+          sudo ldconfig
       - name: Configure
         run: cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON
       - name: Build

@@ -54,11 +54,21 @@ void check_json_type(const nlohmann::json& value, const std::string& key) {
         expected = value.is_number_integer() ? nullptr : "an integer";
     }
     if (expected != nullptr) {
-        throw std::runtime_error("config: field '" + key + "': expected " + expected +
-                                 ", got " + value.type_name());
+        throw std::runtime_error("failed to deserialize config: field '" + key + "': expected " +
+                                 expected + ", got " + value.type_name());
     }
 }
 }  // namespace config_detail
+
+/// Render `["a", "b"]`, matching how rust's Debug prints the same list in the
+/// key-mismatch errors this SDK mirrors.
+inline std::string quoted_list(const std::vector<std::string>& items) {
+    std::string out = "[";
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        out += (i == 0 ? "\"" : ", \"") + items[i] + "\"";
+    }
+    return out + "]";
+}
 
 /// Throw unless `value` is greater than zero. For a rate a module divides by,
 /// where a zero or negative value yields an infinite or negative period.
@@ -95,11 +105,8 @@ public:
             }
         }
         if (!unexpected.empty()) {
-            std::string msg = "config: unexpected field(s):";
-            for (const std::string& key : unexpected) {
-                msg += " '" + key + "'";
-            }
-            throw std::runtime_error(msg);
+            throw std::runtime_error("config keys do not match struct fields: missing [], "
+                                     "unexpected " + quoted_list(unexpected));
         }
     }
 
@@ -116,13 +123,15 @@ public:
             const std::string key(names[i]);
             auto it = obj_.find(key);
             if (it == obj_.end()) {
-                throw std::runtime_error("config: missing required field '" + key + "'");
+                throw std::runtime_error("failed to deserialize config: missing field `" + key +
+                                         "`");
             }
             config_detail::check_json_type<std::decay_t<decltype(field)>>(*it, key);
             try {
                 field = it->template get<std::decay_t<decltype(field)>>();
             } catch (const std::exception& e) {
-                throw std::runtime_error("config: field '" + key + "': " + e.what());
+                throw std::runtime_error("failed to deserialize config: field '" + key +
+                                         "': " + e.what());
             }
             consumed_.insert(key);
         });

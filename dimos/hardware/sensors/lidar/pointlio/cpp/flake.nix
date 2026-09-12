@@ -2,6 +2,7 @@
   description = "Point-LIO + Livox Mid-360 native module";
 
   inputs = {
+    zenoh.url = "github:jeff-hykin/zenoh_flake";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     livox-sdk.url = "path:../../livox/cpp";
@@ -28,7 +29,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, livox-sdk, dimos-lcm, pfr, fast-lio, lcm-extended, ... }:
+  outputs = { self, nixpkgs, zenoh, flake-utils, livox-sdk, dimos-lcm, pfr, fast-lio, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         # Overlay fixes for darwin-broken nixpkgs recipes in our transitive
@@ -68,6 +69,8 @@
         };
         livox-sdk2 = livox-sdk.packages.${system}.livox-sdk2;
         lcm = lcm-extended.packages.${system}.lcm;
+        zenohc = zenoh.packages.${system}.zenoh-c;
+        zenohcpp = zenoh.packages.${system}.zenoh-cpp;
 
         livox-common = ../../common;
 
@@ -98,6 +101,8 @@
             pkgs.boost
             pkgs.llvmPackages.openmp
             pkgs.nlohmann_json
+            zenohc
+            zenohcpp
           ];
 
           cmakeFlags = [

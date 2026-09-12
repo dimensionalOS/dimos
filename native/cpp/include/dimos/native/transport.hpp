@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 namespace dimos::native {
 
 /// Per-channel callback invoked with each inbound message's raw payload bytes.
@@ -29,6 +31,11 @@ public:
 
     /// Register `on_msg` to receive every payload delivered on `channel`.
     virtual void subscribe(const std::string& channel, Dispatch on_msg) = 0;
+
+    /// Apply the per-channel publisher QoS the coordinator sends, the `qos`
+    /// object off the launch line or null when absent. Called once before the
+    /// first publish. Transports without per-topic QoS ignore it.
+    virtual void set_publisher_qos(const nlohmann::json& /*qos*/) {}
 };
 
 }  // namespace dimos::native
