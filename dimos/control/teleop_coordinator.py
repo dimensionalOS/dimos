@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Control coordinator carrying spatial arm teleoperation inputs."""
+"""Control coordinator carrying spatial poses and keyboard end-effector twists."""
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.stream import In
@@ -23,7 +23,7 @@ from dimos.teleop.webxr.controller_types import Buttons
 
 
 class TeleopControlCoordinator(ControlCoordinator):
-    """Add the pose and control ports consumed by teleoperation task cards."""
+    """Add the pose, twist, and control ports consumed by teleoperation task cards."""
 
     left_cartesian_command: In[PoseStamped]
     right_cartesian_command: In[PoseStamped]
