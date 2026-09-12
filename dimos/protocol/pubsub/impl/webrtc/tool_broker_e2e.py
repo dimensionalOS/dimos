@@ -51,7 +51,7 @@ async def _wait_for(cond: Callable[[], bool], timeout: float, what: str) -> None
         await asyncio.sleep(0.05)
 
 
-BROKER = os.environ.get("TELEOP_BROKER_URL", "https://teleop.dimensionalos.com")
+BROKER = os.environ.get("TELEOP_BROKER_URL", "https://api.dimensional.org")
 CREDS_PRESENT = all(os.environ.get(k) for k in ("TELEOP_API_KEY", "TELEOP_OPERATOR_TOKEN"))
 
 skip_unless_broker = pytest.mark.skipif(
