@@ -658,3 +658,26 @@ def test_the_answer_sentence_names_the_place_it_flies_to() -> None:
     # On the branch that really does rank by similarity, "best match" is true and stays.
     ranked_by_score = _best_phrase(places[0], located=False)
     assert ranked_by_score == f"best match {places[0].similarity:+.3f}"
+
+
+def test_an_unmeasured_view_count_does_not_reach_the_metadata_either() -> None:
+    """Dropping it from the label and leaving it in the payload is the same defect.
+
+    `views` is measured only on the depth path. On the other one it is the dataclass
+    default, and an agent reading the skill result cannot tell a measured 1 from an
+    unmeasured one. The marker label stopped printing it; the metadata kept sending it,
+    which is a fix reaching one of two call sites -- the shape this loop has produced
+    five times.
+    """
+    from dimos.teleop.memory_world.visual_answers import _place_metadata
+
+    # A Place as the no-depth branch produces it: VisualMemoryIndex.search() never
+    # passes views=, so it carries the dataclass default.
+    place = Place(position=(1.0, 1.0, 0.0), similarity=0.3, source_id=1, ts=1.0)
+    assert place.views == 1  # the default, not a measurement
+
+    assert "views" not in _place_metadata(place, located=False)
+    assert _place_metadata(place, located=True)["views"] == place.views
+    # The numbers that ARE measured on both branches stay on both.
+    for located in (True, False):
+        assert _place_metadata(place, located=located)["similarity"] == place.similarity

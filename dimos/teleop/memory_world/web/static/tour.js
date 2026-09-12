@@ -151,7 +151,8 @@ export class Tour {
             },
             {
                 title: 'Places',
-                body: () => `Hot voxels that touch form <b>clusters</b>, ranked by their summed score.
+                body: () => `Hot voxels that touch form <b>clusters</b>, ranked by <b>how many
+                    viewpoints saw them</b>, then by score.
                     <b>← →</b> step from place to place; the camera flies to each and only its evidence stays lit.
                     <ul><li>${this._clusterLine()}</li>
                     <li>The pictures hang where the camera stood when it took them, so you can check the answer yourself.</li></ul>`,

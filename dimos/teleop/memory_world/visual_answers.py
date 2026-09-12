@@ -61,6 +61,21 @@ def _best_phrase(best: Place, located: bool) -> str:
     return f"best {best.similarity:+.3f} from {best.views} view{'s' if best.views != 1 else ''}"
 
 
+def _place_metadata(place: Place, located: bool) -> dict[str, Any]:
+    """One place, as the skill result reports it.
+
+    `views` is measured only on the depth path; on the other one it is the dataclass
+    default, and a reader cannot tell a measured 1 from an unmeasured one. So it is
+    omitted there rather than guessed. This is a function and not an inline dict because
+    the marker label makes the same decision, and making it twice is how the first version
+    of this fix dropped the count from the label and kept sending it in the payload.
+    """
+    reported: dict[str, Any] = {"position": place.position, "similarity": place.similarity}
+    if located:
+        reported["views"] = place.views
+    return reported
+
+
 class VisualAnswers:
     """Needs, from the module: ``config``, the store and index locks,
     ``_ensure_store``, ``_ensure_visual_index``, ``_reopen_recording``,
@@ -391,14 +406,7 @@ class VisualAnswers:
             metadata={
                 "query_id": query_id,
                 "query": phrase,
-                "places": [
-                    {
-                        "position": place.position,
-                        "similarity": place.similarity,
-                        "views": place.views,
-                    }
-                    for place in places
-                ],
+                "places": [_place_metadata(place, located) for place in places],
                 "located": located,
             },
         )
