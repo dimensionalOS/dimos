@@ -15,8 +15,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Barrier, Lock
+import time
 
 import pytest
 
@@ -24,8 +27,23 @@ pytest.importorskip("viser", reason="Viser optional dependency is not installed"
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningSceneInfo
-from dimos.manipulation.visualization.operator import OperatorStatus, TargetEvaluationResult
+from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
+from dimos.manipulation.planning.spec.models import (
+    GeneratedPlan,
+    PlanningGroupID,
+    PlanningSceneInfo,
+)
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
+from dimos.manipulation.visualization.operator import (
+    ManipulationOperator,
+    OperatorStatus,
+    TargetEvaluationResult,
+)
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
 from dimos.manipulation.visualization.viser.state import (
@@ -33,6 +51,7 @@ from dimos.manipulation.visualization.viser.state import (
     BackendConnectionStatus,
     FeasibilityStatus,
     OperationWorker,
+    PanelPlanState,
     PanelRuntime,
     PlanStatus,
     TargetEvaluationWorker,
@@ -40,11 +59,51 @@ from dimos.manipulation.visualization.viser.state import (
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.robot.assets.model import RobotModel
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.robot.assets.model import LoadedRobotModel, PlanarBaseDefinition, RobotModel
 
 
 class EmptyServer:
     pass
+
+
+class FakeNumericHandle:
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def on_update(self, _callback: Callable[[object], None]) -> None:
+        pass
+
+    def remove(self) -> None:
+        pass
+
+
+class ConcurrentRemovalHandle:
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self.remove_count = 0
+
+    def remove(self) -> None:
+        with self._lock:
+            self.remove_count += 1
+            if self.remove_count > 1:
+                raise RuntimeError("handle removed more than once")
+        time.sleep(0.01)
+
+
+class FakeJointGui:
+    def __init__(self) -> None:
+        self.numbers: list[tuple[str, dict[str, float]]] = []
+        self.sliders: list[tuple[str, dict[str, float]]] = []
+
+    def add_number(self, label: str, **kwargs: float) -> FakeNumericHandle:
+        self.numbers.append((label, kwargs))
+        return FakeNumericHandle(kwargs["initial_value"])
+
+    def add_slider(self, label: str, **kwargs: float) -> FakeNumericHandle:
+        self.sliders.append((label, kwargs))
+        return FakeNumericHandle(kwargs["initial_value"])
 
 
 class FakeOperatorBackend:
@@ -163,17 +222,255 @@ def planning_group(name: str, joints: tuple[str, ...]) -> PlanningGroup:
 
 def make_gui(module: FakeOperatorBackend | None = None) -> ViserPanelGui:
     module = module or FakeOperatorBackend()
+    config = RobotModelConfig(model=RobotModel.from_file(Path("/tmp/model.urdf")), joint_names=[])
     return ViserPanelGui(
         EmptyServer(),
         PlanningSceneInfo(
-            model=RobotModelConfig(
-                model=RobotModel.from_file(Path("/tmp/model.urdf")), joint_names=[]
+            model=PreparedRobotModel(
+                config=config,
+                description=LoadedRobotModel("<robot/>", Path("/tmp/model.urdf"), {}),
+                joint_space=JointSpace(()),
+                planning_groups=(),
             )
         ),
         FakeOperator(module),
         lambda: None,
         ViserVisualizationConfig(),
     )
+
+
+@pytest.fixture
+def executable_gui(monkeypatch, mocker):
+    gui = make_gui()
+    submissions = []
+    mocker.patch.object(
+        gui._operation_worker,
+        "submit",
+        side_effect=lambda operation, **kwargs: submissions.append(operation),
+    )
+    monkeypatch.setattr(gui, "refresh", lambda: None)
+    gui.state.runtime = PanelRuntime.RUNNING
+    gui.state.backend_status = BackendConnectionStatus.READY
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui.state.manipulation_state = "COMPLETED"
+    gui.state.selected_group_ids = ("manipulator",)
+    gui.state.plan_state = PanelPlanState(
+        status=PlanStatus.FRESH,
+        group_ids=gui.state.selected_group_ids,
+        plan=GeneratedPlan(
+            group_ids=gui.state.selected_group_ids,
+            trajectory=JointTrajectory(
+                joint_names=["arm/j0"],
+                points=[
+                    TrajectoryPoint(positions=[0.0], time_from_start=0.0),
+                    TrajectoryPoint(positions=[1.0], time_from_start=1.0),
+                ],
+            ),
+            path=[JointState(name=["arm/j0"], position=[value]) for value in (0.0, 1.0)],
+            status=PlanningStatus.SUCCESS,
+        ),
+    )
+    execute = mocker.patch.object(gui.operator, "execute", create=True)
+    try:
+        yield gui, submissions, execute
+    finally:
+        gui.close()
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+def test_execute_consumes_plan_before_dispatch(executable_gui, accepted):
+    gui, submissions, execute = executable_gui
+    plan = gui.state.plan_state.plan
+
+    def dispatch(dispatched_plan):
+        assert dispatched_plan is plan
+        assert gui.state.plan_state == PanelPlanState()
+        assert gui.state.action_status is ActionStatus.EXECUTING
+        return accepted
+
+    execute.side_effect = dispatch
+    gui._submit_execute()
+    submissions[0]()
+
+    assert gui.state.plan_state == PanelPlanState()
+    assert gui.state.action_status is ActionStatus.IDLE
+    assert gui.state.last_result == f"execute={accepted}"
+
+
+def test_execute_exception_leaves_plan_consumed(executable_gui):
+    gui, submissions, execute = executable_gui
+    execute.side_effect = RuntimeError("dispatch failed")
+    gui._submit_execute()
+
+    with pytest.raises(RuntimeError, match="dispatch failed"):
+        submissions[0]()
+
+    assert gui.state.plan_state == PanelPlanState()
+
+
+def test_execute_validation_failure_retains_plan(executable_gui):
+    gui, submissions, execute = executable_gui
+    plan = gui.state.plan_state.plan
+    gui.state.target_status = TargetStatus.INFEASIBLE
+
+    gui._submit_execute()
+
+    assert gui.state.plan_state.plan is plan
+    assert submissions == []
+    execute.assert_not_called()
+
+
+def test_late_execute_result_preserves_newer_plan_after_cancel(executable_gui, mocker):
+    gui, submissions, execute = executable_gui
+    newer_plan = PanelPlanState(status=PlanStatus.FRESH)
+    mocker.patch.object(gui, "_restart_operation_worker")
+
+    def dispatch(_plan):
+        gui._submit_cancel()
+        assert gui.state.plan_state == PanelPlanState()
+        gui.state.plan_state = newer_plan
+        return False
+
+    execute.side_effect = dispatch
+    gui._submit_execute()
+    submissions[0]()
+
+    assert gui.state.plan_state is newer_plan
+    assert gui.state.plan_state.status is PlanStatus.FRESH
+    assert gui.state.last_result == "cancel=True"
+
+
+def test_gui_completion_enables_next_plan_without_cancel(executable_gui, module_factory, mocker):
+    gui, submissions, _execute = executable_gui
+    module = module_factory()
+    mocker.patch.object(gui, "operator", ManipulationOperator(module, mocker.Mock()))
+    status = mocker.patch.object(
+        module._control_coordinator,
+        "task_invoke",
+        return_value=TrajectoryStatus(state=TrajectoryState.EXECUTING),
+    )
+    cancel = mocker.spy(module, "cancel")
+
+    gui._submit_execute()
+    submissions[0]()
+    gui._refresh_model_state()
+    assert gui.state.manipulation_state == "EXECUTING"
+    assert gui.state.can_plan() is False
+    assert gui.state.can_cancel() is True
+    assert gui.state.plan_state == PanelPlanState()
+
+    status.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    gui._refresh_model_state()
+
+    assert gui.state.manipulation_state == "COMPLETED"
+    assert gui.state.can_plan() is True
+    assert gui.state.can_cancel() is False
+    assert gui.state.can_execute() is False
+    cancel.assert_not_called()
+
+
+def test_planar_joint_controls_use_unbounded_translation_inputs_and_wrapped_yaw() -> None:
+    planar = PlanarBaseDefinition(
+        velocity_limits=(1.0, 1.0, 2.0),
+        acceleration_limits=(2.0, 2.0, 4.0),
+    )
+    group = PlanningGroup("moving_base", planar.joint_names, planar.root_link)
+    config = RobotModelConfig(
+        model=RobotModel.from_file(Path("/tmp/model.urdf")).with_planar_base(planar),
+        joint_names=list(planar.joint_names),
+        base_link=planar.root_link,
+    )
+    panel = ViserPanelGui(
+        EmptyServer(),
+        PlanningSceneInfo(
+            model=PreparedRobotModel(
+                config=config,
+                description=LoadedRobotModel("<robot/>", Path("/tmp/model.urdf"), {}),
+                joint_space=JointSpace(
+                    (
+                        JointCoordinate(
+                            planar.joint_names[0],
+                            "prismatic",
+                            CoordinateTopology.LINE,
+                            None,
+                            None,
+                            1.0,
+                            2.0,
+                        ),
+                        JointCoordinate(
+                            planar.joint_names[1],
+                            "prismatic",
+                            CoordinateTopology.LINE,
+                            None,
+                            None,
+                            1.0,
+                            2.0,
+                        ),
+                        JointCoordinate(
+                            planar.joint_names[2],
+                            "continuous",
+                            CoordinateTopology.CIRCLE,
+                            None,
+                            None,
+                            2.0,
+                            4.0,
+                        ),
+                    )
+                ),
+                planning_groups=(group,),
+            ),
+            planning_groups=[group],
+        ),
+        FakeOperator(),
+        lambda: None,
+        ViserVisualizationConfig(),
+    )
+    panel.state.selected_group_ids = (group.id,)
+    panel.state.group_joint_targets[group.id] = JointState(
+        name=list(planar.joint_names), position=[6.0, -7.0, 4.0]
+    )
+    controls = FakeJointGui()
+
+    panel._build_joint_slider_handles(controls)  # type: ignore[arg-type]
+
+    assert [label for label, _kwargs in controls.numbers] == [
+        "moving_base/base/x",
+        "moving_base/base/y",
+    ]
+    assert all("min" not in kwargs and "max" not in kwargs for _, kwargs in controls.numbers)
+    assert controls.sliders == [
+        (
+            "moving_base/base/yaw",
+            {
+                "min": pytest.approx(-3.141592653589793),
+                "max": pytest.approx(3.141592653589793),
+                "step": 0.001,
+                "initial_value": pytest.approx(4.0 - 2.0 * 3.141592653589793),
+            },
+        )
+    ]
+
+
+def test_clear_joint_sliders_is_safe_during_concurrent_rebuilds() -> None:
+    panel = make_gui()
+    handles = [ConcurrentRemovalHandle() for _ in range(3)]
+    panel._joint_sliders = {
+        (PlanningGroupID("arm"), f"joint_{index}"): handle for index, handle in enumerate(handles)
+    }
+    worker_count = 8
+    barrier = Barrier(worker_count)
+
+    def clear_at_once() -> None:
+        barrier.wait()
+        panel._clear_joint_sliders()
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [executor.submit(clear_at_once) for _ in range(worker_count)]
+        for future in futures:
+            future.result()
+
+    assert panel._joint_sliders == {}
+    assert [handle.remove_count for handle in handles] == [1, 1, 1]
 
 
 @pytest.mark.parametrize(

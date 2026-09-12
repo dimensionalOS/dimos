@@ -36,6 +36,7 @@ restarts (respawning the local child when it died).
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import AsyncIterator, Callable, Collection
 from dataclasses import dataclass, field, replace
 import functools
@@ -99,8 +100,9 @@ from dimos.web.relay_bridge.protocol import (
 from dimos.web.relay_bridge.relay_process import RelayProcess, ensure_web_dist
 from dimos.web.relay_bridge.wt_client import (
     RelayClient,
+    RelayInfo,
     RelayRejectedError,
-    connect_with_backoff,
+    fetch_relay_info,
 )
 
 logger = setup_logger()
@@ -112,6 +114,11 @@ _FrameMeta = dict[str, Any] | None
 _Sender = Callable[[bytes, _FrameMeta, float | None], None]
 
 _RECONNECT_PAUSE_S = 2.0
+_START_CONNECT_ATTEMPTS = 4
+# A bridge killed without a clean close keeps its robot id registered until
+# the relay's 30 s QUIC idle timeout; a restart inside that window waits it
+# out (well inside the 1200 s start RPC timeout).
+_CONFLICT_RETRY_S = 45.0
 
 # A SIGKILLed relay child sends no CONNECTION_CLOSE, so the QUIC session only
 # notices at idle timeout (tens of seconds). The child watchdog polls the
@@ -231,11 +238,21 @@ class RuntimeChannelSpec:
     # viewer: a new session must not wait for the next publish (the producer
     # may have gone quiet, possibly before the first viewer ever attached).
     resend_on_subscribe: bool = False
+    # Event channels (chat): the maxHz cap is met by spacing sends (a paced
+    # FIFO on the loop), never by dropping, so a burst of messages crosses
+    # complete and in order and a state flag keeps its newest value.
+    paced: bool = False
 
 
 class RelayBridgeConfig(ModuleConfig):
     relay_url: str | None = None
-    """Attach to a running relay (wtUrl). None: spawn a local one."""
+    """HTTP URL of a relay started elsewhere (e.g. http://localhost:7780); its
+    WebTransport endpoint is discovered through /api/info on every connect.
+    None: spawn a local one."""
+    relay_ca: str | None = None
+    """PEM CA bundle that signed the relay_url relay's certificate (mkcert, a
+    private CA). It replaces the default trust stores for both the /api/info
+    fetch and QUIC, so leave it unset for a relay with a public certificate."""
     local_port: int = 7780
     """HTTP port of the spawned local relay; 0 picks an ephemeral port (tests)."""
     open_browser: bool = True
@@ -365,6 +382,55 @@ class _Session:
     retired: threading.Event = field(default_factory=threading.Event)
 
 
+# A producer sustaining more than maxHz for this many frames is pathological
+# (the agent chats at a few messages a second); beyond it the oldest go.
+_PACED_QUEUE_MAX = 256
+
+
+class _PacedSender:
+    """Send cap by spacing, not sampling: frames queue on the loop and go out
+    one per interval, in order, so an event channel (chat) never thins a
+    burst. Wraps the channel's real sender."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, interval: float, send: _Sender) -> None:
+        self._loop = loop
+        self._interval = interval
+        self._send = send
+        self._queue: deque[tuple[bytes, _FrameMeta, float | None]] = deque()
+        self._due = 0.0
+        self._handle: asyncio.TimerHandle | None = None
+        self.dropped = 0
+
+    def __call__(self, payload: bytes, meta: _FrameMeta, ts: float | None) -> None:
+        self._queue.append((payload, meta, ts))
+        if len(self._queue) > _PACED_QUEUE_MAX:
+            self._queue.popleft()
+            self.dropped += 1
+        if self._handle is None:
+            self._drain()
+
+    def _drain(self) -> None:
+        self._handle = None
+        now = self._loop.time()
+        if now < self._due:
+            self._handle = self._loop.call_at(self._due, self._drain)
+            return
+        payload, meta, ts = self._queue.popleft()
+        self._due = now + self._interval
+        if self._queue:
+            self._handle = self._loop.call_at(self._due, self._drain)
+        try:
+            self._send(payload, meta, ts)
+        except Exception:
+            return  # session mid-teardown, same as _offer
+
+    def close(self) -> None:
+        if self._handle is not None:
+            self._handle.cancel()
+            self._handle = None
+        self._queue.clear()
+
+
 def _no_default_params(config: RelayBridgeConfig) -> dict[str, Any]:
     return {}
 
@@ -491,6 +557,9 @@ class RelayBridgeModule(Module):
         self._build_cancel: threading.Event | None = None
         self._session: _Session | None = None
         self._url: str | None = None
+        self._ca: str | None = None
+        # Last /api/info discovery (for logs and tests).
+        self._relay_info: RelayInfo | None = None
         # Resolved config.serve_dir, kept for relay-child respawns.
         self._serve_dir: Path | None = None
         self._robot_info: RobotInfo | None = None
@@ -605,6 +674,9 @@ class RelayBridgeModule(Module):
                     )
             self._manifest = manifest.model_dump()
             self._url = self.config.relay_url or self.config.g.relay_url
+            self._ca = (
+                (self.config.relay_ca or self.config.g.relay_ca) if self._url is not None else None
+            )
             if self._url is not None and self.config.serve_dir is not None:
                 raise RuntimeError(
                     "serve_dir requires the spawned local relay (--local-relay); "
@@ -624,12 +696,16 @@ class RelayBridgeModule(Module):
                 self._url = await _blocking_call(
                     self._spawn_relay, self.config.open_browser, self._serve_dir
                 )
-            # The first connect fails fast: a relay that cannot be reached at
-            # startup should fail the module start visibly, not retry forever.
-            session = await self._connect_and_hello()
+            # Startup retries transient discovery/connection failures a few
+            # times, and waits longer only for a robot id the relay still holds.
+            session = await self._first_session()
             self._session = session
             supervisor = asyncio.create_task(self._supervise(session))
-            logger.info(f"relay bridge up: robot={self._robot_info.id} relay={self._url}")
+            assert self._relay_info is not None
+            logger.info(
+                f"relay bridge up: robot={self._robot_info.id} relay={self._url} "
+                f"wt={self._relay_info.wt_url}"
+            )
             yield
         finally:
             try:
@@ -855,18 +931,55 @@ class RelayBridgeModule(Module):
         return None
 
     def _spawn_relay(self, open_browser: bool, serve_dir: Path | None) -> str:
-        """Start a fresh local relay child (blocking; run via to_thread)."""
+        """Start a fresh local relay child (blocking; run via to_thread) and
+        return its HTTP base URL."""
         _probe_local_port(self.config.local_port)
         self._relay = RelayProcess(port=self.config.local_port, serve_dir=serve_dir)
         info = self._relay.start()
         logger.info(f"local relay ready: {info.open_url}")
         if open_browser:
             webbrowser.open_new_tab(info.open_url)
-        return info.wt_url
+        return info.open_url
+
+    async def _first_session(self) -> _Session:
+        """First connect: retry transient transport failures a few times and
+        wait out a robot id that a killed predecessor left registered."""
+        deadline = time.monotonic() + _CONFLICT_RETRY_S
+        announced = False
+        connection_failures = 0
+        while True:
+            try:
+                return await self._connect_and_hello()
+            except RelayRejectedError as e:
+                if e.code != "robot_id_conflict" or time.monotonic() >= deadline:
+                    raise
+                connection_failures = 0
+                if not announced:
+                    announced = True
+                    logger.warning(
+                        f"relay rejected hello ({e.message}); waiting up to "
+                        f"{_CONFLICT_RETRY_S:.0f} s for the stale registration to expire"
+                    )
+                await asyncio.sleep(_RECONNECT_PAUSE_S)
+            except (OSError, asyncio.TimeoutError) as e:
+                connection_failures += 1
+                if connection_failures >= _START_CONNECT_ATTEMPTS:
+                    raise
+                logger.info(
+                    f"relay startup connection attempt {connection_failures} failed ({e}); "
+                    "rediscovering and retrying"
+                )
+                await asyncio.sleep(_RECONNECT_PAUSE_S)
 
     async def _connect_and_hello(self) -> _Session:
         assert self._url is not None and self._robot_info is not None and self._manifest is not None
-        client = await connect_with_backoff(self._url, "robot", max_attempts=4)
+        # Discovery on every connect: a restarted relay has a new QUIC port
+        # and certificate behind the same HTTP URL.
+        info = await fetch_relay_info(self._url, cafile=self._ca)
+        self._relay_info = info
+        client = await RelayClient.connect(
+            info.wt_url, "robot", insecure=info.cert_hash is not None, cafile=self._ca
+        )
         try:
             await client.hello(robot=self._robot_info, manifest=self._manifest)
             senders = self._build_senders(client)
@@ -881,10 +994,14 @@ class RelayBridgeModule(Module):
     def _build_senders(self, client: RelayClient) -> dict[str, _Sender]:
         senders: dict[str, _Sender] = {}
         for spec in self._channel_specs:
+            sender: _Sender
             if spec.delivery == "latest":
-                senders[spec.ch] = client.latest_writer(spec.ch).offer
+                sender = client.latest_writer(spec.ch).offer
             else:
-                senders[spec.ch] = functools.partial(self._send_reliable, client, spec.ch)
+                sender = functools.partial(self._send_reliable, client, spec.ch)
+            if spec.paced:
+                sender = _PacedSender(asyncio.get_running_loop(), 1.0 / spec.max_hz, sender)
+            senders[spec.ch] = sender
         return senders
 
     def _send_reliable(
@@ -1188,7 +1305,17 @@ class RelayBridgeModule(Module):
             try:
                 return await self._connect_and_hello()
             except RelayRejectedError as e:
-                logger.error(f"relay rejected reconnect ({e.code}: {e.message}); not retrying")
+                if e.code != "robot_id_conflict":
+                    logger.error(f"relay rejected reconnect ({e.code}: {e.message}); not retrying")
+                    return None
+                # Our own previous session may still be registered (no clean
+                # close reached the relay); it expires at the idle timeout.
+                logger.warning(f"relay still holds this robot id ({e.message}); retrying")
+                await asyncio.sleep(_RECONNECT_PAUSE_S)
+            except ValueError as e:
+                # Discovery answered something this bridge cannot use (protocol
+                # version, untrusted certificate): permanent, like a rejection.
+                logger.error(f"relay reconnect impossible ({e}); not retrying")
                 return None
             except Exception as e:
                 logger.warning(f"relay reconnect failed ({e}); retrying")
@@ -1239,7 +1366,9 @@ class RelayBridgeModule(Module):
         if session.retired.is_set():
             return
         now = time.monotonic()
-        if not _passes_rate_gate(self._last_input, spec.ch, now, self._min_interval[spec.ch]):
+        if not spec.paced and not _passes_rate_gate(
+            self._last_input, spec.ch, now, self._min_interval[spec.ch]
+        ):
             return
         encoded = self._run_encoder(spec, msg)
         if encoded is None:
@@ -1279,6 +1408,9 @@ class RelayBridgeModule(Module):
         target.retired.set()
         if self._session is target:
             self._session = None
+        for sender in target.senders.values():
+            if isinstance(sender, _PacedSender):
+                sender.close()
         # A driving teleop stream cannot outlive its session (this also
         # covers module stop, KeyboardTeleop.stop() parity). Idempotent:
         # the edge gate makes the second call of a double-disconnect a no-op.

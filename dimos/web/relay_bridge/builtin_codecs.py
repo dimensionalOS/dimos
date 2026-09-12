@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Built-in web codecs (jpeg.v1, pose.json.v1, costmap.zlib.v1, text.json.v1).
+"""Built-in web codecs (jpeg.v1, pose.json.v1, costmap.zlib.v1, text.json.v1,
+stats.json.v1).
 
 Registered into dimos.web.codecs at import time; relay_bridge_module imports
 this module so every bridge process (parent and worker) has the built-ins.
@@ -111,3 +112,46 @@ def encode_costmap(msg: OccupancyGrid) -> EncodedPayload | None:
         "origin": [origin.position.x, origin.position.y, origin.yaw],
     }
     return EncodedPayload(zlib.compress(cells, _COSTMAP_ZLIB_LEVEL), meta)
+
+
+# stats.json.v1: the resource monitor's /resource_stats dict (asdict of
+# ProcessStats/WorkerStats/ChildProcessStats, dimos/core/resource_monitor/)
+# as JSON with exactly the keys the Stats page reads and dtop renders. Picked
+# by name on purpose: a renamed producer field raises KeyError here (an
+# encode error the bridge logs) instead of silently vanishing from the page,
+# and test_stats_encoding.py pins the subset against the dataclasses.
+_STATS_PROCESS_KEYS = (
+    "pid",
+    "alive",
+    "cpu_percent",
+    "cpu_time_user",
+    "cpu_time_system",
+    "cpu_time_iowait",
+    "pss",
+    "num_threads",
+    "num_children",
+    "num_fds",
+    "io_read_bytes",
+    "io_write_bytes",
+)
+_STATS_WORKER_KEYS = (*_STATS_PROCESS_KEYS, "worker_id", "modules", "dedicated")
+_STATS_CHILD_KEYS = ("pid", "name", "cpu_percent")
+
+
+def _pick(stats: Mapping[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    return {key: stats[key] for key in keys}
+
+
+# The registry keys encoders by the bare message class (dict[str, Any] is not
+# a class), hence the unparameterized annotation.
+@web_encoder("stats.json.v1")
+def encode_stats(msg: dict) -> bytes:  # type: ignore[type-arg]
+    workers = [
+        {
+            **_pick(worker, _STATS_WORKER_KEYS),
+            "children": [_pick(child, _STATS_CHILD_KEYS) for child in worker["children"]],
+        }
+        for worker in msg["workers"]
+    ]
+    stats = {"coordinator": _pick(msg["coordinator"], _STATS_PROCESS_KEYS), "workers": workers}
+    return json.dumps(stats, separators=(",", ":")).encode()

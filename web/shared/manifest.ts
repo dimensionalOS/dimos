@@ -6,7 +6,8 @@
 // The transport (protocol.ts) carries the manifest as one opaque record;
 // this module is the single owner of its structure and domain rules:
 // version gate, bounded unique ids, positive rates, panel/layout/pages
-// references that resolve, and kind-specific panel rules (video, map2d).
+// references that resolve, and kind-specific panel rules (video, map2d,
+// teleop, chat, stats).
 //
 // Manifest v1 is frozen. Additive changes (new panel kinds, new params)
 // ride the existing shape: unknown keys and kinds pass through validation.
@@ -389,6 +390,67 @@ export function parseManifest(value: unknown): Manifest {
         throw new ManifestError(
           "invalid_teleop_panel",
           `teleop panel ${panel.id} needs a twist.json.v1 latest tx channel`,
+        );
+      }
+    }
+    if (panel.kind === "chat") {
+      // channels: the text input (publish tx), the messages, the idle flag,
+      // the push-to-talk audio (publish tx).
+      if (panel.channels.length !== 4) {
+        throw new ManifestError(
+          "invalid_chat_panel",
+          `chat panel ${panel.id} must bind four channels`,
+        );
+      }
+      const [text, messages, idle, audio] = panel.channels.map((ch) => chIds.get(ch)!);
+      if (
+        text.encoding !== "text.json.v1" || text.delivery !== "reliable" ||
+        dirOf(text) !== "tx" || publishOf(text) !== "shared"
+      ) {
+        throw new ManifestError(
+          "invalid_chat_panel",
+          `chat panel ${panel.id} needs a text.json.v1 reliable shared tx channel first`,
+        );
+      }
+      if (
+        messages.encoding !== "chat.json.v1" || messages.delivery !== "reliable" ||
+        dirOf(messages) !== "rx"
+      ) {
+        throw new ManifestError(
+          "invalid_chat_panel",
+          `chat panel ${panel.id} needs a chat.json.v1 reliable rx channel second`,
+        );
+      }
+      if (idle.encoding !== "json.v1" || idle.delivery !== "latest" || dirOf(idle) !== "rx") {
+        throw new ManifestError(
+          "invalid_chat_panel",
+          `chat panel ${panel.id} needs a json.v1 latest rx channel third`,
+        );
+      }
+      if (
+        audio.encoding !== "audio.json.v1" || audio.delivery !== "reliable" ||
+        dirOf(audio) !== "tx" || publishOf(audio) !== "shared"
+      ) {
+        throw new ManifestError(
+          "invalid_chat_panel",
+          `chat panel ${panel.id} needs an audio.json.v1 reliable shared tx channel fourth`,
+        );
+      }
+    }
+    if (panel.kind === "stats") {
+      if (panel.channels.length !== 1) {
+        throw new ManifestError(
+          "invalid_stats_panel",
+          `stats panel ${panel.id} must bind exactly one channel`,
+        );
+      }
+      const stats = chIds.get(panel.channels[0])!;
+      if (
+        stats.encoding !== "stats.json.v1" || stats.delivery !== "latest" || dirOf(stats) !== "rx"
+      ) {
+        throw new ManifestError(
+          "invalid_stats_panel",
+          `stats panel ${panel.id} needs a stats.json.v1 latest rx channel`,
         );
       }
     }

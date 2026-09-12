@@ -37,6 +37,7 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
 )
+from dimos.manipulation.manipulation_spec import ExecutionStatus
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -45,6 +46,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.data import get_data
 
@@ -83,8 +85,6 @@ def _get_xarm7_config() -> RobotModelConfig:
         package_paths={"xarm_description": desc_path},
         xacro_args={"dof": "7", "limited": "true"},
         auto_convert_meshes=True,
-        max_velocity=1.0,
-        max_acceleration=2.0,
     )
 
 
@@ -122,6 +122,7 @@ def module(xarm7_config):
     coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
         TrajectoryCancellationStatus.ALREADY_STOPPED
     )
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
     mod = ManipulationModule(
         model=xarm7_config,
         planning_timeout=10.0,
@@ -133,9 +134,11 @@ def module(xarm7_config):
     mod.coordinator_joint_state = None
     mod.voxel_map = None
     mod.objects = None
-    mod.start()
-    yield mod
-    mod.stop()
+    try:
+        mod.start()
+        yield mod
+    finally:
+        mod.stop()
 
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
@@ -172,9 +175,9 @@ class TestManipulationModuleIntegration:
         module._on_joint_state(joint_state_zeros)
 
         target = JointState(position=[0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
-        success = module.plan_to_joints(target)
+        result = module.plan_to_joints({"manipulator": target})
 
-        assert success is True
+        assert result.succeeded, result.message
         assert module._state == ManipulationState.COMPLETED
         assert module.has_planned_path() is True
 
@@ -189,7 +192,7 @@ class TestManipulationModuleIntegration:
 
         result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
 
-        assert result.is_success()
+        assert result.succeeded, result.message
         assert module._state == ManipulationState.COMPLETED
         assert module._last_plan is not None
         assert module._last_plan.group_ids == ("manipulator",)
@@ -232,19 +235,17 @@ class TestManipulationModuleIntegration:
         pose = module.get_ee_pose()
 
         assert pose is not None
-        assert hasattr(pose, "x")
-        assert hasattr(pose, "y")
-        assert hasattr(pose, "z")
+        assert pose == module.get_state().groups["manipulator"].end_effector_pose
 
     def test_trajectory_uses_canonical_names(self, module, joint_state_zeros):
         """Test that execution preserves canonical model joint names."""
         module._on_joint_state(joint_state_zeros)
 
-        success = module.plan_to_joints(JointState(position=[0.05] * 7))
-        assert success is True
+        result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
+        assert result.succeeded, result.message
 
         assert module._last_plan is not None
-        assert module.execute() is True
+        assert module.execute().status is ExecutionStatus.COMPLETED
         trajectory = module._control_coordinator.execute_trajectory.call_args.args[0]
 
         assert trajectory.joint_names == module.config.model.joint_names
@@ -259,12 +260,12 @@ class TestCoordinatorIntegration:
         """Test execute sends trajectory to coordinator."""
         module._on_joint_state(joint_state_zeros)
 
-        success = module.plan_to_joints(JointState(position=[0.05] * 7))
-        assert success is True
+        result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
+        assert result.succeeded, result.message
 
         result = module.execute()
 
-        assert result is True
+        assert result.status is ExecutionStatus.COMPLETED
         assert module._state == ManipulationState.COMPLETED
 
         # Verify coordinator was called
@@ -278,7 +279,8 @@ class TestCoordinatorIntegration:
         """Test handling of coordinator rejection."""
         module._on_joint_state(joint_state_zeros)
 
-        module.plan_to_joints(JointState(position=[0.05] * 7))
+        plan_result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
+        assert plan_result.succeeded, plan_result.message
 
         module._control_coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
             TrajectoryExecutionStatus.INVALID_TRAJECTORY
@@ -286,8 +288,8 @@ class TestCoordinatorIntegration:
 
         result = module.execute()
 
-        assert result is False
-        assert module._state == ManipulationState.COMPLETED
+        assert result.status is ExecutionStatus.REJECTED
+        assert module._state == ManipulationState.IDLE
         assert "rejected" in module._error_message.lower()
 
     def test_state_transitions_during_execution(self, module, joint_state_zeros):
@@ -297,16 +299,20 @@ class TestCoordinatorIntegration:
         module._on_joint_state(joint_state_zeros)
 
         # Plan - should go through PLANNING -> COMPLETED
-        module.plan_to_joints(JointState(position=[0.05] * 7))
+        result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
+        assert result.succeeded, result.message
         assert module._state == ManipulationState.COMPLETED
 
-        # Reset works from COMPLETED
-        module.reset()
-        assert module._state == ManipulationState.IDLE
+        assert module.clear_planned_path().succeeded
+        assert not module.has_planned_path()
+        assert module.execute().status is ExecutionStatus.NO_PLAN
 
         # Plan again
-        module.plan_to_joints(JointState(position=[0.05] * 7))
+        result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
+        assert result.succeeded, result.message
 
         # Execute - should go to EXECUTING then COMPLETED
-        module.execute()
+        assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
+        assert module._state == ManipulationState.EXECUTING
+        assert module.wait_for_execution().status is ExecutionStatus.COMPLETED
         assert module._state == ManipulationState.COMPLETED

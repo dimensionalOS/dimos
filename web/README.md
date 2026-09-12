@@ -11,7 +11,8 @@ and `dimos --local-relay` auto-downloads Deno via `ensure_deno()`.
 
 ```bash
 deno task dev            # relay on http://127.0.0.1:7780 (add --cockpit-dir cockpit/dist for the UI,
-                         # --sdk-dir sdk/dist for /sdk.js, --serve-dir DIR for a custom page at /)
+                         # --sdk-dir sdk/dist for /sdk.js, --serve-dir DIR for a custom page at /,
+                         # --cert PEM --key PEM for real TLS)
 deno task test           # relay + shared tests (unit + loopback e2e)
 deno task check          # type-check relay + shared; deno fmt + deno lint for style (all of web/)
 ```
@@ -92,6 +93,15 @@ pass that base to `connect({url})` - from another local origin or straight from 
 supported browsers permit WebTransport there; `dimos/e2e_tests/test_sdk_browser.py` pins all three
 forms).
 
+A relay started by hand (`deno task dev` above) takes robots through `--relay-url`, given the
+relay's HTTP URL (`http://127.0.0.1:7780`): the bridge fetches `/api/info` on every connect, exactly
+like the SDK, so a relay restart (new QUIC port, new ephemeral certificate) is transparent to it.
+`docs/usage/web_sdk.md` has the recipe.
+
+With `--cert PEM --key PEM`, HTTPS and QUIC share `--port` and clients verify the certificate
+normally. A private CA reaches the robot as `--relay-ca`; non-loopback binding still needs
+`--unsafe-non-loopback` until relay auth lands.
+
 ## Cockpit
 
 ```bash
@@ -101,6 +111,12 @@ deno task test           # vitest
 deno task check          # tsc --noEmit
 deno task build          # dist/ (what the relay serves at /)
 ```
+
+Panels are authored in Python (`dimos.web.cockpit`: `Video`, `Map2D`, `Teleop`, `Chat`, `Stats`) and
+compiled into the manifest; `cockpit(pages=[...])` panels render as full-page tabs in the header,
+next to Overview and the panels/channels toggle. `Stats()` is dtop as a tab: the bridge re-encodes
+the resource monitor's `/resource_stats` dict as `stats.json.v1`, and the blueprint switches the
+monitor on (`GlobalConfig.dtop`) by itself.
 
 Dev workflow: run the relay (`deno task dev` in `web/`, or just `dimos run <bp> --local-relay`) and
 the vite server side by side. `localhost:5173` is a secure context; vite proxies `/api` to the relay
@@ -113,9 +129,10 @@ pre-built dists inside `_relay_dist` (built by the release workflow; see `setup.
 pip-installed dimos never builds or downloads npm packages.
 
 After changing cockpit or sdk dependencies run `deno install` in `web/` and commit the `deno.lock`
-update; CI validates it with `deno install --frozen`. If vitest ever misbehaves under a new Deno,
-the fallback ladder is `--no-file-parallelism`, then `--pool=threads`, then pinning a different
-vitest minor.
+update; CI validates it with `deno install --frozen`. The cockpit's fonts (Inter, JetBrains Mono)
+are npm packages (`@fontsource-variable/*`) bundled into `dist/` by vite, so nothing is fetched at
+runtime. If vitest ever misbehaves under a new Deno, the fallback ladder is `--no-file-parallelism`,
+then `--pool=threads`, then pinning a different vitest minor.
 
 The browser e2e (`dimos/e2e_tests/test_cockpit_browser.py` for the cockpit, `test_sdk_browser.py`
 for the SDK's zero-build/cross-origin/file: pages; marker `web_browser`) drives the whole stack
