@@ -25,7 +25,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.module_handle import ModuleHandle
-from dimos.robot.unitree.g1.manip_config import G1_READY_JOINTS, G1_READY_SPEED_SCALE
+from dimos.robot.unitree.g1.ready_pose import G1_READY_JOINTS, G1_READY_SPEED_SCALE
 
 app = typer.Typer(help="Operate a running Unitree G1 stack safely")
 
