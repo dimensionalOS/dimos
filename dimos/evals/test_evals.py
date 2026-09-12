@@ -308,7 +308,7 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
 
 def test_image_file_environment(tmp_path: Path) -> None:
     path = tmp_path / "frame.png"
-    Image.from_numpy(np.full((8, 8, 3), 200, dtype=np.uint8)).save(path)
+    Image.from_numpy(np.full((8, 8, 3), 200, dtype=np.uint8)).save(str(path))
     env = ImageFile(path)
     env.preflight(QuestionAnswer())
     running = env.start(())
@@ -484,6 +484,8 @@ def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:
 
     s = summarize(results)
     assert s.n == 3 and s.errors == 2
+    assert s.pass_rate == pytest.approx(1 / 3)
+    assert s.cost_usd is None
 
     run_dir = runner.run_dir
     lines = (run_dir / "results.jsonl").read_text().strip().splitlines()
@@ -641,7 +643,12 @@ def test_runner_stops_before_grading_a_timeout(tmp_path: Path) -> None:
 def test_runner_missing_artifact_is_an_error(tmp_path: Path) -> None:
     graded: list[Outcome] = []
     env = FakeEnvironment(tmp_path / "never-written.db", [])
-    case = EvalCase(id="c", inputs="x", environment=env, grade=lambda o: graded.append(o) or 1.0)
+
+    def grade(outcome: Outcome) -> float:
+        graded.append(outcome)
+        return 1.0
+
+    case = EvalCase(id="c", inputs="x", environment=env, grade=grade)
     result = EvalRunner(out_dir=tmp_path).run([case], FakeAgent(answer="ok"))[0]
     assert result.error == "missing artifacts: ['recording']" and not graded
 
@@ -695,9 +702,10 @@ def test_suites_and_agents_importable() -> None:
         "blind",
         "mcp_client_adapter",
         "pi",
+        "dimcode",
     }
-    for module in agents:
-        assert callable(load_agent(module).run), module
+    for module_name in agents:
+        assert callable(load_agent(module_name).run), module_name
 
 
 def test_load_agent_is_the_module_plus_set_overrides() -> None:
@@ -708,10 +716,12 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
         "dimos.evals.agents.question_answer",
         ["chat_model=null", 'modules=["rangefinder-skill"]', "model=x"],
     )
+    assert isinstance(agent, QuestionAnswer)
     assert (type(agent).__name__, agent.config.chat_model, agent.config.modules, agent.config.model) == (
         "QuestionAnswer", None, ("rangefinder-skill",), "x"
     )  # fmt: skip
     loaded = load_agent("dimos.evals.agents.question_answer", ["frames_per_stream=3"])
+    assert isinstance(loaded, QuestionAnswer)
     assert loaded.config.frames_per_stream == 3
     with pytest.raises(ValidationError, match="frames_per_stream"):
         load_agent("dimos.evals.agents.blind", ["frames_per_stream=3"])

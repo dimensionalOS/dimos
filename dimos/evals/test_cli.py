@@ -143,3 +143,11 @@ def test_run_cli_records_exact_selection_and_agent_inputs(
         "kwargs": {"model": "test-model", "frames_per_stream": 8},
     }
     assert not (run_dir / "case-a").exists(), "preflight-only cases have no case directory"
+
+
+def test_provenance_retains_numeric_output_limit() -> None:
+    kwargs = {"model": "gpt-6-astra", "max_output_tokens": 4096}
+    provenance = run_provenance({"kind": "suite_module"}, "dimos.evals.agents.pi", kwargs)
+    assert provenance["agent"]["kwargs"] == kwargs
+    secret = {"max_output_tokens": "not-a-numeric-budget"}
+    assert run_provenance({}, "agent", secret)["agent"]["kwargs"] is None

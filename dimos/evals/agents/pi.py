@@ -26,7 +26,7 @@ import selectors
 import shutil
 import subprocess
 import time
-from typing import IO, TYPE_CHECKING, Any
+from typing import IO, TYPE_CHECKING, Any, Literal
 
 from pydantic import Field
 
@@ -73,24 +73,6 @@ def recording_file(streams: Sequence[Stream[Any, Any]], path: Path) -> Path:
     return path
 
 
-def _registry_model(cli: str, model: str) -> dict[str, Any] | None:
-    """Copy Pi's model capabilities without its provider routing settings."""
-    exe = shutil.which(cli)
-    for parent in Path(exe).resolve().parents if exe else ():
-        data = parent / "node_modules" / "@earendil-works" / "pi-ai" / "dist" / "providers" / "data"
-        if data.is_dir():
-            for f in sorted(data.glob("*.json")):
-                for models in json.loads(f.read_text()).values():
-                    entry = models.get(model) if isinstance(models, dict) else None
-                    if isinstance(entry, dict) and entry.get("provider") == "openai":
-                        return {
-                            key: value
-                            for key, value in entry.items()
-                            if key not in ("provider", "api", "baseUrl")
-                        }
-    return None
-
-
 def read_pi_events(stream: IO[bytes], deadline: float) -> Generator[dict[str, Any], None, None]:
     """Read Pi's JSON events until EOF, raising TimeoutError at the deadline."""
     pending = b""
@@ -116,7 +98,10 @@ def read_pi_events(stream: IO[bytes], deadline: float) -> Generator[dict[str, An
 class PiAdapterConfig(ModelAgentConfig):
     """Settings for the headless Pi adapter."""
 
-    # The first section of Pi's system prompt.
+    provider: Literal["openai", "anthropic"] = "openai"
+    max_output_tokens: int | None = Field(default=None, ge=1)
+
+    # Shared case guidance appended to Pi's stock system prompt.
     system_prompt: str = (
         "Answer the question from the files and tools listed below and nothing else."
     )
@@ -148,7 +133,7 @@ class PiAdapterConfig(ModelAgentConfig):
     skills: tuple[str, ...] = ()
 
     # Environment variables Pi inherits in addition to every DIMOS_* variable.
-    passthrough_env: tuple[str, ...] = ("PATH", "HOME", "XDG_STATE_HOME", "OPENAI_API_KEY")
+    passthrough_env: tuple[str, ...] = ("PATH",)
 
 
 class PiAdapter(Agent):
@@ -168,8 +153,8 @@ class PiAdapter(Agent):
             raise RuntimeError(
                 f"{self.config.cli!r} is not on PATH (npm install -g @earendil-works/pi-coding-agent)"
             )
-        if "OPENAI_API_KEY" not in os.environ:
-            raise RuntimeError("Pi needs OPENAI_API_KEY")
+        if not os.environ.get(self._key_env):
+            raise RuntimeError(f"{type(self).__name__} needs {self._key_env}")
         if environment.has_robot and "bash" not in self.config.tools:
             raise RuntimeError("Pi reaches the robot through its bash tool, which is not enabled")
         if environment.has_robot and shutil.which("dimos") is None:
@@ -184,7 +169,12 @@ class PiAdapter(Agent):
         )
         if self.config.max_steps == 0:
             return events.trajectory.build("max_steps")
-        upstream = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        upstream = os.environ.get(
+            f"{self.config.provider.upper()}_BASE_URL",
+            "https://api.openai.com/v1"
+            if self.config.provider == "openai"
+            else "https://api.anthropic.com",
+        )
         limit_reached = run_dir / "pi-request-limit-reached"
         with model_trace_proxy(
             raw_dir, upstream, max_requests=self.config.max_steps, limit_reached=limit_reached
@@ -195,11 +185,15 @@ class PiAdapter(Agent):
                 files["recording"] = recording_file(env.streams, run_dir / "recording.db")
             system_prompt = self._write_system_prompt(files, env.mcp_url, run_dir)
             command = self._build_pi_command(inputs, system_prompt, run_dir)
-            ended_by = self._run_pi_process(command, run_dir, events, timeout_s)
+            try:
+                ended_by = self._run_pi_process(command, run_dir, events, timeout_s)
+            except Exception as exc:
+                ended_by = "error"
+                events.error = str(exc)
         if limit_reached.exists():
             return events.trajectory.build("max_steps")
-        if events.error:
-            raise RuntimeError(f"Pi stopped: {events.error}")
+        if events.error and ended_by not in ("timeout", "max_steps"):
+            return events.trajectory.build("error", error=events.error)
         return events.trajectory.build(ended_by)
 
     def _write_system_prompt(self, files: dict[str, Path], mcp_url: str, run_dir: Path) -> str:
@@ -231,40 +225,52 @@ class PiAdapter(Agent):
             f for p in self.config.skills for f in ("--skill", str(Path(p).expanduser().resolve()))
         ]
         return [
-            self.config.cli, "--mode", "json", "--model", f"dimos/{self.config.model}",
+            self.config.cli, "--mode", "json", "--model", f"{self.config.provider}/{self.config.model}",
             "--thinking", self.config.thinking, "--session-dir", str(run_dir / "pi-session"),
             "--tools", ",".join(self.config.tools),
             "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
             "--no-context-files", "--no-approve", *skills,
-            "--system-prompt", system_prompt, inputs,
+            "--append-system-prompt", system_prompt, inputs,
         ]  # fmt: skip
 
+    @property
+    def _key_env(self) -> str:
+        return f"{self.config.provider.upper()}_API_KEY"
+
     def _write_model_config(self, run_dir: Path, proxy_url: str) -> None:
-        """Route the dimos/<model> provider through the model trace proxy."""
+        """Override routing only; Pi owns provider SDKs, capabilities and prices."""
         agent_dir = run_dir / ".pi-agent"
         agent_dir.mkdir(parents=True, exist_ok=True)
-        model = _registry_model(self.config.cli, self.config.model)
-        if model is None:
-            model = {"id": self.config.model, "reasoning": True}
-        provider = {
-            "baseUrl": proxy_url,
-            "api": "openai-responses",
-            "apiKey": "$OPENAI_API_KEY",
-            "models": [model],
-        }
+        provider: dict[str, Any] = {"baseUrl": proxy_url, "apiKey": f"${self._key_env}"}
+        if self.config.max_output_tokens is not None:
+            provider["modelOverrides"] = {
+                self.config.model: {"maxTokens": self.config.max_output_tokens}
+            }
         (agent_dir / "models.json").write_text(
-            json.dumps({"providers": {"dimos": provider}}, indent=2)
+            json.dumps({"providers": {self.config.provider: provider}}, indent=2)
         )
 
     def _build_process_env(self, run_dir: Path) -> dict[str, str]:
-        keep = self.config.passthrough_env
+        keep = (*self.config.passthrough_env, self._key_env)
         passed = {k: v for k, v in os.environ.items() if k in keep or k.startswith("DIMOS_")}
+        home = run_dir / "home"
+        home.mkdir(exist_ok=True)
         return {
             **passed,
+            "HOME": str(home),
+            "XDG_CONFIG_HOME": str(home / "config"),
+            "XDG_STATE_HOME": str(home / "state"),
+            "XDG_CACHE_HOME": str(home / "cache"),
             "PI_CODING_AGENT_DIR": str(run_dir / ".pi-agent"),
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",
         }
+
+    def _process_events(
+        self, proc: subprocess.Popen[bytes], run_dir: Path, deadline: float
+    ) -> Generator[dict[str, Any], None, None]:
+        assert proc.stdout is not None
+        yield from read_pi_events(proc.stdout, deadline)
 
     def _run_pi_process(
         self, command: list[str], run_dir: Path, events: PiToAtif, timeout_s: float
@@ -288,7 +294,7 @@ class PiAdapter(Agent):
         ):
             assert proc.stdout is not None
             try:
-                with closing(read_pi_events(proc.stdout, deadline)) as event_stream:
+                with closing(self._process_events(proc, run_dir, deadline)) as event_stream:
                     for event in event_stream:
                         events.append_event(event)
                         if (

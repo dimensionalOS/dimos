@@ -33,7 +33,7 @@ def _result_text(result: Any) -> str:
 
 
 def _response_id(body: Any) -> str | None:
-    """Read the provider response ID from an OpenAI Responses JSON or SSE body."""
+    """Read the provider response ID from an OpenAI or Anthropic JSON/SSE body."""
     if isinstance(body, dict):
         response_id = body.get("id")
         return str(response_id) if response_id else None
@@ -45,7 +45,7 @@ def _response_id(body: Any) -> str | None:
             if data == "[DONE]":
                 continue
             event = json.loads(data)
-            if response_id := (event.get("response") or {}).get("id"):
+            if response_id := (event.get("response") or event.get("message") or {}).get("id"):
                 return str(response_id)
     return None
 
@@ -123,7 +123,11 @@ class PiToAtif:
                 prompt_tokens=int(usage.get("input", 0)) + int(usage.get("cacheWrite", 0)) + cached,
                 completion_tokens=int(usage.get("output", 0)),
                 cached_tokens=cached,
-                cost_usd=float((usage.get("cost") or {}).get("total") or 0.0),
+                cost_usd=(
+                    float(usage["cost"]["total"])
+                    if usage.get("cost", {}).get("total") is not None
+                    else None
+                ),
             ),
             model_name=str(message.get("responseModel") or message.get("model") or ""),
             latency_s=latency_s,

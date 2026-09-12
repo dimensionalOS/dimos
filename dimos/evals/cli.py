@@ -68,6 +68,7 @@ def _has_secret(value: Any) -> bool:
         return any(
             any(word in str(key).casefold() for word in words) or _has_secret(item)
             for key, item in value.items()
+            if not (key == "max_output_tokens" and isinstance(item, (int, type(None))))
         )
     return isinstance(value, list) and any(_has_secret(item) for item in value)
 

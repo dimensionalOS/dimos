@@ -57,18 +57,22 @@ class RunSummary:
     pass_rate: float
     errors: int
     duration_s: float
-    cost_usd: float
+    cost_usd: float | None
 
 
 def summarize(results: list[EvalResult]) -> RunSummary:
-    scored = [r for r in results if not r.error]
+    scored = results
     return RunSummary(
         n=len(results),
         mean_score=sum(r.score for r in scored) / len(scored) if scored else 0.0,
         pass_rate=sum(r.passed for r in scored) / len(scored) if scored else 0.0,
         errors=sum(1 for r in results if r.error),
         duration_s=sum(r.duration_s for r in results),
-        cost_usd=sum(r.cost_usd for r in results),
+        cost_usd=(
+            sum(r.cost_usd or 0.0 for r in results)
+            if all(r.cost_usd is not None for r in results)
+            else None
+        ),
     )
 
 
@@ -152,6 +156,8 @@ class EvalRunner(Configurable):
         case_dir = self.run_dir / case.id
         case_dir.mkdir(parents=True, exist_ok=True)
         trajectory: Trajectory | None = None
+        agent_duration_s = 0.0
+        tools: list[str] = []
         try:
             try:
                 env = case.environment.start(agent.config.modules)
@@ -160,17 +166,36 @@ class EvalRunner(Configurable):
                 )
                 started = time.monotonic()
                 trajectory = agent.run(case.inputs, env, case_dir, timeout_s=case.timeout_s)
-                case.environment.settle(max(0.0, case.timeout_s - (time.monotonic() - started)))
+                agent_duration_s = time.monotonic() - started
+                _write_trajectory(case_dir, trajectory, tools)
+                case.environment.settle(max(0.0, case.timeout_s - agent_duration_s))
             finally:
                 case.environment.stop()
-            _write_trajectory(case_dir, trajectory, tools)
+            if trajectory.extra.ended_by == "error":
+                return self._result(
+                    case,
+                    t0,
+                    trajectory,
+                    agent_duration_s=agent_duration_s,
+                    error=trajectory.extra.error or "agent error",
+                )
             missing = [name for name, path in env.artifacts.items() if not path.exists()]
             if missing:
-                return self._result(case, t0, trajectory, error=f"missing artifacts: {missing}")
+                return self._result(
+                    case,
+                    t0,
+                    trajectory,
+                    agent_duration_s=agent_duration_s,
+                    error=f"missing artifacts: {missing}",
+                )
             score = case.grade(Outcome(trajectory=trajectory, artifacts=env.artifacts))
-            return self._result(case, t0, trajectory, score=score)
+            return self._result(
+                case, t0, trajectory, agent_duration_s=agent_duration_s, score=score
+            )
         except Exception as e:
-            return self._result(case, t0, trajectory, error=repr(e))
+            return self._result(
+                case, t0, trajectory, agent_duration_s=agent_duration_s, error=repr(e)
+            )
 
     def _result(
         self,
@@ -178,6 +203,7 @@ class EvalRunner(Configurable):
         t0: float,
         trajectory: Trajectory | None,
         *,
+        agent_duration_s: float = 0.0,
         score: float = 0.0,
         error: str = "",
     ) -> EvalResult:
@@ -195,6 +221,10 @@ class EvalRunner(Configurable):
             result,
             final_answer=trajectory.final_answer,
             steps=totals.total_steps,
+            model_turns=sum(s.source == "agent" for s in trajectory.steps),
+            tool_calls=sum(len(s.tool_calls or ()) for s in trajectory.steps),
+            agent_duration_s=agent_duration_s,
+            request_attempts=len(list((self.run_dir / case.id / "raw").glob("*-request.json"))),
             prompt_tokens=totals.total_prompt_tokens,
             completion_tokens=totals.total_completion_tokens,
             cached_tokens=totals.total_cached_tokens,
@@ -233,7 +263,18 @@ def _tools_exposed(mcp_url: str) -> list[str]:
 
 def _write_trajectory(case_dir: Path, trajectory: Trajectory, tools: list[str]) -> None:
     """The ATIF document, with the tools the agent could call and no nulls."""
-    agent = replace(trajectory.agent, tool_definitions=tuple({"name": n} for n in tools))
+    definitions: dict[str, dict[str, Any]] = {name: {"name": name} for name in tools}
+    for request in sorted((case_dir / "raw").glob("*-request.json")):
+        try:
+            body = json.loads(request.read_text()).get("body", {})
+            for tool in body.get("tools", []):
+                definition = tool.get("function", tool)
+                name = definition.get("name")
+                if name:
+                    definitions[name] = definition
+        except (ValueError, AttributeError):
+            continue  # An interrupted request can leave an incomplete trace.
+    agent = replace(trajectory.agent, tool_definitions=tuple(definitions.values()))
     record = _without_none(asdict(replace(trajectory, agent=agent)))
     (case_dir / "trajectory.json").write_text(json.dumps(record, indent=2, default=str))
 

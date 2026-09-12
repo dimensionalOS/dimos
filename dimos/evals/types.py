@@ -52,7 +52,7 @@ class Metrics:
     prompt_tokens: int  # everything sent, cache reads included
     completion_tokens: int
     cached_tokens: int = 0  # the part of prompt_tokens read from the provider's cache
-    cost_usd: float | None = None  # when the provider reports it
+    cost_usd: float | None = None  # reported or estimated by the adapter; None if unknown
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -94,7 +94,7 @@ class FinalMetrics:
     total_prompt_tokens: int
     total_completion_tokens: int
     total_cached_tokens: int
-    total_cost_usd: float
+    total_cost_usd: float | None
     total_steps: int
 
 
@@ -104,6 +104,7 @@ EndedBy = Literal["answer", "max_steps", "timeout", "error"]
 @dataclass(frozen=True, kw_only=True)
 class RunExtra:
     ended_by: EndedBy
+    error: str = ""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -172,10 +173,14 @@ class EvalResult:
     error: str = ""
     final_answer: str = ""
     steps: int = 0  # every step, the instruction included
+    model_turns: int = 0
+    tool_calls: int = 0
+    request_attempts: int = 0
+    agent_duration_s: float = 0.0
     prompt_tokens: int = 0  # everything sent, cache reads included
     completion_tokens: int = 0
     cached_tokens: int = 0
     reasoning_tokens: int = 0
-    cost_usd: float = 0.0
+    cost_usd: float | None = None
     ended_by: str = ""
     trajectory: str = ""  # path of <case_id>/trajectory.json, when an agent ran

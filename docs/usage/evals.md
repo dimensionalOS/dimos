@@ -36,6 +36,76 @@ Every runner invocation writes one `~/.local/state/dimos/evals/run-*/` directory
 To generate deterministic image questions from recordings, see
 [Visual Question Answering](/docs/usage/vqa.md).
 
+## Paired Pi and dimcode pilots
+
+Use the same model, reasoning setting, output cap, case selection and timeout
+for each harness. Pi and dimcode use Pi's provider SDKs and built-in model
+registry; model capabilities and prices are not redefined by DimOS. Pin the
+same Pi version in both installations. The initial integration uses Pi 0.85.1
+and dimcode's local gateway protocol (`0.1.0-next.2`).
+
+```bash skip
+# OPENAI_API_KEY must already be in the environment.
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
+  --set provider=openai --set model=gpt-6-astra --set thinking=medium \
+  --set max_steps=12 --set max_output_tokens=4096
+
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.dimcode \
+  --set provider=openai --set model=gpt-6-astra --set thinking=medium \
+  --set max_steps=12 --set max_output_tokens=4096
+
+# Repeat BOTH commands with model=gpt-5.6-sol, or with these Fable settings:
+# --set provider=anthropic --set model=claude-fable-5-1
+# Fable requires ANTHROPIC_API_KEY, independently of OpenAI access.
+```
+
+`cli=` selects a specific Pi or dimcode executable. `OPENAI_BASE_URL` and
+`ANTHROPIC_BASE_URL` optionally override the upstream endpoints. API keys stay
+in process environment variables; the generated provider config contains
+variable references. Request traces omit authentication headers.
+
+Both adapters get fresh home/config/state directories and a copy of only the
+selected recording observations. Pi retains its stock system prompt with
+shared case guidance appended. Dimcode retains its production prompt, skills,
+MCP integration and rendering tool; shared case guidance accompanies the user
+instruction. Each case starts and stops its own dimcode gateway and session.
+An existing personal gateway is never attached. Dimcode's production tools and
+skills cannot be overridden through the eval adapter.
+
+Fresh state is not filesystem or network isolation. These local pilots can
+validate integration and reveal overhead, but publication runs need a sandbox
+that hides graders, unrelated recordings and other runs. Freeze code/data,
+record runtime versions, balance execution order, repeat each case and retain
+failed trials before interpreting a harness comparison.
+
+`QuestionAnswer`, `Blind` and the production MCP agent use LangChain instead.
+The agents extra includes `langchain-openai` and `langchain-anthropic`.
+Astra and GPT-5.6 use Responses; Fable uses adaptive thinking. Direct Anthropic
+LangChain calls currently save normalized traces rather than raw HTTP payloads.
+
+### Reading the metrics
+
+- `model_turns`: assistant model responses represented in the trajectory.
+  `steps` also includes the initial user instruction.
+- `request_attempts`: recorded HTTP requests, including retries. A failed
+  attempt can have no assistant response, so this can exceed `model_turns`.
+- `tool_calls`: calls requested by those model responses.
+- `agent_duration_s`: adapter execution, including recording export, provider
+  setup and agent cleanup. `duration_s` additionally includes environment
+  startup, settling, teardown and grading.
+- Prompt tokens include cache reads and writes; completion tokens include
+  reasoning when reported by the provider. `cached_tokens` means cache reads.
+- Pi/dimcode `cost_usd` is Pi's registry-based estimate, not a billing receipt.
+  Unknown costs remain null (or omitted in ATIF), never a fabricated zero.
+  Totals cover recorded assistant responses; interrupted requests may have
+  unreported usage. Keep raw attempts when auditing spend.
+
+Errors stay in the summary denominator. An agent error preserves completed
+steps, returns `ended_by=error`, and cannot pass. The runner saves a returned
+trajectory before environment teardown so teardown failures retain evidence.
+Raw requests preserve the actual tools/schemas used on each call; the ATIF
+agent metadata includes the latest recorded definition for each tool name.
+
 ## Your first eval, end to end
 
 Build a tiny SQLite recording using the same Store/Stream API as the robot's
@@ -137,8 +207,9 @@ compare two tool sets on one task, run the suite twice with different
 subsequent motion settling. `McpClientAdapter` returns what it has when its
 wait expires, marked `timeout`; `QuestionAnswer` and `Blind` rely on the
 model provider's timeout. Environment startup has a separate
-`launch_timeout_s`. There are no token or cost caps; usage is recorded when
-the agent supplies it.
+`launch_timeout_s`. Pi and dimcode bound model HTTP requests with `max_steps`
+(including retries), and optionally cap output per request with `max_output_tokens`.
+There is no aggregate token or dollar cap; usage is recorded when the agent supplies it.
 
 **Observation encoding.** Each agent class hard-codes how the recording
 reaches the model. `QuestionAnswer` calls `agent_encode()`; no other agent

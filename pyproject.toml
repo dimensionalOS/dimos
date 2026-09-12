@@ -216,6 +216,7 @@ agents = [
     "langchain>=1.2.3,<2",
     "langchain-core>=1.2.22,<2",
     "langchain-openai>=1,<2",
+    "langchain-anthropic>=1,<2",
     "langchain-huggingface>=1,<2",
     "langchain-ollama>=1,<2",
     "ollama>=0.6.0",
@@ -413,6 +414,7 @@ project-deps = [
     "xacro",
     "lap>=0.5.12",
     "langchain-openai>=1,<2",
+    "langchain-anthropic>=1,<2",
     "ollama>=0.6.0",
     # The generic Damiao whole-body adapter imports upstream types directly.
     "can-motor-control>=0.0.8",

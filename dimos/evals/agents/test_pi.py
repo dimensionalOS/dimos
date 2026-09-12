@@ -14,16 +14,22 @@
 
 """Exercise Pi's configuration, event handling and shutdown without an external agent."""
 
+from collections.abc import Iterator
 from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
 import subprocess
+from typing import IO
+from unittest.mock import MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.agents.llm_trace import request_path, response_path
 from dimos.evals.agents import pi
+from dimos.evals.agents.lib.pi_to_atif import PiToAtif
+from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.pi import PiAdapter, recording_file
 from dimos.evals.cli import load_agent
 from dimos.evals.types import (
@@ -76,10 +82,10 @@ def test_recording_export_contains_only_selected_data(dataset: str, tmp_path: Pa
 
 
 @pytest.fixture
-def pi_process(mocker):
+def pi_process(mocker: MockerFixture) -> Iterator[tuple[MagicMock, IO[bytes], MagicMock]]:
     """Replace external processes; retain real pipe reads and event conversion."""
     mocker.patch.object(pi, "model_trace_proxy", return_value=nullcontext("http://provider.test"))
-    spawn = mocker.patch.object(pi.subprocess, "Popen")
+    spawn = mocker.patch("dimos.evals.agents.pi.subprocess.Popen")
     process = spawn.return_value.__enter__.return_value
     process.returncode = 0
     sweep = mocker.patch.object(pi, "kill_run_processes")
@@ -89,7 +95,9 @@ def pi_process(mocker):
         yield process, outgoing, sweep
 
 
-def test_run_preserves_retried_tool_exchange_and_matching_traces(pi_process, tmp_path):
+def test_run_preserves_retried_tool_exchange_and_matching_traces(
+    pi_process: tuple[MagicMock, IO[bytes], MagicMock], tmp_path: Path
+) -> None:
     process, outgoing, _ = pi_process
     raw = tmp_path / "raw"
     raw.mkdir()
@@ -187,7 +195,9 @@ def test_run_preserves_retried_tool_exchange_and_matching_traces(pi_process, tmp
 
 
 @pytest.mark.parametrize("stop", ["timeout", "exit_error", "budget"])
-def test_run_reports_stop_reason_and_cleans_up_pi(stop, pi_process, tmp_path):
+def test_run_reports_stop_reason_and_cleans_up_pi(
+    stop: str, pi_process: tuple[MagicMock, IO[bytes], MagicMock], tmp_path: Path
+) -> None:
     process, outgoing, sweep = pi_process
     process.returncode = 17
     outgoing.close()
@@ -198,15 +208,11 @@ def test_run_reports_stop_reason_and_cleans_up_pi(stop, pi_process, tmp_path):
         (tmp_path / "pi-request-limit-reached").touch()
     agent = PiAdapter(cli=str(tmp_path / "pi"), shutdown_timeout_s=0)
     environment = RunningEnvironment(mcp_url="", streams=(), artifacts={})
-    expectation = (
-        pytest.raises(RuntimeError, match="exit status 17")
-        if stop == "exit_error"
-        else nullcontext()
-    )
-
-    with expectation:
-        result = agent.run("Question", environment, tmp_path, timeout_s=10)
-        assert result.extra.ended_by == ("max_steps" if stop == "budget" else "timeout")
+    result = agent.run("Question", environment, tmp_path, timeout_s=10)
+    expected = {"budget": "max_steps", "timeout": "timeout", "exit_error": "error"}
+    assert result.extra.ended_by == expected[stop]
+    if stop == "exit_error":
+        assert "exit status 17" in result.extra.error
     process.terminate.assert_called_once()
     assert process.kill.call_count == int(stop == "timeout")
     sweep.assert_called_once_with(
@@ -217,26 +223,63 @@ def test_run_reports_stop_reason_and_cleans_up_pi(stop, pi_process, tmp_path):
     )
 
 
-def test_model_proxy_routing_preserves_registry_capabilities(tmp_path, mocker):
-    data = tmp_path / "node_modules/@earendil-works/pi-ai/dist/providers/data"
-    data.mkdir(parents=True)
-    model = {
-        "id": "eval-model",
-        "input": ["text", "image"],
-        "reasoning": False,
-        "contextWindow": 128000,
-        "maxTokens": 4096,
+@pytest.mark.parametrize(
+    "provider,key", [("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY")]
+)
+def test_model_proxy_keeps_native_provider_and_no_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, key: str
+) -> None:
+    monkeypatch.setenv(key, "private-value")
+    agent = PiAdapter(provider=provider, model="registered-model", max_output_tokens=4096)
+    agent._write_model_config(tmp_path, "http://provider.test")
+    config = (tmp_path / ".pi-agent/models.json").read_text()
+    assert "private-value" not in config
+    assert json.loads(config) == {
+        "providers": {
+            provider: {
+                "baseUrl": "http://provider.test",
+                "apiKey": f"${key}",
+                "modelOverrides": {"registered-model": {"maxTokens": 4096}},
+            }
+        }
     }
-    registered = {**model, "provider": "openai", "api": "original-api", "baseUrl": "original-url"}
-    (data / "openai.json").write_text(json.dumps({"openai": {"eval-model": registered}}))
-    mocker.patch.object(pi.shutil, "which", return_value=str(tmp_path / "bin/pi"))
+    env = agent._build_process_env(tmp_path)
+    assert env[key] == "private-value"
+    assert env["HOME"] == str(tmp_path / "home")
 
-    PiAdapter(model="eval-model")._write_model_config(tmp_path, "http://provider.test")
 
-    provider = json.loads((tmp_path / ".pi-agent/models.json").read_text())["providers"]["dimos"]
-    assert provider == {
-        "models": [model],
-        "baseUrl": "http://provider.test",
-        "api": "openai-responses",
-        "apiKey": "$OPENAI_API_KEY",
-    }
+def test_anthropic_sse_usage_and_trace_matching(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    request_path(raw, 0).write_text("{}")
+    response_path(raw, 0).write_text(
+        json.dumps(
+            {
+                "body": 'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1"}}\n'
+            }
+        )
+    )
+    events = PiToAtif(raw, TrajectoryBuilder("Question", name="Pi"))
+    events.append_event(
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "responseId": "msg_1",
+                "model": "claude-fable-5-1",
+                "content": [{"type": "text", "text": "answer"}],
+                "usage": {"input": 10, "cacheRead": 20, "cacheWrite": 30, "output": 4},
+            },
+        }
+    )
+    result = events.trajectory.build("answer")
+    assert result.final_answer == "answer"
+    assert result.final_metrics.total_prompt_tokens == 60
+    assert result.final_metrics.total_cached_tokens == 20
+    assert result.final_metrics.total_cost_usd is None
+
+
+def test_pi_retains_its_stock_prompt(tmp_path: Path) -> None:
+    command = PiAdapter()._build_pi_command("Question", "Shared context", tmp_path)
+    assert "--append-system-prompt" in command
+    assert "--system-prompt" not in command
