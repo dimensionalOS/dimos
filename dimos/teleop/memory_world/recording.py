@@ -437,13 +437,23 @@ def open_recording(path: str | Path) -> Store:
 # ---- naming a recording's streams -------------------------------------------
 
 
-def depth_info_stream_for(streams: set[str], depth_stream: str, camera_info: str) -> str:
-    """The depth camera's own ``camera_info`` when the recording has one, else the colour one."""
+def depth_info_stream_for(store: Any, depth_stream: str, camera_info: str) -> str:
+    """The depth camera's own ``camera_info`` when the recording has a USABLE one.
+
+    Takes the store, not a set of names, because a name is not intrinsics. This is the
+    third place in this package to learn that: `detect_streams` skips empty streams
+    because a killed ingest leaves the name behind, and `precomputed_stream_name` because
+    an empty embeddings stream is adopted as an index that can never be built. Here an
+    empty `<depth>_camera_info` outranks a populated `<depth>` one on name alone, and the
+    ingest then dies at "stream ... is empty" -- AFTER it has deleted the index it was
+    about to replace.
+    """
+    present = set(store.list_streams())
     for candidate in (
         f"{depth_stream}_camera_info",
         f"{depth_stream.removesuffix('_image')}_camera_info",
     ):
-        if candidate in streams:
+        if candidate in present and next(iter(store.streams[candidate].order_by("ts")), None):
             return candidate
     return camera_info
 

@@ -159,9 +159,7 @@ def ingest_recording(
                 raise SystemExit(
                     f"{recording.name} has no {', '.join(missing)} stream; cannot ingest"
                 )
-            depth_info = depth_info_stream_for(
-                set(store.list_streams()), detected["depth"], detected["camera_info"]
-            )
+            depth_info = depth_info_stream_for(store, detected["depth"], detected["camera_info"])
             print(
                 f"streams: color={detected['image']} depth={detected['depth']} "
                 f"info={detected['camera_info']}/{depth_info} tf={detected['tf']}",
@@ -195,6 +193,14 @@ def ingest_recording(
             opened.append(model)
             started = time.monotonic()
             if memory is store:
+                # The intrinsics are read here rather than inside _ingest, where the same
+                # check used to live. _ingest runs AFTER the deletes below, so a recording
+                # whose camera_info is empty lost the index it already had and then failed
+                # -- which is exactly what the comment below promises cannot happen. A
+                # promise in a comment is not a guard; this is the guard.
+                for name in (detected["camera_info"], depth_info):
+                    if next(iter(store.streams[name].order_by("ts")), None) is None:
+                        raise SystemExit(f"stream {name!r} is empty")
                 # Only now, with everything that can fail before a single embedding already
                 # done: a bad stream name or an unreadable model must not cost the index
                 # that is already there, nor rewrite the recording's tf.

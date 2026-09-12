@@ -1026,3 +1026,41 @@ def test_a_folded_mount_outlives_the_tf_the_way_a_static_did(tmp_path) -> None: 
         assert build_tf_tree(store, "tf").lookup("odom", "cam", 100.0)[0, 3] == 3.0
     finally:
         store.stop()
+
+
+def test_an_empty_depth_camera_info_does_not_outrank_a_populated_one(tmp_path: Path) -> None:
+    """The third place in this package to learn that a name is not its contents.
+
+    `detect_streams` skips empty streams because a killed ingest leaves the NAME behind.
+    `precomputed_stream_name` skips them because an empty embeddings stream is adopted as
+    an index that can never be built. This one picked `<depth>_camera_info` over
+    `<depth-without-_image>_camera_info` on name alone -- and the Hyperspace ingest then
+    died at "stream ... is empty" AFTER deleting the index it was replacing.
+    """
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+    from dimos.teleop.memory_world.recording import depth_info_stream_for
+
+    store = SqliteStore(path=str(tmp_path / "r.db"))
+    store.start()
+    try:
+        # The higher-ranked name exists and is EMPTY; the lower-ranked one has intrinsics.
+        store.stream("depth_image_camera_info", CameraInfo)
+        populated = store.stream("depth_camera_info", CameraInfo)
+        populated.append(CameraInfo(width=8, height=8, frame_id="depth", ts=1.0), ts=1.0)
+
+        chosen = depth_info_stream_for(store, "depth_image", "color_camera_info")
+        assert chosen == "depth_camera_info", "an empty stream is not intrinsics"
+
+        # And with neither usable, it still falls back to the colour camera's.
+        bare = SqliteStore(path=str(tmp_path / "bare.db"))
+        bare.start()
+        try:
+            bare.stream("depth_image_camera_info", CameraInfo)  # empty
+            assert (
+                depth_info_stream_for(bare, "depth_image", "color_camera_info")
+                == "color_camera_info"
+            )
+        finally:
+            bare.stop()
+    finally:
+        store.stop()

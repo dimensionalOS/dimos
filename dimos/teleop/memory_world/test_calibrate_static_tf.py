@@ -21,6 +21,8 @@ a right number written to the wrong edge is worse than no measurement at all.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 

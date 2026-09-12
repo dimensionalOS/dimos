@@ -91,9 +91,7 @@ def _pairs(store: Any, streams: dict[str, Any], samples: int) -> list[tuple[np.n
 
     from dimos.teleop.memory_world.recording import depth_info_stream_for
 
-    info_name = depth_info_stream_for(
-        set(store.list_streams()), streams["depth"], streams["camera_info"]
-    )
+    info_name = depth_info_stream_for(store, streams["depth"], streams["camera_info"])
     K = np.asarray(store.streams[info_name].first().data.K, dtype=np.float64)
     fx, fy, cx, cy = K[0], K[4], K[2], K[5]
     depth, lidar = store.streams[streams["depth"]], store.streams[streams["lidar"]]
@@ -469,9 +467,7 @@ def main() -> None:
                 raise SystemExit(f"{args.recording} has no {role} stream; cannot calibrate")
         # The depth camera's own intrinsics are what unprojects its images; a rig with no
         # colour camera has no colour camera_info and does not need one.
-        if not depth_info_stream_for(
-            set(store.list_streams()), streams["depth"], streams.get("camera_info")
-        ):
+        if not depth_info_stream_for(store, streams["depth"], streams.get("camera_info")):
             raise SystemExit(f"{args.recording} has no camera_info for {streams['depth']!r}")
         tree = build_tf_tree(store, streams["tf"])
         camera_frame = str(

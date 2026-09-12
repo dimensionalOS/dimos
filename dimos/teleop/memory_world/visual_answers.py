@@ -259,7 +259,7 @@ class VisualAnswers:
         with self._store_lock:
             store = self._ensure_store()
             info = depth_info_stream_for(
-                set(store.list_streams()),
+                store,
                 self.config.depth_stream_name,
                 self.config.camera_info_stream_name,
             )
