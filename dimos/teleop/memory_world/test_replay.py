@@ -150,6 +150,35 @@ def test_replay_built_in_one_world_frame_serves_only_that_one(store) -> None:  #
     )
 
 
+def test_a_changed_keyframe_interval_is_a_rebuild_like_its_four_siblings(store) -> None:  # type: ignore[no-untyped-def]
+    """The spacing is baked in at build time, so serving cannot change it.
+
+    voxel_size, max_range, lidar_stream and world_frame all mark the streams stale when
+    they change; keyframe_interval_s was written into the tags and then never read, so
+    `--replay-keyframe-interval-s` had NO effect on a recording that was already built.
+    No rebuild, no log line, and the streams kept the spacing of whichever run built them
+    first -- the operator's setting simply did nothing, and nothing said so.
+    """
+    build_replay_streams(
+        store,
+        lidar_stream_name="lidar",
+        to_scan=lambda obs: SensorScan(obs.data.points_f32(), *AT_ORIGIN),
+        voxel_size=VOXEL,
+        max_range=10.0,
+        keyframe_interval_s=1.0,
+    )
+    same = VoxelReplay.available(
+        store, voxel_size=VOXEL, lidar_stream_name="lidar", keyframe_interval_s=1.0
+    )
+    assert same, "the interval it was built with must not force a rebuild"
+    assert VoxelReplay.available(store, voxel_size=VOXEL, lidar_stream_name="lidar"), (
+        "no preference must still fit, as it does for world_frame"
+    )
+    assert not VoxelReplay.available(
+        store, voxel_size=VOXEL, lidar_stream_name="lidar", keyframe_interval_s=999.0
+    ), "a different interval cannot be served from these streams, so it is a rebuild"
+
+
 def _sensor_frame_recording(path: Path, tf_child: str) -> None:
     """Three scans in the 'lidar' frame and a tf stream odom -> *tf_child* at their stamps."""
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion

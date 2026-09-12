@@ -1176,6 +1176,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
                     lidar_stream_name=self.config.lidar_stream_name,
                     max_range=self.config.replay_max_range_m,
                     world_frame=self.config.world_frame,
+                    keyframe_interval_s=self.config.replay_keyframe_interval_s,
                 )
             if not available:
                 self._replay_progress = "building"

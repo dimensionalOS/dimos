@@ -499,9 +499,10 @@ class VoxelReplay:
         lidar_stream_name: str,
         max_range: float | None = None,
         world_frame: str | None = None,
+        keyframe_interval_s: float | None = None,
     ) -> bool:
-        """True when both streams exist, were built for this grid, range and lidar,
-        and the build reached the last scan."""
+        """True when both streams exist, were built for this grid, range, lidar and
+        keyframe spacing, and the build reached the last scan."""
         names = store.list_streams()
         if DIFF_STREAM not in names or KEYFRAME_STREAM not in names:
             return False
@@ -519,6 +520,15 @@ class VoxelReplay:
             "lidar_stream": tags.get("lidar_stream") == lidar_stream_name,
             # Streams from before the tag, or built without a frame, fit any frame.
             "world_frame": world_frame is None or tags.get("world_frame") in (None, world_frame),
+            # The spacing is baked in at build time and cannot be changed by serving
+            # differently, so it belongs with its four siblings above: without it,
+            # replay_keyframe_interval_s had no effect at all on a recording that was
+            # already built, silently and with no log line -- the streams kept the
+            # spacing of whichever run built them first. Streams from before the tag fit
+            # any value, so this does not force a rebuild of anything already on disk.
+            "keyframe_interval_s": keyframe_interval_s is None
+            or tags.get("keyframe_interval_s") is None
+            or abs(float(tags["keyframe_interval_s"]) - keyframe_interval_s) < 1e-9,
         }
         failed = [name for name, ok in checks.items() if not ok]
         if failed:  # a rebuild is half an hour: say why
