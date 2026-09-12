@@ -511,7 +511,12 @@ export class WorldScene {
     toggleHud() {
         this._hudPanel.visible = !this._hudPanel.visible;
         this._hudOff = !this._hudPanel.visible;  // the user's own choice; an answer respects it
-        this._hudGroup.visible = this._hudPanel.visible;  // the answer panel rides here too
+        // The head-locked group carries the answer panel, and the tour pins it off so an
+        // answer cannot reappear beside an unrelated station. M toggles the user's panel,
+        // but it does not get to undo that pin -- `_setAnswer` already honours it, and
+        // this was the one way back in: two presses during a tour put a stale answer on
+        // screen next to a card describing something else.
+        this._hudGroup.visible = this._hudPanel.visible && !this._hudGroupPinnedOff;
         this.diag('hud_toggle', { visible: this._hudPanel.visible });
         if (this.onLayerChange) this.onLayerChange();
         return this._hudPanel.visible;
