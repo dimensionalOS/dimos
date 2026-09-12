@@ -1201,6 +1201,46 @@ def test_a_ros_named_depth_topic_still_finds_its_own_camera_info(tmp_path: Path)
         store.stop()
 
 
+def test_detect_streams_pairs_an_image_with_its_own_camera_info(tmp_path: Path) -> None:
+    """The same suffix bug as the depth test above, on the COLOUR side this time.
+
+    `camera_color_image_raw` does not END with `_image` either, so `removesuffix` was a
+    no-op, both candidates in the pairing loop were the identical string, neither existed,
+    and the generic hint ranking chose a CameraInfo on its own -- on a recording with two
+    cameras, the other one's. That K reaches `_camera_hfov`, `sensor_intrinsics` and
+    `patch_world_position`, which is to say it reaches where the answers are placed.
+    """
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.teleop.memory_world.recording import detect_streams
+
+    store = SqliteStore(path=str(tmp_path / "two_cameras.db"))
+    store.start()
+    try:
+        for name, width in (("camera_color_camera_info", 1280), ("cam2_color_camera_info", 640)):
+            store.stream(name, CameraInfo).append(
+                CameraInfo(width=width, height=480, frame_id=name, ts=1.0), ts=1.0
+            )
+        # `Image`, not `CompressedImage`: detect_streams only honours the caller's
+        # chosen image when it is in the `Image` list, and picks its own otherwise.
+        for name in ("camera_color_image_raw", "cam2_color_image_raw"):
+            store.stream(name, Image).append(
+                Image(data=np.zeros((1, 1, 3), np.uint8), frame_id=name, ts=1.0),
+                ts=1.0,
+            )
+
+        found = detect_streams(store, image="camera_color_image_raw")
+        assert found["camera_info"] == "camera_color_camera_info", (
+            f"paired with another camera's intrinsics: {found['camera_info']}"
+        )
+        other = detect_streams(store, image="cam2_color_image_raw")
+        assert other["camera_info"] == "cam2_color_camera_info", (
+            f"paired with another camera's intrinsics: {other['camera_info']}"
+        )
+    finally:
+        store.stop()
+
+
 def test_the_roi_survives_the_mcap_decode(monkeypatch: pytest.MonkeyPatch) -> None:
     """A camera_info read from an mcap must say the same thing as one read from a db.
 

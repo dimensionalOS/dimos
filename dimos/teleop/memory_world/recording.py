@@ -857,7 +857,15 @@ def detect_streams(store: Store, image: str | None = None) -> dict[str, Any]:
     # Prefer the camera_info that belongs to the chosen image stream.
     if image is not None:
         infos = by_type.get("CameraInfo", [])
-        for paired in (f"{image}_camera_info", f"{image.removesuffix('_image')}_camera_info"):
+        # Split on `_image`, not removesuffix -- the same fix `depth_info_stream_for`
+        # carries and for the same reason. `camera_color_image_raw` does not END with
+        # `_image`, so removesuffix was a no-op, both candidates were the identical
+        # string, neither existed, and the generic hint ranking picked whichever
+        # CameraInfo it liked: on a two-camera recording, the OTHER camera's intrinsics.
+        # That K reaches _camera_hfov, sensor_intrinsics and patch_world_position, which
+        # is to say it reaches where the answers are placed.
+        base = image.split("_image")[0] or image
+        for paired in (f"{image}_camera_info", f"{base}_camera_info"):
             if paired in infos:
                 detected["camera_info"] = paired
                 break
