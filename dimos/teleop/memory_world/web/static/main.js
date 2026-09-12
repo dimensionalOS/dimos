@@ -302,6 +302,7 @@ function buildScene() {
         diag('scene_constructed');
         tickers = [];
         scene.onTick = (dt) => { for (const tick of tickers) tick(dt); };
+        scene.onJump = () => jumpToAnswer();  // the J key; the Answer button calls it directly
         heatmap = HeatmapLayer ? new HeatmapLayer(scene._frameRotate) : null;
         pyramids = PyramidLayer ? new PyramidLayer(scene._frameRotate) : null;
         flight = Flight ? new Flight(scene) : null;
@@ -640,7 +641,23 @@ hudBtn.addEventListener('click', () => {
 });
 // The minimap starts hidden, so the button starts as the way to get it back.
 hudBtn.textContent = 'Show map';
-document.getElementById('answerBtn').addEventListener('click', () => window.app.jumpTo(0));
+// Take me to the answer: the best photo of the place BEING BROWSED, else that place's
+// marker, else the focus point. The J key and this button both used to ask for index 0 of
+// the UNFILTERED photo list and fall back to _lastResultPoints[0], so after stepping to
+// another place they walked you toward place 0 while place 0's evidence was hidden -- and
+// on an answer carrying a focus point but no points they did nothing at all.
+function jumpToAnswer() {
+    if (!scene) return false;
+    const here = scene.queryImagesHere();
+    if (here.length && scene.viewFrom(here[0])) return true;
+    const points = scene._lastResultPoints || [];
+    const at = scene.clusterFilter >= 0 ? scene.clusterFilter : 0;
+    const point = points[at] || points[0];
+    if (point) { scene.focusOn(point.position); return true; }
+    if (scene._focusPoint) { scene.focusOn(scene._focusPoint); return true; }
+    return false;
+}
+document.getElementById('answerBtn').addEventListener('click', () => jumpToAnswer());
 
 // ---- typed questions ---------------------------------------------------------
 
@@ -895,9 +912,20 @@ window.addEventListener('keydown', (event) => {
     if (typing) return;
     if (event.code === 'Slash') { event.preventDefault(); askInput.focus(); return; }
     if (tour && tour.active) {
-        if (event.code === 'ArrowRight' || event.code === 'Space') { event.preventDefault(); tour.next(); }
-        if (event.code === 'ArrowLeft') { event.preventDefault(); tour.prev(); }
-        return;
+        // Space always advances the tour. The arrows do too -- EXCEPT on a hands-on
+        // station, whose whole text is "the controls are back": it prints
+        // "arrows places . N route . O orbit . P camera" and then this branch swallowed
+        // every one of them. On the last station, which is the hands-on one, pressing the
+        // right arrow to "step to the next place" ran tour.next() off the end and quietly
+        // exited the tour instead. On those stations everything falls through to the
+        // normal handlers below.
+        const station = tour.stations && tour.stations[tour.index];
+        if (event.code === 'Space') { event.preventDefault(); tour.next(); return; }
+        if (!(station && station.hands_on)) {
+            if (event.code === 'ArrowRight') { event.preventDefault(); tour.next(); }
+            if (event.code === 'ArrowLeft') { event.preventDefault(); tour.prev(); }
+            return;
+        }
     }
     if (event.code === 'ArrowRight') { event.preventDefault(); results && results.next(); }
     else if (event.code === 'ArrowLeft') { event.preventDefault(); results && results.prev(); }
@@ -1122,8 +1150,10 @@ window.app = {
     resetPerf: () => scene && scene.resetPerf(),
     benchmark: (frames) => (scene ? scene.benchmarkRender(frames) : null),
     // Bring the i-th answer of the last result in front of the viewer (also key J).
-    jumpTo: (index = 0) => scene && scene._lastResultPoints.length > index
-        && !scene.viewFrom(index) && scene.focusOn(scene._lastResultPoints[index].position),
+    jumpTo: (index = null) => (index === null
+        ? jumpToAnswer()
+        : scene && scene._lastResultPoints.length > index
+            && !scene.viewFrom(index) && scene.focusOn(scene._lastResultPoints[index].position)),
     hud: () => scene && scene.toggleHud(),
     // Search readiness as the server last reported it, and the embed job's state.
     indexStatus: () => indexStatus,

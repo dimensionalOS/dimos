@@ -438,9 +438,7 @@ export class WorldScene {
         if (event.code === 'KeyR') this.resetView();
         // J: stand where the best answer's camera stood (a known clear spot),
         // or, without a frame, bring the answer point in front of the viewer.
-        if (event.code === 'KeyJ' && this._lastResultPoints.length && !this.viewFrom(0)) {
-            this.focusOn(this._lastResultPoints[0].position);
-        }
+        if (event.code === 'KeyJ' && this.onJump) this.onJump();
         if (event.code === 'KeyM') this.toggleHud();
         if (event.code === 'KeyO') this.setOrbit(!this._orbit.active);
         if (event.code === 'KeyP') this.stepQueryImage(event.shiftKey ? -1 : 1);
@@ -747,6 +745,7 @@ export class WorldScene {
     }
 
     resetView() {
+        this._stopOrbitBeforeMoving();
         this._worldGroup.position.set(0, 0, 0);
         this._worldGroup.rotation.set(0, 0, 0);
         this._worldGroup.scale.set(1, 1, 1);
@@ -1075,6 +1074,7 @@ export class WorldScene {
      *  desktop the world is also lifted so the point sits at eye level; in VR
      *  the floor stays where the floor is. */
     focusOn(position) {
+        this._stopOrbitBeforeMoving();
         const [x, y, z] = position;
         // frameRotate maps robot (x, y, z) to three (x, z, -y); worldGroup then scales and moves it.
         const local = new THREE.Vector3(x, z, -y).multiplyScalar(this._worldGroup.scale.x);
@@ -1354,6 +1354,7 @@ export class WorldScene {
             marker.position.set(...point.position);
             this._highlightGroup.add(marker);
         }
+        this._focusPoint = result.focus_point || null;
         if (result.focus_point) {
             const focus = new THREE.Mesh(
                 new THREE.SphereGeometry(0.18, 20, 16),
@@ -1436,12 +1437,10 @@ export class WorldScene {
     viewFrom(index) {
         const header = this._queryImages[index];
         if (!header || this.three.xr.isPresenting) return false;
-        // A photo the filter is hiding is not somewhere to stand: J and the Answer
-        // button index the UNFILTERED list, so after browsing to another place they
-        // stood you in a wall with a corridor cut toward a hidden photo. Both callers
-        // fall back to focusOn when this returns false.
+        // A photo the filter is hiding is not somewhere to stand; see jumpToAnswer.
         if (header.cluster !== undefined && this.clusterFilter >= 0
             && header.cluster !== this.clusterFilter) return false;
+        this._stopOrbitBeforeMoving();
         const eye = new THREE.Vector3(...header.position);
         const forward = new THREE.Vector3(...header.forward).normalize();
         // Robot -> three: (x, y, z) -> (x, z, -y), then the world group's scale.
@@ -1462,6 +1461,11 @@ export class WorldScene {
         this._applyQueryImageVisibility();
         this.diag('view_from', { index });
         return true;
+    }
+
+    /** Orbit rewrites the world position every frame; drop it before moving by hand. */
+    _stopOrbitBeforeMoving() {
+        if (this._orbit && this._orbit.active) this.setOrbit(false);
     }
 
     _addHighlightTube(path, radius, color) {
