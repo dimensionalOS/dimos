@@ -148,6 +148,13 @@ def get_most_recent(alive_only: bool = True) -> RunEntry | None:
     return runs[-1] if runs else None
 
 
+def get_run(run_id: str, alive_only: bool = True) -> RunEntry | None:
+    """Select an exact run ID; never fall back to another running instance."""
+    return next(
+        (entry for entry in list_runs(alive_only=alive_only) if entry.run_id == run_id), None
+    )
+
+
 def stop_entry(entry: RunEntry, force: bool = False) -> tuple[str, bool]:
     """Stop a DimOS instance by registry entry.
 

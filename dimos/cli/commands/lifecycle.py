@@ -37,7 +37,7 @@ from dimos.core.daemon import (
     write_daemon_status,
 )
 from dimos.core.global_config import global_config
-from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.core.run_registry import get_most_recent, get_run, is_pid_alive, stop_entry
 from dimos.utils.cache import cache_usage_guard, cache_usage_locked
 from dimos.utils.logging_config import setup_logger
 
@@ -286,7 +286,7 @@ def run(
                 log_dir=str(log_dir),
                 cli_args=list(blueprint_names),
                 config_overrides=global_option_overrides,
-                original_argv=sys.argv,
+                original_argv=[sys.executable, *sys.orig_argv[1:]],
             )
             entry.save()
             spawn_watchdog(run_id, log_dir=log_dir)
@@ -324,7 +324,7 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(blueprint_names),
             config_overrides=global_option_overrides,
-            original_argv=sys.argv,
+            original_argv=[sys.executable, *sys.orig_argv[1:]],
         )
         entry.save()
         spawn_watchdog(run_id, log_dir=log_dir)
@@ -342,9 +342,9 @@ def run(
             entry.remove()
 
 
-def status() -> None:
+def status(run_id: str = typer.Option("", "--run", "-r", help="Exact run ID")) -> None:
     """Show the running DimOS instance."""
-    entry = get_most_recent(alive_only=True)
+    entry = get_run(run_id) if run_id else get_most_recent(alive_only=True)
     if not entry:
         typer.echo("No running DimOS instance")
         return
@@ -367,18 +367,21 @@ def status() -> None:
 
 def stop(
     force: bool = typer.Option(False, "--force", "-f", help="Force kill (SIGKILL)"),
+    run_id: str = typer.Option("", "--run", "-r", help="Exact run ID"),
 ) -> None:
     """Stop the running DimOS instance."""
 
-    entry = get_most_recent(alive_only=True)
+    entry = get_run(run_id) if run_id else get_most_recent(alive_only=True)
     if not entry:
         typer.echo("No running DimOS instance", err=True)
         raise typer.Exit(1)
 
     sig_name = "SIGKILL" if force else "SIGTERM"
     typer.echo(f"Stopping {entry.run_id} (PID {entry.pid}) with {sig_name}...")
-    msg, _ok = stop_entry(entry, force=force)
+    msg, ok = stop_entry(entry, force=force)
     typer.echo(f"  {msg}")
+    if not ok:
+        raise typer.Exit(1)
 
 
 def log_cmd(
@@ -417,9 +420,10 @@ def log_cmd(
 
 def restart(
     force: bool = typer.Option(False, "--force", "-f", help="Force kill before restarting"),
+    run_id: str = typer.Option("", "--run", "-r", help="Exact run ID"),
 ) -> None:
     """Restart the running DimOS instance with the same arguments."""
-    entry = get_most_recent(alive_only=True)
+    entry = get_run(run_id) if run_id else get_most_recent(alive_only=True)
     if not entry:
         typer.echo("No running DimOS instance to restart", err=True)
         raise typer.Exit(1)
@@ -433,8 +437,10 @@ def restart(
     old_pid = entry.pid
 
     typer.echo(f"Restarting {entry.run_id} ({entry.blueprint})...")
-    msg, _ok = stop_entry(entry, force=force)
+    msg, ok = stop_entry(entry, force=force)
     typer.echo(f"  {msg}")
+    if not ok:
+        raise typer.Exit(1)
 
     # Wait for the old process to fully exit so ports are released.
     for _ in range(20):  # up to 2s

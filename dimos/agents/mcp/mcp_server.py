@@ -32,6 +32,7 @@ import uvicorn
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp import tool_stream
+from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall, RPCClient
@@ -72,8 +73,26 @@ def _jsonrpc_result(req_id: Any, result: Any) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
 
-def _jsonrpc_result_text(req_id: Any, text: str) -> dict[str, Any]:
-    return _jsonrpc_result(req_id, {"content": [{"type": "text", "text": text}]})
+def _jsonrpc_result_text(req_id: Any, text: str, *, is_error: bool = False) -> dict[str, Any]:
+    return _jsonrpc_result(
+        req_id, {"content": [{"type": "text", "text": text}], "isError": is_error}
+    )
+
+
+def _mcp_content(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Translate the existing agent image encoding at the MCP boundary."""
+    content = []
+    for block in blocks:
+        if block.get("type") == "image_url":
+            url = block["image_url"]["url"]
+            if not url.startswith("data:image/") or ";base64," not in url:
+                content.append({"type": "resource_link", "name": "image", "uri": url})
+                continue
+            header, data = url.split(";base64,", 1)
+            content.append({"type": "image", "mimeType": header[5:], "data": data})
+        else:
+            content.append(block)
+    return content
 
 
 def _jsonrpc_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
@@ -122,7 +141,7 @@ async def _handle_tools_call(
     rpc_call = rpc_calls.get(name)
     if rpc_call is None:
         logger.warning("MCP tool not found", tool=name)
-        return _jsonrpc_result_text(req_id, f"Tool not found: {name}")
+        return _jsonrpc_result_text(req_id, f"Tool not found: {name}", is_error=True)
 
     skill_info = app.state.skills_by_name.get(name)
     uses: list[str] = list(skill_info.uses) if skill_info is not None else []
@@ -173,6 +192,7 @@ async def _handle_tools_call(
             return _jsonrpc_result_text(
                 req_id,
                 f"Cannot start '{name}': capability '{cap}' is held by '{holder}'. {advice}",
+                is_error=True,
             )
 
     logger.info("MCP tool call", tool=name, args=args, progress_token=progress_token)
@@ -201,7 +221,7 @@ async def _handle_tools_call(
             )
         except Exception as e:
             logger.exception("MCP tool error", tool=name, duration=f"{time.monotonic() - t0:.3f}s")
-            return _jsonrpc_result_text(req_id, f"Error running tool '{name}': {e}")
+            return _jsonrpc_result_text(req_id, f"Error running tool '{name}': {e}", is_error=True)
 
         if lifecycle == "background":
             # Hand ownership of the caps off to the tool-stream lifecycle.
@@ -215,7 +235,13 @@ async def _handle_tools_call(
 
     if hasattr(result, "agent_encode"):
         logger.info("MCP tool done", tool=name, duration=duration, response=response)
-        return _jsonrpc_result(req_id, {"content": result.agent_encode()})
+        return _jsonrpc_result(
+            req_id,
+            {
+                "content": _mcp_content(result.agent_encode()),
+                "isError": isinstance(result, SkillResult) and not result.success,
+            },
+        )
 
     logger.info("MCP tool done", tool=name, duration=duration, response=response)
     return _jsonrpc_result_text(req_id, str(result))

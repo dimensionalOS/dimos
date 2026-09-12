@@ -1,0 +1,47 @@
+name: dimcode
+
+on:
+  pull_request:
+    paths:
+      - 'agent/**'
+      - 'web/sdk/**'
+      - 'web/shared/**'
+      - 'web/relay/**'
+      - '.github/workflows/dimcode.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agent/**'
+      - 'web/sdk/**'
+      - 'web/shared/**'
+      - 'web/relay/**'
+      - '.github/workflows/dimcode.yml'
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.6.10
+      - run: npm ci
+      - run: npm run check
+        env:
+          DIMCODE_TEST_DENO: deno
+      - run: npm pack
