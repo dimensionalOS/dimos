@@ -1076,11 +1076,71 @@ def test_an_embedding_answer_carries_the_places_the_viewer_renders() -> None:
     against a real recording -- ask succeeded, six places found, six evidence photos hung,
     4308 voxels lit, and Navigate did nothing at all.
 
-    So the embedding answer publishes the same summary shape Hyperspace does, and the
-    viewer needs no branch. The keys are `HeatmapCluster.summary()`'s.
+    And it has to ride the RESULT. My first fix put the summaries in the SkillResult's
+    metadata, which is why this asserts on the payload `_publish_query_result` actually
+    broadcasts -- `result.model_dump(mode="json")` -- and not on the object in hand. The
+    live check came back with `resultsBarPlaces: 0` a second time.
     """
-    from dimos.teleop.memory_world.hyperspace_search import Cluster
+    import threading
+    from types import SimpleNamespace
 
+    from dimos.teleop.memory_world.hyperspace_search import Cluster
+    from dimos.teleop.memory_world.visual_answers import VisualAnswers
+    from dimos.teleop.memory_world.visual_search import Place
+
+    places = [
+        Place(position=(1.0, 2.0, 3.0), similarity=0.42, source_id=3, ts=1.0, views=2),
+        # Cosine similarity is signed. Bounds written for the heat map's [0, 1] score
+        # rejected this answer outright, and the viewer got no clusters for a second
+        # reason -- a pydantic error raised past the publish.
+        Place(position=(4.0, 5.0, 6.0), similarity=-0.11, source_id=4, ts=2.0, views=1),
+    ]
+    published: dict = {}
+
+    class Module(VisualAnswers):
+        def __init__(self) -> None:
+            self._store_lock = threading.RLock()
+            self._clients_lock = threading.RLock()
+            self._last_answer = (None, None)
+            self.config = SimpleNamespace(
+                store_path="/nowhere/walk.db",
+                search_top_k=5,
+                place_radius_m=1.0,
+                max_places=3,
+                object_radius_m=0.25,
+            )
+
+        def _ensure_visual_index(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(count=lambda: 7, search=lambda *a, **k: [])
+
+        def _locate_objects(self, phrase):  # type: ignore[no-untyped-def]
+            return places
+
+        def _markers_near(self, positions):  # type: ignore[no-untyped-def]
+            return []
+
+        def _add_route_to_result(self, result) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def _publish_query_result(self, result) -> str:  # type: ignore[no-untyped-def]
+            # What module.py broadcasts, byte for byte -- not the model.
+            published["payload"] = result.model_dump(mode="json")
+            return "qid"
+
+        def _publish_query_images(self, query_id, phrase, places) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+    outcome = Module()._find_with_siglip("a basket", 0.0)
+    assert outcome.success, outcome.message
+
+    broadcast = published["payload"]["clusters"]
+    assert len(broadcast) == len(places), "the viewer steps through `clusters`, one per place"
+    assert [c["centre"] for c in broadcast] == [list(p.position) for p in places]
+    assert broadcast[0]["n_views"] == 2  # `results.js` prints this beside the score
+    assert broadcast[1]["peak"] == pytest.approx(-0.11)  # not clamped to 0.00
+    assert all(c["radius"] > 0 for c in broadcast)  # `cluster.radius * 3 + 1.5` framing
+
+    # Keys match `Cluster.summary()`'s, so the viewer needs no per-engine branch.
     wanted = set(
         Cluster(
             index=0,
@@ -1093,17 +1153,6 @@ def test_an_embedding_answer_carries_the_places_the_viewer_renders() -> None:
             evidence=[],
         ).summary()
     )
-    published = {
-        "index",
-        "centre",
-        "radius",
-        "score",
-        "peak",
-        "n_voxels",
-        "n_views",
-        "n_evidence",
-    }
-
-    assert published == wanted, (
+    assert wanted <= set(broadcast[0]), (
         "the embedding answer's cluster summary has drifted from the one the viewer reads"
     )

@@ -29,7 +29,7 @@ import numpy as np
 from dimos.agents.skill_result import SkillResult
 from dimos.teleop.memory_world.embed import EmbeddingJob, siglipify_command, siglipify_config
 from dimos.teleop.memory_world.messages import MSG_QUERY_IMAGE, encode_binary
-from dimos.teleop.memory_world.query import HighlightPoint, MemoryQueryResult
+from dimos.teleop.memory_world.query import ClusterSummary, HighlightPoint, MemoryQueryResult
 from dimos.teleop.memory_world.recording import depth_info_stream_for
 from dimos.teleop.memory_world.tf_tree import pose_matrix
 from dimos.teleop.memory_world.visual_search import (
@@ -402,9 +402,32 @@ class VisualAnswers:
         if not places:
             return SkillResult.fail("NOT_FOUND", f"Nothing in the recording matches {phrase!r}")
 
+        # The same shape Hyperspace publishes, from the embeddings' own places. The client
+        # builds its results bar, its place stepping and its Navigate button from the
+        # answer's `clusters`; an answer that carries only `points` leaves all three inert
+        # -- the bar reads "0 places" and `results.navigate()` returns null before it
+        # reaches the route at all. It has to ride the RESULT, not the SkillResult's
+        # metadata: `_publish_query_result` broadcasts `result.model_dump()`, and nothing
+        # of the skill's metadata ever reaches the websocket.
+        radius = float(self.config.object_radius_m if located else self.config.place_radius_m)
+        clusters = [
+            ClusterSummary(
+                index=index,
+                centre=place.position,
+                radius=radius,
+                score=float(place.similarity),
+                peak=float(place.similarity),
+                n_views=int(place.views),
+                n_evidence=int(place.views),
+                label=f"{phrase[:80]} #{index + 1}",
+            )
+            for index, place in enumerate(places)
+        ]
+
         result = MemoryQueryResult(
             engine="siglip",
             query_text=phrase,
+            clusters=clusters,
             answer=f"Found {phrase} in {len(places)} place(s), {_best_phrase(places[0], located)}",
             focus_point=places[0].position,
             points=[
@@ -434,25 +457,6 @@ class VisualAnswers:
         # against every embedding answer, which is now every answer there is. It wants two
         # fields per place, an index and a centre, so the places give it those directly
         # rather than the route growing a second way to be asked.
-        # The same shape Hyperspace publishes, from the embeddings' own places. The client
-        # builds its results bar, its place stepping and its Navigate button from
-        # `clusters`; an answer that carries only `points` leaves all three inert -- the
-        # bar reads "0 places" and `results.navigate()` returns null before it reaches the
-        # route at all. Keys match `HeatmapCluster.summary()` so the viewer needs no branch.
-        radius = float(self.config.object_radius_m)
-        summaries = [
-            {
-                "index": i,
-                "centre": [round(float(v), 3) for v in place.position],
-                "radius": round(radius, 3),
-                "score": round(float(place.similarity), 3),
-                "peak": round(float(place.similarity), 3),
-                "n_voxels": 0,
-                "n_views": int(place.views),
-                "n_evidence": int(place.views),
-            }
-            for i, place in enumerate(places)
-        ]
         with self._clients_lock:
             self._last_answer = (
                 SimpleNamespace(
@@ -473,7 +477,7 @@ class VisualAnswers:
                 "query_id": query_id,
                 "query": phrase,
                 "engine": "siglip",
-                "clusters": summaries,
+                "clusters": [cluster.model_dump(mode="json") for cluster in clusters],
                 "places": [_place_metadata(place, located) for place in places],
                 "located": located,
             },
