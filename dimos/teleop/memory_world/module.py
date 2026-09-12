@@ -975,7 +975,10 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
     @skill
     def find_in_memory(self, query: str) -> SkillResult:
         """Find the distinct places something was seen and highlight them in VR:
-        "where did I see a car" → Hyperspace when ready, else the SigLIP index.
+        "where did I see a car", answered by the CLIP/SigLIP index over the frames.
+
+        One engine answers, always. Hyperspace used to win whenever its index happened to
+        be ready, so a recording could answer two ways depending on a sidecar's timing.
 
         Args:
             query: What to look for, e.g. "a car" or "a whiteboard".
@@ -984,8 +987,6 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
         phrase = search_phrase(query)
         if not phrase:
             return SkillResult.fail("INVALID_QUERY", "The query text is empty")
-        if self._hyperspace_ready():
-            return self._find_with_hyperspace(phrase, started)
 
         try:
             return self._find_with_siglip(phrase, started)
