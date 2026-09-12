@@ -344,6 +344,15 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
 
     # ---- routes ------------------------------------------------------------
 
+    @staticmethod
+    def _put_route_first(app: Any, path: str) -> None:
+        """Move the most recently registered route for *path* to the front."""
+        routes = app.router.routes
+        for index in range(len(routes) - 1, -1, -1):
+            if getattr(routes[index], "path", None) == path:
+                routes.insert(0, routes.pop(index))
+                return
+
     def _setup_routes(self) -> None:
         assert self._web_server is not None
         app = self._web_server.app
@@ -352,7 +361,9 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
 
         # `or "/"`: the base is "" at the root so that "/ws" and "/replay/index" come out
         # right, but the PAGE itself still has to be registered at "/".
-        @app.get(self.config.client_route or "/", response_class=HTMLResponse)  # type: ignore[misc]
+        page_route = self.config.client_route or "/"
+
+        @app.get(page_route, response_class=HTMLResponse)  # type: ignore[misc]
         async def memory_world_index() -> HTMLResponse:
             index_path = STATIC_DIR / "index.html"
             # The newest static file stamps the script URLs, so a reload never
@@ -364,6 +375,12 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
                 .replace("__ASSET_VERSION__", str(asset_version))
             )
             return HTMLResponse(content=content)
+
+        # At the root this has to OUTRANK the generic interface index that
+        # RobotWebInterface already registered at "/": Starlette answers with the first
+        # full match, so the viewer's own page was registered and reachable by nothing --
+        # and memworld's probe got 200 from the OTHER application and printed success.
+        self._put_route_first(app, page_route)
 
         if STATIC_DIR.is_dir():
             app.mount(

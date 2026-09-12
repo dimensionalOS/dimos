@@ -947,10 +947,26 @@ def test_the_client_route_is_normalised_the_way_the_viewer_normalises_it(
     """The viewer computes its base as `pathname.replace(/\\/$/, "")`, and every API path
     and the websocket hang off it on both sides. When the two rules disagree the page
     loads and everything under it 404s, which looks like a working server."""
+    from fastapi.testclient import TestClient
+
+    from dimos.web.robot_web_interface import RobotWebInterface
+
     db_path = tmp_path / "route.db"
     _empty_store(db_path)
     module = MemoryWorldModule(store_path=str(db_path), client_route=configured)
     try:
         assert module.config.client_route == expected
+
+        # ...and the page is actually SERVED there. Asserting the normalised string alone
+        # passed while the root case did not work at all: RobotWebInterface registers
+        # dimos's generic index at "/" first, Starlette answers with the first full match,
+        # and the viewer's own page was registered and reachable by nothing.
+        module._web_server = RobotWebInterface(host="127.0.0.1", port=0)
+        module._setup_routes()
+        response = TestClient(module._web_server.app).get(expected or "/")
+        assert response.status_code == 200
+        assert "DimOS Memory World" in response.text, (
+            f"{expected or '/'} served something else: {response.text[:120]}"
+        )
     finally:
         module.stop()
