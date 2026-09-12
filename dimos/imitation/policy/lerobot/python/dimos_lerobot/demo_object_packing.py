@@ -116,12 +116,27 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                 except RuntimeError as exc:
                     error = str(exc)
                 success = error is None and stable >= 3 and task.pick_complete()
+                failure_reason = error
+                if not success and failure_reason is None:
+                    measured = task.result()
+                    failure_reason = (
+                        "return_home_timeout"
+                        if measured.success
+                        else "no_bilateral_grasp"
+                        if not measured.bilateral_grasp
+                        else "insufficient_lift"
+                        if measured.peak_lift_m <= 0.06
+                        else "placement_failed"
+                        if not measured.inside_bin
+                        else "release_or_settling_failed"
+                    )
                 row = dict(
                     selected=index,
                     object=layout.objects[index].name,
                     shape=layout.objects[index].shape,
                     success=success,
                     error=error,
+                    failure_reason=failure_reason,
                     result=task.result().to_dict(),
                 )
                 picks.append(row)

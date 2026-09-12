@@ -17,12 +17,15 @@
 import argparse
 from collections import Counter
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
+from threading import Event, Thread
 import time
 from typing import Any
 
@@ -31,6 +34,34 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(value, indent=2) + "\n")
     temporary.replace(path)
+
+
+def monitor_progress(job: Path, stop: Event) -> None:
+    """Save a compact update every five minutes without an agent or API call."""
+    while not stop.is_set():
+        try:
+            progress = json.loads((job / "status.json").read_text())
+            progress["checked_at"] = time.time()
+            log = job / "train.log"
+            if log.exists():
+                with log.open("rb") as source:
+                    source.seek(max(0, log.stat().st_size - 32768))
+                    steps = re.findall(rb"step:(\d+)", source.read())
+                if steps:
+                    progress["training_step"] = int(steps[-1])
+            for name in ("eval-single", "eval-sequences"):
+                result = job / name / "result.json"
+                if result.exists():
+                    report = json.loads(result.read_text())
+                    progress[name] = {
+                        key: report[key]
+                        for key in ("successes", "total", "pick_successes", "pick_total")
+                    }
+            write_json(job / "progress.json", progress)
+        except (OSError, ValueError, KeyError):
+            # A result may be between writes; the next check reads it afresh.
+            pass
+        stop.wait(300)
 
 
 def run_pipeline(args: argparse.Namespace) -> None:
@@ -78,15 +109,56 @@ def run_pipeline(args: argparse.Namespace) -> None:
         source=str(args.source.resolve()),
         seed=args.seed,
     )
+    if args.reuse_job is not None:
+        previous = args.reuse_job.resolve()
+        if previous == job:
+            raise ValueError("Use a new output directory for a refinement run")
+        previous_contract = json.loads((previous / "contract.json").read_text())
+        if previous_contract["scene_package"] != contract["scene_package"]:
+            raise ValueError("Reused demonstrations require the same scene package")
+        if any(not (previous / (stage + ".done")).exists() for stage in ("train", "export")):
+            raise ValueError("Refinement requires a completed previous training and export")
+        initialization = previous / "training/checkpoints/last/pretrained_model"
+        weights = initialization / "model.safetensors"
+        contract.update(
+            reuse_job=str(previous),
+            initial_weights_sha256=hashlib.sha256(weights.read_bytes()).hexdigest(),
+        )
+        collection = Path(previous_contract.get("collection", str(previous / "collection")))
+        dataset = Path(previous_contract.get("dataset", str(previous / "dataset")))
+        contract.update(collection=str(collection), dataset=str(dataset))
+        for source_path in (
+            collection / "manifest.json",
+            dataset / "meta/info.json",
+            initialization,
+        ):
+            if not source_path.exists():
+                raise ValueError(f"Missing refinement input: {source_path}")
     contract_path = job / "contract.json"
     if contract_path.exists() and json.loads(contract_path.read_text()) != contract:
         raise ValueError("Cannot reuse a pipeline directory with a different contract")
     write_json(contract_path, contract)
+    write_json(job / "status.json", status)
+    stop_monitor = Event()
+    monitor = Thread(target=monitor_progress, args=(job, stop_monitor), daemon=True)
+    monitor.start()
 
-    def run(stage: str, command: list[str], *, require_success: bool = True) -> None:
+    def run(
+        stage: str,
+        command: list[str],
+        *,
+        evaluation_result: Path | None = None,
+        expected_layouts: int = 0,
+    ) -> None:
         done = job / (stage + ".done")
         if done.exists():
-            return
+            if evaluation_result is None:
+                return
+            if evaluation_result.exists():
+                report = json.loads(evaluation_result.read_text())
+                if report["total"] == expected_layouts:
+                    return
+            done.unlink()
         status.update(stage=stage, updated=time.time())
         write_json(job / "status.json", status)
         (job / "stage").write_text(stage)
@@ -102,33 +174,38 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 stderr=subprocess.STDOUT,
                 check=False,
             )
-        if require_success and result.returncode != 0:
+        if evaluation_result is not None:
+            report = json.loads(evaluation_result.read_text())
+            if report["total"] != expected_layouts:
+                raise RuntimeError(f"{stage} aborted before all requested layouts completed")
+        elif result.returncode != 0:
             raise RuntimeError(f"{stage} exited {result.returncode}; inspect its log")
         done.write_text(str(result.returncode))
 
     try:
-        run(
-            "collect",
-            [
-                *native,
-                "-m",
-                "dimos.robot.galaxea.r1pro.demo_collect_objects",
-                "--output",
-                str(collection),
-                "--scene-package",
-                str(args.scene_package),
-                "--start-seed",
-                str(args.seed),
-                "--layouts",
-                str(args.layouts),
-                "--choices",
-                "2",
-                "--occupied-max",
-                "3",
-                "--image-stride",
-                "2",
-            ],
-        )
+        if args.reuse_job is None:
+            run(
+                "collect",
+                [
+                    *native,
+                    "-m",
+                    "dimos.robot.galaxea.r1pro.demo_collect_objects",
+                    "--output",
+                    str(collection),
+                    "--scene-package",
+                    str(args.scene_package),
+                    "--start-seed",
+                    str(args.seed),
+                    "--layouts",
+                    str(args.layouts),
+                    "--choices",
+                    "2",
+                    "--occupied-max",
+                    "3",
+                    "--image-stride",
+                    "2",
+                ],
+            )
         manifest = json.loads((collection / "manifest.json").read_text())
         accepted = len(manifest["episodes"])
         attempted = accepted + len(manifest["rejected"])
@@ -143,32 +220,33 @@ def run_pipeline(args: argparse.Namespace) -> None:
             raise RuntimeError(
                 "Teacher coverage gate failed; inspect rejected samples before training"
             )
-        run(
-            "convert",
-            [
-                *learned,
-                "-m",
-                "dimos_lerobot.prepare_r1pro_dataset",
-                "--source",
-                str(collection),
-                "--output",
-                str(dataset),
-            ],
-        )
-        run(
-            "initialize",
-            [
-                *learned,
-                "-m",
-                "dimos_lerobot.prepare_object_act",
-                "--source",
-                str(args.source),
-                "--dataset",
-                str(dataset),
-                "--output",
-                str(initialization),
-            ],
-        )
+        if args.reuse_job is None:
+            run(
+                "convert",
+                [
+                    *learned,
+                    "-m",
+                    "dimos_lerobot.prepare_r1pro_dataset",
+                    "--source",
+                    str(collection),
+                    "--output",
+                    str(dataset),
+                ],
+            )
+            run(
+                "initialize",
+                [
+                    *learned,
+                    "-m",
+                    "dimos_lerobot.prepare_object_act",
+                    "--source",
+                    str(args.source),
+                    "--dataset",
+                    str(dataset),
+                    "--output",
+                    str(initialization),
+                ],
+            )
         # Keep paired target choices from one layout entirely on one side of
         # the diagnostic loss split. Physical test scenes use separate seeds.
         seeds = list(dict.fromkeys(row["seed"] for row in manifest["episodes"]))
@@ -184,16 +262,22 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 eval_fraction=eval_fraction,
             ),
         )
+        resume_config = training / "checkpoints/last/pretrained_model/train_config.json"
+        training_source = (
+            ["--resume=true", "--config_path=" + str(resume_config)]
+            if resume_config.exists()
+            else ["--policy.path=" + str(initialization)]
+        )
         run(
             "train",
             [
                 *learned,
                 "-m",
                 "lerobot.scripts.lerobot_train",
+                *training_source,
                 "--dataset.repo_id=local/r1pro-object-packing",
                 "--dataset.root=" + str(dataset),
                 f"--dataset.eval_split={eval_fraction}",
-                "--policy.path=" + str(initialization),
                 "--policy.device=cuda",
                 "--policy.push_to_hub=false",
                 "--policy.optimizer_lr=.00005",
@@ -249,17 +333,21 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 "3",
                 "--single-pick",
             ],
-            require_success=False,
+            evaluation_result=job / "eval-single/result.json",
+            expected_layouts=12,
         )
         run(
             "evaluate-sequences",
             learned
             + evaluation
             + ["--output", str(job / "eval-sequences"), "--start-seed", "210000", "--layouts", "8"],
-            require_success=False,
+            evaluation_result=job / "eval-sequences/result.json",
+            expected_layouts=8,
         )
         single = json.loads((job / "eval-single/result.json").read_text())
         sequences = json.loads((job / "eval-sequences/result.json").read_text())
+        if single["total"] != 12 or sequences["total"] != 8:
+            raise RuntimeError("Evaluation aborted before all requested layouts completed")
         status.update(
             stage="evaluated",
             single_successes=single["successes"],
@@ -278,18 +366,31 @@ def run_pipeline(args: argparse.Namespace) -> None:
         status["updated"] = time.time()
         write_json(job / "status.json", status)
         (job / "stage").write_text(str(status["stage"]))
+        stop_monitor.set()
+        monitor.join(timeout=2)
+        # Preserve the final state rather than a stale running progress record.
+        write_json(job / "progress.json", status)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--source", type=Path)
     parser.add_argument("--scene-package", type=Path, required=True)
     parser.add_argument("--layouts", type=int, default=64)
     parser.add_argument("--steps", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=110000)
+    parser.add_argument(
+        "--reuse-job",
+        type=Path,
+        help="Refine a finished job's checkpoint using its existing dataset and loss split",
+    )
     parser.add_argument("--background", action="store_true")
     args = parser.parse_args()
+    if args.reuse_job is not None:
+        args.source = args.reuse_job / "policy"
+    elif args.source is None:
+        parser.error("Provide --source for a new dataset or --reuse-job for refinement")
     if args.layouts < 8 or args.steps < 1 or args.seed < 0:
         parser.error("Use at least eight layouts, positive training steps and a nonnegative seed")
     if args.background:

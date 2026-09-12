@@ -208,7 +208,7 @@ class ObjectPackingTask(GraspingTask):
         )
 
     def pick_complete(self) -> bool:
-        return (
+        return bool(
             self.result().success and np.max(np.abs(self.data.qpos[self.qids] - self.home)) < 0.015
         )
 
