@@ -5,6 +5,7 @@
 // the one that moves without dragging anything behind it. Same shape as evidence.js:
 // a function over the scene, not a class.
 import * as THREE from 'https://esm.sh/three@0.160.0';
+import { worldPosToRobotXY } from '/static_mw/world_frame.js';
 
 export const HUD_PANEL_SIZE = 0.22;          // metres (square)
 const HUD_DISTANCE = 0.55;            // metres in front of head
@@ -68,7 +69,7 @@ export function placeHud(scene) {
     // We need the camera's robot-frame XY. Camera is at headPos in three-world;
     // un-apply worldGroup transform + frameRotate to get robot frame.
     if (scene._topDownBounds) {
-        const robotXY = scene._worldPosToRobotXY(headPos);
+        const robotXY = worldPosToRobotXY(scene._worldGroup, headPos);
         if (robotXY) {
             const uv = scene._robotXYToHudUV(robotXY[0], robotXY[1]);
             // Panel is HUD_PANEL_SIZE wide centred at (0,0). Map u,v in [0,1]

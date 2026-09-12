@@ -5,6 +5,7 @@
 // maths mirrors focusOn()/viewFrom() in scene.js; this file only adds time.
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
+import { robotToWorldOffset } from '/static_mw/world_frame.js';
 
 const DEFAULT_DURATION_S = 1.4;
 const DEFAULT_PITCH_RAD = -0.28;     // look slightly down at a target on the floor
@@ -21,10 +22,6 @@ function shortestAngle(from, to) {
 }
 
 /** robot (x, y, z) -> three (x, z, -y), scaled like the world group. */
-function toThree(scene, p) {
-    return new THREE.Vector3(p[0], p[2], -p[1]).multiplyScalar(scene._worldGroup.scale.x);
-}
-
 export class Flight {
     constructor(scene) {
         this.scene = scene;
@@ -59,21 +56,11 @@ export class Flight {
         );
         const head = scene.getCameraPositionWorld();
         const scale = scene._worldGroup.scale.x;
-        const local = toThree(scene, target);
-        // three draws a child of worldGroup at `position + R_y(rotation.y) . local`, so
-        // placing it takes the ROTATED local offset. Subtracting the bare one is right
-        // only at rotation.y === 0, and the right stick turns that every frame in VR:
-        // measured 5.58 m of error at 30 degrees, 15.23 m at 90, 21.54 m at 180, for a
-        // call that asks to stand exactly where a photo was taken. Same convention as
-        // scene._worldPosToRobotXY, which un-applies this: x' = c*x + s*z, z' = -s*x + c*z.
-        const spin = scene._worldGroup.rotation.y;
-        const c = Math.cos(spin);
-        const sn = Math.sin(spin);
-        const placed = new THREE.Vector3(
-            c * local.x + sn * local.z,
-            local.y,
-            -sn * local.x + c * local.z,
-        );
+        // One implementation of "where three draws this point", shared with focusOn,
+        // viewFrom and OrbitControl.apply -- which each had their own copy of the
+        // unrotated version, and so each teleported you somewhere else the moment
+        // anyone turned. The comment that used to live here is on the method.
+        const placed = robotToWorldOffset(scene._worldGroup, target);
         const end = new THREE.Vector3(
             head.x + dir.x * distance * scale - placed.x,
             head.y + dir.y * distance * scale - placed.y,
