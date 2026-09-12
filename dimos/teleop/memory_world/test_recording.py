@@ -440,6 +440,27 @@ def test_embedding_job_failure_keeps_the_last_line() -> None:
     assert status["embedding"] == "failed" and "no such stream" in status["progress"]
 
 
+def test_embedding_job_failure_keeps_a_last_line_that_had_no_newline() -> None:
+    """A process that dies mid-line never terminates it, and that line is the reason.
+
+    The sibling above uses `echo`, which appends a newline, so the reason arrives as a
+    complete line and the loop sees it. `printf` without one leaves it in the buffer,
+    where flushing it to the log is not enough: the failure the viewer is shown is built
+    from `last`, so the reason has to reach THAT, not just the log.
+    """
+    import threading
+
+    from dimos.teleop.memory_world.embed import EmbeddingJob
+
+    finished = threading.Event()
+    job = EmbeddingJob(on_finished=lambda j: finished.set())
+    job.start(["bash", "-c", "printf 'CUDA out of memory'; exit 1", "--"], "", adopt=lambda: None)
+    assert finished.wait(10)
+    status = job.status()
+    assert status["embedding"] == "failed"
+    assert "CUDA out of memory" in status["progress"], status
+
+
 def test_tf_root_is_the_frame_with_no_parent() -> None:
     from dimos.teleop.memory_world.recording import tf_root
     from dimos.teleop.memory_world.tf_tree import TfTree

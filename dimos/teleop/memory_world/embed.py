@@ -146,7 +146,8 @@ class EmbeddingJob:
             # without a newline, and that unterminated last line is the one saying why.
             tail = pending.strip()
             if tail:
-                self._set("running", tail[-160:])
+                last = tail[-160:]  # `last` is what the RuntimeError below reports
+                self._set("running", last)
                 logger.info("%s: %s", self.name, tail)
             code = process.wait()
             if code != 0:
