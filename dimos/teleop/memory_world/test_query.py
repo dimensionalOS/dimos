@@ -832,3 +832,68 @@ def test_the_voxel_cloud_packs_what_survives_the_height_filter(
     # Nothing inside the band is not a cloud at all, rather than an empty one.
     monkeypatch.setattr(memory_world, "_accumulated_cloud", lambda: cloud[2:])
     assert memory_world._build_voxel_cloud_from_lidar() is None
+
+
+def test_the_camera_frame_comes_from_the_images_and_the_config_overrides_it(
+    memory_world: MemoryWorldModule, tmp_path: Path
+) -> None:
+    """`_camera_frame` decides which tf frame every camera pose is looked up in.
+
+    A reviewer asked which load-bearing code the suite would not notice the loss of, and
+    this was on the list: returning a constant left all 213 tests green. It is the same
+    shape of blind spot that let a dropped import break the live server.
+    """
+    from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+
+    pixels = np.zeros((4, 4, 3), dtype=np.uint8)
+    ok, encoded = cv2.imencode(".jpg", pixels)
+    assert ok
+    db_path = tmp_path / "frames.db"
+    store = SqliteStore(path=str(db_path))
+    store.start()
+    store.stream("color_image", CompressedImage).append(
+        CompressedImage(data=encoded.tobytes(), format="jpeg", frame_id="d455_optical", ts=1.0),
+        ts=1.0,
+    )
+    store.stop()
+
+    module = MemoryWorldModule(store_path=str(db_path))
+    try:
+        assert module._camera_frame() == "d455_optical"  # read off the images themselves
+        module._camera_frame_cache = None
+        module.config.camera_optical_frame = "told_so"
+        assert module._camera_frame() == "told_so"  # the operator outranks the recording
+    finally:
+        module.stop()
+
+
+def test_the_field_of_view_falls_back_to_seventy_degrees_without_intrinsics(
+    memory_world: MemoryWorldModule,
+) -> None:
+    """`_camera_hfov` sets how wide every camera frustum is drawn.
+
+    Also on the reviewer's list of code no test exercised: returning 0.0 left the suite
+    green, and a zero field of view draws every frustum as a line.
+    """
+    memory_world.config.camera_info_stream_name = None
+    memory_world._camera_hfov_deg = None
+    assert memory_world._camera_hfov() == pytest.approx(70.0)
+
+
+def test_the_operator_can_say_whether_the_lidar_is_already_in_the_world_frame(
+    memory_world: MemoryWorldModule,
+) -> None:
+    """`_lidar_world_aligned` decides whether scans get transformed by tf at all.
+
+    Third of the four functions a reviewer found the suite would not miss: returning a
+    constant left every test green, and getting this wrong puts the whole map in the
+    wrong frame. The configured answer is the one an operator reaches for when the
+    detection is wrong, so it is the one that must not silently stop working.
+    """
+    memory_world.config.lidar_world_frame = True
+    memory_world._lidar_world_aligned_cache = None
+    assert memory_world._lidar_world_aligned() is True
+
+    memory_world.config.lidar_world_frame = False
+    memory_world._lidar_world_aligned_cache = None
+    assert memory_world._lidar_world_aligned() is False
