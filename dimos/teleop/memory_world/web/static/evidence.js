@@ -11,6 +11,25 @@ import * as THREE from 'https://esm.sh/three@0.160.0';
 /** Hang the frame behind an answer on its camera's image plane: a quad
  *  `distance_m` in front of where the camera stood, sized by its field of
  *  view, with thin lines back to the camera so the frustum reads. */
+/** Where a photograph hangs and how wide it is there, as `[from, to, radius]` for
+ *  `scene.setSightLine`. `[null, null, 0]` when the header cannot say, which turns the
+ *  corridor off rather than guessing at one.
+ *
+ *  Here rather than in a caller because both the place stepper and the P key need it, and
+ *  a second copy of this arithmetic is a second thing to keep in step with the header. */
+export function sightLineFor(header) {
+    if (!header || !header.position || !header.forward) return [null, null, 0];
+    const f = header.forward;
+    const at = header.distance_m
+        ? [0, 1, 2].map((k) => header.position[k] + f[k] * header.distance_m)
+        : header.point;
+    const halfWidth = header.distance_m && header.hfov_deg
+        ? header.distance_m * Math.tan((header.hfov_deg * Math.PI) / 360)
+        : 0.8;
+    if (!at) return [null, null, 0];
+    return [header.position, at, halfWidth];
+}
+
 export function addQueryImage(scene, header, jpegArrayBuffer) {
     if (header.query_id !== scene._activeQueryId) return;
     const blob = new Blob([jpegArrayBuffer], { type: 'image/jpeg' });

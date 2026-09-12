@@ -7,7 +7,7 @@
 import * as THREE from 'https://esm.sh/three@0.160.0';
 import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms, viewportHeight, viewportHeightPx } from '/static_mw/voxel_sprites.js';
 import { ANSWER_PANEL_W, HUD_PANEL_SIZE, placeHud } from '/static_mw/hud.js';
-import { addQueryImage } from '/static_mw/evidence.js';
+import { addQueryImage, sightLineFor } from '/static_mw/evidence.js';
 import { OrbitControl } from '/static_mw/orbit.js';
 
 const WALK_SPEED_M_PER_S = 1.4;               // headset-relative
@@ -1411,6 +1411,10 @@ export class WorldScene {
         this._desktopPitch = Math.asin(Math.max(-1, Math.min(1, fwdThree.y)));
         this.camera.rotation.set(this._desktopPitch, this._desktopYaw, 0);
         this._queryImageCursor = index;
+        // The corridor follows the eye. Without this, P walks you inside the wall each
+        // picture shows with nothing carved, while the tunnel cut for the previous one
+        // stays open somewhere behind you.
+        this.setSightLine(...sightLineFor(header));
         this._applyQueryImageVisibility();
         this.diag('view_from', { index });
         return true;

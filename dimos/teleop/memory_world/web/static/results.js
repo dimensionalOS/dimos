@@ -3,6 +3,7 @@
 // ask the server for a route to it.
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
+import { sightLineFor } from '/static_mw/evidence.js';
 
 const ROUTE_COLOR = 0x64ff8f;
 const ROUTE_RADIUS_M = 0.06;
@@ -130,14 +131,7 @@ export class ResultsNav {
         const header = (this.scene._queryImages || []).find((h) => h && h.cluster === index);
         if (!header || !header.position || !header.forward) return null;
         const f = header.forward;
-        // Where the photograph hangs, and how wide it is there: the corridor carved out
-        // of the map reaches exactly that far and no further.
-        const at = header.distance_m
-            ? [0, 1, 2].map((k) => header.position[k] + f[k] * header.distance_m)
-            : header.point;
-        const halfWidth = header.distance_m && header.hfov_deg
-            ? header.distance_m * Math.tan((header.hfov_deg * Math.PI) / 360)
-            : 0.8;
+        const [, at, halfWidth] = sightLineFor(header);
         return {
             position: header.position,
             at,
@@ -157,14 +151,17 @@ export class ResultsNav {
 
     _showEvidence(index) {
         const scene = this.scene;
-        // The scene owns whether a photo is on screen: it also knows whether the user
-        // has Photos turned off, which this used to override.
-        if (scene._applyQueryImageVisibility) scene._applyQueryImageVisibility();
+        // Cluster filter FIRST, then the visibility rule, which owns whether a photo and
+        // its marks are on screen and knows the user turned Photos off. The other order
+        // put the ring and the line back for the chosen cluster while its photo stayed
+        // hidden -- a circle hanging in mid-air, which is the thing the rule exists to
+        // prevent. The tour's Places station does exactly that: photos off, then go(0).
         for (const child of scene._highlightGroup.children) {
             if (child.userData && child.userData.cluster !== undefined) {
                 child.visible = child.userData.cluster === index;
             }
         }
+        if (scene._applyQueryImageVisibility) scene._applyQueryImageVisibility();
     }
 
     /** Orbit this place, or stop orbiting if this is the place already being orbited. */
