@@ -53,7 +53,6 @@ from dimos.cli.commands.apriltag import apriltag
 from dimos.cli.commands.bake import bake
 from dimos.cli.commands.cameracalibrate import cameracalibrate
 from dimos.cli.commands.data import data_app
-from dimos.cli.commands.dataprep import dataprep_app
 from dimos.cli.commands.docs import docs
 from dimos.cli.commands.global_options import create_dynamic_callback
 from dimos.cli.commands.graph import graph
@@ -141,7 +140,6 @@ main.add_typer(map_app, name="map")
 from dimos.navigation.nav_3d.evaluator.cli import app as nav_eval_app
 
 main.add_typer(nav_eval_app, name="nav-eval")
-main.add_typer(dataprep_app, name="dataprep")
 
 from dimos.memory.cli.app import mem_app
 

@@ -26,9 +26,8 @@ and `coordinator_joint_state` (observation), `status` (episode segmentation).
 from __future__ import annotations
 
 from dimos.core.stream import In
-from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.memory.module import Recorder, RecorderConfig
-from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -45,8 +44,3 @@ class CollectionRecorder(Recorder):
     color_image: In[Image]  # observation (camera)
     coordinator_joint_state: In[JointState]  # observation + action (measured/next state)
     status: In[EpisodeStatus]  # episode start/save/discard segmentation
-
-    async def _resolve_pose(self, name: str, msg: object, ts: float) -> Pose | None:
-        if name in self.config.poseless_streams:
-            return None
-        return await super()._resolve_pose(name, msg, ts)

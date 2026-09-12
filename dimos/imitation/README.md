@@ -1,126 +1,51 @@
-# Imitation Learning
+# Imitation learning
 
-Collect demonstrations, build training datasets, and run trained policies in
-DimOS. Teleoperation records episodes to a session DB, and DataPrep converts
-that DB into a LeRobot or HDF5 dataset for imitation learning.
+Collection uses ordinary DimOS Blueprints. The graph owns robot hardware,
+cameras, transports, and runtime lifecycle. A `CollectionProfile` declares
+typed inputs and dataset projections; `collection_recorder(profile=...)`
+creates matching recorder ports before autoconnect.
 
-```
-teleop (WebXR) ─▶ CollectionRecorder ─▶ session_<robot>_<ts>.db ─▶ dimos dataprep ─▶ dataset
-```
-
-After training, use the production
-[`LeRobotPolicyModule`](policy/lerobot/README.md) to run a checkpoint against
-live camera and joint-state observations.
-
----
-
-## 1. Record a session
-
-Run a collection blueprint. Add `--simulation` to drive MuJoCo; omit it for real
-hardware (a RealSense + the arm).
+## OpenYAM Quest collection
 
 ```bash
-# XArm7 in sim
-dimos --simulation run learning-collect-webxr-xarm7
-
-# Piper on real hardware
-dimos run learning-collect-webxr-piper
+dimos run openyam-quest-collection \
+  --recorder.recording recordings/session-001 \
+  --episodes.task "pick up the cube"
 ```
 
-This brings up teleop, a RealSense (real only), the episode monitor, and the
-recorder, all wired together.
+Configure camera and hardware options through `dimos run BLUEPRINT --help`.
+Quest B starts/saves an episode; Y discards it. Python clients can use
+`Dimos.connect().find_module_by_spec(EpisodeControlSpec)` and its
+`get_status()` and `command(event)` RPCs instead.
 
-### Controls (WebXR)
+The recording is a new directory containing `schema.json` and
+`recording.mcap`, or `recording.db` with `--recorder.format sqlite`.
+Existing directories are rejected. Copy or move the complete directory.
+Stopping the runtime leaves an active episode incomplete; export excludes
+incomplete and discarded episodes. Support the arms before shutdown.
 
-| Button | Action |
-| --- | --- |
-| **A** (right) / **X** (left) | **Hold to engage** — the arm tracks the controller only while held |
-| **B** | **Toggle record** — press to start an episode, press again to save it |
-| **Y** | **Discard** the in-progress episode |
+## Prepare a recording
 
-So a take is: hold **A** to move the arm into place → press **B** to start →
-perform the task → press **B** to save (or **Y** to throw it away). The terminal
-prints one line per transition:
+```python
+from pathlib import Path
 
-```
-[collect] ▶ RECORDING episode  (state=recording  saved=0  discarded=0)
-[collect] ✓ SAVED episode      (state=idle       saved=1  discarded=0)
-```
+from dimos.imitation.collection.recording import RecordingSchema
+from dimos.imitation.dataprep.core import OutputConfig
+from dimos.imitation.dataprep.lerobot import run_lerobot_dataprep
 
-> End each good take with **B** before quitting — an episode still recording at
-> shutdown is dropped.
-
-### Where the recording goes
-
-```
-~/.local/state/dimos/recordings/session_<robot>_<YYYYMMDD_HHMMSS>.db
+directory = Path("recordings/session-001")
+config = RecordingSchema.read(directory).dataprep_config(
+    directory, OutputConfig(format="lerobot", path=Path("datasets/session-001"))
+)
+run_lerobot_dataprep(config)
 ```
 
-A new timestamped file per run (nothing is overwritten). It records three
-streams: `color_image`, `coordinator_joint_state`, and `status` (the episode
-start/save/discard markers).
+Preparation uses the saved schema, not a current robot profile. Only prepare
+trusted recordings; custom message classes must be installed in the reader
+environment. Generic `run_dataprep(config)` supports HDF5 output.
 
-The exact path is printed when the recorder starts — note it for the next step.
+## Policy execution
 
----
-
-## 2. Build a dataset
-
-DataPrep is an offline batch step that reads a session DB and writes a dataset.
-The obs/action stream mapping is nested, so it comes from a JSON config — start
-from [`dataprep/example_config.json`](dataprep/example_config.json) and edit the
-`source`/`output` to taste.
-
-```bash
-# LeRobot v3.0 (default)
-dimos dataprep build \
-  --source ~/.local/state/dimos/recordings/session_xarm7_20260622_120000.db \
-  --config dimos/imitation/dataprep/example_config.json
-
-# HDF5 instead
-dimos dataprep build -s <session.db> -c <config.json> -f hdf5
-```
-
-`--source` / `--output` / `--format` override whatever the config specifies, so
-you can reuse one config across runs and just swap `--source`. The dataset is
-written to the config's `output.path` (the example uses `data/datasets/session`)
-unless you pass `--output`.
-
-Inspect the result (features, shapes, dtypes, episode/frame counts):
-
-```bash
-dimos dataprep inspect data/datasets/session       # LeRobot dir
-dimos dataprep inspect data/datasets/session.hdf5  # HDF5 file
-```
-
-Each dataset gets a `dimos_meta.json` sidecar recording exactly how it was built
-(source, sync, episodes).
-
----
-
-## 3. Config reference
-
-See [`dataprep/example_config.json`](dataprep/example_config.json) for a full,
-working example. The fields that matter:
-
-- **`source`** — the session `.db`.
-- **`observation` / `action`** — map a dataset feature name to a recorded
-  `{stream, field}`. Action defaults to the *next* frame's joint state (see
-  `action_shift`), giving a next-state behavioral-cloning target.
-- **`sync`** — resample everything onto one timeline: `anchor` stream,
-  `rate_hz`, nearest-match `tolerance_ms`, and `action_shift` (1 = next-state BC,
-  0 = action == state). `fps` is derived from `rate_hz` unless set explicitly.
-- **`output`** — `format` (`lerobot` | `hdf5`), `path`, and `metadata`
-  (`robot`, `default_task_label`, …).
-
----
-
-## Notes
-
-- **Sim vs real camera** — under `--simulation` the MuJoCo camera supplies
-  `color_image`; on real hardware a RealSense does. The blueprint picks the
-  right one automatically.
-- **"action" is the measured next joint state**, not a recorded command. For
-  true commanded actions you'd record `joint_command` and map `action` to it.
-- **Old vs new sessions** — recordings made before the `coordinator_joint_state`
-  rename use the old stream name; point a matching config at them, or re-record.
+The [LeRobot module](policy/lerobot/README.md) provides isolated checkpoint
+loading, preflight, and controlled trajectory execution. Collection profiles
+do not define arbitrary policy-backend compatibility.
