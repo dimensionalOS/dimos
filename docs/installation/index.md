@@ -2,15 +2,9 @@
 
 ## Install with an agent (recommended)
 
-Ask your coding agent to guide you through setup. Copy this prompt:
+Give your coding agent this prompt (works before cloning or in an existing checkout):
 
-> Read https://raw.githubusercontent.com/dimensionalOS/dimos/main/.agents/skills/setup-dimos/SKILL.md and help me install DimOS. Ask me about the installation options before running setup, then verify the environment and show me how to get started.
-
-The agent checks your host, asks about capabilities, installation mode, destination,
-and native/Nix setup, then runs the installer with your choices and reports the
-verification results. The [setup skill](https://github.com/dimensionalOS/dimos/blob/main/.agents/skills/setup-dimos/SKILL.md)
-works before cloning or inside an existing checkout; no separate skill installation
-is needed. Include any known preferences in your request to skip those questions.
+> Read https://raw.githubusercontent.com/dimensionalOS/dimos/main/.agents/skills/setup-dimos/SKILL.md and help me install DimOS. Ask about installation options, then install, verify, and show the next commands.
 
 ## Install from a terminal
 
@@ -20,11 +14,11 @@ The guided installer sets up system dependencies, uv, Python 3.12, and dimOS. Ru
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-Choose an installation mode, destination, and one or both capabilities. Choose native dependencies or Nix; the installer detects the CPU/CUDA backend, shows the work it will perform, and asks for one installation confirmation. It then installs and verifies the environment. Existing checkouts and virtual environments are reused without clearing them or switching branches.
+Choose a mode, destination, capabilities, and native/Nix setup, then review the summary. The installer installs and verifies dependencies, reusing existing checkouts and environments.
 
 ## Choose capabilities
 
-Use the arrow keys to move, Space to toggle navigation and manipulation independently, and Enter to confirm. Nothing is preselected. Interactive runs use Gum (downloaded temporarily if needed); if it cannot be loaded, a built-in menu provides the same arrow-key/Space selection. Unattended runs do not download the menu helper. The same choices apply to both installation modes:
+Use arrow keys to move, Space to toggle, and Enter to confirm at least one capability:
 
 | Capability | Included dependencies |
 | --- | --- |
@@ -40,10 +34,6 @@ These bundles cover common workflows, not every hardware or model requirement. G
 - **Developer** clones `main`, or reuses an existing checkout, and installs its selected capabilities plus contributor test/lint groups. Those groups bring additional dependencies beyond the capability selection.
 
 ## Agent-assisted and unattended installation
-
-Give your agent the [setup-dimos skill](https://github.com/dimensionalOS/dimos/blob/main/.agents/skills/setup-dimos/SKILL.md). It works before cloning and inside a checkout. A copyable prompt:
-
-> Read https://raw.githubusercontent.com/dimensionalOS/dimos/main/.agents/skills/setup-dimos/SKILL.md and set up a DimOS navigation environment in ./dimos-app using library mode. Verify it and report the next commands.
 
 Non-interactive runs require explicit mode, destination, and capabilities. For a CPU library environment:
 
@@ -65,13 +55,11 @@ bash scripts/install.sh --non-interactive --mode dev --project-dir . \
 
 Use `--capabilities manipulation` for arms only. Add `--dry-run` to preview an explicit command without changes. Required system packages install automatically; unattended runs fail with instructions if administrator access is unavailable, rather than prompting for a password. An administrator can provision prerequisites first, or you can authenticate with `sudo -v` in a terminal and rerun where that authorization applies.
 
-Verification always checks the CLI, native libraries, selected capability dependencies, and PyTorch backend. It does not launch a blueprint or download model assets. The final summary includes activation instructions and examples from the [README](https://github.com/dimensionalOS/dimos#featured-runfiles): Go2 replay with its Rerun viewer for navigation, and xArm7 keyboard teleop for manipulation. Try the examples separately. Keyboard teleop uses mock hardware when no xArm address is configured; open its printed visualization URL. In a checkout, use `uv run --no-sync` to preserve the selected environment; plain `uv run` may resync a different set of extras.
+Verification checks the CLI and dependencies without launching blueprints or downloading models. Completion shows activation instructions and [README examples](https://github.com/dimensionalOS/dimos#featured-runfiles). In a checkout, use `uv run --no-sync` to preserve the selected environment.
 
 ## Platform setup and overrides
 
-Interactive runs ask how to provide system dependencies before the installation summary. Ubuntu/WSL offer native apt packages (recommended) or Nix; macOS offers native Homebrew packages (recommended) or Nix. Other Linux distributions offer Nix (recommended) or dependencies you have already installed manually. NixOS uses Nix.
-
-`--use-nix` and `--no-nix` bypass the question. Unattended runs use these platform defaults unless overridden:
+Interactive runs offer native dependencies or Nix. Unattended runs use these defaults; `--use-nix` or `--no-nix` overrides the choice:
 
 | Platform | Default setup | Validation |
 | --- | --- | --- |
@@ -79,7 +67,7 @@ Interactive runs ask how to provide system dependencies before the installation 
 | [macOS 14+](/docs/installation/osx.md), Apple Silicon | Homebrew | CI paused; local testing needed |
 | [NixOS / other Linux](/docs/installation/nix.md), including Arch | Nix | Not covered by installation CI |
 
-The summary identifies any Homebrew/Nix bootstrap. `--use-nix` selects Nix explicitly; `--no-nix` selects apt/Homebrew on supported platforms or preinstalled system dependencies on other Linux distributions. The installer enables `nix-command` and `flakes` for its Nix commands without changing your Nix configuration. Library mode reuses existing flake files or downloads missing ones; developer mode uses the checkout's flake.
+The summary lists any package-manager bootstrap. `--no-nix` uses apt/Homebrew where supported; other Linux distributions require preinstalled native dependencies. NixOS defaults to Nix.
 
 CUDA selection requires a detected NVIDIA GPU on Linux x86_64. `--no-cuda` selects CPU dependencies. Jetson CUDA setup is not supported. PyTorch verification does not qualify complete GPU workloads or promise GPU execution for every inference backend.
 
