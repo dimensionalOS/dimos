@@ -501,12 +501,19 @@ def refine(
     return result
 
 
-def refine_config_of(spec: str, default: str, cutoff: float = 0.3) -> RefineConfig | None:
+def refine_config_of(
+    spec: str, default: str, cutoff: float = 0.3, min_frames: int = 2
+) -> RefineConfig | None:
     """The refinement a config string asks for: "default" means ``default``
     (normally ``QueryConfig.refine``), "" or "none" means the raw map, else
-    a comma separated chain of methods."""
+    a comma separated chain of methods. ``min_frames`` is the support step's
+    keyframe count."""
     if spec == "default":
         spec = default
     if spec in ("", "none"):
         return None
-    return RefineConfig(methods=[m.strip() for m in spec.split(",") if m.strip()], cutoff=cutoff)
+    return RefineConfig(
+        methods=[m.strip() for m in spec.split(",") if m.strip()],
+        cutoff=cutoff,
+        min_frames=min_frames,
+    )

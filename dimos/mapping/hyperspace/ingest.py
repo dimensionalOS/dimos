@@ -29,6 +29,7 @@ import numpy as np
 
 from dimos.mapping.hyperspace import patches as hs
 from dimos.models.embedding.base import Embedding
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -41,7 +42,6 @@ if TYPE_CHECKING:
     from dimos.memory.store.base import Store
     from dimos.memory.stream import Stream
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-    from dimos.msgs.sensor_msgs.Image import Image
 
 logger = setup_logger()
 
@@ -81,6 +81,44 @@ class IngestConfig:
     depth_max_dt: float = 0.05
     depth_history: int = 64
     depth_thumbnail_stride: int = 4
+    # The keyframe's cell grid: what patch_depth is measured on and what the
+    # query pools the members' scores onto. None = the model's own grid for a
+    # single fixed-resolution checkpoint (the original layout), and for an
+    # ensemble the finest grid any member offers, never coarser than 24x24.
+    cell_grid: tuple[int, int] | None = None
+    # Fill the depth holes from the colour frame before measuring patch depth
+    # (dimos.perception.depth2depth). Stereo returns nothing off glass, shiny
+    # floors and dark shelves, and reads *through* a freezer door -- so a patch
+    # in front of one is placed metres too far. "" = raw sensor depth only.
+    depth2depth_model: str = ""
+
+
+def grids_of(model: Any, image: Image) -> list[tuple[NDArray[np.float32], tuple[int, int]]]:
+    """One ``(grid, (rows, cols))`` per ensemble member, from an ensemble, a
+    single SigLIP2Patches, or any object with ``embed_patches`` and
+    ``patches_per_side`` (the test stubs)."""
+    if hasattr(model, "embed_grids"):
+        grids = model.embed_grids(image)
+        return grids if isinstance(grids, list) and grids and isinstance(grids[0], tuple) else grids
+    side = int(model.patches_per_side)
+    return [(model.embed_patches(image)[0], (side, side))]
+
+
+def decoded(image: Any) -> Image:
+    """A raw frame from whatever the recording holds. Compressed frames go
+    through CompressedImage.decode(), except webp, which it has no branch for
+    (the lite recorder writes webp colour, so the grocery recordings are all
+    webp) -- Pillow reads those."""
+    if not isinstance(getattr(image, "format", None), str) or not hasattr(image, "decode"):
+        return image
+    if not image.format.startswith("webp"):
+        return image.decode()
+    import io
+
+    from PIL import Image as PillowImage
+
+    pixels = np.asarray(PillowImage.open(io.BytesIO(image.data)).convert("RGB"), np.uint8)
+    return Image(data=pixels, format=ImageFormat.RGB, frame_id=image.frame_id, ts=image.ts)
 
 
 class PatchIngestor:
@@ -97,6 +135,10 @@ class PatchIngestor:
         self.store = store
         self.model = model
         self.config = config
+        # Ensemble bookkeeping, written with every keyframe so the query side
+        # can load the matching text towers: short tags and the full specs.
+        self.members: list[str] = list(getattr(model, "tags", []))
+        self.member_specs: list[str] = list(getattr(model, "specs", []))
         # target_from_source(target_frame, source_frame, ts) for the motion gate
         # and depth-to-colour alignment. None = no tf available (both skipped).
         self.lookup = lookup
@@ -105,6 +147,9 @@ class PatchIngestor:
         self.depths: deque[tuple[float, str, NDArray[np.float32]]] = deque(
             maxlen=config.depth_history
         )
+        # Built on the first colour frame: loading the model costs seconds and
+        # an ingest without depth2depth should never pay for it.
+        self.fuser: Any = None
         self.keyframes: Stream[Any] = store.stream(KEYFRAME_STREAM, dict)
         self.patches: Stream[Any] = store.stream(PATCH_STREAM, dict)
         self.tf_stream: Stream[TFMessage] = store.stream(TF_STREAM, TFMessage)
@@ -122,6 +167,7 @@ class PatchIngestor:
         )
 
     def add_depth(self, image: Image) -> None:
+        image = decoded(image)
         depth = np.asarray(image.as_numpy())
         metres = depth.astype(np.float32) * (0.001 if depth.dtype == np.uint16 else 1.0)
         metres[(metres > self.config.max_depth_m) | ~np.isfinite(metres)] = 0.0
@@ -143,6 +189,7 @@ class PatchIngestor:
 
     def add_image(self, image: Image) -> bool:
         """Returns True when this frame produced a keyframe."""
+        image = decoded(image)
         self.stats["images"] += 1
         if self.stats["images"] in (1, 50) or self.stats["images"] % 250 == 0:
             logger.info(f"hyperspace ingest: {self.stats}")
@@ -155,7 +202,8 @@ class PatchIngestor:
             self.stats["gated"] += 1
             return False
         started = time.monotonic()
-        grid = self.model.embed_patches(image)[0]
+        grids = grids_of(self.model, image)
+        grid = grids[0][0]
         if self.stats["embedded"] == 0:
             logger.info(f"hyperspace ingest: first embed took {time.monotonic() - started:.2f}s")
         self.last_embedded = ts
@@ -164,12 +212,14 @@ class PatchIngestor:
         # Pair depth now, while its frame is still in the short depth history:
         # the buffer judges this frame ~5 embedded frames later.
         depth = self._paired_depth(image.frame_id, ts)
+        if depth is not None and self.config.depth2depth_model:
+            depth = self._fused_depth(rgb, depth)
         kept = self.buffer.push(
             hs.BufferedFrame(
                 ts=ts,
                 grid=grid.astype(np.float16),
                 quality=quality,
-                payload=(image.frame_id, depth),
+                payload=(image.frame_id, depth, grids),
             )
         )
         if kept is None:
@@ -182,6 +232,24 @@ class PatchIngestor:
         for frame in kept:
             self._write_keyframe(frame)
         return len(kept)
+
+    def _fused_depth(
+        self, rgb: NDArray[np.uint8], depth: NDArray[np.float32]
+    ) -> NDArray[np.float32]:
+        """Depth with its holes filled from the colour frame. Shapes must match:
+        the pairing has already put the depth on the colour camera's grid."""
+        from dimos.perception.depth2depth.fusion import Depth2Depth, FuseConfig
+
+        if self.fuser is None:
+            self.fuser = Depth2Depth(
+                config=FuseConfig(far_m=self.config.max_depth_m),
+                model_name=self.config.depth2depth_model,
+            )
+            self.fuser.start()
+            logger.info(f"hyperspace ingest: depth2depth on {self.fuser.device}")
+        if rgb.shape[:2] != depth.shape[:2]:
+            return depth
+        return self.fuser.fuse(rgb, depth).fused
 
     def _paired_depth(self, camera_frame: str, ts: float) -> NDArray[np.float32] | None:
         best = None
@@ -205,13 +273,31 @@ class PatchIngestor:
             return None
         return hs.reproject_depth(metres, depth_intrinsics, color, color_from_depth)
 
+    def cell_grid(
+        self, grids: list[tuple[NDArray[np.float32], tuple[int, int]]]
+    ) -> tuple[int, int]:
+        if self.config.cell_grid is not None:
+            return self.config.cell_grid
+        # One fixed grid: keep the model's own layout, so the vector index's
+        # patch ids and the keyframe cells are the same thing.
+        if len(grids) == 1:
+            return grids[0][1]
+        # Several members: the finest grid any of them offers, so a tiled
+        # member's extra resolution is not thrown away resampling onto a
+        # coarser common grid. Floored at 24x24, the layout every ensemble
+        # used before tiling existed, so the untiled defaults are unchanged.
+        return (
+            max(24, max(shape[0] for _, shape in grids)),
+            max(24, max(shape[1] for _, shape in grids)),
+        )
+
     def _write_keyframe(self, kept: hs.BufferedFrame) -> None:
-        camera_frame, depth = kept.payload
+        camera_frame, depth, grids = kept.payload
         color = self.intrinsics.get(camera_frame)
         if color is None:
             logger.warning(f"hyperspace: no camera_info for {camera_frame!r} yet; keyframe dropped")
             return
-        rows = cols = self.model.patches_per_side
+        rows, cols = self.cell_grid(grids)
         if depth is None:
             self.stats["kept_without_depth"] += 1
             patch_depth = np.full(rows * cols, np.nan, dtype=np.float32)
@@ -220,22 +306,33 @@ class PatchIngestor:
             patch_depth = hs.per_patch_depth(depth, rows, cols)
             stride = max(self.config.depth_thumbnail_stride, 1)
             thumbnail = np.clip(depth[::stride, ::stride] * 1000.0, 0, 65535).astype(np.uint16)
-        keyframe = self.keyframes.append(
-            {
-                "camera_frame": camera_frame,
-                "ts": kept.ts,
-                "rows": rows,
-                "cols": cols,
-                "intrinsics": vars(color),
-                "grid": kept.grid,
-                "patch_depth": patch_depth,
-                "thumbnail_mm": thumbnail,
-                "thumbnail_stride": self.config.depth_thumbnail_stride,
-            },
-            ts=kept.ts,
-            tags={"camera_frame": camera_frame},
-        )
-        for index in range(rows * cols):
+        payload = {
+            "camera_frame": camera_frame,
+            "ts": kept.ts,
+            "rows": rows,
+            "cols": cols,
+            "intrinsics": vars(color),
+            # The primary member's grid, as before; ``grids`` carries every
+            # member (primary first) with its own shape when there is more
+            # than one, or when the one grid is not the cell grid.
+            "grid": kept.grid,
+            "patch_depth": patch_depth,
+            "thumbnail_mm": thumbnail,
+            "thumbnail_stride": self.config.depth_thumbnail_stride,
+        }
+        shapes = [shape for _, shape in grids]
+        if self.member_specs:
+            payload["members"] = self.members
+            payload["member_specs"] = self.member_specs
+        if len(grids) > 1 or shapes[0] != (rows, cols):
+            payload["grids"] = [grid.astype(np.float16) for grid, _ in grids]
+            payload["grid_shapes"] = [list(shape) for shape in shapes]
+            payload.setdefault("members", [f"member{i}" for i in range(len(grids))])
+        keyframe = self.keyframes.append(payload, ts=kept.ts, tags={"camera_frame": camera_frame})
+        # The vector index holds the primary member only, indexed on its own
+        # grid (``grid_shapes[0]``): a nearest-neighbour hook for single-grid
+        # tools, not what the ensemble query reads.
+        for index in range(len(kept.grid)):
             self.patches.append(
                 {"keyframe": keyframe.id, "patch": index},
                 ts=kept.ts,

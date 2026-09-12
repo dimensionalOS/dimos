@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.core.rpc_decorator import rpc
+from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.mapping.hyperspace import segmenter as seg
 from dimos.mapping.hyperspace.embedder import SIGLIP2_MODEL_NAME, SigLIP2Patches

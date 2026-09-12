@@ -37,13 +37,14 @@ import numpy as np
 import typer
 
 from dimos.mapping.hyperspace import patches as hs
-from dimos.mapping.hyperspace.embedder import SIGLIP2_MODEL_NAME, SigLIP2Patches
+from dimos.mapping.hyperspace.embedder import DEFAULT_MEMBERS, PatchEnsemble
 from dimos.mapping.hyperspace.ingest import (
     KEYFRAME_STREAM,
     IngestConfig,
     PatchIngestor,
     transform_to_matrix,
 )
+from dimos.mapping.hyperspace.module import depth2depth_model_of, store_members
 from dimos.mapping.hyperspace.query import HyperspaceQuery
 from dimos.mapping.hyperspace.refine import METHODS, refine_config_of
 from dimos.memory.tf import StreamTF
@@ -109,7 +110,7 @@ def pick_device(device: str) -> str:
 def ingest(
     recording: Store,
     memory: Store,
-    model: SigLIP2Patches,
+    model: PatchEnsemble,
     *,
     color_stream: str,
     depth_stream: str,
@@ -368,11 +369,27 @@ def main(
         + ", ".join(METHODS)
         + "; 'default' = QueryConfig.refine, 'none' = the raw map",
     ),
-    model_name: str = typer.Option(
-        SIGLIP2_MODEL_NAME, help="SigLIP2 snapshot: HF id or local directory"
+    models: str = typer.Option(
+        ",".join(DEFAULT_MEMBERS),
+        help="Comma separated SigLIP2 checkpoints (ids or dirs; NaFlex ones as id@budget). "
+        "One = the classic single model; several = an ensemble pooled per cell. "
+        "When reusing a db its own members are used.",
+    ),
+    pool: str = typer.Option("min", help="Ensemble pooling: min, 2nd (second lowest) or mean"),
+    min_frames: int = typer.Option(
+        1,
+        help="Keyframes a voxel must be seen from (refine 'support'); 2 was the single-model setting",
+    ),
+    pooled_hot_threshold: float = typer.Option(
+        0.005, help="Hot threshold on the pooled score (0.005 for min, 0.02 for 2nd)"
     ),
     device: str = typer.Option("auto", help="cuda, mps, cpu, or auto"),
     max_depth: float = typer.Option(10.0, help="Depth readings beyond this many meters are holes"),
+    depth2depth: str = typer.Option(
+        "",
+        help="Fill the depth holes from the colour frame before measuring patch depth: "
+        "'default', a depth-anything checkpoint, or '' for raw sensor depth",
+    ),
     color_stream: str = typer.Option("", help="Colour image stream (auto-detected by name)"),
     depth_stream: str = typer.Option("", help="Depth image stream (auto-detected by name)"),
     color_info_stream: str = typer.Option("", help="Colour camera_info stream"),
@@ -394,10 +411,11 @@ def main(
     memory = open_store(memory_path, must_exist=False)
     device = pick_device(device)
     stats: dict[str, int] = {}
+    specs = [spec.strip() for spec in models.split(",") if spec.strip()]
     if fresh:
-        model = SigLIP2Patches(model_name=model_name, device=device, towers="vision")
+        model = PatchEnsemble(specs, device=device, towers="vision")
         model.start()
-        typer.echo(f"embedding with {model_name} on {device} -> {memory_path}")
+        typer.echo(f"embedding with {model.tags} on {device} -> {memory_path}")
         stats = ingest(
             source,
             memory,
@@ -412,22 +430,26 @@ def main(
             config=IngestConfig(
                 gate=hs.KeyframeGateConfig(max_angular_velocity=None),
                 max_depth_m=max_depth,
+                depth2depth_model=depth2depth_model_of(depth2depth),
             ),
         )
         typer.echo(f"ingest: {stats}")
         model.stop()
     else:
         typer.echo(f"reusing {memory_path} (pass --no-reuse to re-embed)")
-    text_model = SigLIP2Patches(model_name=model_name, device=device, towers="text")
+        specs = store_members(memory) or specs
+    text_model = PatchEnsemble(specs, device=device, towers="text")
     text_model.start()
-    query_config = hs.QueryConfig(cap_near=cap_near, cap_far=cap_far)
+    query_config = hs.QueryConfig(
+        cap_near=cap_near, cap_far=cap_far, pool=pool, pooled_hot_threshold=pooled_hot_threshold
+    )
     engine = HyperspaceQuery(
         memory,
-        lambda text: text_model.embed_text_array(text)[0],
+        text_model.embed_text,
         query_config,
         world_frame=frame,
         voxel_size=voxel_size,
-        refine_config=refine_config_of(refine, query_config.refine, cutoff),
+        refine_config=refine_config_of(refine, query_config.refine, cutoff, min_frames),
     )
     answers = []
     for index, text in enumerate(query, start=1):
