@@ -29,11 +29,13 @@ Install dimOS with the [official installer](/docs/installation/index.md). It pro
 
 The macOS 14 minimum follows the current developer dependencies, including ONNX Runtime and Drake. It does not mean that every older dimOS package requires macOS 14. See the [macOS installation guide](/docs/installation/osx.md).
 
-Choose extras with the installer's `--extras` option. The default is `all`, adjusted for the platform. For example:
+The installer requires an explicit **navigation**, **manipulation**, or combined capability selection. It includes the supporting features for common blueprints and detects the accelerator backend. For example:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --extras base,unitree,sim
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --capabilities navigation
 ```
+
+For advanced direct `uv`/`pip` installs, granular package extras remain available:
 
 | Extra | What it adds | Key packages | GPU? |
 |-------|-------------|--------------|------|

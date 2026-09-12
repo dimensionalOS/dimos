@@ -2,12 +2,13 @@
 # Copyright 2025-2026 Dimensional Inc.
 # Licensed under the Apache License, Version 2.0
 # Run one real installation on a disposable host/container:
-#   INSTALL_TEST_ROOT="$(mktemp -d)" bash scripts/test-install.sh library|dev
+#   INSTALL_TEST_ROOT="$(mktemp -d)" bash scripts/test-install.sh library|dev navigation|manipulation|navigation,manipulation
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
 mode=${1:?expected library or dev}
 case "$mode" in library|dev) ;; *) exit 2;; esac
+capabilities=${2:?expected navigation, manipulation, or navigation,manipulation}
 : "${INSTALL_TEST_ROOT:?set INSTALL_TEST_ROOT to an empty temporary directory}"
 mkdir -p "$INSTALL_TEST_ROOT/logs"
 project="$INSTALL_TEST_ROOT/$mode"
@@ -22,9 +23,9 @@ if [[ "$mode" == dev ]]; then
     git -C "$project" checkout --detach "$expected_commit"
 fi
 
-# The installer performs bounded CLI and dependency verification. --skip-tests
-# disables its optional blueprint replay. pipefail preserves installation errors.
+# The installer performs bounded CLI and capability dependency verification.
+# No blueprint is started. pipefail preserves installation errors.
 cat "$repo/scripts/install.sh" | /bin/bash -s -- \
-    --non-interactive --no-nix --no-sysctl --skip-tests --no-cuda \
+    --non-interactive --no-nix --no-cuda --capabilities "$capabilities" \
     --mode "$mode" --project-dir "$project" \
     2>&1 | tee "$INSTALL_TEST_ROOT/logs/install.log"

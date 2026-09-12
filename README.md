@@ -145,7 +145,9 @@ Use the official installer to set up system dependencies, Python 3.12, and dimOS
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-> See [`scripts/install.sh --help`](scripts/install.sh) for non-interactive and advanced options.
+Choose **navigation**, **manipulation**, or both. Each includes the agents, perception, visualization, and simulation dependencies for common workflows. The installer detects the system setup, shows a summary, then installs and verifies your environment.
+
+**Installing with an agent?** Give it the [setup-dimos skill](.agents/skills/setup-dimos/SKILL.md), which covers new projects and existing checkouts. See [unattended installation](docs/installation/index.md#agent-assisted-and-unattended-installation) for explicit commands, or run `bash scripts/install.sh --help`.
 
 See [installer options](docs/installation/index.md), or platform notes:
 

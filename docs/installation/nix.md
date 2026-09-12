@@ -3,15 +3,15 @@
 Use the official installer with `--use-nix` to provision a Nix development shell and a virtual environment using the Nix-provided Python:
 
 ```sh skip
-curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --use-nix --mode dev --project-dir ./dimos
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --use-nix --mode dev --project-dir ./dimos --capabilities navigation,manipulation
 cd dimos
 nix develop
 source .venv/bin/activate
 ```
 
-The installer offers to install Nix if needed and enables flakes for a new installation. An existing Nix installation must already have flakes enabled. Choose library mode to install the published package instead; the installer downloads the flake files into that project.
+The installation summary includes Nix bootstrap when needed; after confirmation, the installer provisions Nix and enables flakes. An existing Nix installation must already have flakes enabled. Choose library mode to install the published package instead; the installer downloads the flake files into that project.
 
-Nix is an option for Arch Linux and other distributions whose package managers the installer does not handle. This path is not covered by installation CI. Native Arch dependency installation through pacman is not implemented.
+Nix is the default for NixOS, Arch Linux, and other Linux distributions whose package managers the installer does not handle. This path is not covered by installation CI. Native Arch dependency installation through pacman is not implemented.
 
 On Ubuntu, prefer the [system-package path](/docs/installation/ubuntu.md), which is tested in CI. Nix libraries can conflict with PyPI wheels on Ubuntu 22.04.
 
