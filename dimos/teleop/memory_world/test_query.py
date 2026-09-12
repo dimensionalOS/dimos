@@ -199,6 +199,55 @@ def test_analyze_memory_reports_a_child_that_died_after_printing_its_answer(
     assert "3" in outcome.message
 
 
+def test_two_frames_a_fraction_of_a_millisecond_apart_are_not_one_cached_frame(
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The replay frame cache is keyed by the stamp, so the stamp has to be the stamp.
+
+    It was rounded to four decimals first. Two observations inside the same tenth of a
+    millisecond then shared a bucket, and the second one was served the FIRST one's JPEG
+    and camera pose -- a picture of somewhere else, with a pose to match.
+    """
+    first = SimpleNamespace(ts=1.00001, data="FIRST")
+    second = SimpleNamespace(ts=1.000049, data="SECOND")
+    stream = SimpleNamespace(at=lambda ts, tolerance: [first, second])
+    monkeypatch.setattr(
+        memory_world, "_ensure_store", lambda: SimpleNamespace(streams={"": stream})
+    )
+    monkeypatch.setattr(memory_world.config, "image_stream_name", "")
+    monkeypatch.setattr(memory_world, "_encode_jpeg", lambda data, *a: str(data).encode())
+    monkeypatch.setattr(memory_world, "_camera_hfov", lambda: 60.0)
+    monkeypatch.setattr(memory_world, "_camera_pose_of", lambda obs: None)
+
+    got_first, _ = memory_world._replay_frame(1.00001)
+    got_second, _ = memory_world._replay_frame(1.000049)
+
+    assert got_first == b"FIRST"
+    assert got_second == b"SECOND", "served the neighbouring frame's picture from the cache"
+    # ...and the cache is still a cache: asking again returns the same object, not a re-encode.
+    assert memory_world._replay_frame(1.00001)[0] == b"FIRST"
+    assert len(memory_world._replay_frames) == 2
+
+
+def test_analyze_memory_reads_the_sentinel_as_a_line_not_a_substring(
+    memory_world: MemoryWorldModule,
+) -> None:
+    """The answer's own text must not be mistaken for the marker announcing it.
+
+    The bootstrap prints the sentinel at the start of a line and the JSON after it on the
+    SAME line, so searching the whole of stdout for the last occurrence found the copy
+    sitting INSIDE the answer -- later in the string than the real one -- and sliced from
+    there. A perfectly good result came back as EXECUTION_FAILED.
+    """
+    outcome = memory_world.analyze_memory(
+        "result = {'answer': 'the marker __DIMOS_MEMORY_RESULT__= appears in my text'}",
+        timeout=10,
+    )
+
+    assert outcome.success, f"a valid answer quoting the marker was rejected: {outcome.message}"
+    assert "appears in my text" in outcome.message
+
+
 def test_analyze_memory_times_out(memory_world: MemoryWorldModule) -> None:
     outcome = memory_world.analyze_memory("import time; time.sleep(1)", timeout=0.01)
 
@@ -1468,8 +1517,9 @@ def test_navigate_tries_every_viewpoint_before_saying_there_is_no_route(
     # TWELVE photos, and their publication order is deliberately not their distance
     # order. The count matters: this test used three, so every cap from 4 upwards
     # survived it and the 8 that actually shipped was invisible to it. With twelve and
-    # only the LAST candidate reachable there are 13 candidates in the list, so any cap
-    # at all fails.
+    # only the LAST candidate reachable there are 13 candidates in the list, so every cap
+    # smaller than the list fails. (A cap of exactly 13 is the same as no cap for this
+    # fixture and is not what the constant ever was: the one that shipped was 8.)
     distances = [12.0, 3.0, 7.0, 1.0, 9.0, 2.0, 11.0, 4.0, 8.0, 5.0, 10.0, 6.0]
     memory_world._active_query_images = [
         ({"query_id": "q1", "cluster": 0, "index": i, "position": [d, 0.0, 0.5]}, b"")

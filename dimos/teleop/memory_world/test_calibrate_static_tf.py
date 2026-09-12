@@ -28,6 +28,7 @@ import pytest
 
 from dimos.teleop.memory_world.calibrate_static_tf import (
     _nearest,
+    _raster_intrinsics,
     _rotation,
     _thinned,
     camera_mount_edge,
@@ -165,6 +166,33 @@ def test_the_rotation_helper_is_a_rotation_and_turns_the_right_way() -> None:
     )
 
 
+def test_calibration_intrinsics_are_scaled_to_the_depth_raster() -> None:
+    """The mount fit back-projects the DEPTH image, not the calibrated one.
+
+    K was read raw and indexed with the depth image's own rows and columns. With a
+    1280x720 calibration and a 640x480 depth image, the centre pixel back-projected to
+    (-0.71, -0.27, 2) instead of (0, 0, 2), and that shape was what the mount was fitted
+    against. Same mistake, same package, as the one `patch_world_position` was fixed for.
+    """
+    calibrated = (900.0, 900.0, 640.0, 360.0)  # solved on 1280x720
+
+    # Matching raster: left exactly alone, no scaling invented.
+    assert _raster_intrinsics(calibrated, (1280, 720), (720, 1280)) == calibrated
+
+    # 4:3 depth against a 16:9 calibration, where the two ratios genuinely differ:
+    # sx = 640/1280 = 0.5 and sy = 480/720 = 2/3. Each axis takes its OWN, so reusing
+    # one for both -- which is how a y ends up computed with an x scale -- is visible.
+    fx, fy, cx, cy = _raster_intrinsics(calibrated, (1280, 720), (480, 640))
+    assert (fx, cx) == pytest.approx((450.0, 320.0))
+    assert (fy, cy) == pytest.approx((600.0, 240.0))
+    # The centre of the depth raster is then dead ahead, which is the whole point.
+    assert ((640 / 2) - cx) == pytest.approx(0.0)
+    assert ((480 / 2) - cy) == pytest.approx(0.0)
+
+    # A calibration that states no size cannot be scaled to anything.
+    assert _raster_intrinsics(calibrated, (0, 0), (480, 640)) == calibrated
+
+
 def test_thinning_keeps_one_point_per_cube_and_obeys_the_cap() -> None:
     # Two of these are CLOSER together than the cube, which is what pins the size. They
     # used to be spaced 1.0 apart, so every size from 0.06 (what production passes) up to
@@ -177,6 +205,11 @@ def test_thinning_keeps_one_point_per_cube_and_obeys_the_cap() -> None:
     thinned = _thinned(spread, 0.5, 500)
     assert len(thinned) == 500  # capped, and every survivor is one of the originals
     assert {tuple(p) for p in thinned} <= {tuple(p) for p in spread}
+    # DISTINCT survivors. A subset assertion silently collapses duplicates, so sampling
+    # the cap with replacement -- which hands the same point back several times and
+    # breaks the one-point-per-cube promise in this test's own name -- passed it: 500
+    # rows covering 458 cubes.
+    assert len({tuple(p) for p in thinned}) == 500, "the cap returned the same point twice"
 
 
 def test_a_measured_mount_is_written_into_the_recordings_own_tf(tmp_path) -> None:  # type: ignore[no-untyped-def]

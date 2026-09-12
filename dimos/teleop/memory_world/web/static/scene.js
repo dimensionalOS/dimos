@@ -1436,6 +1436,12 @@ export class WorldScene {
     viewFrom(index) {
         const header = this._queryImages[index];
         if (!header || this.three.xr.isPresenting) return false;
+        // A photo the filter is hiding is not somewhere to stand: J and the Answer
+        // button index the UNFILTERED list, so after browsing to another place they
+        // stood you in a wall with a corridor cut toward a hidden photo. Both callers
+        // fall back to focusOn when this returns false.
+        if (header.cluster !== undefined && this.clusterFilter >= 0
+            && header.cluster !== this.clusterFilter) return false;
         const eye = new THREE.Vector3(...header.position);
         const forward = new THREE.Vector3(...header.forward).normalize();
         // Robot -> three: (x, y, z) -> (x, z, -y), then the world group's scale.

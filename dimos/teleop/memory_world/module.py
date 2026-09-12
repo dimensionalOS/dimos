@@ -775,8 +775,18 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
                 "EXECUTION_TIMEOUT", f"Memory analysis timed out after {timeout:g} seconds"
             )
 
-        marker = completed.stdout.rfind(RESULT_SENTINEL)
-        if marker < 0:
+        # The bootstrap prints the sentinel at the START of its own line, so that is how
+        # it is looked for. `rfind` over the whole of stdout searched INSIDE the printed
+        # JSON too, and since the JSON follows the marker on the same line, an answer whose
+        # own text contained the sentinel won the search -- a valid result came back as
+        # EXECUTION_FAILED. It also indexed `splitlines()[0]` on whatever followed, which
+        # for a marker at the very end of stdout is an empty list: IndexError, uncaught.
+        encoded = None
+        for line in reversed(completed.stdout.splitlines()):
+            if line.startswith(RESULT_SENTINEL):
+                encoded = line[len(RESULT_SENTINEL) :]
+                break
+        if encoded is None:
             detail = (completed.stderr or completed.stdout or "analysis returned no result").strip()
             return SkillResult.fail("EXECUTION_FAILED", self._cap_analysis_output(detail))
 
@@ -792,7 +802,6 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
             )
             return SkillResult.fail("EXECUTION_FAILED", self._cap_analysis_output(detail))
 
-        encoded = completed.stdout[marker + len(RESULT_SENTINEL) :].splitlines()[0]
         if len(encoded) > self.config.memory_analysis_max_output_chars:
             return SkillResult.fail(
                 "RESULT_TOO_LARGE",

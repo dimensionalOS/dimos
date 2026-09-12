@@ -126,3 +126,6 @@ def test_slerp_halfway_between_identity_and_a_quarter_turn() -> None:
     halfway = slerp(np.array(IDENTITY), np.array(YAW_90), 0.5)
     angle = 2 * np.degrees(np.arccos(halfway[3]))
     assert angle == pytest.approx(45.0, abs=1e-6)
+    # ...and about the RIGHT AXIS. The angle comes from w alone, so swapping x and z in
+    # the result left this green while a roll was returned as halfway to a yaw.
+    assert halfway[:3] == pytest.approx([0.0, 0.0, np.sin(np.radians(22.5))], abs=1e-6)

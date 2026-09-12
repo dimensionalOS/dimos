@@ -117,7 +117,12 @@ class ReplayServing:
         if not candidates:
             return None
         obs = min(candidates, key=lambda o: abs(float(o.ts) - ts))
-        key = round(float(obs.ts), 4)  # not obs.id: an mcap numbers each windowed read from 0
+        # Not obs.id: an mcap numbers each windowed read from 0. Not a ROUNDED stamp
+        # either -- at 4 decimals two frames a tenth of a millisecond apart share a bucket
+        # and the second one is served the first one's JPEG and pose. The stamp is
+        # deterministic for a given observation, so the exact float is already a stable
+        # key and rounding bought nothing.
+        key = float(obs.ts)
         cached = self._replay_frames.get(key)
         if cached is not None:
             self._replay_frames.move_to_end(key)

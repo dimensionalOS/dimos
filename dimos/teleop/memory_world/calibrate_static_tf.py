@@ -76,6 +76,29 @@ def _nearest(stream: Any, ts: float, tolerance: float) -> Any:
     return min(near, key=lambda obs: abs(float(obs.ts) - ts))
 
 
+def _raster_intrinsics(
+    calibrated: tuple[float, float, float, float],
+    calibrated_size: tuple[int, int],
+    shape: tuple[int, ...],
+) -> tuple[float, float, float, float]:
+    """*calibrated* intrinsics, scaled to the raster they are about to index.
+
+    `sensor_intrinsics` has already applied the roi and binning the message states. A
+    difference REMAINING after that is a resize, and a resize is the one case where the
+    focal length scales with the principal point. Each axis scales by its own ratio: the
+    two are equal only when the aspect matches, and reusing one for both is how a y
+    coordinate ends up computed with an x scale factor.
+    """
+    fx, fy, cx, cy = calibrated
+    height, width = int(shape[0]), int(shape[1])
+    iwidth, iheight = int(calibrated_size[0]), int(calibrated_size[1])
+    if iwidth > 0 and iheight > 0 and (iwidth, iheight) != (width, height):
+        sx, sy = width / float(iwidth), height / float(iheight)
+        fx, cx = fx * sx, cx * sx
+        fy, cy = fy * sy, cy * sy
+    return fx, fy, cx, cy
+
+
 def _thinned(points: np.ndarray, size: float, cap: int) -> np.ndarray:
     """One point per *size* cube, then at most *cap* of them."""
     _, keep = np.unique(np.floor(points / size).astype(np.int64), axis=0, return_index=True)
@@ -90,10 +113,18 @@ def _pairs(store: Any, streams: dict[str, Any], samples: int) -> list[tuple[np.n
     from scipy.spatial import cKDTree
 
     from dimos.teleop.memory_world.recording import depth_info_stream_for
+    from dimos.teleop.memory_world.visual_search import sensor_intrinsics
 
     info_name = depth_info_stream_for(store, streams["depth"], streams["camera_info"])
-    K = np.asarray(store.streams[info_name].first().data.K, dtype=np.float64)
-    fx, fy, cx, cy = K[0], K[4], K[2], K[5]
+    info = store.streams[info_name].first().data
+    # A camera_info is a calibration, not a promise about the raster beside it. Reading K
+    # raw and indexing it with the DEPTH image's rows and columns back-projected the
+    # centre pixel of a 640x480 depth image through a 1280x720 calibration's cx to
+    # (-0.71, -0.27, 2) instead of (0, 0, 2), and fed that shape to the mount fit. This is
+    # the same mistake, in the same package, that `patch_world_position` was fixed for.
+    # `sensor_intrinsics` applies roi and binning, which are stated in the message;
+    # anything still mismatched after that IS a resize, and a resize scales.
+    calibrated, calibrated_size = sensor_intrinsics(info)
     depth, lidar = store.streams[streams["depth"]], store.streams[streams["lidar"]]
     first, last = depth.first(), depth.last()
 
@@ -117,6 +148,7 @@ def _pairs(store: Any, streams: dict[str, Any], samples: int) -> list[tuple[np.n
         if usable.sum() < 2000:
             continue
         zz = z[usable]
+        fx, fy, cx, cy = _raster_intrinsics(calibrated, calibrated_size, raw.shape)
         cloud = np.stack([(cols[usable] - cx) * zz / fx, (rows[usable] - cy) * zz / fy, zz], axis=1)
         points = np.asarray(scan.data.points_f32(), dtype=np.float64)
         points = points[np.isfinite(points).all(axis=1)]
