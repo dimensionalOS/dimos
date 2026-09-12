@@ -86,19 +86,12 @@ class TestRunEntryCRUD:
 
 
 class TestGenerateRunId:
-    """Run IDs retain readable names and distinguish simultaneous launches."""
+    """test_generate_run_id_format — timestamp + sanitized blueprint name."""
 
     def test_generate_run_id_format(self):
         rid = generate_run_id("unitree-go2")
-        assert re.fullmatch(r"\d{8}-\d{6}-[0-9a-f]{32}-unitree-go2", rid)
-
-    def test_same_blueprint_started_in_one_second_has_distinct_ids(self, monkeypatch):
-        monkeypatch.setattr(run_registry.time, "strftime", lambda _: "20260912-120000")
-
-        first = generate_run_id("coordinator-mock")
-        second = generate_run_id("coordinator-mock")
-
-        assert first != second
+        # Pattern: YYYYMMDD-HHMMSS-<name>
+        assert re.match(r"^\d{8}-\d{6}-unitree-go2$", rid), f"unexpected format: {rid}"
 
     def test_sanitizes_slashes(self):
         rid = generate_run_id("path/to/bp")

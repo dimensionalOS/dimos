@@ -46,11 +46,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, TypeVar, Unpack, cast
 
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
-from typing_extensions import Unpack
 
 from dimos.memory.transform import Transformer
 from dimos.memory.type.observation import Observation

@@ -45,8 +45,8 @@ class TestControlCoordinatorE2E:
         lcm_spy.save_topic(joint_state_topic)
 
         # Start the mock coordinator blueprint
-        call = start_blueprint("coordinator-mock")
-        wait_for_system_ready(call)
+        start_blueprint("coordinator-mock")
+        wait_for_system_ready()
 
         # Wait for joint state to be published (proves tick loop is running)
         lcm_spy.wait_for_saved_topic(joint_state_topic)
@@ -80,8 +80,8 @@ class TestControlCoordinatorE2E:
         lcm_spy.save_topic("/coordinator_joint_state#sensor_msgs.JointState")
 
         # Start coordinator
-        call = start_blueprint("coordinator-mock")
-        wait_for_system_ready(call)
+        start_blueprint("coordinator-mock")
+        wait_for_system_ready()
 
         # Wait for it to be ready
         lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs.JointState")
@@ -133,8 +133,8 @@ class TestControlCoordinatorE2E:
         lcm_spy.save_topic(joint_state_topic)
 
         # Start coordinator
-        call = start_blueprint("coordinator-mock")
-        wait_for_system_ready(call)
+        start_blueprint("coordinator-mock")
+        wait_for_system_ready()
 
         # Wait for initial message
         lcm_spy.wait_for_saved_topic(joint_state_topic)
@@ -165,8 +165,8 @@ class TestControlCoordinatorE2E:
         lcm_spy.save_topic("/coordinator_joint_state#sensor_msgs.JointState")
 
         # Start coordinator
-        call = start_blueprint("coordinator-mock")
-        wait_for_system_ready(call)
+        start_blueprint("coordinator-mock")
+        wait_for_system_ready()
         lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs.JointState")
 
         client = RPCClient(None, ControlCoordinator)
@@ -211,8 +211,8 @@ class TestControlCoordinatorE2E:
         lcm_spy.save_topic("/coordinator_joint_state#sensor_msgs.JointState")
 
         # Start dual-arm mock coordinator
-        call = start_blueprint("coordinator-dual-mock")
-        wait_for_system_ready(call)
+        start_blueprint("coordinator-dual-mock")
+        wait_for_system_ready()
         lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs.JointState")
 
         client = RPCClient(None, ControlCoordinator)

@@ -20,11 +20,12 @@ import time
 
 import pytest
 
+from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
 from dimos.e2e_tests.conf_types import StartPersonTrack
 from dimos.e2e_tests.dim_sim_client import DimSimClient
-from dimos.e2e_tests.dimos_cli_call import DimosCliCall, wait_for_ready
+from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -112,8 +113,16 @@ def start_blueprint(mcp_port: int) -> Iterator[Callable[..., DimosCliCall]]:
 
 @pytest.fixture
 def wait_for_system_ready() -> Callable[..., None]:
-    """The readiness RPC is served only after every module has started."""
-    return wait_for_ready
+    """Block until the blueprint is up.
+
+    The CLI serves Coordinator RPC only after build() started every module and
+    delivered on_system_modules.
+    """
+
+    def wait(timeout: float = 120.0) -> None:
+        CoordinatorRPC.connect(timeout=timeout).stop()
+
+    return wait
 
 
 @pytest.fixture

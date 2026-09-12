@@ -13,7 +13,7 @@ Bare `--record` means `--record sqlite`. SQLite lands at
 `recordings/<run-id>/memory.db`; MCAP lands at
 `recordings/<run-id>/memory.mcap`. The root is under the checkout, or
 `~/.local/state/dimos/recordings/` for an installed package. `<run-id>` is the
-same `YYYYMMDD-HHMMSS-<uuid>-<blueprint>` used by the run's `logs/` directory.
+same `YYYYMMDD-HHMMSS-<blueprint>` used by the run's `logs/` directory.
 
 ## Experimental Rust engine
 

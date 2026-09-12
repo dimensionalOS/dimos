@@ -32,9 +32,9 @@ def test_spatial_memory_navigation(
     follow_points: Callable[..., None],
     wait_for_system_ready: Callable[..., None],
 ) -> None:
-    call = start_blueprint("run", "unitree-go2-agentic")
+    start_blueprint("run", "unitree-go2-agentic")
 
-    wait_for_system_ready(call, timeout=120.0)
+    wait_for_system_ready(timeout=120.0)
 
     time.sleep(5)
 

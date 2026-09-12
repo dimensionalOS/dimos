@@ -33,7 +33,7 @@ import hashlib
 import keyword
 import sys
 import threading
-from typing import Any, cast, get_args, get_origin, get_type_hints
+from typing import Any, cast, get_args, get_type_hints
 
 from dimos.core.stream import In, Out
 from dimos.web.relay_bridge.manifest import MAX_MANIFEST_ID_LEN, RESERVED_CHANNEL_PREFIX, Dir
@@ -126,7 +126,7 @@ def _validate_specs(specs: tuple[DynamicPortSpec, ...]) -> None:
                 f"got {spec.direction!r}"
             )
         message_type = spec.message_type
-        if not isinstance(message_type, type) or get_origin(message_type) is not None:
+        if not isinstance(message_type, type):
             raise TypeError(
                 f"stream {stream!r}: message_type must be a class, got {message_type!r}"
             )

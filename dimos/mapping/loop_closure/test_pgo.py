@@ -34,13 +34,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
-@pytest.fixture
-def gtsam():
-    return pytest.importorskip(
-        "gtsam", reason="PGO optimization requires dimos[mapping]", exc_type=ModuleNotFoundError
-    )
-
-
 def _random_R(rng: np.random.Generator) -> np.ndarray:
     """Random uniform rotation matrix via random quaternion."""
     q = rng.standard_normal(4)
@@ -100,7 +93,6 @@ class TestTransformHelpers:
         obs: Observation[int] = Observation(id=0, ts=1.0, pose=ps, _data=0)
         assert obs.pose_tuple == (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0)
 
-    @pytest.mark.usefixtures("gtsam")
     def test_obs_to_pose3_roundtrip(self) -> None:
         from dimos.memory.type.observation import Observation
 
@@ -113,7 +105,9 @@ class TestTransformHelpers:
         np.testing.assert_allclose(p.rotation().matrix(), R, atol=1e-9)
         np.testing.assert_allclose(np.asarray(p.translation()), t, atol=1e-9)
 
-    def test_pose3_to_transform(self, gtsam) -> None:
+    def test_pose3_to_transform(self) -> None:
+        import gtsam  # type: ignore[import-not-found,import-untyped]
+
         rng = np.random.default_rng(2)
         R = _random_R(rng)
         t = rng.uniform(-3, 3, size=3)
@@ -122,7 +116,9 @@ class TestTransformHelpers:
         np.testing.assert_allclose(tf.rotation.to_rotation_matrix(), R, atol=1e-10)
         np.testing.assert_allclose(tf.translation.to_numpy(), t, atol=1e-10)
 
-    def test_pose3_to_transform_with_frames(self, gtsam) -> None:
+    def test_pose3_to_transform_with_frames(self) -> None:
+        import gtsam
+
         rng = np.random.default_rng(3)
         R = _random_R(rng)
         t = rng.uniform(-3, 3, size=3)
@@ -159,7 +155,6 @@ def _make_lidar_stream(n_frames: int = 12, points_per_frame: int = 500) -> Strea
     return lidar
 
 
-@pytest.mark.usefixtures("gtsam")
 class TestPipelineEndToEnd:
     def test_straight_line_produces_keyframes(self) -> None:
         lidar = _make_lidar_stream(n_frames=12)

@@ -67,29 +67,6 @@ When writing or debugging a specific self-hosted test, override `-m` yourself to
 pytest -m self_hosted dimos/path/to/test_something.py
 ```
 
-### Hosted CI diagnostics
-
-The hosted test job selects Python with `UV_PYTHON` and verifies the interpreter
-before running pytest. It covers Python 3.10–3.12 on x64 and 3.12 on ARM. Python
-3.10 omits the optional `mapping` extra because GTSAM has no Linux x64 wheel;
-only the five PGO tests that need GTSAM skip when it is absent.
-
-Each job uploads a `tests-<os>-py<version>-<attempt>` artifact containing pytest
-output, JUnit, coverage, crash dumps, and E2E subprocess logs. Diagnostic retries
-use the same worker count and coverage instrumentation, with separate reports;
-the original test failure still fails the job. The reduced test selection does
-not reproduce full-suite load or ordering.
-
-E2E CLI launches write a separate log for each invocation. Set
-`DIMOS_TEST_LOG_DIR` to choose the directory locally; otherwise logs go to the
-system temporary directory. The `wait_for_system_ready(call)` fixture checks
-the spawned process while waiting for the coordinator's readiness RPC. Its
-default startup deadline is 120 seconds; stream and behavior assertions retain
-their own deadlines after startup.
-
-CLI run IDs include a UUID so simultaneous launches of the same blueprint have
-separate logs and process-cleanup ownership.
-
 ## Testing on a fresh Ubuntu install
 
 CI tests dimos with pre-built images and cached deps, so it can't catch gaps

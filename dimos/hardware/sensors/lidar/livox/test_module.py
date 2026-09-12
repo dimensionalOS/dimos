@@ -19,7 +19,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 import pytest
-import tomli
+import tomllib
 
 from dimos.core.native_module import NativeModuleConfig
 from dimos.hardware.sensors.lidar.livox.module import Mid360, Mid360Config, _resolved_host_ip
@@ -77,6 +77,6 @@ def test_ports_match_registry() -> None:
             if getattr(hint, "__origin__", None) is not None or "Out[" in str(hint)
         } - {"config"}
 
-    manifest = tomli.loads(_RUST_MANIFEST.read_text())
+    manifest = tomllib.loads(_RUST_MANIFEST.read_text())
     registry = manifest["package"]["metadata"]["dimos"]["module"]["mid360"]
     assert set(registry["outputs"]) == ports(Mid360)

@@ -63,8 +63,8 @@ def _local_result_dataclasses() -> set[type[object]]:
         for item in fields(annotation):
             visit(hints[item.name])
 
-    for name, member in ManipulationSpec.__dict__.items():
-        if not name.startswith("_") and inspect.isfunction(member):
+    for member in ManipulationSpec.__dict__.values():
+        if inspect.isfunction(member):
             visit(get_type_hints(member)["return"])
     return found
 

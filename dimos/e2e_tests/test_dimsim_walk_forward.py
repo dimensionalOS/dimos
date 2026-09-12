@@ -19,7 +19,7 @@ import pytest
 def test_walk_forward(
     lcm_spy, start_blueprint, wait_for_system_ready, human_input, dim_sim
 ) -> None:
-    call = start_blueprint(
+    start_blueprint(
         "run",
         "--disable",
         "spatial-memory",
@@ -28,7 +28,7 @@ def test_walk_forward(
         "unitree-go2-agentic",
         simulator="dimsim",
     )
-    wait_for_system_ready(call, timeout=1200.0)
+    wait_for_system_ready(timeout=1200.0)
 
     origin_x, origin_y = 1, 2
     dim_sim.set_agent_position(origin_x, origin_y)

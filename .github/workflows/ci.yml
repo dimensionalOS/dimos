@@ -509,19 +509,20 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        pyver: ['3.10', '3.11', '3.12']
+        pyver: ['3.10', '3.11', '3.12', '3.13', '3.14']
         os: ["ubuntu-latest"]
         experimental: [false]
         include:
+          - os: "ubuntu-latest"
+            pyver: "3.14t"
+            experimental: false
           - os: "ubuntu-24.04-arm"
-            pyver: "3.12"
+            pyver: "3.14"
             experimental: false
       fail-fast: true
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
     env:
-      # Override .python-version for both uv sync and every uv run.
-      UV_PYTHON: ${{ matrix.pyver }}
       # Arm faulthandler from interpreter start — before conftest is even
       # imported — so import-time crashes are covered too. dimos/conftest.py
       # redirects it to a per-process file under $RUNNER_TEMP/pytest-crash,
@@ -568,6 +569,9 @@ jobs:
           sudo mv /usr/bin/git-lfs /usr/bin/git-lfs.orig
           sudo install -m 0755 bin/git-lfs-guard /usr/bin/git-lfs
           git config --global --unset-all filter.lfs.process || true
+      - name: Set PYTHON_GIL=0 for free-threading builds
+        if: ${{ endsWith(matrix.pyver, 't') }}
+        run: echo "PYTHON_GIL=0" >> $GITHUB_ENV
       # The published store paths are x86_64-linux, so the arm leg (and any
       # future macOS leg) skips provisioning; binary-needing tests skip there.
       # On a marker miss (fork PR, eviction) the binaries are simply absent —
@@ -593,44 +597,15 @@ jobs:
         run: python3 bin/build-native-modules --link-results .cachix-marker/links.txt
       - name: Install dependencies
         run: uv sync --group tests --frozen
-      - name: Verify test interpreter
-        run: |
-          uv run python - <<'PY'
-          import os
-          import sys
-          print(f"Test interpreter: {sys.executable}\n{sys.version}")
-          actual = f"{sys.version_info.major}.{sys.version_info.minor}"
-          expected = os.environ["UV_PYTHON"]
-          assert actual == expected, f"Expected Python {expected}, got {actual}"
-          PY
       - name: Run tests
-        id: tests
-        env:
-          DIMOS_TEST_LOG_DIR: ${{ runner.temp }}/test-results/primary/e2e
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/test-results"
-          uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml \
-            -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)' \
-            2>&1 | tee "$RUNNER_TEMP/test-results/primary.log"
+        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       - name: Re-run the failing tests with maximum verbosity
-        # Diagnostic only: the primary step's failure remains authoritative.
-        # Selection is reduced, but worker count and coverage match the first run.
-        if: ${{ failure() && steps.tests.outcome == 'failure' }}
-        timeout-minutes: 5
+        if: failure()
         env:
           COLOR: yes
-          COVERAGE_FILE: ${{ runner.temp }}/test-results/retry/.coverage
-          DIMOS_TEST_LOG_DIR: ${{ runner.temp }}/test-results/retry/e2e
+        run: >-  # `exit 1` makes sure that the job remains red with flaky runs
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)' && exit 1
         shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/test-results/retry"
-          uv run pytest --numprocesses=logical --cov=dimos/ \
-            --cov-report="xml:$RUNNER_TEMP/test-results/retry/coverage.xml" \
-            --junitxml="$RUNNER_TEMP/test-results/retry/junit.xml" \
-            -vvvvv --lf --last-failed-no-failures=none \
-            -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)' \
-            2>&1 | tee "$RUNNER_TEMP/test-results/retry.log"
       - name: Print crash diagnostics
         if: failure()
         shell: bash
@@ -641,17 +616,6 @@ jobs:
             cat "$f"
             echo "::endgroup::"
           done
-      - name: Preserve test diagnostics
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: tests-${{ matrix.os }}-py${{ matrix.pyver }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/test-results/
-            ${{ runner.temp }}/pytest-crash/
-            junit.xml
-            coverage.xml
-          if-no-files-found: ignore
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
       - name: Upload coverage

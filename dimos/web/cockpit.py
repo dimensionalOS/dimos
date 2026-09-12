@@ -38,9 +38,7 @@ from collections.abc import Iterator, Mapping, Sequence, Set as AbstractSet
 from dataclasses import dataclass, field, replace
 import json
 import math
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, get_origin
-
-from typing_extensions import Self
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
 
 from dimos.web.relay_bridge.manifest import (
     MANIFEST_VERSION,
@@ -191,7 +189,7 @@ class Channel:
                 f"stream id {self.stream!r} is invalid: ids beginning with "
                 f"{RESERVED_CHANNEL_PREFIX!r} are reserved for protocol control"
             )
-        if not isinstance(self.message_type, type) or get_origin(self.message_type) is not None:
+        if not isinstance(self.message_type, type):
             raise TypeError(f"message_type must be a class, got {self.message_type!r}")
         if self.dir not in ("rx", "tx"):
             raise ValueError(f"dir must be 'rx' or 'tx', got {self.dir!r}")

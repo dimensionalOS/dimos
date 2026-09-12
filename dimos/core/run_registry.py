@@ -23,7 +23,6 @@ from pathlib import Path
 import re
 import signal
 import time
-import uuid
 
 from dimos.constants import STATE_DIR
 from dimos.core.coordination.process_lifecycle import kill_run_processes
@@ -74,7 +73,7 @@ def generate_run_id(blueprint: str) -> str:
     """Generate a human-readable, timestamp-prefixed run ID."""
     ts = time.strftime("%Y%m%d-%H%M%S")
     safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", blueprint)
-    return f"{ts}-{uuid.uuid4().hex}-{safe_name}"
+    return f"{ts}-{safe_name}"
 
 
 def is_pid_alive(pid: int) -> bool:

@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 import pickle
 import struct
@@ -433,10 +432,12 @@ def test_broker_failed_channel_open_retries_next_heartbeat() -> None:
     assert provider._dc_ids["cmd_unreliable"] == 5
 
 
-def test_broker_heartbeat_terminal_notifies_operator_lost(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_broker_heartbeat_terminal_notifies_operator_lost() -> None:
     """A revoked session (401/404 streak) may leave the WebRTC room up, so the
     planner would keep driving. The terminal branch must inject operator_lost
     before abandoning the heartbeat loop."""
+    import asyncio
+
     provider = BrokerConfig(api_key="key")._create()
     provider._config = provider._config.model_copy(update={"heartbeat_hz": 1000.0})  # fast ticks
 
@@ -446,16 +447,8 @@ def test_broker_heartbeat_terminal_notifies_operator_lost(monkeypatch: pytest.Mo
     async def _always_401() -> int:
         return 401
 
-    monkeypatch.setattr(provider, "_heartbeat_once", _always_401)
-
-    async def run_heartbeat() -> None:
-        # The provider owns its loop in production; asyncio.run owns this one.
-        # Let the heartbeat finish without stopping the test runner's loop.
-        with monkeypatch.context() as patch:
-            patch.setattr(asyncio.get_running_loop(), "stop", lambda: None)
-            await asyncio.wait_for(provider._heartbeat_loop(), timeout=2.0)
-
-    asyncio.run(run_heartbeat())
+    provider._heartbeat_once = _always_401  # type: ignore[method-assign]
+    asyncio.run(asyncio.wait_for(provider._heartbeat_loop(), timeout=2.0))
 
     assert got and b'"operator_lost"' in got[0], "terminal streak must inject operator_lost"
 

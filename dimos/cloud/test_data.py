@@ -213,7 +213,7 @@ def test_explicit_path_uploads_fresh_file(env: tuple[CloudData, FakeTransport, P
 
 def test_blueprint_recorded_from_run_dir(env: tuple[CloudData, FakeTransport, Path]) -> None:
     cloud, t, db = env
-    run = db.parent / "20260830-155733-0123456789abcdef0123456789abcdef-unitree-go2"
+    run = db.parent / "20260830-155733-unitree-go2"
     run.mkdir()
     r = cloud.upload(recording(run))
     assert t.uploads[r["upload_id"]]["manifest"]["blueprint"] == "unitree-go2"
@@ -380,7 +380,7 @@ def test_recordings_discovery_recurses_run_dirs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
-    run = tmp_path / "20260828-181256-0123456789abcdef0123456789abcdef-unitree-go2"
+    run = tmp_path / "20260828-181256-unitree-go2"
     run.mkdir()
     db = recording(run)  # recordings/<run>/session_go2_1.db
     (run / "memory.db-wal").write_bytes(b"x")  # sidecar, skipped

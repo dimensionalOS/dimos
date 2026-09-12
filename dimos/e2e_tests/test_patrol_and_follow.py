@@ -33,7 +33,7 @@ def test_patrol_and_follow(
     explore_office: Callable[[], None],
     wait_for_system_ready: Callable[..., None],
 ) -> None:
-    call = start_blueprint(
+    start_blueprint(
         "--mujoco-start-pos",
         "-10.75 -6.78",
         "--nerf-speed",
@@ -44,7 +44,7 @@ def test_patrol_and_follow(
         "unitree-go2-agentic",
     )
 
-    wait_for_system_ready(call, timeout=120.0)
+    wait_for_system_ready(timeout=120.0)
 
     time.sleep(5)
 

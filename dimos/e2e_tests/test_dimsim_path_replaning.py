@@ -24,13 +24,13 @@ def test_path_replanning(
     direct_cmd_vel_explorer,
     spawn_wall_on_pose,
 ) -> None:
-    call = start_blueprint(
+    start_blueprint(
         "--dimsim-scene=empty",
         "run",
         "unitree-go2-agentic",
         simulator="dimsim",
     )
-    wait_for_system_ready(call, timeout=1200.0)
+    wait_for_system_ready(timeout=1200.0)
 
     # robot spawns at (3, 2)
 

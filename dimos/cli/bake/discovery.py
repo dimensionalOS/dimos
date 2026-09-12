@@ -24,7 +24,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 
-import tomli
+import tomllib
 
 from dimos.cli.bake.errors import BakeError
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -89,7 +89,7 @@ def _str_table(entry: Mapping[str, object], key: str, where: str) -> dict[str, s
 
 def parse_manifest(path: Path) -> list[RegisteredModule]:
     """Registry entries declared by one Cargo.toml. Empty for crates that opt out."""
-    manifest = tomli.loads(path.read_text())
+    manifest = tomllib.loads(path.read_text())
     package = manifest.get("package", {})
     modules = package.get("metadata", {}).get("dimos", {}).get("module", {})
     if not modules:
