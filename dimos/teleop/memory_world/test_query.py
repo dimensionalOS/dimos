@@ -1220,35 +1220,40 @@ def test_a_route_starts_under_the_viewer_not_where_the_robot_stopped(
     The camera floats at eye height, so the start is the map voxel UNDER it: the surface
     being stood on, not the camera itself and not the lowest thing in the column.
     """
-    # A floor at z=0 under the viewer, a shelf top at z=1.2 in the same column, and a
-    # far-away patch of floor that must not win.
+    # A shelf top and a ceiling above the viewer, the floor below them, and a far patch
+    # that must not win however low it is.
     memory_world._map_xyz = np.array(
         [
-            [4.0, 4.0, 0.0],
-            [4.05, 4.0, 1.2],
-            [4.0, 4.05, -0.4],
-            # Far away AND higher than the shelf, but still below the camera: without the
-            # radius filter this wins on z alone and the route starts across the room.
-            # A far patch merely LOWER than the shelf cannot show that, which is why the
-            # first version of this test passed with the filter removed.
-            [30.0, 30.0, 1.5],
+            [4.05, 4.0, 1.2],  # a shelf top, above the floor
+            [4.0, 4.05, 2.4],  # a ceiling
+            [4.0, 4.0, 0.7],  # the floor under the viewer
+            # Far away and LOWER than that floor: without the radius filter this wins
+            # outright and the route starts across the room. A far patch merely higher
+            # cannot show that, which is why an earlier version of this test passed with
+            # the filter removed.
+            [30.0, 30.0, -5.0],
         ],
         dtype=np.float32,
     )
-    memory_world._viewer_position = (4.0, 4.0, 1.6)  # eye height above the shelf top
+    # The viewer's z is always a literal zero -- `getViewerRobotPosition()` returns
+    # [x, y, 0] -- so nothing here may depend on it. An earlier version compared map
+    # voxels against it as if it were a head height, which against a real viewer matched
+    # nothing and reached the right answer only through its fallback branch.
+    memory_world._viewer_position = (4.0, 4.0, 0.0)
 
     under = memory_world._ground_under_viewer()
     assert under is not None
-    # The shelf top, because it is the highest thing at or below the camera -- standing
-    # on a shelf is where you are, even though the floor is also in the column.
-    assert under == pytest.approx((4.05, 4.0, 1.2), abs=1e-5)
+    assert under == pytest.approx((4.0, 4.0, 0.7), abs=1e-5), "not the floor of this column"
 
-    # Standing on the floor instead: the shelf is above the camera and cannot be it.
-    memory_world._viewer_position = (4.0, 4.0, 0.5)
-    assert memory_world._ground_under_viewer() == pytest.approx((4.0, 4.0, 0.0), abs=1e-5)
+    # A nonsense z must change nothing, because the real viewer never sends one.
+    memory_world._viewer_position = (4.0, 4.0, 99.0)
+    assert memory_world._ground_under_viewer() == pytest.approx((4.0, 4.0, 0.7), abs=1e-5)
 
+    # A column holding only a ceiling still answers with the lowest thing in it, and the
+    # route starts there rather than nowhere -- but it must never be the 2.4 ceiling when
+    # a floor is present, which the first assertion above is what pins.
     # Off the edge of the map entirely: no answer, so the caller falls back.
-    memory_world._viewer_position = (100.0, 100.0, 1.6)
+    memory_world._viewer_position = (100.0, 100.0, 0.0)
     assert memory_world._ground_under_viewer() is None
 
     # And with no viewer connected at all there is nothing to stand on.
@@ -1363,3 +1368,21 @@ def test_a_route_that_goes_nowhere_is_not_a_route(
     monkeypatch.setattr(memory_world, "_planner", lambda: SimpleNamespace(plan=lambda *a: moving))
     payload = memory_world._navigate_to(NavigateRequest(cluster=0, query_id="q1"))
     assert payload["length_m"] == 2.9
+
+    # And a route that arrives at the goal's x and y while DESCENDING is a route. The
+    # goal is a camera pose, so it sits at head height above the floor the route runs on;
+    # comparing in 3-D made that constant offset look like going backwards, and a real
+    # 0.2 m route reading 1.612 -> 1.700 was refused outright.
+    descending = SimpleNamespace(
+        points=[(4.9, 4.9, 0.3), (5.0, 5.0, 0.2)],
+        length_m=0.2,
+        cells=3,
+        planner="costmap",
+    )
+    high = SimpleNamespace(index=0, centre=(5.0, 5.0, 1.6), radius=1.0)
+    memory_world._last_answer = (SimpleNamespace(clusters=[high]), "q1")
+    monkeypatch.setattr(
+        memory_world, "_planner", lambda: SimpleNamespace(plan=lambda *a: descending)
+    )
+    payload = memory_world._navigate_to(NavigateRequest(cluster=0, query_id="q1"))
+    assert payload["length_m"] == 0.2, "a descending route to the right place was refused"

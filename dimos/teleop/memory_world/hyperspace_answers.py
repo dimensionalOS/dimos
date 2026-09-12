@@ -640,19 +640,25 @@ class HyperspaceAnswers:
         raise HTTPException(status_code=503, detail="the robot's path is not known yet")
 
     def _ground_under_viewer(self) -> tuple[float, float, float] | None:
-        """The map voxel under the viewer's camera -- where their feet are.
+        """The floor under the viewer -- where their feet are.
 
         A route has to start where the person asking for it is standing. It used to start
         where the ROBOT stopped at the end of the recording, so walking anywhere and
         pressing Navigate drew a green tube that began somewhere else entirely -- across
-        the shop, in the grocery map, which is up to 30 m from the viewer.
+        the shop, in the grocery map, up to 30 m from the viewer.
 
-        The camera is at eye height and floating, so it is not a start on its own: the
-        planner works on the surface. This takes the map voxels in a column around the
-        camera and returns the HIGHEST one at or below it, which is the floor being stood
-        on rather than the floor under a shelf the camera happens to be above. Nothing in
-        the column (out over a stairwell, off the edge of the map) is not an error worth
-        refusing -- the caller falls back.
+        Only the viewer's x and y are used, because only those exist: the viewer sends
+        `getViewerRobotPosition()`, which is `[x, y, 0]` -- the z is a literal zero, not a
+        head height. The first version of this compared map voxels against `viewer[2]` and
+        took the highest one at or below it, reasoning about a camera at eye height that
+        this application never reports. Against a real viewer that test was `z <= 0.32` on
+        a floor at 0.7, so it matched nothing and the answer came from the fallback branch
+        every time -- right by accident, and wrong the moment the column held a ceiling,
+        which the fallback would then have picked in a room with no floor below zero.
+
+        So: the lowest surface in a small column around the viewer's x and y. That is the
+        floor under them, whatever is stacked above it. Nothing in the column at all (off
+        the edge of the map) is not an error worth refusing -- the caller falls back.
         """
         with self._clients_lock:
             viewer = self._viewer_position
@@ -668,8 +674,7 @@ class HyperspaceAnswers:
         if not near.any():
             return None
         column = found[near]
-        below = column[column[:, 2] <= viewer[2] + radius]
-        pick = below[np.argmax(below[:, 2])] if len(below) else column[np.argmin(column[:, 2])]
+        pick = column[np.argmin(column[:, 2])]
         return (float(pick[0]), float(pick[1]), float(pick[2]))
 
     def _navigate_to(self, request: NavigateRequest) -> dict[str, Any]:
@@ -725,8 +730,13 @@ class HyperspaceAnswers:
         # reported as HTTP 200 with the goal 2.45 m away. The viewer then draws a tube of
         # no length and the person is told a route exists. Refusing is the same answer the
         # planner would have given by returning None, which is what it means.
-        reached = math.dist(points[-1], goal)
-        if reached >= math.dist(points[0], goal) - 1e-9:
+        # Measured in the PLANE, not in 3-D. The goal is a camera pose, so it sits at
+        # head height above the floor the route runs on, and that constant offset is in
+        # both distances. In 3-D a legitimate route that reaches the goal's exact x and y
+        # while descending 0.1 m reads as going backwards -- measured 1.612 -> 1.700 --
+        # and was refused. Height is not what "did it get closer" means here.
+        reached = math.dist(points[-1][:2], goal[:2])
+        if reached >= math.dist(points[0][:2], goal[:2]) - 1e-9:
             raise HTTPException(status_code=422, detail="no route through the known free space")
         payload = {
             "query_id": query_id,
