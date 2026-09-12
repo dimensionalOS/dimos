@@ -127,7 +127,7 @@ class _FrameQueue:
         return frame
 
 
-def make_quic_configuration(insecure: bool) -> QuicConfiguration:
+def make_quic_configuration(insecure: bool, cafile: str | None = None) -> QuicConfiguration:
     config = QuicConfiguration(
         is_client=True,
         alpn_protocols=H3_ALPN,
@@ -137,6 +137,10 @@ def make_quic_configuration(insecure: bool) -> QuicConfiguration:
     )
     if insecure:
         config.verify_mode = ssl.CERT_NONE
+    if cafile is not None:
+        # Replaces certifi's bundle (aioquic loads that only when no location
+        # is given): the relay's private CA, e.g. mkcert's root.
+        config.load_verify_locations(cafile=cafile)
     return config
 
 

@@ -505,6 +505,28 @@ async def test_connect_handshake_timeout_is_bounded(monkeypatch: pytest.MonkeyPa
         await RelayClient.connect("https://127.0.0.1:1", "robot", timeout=0.01)
 
 
+async def test_connect_defaults_port_to_443_and_loads_relay_ca(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dials: list[tuple[str, int, str | None]] = []
+
+    class Refused:
+        async def __aenter__(self) -> None:
+            raise ConnectionRefusedError
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+    def fake_connect(host: str, port: int, *, configuration: Any, **kwargs: Any) -> Refused:
+        dials.append((host, port, configuration.cafile))
+        return Refused()
+
+    monkeypatch.setattr(wt_client, "aioquic_connect", fake_connect)
+    with pytest.raises(ConnectionRefusedError):
+        await RelayClient.connect("https://relay.example", "robot", cafile="/ca.pem")
+    assert dials == [("relay.example", 443, "/ca.pem")]
+
+
 # /api/info discovery against an in-process HTTP server.
 
 

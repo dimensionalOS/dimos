@@ -28,7 +28,10 @@ get_loop), which corrupts pytest-asyncio's function-scoped loop teardown.
 
 import asyncio
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
+from ipaddress import IPv4Address
 import json
+from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -36,6 +39,10 @@ import time
 from typing import Any
 import zlib
 
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 import numpy as np
 import pytest
 
@@ -605,10 +612,11 @@ def test_teleop_lease_exclusive_and_handover(teleop_bridge: RelayBridgeModule) -
 # --relay-url: a relay started by hand.
 
 
-def _external_bridge(relay_url: str) -> RelayBridgeModule:
+def _external_bridge(relay_url: str, relay_ca: str | None = None) -> RelayBridgeModule:
     """A bridge attached to a relay it did not spawn (the --relay-url path)."""
     return RelayBridgeModule(
         relay_url=relay_url,
+        relay_ca=relay_ca,
         open_browser=False,
         web_build=False,
         robot_id=ROBOT_ID,
@@ -650,6 +658,70 @@ def test_external_relay_restart_reattaches() -> None:
         relay.stop()
         if restarted is not None:
             restarted.stop()
+
+
+def _self_signed_cert(directory: Path) -> tuple[Path, Path]:
+    """A one-day P-256 certificate for 127.0.0.1, its own trust anchor, as
+    PEM files (certificate, PKCS#8 key)."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "dimos relay e2e")])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(hours=1))
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.IPAddress(IPv4Address("127.0.0.1"))]),
+            critical=False,
+        )
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    cert_path = directory / "relay.pem"
+    key_path = directory / "relay-key.pem"
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return cert_path, key_path
+
+
+def test_external_relay_with_real_certificate(tmp_path: Path) -> None:
+    # A relay given --cert/--key advertises no hash, so both client legs
+    # verify the certificate: against relay_ca (mkcert, a private CA) or the
+    # default trust stores. Never insecure=True.
+    cert, key = _self_signed_cert(tmp_path)
+    with RelayProcess(cert=cert, key=key) as ready:
+        assert ready.cert_hash is None
+        assert ready.open_url == f"https://127.0.0.1:{ready.http_port}/"
+        wt_url = f"https://127.0.0.1:{ready.http_port}"
+
+        async def unverified() -> None:
+            # The default stores do not know this certificate.
+            with pytest.raises(OSError, match="CERTIFICATE_VERIFY_FAILED"):
+                await fetch_relay_info(ready.open_url)
+            with pytest.raises(ConnectionError):
+                await RelayClient.connect(wt_url, "robot", insecure=False)
+
+        asyncio.run(unverified())
+
+        bridge = _external_bridge(ready.open_url, relay_ca=str(cert))
+        try:
+            bridge.start()  # returns only after hello/welcome: registered
+            info = bridge._relay_info
+            assert info is not None and info.cert_hash is None and info.wt_url == wt_url
+            assert _session_live(bridge)
+        finally:
+            stop_module(bridge)
 
 
 def test_start_waits_out_robot_id_conflict_on_relay(monkeypatch: pytest.MonkeyPatch) -> None:

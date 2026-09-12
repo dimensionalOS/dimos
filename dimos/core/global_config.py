@@ -129,6 +129,10 @@ class GlobalConfig(BaseSettings):
     relay_url: str | None = None
     """HTTP URL of a relay started elsewhere (e.g. http://localhost:7780); the
     bridge discovers its WebTransport endpoint through /api/info."""
+    relay_ca: str | None = None
+    """PEM CA bundle that signed the relay_url relay's certificate (mkcert, a
+    private CA); replaces the default trust stores. Unset for a relay with a
+    public certificate."""
     dimos_cloud_url: str = "https://api.dimensional.org"
     dimos_api_key: str | None = None
     dimos_upload_codec: str = "lz4"
