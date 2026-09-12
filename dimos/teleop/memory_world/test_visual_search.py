@@ -425,6 +425,47 @@ def test_precomputed_raw_tower_tokens_are_refused(sqlite_store: SqliteStore) -> 
         index.load()
 
 
+def test_an_embeddings_stream_under_another_prefix_is_adopted_when_it_is_the_only_one(
+    sqlite_store: SqliteStore,
+) -> None:
+    """siglipify names its stream after the images it was POINTED at, not this rig's name.
+
+    sf_office1_2 holds 1108 vectors in `image_siglip2_giant_opt_p16_384` while its images
+    are `realsense_color_image`. The strict name found nothing, so the viewer offered to
+    spend minutes building an index that was already sitting in the file.
+    """
+    rows = [(1.0, 1, np.zeros((4, 2), np.float16)), (2.0, 2, np.zeros((4, 2), np.float16))]
+    seed_embedding_stream(sqlite_store.config.path, f"image_{model_slug(GIANT)}", GIANT, rows)
+
+    index = VisualMemoryIndex(
+        store=sqlite_store, image_stream_name="realsense_color_image", pose_of=lambda *a: None
+    )
+
+    assert index.precomputed_stream_name == f"image_{model_slug(GIANT)}"
+    assert index.count() == 2
+
+
+def test_two_embeddings_streams_for_one_model_are_not_guessed_between(
+    sqlite_store: SqliteStore,
+) -> None:
+    """The strict rule exists because two cameras' frames are not the same evidence.
+
+    With one candidate there is nothing to confuse it with; with two there is, and
+    picking either would attach one camera's vectors to the other camera's poses.
+    """
+    rows = [(1.0, 1, np.zeros((4, 2), np.float16))]
+    for camera in ("left_image", "right_image"):
+        seed_embedding_stream(
+            sqlite_store.config.path, f"{camera}_{model_slug(GIANT)}", GIANT, rows
+        )
+
+    index = VisualMemoryIndex(
+        store=sqlite_store, image_stream_name="realsense_color_image", pose_of=lambda *a: None
+    )
+
+    assert index.precomputed_stream_name is None, "guessed which camera the vectors were for"
+
+
 def test_precomputed_vectors_from_another_model_are_refused(sqlite_store: SqliteStore) -> None:
     other = "google/siglip2-so400m-patch16-384"
     _seed_precomputed(sqlite_store, [(1.0, 1, np.ones((1, 2), np.float32))], model_name=other)

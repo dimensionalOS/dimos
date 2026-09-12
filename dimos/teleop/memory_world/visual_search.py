@@ -603,8 +603,56 @@ class VisualMemoryIndex:
                     has_rows = StoredEmbeddings(self.store, name).count() > 0
                 except Exception:
                     logger.warning("embeddings stream %r cannot be read; not adopting", name)
+            if not has_rows:
+                name = self._embeddings_under_another_prefix() or name
+                has_rows = name in self.store.list_streams() and self._counts(name)
             self._precomputed = name if has_rows else None
         return self._precomputed
+
+    def _counts(self, name: str) -> bool:
+        try:
+            return StoredEmbeddings(self.store, name).count() > 0
+        except Exception:
+            logger.warning("embeddings stream %r cannot be read; not adopting", name)
+            return False
+
+    def _embeddings_under_another_prefix(self) -> str | None:
+        """A siglipify stream for this MODEL whose prefix is not this image stream's.
+
+        siglipify names its stream after the image stream it was pointed at, and that need
+        not be the name this recording's images carry: sf_office1_2 holds 1108 vectors in
+        `image_siglip2_giant_opt_p16_384` while the images are `realsense_color_image`, so
+        the strict name found nothing and the viewer offered to build an index that was
+        already sitting in the file.
+
+        Only when there is exactly ONE candidate. The strict rule exists because two
+        models' vectors are not comparable and two cameras' frames are not the same
+        evidence; with a single embeddings stream for this model in the recording there is
+        nothing it could be confused with, and with more than one there is, so this
+        declines rather than guessing which camera a prefix meant.
+        """
+        suffix = f"_{model_slug(self.model_name)}"
+        found = [
+            name
+            for name in self.store.list_streams()
+            if name.endswith(suffix) and "_index_" not in name
+        ]
+        if len(found) != 1:
+            if found:
+                logger.warning(
+                    "%d embeddings streams for %s and none named for %r; not guessing: %s",
+                    len(found),
+                    self.model_name,
+                    self.image_stream_name,
+                    ", ".join(sorted(found)),
+                )
+            return None
+        logger.info(
+            "adopting %r for images %r: the only embeddings stream for this model",
+            found[0],
+            self.image_stream_name,
+        )
+        return found[0]
 
     def count(self) -> int:
         """How many frames are already indexed."""
