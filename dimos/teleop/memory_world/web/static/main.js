@@ -756,6 +756,11 @@ function syncLayerBoxes() {
     // Each toggle writes the boxes back; the snapshot keeps the later ones honest.
     if (scene._cloudWanted !== wanted.voxels) scene.toggleCloud();
     if (scene._imageQuadGroup && scene._imageQuadGroup.visible !== wanted.photos) scene.toggleImages();
+    // The boxes survive a reconnect and the scene does not, so the user's choice has to be
+    // restored whether or not the toggle above ran. It does not run when the box already
+    // matches a fresh scene's default, which is exactly the "Photos off" case, and an
+    // answer would then have switched them back on again after every reconnect.
+    scene._photosPinnedOff = !wanted.photos;
     if (scene._hudPanel && scene._hudPanel.visible !== wanted.hud) {
         hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
     }
