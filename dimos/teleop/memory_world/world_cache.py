@@ -113,11 +113,18 @@ class WorldCache:
             # the loop into the handler below. That returned None for the WHOLE build, so
             # the replay and the accumulated scans were never tried and the viewer got
             # "world load failed" with a usable map sitting in the recording.
+            # No `if self._stopping.is_set(): raise` here, unlike from_replay. That
+            # re-raise belongs there because _ensure_replay is a long build that WATCHES
+            # _stopping and raises its own cancellation; this is one quick stream read
+            # that never looks at it. Copying the clause turned a bad-data failure into a
+            # total one whenever a stop happened to be in flight: the re-raise is caught
+            # by this function's own trailing handler, which returns None for the WHOLE
+            # build and skips the very fall-through the guard was added to provide. A
+            # genuine cancellation still propagates -- from_replay is next in the chain
+            # and raises it there.
             try:
                 found = self._replay_read(self._global_map_cloud)
             except Exception:
-                if self._stopping.is_set():
-                    raise
                 logger.exception(
                     "the %s stream could not be read as a cloud; trying the next source",
                     self.config.global_map_stream_name,

@@ -836,3 +836,44 @@ def test_an_empty_siglipify_stream_is_not_adopted_as_the_index(sqlite_store: Sql
         pose_of=_placed,
     )
     assert unreadable.precomputed_stream_name is None, "an unreadable stream is not an index"
+
+
+def test_intrinsics_are_scaled_to_the_raster_they_are_indexed_against() -> None:
+    """A camera_info is a calibration, not a promise about the image beside it.
+
+    With no depth camera_info the recording falls back to the COLOUR one, and the patch
+    is then sampled at a depth pixel -- correctly -- and lifted with colour numbers. A
+    centre patch in an 848x480 depth image is column 424, and back-projecting it through
+    a 1280x720 calibration's cx=640 puts it 43 cm off-axis at 2 m. The sampling end was
+    right; the lift was wrong, which is why fixing the sample alone did not fix it.
+    """
+    depth_mm = np.full((480, 848), 2.0, dtype=np.float32)  # 32FC1 depth is metres
+    colour_calibration = (900.0, 900.0, 640.0, 360.0)  # solved on 1280x720
+
+    off = patch_world_position((0.5, 0.5), depth_mm, colour_calibration, np.eye(4), window_px=8)
+    assert off is not None
+    scaled = patch_world_position(
+        (0.5, 0.5),
+        depth_mm,
+        colour_calibration,
+        np.eye(4),
+        window_px=8,
+        intrinsics_size=(1280, 720),
+    )
+    assert scaled is not None
+    # Dead centre of an aligned depth image is dead ahead, whatever the raster.
+    assert abs(scaled[0]) < 0.01 and abs(scaled[1]) < 0.01, scaled
+    assert scaled[2] == pytest.approx(2.0)
+    # And without the scaling it is not: this is the error the scaling removes.
+    assert abs(off[0]) > 0.4, off
+
+    # A calibration that already matches the raster must be left exactly alone.
+    same = patch_world_position(
+        (0.5, 0.5),
+        depth_mm,
+        (900.0, 900.0, 424.0, 240.0),
+        np.eye(4),
+        window_px=8,
+        intrinsics_size=(848, 480),
+    )
+    assert same is not None and abs(same[0]) < 0.01 and abs(same[1]) < 0.01

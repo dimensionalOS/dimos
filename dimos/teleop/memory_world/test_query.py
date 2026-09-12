@@ -974,6 +974,19 @@ def test_a_global_map_that_cannot_be_read_falls_through_to_the_next_source(
     assert memory_world._map_xyz is not None
     assert memory_world._map_xyz.tolist() == [[9.0, 9.0, 9.0]]
 
+    # And a stop in flight must not turn a bad-data failure into a total one. The first
+    # version of this guard re-raised when `_stopping` was set, copied from from_replay --
+    # where it is right, because the build it guards watches `_stopping` and raises its
+    # own cancellation. This read never looks at it, so the clause only meant that an
+    # unrelated concurrent stop() skipped every remaining source.
+    memory_world._stopping.set()
+    try:
+        built = memory_world._build_voxel_cloud_from_lidar()
+        assert built is not None, "a stop in flight skipped the sources that still worked"
+        assert built[0]["n"] == 1
+    finally:
+        memory_world._stopping.clear()
+
 
 def test_a_global_map_in_another_frame_is_moved_into_the_world_frame(
     memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch

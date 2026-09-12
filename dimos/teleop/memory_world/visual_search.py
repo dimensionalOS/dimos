@@ -378,6 +378,7 @@ def patch_world_position(
     window_px: int = 16,
     color_intrinsics: tuple[float, float, float, float] | None = None,
     color_size: tuple[int, int] | None = None,
+    intrinsics_size: tuple[int, int] | None = None,
 ) -> tuple[float, float, float] | None:
     """Back-project the centre of the winning patch through the depth image.
 
@@ -394,6 +395,14 @@ def patch_world_position(
     the ~1.5 cm baseline between the two -- under the voxel size, and not correctable
     without already knowing the depth.
 
+    *intrinsics_size* is (width, height) of the raster *intrinsics* was CALIBRATED on,
+    and it is scaled to the depth image when the two differ. A camera_info is a
+    calibration, not a promise about the raster it arrives beside: fx and cx are in the
+    pixels of the image it was solved for. Sampling at a depth pixel and then
+    back-projecting with unscaled colour numbers put a centre patch (u=424 against
+    cx=640) 43 cm off-axis at 2 m -- the sample was right and the lift was wrong, which
+    no amount of care at the sampling end can fix.
+
     *color_size* is (width, height) of the colour raster, and it is not optional with
     *color_intrinsics*: those intrinsics are in colour PIXELS, so the normalised uv has
     to be multiplied by the colour raster to meet them. Using the depth raster costs
@@ -404,6 +413,12 @@ def patch_world_position(
         depth_mm = depth_mm * 1000.0
     height, width = depth_mm.shape
     fx, fy, cx, cy = intrinsics
+    if intrinsics_size is not None and tuple(intrinsics_size) != (width, height):
+        iwidth, iheight = intrinsics_size
+        if iwidth and iheight:
+            sx, sy = width / float(iwidth), height / float(iheight)
+            fx, cx = fx * sx, cx * sx
+            fy, cy = fy * sy, cy * sy
     if color_intrinsics is not None:
         if color_size is None:  # loudly, rather than silently sampling the wrong pixel
             raise ValueError("color_intrinsics needs color_size: the uv is normalised in it")

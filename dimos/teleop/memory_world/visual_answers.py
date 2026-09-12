@@ -271,7 +271,8 @@ class VisualAnswers:
                 self.config.camera_info_stream_name,
             )
             try:
-                k = store.streams[info].first().data.K  # the depth camera's own intrinsics
+                dinfo = store.streams[info].first().data  # the depth camera's own
+                k = dinfo.K
             except LookupError:  # declared, never published
                 return []
             if not (k[0] and k[4]):  # uncalibrated: nothing to raycast through
@@ -286,6 +287,12 @@ class VisualAnswers:
             except LookupError:
                 cinfo = None
         intrinsics = (float(k[0]), float(k[4]), float(k[2]), float(k[5]))
+        # The raster THOSE numbers were solved for, so they can be scaled to whatever the
+        # depth image turns out to be. Without it a 1280x720 calibration indexed at an
+        # 848x480 depth pixel lifts the patch through cx=640 and lands it 43 cm off-axis.
+        intrinsics_size = (
+            (int(dinfo.width), int(dinfo.height)) if dinfo.width and dinfo.height else None
+        )
         ck = cinfo.K if cinfo is not None else None
         colour_intrinsics = (
             (float(ck[0]), float(ck[4]), float(ck[2]), float(ck[5]))
@@ -333,6 +340,7 @@ class VisualAnswers:
                     camera_to_world,
                     color_intrinsics=colour_intrinsics,
                     color_size=colour_size,
+                    intrinsics_size=intrinsics_size,
                 )
                 if position is not None:
                     hits.append(
