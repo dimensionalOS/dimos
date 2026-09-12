@@ -187,6 +187,18 @@ def test_pick_reports_no_reachable_candidate_when_every_attempt_fails(
     assert not module._holding_object
 
 
+def test_proposals_reach_the_viewer_as_they_are_generated(module: PickAndPlaceModule) -> None:
+    """get_grasp_candidates only answers after the fact, which is no help live."""
+    manipulation: Any = module._manipulation
+    shown: list[GraspCandidateArray] = []
+    manipulation.show_grasp_proposals.side_effect = lambda array: shown.append(array)
+
+    assert module.pick_object("cup-1").success
+
+    # The stale overlay is cleared first, then the fresh proposals go out.
+    assert [[c.score for c in array.candidates] for array in shown] == [[], [1.0]]
+
+
 def test_pick_object_rejects_empty_candidates(module: PickAndPlaceModule) -> None:
     module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
         Header(1.0, "world"), []

@@ -132,6 +132,7 @@ class PickAndPlaceModule(Module):
         except (RuntimeError, ValueError) as exc:
             return SkillResult.fail("GRASP_GENERATION_FAILED", str(exc))
         self._grasp_candidates = candidates
+        self._manipulation.show_grasp_proposals(candidates)
         if candidates.header.frame_id != self.config.planning_frame:
             return SkillResult.fail(
                 "GRASP_FRAME_MISMATCH",
@@ -231,6 +232,7 @@ class PickAndPlaceModule(Module):
 
     def _clear_selection(self) -> None:
         self._grasp_candidates = GraspCandidateArray()
+        self._manipulation.show_grasp_proposals(GraspCandidateArray())
         self._selected_object_id = None
         self._selected_grasp = None
 
