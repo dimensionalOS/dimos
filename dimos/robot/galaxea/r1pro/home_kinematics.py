@@ -117,9 +117,14 @@ class HomeKinematics:
         targets: dict[str, NDArray[Any]],
         *,
         orientations: dict[str, Quaternion] | None = None,
+        allow_torso: bool = True,
+        torso_yaw_only: bool = False,
         position_tolerance: float = POSITION_TOLERANCE,
         orientation_tolerance: float = ORIENTATION_TOLERANCE,
     ) -> NDArray[np.float64]:
+        torso = self.groups["torso"]
+        if torso_yaw_only:
+            torso = replace(torso, joint_names=torso.joint_names[-1:])
         result = self.solver.solve_pose_targets(
             self.world,
             {
@@ -130,7 +135,7 @@ class HomeKinematics:
                 )
                 for side, xyz in targets.items()
             },
-            auxiliary_groups=[self.groups["torso"]],
+            auxiliary_groups=[torso] if allow_torso else [],
             seed=self.seed(data),
             position_tolerance=position_tolerance,
             orientation_tolerance=orientation_tolerance,

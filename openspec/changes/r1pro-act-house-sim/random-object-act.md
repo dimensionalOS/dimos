@@ -1,6 +1,6 @@
 # ACT for randomly generated objects
 
-Status: implementation direction agreed on 2026-09-11; no general-object checkpoint exists yet.
+Status: implementation authorized and the first background collection/training cycle started. The teacher passed 15 physical picks; learned task validation and native integration are still pending. See handoffs-random-objects.md for current evidence and job locations.
 
 The user explicitly requires ACT to perform the grasps. The next target is a scene with four or five randomly generated rigid objects, selectable individually and movable into available tray space. Classical bottle unloading and tray transport remain separate skills. Do not substitute classical grasps and report them as ACT successes.
 

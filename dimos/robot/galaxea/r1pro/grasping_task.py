@@ -111,7 +111,9 @@ def score_task(
 class GraspingTask:
     """Deterministic MuJoCo task, sharing its MJCF with native deployment."""
 
-    def __init__(self, scene: Path, *, images: bool = True) -> None:
+    def __init__(
+        self, scene: Path, *, images: bool = True, object_body: str = "task_bottle"
+    ) -> None:
         self.model = mujoco.MjModel.from_xml_path(str(scene))
         self.data = mujoco.MjData(self.model)
         self.qids = np.array([self.model.joint(n).qposadr[0] for n in MANIPULATION_JOINTS])
@@ -130,9 +132,9 @@ class GraspingTask:
             [self.model.joint(n).dofadr[0] for n in MANIPULATION_JOINTS[11:18]]
         )
         self.tcp_id = self.model.site("right_tcp").id
-        self.bottle_id = self.model.body("task_bottle").id
+        self.bottle_id = self.model.body(object_body).id
         self.pad_ids = {self.model.geom(f"right_finger_pad{i}").id for i in (1, 2)}
-        self.bottle_geoms = {self.model.geom(n).id for n in ("bottle_body", "bottle_cap")}
+        self.bottle_geoms = set(map(int, np.flatnonzero(self.model.geom_bodyid == self.bottle_id)))
         self.frame_steps = round(1 / FPS / self.model.opt.timestep)
         if not np.isclose(self.frame_steps * self.model.opt.timestep, 1 / FPS):
             raise ValueError("Physics timestep must divide the action period")

@@ -27,6 +27,7 @@ from lerobot.configs.policies import PreTrainedConfig
 
 from dimos.imitation.profile import PolicyIOProfile
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PACKING_IO, R1PRO_PICK_PLACE_IO
+from dimos.robot.galaxea.r1pro.object_packing import OBJECT_PACKING_IO
 
 
 def prepare(
@@ -69,12 +70,19 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--action-steps", type=int, default=30)
     parser.add_argument("--packing", action="store_true")
+    parser.add_argument("--objects", action="store_true")
     args = parser.parse_args()
+    if args.objects and args.packing:
+        parser.error("Choose exactly one object or bottle packing profile")
     prepare(
         args.source,
         args.output,
         args.action_steps,
-        R1PRO_PACKING_IO if args.packing else R1PRO_PICK_PLACE_IO,
+        OBJECT_PACKING_IO
+        if args.objects
+        else R1PRO_PACKING_IO
+        if args.packing
+        else R1PRO_PICK_PLACE_IO,
     )
 
 

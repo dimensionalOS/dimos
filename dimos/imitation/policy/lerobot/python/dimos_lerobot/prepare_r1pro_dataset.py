@@ -34,6 +34,11 @@ from dimos.robot.galaxea.r1pro.learning import (
     R1PRO_PICK_PLACE_JOINTS,
     R1PRO_PICK_PLACE_TASK,
 )
+from dimos.robot.galaxea.r1pro.object_packing import (
+    OBJECT_GOAL_FEATURES,
+    OBJECT_PACKING_IO,
+    OBJECT_PACKING_TASK,
+)
 
 
 def stable_joint_statistics(
@@ -128,22 +133,34 @@ def convert(source: Path, output: Path) -> None:
             "shape": (size, size, 3),
             "names": ["height", "width", "channels"],
         }
-    packing = manifest.get("profile") == R1PRO_PACKING_IO.name
+    objects = manifest.get("profile") == OBJECT_PACKING_IO.name
+    packing = manifest.get("profile") == R1PRO_PACKING_IO.name or objects
+    profile = OBJECT_PACKING_IO if objects else R1PRO_PACKING_IO
+    goal_features = OBJECT_GOAL_FEATURES if objects else R1PRO_PACKING_GOAL_FEATURES
+    task_text = (
+        OBJECT_PACKING_TASK if objects else R1PRO_PACKING_TASK if packing else R1PRO_PICK_PLACE_TASK
+    )
     if packing:
         if not manifest.get("images") or not (
-            manifest.get("sequences") or manifest.get("choice_groups")
+            manifest.get("sequences")
+            or manifest.get("choice_groups")
+            or (objects and manifest.get("episodes"))
         ):
             raise ValueError("Packing training requires verified demonstrations with images")
         features["observation.environment_state"] = {
             "dtype": "float32",
-            "shape": (len(R1PRO_PACKING_GOAL_FEATURES),),
-            "names": list(R1PRO_PACKING_GOAL_FEATURES),
+            "shape": (len(goal_features),),
+            "names": list(goal_features),
         }
     dataset = LeRobotDataset.create(
-        repo_id="local/r1pro-bottle-packing" if packing else "local/r1pro-pick-place",
+        repo_id="local/r1pro-object-packing"
+        if objects
+        else "local/r1pro-bottle-packing"
+        if packing
+        else "local/r1pro-pick-place",
         root=output,
         fps=R1PRO_PICK_PLACE_FPS,
-        robot_type=R1PRO_PACKING_IO.robot_type if packing else "r1pro_sim_pick_place",
+        robot_type=profile.robot_type if packing else "r1pro_sim_pick_place",
         features=features,
         use_videos=False,
         image_writer_threads=4,
@@ -158,7 +175,7 @@ def convert(source: Path, output: Path) -> None:
                     dataset.add_frame(
                         {
                             **{key: arrays[key][index] for key in features},
-                            "task": R1PRO_PACKING_TASK if packing else R1PRO_PICK_PLACE_TASK,
+                            "task": task_text,
                         }
                     )
                 dataset.save_episode()
