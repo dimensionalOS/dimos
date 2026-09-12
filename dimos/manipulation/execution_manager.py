@@ -135,8 +135,12 @@ class PlanExecutionManager:
             if base_trajectory is not None and self._base_task is not None:
                 base_result = self._start_base(self._base_task, base_trajectory)
                 if not isinstance(base_result, TrajectoryExecutionResult):
-                    if trajectory is not None:
-                        self._cancel_leg(JOINT_TRAJECTORY_TASK_NAME)
+                    if trajectory is not None and not self._cancel_leg(JOINT_TRAJECTORY_TASK_NAME):
+                        # The arm half is still running, without the base half.
+                        base_result = ExecutionResult(
+                            ExecutionStatus.UNCERTAIN,
+                            f"{base_result.message}; could not cancel {JOINT_TRAJECTORY_TASK_NAME}",
+                        )
                     self._store(base_result, active=False)
                     return base_result
                 result = result or base_result

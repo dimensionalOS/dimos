@@ -213,3 +213,18 @@ def test_a_refused_base_trajectory_cancels_the_joints() -> None:
     assert result.status is ExecutionStatus.REJECTED
     assert "too fast" in result.message
     robot.coordinator.cancel_trajectory.assert_called_once_with()
+
+
+def test_a_refused_base_is_uncertain_when_the_joints_cannot_be_confirmed_stopped() -> None:
+    robot = _WholeBody()
+    robot.base_execute = TrajectoryExecutionResult(
+        TrajectoryExecutionStatus.INVALID_TRAJECTORY, "too fast"
+    )
+    robot.coordinator.cancel_trajectory.side_effect = lambda: TrajectoryCancellationResult(
+        TrajectoryCancellationStatus.UNCERTAIN
+    )
+
+    result = robot.manager().execute(_plan(("left/j1", *BASE)), blocking=False)
+
+    assert result.status is ExecutionStatus.UNCERTAIN
+    assert "could not cancel" in result.message
