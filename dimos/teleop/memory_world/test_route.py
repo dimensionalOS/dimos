@@ -145,6 +145,30 @@ def test_unreachable_snap_returns_none() -> None:
     assert planner.snap((30.0, 30.0)) is None
 
 
+def test_a_point_below_the_origin_lands_on_a_negative_cell() -> None:
+    """`cell_of` floors rather than truncating, and only negative coordinates show it.
+
+    Its own comment says why it exists: int() truncates toward zero, so a point up to one
+    cell BELOW the origin landed on cell 0 instead of -1 and then PASSED the bounds check
+    every caller makes. Every fixture in this file puts the origin below every query point,
+    where floor and int agree exactly, so swapping one for the other changed nothing any
+    test could see.
+    """
+    planner = RoutePlanner.from_voxels(
+        _floor(0, 2, 0, 2), _path((0.5, 0.5), (1.5, 1.5)), voxel_size=VOXEL
+    )
+    ox, oy = planner.origin_xy
+
+    # Half a cell below the origin on both axes: floor gives -1, int() gives 0.
+    row, col = planner.cell_of((ox - planner.resolution / 2, oy - planner.resolution / 2))
+
+    assert (row, col) == (-1, -1), "truncated toward zero, so an outside point read as inside"
+    # ...and a point that far out must NOT pass the bounds check every caller makes.
+    assert not planner.passable(row, col)
+    # world_of is floor's inverse, so a round trip lands back in the same cell.
+    assert planner.cell_of(planner.world_of(row, col)) == (row, col)
+
+
 def test_city_scale_map_plans_on_coarse_cells() -> None:
     # A 4 km straight road: at 10 cm cells the grid would be 40k cells across.
     road = _floor(0, 4000, 0, 4)
