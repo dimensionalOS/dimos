@@ -84,6 +84,15 @@ class MemoryQueryResult(BaseModel):
     query_text: str = Field(default="", max_length=400)
 
 
+def answer_positions(result: MemoryQueryResult) -> list[tuple[float, float, float]]:
+    """Everywhere an answer points, focus point included: an answer can carry one and
+    no points, and dropping it there loses every photograph it could have had."""
+    near = [tuple(point.position) for point in result.points]
+    if result.focus_point is not None:
+        near.append(tuple(result.focus_point))
+    return near  # type: ignore[return-value]
+
+
 RESULT_SENTINEL = "__DIMOS_MEMORY_RESULT__="
 
 

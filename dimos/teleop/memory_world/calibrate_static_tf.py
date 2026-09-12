@@ -329,12 +329,12 @@ def write_static_mount(store: Any, mount: str, child: str, matrix: np.ndarray, t
             f"{name!r} belongs to the recording itself, which is read only. Fix the mount"
             " where the recording is written, or convert it to a .db first."
         )
-    kept = [
+    original = [
         t
         for obs in (store.streams[name] if name in store.list_streams() else [])
         for t in obs.data.transforms
-        if (str(t.frame_id), str(t.child_frame_id)) != (mount, child)
     ]
+    kept = [t for t in original if (str(t.frame_id), str(t.child_frame_id)) != (mount, child)]
     x, y, z, w = quaternion_from_matrix(matrix[:3, :3])
     corrected = Transform(
         translation=Vector3(*(float(v) for v in matrix[:3, 3])),
@@ -349,10 +349,13 @@ def write_static_mount(store: Any, mount: str, child: str, matrix: np.ndarray, t
         store.stream(name, TFMessage).append(TFMessage(*kept, corrected), ts=ts)
     except BaseException:
         # Between the delete and the append the recording has no static tf at all, and the
-        # only copy of the other edges is `kept`. A full disk or a Ctrl-C there would take
-        # the lidar mount, the imu and everything else with it, permanently and silently.
-        if kept:
-            store.stream(name, TFMessage).append(TFMessage(*kept), ts=ts)
+        # only copy of it is in memory. A full disk or a Ctrl-C there would take the lidar
+        # mount, the imu and everything else with it, permanently and silently. What goes
+        # back is what was THERE -- `kept` is missing the very edge being replaced, so
+        # restoring that would drop the old camera mount and, if it was the only edge,
+        # would write nothing at all.
+        if original:
+            store.stream(name, TFMessage).append(TFMessage(*original), ts=ts)
         raise
     return name
 

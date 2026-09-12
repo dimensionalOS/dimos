@@ -391,21 +391,36 @@ def test_a_voxel_already_held_is_never_inserted_twice() -> None:
 
     The "is it near?" test here and the mapper's own test run over different float32
     centres, so a voxel on the boundary can be reported as newly seen while already
-    being held. Two copies then break the uniqueness the removal path relies on.
+    being held. Two copies then break the uniqueness the removal path relies on. Driven
+    through the real add_scan with a mapper that reports exactly that boundary voxel.
     """
-    from dimos.teleop.memory_world.replay import RayTracedGrid
+    from dimos.teleop.memory_world.replay import RayTracedGrid, SensorScan, unpack_centres
 
-    grid = RayTracedGrid.__new__(RayTracedGrid)  # the key bookkeeping only, no mapper
+    class BoundaryMapper:
+        """Reports one voxel just outside this grid's own cylinder test, then inside it."""
+
+        def __init__(self, centre: np.ndarray) -> None:
+            self.centre = centre
+
+        def add_frame(self, *_: object) -> None:
+            return None
+
+        def local_map(self, *_: object, **__: object) -> np.ndarray:
+            return self.centre.reshape(1, 3)
+
+    grid = RayTracedGrid.__new__(RayTracedGrid)
     grid.voxel_size = 0.1
-    grid.keys = np.array([10, 20, 30], dtype=np.int64)
-    grid._centres = np.zeros((3, 3), dtype=np.float32)
+    grid.max_range = 5.0
+    grid.keys = np.empty(0, dtype=np.int64)
+    grid._centres = np.empty((0, 3), dtype=np.float32)
+    # Exactly max_range away in x, where float32 rounding decides the cylinder test.
+    centre = np.array([5.0, 0.0, 0.0], dtype=np.float32)
+    grid.mapper = BoundaryMapper(centre)
+    scan = SensorScan(points=np.zeros((1, 3), np.float32), position=np.zeros(3), orientation=None)
 
-    added = np.array([20, 40], dtype=np.int64)  # 20 is already held: the boundary case
-    at = np.searchsorted(grid.keys, added)
-    held = at < len(grid.keys)
-    fresh = np.ones(len(added), dtype=bool)
-    fresh[held] = grid.keys[at[held]] != added[held]
-    assert fresh.tolist() == [False, True]  # only 40 is new
-
-    keys = np.insert(grid.keys, at[fresh], added[fresh])
-    assert keys.tolist() == sorted(set(keys.tolist()))  # unique, which removal relies on
+    for _ in range(4):  # the same voxel, seen again and again
+        grid.add_scan(scan)
+    assert len(grid.keys) == len(set(grid.keys.tolist())), "a key was inserted twice"
+    assert len(grid.keys) == 1
+    assert grid._centres.shape == (1, 3)
+    assert np.allclose(unpack_centres(grid.keys, grid.voxel_size)[0], centre, atol=grid.voxel_size)

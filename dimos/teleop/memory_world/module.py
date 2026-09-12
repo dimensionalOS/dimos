@@ -68,6 +68,7 @@ from dimos.teleop.memory_world.query import (
     RESULT_SENTINEL,
     HighlightPoint,
     MemoryQueryResult,
+    answer_positions,
 )
 from dimos.teleop.memory_world.recording import (
     build_tf_tree,
@@ -122,22 +123,20 @@ class MemoryWorldConfig(ModuleConfig):
     # Cap on the static cloud sent to a viewer. A building is about a million
     # voxels; the viewer's quality governor thins what it cannot draw.
     max_points: int = 1_500_000
-    # Which lidar stream to accumulate, and how many scans (<= 0 uses every frame).
-    # The cloud is deduped by voxel_size, so more scans only costs build time.
-    # Empty picks the stream whose poses agree with tf (recording.pick_lidar); a
-    # default name would win whenever a recording has it, as "lidar" did on a rig
-    # with ten.
+    # Which lidar stream, and how many scans (<= 0 uses every frame). The cloud is
+    # deduped by voxel_size, so more scans only costs build time. Empty picks the
+    # stream whose poses agree with tf (recording.pick_lidar).
     lidar_stream_name: str = ""
     n_voxel_scans: int = 150
-    # True: the scans are already registered in the world frame (e.g. SLAM output),
-    # so their poses must not be applied again. None detects it: a scan frame equal
-    # to world_frame, or a stitched *corrected* frame, counts as aligned; any other
-    # frame is placed through tf; map/odom/world count as aligned when tf cannot place them.
+    # True: the scans are already in the world frame (SLAM output), so their poses
+    # must not be applied twice. None detects it: a scan frame equal to world_frame or
+    # a stitched *corrected* one counts as aligned, map/odom/world count as aligned
+    # when tf cannot place them, and anything else is placed through tf.
     lidar_world_frame: bool | None = None
-    # Heights kept from the cloud. None keeps everything, the default: a recording
-    # can be multi-storey and its origin can be the sensor, so there is no floor to
-    # assume. A [-0.2, 2.4] slab once threw away 96% of a stairwell walkthrough.
-    # Set both to clip explicitly, in the recording's own frame.
+    # Heights kept from the cloud, in the recording's own frame. None keeps
+    # everything: a recording can be multi-storey and its origin can be the sensor,
+    # so there is no floor to assume. A [-0.2, 2.4] slab once threw away 96% of a
+    # stairwell.
     map_z_min: float | None = None
     map_z_max: float | None = None
     # Height colour ramp, over the cloud's own range so a multi-storey
@@ -158,9 +157,8 @@ class MemoryWorldConfig(ModuleConfig):
     query_image_max_size: int = 640
     query_image_distance_m: float = PydanticField(default=1.0, gt=0.0)
     # ---- poses: the tf tree, and nothing else --------------------------------
-    # Every pose the world needs (camera frames, lidar scans, the path) is a
-    # tf lookup at the observation's timestamp. Recordings without a tf stream
-    # fall back to the pose stamped on each image, read as a body pose.
+    # Every pose the world needs is a tf lookup at the observation's stamp. A
+    # recording with no tf falls back to the body pose stamped on each image.
     tf_stream_name: str = ""  # empty detects it
     # The frame everything is placed in; empty or absent from tf, the tf root is
     # used. Scans stamped with this frame are taken as already aligned.
@@ -189,9 +187,8 @@ class MemoryWorldConfig(ModuleConfig):
     background_mode: Literal["black", "passthrough"] = "black"
     memory_analysis_max_output_chars: int = PydanticField(default=64_000, gt=0)
     # ---- spoken "where did I see X" search --------------------------------
-    # SigLIP 2 per-patch index over the image stream. Building it is the slow
-    # part and happens once per recording, in the background, into the
-    # recording itself (~1.7 MB per indexed frame at fp16).
+    # SigLIP 2 per-patch index over the image stream, built once per recording in
+    # the background, into the recording (~1.7 MB per indexed frame at fp16).
     siglip_model_name: str = SIGLIP2_MODEL_NAME
     # Empty means "named after the image stream and siglip_model_name", so two
     # models, or two cameras, never share one.
@@ -236,9 +233,8 @@ class MemoryWorldConfig(ModuleConfig):
     locate_frames: int = PydanticField(default=12, ge=1)
     object_radius_m: float = PydanticField(default=0.75, gt=0.0)
     # ---- timeline replay ------------------------------------------------------
-    # Keyframe and per-scan diff streams written into the recording once (see
-    # replay.py); the viewer scrubs by fetching one keyframe's segment at a
-    # time. A longer interval means fewer, larger segments.
+    # Keyframe and per-scan diff streams written once (replay.py); the viewer scrubs
+    # a segment at a time. A longer interval means fewer, larger segments.
     replay_keyframe_interval_s: float = PydanticField(default=5.0, gt=0.0)
     build_replay_on_start: bool = True
     # Rays longer than this are not cast. The replay is ray-traced (each scan
@@ -1015,11 +1011,16 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         # The engine says which space its ids are in; the two overlap numerically (marker
         # 1 and observation 1 are both small integers), so guessing from the values would
         # quietly highlight the wrong photo rather than fail.
-        if result.engine != "agent" or not result.observation_ids:
+        if result.engine != "agent":
             return list(result.observation_ids or [])
         cached = self._cached_image_poses
         if cached is None:  # no markers were published, so no id of ours can name one
             return []
+        if not result.observation_ids:
+            # An answer can point somewhere without naming a frame. The markers nearest
+            # where it points are still its evidence, and returning nothing here left it
+            # with no photograph at all.
+            return self._markers_near(answer_positions(result))
         header, _ = cached
         sources = {
             source: marker
@@ -1031,12 +1032,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         snapped = [sources[i] for i in result.observation_ids if i in sources]
         if snapped:
             return snapped
-        # focus_point too: an answer can carry one and no points, and dropping it there
-        # would lose every photograph rather than show the nearest.
-        near = [tuple(point.position) for point in result.points]
-        if result.focus_point is not None:
-            near.append(tuple(result.focus_point))
-        return self._markers_near(near)
+        return self._markers_near(answer_positions(result))
 
     # ---- spoken visual search ---------------------------------------------
 
