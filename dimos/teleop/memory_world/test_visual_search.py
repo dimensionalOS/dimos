@@ -598,3 +598,29 @@ def test_the_siglip_fallback_answers_end_to_end() -> None:
     assert outcome.duration_ms > 0  # time.monotonic(), which the name list did not cover
     assert published["result"].engine == "siglip"
     assert published["result"].observation_ids == [11]
+
+
+def test_one_frame_straddling_a_bearing_boundary_is_still_one_view() -> None:
+    """A blob is not two directions because it crosses a 45 degree line.
+
+    The bearing was measured to each hit's OWN world point, so one camera, in one
+    frame, looking at one object that happens to sit on a bin boundary reported two
+    viewing directions -- and `views` is the primary rank key and the "N views" the
+    user reads. A place genuinely seen from two sides then lost to a single stray.
+    """
+    # One camera at the origin, one frame, a blob either side of the 45 degree line.
+    straddle = [
+        hit(5.00, 5.05, 0.30, camera=(0.0, 0.0, 0.0), frame=1),  # bearing 45.3 deg
+        hit(5.05, 5.00, 0.29, camera=(0.0, 0.0, 0.0), frame=1),  # bearing 44.7 deg
+    ]
+    assert cluster_hits(straddle, radius=0.75, max_places=6)[0].views == 1
+
+    # And the ranking it was corrupting: two real directions must outrank the blob,
+    # even though the blob's similarity is higher.
+    two_sides = [
+        hit(-5.0, 0.0, 0.20, camera=(-10.0, 0.0, 0.0), frame=2),  # from the west
+        hit(-5.0, 0.1, 0.19, camera=(-5.0, -10.0, 0.0), frame=3),  # and from the south
+    ]
+    places = cluster_hits(straddle + two_sides, radius=0.75, max_places=6)
+    assert [place.views for place in places] == [2, 1]
+    assert places[0].similarity == 0.20

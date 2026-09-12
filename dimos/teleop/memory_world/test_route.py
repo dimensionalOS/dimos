@@ -155,3 +155,24 @@ def test_mls_planner_routes_through_the_doorway() -> None:
     ys = np.asarray([p[1] for p in route.points])
     crossing = ys[np.argmin(np.abs(xs - 5.0))]
     assert 4.0 < crossing < 5.2, f"crossed the wall at y={crossing}"
+
+
+def test_the_drawn_route_runs_through_cell_centres_not_corners() -> None:
+    """The polyline must sit on the cells it was planned through.
+
+    `OccupancyGrid.grid_to_world` is `origin + cell * resolution`, which is the cell's
+    CORNER, while `snap()` and `world_of()` work in centres. Taken as-is every waypoint
+    sat half a cell down and left of the cell A* chose: 4 cm at this voxel size, but half
+    a metre on a city map, where that is more than the robot's radius.
+    """
+    planner = RoutePlanner.from_voxels(_room_with_doorway(), DOORWAY_DRIVE, voxel_size=VOXEL)
+    route = planner.plan((1.0, 1.0), (9.0, 1.0))
+    assert route is not None
+    for x, y, _ in route.points:
+        # cell_of, not snap: snap looks for the nearest FREE cell, which for a waypoint
+        # beside a wall is a different cell entirely. The question here is only whether a
+        # waypoint sits at the centre of the cell it is in.
+        row, col = planner.cell_of((x, y))
+        assert planner.world_of(row, col) == pytest.approx((x, y), abs=1e-9), (
+            f"waypoint ({x}, {y}) is not the centre of the cell it lands in"
+        )

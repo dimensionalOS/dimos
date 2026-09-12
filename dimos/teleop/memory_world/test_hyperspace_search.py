@@ -752,3 +752,57 @@ def test_one_photograph_is_offered_once_however_many_hits_it_produced() -> None:
 
     assert [(e.camera_frame, e.ts) for e in picked] == [("cam", 10.0), ("cam", 20.0)]
     assert picked[0].score == 0.9  # and it is the best hit of that frame that is kept
+
+
+def test_the_frames_route_reads_the_store_off_the_event_loop() -> None:
+    """Every route here goes through `asyncio.to_thread`, and `/frames` did not.
+
+    `_camera_frame` takes the store lock and reads the store on a cold cache, and the
+    cache's only warmer runs INSIDE that lock. Called straight from the coroutine it
+    froze the whole server -- every websocket and every other route, for every client,
+    not just the caller -- for as long as the read took.
+    """
+    import asyncio
+    import threading
+    from types import SimpleNamespace
+    from typing import Any
+
+    from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
+
+    routes: dict[str, Any] = {}
+
+    class FakeApp:
+        """Records the handlers instead of serving them."""
+
+        def _record(self, path: str) -> Any:
+            def register(fn: Any) -> Any:
+                routes[path] = fn
+                return fn
+
+            return register
+
+        get = post = websocket = _record
+
+    ran_on: dict[str, str] = {}
+
+    def camera_frame() -> str:
+        ran_on["thread"] = threading.current_thread().name
+        return "camera_optical"
+
+    owner = SimpleNamespace(
+        # orbit_frame is not in tf here, which is the branch that reads the store.
+        config=SimpleNamespace(client_route="/memory_world", orbit_frame="base_link"),
+        _tf_frames=lambda: ["odom", "camera_optical"],
+        _camera_frame=camera_frame,
+    )
+    HyperspaceAnswers._setup_hyperspace_routes(owner, FakeApp())  # type: ignore[arg-type]
+
+    async def call() -> dict[str, Any]:
+        ran_on["loop"] = threading.current_thread().name
+        return await routes["/memory_world/frames"]()
+
+    answer = asyncio.run(call())
+    # The frame it chose is still right ...
+    assert answer["default"] == "camera_optical"
+    # ... and it was not read on the thread running the event loop.
+    assert ran_on["thread"] != ran_on["loop"], "the store read happened on the event loop"

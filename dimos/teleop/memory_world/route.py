@@ -354,6 +354,13 @@ class RoutePlanner:
         path = min_cost_astar(self.grid, goal=goal, start=start)  # no unknown cells here
         if path is None or len(path.poses) < 2:
             return None
-        points = [(float(p.x), float(p.y), self.floor_at((p.x, p.y))) for p in path.poses]
+        # OccupancyGrid.grid_to_world is `origin + cell * resolution`, which is the cell's
+        # CORNER, while snap() and world_of() work in centres. Taken as-is the drawn route
+        # sits half a cell down and left of the cells it was planned through: 4 cm at
+        # voxel_size 0.08, but half a metre on a city map, where the cells reach a metre
+        # and half of one is more than ROBOT_RADIUS_M.
+        half = self.resolution / 2
+        centres = [(float(p.x) + half, float(p.y) + half) for p in path.poses]
+        points = [(x, y, self.floor_at((x, y))) for x, y in centres]
         length = float(sum(math.dist(a[:2], b[:2]) for a, b in pairwise(points)))
         return Route(points=points, length_m=length, cells=len(points))

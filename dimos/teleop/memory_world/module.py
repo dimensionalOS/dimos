@@ -1547,10 +1547,22 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 if self._visual_index is not None:
                     self._visual_index.stop()
                     self._visual_index = None
-                store, self._store = self._store, None
-                if store is not None:
+                # Under the store lock: the evidence and adopt threads are not joined
+                # here, and closing a store out from under a read in flight gives a page
+                # of sqlite ProgrammingError on every `memworld --stop` after a question.
+                # With a deadline, because an evidence read decodes up to 64 frames and
+                # --stop should not wait on it -- the process exit closes it either way,
+                # which is what the busy branch above already decides for its threads.
+                if self._store_lock.acquire(timeout=5):
                     try:
-                        store.stop()
-                    except Exception:
-                        logger.exception("error closing memory store")
+                        store, self._store = self._store, None
+                    finally:
+                        self._store_lock.release()
+                    if store is not None:
+                        try:
+                            store.stop()
+                        except Exception:
+                            logger.exception("error closing memory store")
+                else:
+                    logger.warning("a read is still in flight; the store is left to exit")
             super().stop()

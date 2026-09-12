@@ -636,7 +636,12 @@ class HyperspaceAnswers:
             # and offering a default nothing matches lets the browser pick its own.
             chosen = self.config.orbit_frame
             if frames and chosen not in frames:
-                chosen = self._camera_frame() if self._camera_frame() in frames else frames[0]
+                # to_thread, like every other route here: _camera_frame takes the store
+                # lock and reads the store on a cold cache, and the cache's only warmer
+                # runs INSIDE that lock. On the event loop it freezes every websocket and
+                # every route for every client, not just this request. Called once, too.
+                camera = await asyncio.to_thread(self._camera_frame)
+                chosen = camera if camera in frames else frames[0]
             return {"frames": frames, "default": chosen}
 
         @app.get(f"{base}/orbit")  # type: ignore[misc]

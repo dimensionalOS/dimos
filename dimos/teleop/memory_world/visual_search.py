@@ -332,7 +332,13 @@ def cluster_hits(hits: Iterable[PatchHit], radius: float, max_places: int) -> li
             nearest["weight"] + weight
         )
         nearest["weight"] += weight
-        dx, dy = point[0] - hit.camera_position[0], point[1] - hit.camera_position[1]
+        # The bearing is from the camera to THE PLACE, so it must be measured to one
+        # fixed point per cluster -- the best hit, which is the first one in and never
+        # replaced. Measuring to each hit's own point instead let a single frame's blob
+        # straddle a 45 degree boundary and count as two directions, which is the exact
+        # thing the docstring above says cannot happen and the primary rank key.
+        anchor = nearest["best"].position
+        dx, dy = anchor[0] - hit.camera_position[0], anchor[1] - hit.camera_position[1]
         nearest["bearings"].add(int(np.degrees(np.arctan2(dy, dx)) // 45))
 
     ranked = sorted(

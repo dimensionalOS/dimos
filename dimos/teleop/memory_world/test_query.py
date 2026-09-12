@@ -380,3 +380,46 @@ def test_an_answers_ids_reach_the_viewer_as_marker_ids_whatever_the_engine_count
         ],
     )
     assert snap(module, by_points) == [7, 7]  # one marker per place it points at
+
+
+def test_stop_does_not_close_the_store_under_a_read_in_flight(tmp_path: Path) -> None:
+    """The evidence and adopt threads are not joined by stop(), so it must take the lock.
+
+    Closing the store out from under a read in flight gives a page of sqlite
+    ProgrammingError on every `memworld --stop` issued after a question. Read-only, so
+    noise rather than corruption, but it is noise that hides a real failure.
+    """
+    import threading
+    import time
+
+    db_path = tmp_path / "recording.db"
+    _empty_store(db_path)
+    module = MemoryWorldModule(store_path=str(db_path))
+    module._ensure_store()
+    assert module._store is not None
+
+    holding = threading.Event()
+    may_finish = threading.Event()
+
+    def a_read_in_flight() -> None:
+        with module._store_lock:
+            holding.set()
+            may_finish.wait(10)
+
+    reader = threading.Thread(target=a_read_in_flight, name="reader")
+    reader.start()
+    try:
+        assert holding.wait(5), "the reader never took the lock"
+        stopped = threading.Thread(target=module.stop, name="stop")
+        stopped.start()
+        # While the read holds the lock, the store must still be open.
+        time.sleep(1.0)
+        assert module._store is not None, "stop() closed the store under a read in flight"
+        may_finish.set()
+        stopped.join(timeout=20)
+        assert not stopped.is_alive()
+        # And once the read is done, it does close it.
+        assert module._store is None
+    finally:
+        may_finish.set()
+        reader.join(timeout=5)
