@@ -118,6 +118,12 @@ export class WorldScene {
         this._voxelsDrawn = 0;
         this._cloudData = null;               // {n, positions, colors, voxelSize}
         this._roofCut = { value: 1e9 };       // voxels above this robot z are not drawn
+        // A corridor from the eye to a photograph, carved out of the map while that photo
+        // is being looked at: standing where the picture was taken puts you inside the
+        // wall the robot was facing, and the picture is behind it. Radius <= 0 is off.
+        this._sightFrom = { value: new THREE.Vector3() };
+        this._sightTo = { value: new THREE.Vector3() };
+        this._sightRadius = { value: 0 };
         this._imageQuadGroup = new THREE.Group();     // textured quads, toggleable
         this._imageQuadGroup.visible = false;
         this._frameRotate.add(this._imageQuadGroup);
@@ -956,17 +962,39 @@ export class WorldScene {
         geometry.setAttribute('color', colors);
         geometry.setDrawRange(0, 0);
         const material = new THREE.ShaderMaterial({
-            uniforms: { ...spriteUniforms(d.voxelSize), roofCut: this._roofCut },
+            uniforms: {
+                ...spriteUniforms(d.voxelSize),
+                roofCut: this._roofCut,
+                sightFrom: this._sightFrom,
+                sightTo: this._sightTo,
+                sightRadius: this._sightRadius,
+            },
             vertexColors: true,
             vertexShader: `${SPRITE_VERTEX_GLSL}
                 uniform float roofCut;
+                uniform vec3 sightFrom;
+                uniform vec3 sightTo;
+                uniform float sightRadius;
                 varying vec3 vColor;
+                // Inside the cone from the eye to the photograph: a narrow hole at the
+                // face opening out to the picture's own width, so what is carved away is
+                // what would have been in front of it and nothing else.
+                bool inSightLine(vec3 p) {
+                    if (sightRadius <= 0.0) return false;
+                    vec3 axis = sightTo - sightFrom;
+                    float len2 = dot(axis, axis);
+                    if (len2 <= 0.0) return false;
+                    float t = clamp(dot(p - sightFrom, axis) / len2, 0.0, 1.0);
+                    float radius = mix(0.15, sightRadius, t);
+                    return distance(p, sightFrom + axis * t) < radius;
+                }
                 void main() {
                     vColor = color;
                     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
                     // Above the roof cut (robot z) the voxel vanishes: the tour looks in from above.
-                    gl_PointSize = position.z > roofCut ? 0.0 : spritePointSize(mvPosition);
-                    gl_Position = position.z > roofCut ? vec4(2.0, 2.0, 2.0, 1.0) : projectionMatrix * mvPosition;
+                    bool gone = position.z > roofCut || inSightLine(position);
+                    gl_PointSize = gone ? 0.0 : spritePointSize(mvPosition);
+                    gl_Position = gone ? vec4(2.0, 2.0, 2.0, 1.0) : projectionMatrix * mvPosition;
                 }`,
             fragmentShader: SPRITE_FRAGMENT_SHADER,
         });
@@ -1142,6 +1170,22 @@ export class WorldScene {
         this._queryImageCursor = -1;
         this._applyQueryImageVisibility();
         this.diag('focused', { x, y, z });
+    }
+
+    /** Carve the map out of the way between `from` and `to` (robot frame), opening out
+     *  to `radius` at the far end. Called with nothing to put the map back.
+     *
+     *  Standing where a picture was taken puts the viewer inside whatever the robot was
+     *  looking at, so the picture hangs behind a wall of voxels and all you see is the
+     *  wall. */
+    setSightLine(from, to, radius) {
+        if (!from || !to || !(radius > 0)) {
+            this._sightRadius.value = 0;
+            return;
+        }
+        this._sightFrom.value.set(from[0], from[1], from[2]);
+        this._sightTo.value.set(to[0], to[1], to[2]);
+        this._sightRadius.value = radius;
     }
 
     /** Hide voxels above robot z `z` (Infinity/null shows all). */

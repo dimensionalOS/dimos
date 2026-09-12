@@ -60,6 +60,7 @@ export class ResultsNav {
     clear() {
         this.clusters = [];
         this.current = -1;
+        if (this.scene.setSightLine) this.scene.setSightLine(null);
         this.clearRoute();
         this.scene.clusterFilter = -1;
         if (this.heatmap) this.heatmap.clear();
@@ -88,6 +89,11 @@ export class ResultsNav {
                 this.flight.lookAt(viewpoint.position, {
                     distance: 0, yaw: viewpoint.yaw, pitch: viewpoint.pitch,
                 });
+                // And take the map out from between the viewer and that picture, or
+                // standing where it was taken just puts you inside the wall it shows.
+                if (this.scene.setSightLine) {
+                    this.scene.setSightLine(viewpoint.position, viewpoint.at, viewpoint.radius);
+                }
             } else {
                 const distance = Math.max(MIN_VIEW_DISTANCE_M, Math.min(MAX_VIEW_DISTANCE_M, cluster.radius * 3 + 1.5));
                 this.flight.lookAt(cluster.centre, { distance, yaw: this._yawFromEvidence(index) });
@@ -115,8 +121,18 @@ export class ResultsNav {
         const header = (this.scene._queryImages || []).find((h) => h && h.cluster === index);
         if (!header || !header.position || !header.forward) return null;
         const f = header.forward;
+        // Where the photograph hangs, and how wide it is there: the corridor carved out
+        // of the map reaches exactly that far and no further.
+        const at = header.distance_m
+            ? [0, 1, 2].map((k) => header.position[k] + f[k] * header.distance_m)
+            : header.point;
+        const halfWidth = header.distance_m && header.hfov_deg
+            ? header.distance_m * Math.tan((header.hfov_deg * Math.PI) / 360)
+            : 0.8;
         return {
             position: header.position,
+            at,
+            radius: halfWidth,
             yaw: Math.atan2(-f[0], f[1]),               // robot -> three, as below
             pitch: Math.asin(Math.max(-1, Math.min(1, f[2]))),   // robot z is up
         };
