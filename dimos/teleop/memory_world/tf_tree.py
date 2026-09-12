@@ -237,6 +237,8 @@ class TfTree:
         path = self._path(target, source)
         if path is None:
             return None
+        if not path:  # the same frame: `lookup` returns identity for this, so do not raise
+            return (-math.inf, math.inf)
         starts, ends = [], []
         for parent, child, _ in path:
             start, end = self._edges[(parent, child)].span

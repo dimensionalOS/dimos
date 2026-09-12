@@ -278,6 +278,10 @@ export class Tour {
     /** Cut the voxels above head height (on/off), so an overview shows rooms, not ceilings.
      *  Outdoors (or on a hilly ride) there is no ceiling and no single floor, so nothing is cut. */
     _roof(cut) {
+        // Only while the tour is on. A station resuming after Exit used to cut the ceiling
+        // and leave it cut: setRoofCut has three callers and all of them are in here, so
+        // with the tour closed nothing could put it back for the rest of the session.
+        if (!this.active) return;
         if (!cut || this._outdoors()) { this.scene.setRoofCut(null); return; }
         const replay = this.replayOf();
         const floor = replay && replay.index && replay.index.height ? replay.index.height.floor : null;
@@ -325,6 +329,7 @@ export class Tour {
     dispose() { this._disposed = true; }  // a station still entering then draws nothing
 
     _buildPlacards() {
+        if (!this.active) return;   // a resumed station must not put the signs back
         this._clearPlacards();
         const bounds = this._bounds();
         const anchors = [];
@@ -453,9 +458,17 @@ export class Tour {
         const station = this.stations[index];
         document.body.classList.toggle('touring-hands-on', Boolean(station.hands_on));
         this._refresh();
+        // A station that awaits (4 asks the server, 8 plans a route, and the first plan
+        // builds the MLS graph over the whole map) resumes AFTER an Exit that happened
+        // while it waited. `_disposed` is not that check -- only a websocket drop sets it
+        // -- so the tour has to ask whether it is still on this station.
         const result = station.enter();
         if (result && typeof result.then === 'function') {
-            result.then(() => { if (this._disposed) return; this._refresh(); this._buildPlacards(); }).catch((e) => this.diag('tour_station_failed', { index, error: String(e.message || e) }));
+            result.then(() => {
+                if (this._disposed || !this.active || this.index !== index) return;
+                this._refresh();
+                this._buildPlacards();
+            }).catch((e) => this.diag('tour_station_failed', { index, error: String(e.message || e) }));
         }
         this.diag('tour_station', { index, title: station.title });
     }

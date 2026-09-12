@@ -1,5 +1,5 @@
 // Memory World browser entry point:
-//   - opens /ws_memory_world
+//   - opens <client route>/ws
 //   - hands payloads to WorldScene (point cloud + Street-View markers)
 //   - routes gestures from InputAdapter directly to the scene (locomotion
 //     is client-side state; server doesn't need a copy)
@@ -130,7 +130,11 @@ window.addEventListener('unhandledrejection', (e) => {
 function setupWebSocket() {
     return new Promise((resolve, reject) => {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws_memory_world`;
+        // Derived from the page's own path, not a literal: the server registers the
+        // socket under the client route, so a moved viewer keeps working. A separate
+        // ws_route setting used to exist on the Python side and this file ignored it,
+        // which made it a knob that could only break things.
+        const wsUrl = `${protocol}//${window.location.host}${baseUrl}/ws`;
         setStatus('Connecting to server…');
         const socket = new WebSocket(wsUrl);
         ws = socket;
@@ -305,7 +309,8 @@ function buildScene() {
             },
         }) : null;
         // Either orbit button may be the one pressed; both say the same thing after.
-        if (results) results.onOrbitChange = () => setOrbit(scene.isOrbiting());
+        if (results) results.onOrbitChange = () => syncOrbitLabels();
+        scene.onOrbitChange = () => syncOrbitLabels();  // the O key and camera flights too
         tour = Tour ? new Tour({
             scene, heatmap, pyramids, flight, results, baseUrl, diag,
             replay: () => replay,
@@ -927,23 +932,25 @@ embedBtn.addEventListener('click', async () => {
 
 // Orbit mode circles a frame of the robot (base_link by default) and follows it
 // along the timeline. The server names the frame and gives its position per scan.
-function setOrbit(enabled) {
+/** Make every orbit button say what pressing it will do. Called for ANY change of
+ *  orbit, including ones this file did not ask for -- a camera flight turns orbit off
+ *  on its way to a place, and the buttons used to go on claiming it was still on. */
+function syncOrbitLabels() {
     if (!scene) return;
-    const on = scene.setOrbit(enabled);
+    const on = scene.isOrbiting();
     // The frame the user picked, not the recording's default: OrbitControl keeps
     // orbiting their choice, so the button has to name it.
     const frame = orbitFrameSel.value || replay?.index?.orbit?.frame || 'frame';
-    const label = on ? 'Stop orbit' : `Orbit ${frame}`;
-    orbitBtn.textContent = label;
+    orbitBtn.textContent = on ? 'Stop orbit' : `Orbit ${frame}`;
     document.getElementById('orbitTouchBtn').textContent = on ? 'Walk' : 'Orbit';
     if (results && results._syncOrbitLabel) results._syncOrbitLabel();  // label only, no loop
 }
+function setOrbit(enabled) {
+    if (!scene) return;
+    scene.setOrbit(enabled);   // which calls back into syncOrbitLabels
+}
 orbitBtn.addEventListener('click', () => setOrbit(!scene?.isOrbiting()));
 document.getElementById('orbitTouchBtn').addEventListener('click', () => setOrbit(!scene?.isOrbiting()));
-window.addEventListener('keydown', (event) => {
-    // The scene toggles on O itself; keep the button label in step.
-    if (event.code === 'KeyO' && scene) setTimeout(() => setOrbit(scene.isOrbiting()), 0);
-});
 document.getElementById('cameraBtn').addEventListener('click', () => {
     if (scene) scene.stepQueryImage();  // the same filtered step the P key takes
 });

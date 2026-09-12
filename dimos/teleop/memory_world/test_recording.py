@@ -1126,3 +1126,33 @@ def test_the_ingest_preflight_refuses_a_half_done_rebuild_before_it_deletes(tmp_
             plain.stop()
     finally:
         store.stop()
+
+
+def test_a_ros_named_depth_topic_still_finds_its_own_camera_info(tmp_path: Path) -> None:
+    """`camera_depth_image_rect_raw` does not END with `_image`, so stripping a suffix
+    did nothing and the depth camera's own intrinsics were never looked for.
+
+    What was used instead was the COLOUR camera's K, as the DEPTH camera's. The patch
+    correction then mapped colour to colour and indexed a 1280-wide raster into an
+    848-wide one: every patch past uv 0.66 falls outside the depth image and is dropped,
+    and the ones that survive sample about half a frame too far right and down.
+    """
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+    from dimos.teleop.memory_world.recording import depth_info_stream_for
+
+    store = SqliteStore(path=str(tmp_path / "ros.db"))
+    store.start()
+    try:
+        own = store.stream("camera_depth_camera_info", CameraInfo)
+        own.append(CameraInfo(width=848, height=480, frame_id="depth", ts=1.0), ts=1.0)
+        colour = store.stream("camera_color_camera_info", CameraInfo)
+        colour.append(CameraInfo(width=1280, height=720, frame_id="colour", ts=1.0), ts=1.0)
+
+        chosen = depth_info_stream_for(
+            store, "camera_depth_image_rect_raw", "camera_color_camera_info"
+        )
+        assert chosen == "camera_depth_camera_info", (
+            "the depth camera's own intrinsics, not the colour camera's"
+        )
+    finally:
+        store.stop()

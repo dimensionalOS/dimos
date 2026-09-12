@@ -149,6 +149,7 @@ export class WorldScene {
         this._photosPinnedOff = false;                // set when the user turns Photos off
         this._hudOff = false;                         // likewise for the minimap and answer panel
         this._queryImageCursor = -1;
+        this.onOrbitChange = null;   // set by main.js; see setOrbit
 
         // Top-down map: shared texture, used twice (ground projection + HUD).
         this._topDownBounds = null;
@@ -485,6 +486,11 @@ export class WorldScene {
         if (enabled) this._orbit.enable(this);
         else this._orbit.disable();
         this.diag('orbit', { on: this._orbit.active, target: this._orbit.target });
+        // Whoever changed it, the buttons have to follow: flying to a place turns orbit
+        // off through here, and without this the toolbar kept saying "Stop orbit" while
+        // orbit was already off -- so pressing the button that said "Stop orbit" started
+        // orbiting. Every path into orbit goes through this method, including the O key.
+        if (this.onOrbitChange) this.onOrbitChange(this._orbit.active);
         return this._orbit.active;
     }
 

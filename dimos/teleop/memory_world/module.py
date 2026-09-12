@@ -27,6 +27,7 @@ import contextlib
 import gzip
 import io
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -178,7 +179,6 @@ class MemoryWorldConfig(ModuleConfig):
     map_z_low_percentile: float = PydanticField(default=10.0, ge=0.0, le=100.0)
     map_z_high_percentile: float = PydanticField(default=90.0, ge=0.0, le=100.0)
     client_route: str = "/memory_world"
-    ws_route: str = "/ws_memory_world"
     # Bind on all interfaces by default — the headset connects over Wi-Fi.
     listen_host: str = "0.0.0.0"
     background_mode: Literal["black", "passthrough"] = "black"
@@ -306,6 +306,10 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
 
         super().__init__(**kwargs)
         self.config.store_path = str(self._resolve_store_path(self.config.store_path))
+        # "/custom/" would register "/custom//replay/index" while the viewer, which builds
+        # its base with pathname.replace(/\/$/, ""), asks for "/custom/replay/index": the
+        # page loads and every API call 404s. The viewer's rule, applied on this side too.
+        self.config.client_route = "/" + self.config.client_route.strip("/")
 
     @staticmethod
     def _resolve_store_path(name_or_path: str) -> Path:
@@ -345,7 +349,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
                 name="memory_world_static",
             )
 
-        @app.websocket(self.config.ws_route)  # type: ignore[misc]
+        @app.websocket(f"{self.config.client_route}/ws")  # type: ignore[misc]
         async def ws_world(ws: WebSocket) -> None:
             await self._handle_ws(ws)
 
@@ -579,7 +583,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
                     conn.send_threadsafe(encode_text("query_result", **self._active_query_result))
                     for header, jpeg in self._active_query_images:
                         conn.send_threadsafe(encode_binary(MSG_QUERY_IMAGE, header, jpeg))
-        except Exception:
+        except (Exception, SystemExit):  # a refusal is a SystemExit, not an Exception
             logger.exception("failed to build/send world payload")
             conn.send_threadsafe(encode_text("error", message="world load failed"))
 
@@ -1142,8 +1146,10 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
                 # Listing every camera stamp is a pass over the image stream (on
                 # an mcap that decompresses every chunk), so it is done here, once.
                 self._replay_index = self._build_replay_index_json(replay)
-        except Exception as error:
-            # The viewer reads this prefix: it stops polling on a failed build.
+        except (Exception, SystemExit) as error:
+            # The viewer reads this prefix: it stops polling on a failed build. A refusal
+            # is a SystemExit, and missing it here left `_replay_progress` on its starting
+            # value, so the poll never saw the prefix and /replay/index rebuilt for ever.
             self._replay_progress = f"build failed: {error}"
             # Remembered: otherwise every viewer connect and every /replay/index retry
             # would rebuild from scratch. A cancelled build is retried by the next start.
@@ -1164,7 +1170,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
             return
         try:
             self._ensure_replay()
-        except Exception:
+        except (Exception, SystemExit):  # a refusal is a SystemExit
             logger.exception("voxel replay build failed")  # _replay_locked keeps the reason
 
     def _frame_pose_at(self, frame: str, ts: float) -> np.ndarray | None:
@@ -1242,7 +1248,12 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
             if (
                 isinstance(position, list)
                 and len(position) == 3
-                and all(isinstance(value, int | float) and np.isfinite(value) for value in position)
+                # math.isfinite, not np.isfinite: the latter raises TypeError on a python
+                # int too wide for int64, so the guard meant to reject bad input died on it
+                # and took the websocket down with it.
+                and all(
+                    isinstance(value, int | float) and math.isfinite(value) for value in position
+                )
             ):
                 with self._clients_lock:
                     self._viewer_position = (
@@ -1320,7 +1331,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
         step is a pass over the recording and run together they starve each other."""
         try:
             self._ensure_world_cache()
-        except Exception:
+        except (Exception, SystemExit):  # a refusal is a SystemExit; a thread dying on
+            # one logs nothing at all, so the viewer sat on "Building the map..." for ever.
             logger.exception("world cache build failed")
         if self._stopping.is_set():
             return

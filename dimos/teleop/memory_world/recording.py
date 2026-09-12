@@ -518,9 +518,16 @@ def depth_info_stream_for(store: Any, depth_stream: str, camera_info: str) -> st
     about to replace.
     """
     present = set(store.list_streams())
+    # Split on `_image` rather than stripping a trailing one: a ROS depth topic is
+    # `camera_depth_image_rect_raw`, which does not END with `_image`, so removesuffix
+    # was a no-op there and the real `camera_depth_camera_info` was never tried. The
+    # fallback was then the COLOUR info, used as the depth camera's K -- so the patch
+    # correction mapped colour to colour and indexed a 1280-wide raster into an 848-wide
+    # one: everything past uv 0.66 dropped, the rest sampled half a frame to the right.
+    base = depth_stream.split("_image")[0] or depth_stream
     for candidate in (
         f"{depth_stream}_camera_info",
-        f"{depth_stream.removesuffix('_image')}_camera_info",
+        f"{base}_camera_info",
     ):
         if candidate in present and next(iter(store.streams[candidate].order_by("ts")), None):
             return candidate
