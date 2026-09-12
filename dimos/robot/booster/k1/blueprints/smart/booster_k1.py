@@ -21,5 +21,3 @@ from dimos.robot.booster.k1.blueprints.basic.booster_k1_basic import booster_k1_
 booster_k1 = autoconnect(
     booster_k1_basic,
 ).global_config(n_workers=4, robot_model="booster_k1")
-
-__all__ = ["booster_k1"]

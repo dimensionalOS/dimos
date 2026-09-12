@@ -38,13 +38,11 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.spec.perception import Camera, Pointcloud
+from dimos.spec.perception import Camera
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -54,43 +52,21 @@ class ConnectionConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
 
 
-def _camera_info_static() -> CameraInfo:
-    # TODO: replace with actual K1 camera intrinsics
-    fx, fy, cx, cy = (400.0, 400.0, 272.0, 153.0)
-    width, height = (544, 306)
-
-    return CameraInfo(
-        frame_id="camera_optical",
-        height=height,
-        width=width,
-        distortion_model="plumb_bob",
-        D=[0.0, 0.0, 0.0, 0.0, 0.0],
-        K=[fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
-        R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-        P=[fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
-        binning_x=0,
-        binning_y=0,
-    )
-
-
-class K1Connection(Module, Camera, Pointcloud):
+class K1Connection(Module, Camera):
     """Connection module for the Booster K1 humanoid robot."""
 
     config: ConnectionConfig
 
     cmd_vel: In[Twist]
-    # TODO: publish pointcloud, odom, and lidar once K1 hardware exposes this data
-    pointcloud: Out[PointCloud2]
-    odom: Out[PoseStamped]
-    lidar: Out[PointCloud2]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
 
-    camera_info_static: CameraInfo = _camera_info_static()
+    camera_info_static: CameraInfo = CameraInfo.from_intrinsics(
+        400.0, 400.0, 272.0, 153.0, 544, 306, frame_id="camera_optical"
+    )
     _camera_info_thread: Thread | None = None
     _video_thread: Thread | None = None
     _latest_video_frame: Image | None = None
-    _conn: BoosterConnection | None = None
 
     @classmethod
     def rerun_views(cls) -> list[rrb.Spatial2DView]:
@@ -104,6 +80,7 @@ class K1Connection(Module, Camera, Pointcloud):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._conn: BoosterConnection | None = None
         self._conn_lock = Lock()
         self._stop_event = Event()
 
@@ -179,10 +156,10 @@ class K1Connection(Module, Camera, Pointcloud):
                 logger.warning("Video error, retrying in 3s", error=str(e))
                 await asyncio.sleep(3)
 
-    def _on_frame(self, jpeg_bytes: bytes) -> None:
+    def _on_frame(self, jpeg: bytes) -> None:
         if self._stop_event.is_set():
             return
-        arr = cv2.imdecode(np.frombuffer(jpeg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+        arr = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
         if arr is None:
             return
         image = Image.from_numpy(arr, format=ImageFormat.BGR, frame_id="camera_optical")
@@ -217,7 +194,7 @@ class K1Connection(Module, Camera, Pointcloud):
 
     @rpc
     def standup(self) -> bool:
-        """Make the robot stand up (DAMPING -> PREPARE -> WALKING)."""
+        """Make the robot stand up."""
         try:
             with self._conn_lock:
                 if not self._conn:
@@ -264,7 +241,7 @@ class K1Connection(Module, Camera, Pointcloud):
             return False
 
     @rpc
-    def sit(self) -> bool:
+    def liedown(self) -> bool:
         """Make the robot lie down."""
         try:
             with self._conn_lock:

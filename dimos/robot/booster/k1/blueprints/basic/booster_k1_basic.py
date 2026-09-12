@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic Booster K1 blueprint: connection + visualization."""
+"""Basic Booster K1 blueprint: connection + camera visualization."""
 
 from typing import Any
 
@@ -33,7 +33,7 @@ def _convert_camera_info(camera_info: Any) -> Any:
 
 
 def _k1_rerun_blueprint() -> rrb.Blueprint:
-    """Split layout: camera feed + 3D world view side by side."""
+    """Camera feed + 3D world view side by side."""
     return rrb.Blueprint(
         rrb.Horizontal(
             rrb.Spatial2DView(origin="world/color_image", name="Camera"),

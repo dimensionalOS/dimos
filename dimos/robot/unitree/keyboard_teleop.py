@@ -101,15 +101,7 @@ class KeyboardTeleop(Module):
         self.angular_speed = angular_speed
         self.boost_multiplier = boost_multiplier
         self.slow_multiplier = slow_multiplier
-        # When True, only publish while a movement key is held; on
-        # release publish a single zero Twist (stop) then go silent.
-        # Lets the teleop coexist with another /cmd_vel publisher
-        # (e.g. the SI / benchmark tools) instead of flooding zeros.
         self.publish_only_when_active = publish_only_when_active
-        # When True, WASD/QE movement keys are no-ops and the window is a
-        # pure 0-9 e_max slider. Used by blueprints that drive cmd_vel
-        # from another source (e.g. nav-stack-driven precision controller)
-        # but still want the operator's live e_max input.
         self.disable_movement = disable_movement
         self._was_active = False
         # Namespaced instances (e.g. "robot0/keyboardteleop") get their own
