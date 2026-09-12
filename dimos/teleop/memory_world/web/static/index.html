@@ -375,6 +375,29 @@
             z-index: 125;
             max-width: min(900px, calc(100% - 24px));
         }
+        /* The answer, as real text. It used to be drawn into a canvas and hung in the
+           scene as a head-locked quad: unselectable, unscalable, blurry at an angle, and
+           silently cut off after four wrapped lines. HTML has none of those problems.
+           It cannot render inside an immersive XR session, though, so the 3D panel is
+           still what a headset sees -- this is hidden there and that one is shown. */
+        #answerText {
+            position: absolute;
+            left: 50%;
+            top: 84px;
+            transform: translateX(-50%);
+            padding: 10px 16px;
+            background: rgba(5, 10, 16, 0.92);
+            border: 1px solid var(--accent-soft);
+            border-left: 3px solid #7af0a8;
+            color: var(--text);
+            font-size: 15px;
+            line-height: 1.45;
+            z-index: 125;
+            max-width: min(720px, calc(100% - 24px));
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+        #answerText[hidden] { display: none; }
         #results[hidden] { display: none; }
         body:not(.desktop-view) #results { display: none; }
         body.desktop-view.touch #results { bottom: 308px; }    /* and clear of the timeline */
@@ -548,6 +571,7 @@
         <button id="embedBtn" class="hidden">Add SigLIP embeddings (siglipify)</button>
         <div class="note">Keys: ← → places · N navigate · O orbit · T tour · H menu · I photos · V voxels · M minimap</div>
     </div>
+    <div id="answerText" hidden></div>
     <div id="results" hidden>
         <button id="resultsPrev" title="Previous place">◀</button>
         <span id="resultsCounter">0 / 0</span>

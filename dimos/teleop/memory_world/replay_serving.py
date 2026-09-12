@@ -71,7 +71,12 @@ class ReplayServing:
         images = self._ensure_store().streams[self.config.image_stream_name]
         payload = replay.index.to_json()
         # Frame stamps let the viewer ask for exact frames, so its cache hits.
-        payload["frames"] = [round(float(obs.ts), 4) for obs in images]
+        # EXACT stamps. The comment above is the contract -- the viewer picks a `t` out of
+        # this list and asks for it by value -- and rounding here broke it at the source:
+        # two frames a tenth of a millisecond apart arrived as the same number, so the
+        # viewer could not name the second one however exact the route's key became.
+        # Keying the cache exactly was only half the fix.
+        payload["frames"] = [float(obs.ts) for obs in images]
         payload["hfov_deg"] = self._camera_hfov()
         # The viewer colours replayed voxels itself, on the static map's ramp -- so the
         # ramp has to be measured on the voxels it will actually colour. The keyframe is
@@ -147,7 +152,7 @@ class ReplayServing:
         jpeg = self._encode_jpeg(
             obs.data, self.config.replay_frame_max_size, self.config.replay_frame_jpeg_quality
         )
-        meta: dict[str, Any] = {"ts": round(float(obs.ts), 4), "hfov_deg": self._camera_hfov()}
+        meta: dict[str, Any] = {"ts": float(obs.ts), "hfov_deg": self._camera_hfov()}
         camera = self._camera_pose_of(obs)
         if camera is not None:
             meta.update(

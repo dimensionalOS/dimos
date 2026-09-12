@@ -123,7 +123,13 @@ def test_invalid_parameters_are_rejected(radius: float, max_places: int) -> None
         ("Where did I see a traffic cone?", "a traffic cone"),
         ("  where is   the whiteboard ", "the whiteboard"),
         ("a chair", "a chair"),
-        ("Whereabouts", "Whereabouts"),  # a prefix must be a whole word
+        ("Whereabouts", "Whereabouts"),  # a prefix must be a whole word...
+        # ...and "where" is not the only prefix. This case is "find", the shortest one and
+        # the likeliest to swallow a real word: with the trailing space dropped from the
+        # match, "findings" came back as "ngs". The Whereabouts case above cannot see that,
+        # because it only exercises the "where" family.
+        ("findings", "findings"),
+        ("Find the traffic cone", "the traffic cone"),
         ("", ""),
     ],
 )

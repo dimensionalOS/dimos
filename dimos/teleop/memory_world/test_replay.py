@@ -91,6 +91,12 @@ def test_sensor_scan_moves_a_world_scan_back_to_the_sensor() -> None:
     scan = sensor_scan(np.array([[10.0, 1.0, 0.5]], np.float32), world_from_sensor, in_world=True)
     np.testing.assert_allclose(scan.points, [[1.0, 0.0, 0.5]], atol=1e-6)
     assert scan.position == (10.0, 0.0, 0.0)
+    # The ORIENTATION it carries, too. Yawing the fixture fixed the points half and left
+    # this one asserted by nothing: hard-coding `orientation=(0, 0, 0, 1)` in sensor_scan
+    # kept the whole suite green even though this sensor is turned a quarter circle.
+    np.testing.assert_allclose(
+        np.abs(scan.orientation), np.abs(yaw_90), atol=1e-6
+    )  # q and -q are the same rotation
     # Already in the sensor's frame: kept exactly, neither turned nor moved.
     kept = sensor_scan(np.array([[2.0, 1.0, 0.5]], np.float32), world_from_sensor, in_world=False)
     np.testing.assert_allclose(kept.points, [[2.0, 1.0, 0.5]])

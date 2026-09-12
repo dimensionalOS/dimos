@@ -1396,14 +1396,6 @@ export class WorldScene {
         addQueryImage(this, header, jpegArrayBuffer);
     }
 
-    /** Step to the next photograph OF THE PLACE NOW SHOWN, and say whether it moved.
-     *
-     *  The filter is the point: stepping through every frame of the answer moved the
-     *  camera to another cluster's picture while the filter still named this one, so
-     *  the visibility rule hid both and the bar described somewhere you had left. Both
-     *  the P key and the Camera button come through here, because the button used to
-     *  step the unfiltered list and land you at a pose with every photo hidden.
-     */
     /** The pictures of the place being stepped through, in the order they were sent. */
     queryImagesHere() {
         return this._queryImages
@@ -1492,6 +1484,7 @@ export class WorldScene {
         this._activeQueryId = null;
         this.setSightLine(null);
         this._answerPanel.visible = false;
+        if (this.onAnswerText) this.onAnswerText(null);  // the page's copy goes with it
         // The painted voxels and the selection are part of the answer too: left behind,
         // J still flew to a place that had been closed, and the voxels stayed lit.
         this._highlightVoxels([]);
@@ -1547,7 +1540,13 @@ export class WorldScene {
         if (line && lines.length < 4) lines.push(line);
         lines.slice(0, 4).forEach((text, i) => ctx.fillText(text, 42, 62 + i * 50));
         this._answerTexture.needsUpdate = true;
-        this._answerPanel.visible = true;
+        // Real text on the page, and the drawn quad only where HTML cannot go. The canvas
+        // above is unselectable, blurry off-axis, and drops everything past four wrapped
+        // lines; an immersive XR session is the one place that is still the best
+        // available, because the DOM is not composited into it.
+        const inXr = this.three.xr.isPresenting;
+        this._answerPanel.visible = inXr;
+        if (this.onAnswerText) this.onAnswerText(inXr ? null : String(answer));
         if (!this._hudGroupPinnedOff && !this._hudOff) this._hudGroup.visible = true;  // it lives here
     }
 

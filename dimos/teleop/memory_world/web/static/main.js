@@ -303,6 +303,14 @@ function buildScene() {
         tickers = [];
         scene.onTick = (dt) => { for (const tick of tickers) tick(dt); };
         scene.onJump = () => jumpToAnswer();  // the J key; the Answer button calls it directly
+        // The answer as real text on the page. `null` means an immersive XR session is
+        // showing the drawn panel instead, because the DOM is not composited into one.
+        scene.onAnswerText = (text) => {
+            const el = document.getElementById('answerText');
+            if (!el) return;
+            el.textContent = text || '';
+            el.hidden = !text;
+        };
         heatmap = HeatmapLayer ? new HeatmapLayer(scene._frameRotate) : null;
         pyramids = PyramidLayer ? new PyramidLayer(scene._frameRotate) : null;
         flight = Flight ? new Flight(scene) : null;
