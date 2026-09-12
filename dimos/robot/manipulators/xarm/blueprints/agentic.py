@@ -25,7 +25,7 @@ from dimos.robot.manipulators.common.agent_prompts import (
     MANIPULATION_AGENT_SYSTEM_PROMPT,
 )
 from dimos.robot.manipulators.xarm.blueprints.basic import xarm7_planner_coordinator
-from dimos.robot.manipulators.xarm.blueprints.grasp import xarm_grasp
+from dimos.robot.manipulators.xarm.blueprints.grasp import xarm_grasp, xarm_grasp_graspgenx
 from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
 
 xarm7_planner_coordinator_agent = autoconnect(
@@ -40,6 +40,12 @@ xarm7_planner_coordinator_agent = autoconnect(
 # outright, so give them room.
 xarm_grasp_agent = autoconnect(
     xarm_grasp,
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
+).global_config(n_workers=6)
+
+xarm_grasp_graspgenx_agent = autoconnect(
+    xarm_grasp_graspgenx,
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
 ).global_config(n_workers=6)
