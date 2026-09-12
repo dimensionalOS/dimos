@@ -94,6 +94,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -447,6 +448,12 @@ class ManipulationModule(Module):
             result = ExecutionResult(ExecutionStatus.ABORTED, "Planning cancelled")
         self._apply_execution_result(result)
         return result
+
+    @rpc
+    def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None:
+        """Display the ranked proposals. The grasp module owns no visualizer."""
+        if self._world_monitor is not None:
+            self._world_monitor.show_grasp_proposals(candidates)
 
     @rpc
     def reset(self) -> CommandResult:

@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     )
     from dimos.manipulation.planning.spec.validation import PreparedRobotModel
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
     from dimos.msgs.sensor_msgs.JointState import JointState
     from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
@@ -209,6 +210,14 @@ class VisualizationSpec(Protocol):
 
     def clear_vis_obstacles(self) -> None:
         """Clear obstacle representations from the visualization."""
+        ...
+
+    def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None:
+        """Display the ranked grasp proposals a generator produced.
+
+        Display only: these are candidates, not planning geometry. An empty
+        array clears whatever is drawn.
+        """
         ...
 
     def get_visualization_url(self) -> str | None:
