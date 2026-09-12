@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Shared Livox SDK2 configuration utilities for dimos native modules.
-// Used by both mid360_native and fastlio2_native.
+// Used by the fastlio2 and pointlio C++ modules.
 
 #pragma once
 

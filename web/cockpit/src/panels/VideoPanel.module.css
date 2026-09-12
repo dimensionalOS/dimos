@@ -1,10 +1,14 @@
 .canvas {
+  background: #000;
   display: block;
-  max-height: 70vh;
-  max-width: 100%;
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
 }
 
 .waiting {
-  color: #8b949e;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
   position: absolute;
 }

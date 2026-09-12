@@ -62,6 +62,7 @@ data/*
 # Runtime output
 /logs
 /recordings
+/downloads
 results/
 /assets/output/
 /assets/rgbd_data/

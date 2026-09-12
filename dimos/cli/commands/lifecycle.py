@@ -91,7 +91,15 @@ def run(
         help="Spawn a local cockpit relay and bridge this robot to it",
     ),
     relay_url: str | None = typer.Option(
-        None, "--relay-url", help="Bridge this robot to a running relay (wtUrl)"
+        None,
+        "--relay-url",
+        help="Bridge this robot to a relay started elsewhere (its HTTP URL, e.g. "
+        "http://localhost:7780)",
+    ),
+    relay_ca: str | None = typer.Option(
+        None,
+        "--relay-ca",
+        help="PEM CA bundle that signed the relay's certificate (mkcert, a private CA)",
     ),
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
@@ -135,7 +143,11 @@ def run(
     # These flags are accepted on `run` itself, not just as global options.
     run_overrides = {
         name: value
-        for name, value in (("local_relay", local_relay), ("relay_url", relay_url))
+        for name, value in (
+            ("local_relay", local_relay),
+            ("relay_url", relay_url),
+            ("relay_ca", relay_ca),
+        )
         if value is not None
     }
     if run_overrides:

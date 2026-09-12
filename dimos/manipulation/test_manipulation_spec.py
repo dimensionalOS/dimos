@@ -153,3 +153,7 @@ def test_manipulation_module_exposes_no_skills() -> None:
 
 def test_manipulation_module_satisfies_group_native_spec() -> None:
     assert spec_annotation_compliance(ManipulationModule, ManipulationSpec)
+    for name, member in ManipulationSpec.__dict__.items():
+        if inspect.isfunction(member) and not name.startswith("_"):
+            assert name in ManipulationModule.rpcs
+    assert "plan_to_pose" not in ManipulationModule.rpcs
