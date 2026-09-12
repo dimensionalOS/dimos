@@ -77,10 +77,13 @@ def render_store(
     renderable = []
     t0: float | None = None
     for name in store.list_streams():
-        stream = store.streams[name]
         try:
+            stream = store.streams[name]
             first = stream.first()
         except LookupError:
+            continue
+        except (ImportError, AttributeError) as e:
+            print(f"  skip {name}: payload type unavailable ({e})")
             continue
         data = first.data
         if not hasattr(data, "to_rerun"):
