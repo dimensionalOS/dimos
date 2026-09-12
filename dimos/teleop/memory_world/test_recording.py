@@ -519,7 +519,7 @@ def test_build_tf_tree_holds_static_transforms_and_uses_their_stamps(tmp_path: P
         ts=9.0,
     )
     try:
-        tree = build_tf_tree(store, "tf", "odom")
+        tree = build_tf_tree(store, "tf")
         camera = tree.lookup("odom", "camera", 15.0)
         assert camera is not None
         assert np.allclose(camera[:3, 3], [5.0, 0.0, 1.5])  # halfway by the transforms' own stamps

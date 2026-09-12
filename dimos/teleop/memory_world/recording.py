@@ -469,15 +469,14 @@ _STREAM_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 }
 
 
-def build_tf_tree(
-    store: Store, tf_stream: str, world_frame: str | None = None, base_frame: str = "base_link"
-) -> TfTree:
+def build_tf_tree(store: Store, tf_stream: str) -> TfTree:
     """The recording's tf tree: the moving stream, with its static edges over the top.
 
-    The recording is taken as it is. An icp stitch's loop-closed odometry used to be
-    substituted in here, so that everything the tree placed landed in the world the
-    stitched map was in; that is gone, because the stitch moves the clouds out from
-    under Hyperspace's keyframe poses and its answers then disagree with the map.
+    The recording is taken exactly as it is, with no world named and nothing substituted
+    in. An icp stitch's loop-closed odometry used to be put in here so everything the
+    tree placed landed in the world the stitched map was in; that is gone, because the
+    stitch moves the clouds out from under Hyperspace's keyframe poses and its answers
+    then disagree with the map.
     """
     from dimos.teleop.memory_world.tf_tree import TfTree
 
@@ -496,17 +495,6 @@ def build_tf_tree(
                     static=True,
                 )
     return tree
-
-
-def _edge_named_by(store: Store, name: str) -> tuple[str, str] | None:
-    """The tf edge an odometry stream describes, from its own header."""
-    try:
-        sample = store.streams[name].first()
-    except LookupError:  # declared but empty
-        return None
-    parent = str(getattr(sample.data, "frame_id", "") or "").lstrip("/")
-    child = str(getattr(sample.data, "child_frame_id", "") or "").lstrip("/")
-    return (parent, child) if parent and child else None
 
 
 def tf_root(tree: Any) -> str | None:

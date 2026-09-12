@@ -42,7 +42,12 @@ from typing import Any
 
 import numpy as np
 
-from dimos.teleop.memory_world.hyperspace_search import HYPERSPACE_MODEL_NAME, memory_db_for
+from dimos.teleop.memory_world.hyperspace_search import (
+    HYPERSPACE_MODEL_NAME,
+    KEYFRAME_STREAM,
+    PATCH_STREAM,
+    memory_db_for,
+)
 from dimos.teleop.memory_world.recording import depth_info_stream_for
 
 logger = logging.getLogger(__name__)
@@ -56,14 +61,11 @@ def ingest_command(
     hz: float,
     novelty: float = 0.02,
     streams: dict[str, str | None] | None = None,
-    world_frame: str | None = None,
 ) -> list[str]:
     """The subprocess that runs this module on *recording*, with the current interpreter.
     *streams* names the image, depth, camera_info and tf streams the module chose, so a
     multi-camera recording is indexed from the camera the viewer shows."""
     chosen = [f"--{role}={name}" for role, name in (streams or {}).items() if name]
-    if world_frame:  # the same world the module places in, or the trees can differ
-        chosen.append(f"--world-frame={world_frame}")
     return [
         sys.executable,
         "-m",
@@ -116,7 +118,6 @@ def ingest_recording(
     max_depth_m: float = 10.0,
     novelty: float = 0.02,
     streams: dict[str, str | None] | None = None,
-    world_frame: str | None = None,
 ) -> dict[str, Any]:
     """Embed *recording*'s keyframes into its Hyperspace memory db. Returns the ingest stats.
     *streams* overrides the detected image/depth/camera_info/tf stream names per role."""
@@ -163,18 +164,27 @@ def ingest_recording(
                 flush=True,
             )
 
-            # Built beside the final name and moved into place at the end: a rerun (or an
-            # interrupted run) must not append a second copy of every keyframe.
-            building = memory_path.with_name(memory_path.name + ".building")
-            for stale in (
-                building,
-                building.with_name(building.name + "-wal"),
-                building.with_name(building.name + "-shm"),
-            ):
-                stale.unlink(missing_ok=True)
-            memory = SqliteStore(path=str(building), must_exist=False)
-            memory.start()
-            opened.append(memory)
+            if memory_path == recording:
+                # One db: the recording holds its own keyframes and patches, and reads
+                # its own tf. The two streams are dropped first, because a rerun must not
+                # append a second copy of every keyframe, and again on failure below.
+                memory = store
+                for stream in (KEYFRAME_STREAM, PATCH_STREAM):
+                    if stream in store.list_streams():
+                        store.delete_stream(stream)
+            else:
+                # An mcap cannot be written to, so its keyframes go in a companion, built
+                # beside the final name and moved into place at the end.
+                building = memory_path.with_name(memory_path.name + ".building")
+                for stale in (
+                    building,
+                    building.with_name(building.name + "-wal"),
+                    building.with_name(building.name + "-shm"),
+                ):
+                    stale.unlink(missing_ok=True)
+                memory = SqliteStore(path=str(building), must_exist=False)
+                memory.start()
+                opened.append(memory)
             chosen = pick_device(device)
             print(f"embedding with {model_name} on {chosen} -> {memory_path}", flush=True)
             model = SigLIP2Patches(model_name=model_name, device=chosen, towers="vision")
@@ -188,7 +198,6 @@ def ingest_recording(
                 streams=detected,
                 depth_info=depth_info,
                 hz=hz,
-                world_frame=world_frame,
                 max_seconds=max_seconds,
                 config=IngestConfig(
                     gate=hs.KeyframeGateConfig(novelty_threshold=novelty), max_depth_m=max_depth_m
@@ -205,11 +214,26 @@ def ingest_recording(
                 f"no keyframe was kept from {stats.get('images', 0)} images (stamps never matched"
                 " depth, or tf placed none); the search db is unchanged"
             )
-        for suffix in ("-wal", "-shm"):
-            memory_path.with_name(memory_path.name + suffix).unlink(missing_ok=True)
-        building.replace(memory_path)
+        if building is not None:
+            for suffix in ("-wal", "-shm"):
+                memory_path.with_name(memory_path.name + suffix).unlink(missing_ok=True)
+            building.replace(memory_path)
         published = True
     finally:
+        if building is None and not published and memory_path == recording:
+            # Written in place: a half-done set of keyframes must not read as a finished
+            # one, and memory_db_ready only checks that the streams exist and are non-empty.
+            try:
+                reopened = SqliteStore(path=str(recording), must_exist=True)
+                reopened.start()
+                try:
+                    for stream in (KEYFRAME_STREAM, PATCH_STREAM):
+                        if stream in reopened.list_streams():
+                            reopened.delete_stream(stream)
+                finally:
+                    reopened.stop()
+            except Exception:
+                logger.exception("could not drop the half-built keyframes of %s", recording)
         if building is not None and not published:
             # However far it got, a half-built db must not be taken for a finished one.
             for suffix in ("", "-wal", "-shm"):
@@ -232,20 +256,17 @@ def _ingest(
     streams: dict[str, Any],
     depth_info: str,
     hz: float,
-    world_frame: str | None,
     max_seconds: float,
     config: Any,
 ) -> dict[str, int]:
-    """Hyperspace's ingest loop (``dimos.mapping.hyperspace.cli.ingest``), with two
-    change: keyframes are placed through :func:`build_tf_tree`, so the memory db's tf
-    is the same tf the module places markers and pictures with."""
+    """Hyperspace's ingest loop (``dimos.mapping.hyperspace.cli.ingest``), with one
+    change: keyframes are placed through :func:`build_tf_tree`, so the keyframes are
+    placed by the same tf the module places markers and pictures with."""
     from dimos.mapping.hyperspace.ingest import PatchIngestor
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
     from dimos.teleop.memory_world.recording import build_tf_tree
 
-    # The module's world, not whatever this tree's root happens to be, so the two trees
-    # are built from the same input.
-    tree = build_tf_tree(store, streams["tf"], world_frame)
+    tree = build_tf_tree(store, streams["tf"])
 
     def lookup(target: str, source: str, ts: float) -> Any:
         matrix = tree.lookup(target, source, ts, TF_TOLERANCE_S)
@@ -312,14 +333,17 @@ def _ingest(
         if held:  # Hyperspace holds the last sample of an edge, so these come first
             yield start_ts - 5.0, TFMessage(*held)
 
-    transforms = 0
-    for stamp, message in heapq.merge(statics(), originals(), key=lambda item: item[0]):
-        ingestor.add_tf(message, ts=stamp)
-        transforms += 1
-    print(
-        f"tf: {transforms} messages",
-        flush=True,
-    )
+    if memory is store:
+        # One tf tree. The recording's own is what everything else reads, so copying it
+        # here would create a second copy that can drift from the first -- which is the
+        # whole reason the keyframes live in the recording now.
+        print(f"tf: reading the recording's own {streams['tf']!r}", flush=True)
+    else:
+        transforms = 0
+        for stamp, message in heapq.merge(statics(), originals(), key=lambda item: item[0]):
+            ingestor.add_tf(message, ts=stamp)
+            transforms += 1
+        print(f"tf: {transforms} messages copied for the companion db", flush=True)
 
     min_interval = 1.0 / hz if hz > 0 else 0.0
     ingestor.config.min_frame_interval_s = max(min_interval, config.min_frame_interval_s)
@@ -355,9 +379,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--hz", type=float, default=5.0, help="colour frames per second to consider"
     )
-    parser.add_argument(
-        "--world-frame", default=None, help="the frame to place in (default: the tf root)"
-    )
     parser.add_argument("--max-seconds", type=float, default=1e9)
     parser.add_argument("--max-depth", type=float, default=10.0)
     parser.add_argument(
@@ -379,7 +400,6 @@ def main(argv: list[str] | None = None) -> None:
         max_depth_m=args.max_depth,
         novelty=args.novelty,
         streams={role: getattr(args, role) for role in ("image", "depth", "camera_info", "tf")},
-        world_frame=args.world_frame,
     )
 
 

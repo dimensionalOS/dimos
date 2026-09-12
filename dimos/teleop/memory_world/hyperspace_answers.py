@@ -222,7 +222,6 @@ class HyperspaceAnswers:
                     "camera_info": self.config.camera_info_stream_name,
                     "tf": self.config.tf_stream_name,
                 },
-                world_frame=self.config.world_frame,
             ),
             None,
             adopt=self._adopt_prepared,

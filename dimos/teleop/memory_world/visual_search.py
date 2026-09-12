@@ -856,7 +856,7 @@ def main() -> None:
 
     store = open_recording(args.store_path)
     store.start()
-    tree = build_tf_tree(store, args.tf_stream, args.world_frame)
+    tree = build_tf_tree(store, args.tf_stream)
     # Like the module: a world frame tf does not know means the tf root.
     world = (
         args.world_frame if args.world_frame in tree.frames else tf_root(tree) or args.world_frame

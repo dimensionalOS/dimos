@@ -23,9 +23,9 @@ the ONE rigid transform that explains them all. Per-frame registration was tried
 first and is far too unstable to trust: a rigid mount only shows up when the frames
 are solved together.
 
-With ``--write`` the answer goes into the recording's own ``tf_static``, replacing
-whatever that edge said. Nothing reads it specially afterwards: a recording whose
-static tf is wrong is fixed by writing the right static tf.
+With ``--write`` the answer goes into the recording's own ``tf``, replacing every
+sample of that edge. Nothing reads it specially afterwards: a recording whose mount
+is wrong is fixed by writing the right mount where every reader already looks.
 
     python -m dimos.teleop.memory_world.calibrate_static_tf <recording.db> [--samples 20]
         [--write]
@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -309,58 +310,67 @@ def corrected_mount(
     return mount, camera_root, matrix
 
 
-def write_static_mount(store: Any, mount: str, child: str, matrix: np.ndarray, ts: float) -> str:
-    """Put the measured mount into the recording's own ``tf_static``, and say where.
+def write_mount_into_tf(
+    store: Any, tf_stream: str, mount: str, child: str, matrix: np.ndarray
+) -> int:
+    """Put the measured mount into the recording's OWN tf, every sample of that edge.
 
-    Not a correction layer the reader has to know about: a recording whose static tf
-    is wrong is fixed by writing the right static tf, and everything downstream then
-    reads an ordinary recording. A recording with no ``tf_static`` gains one holding
-    this edge alone; one that has it keeps every other edge and loses only this one.
+    One tf tree. Everything downstream -- the map, the markers, the pictures and
+    Hyperspace's keyframes -- reads the recording's `tf`, so a correction that lives
+    anywhere else is a second source that can drift from the first. A separate static
+    stream would not even be seen by Hyperspace, which reads `tf` alone.
+
+    The whole stream is rebuilt, because the wrong value is in every sample of that edge
+    and a later sample cannot override an earlier one for a reader that interpolates.
+    Nothing else in it is touched, and the original is put back if the write fails.
     """
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-    from dimos.teleop.memory_world.recording import detect_streams
 
-    name = detect_streams(store).get("tf_static") or "tf_static"
-    if name in getattr(getattr(store, "recording", None), "list_streams", list)():
-        raise SystemExit(
-            f"{name!r} belongs to the recording itself, which is read only. Fix the mount"
-            " where the recording is written, or convert it to a .db first."
-        )
-    # One entry per edge, first sample winning, which is what every reader resolves to
-    # anyway. Flattening every sample instead would rewrite a stream that latches its
-    # static tf once a second as one message holding N copies of every edge.
-    by_edge: dict[tuple[str, str], Any] = {}
-    for obs in store.streams[name] if name in store.list_streams() else []:
-        for t in obs.data.transforms:
-            by_edge.setdefault((str(t.frame_id), str(t.child_frame_id)), t)
-    original = list(by_edge.values())
-    kept = [t for edge, t in by_edge.items() if edge != (mount, child)]
     x, y, z, w = quaternion_from_matrix(matrix[:3, :3])
-    corrected = Transform(
-        translation=Vector3(*(float(v) for v in matrix[:3, 3])),
-        rotation=Quaternion(float(x), float(y), float(z), float(w)),
-        frame_id=mount,
-        child_frame_id=child,
-        ts=ts,
+    position = tuple(float(v) for v in matrix[:3, 3])
+
+    def corrected(t: Any) -> Any:
+        if (str(t.frame_id), str(t.child_frame_id)) != (mount, child):
+            return t
+        return Transform(
+            translation=Vector3(*position),
+            rotation=Quaternion(float(x), float(y), float(z), float(w)),
+            frame_id=mount,
+            child_frame_id=child,
+            ts=t.ts,
+        )
+
+    original = [(float(obs.ts), list(obs.data.transforms)) for obs in store.streams[tf_stream]]
+    rebuilt = [(ts, [corrected(t) for t in transforms]) for ts, transforms in original]
+    touched = sum(
+        1
+        for _, transforms in original
+        for t in transforms
+        if (str(t.frame_id), str(t.child_frame_id)) == (mount, child)
     )
-    if name in store.list_streams():
-        store.delete_stream(name)  # rewritten whole: one sample of an edge, held for all time
+    if not touched:
+        raise SystemExit(f"{tf_stream!r} carries no {mount} -> {child}; nothing to correct")
+
+    store.delete_stream(tf_stream)
     try:
-        store.stream(name, TFMessage).append(TFMessage(*kept, corrected), ts=ts)
+        written = store.stream(tf_stream, TFMessage)
+        for ts, transforms in rebuilt:
+            written.append(TFMessage(*transforms), ts=ts)
     except BaseException:
-        # Between the delete and the append the recording has no static tf at all, and the
-        # only copy of it is in memory. A full disk or a Ctrl-C there would take the lidar
-        # mount, the imu and everything else with it, permanently and silently. What goes
-        # back is what was THERE -- `kept` is missing the very edge being replaced, so
-        # restoring that would drop the old camera mount and, if it was the only edge,
-        # would write nothing at all.
-        if original:
-            store.stream(name, TFMessage).append(TFMessage(*original), ts=ts)
-        raise
-    return name
+        # Between the delete and the last append the recording has no tf at all. Whatever
+        # went wrong, what was there goes back.
+        try:
+            if tf_stream in store.list_streams():
+                store.delete_stream(tf_stream)
+            restored = store.stream(tf_stream, TFMessage)
+            for ts, transforms in original:
+                restored.append(TFMessage(*transforms), ts=ts)
+        finally:
+            raise
+    return touched
 
 
 def drop_what_the_mount_invalidates(store: Any, recording: str) -> list[str]:
@@ -373,15 +383,30 @@ def drop_what_the_mount_invalidates(store: Any, recording: str) -> list[str]:
     map, the path and the lidar are untouched, because the mount edge carries only the
     camera.
     """
-    from dimos.teleop.memory_world.hyperspace_search import memory_db_for
+    from dimos.teleop.memory_world.hyperspace_search import (
+        KEYFRAME_STREAM,
+        PATCH_STREAM,
+        memory_db_for,
+    )
 
     dropped = []
     memory_db = memory_db_for(recording)
-    for path in (memory_db, *(memory_db.with_name(memory_db.name + s) for s in ("-wal", "-shm"))):
-        if path.exists():
-            path.unlink()
-            if path == memory_db:
-                dropped.append(path.name)
+    if memory_db == Path(recording):
+        # One db: Hyperspace's keyframes live in the recording, so what is stale here is
+        # two streams and not a file. Unlinking would take the recording with it.
+        for name in (KEYFRAME_STREAM, PATCH_STREAM):
+            if name in store.list_streams():
+                store.delete_stream(name)
+                dropped.append(name)
+    else:
+        for path in (
+            memory_db,
+            *(memory_db.with_name(memory_db.name + s) for s in ("-wal", "-shm")),
+        ):
+            if path.exists():
+                path.unlink()
+                if path == memory_db:
+                    dropped.append(path.name)
     # By payload, not by name: an index built with --index-stream can be called
     # anything, and one missed here keeps poses from the mount that was just replaced.
     for name in list(store.list_streams()):
@@ -389,7 +414,7 @@ def drop_what_the_mount_invalidates(store: Any, recording: str) -> list[str]:
             payload = type(store.streams[name].first().data).__name__
         except Exception:  # empty or unreadable: nothing of the old mount in it
             continue
-        if payload != "PatchGrid":
+        if payload != "PatchGrid" or name in dropped:
             continue
         try:
             store.delete_stream(name)
@@ -417,7 +442,7 @@ def main() -> None:
     parser.add_argument(
         "--write",
         action="store_true",
-        help="put the measured mount into the recording's tf_static (default: print only)",
+        help="put the measured mount into the recording's tf (default: print only)",
     )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -459,14 +484,11 @@ def main() -> None:
         ts = float(store.streams[streams["depth"]].first().ts)
 
         if args.write:  # before six minutes of fitting, not after
-            static = detect_streams(store).get("tf_static")
-            if (
-                static
-                and static in getattr(getattr(store, "recording", None), "list_streams", list)()
-            ):
+            if streams["tf"] in getattr(getattr(store, "recording", None), "list_streams", list)():
                 raise SystemExit(
-                    f"{static!r} belongs to {args.recording} itself, which is read only."
-                    " Fix the mount where the recording is written, or convert it to a .db."
+                    f"{streams['tf']!r} belongs to {args.recording} itself, which is read"
+                    " only. Fix the mount where the recording is written, or convert it"
+                    " to a .db."
                 )
         pairs = _pairs(store, streams, args.samples)
         if len(pairs) < 4:
@@ -494,10 +516,10 @@ def main() -> None:
         mount, child, matrix = fixed
         print(_report(f"corrected {mount} -> {child}", matrix))
         if not args.write:
-            print("measured only; pass --write to put it in the recording's tf_static")
+            print("measured only; pass --write to put it in the recording's tf")
             return
-        name = write_static_mount(store, mount, child, matrix, ts)
-        print(f"wrote {mount} -> {child} into {name!r} of {args.recording}")
+        touched = write_mount_into_tf(store, streams["tf"], mount, child, matrix)
+        print(f"wrote {mount} -> {child} into {streams['tf']!r}, {touched} samples")
         for gone in drop_what_the_mount_invalidates(store, args.recording):
             print(f"dropped {gone}, which holds poses from the old mount")
     finally:

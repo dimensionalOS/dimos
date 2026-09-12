@@ -295,8 +295,14 @@ def assign_points(
 
 
 def memory_db_for(recording: str | Path) -> Path:
-    """Where Hyperspace's ingest puts a recording's keyframes and patches."""
-    return Path(recording).with_suffix(MEMORY_DB_SUFFIX)
+    """Where Hyperspace's ingest puts a recording's keyframes and patches.
+
+    A memory2 recording holds them itself: one file, and one tf tree that the map, the
+    markers and the search all read. Only an mcap, which cannot be written to, needs a
+    companion -- and then that companion carries a copy of the recording's tf.
+    """
+    path = Path(recording)
+    return path if path.suffix == ".db" else path.with_suffix(MEMORY_DB_SUFFIX)
 
 
 def memory_db_ready(recording: str | Path) -> bool:

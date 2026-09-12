@@ -1187,7 +1187,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                     self.config.tf_stream_name,
                 )
                 return None
-            tree = build_tf_tree(store, self.config.tf_stream_name, self.config.world_frame)
+            tree = build_tf_tree(store, self.config.tf_stream_name)
             logger.info("tf tree: %d transforms over %d frames", len(tree), len(tree.frames))
             self._tf_tree_cache = tree
         return self._tf_tree_cache
