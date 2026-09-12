@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from enum import Enum
 import math
@@ -180,6 +181,11 @@ class ManipulationModuleConfig(ModuleConfig):
             raise ValueError(f"joint_state_aliases targets are not model joints: {unknown}")
         if shadowed := sorted(set(self.joint_state_aliases) & model_joints):
             raise ValueError(f"joint_state_aliases sources are model joints: {shadowed}")
+        # Two sources for one model joint: whichever lands later in a JointState
+        # message would win, so the same message could mean two different poses.
+        targets = Counter(self.joint_state_aliases.values())
+        if collided := sorted(name for name, count in targets.items() if count > 1):
+            raise ValueError(f"joint_state_aliases targets are not unique: {collided}")
         return self
 
 
