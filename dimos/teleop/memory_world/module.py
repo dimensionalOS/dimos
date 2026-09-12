@@ -209,6 +209,18 @@ class MemoryWorldConfig(ModuleConfig):
     # SigLIP 2 per-patch index over the image stream, built once per recording in
     # the background, into the recording (~1.7 MB per indexed frame at fp16).
     siglip_model_name: str = SIGLIP2_MODEL_NAME
+    # Where the embedding model runs. "cpu", like `hyperspace_device` and for the same
+    # reason: MPS inside a dimos worker aborts the whole process with
+    # `MPSKernelDAG.mm:1382: failed assertion ... Unable to reach MTLCompilerService`,
+    # seven seconds after the model loads, with no Python traceback and nothing the
+    # module can catch. The same model in a plain process on MPS is fine, which is what
+    # makes it look like a machine problem instead of this one. Left at the embedder's
+    # own default (auto -> mps on a Mac), every memworld run died on startup.
+    #
+    # The cost is a slower FIRST index build; the text tower a query runs is under a
+    # second either way. `python -m dimos.teleop.memory_world.visual_search --device mps`
+    # builds the index outside a worker when that matters.
+    siglip_device: str = "cpu"
     # Empty means "named after the image stream and siglip_model_name", so two
     # models, or two cameras, never share one.
     image_index_stream_name: str = ""
@@ -824,6 +836,7 @@ class MemoryWorldModule(
                 image_stream_name=self.config.image_stream_name,
                 index_stream_name=self.config.image_index_stream_name,
                 model_name=self.config.siglip_model_name,
+                device=self.config.siglip_device,
                 world_frame=self.config.world_frame,
             )
         return self._visual_index

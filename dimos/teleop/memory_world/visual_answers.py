@@ -241,6 +241,15 @@ class VisualAnswers:
             header = {
                 "query_id": query_id,
                 "index": index,
+                # Which place this photograph belongs to. One per place here, so it is
+                # the same number -- but it has to be SAID. `/navigate`'s `pose_of`
+                # rejects any image whose `cluster` is not the one being routed to, so
+                # without this key every photograph was refused and the only candidate
+                # left was the cluster CENTRE, which for a thing on a wall is inside the
+                # wall: "no route through the known free space", every time, for every
+                # place, while the pose the robot actually stood at to take the picture
+                # was in the list. The viewer's place filter and `jumpTo` read it too.
+                "cluster": index,
                 "label": f"{phrase} ({place.similarity:+.3f})",
                 "position": [float(v) for v in camera[:3, 3]],
                 "forward": [float(v) for v in forward],

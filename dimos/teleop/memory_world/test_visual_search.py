@@ -1103,6 +1103,72 @@ def test_a_crop_is_not_a_resize_and_only_a_resize_scales_the_focal_length() -> N
     assert where[1] == pytest.approx((240 - 480) * 2.0 / 900.0), where
 
 
+def test_every_evidence_photo_says_which_place_it_belongs_to() -> None:
+    """`/navigate`'s `pose_of` refuses any image whose `cluster` is not the place being
+    routed to, and the embedding answer's headers carried no `cluster` at all.
+
+    So every photograph was refused and the only candidate left was the cluster CENTRE,
+    which for a thing on a wall is inside the wall. Measured live on sf_office1_2: ask
+    "a whiteboard", six places found, six photographs hung, and Navigate answered
+    `422 no route through the known free space` -- while the pose the robot stood at to
+    take each of those pictures was in the list the whole time. The viewer's place
+    filter (`queryImagesHere`) and `jumpTo` read the same key.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from dimos.teleop.memory_world.visual_answers import VisualAnswers
+    from dimos.teleop.memory_world.visual_search import Place
+
+    places = [
+        Place(position=(1.0, 2.0, 3.0), similarity=0.42, source_id=3, ts=1.0),
+        Place(position=(4.0, 5.0, 6.0), similarity=0.31, source_id=4, ts=2.0),
+    ]
+    sent: list[dict] = []
+
+    class Module(VisualAnswers):
+        def __init__(self) -> None:
+            self._store_lock = threading.RLock()
+            self._clients_lock = threading.RLock()
+            self._active_query_images: list = []
+            self.config = SimpleNamespace(
+                image_stream_name="color",
+                query_image_max_size=64,
+                thumbnail_jpeg_quality=70,
+                query_image_distance_m=2.0,
+            )
+
+        def _camera_hfov(self):  # type: ignore[no-untyped-def]
+            return 60.0
+
+        def _ensure_store(self):  # type: ignore[no-untyped-def]
+            frame = SimpleNamespace(data=np.zeros((8, 8, 3), dtype=np.uint8))
+            stream = SimpleNamespace(
+                at=lambda *a, **k: SimpleNamespace(first=lambda: frame),
+            )
+            return SimpleNamespace(streams={"color": stream})
+
+        def _encode_jpeg(self, *a, **k):  # type: ignore[no-untyped-def]
+            return b"\xff\xd8jpeg"
+
+        def _query_is_current(self, query_id):  # type: ignore[no-untyped-def]
+            return True
+
+        def _broadcast(self, message) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+    module = Module()
+    module._publish_query_images("qid", "a whiteboard", places)
+    sent = [header for header, _ in module._active_query_images]
+
+    assert len(sent) == len(places), "a photograph went missing"
+    assert [header.get("cluster") for header in sent] == list(range(len(places))), (
+        "an evidence photo that does not name its place is one Navigate will not route to"
+    )
+
+
 def test_an_embedding_answer_carries_the_places_the_viewer_renders() -> None:
     """The client builds its results bar, place stepping and Navigate from `clusters`.
 
