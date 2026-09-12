@@ -106,7 +106,7 @@ def test_relay_run_cmd_resolves_symlinked_dirs(tmp_path: Path) -> None:
 
 
 def test_relay_process_reports_unpaired_tls_flag_before_reading_pem(tmp_path: Path) -> None:
-    process = RelayProcess(cert=tmp_path / "missing.pem", timeout=2.0)
+    process = RelayProcess(cert=tmp_path / "missing.pem")
 
     try:
         with pytest.raises(RuntimeError, match="--cert and --key must be given together"):
