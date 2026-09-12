@@ -671,12 +671,13 @@ def test_a_write_that_dies_half_way_through_the_stream_still_loses_nothing(tmp_p
         store.stop()
 
 
-def test_taking_the_corrected_edge_out_of_the_static_tf_cannot_lose_the_others(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """The static stream is rewritten to drop one edge, and the imu and the gps are in it.
+def test_a_mount_that_lives_only_in_the_static_tf_can_still_be_corrected(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The ordinary shape of a rig: the moving tf carries odometry and the mounts are
+    latched once in tf_static.
 
-    Deleting it and writing it again leaves a window with nothing there, and a disk that
-    has stopped taking writes does not let the second half happen. Those mounts are not
-    ours to lose to fix the camera's.
+    The correction goes into the moving tf, so there has to be an edge there to correct.
+    Folding first gives it one -- and leaves the imu and the gps in the same tree rather
+    than in a second stream that would outvote it.
     """
     from dimos.memory.store.sqlite import SqliteStore
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -684,47 +685,36 @@ def test_taking_the_corrected_edge_out_of_the_static_tf_cannot_lose_the_others(t
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
     from dimos.teleop.memory_world.calibrate_static_tf import write_mount_into_tf
+    from dimos.teleop.memory_world.recording import build_tf_tree
 
-    def edge(parent: str, child: str, x: float) -> Transform:
+    def edge(parent: str, child: str, x: float, ts: float = 1.0) -> Transform:
         return Transform(
             translation=Vector3(x, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
             frame_id=parent,
             child_frame_id=child,
-            ts=1.0,
+            ts=ts,
         )
 
     store = SqliteStore(path=str(tmp_path / "rec.db"), must_exist=False)
     store.start()
     try:
-        store.stream("tf", TFMessage).append(TFMessage(edge("mount", "cam", 9.0)), ts=1.0)
+        tf = store.stream("tf", TFMessage)
+        for step in (1.0, 2.0, 3.0):
+            tf.append(TFMessage(edge("odom", "base", step, step)), ts=step)
         store.stream("tf_static", TFMessage).append(
-            TFMessage(
-                edge("mount", "cam", 9.0), edge("mount", "imu", 4.0), edge("mount", "gps", 2.0)
-            ),
-            ts=1.0,
+            TFMessage(edge("base", "cam", 9.0), edge("base", "imu", 4.0)), ts=1.0
         )
-        real_stream = store.stream
+        assert build_tf_tree(store, "tf").lookup("odom", "cam", 3.0)[0, 3] == 12.0
 
-        def dying_stream(name: str, *args, **kwargs):  # type: ignore[no-untyped-def]
-            # The tf rewrite is allowed through; the static one is not, for good.
-            if name == "tf_static" and args:
-                raise OSError(28, "No space left on device")
-            return real_stream(name, *args, **kwargs)
+        fixed = np.eye(4)
+        fixed[0, 3] = 2.0
+        assert write_mount_into_tf(store, "tf", "base", "cam", fixed)
 
-        store.stream = dying_stream  # type: ignore[assignment]
-        with pytest.raises((OSError, SystemExit)):
-            write_mount_into_tf(store, "tf", "mount", "cam", np.eye(4))
-        store.stream = real_stream  # type: ignore[assignment]
-
-        surviving = {
-            (str(t.frame_id), str(t.child_frame_id), t.translation.x)
-            for name in store.list_streams()
-            if name.startswith("tf_static")
-            for obs in store.streams[name]
-            for t in obs.data.transforms
-        }
-        assert ("mount", "imu", 4.0) in surviving
-        assert ("mount", "gps", 2.0) in surviving
+        assert "tf_static" not in store.list_streams()  # one tree, in one stream
+        tree = build_tf_tree(store, "tf")
+        assert tree.lookup("odom", "cam", 3.0)[0, 3] == 5.0  # the measured mount
+        assert tree.lookup("odom", "cam", 1.0)[0, 3] == 3.0  # at both ends
+        assert tree.lookup("base", "imu", 2.0)[0, 3] == 4.0  # and the rest came along
     finally:
         store.stop()

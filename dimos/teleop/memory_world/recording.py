@@ -563,6 +563,7 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
     """
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
+    refuse_if_a_rebuild_is_half_done(store, static_stream)
     folded: dict[tuple[str, str], Any] = {}
     for obs in store.streams[static_stream]:
         for t in obs.data.transforms:
@@ -572,27 +573,43 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
         store.delete_stream(static_stream)
         return 0
 
-    rows = [
-        (
-            float(obs.ts),
-            TFMessage(
-                *[
-                    t
-                    for t in obs.data.transforms
-                    if (str(t.frame_id), str(t.child_frame_id)) not in folded
-                ],
-                *[_restamped(t, float(obs.ts)) for t in folded.values()],
-            ),
-        )
-        for obs in store.streams[tf_stream]
-    ]
+    # A tf message carries its own stamp, which is not the stamp it was recorded at, and
+    # TfTree reads the message's. So the folded edge is stamped where the messages beside
+    # it say they are, and the first and last rows carry the ends of the whole span --
+    # otherwise the edge holds over a window slightly inside the recording and the frames
+    # at either end are placed nowhere.
+    rows = []
+    stamps = []
+    for obs in store.streams[tf_stream]:
+        kept = [
+            t for t in obs.data.transforms if (str(t.frame_id), str(t.child_frame_id)) not in folded
+        ]
+        said = [float(t.ts) for t in obs.data.transforms] + [float(obs.ts)]
+        stamps.append((min(said), max(said)))
+        rows.append((float(obs.ts), kept, min(said)))
     if not rows:
         # Folding into nothing would write nothing and destroy the statics on the way.
         raise SystemExit(
             f"{tf_stream!r} is empty, so there is nowhere to fold {static_stream!r} into."
             " A recording with no moving tf has no tree to place anything in."
         )
-    rebuild_stream(store, tf_stream, rows, TFMessage)
+    first, last = min(s for s, _ in stamps), max(e for _, e in stamps)
+    written = []
+    for index, (ts, kept, said) in enumerate(rows):
+        ends = {said}
+        if index == 0:
+            ends.add(first)
+        if index == len(rows) - 1:
+            ends.add(last)
+        written.append(
+            (
+                ts,
+                TFMessage(
+                    *kept, *[_restamped(t, e) for e in sorted(ends) for t in folded.values()]
+                ),
+            )
+        )
+    rebuild_stream(store, tf_stream, written, TFMessage)
     store.delete_stream(static_stream)
     return len(folded)
 
@@ -615,6 +632,7 @@ def build_tf_tree(store: Store, tf_stream: str) -> TfTree:
     tree = TfTree.from_stream(store.streams[tf_stream])
     static = detect_streams(store).get("tf_static")
     if static is not None:
+        refuse_if_a_rebuild_is_half_done(store, static)
         for obs in store.streams[static]:
             for t in obs.data.transforms:
                 p, q = t.translation, t.rotation

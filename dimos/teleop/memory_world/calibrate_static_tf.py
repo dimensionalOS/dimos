@@ -318,9 +318,10 @@ def write_mount_into_tf(
     One tf tree. Everything downstream -- the map, the markers, the pictures and
     Hyperspace's keyframes -- reads the recording's `tf`, so a correction that lives
     anywhere else is a second source that can drift from the first. A separate static
-    stream would not even be seen by Hyperspace, which reads `tf` alone; the recording's
-    own static tf, which build_tf_tree lays over the moving one, would quietly win over
-    the correction, so that edge is taken out of it here too.
+    stream would not even be seen by Hyperspace, which reads `tf` alone, and the
+    recording's own static tf -- which build_tf_tree lays over the moving one -- would
+    quietly win over the correction. So the statics are folded into the tf first, and
+    what is corrected afterwards is the only place the joint is stated.
 
     The whole stream is rebuilt through :func:`recording.rebuild_stream`, because the
     wrong value is in every sample of that edge and a later sample cannot override an
@@ -331,6 +332,8 @@ def write_mount_into_tf(
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
     from dimos.teleop.memory_world.recording import (
+        detect_streams,
+        fold_static_tf,
         rebuild_stream,
         refuse_if_a_rebuild_is_half_done,
     )
@@ -349,6 +352,13 @@ def write_mount_into_tf(
             ts=t.ts,
         )
 
+    # One tree first. The mount may live only in a static stream, and a stale copy there
+    # would outvote the correction anyway, so the statics go into the tf before it is
+    # corrected rather than being patched up afterwards.
+    static = detect_streams(store).get("tf_static")
+    if static and static in store.list_streams():
+        fold_static_tf(store, tf_stream, static)
+
     refuse_if_a_rebuild_is_half_done(store, tf_stream)
     original = [(float(obs.ts), list(obs.data.transforms)) for obs in store.streams[tf_stream]]
     touched = sum(
@@ -366,42 +376,7 @@ def write_mount_into_tf(
         [(ts, TFMessage(*[corrected(t) for t in transforms])) for ts, transforms in original],
         TFMessage,
     )
-    _drop_edge_from_static_tf(store, mount, child)
     return touched
-
-
-def _drop_edge_from_static_tf(store: Any, mount: str, child: str) -> None:
-    """Take the corrected edge out of the recording's static tf, if it declares one.
-
-    ``build_tf_tree`` lays the static edges over the moving stream, so a stale static
-    mount would go on winning over the correction that was just written and the write
-    would look like it had done nothing.
-    """
-    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-    from dimos.teleop.memory_world.recording import detect_streams, rebuild_stream
-
-    static = detect_streams(store).get("tf_static")
-    if not static or static not in store.list_streams():
-        return
-    dropped = 0
-    kept = []
-    for obs in store.streams[static]:
-        surviving = [
-            t
-            for t in obs.data.transforms
-            if (str(t.frame_id), str(t.child_frame_id)) != (mount, child)
-        ]
-        dropped += len(obs.data.transforms) - len(surviving)
-        if surviving:
-            kept.append((float(obs.ts), surviving))
-    if not dropped:
-        return  # it never declared this edge
-    if not kept:
-        store.delete_stream(static)  # that edge was all it held
-        return
-    # Staged like every other rewrite: the other mounts in here -- the imu, the gps -- are
-    # not ours to lose to a full disk.
-    rebuild_stream(store, static, [(ts, TFMessage(*ts_and)) for ts, ts_and in kept], TFMessage)
 
 
 def drop_what_the_mount_invalidates(store: Any, recording: str) -> list[str]:

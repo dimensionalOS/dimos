@@ -737,3 +737,59 @@ def test_a_tf_truncated_by_a_dead_rebuild_is_refused_rather_than_read(tmp_path) 
         assert detect_streams(store)["tf"] == "tf"
     finally:
         store.stop()
+
+
+def test_a_static_tf_cut_short_by_a_dead_rebuild_is_refused_too(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The moving tf is not the only stream a rebuild can die in the middle of.
+
+    A truncated static tf is worse than a truncated moving one, because it is silent in
+    both directions: the tree loads with a mount missing, and a fold would then delete the
+    only complete copy there is.
+    """
+    import pytest
+
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, fold_static_tf
+
+    store = _tf_store(tmp_path)
+    try:
+        store.stream("tf", TFMessage).append(TFMessage(_edge("odom", "base", 1.0, 1.0)), ts=1.0)
+        store.stream("tf_static", TFMessage).append(TFMessage(_edge("base", "imu", 4.0)), ts=1.0)
+        staged = store.stream("tf_static__rebuilt", TFMessage)
+        staged.append(TFMessage(_edge("base", "imu", 4.0), _edge("base", "gps", 2.0)), ts=1.0)
+
+        with pytest.raises(SystemExit):
+            build_tf_tree(store, "tf")
+        with pytest.raises(SystemExit):
+            fold_static_tf(store, "tf", "tf_static")
+        assert "tf_static__rebuilt" in store.list_streams()  # the complete copy stays
+    finally:
+        store.stop()
+
+
+def test_a_folded_mount_covers_the_whole_span_the_tf_can_be_asked_about(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A tf message carries its own stamp, and it is not the stamp it was recorded at.
+
+    TfTree reads the message's. Stamping the folded copies by the recording stamp alone
+    leaves the edge holding over a window slightly inside the recording, and the frames at
+    either end -- the first and last thing the camera saw -- are placed nowhere.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, fold_static_tf
+
+    store = _tf_store(tmp_path)
+    try:
+        tf = store.stream("tf", TFMessage)
+        tf.append(TFMessage(_edge("odom", "base", 1.0, 10.0)), ts=11.0)  # said at 10, kept at 11
+        tf.append(TFMessage(_edge("odom", "base", 2.0, 20.0)), ts=21.0)
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(_edge("base", "cam", 2.0, 1.0)), ts=1.0
+        )
+        assert build_tf_tree(store, "tf").lookup("odom", "cam", 10.0)[0, 3] == 3.0
+
+        fold_static_tf(store, "tf", "tf_static")
+        tree = build_tf_tree(store, "tf")
+        assert tree.lookup("odom", "cam", 10.0)[0, 3] == 3.0  # the first frame, still placed
+        assert tree.lookup("odom", "cam", 20.0)[0, 3] == 4.0  # and the last
+    finally:
+        store.stop()
