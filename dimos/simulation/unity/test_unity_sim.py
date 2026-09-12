@@ -100,14 +100,18 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def _build_ros1_pointcloud2(points: np.ndarray, frame_id: str = "map") -> bytes:
+def _build_ros1_pointcloud2(
+    points: np.ndarray, frame_id: str = "map", height: int = 1, row_padding: int = 0
+) -> bytes:
+    point_step = 16
+    width = len(points) // height
+    packed_row_length = point_step * width
     w = ROS1Writer()
     w.u32(0)
     w.time()
     w.string(frame_id)
-    n = len(points)
-    w.u32(1)
-    w.u32(n)
+    w.u32(height)
+    w.u32(width)
     w.u32(4)
     for i, name in enumerate(["x", "y", "z", "intensity"]):
         w.string(name)
@@ -115,9 +119,18 @@ def _build_ros1_pointcloud2(points: np.ndarray, frame_id: str = "map") -> bytes:
         w.u8(7)
         w.u32(1)
     w.u8(0)
-    w.u32(16)
-    w.u32(16 * n)
-    data = np.column_stack([points, np.zeros(n, dtype=np.float32)]).astype(np.float32).tobytes()
+    w.u32(point_step)
+    w.u32(packed_row_length + row_padding)
+    packed = (
+        np.column_stack([points, np.zeros(len(points), dtype=np.float32)])
+        .astype(np.float32)
+        .tobytes()
+    )
+    padding = b"\xff\xff\x7f\x7f" * max(row_padding // 4, 0)
+    data = b"".join(
+        packed[row * packed_row_length : (row + 1) * packed_row_length] + padding
+        for row in range(height)
+    )
     w.u32(len(data))
     w.raw(data)
     w.u8(1)
@@ -194,6 +207,20 @@ class TestROS1Deserialization:
         assert result is not None
         decoded_points, _, _ = result
         assert len(decoded_points) == 0
+
+    def test_pointcloud2_padded_rows(self):
+        """An organized cloud may pad each row; the padding must not become coordinates."""
+        points = np.arange(1, 13, dtype=np.float32).reshape(4, 3)
+        data = _build_ros1_pointcloud2(points, height=2, row_padding=8)
+        result = deserialize_pointcloud2(data)
+        assert result is not None
+        decoded_points, _, _ = result
+        np.testing.assert_allclose(decoded_points, points, atol=1e-5)
+
+    def test_pointcloud2_row_step_below_row_length(self):
+        points = np.arange(1, 13, dtype=np.float32).reshape(4, 3)
+        data = _build_ros1_pointcloud2(points, height=2, row_padding=-4)
+        assert deserialize_pointcloud2(data) is None
 
     def test_pointcloud2_truncated(self):
         points = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)

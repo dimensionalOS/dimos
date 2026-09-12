@@ -41,6 +41,7 @@ import time
 
 import numpy as np
 
+from dimos.msgs.sensor_msgs.PointCloud2 import strip_row_padding
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -219,7 +220,7 @@ def deserialize_pointcloud2(data: bytes) -> tuple[np.ndarray, str, float] | None
 
         r.bool()
         point_step = r.u32()
-        r.u32()
+        row_step = r.u32()
 
         # Data array
         data_len = r.u32()
@@ -233,6 +234,8 @@ def deserialize_pointcloud2(data: bytes) -> tuple[np.ndarray, str, float] | None
             return None
         if num_points == 0:
             return np.zeros((0, 3), dtype=np.float32), header.frame_id, header.stamp
+
+        raw_data = strip_row_padding(raw_data, height, width, point_step, row_step)
 
         # Fast path: standard XYZI layout
         if x_off == 0 and y_off == 4 and z_off == 8 and point_step >= 12:
