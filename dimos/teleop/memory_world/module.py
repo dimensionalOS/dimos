@@ -1327,6 +1327,12 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
         if self._web_server is not None:
             logger.warning("already serving on port %d; start() ignored", self.config.server_port)
             return
+        # stop() latches this and nothing else clears it. While stop() also left
+        # _web_server set, the guard above made a restart impossible and this could not
+        # be reached; clearing _web_server there made it reachable, and a restarted
+        # module came up inert -- _prepare returns before loading search, _build_replay
+        # refuses, and a replay request answers "replay not built: stopping".
+        self._stopping.clear()
         super().start()
         self._web_server = RobotWebInterface(
             host=self.config.listen_host,

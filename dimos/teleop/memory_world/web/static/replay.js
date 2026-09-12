@@ -405,6 +405,7 @@ export class ReplayController {
         this._frameCache.clear();
         this.segments.clear();
         this.cacheBytes = 0;
+        this._frameWanted = null;   // nothing left for the pump to want
         this.index = null;   // seek/tick/preload all return without an index
     }
 
@@ -501,7 +502,11 @@ export class ReplayController {
 
     async _pumpFrame() {
         if (this._frameBusy) return;
-        while (this._frameWanted !== null && this._frameWanted !== this._frameShown) {
+        // _disposed belongs in the condition, not only after the awaits: the cache-hit
+        // branch below has no await at all, so a disposed controller could reach
+        // scene.setCameraFrame without ever yielding. dispose() does not clear
+        // _frameWanted, so this is what stops the pump.
+        while (!this._disposed && this._frameWanted !== null && this._frameWanted !== this._frameShown) {
             const ts = this._frameWanted;
             this._frameBusy = true;
             try {
@@ -528,6 +533,10 @@ export class ReplayController {
                 this._frameShown = ts;
             } catch (e) {
                 this.diag('replay_frame_failed', { error: String(e.message || e) });
+                // The success path above checks this after its await; so must the failure
+                // path. A download that rejects AFTER a disconnect used to clear the
+                // camera on a disposed scene and then let the loop start the next one.
+                if (this._disposed) { this._frameShown = ts; return; }
                 // Show NOTHING rather than the last photo, which is the same rule
                 // _forgetFrame follows for a gap in the stream: a fetch that failed is a
                 // moment we have no picture for, and leaving the previous one up puts a

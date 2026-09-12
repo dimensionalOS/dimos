@@ -752,6 +752,62 @@ def test_a_second_start_does_not_orphan_the_server_that_is_serving(tmp_path: Pat
         module.stop()
 
 
+def test_a_module_that_was_stopped_can_be_started_again(tmp_path: Path) -> None:
+    """start() after stop() must come back alive, not inert.
+
+    stop() latches `_stopping`, and nothing clears it. That was invisible while stop()
+    also left `_web_server` set, because the guard at the top of start() made a restart
+    impossible -- the module refused with "already serving" and never got far enough to
+    care. Clearing `_web_server` in stop() fixed the refusal and exposed this: the second
+    start() built a server and served, but `_stopping` was still set, so `_prepare`
+    returned before loading search, `_build_replay` refused, and a replay request
+    answered "replay not built: stopping". A module that looked up and was not.
+    """
+    import socket
+    import threading
+
+    db_path = tmp_path / "recording.db"
+    _empty_store(db_path)
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+
+    built: list[object] = []
+
+    class FakeWeb:
+        def __init__(self, **kwargs: object) -> None:
+            from fastapi import FastAPI
+
+            self.app = FastAPI()
+            self.done = threading.Event()
+            built.append(self)
+
+        def run(self, **kwargs: object) -> None:
+            self.done.wait(30)
+
+        def shutdown(self) -> None:
+            self.done.set()
+
+    module = MemoryWorldModule(store_path=str(db_path), server_port=port)
+    monkey = mock.patch("dimos.teleop.memory_world.module.RobotWebInterface", FakeWeb)
+    monkey.start()
+    try:
+        module.start()
+        module.stop()
+        assert module._stopping.is_set(), "stop() is expected to latch it"
+
+        module.start()
+        assert len(built) == 2, "the second start built no server"
+        assert not module._stopping.is_set(), (
+            "restarted while still marked stopping: prepare, replay and the visual index"
+            " all refuse to do anything in that state"
+        )
+    finally:
+        monkey.stop()
+        module.stop()
+
+
 def test_the_capture_markers_are_built_from_the_poses_on_the_images(tmp_path: Path) -> None:
     """`_build_image_poses` end to end, because nothing else in this suite runs it.
 
