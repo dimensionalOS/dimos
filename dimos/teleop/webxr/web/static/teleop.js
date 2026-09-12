@@ -566,8 +566,7 @@ function processTracking(time, frame) {
 
     if (webXRClientConfig.body_tracking_mode !== 'off') {
         const joints = captureBody(frame, xrBodyRefSpace);
-        const shouldSend = joints !== null || webXRClientConfig.body_tracking_mode === 'required';
-        if (shouldSend && ws && ws.readyState === WebSocket.OPEN) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
                 type: 'body_tracking_snapshot',
                 capture_time_s: (performance.timeOrigin + time) / 1000,
