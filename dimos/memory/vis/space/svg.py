@@ -341,7 +341,8 @@ def render(
     ]
     parts.extend(fragments)
     parts.append("</svg>")
-    svg = "\n".join(parts)
+    # Trailing newline: these land in the repo as ordinary text files.
+    svg = "\n".join(parts) + "\n"
 
     if path is not None:
         Path(path).write_text(svg)

@@ -257,4 +257,6 @@ def render(plot: Plot, width: float = 10, height: float = 3.5) -> str:
         fig.savefig(buf, format="svg", bbox_inches="tight")
         plt.close(fig)
 
-        return buf.getvalue()
+        # Matplotlib pads some lines; these land in the repo as ordinary text
+        # files, so emit them the way the whitespace hooks expect.
+        return "\n".join(ln.rstrip() for ln in buf.getvalue().splitlines()) + "\n"

@@ -1,2 +1,4 @@
-plot_brightness_algo.svg filter=lfs diff=lfs merge=lfs -text
-plot_brightness_algo_delta.svg filter=lfs diff=lfs merge=lfs -text
+# The svgs here are text and want to be diffed and rendered, on github as well
+# as on the site; the parent ** rule would put them in LFS, where github serves
+# the pointer instead of the drawing. The rasters beside them stay in LFS.
+*.svg -filter -diff -merge text
