@@ -228,3 +228,22 @@ def test_a_refused_base_is_uncertain_when_the_joints_cannot_be_confirmed_stopped
 
     assert result.status is ExecutionStatus.UNCERTAIN
     assert "could not cancel" in result.message
+
+
+def test_a_poll_from_a_finished_run_does_not_disturb_the_next_one() -> None:
+    """A watchdog whose poll outlives its run must not cancel or overwrite the next."""
+    robot = _WholeBody()
+    manager = robot.manager()
+    manager.execute(_plan(("left/j1", *BASE)), blocking=False)
+    manager.cancel()
+
+    robot.states = dict.fromkeys(robot.states, TrajectoryState.EXECUTING)
+    assert manager.execute(_plan(("left/j1", *BASE)), blocking=False).status is (
+        ExecutionStatus.ACCEPTED
+    )
+
+    manager._poll(run_id=1)
+    manager.close()
+
+    assert manager.status is ExecutionStatus.ACCEPTED
+    assert set(robot.states.values()) == {TrajectoryState.EXECUTING}

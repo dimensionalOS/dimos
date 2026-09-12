@@ -79,6 +79,7 @@ class PlanExecutionManager:
         self._latest_result: ExecutionResult | None = None
         self._legs: tuple[str, ...] = (JOINT_TRAJECTORY_TASK_NAME,)
         self._cancelled_legs: set[str] = set()
+        self._run_id = 0
         self._run_done = threading.Event()
         self._watchdog: threading.Thread | None = None
 
@@ -151,16 +152,24 @@ class PlanExecutionManager:
                 result.message if result is not None else "",
                 coordinator_result=result,
             )
-            with self._state_lock:
-                self._legs = tuple(legs)
-                self._run_done = threading.Event()
-                run_done = self._run_done
-            self._store(accepted, active=True)
-            if base_trajectory is not None:
-                self._watchdog = threading.Thread(
-                    target=self._watch, args=(run_done,), name="PlanExecutionWatchdog", daemon=True
-                )
-                self._watchdog.start()
+            # Under the poll lock so an in-flight poll of the previous run
+            # cannot straddle the swap and act on this one.
+            with self._poll_lock:
+                with self._state_lock:
+                    self._run_id += 1
+                    run_id = self._run_id
+                    self._legs = tuple(legs)
+                    self._run_done = threading.Event()
+                    run_done = self._run_done
+                self._store(accepted, active=True)
+                if base_trajectory is not None:
+                    self._watchdog = threading.Thread(
+                        target=self._watch,
+                        args=(run_done, run_id),
+                        name="PlanExecutionWatchdog",
+                        daemon=True,
+                    )
+                    self._watchdog.start()
 
         if not blocking:
             return accepted
@@ -257,24 +266,35 @@ class PlanExecutionManager:
         self._store(result, active=False)
         return result
 
-    def _poll(self) -> ExecutionResult:
-        """Read every leg of the run once and store the combined result."""
+    def _poll(self, run_id: int | None = None) -> ExecutionResult:
+        """Read every leg of the run once and store the combined result.
+
+        ``run_id`` names the run a watchdog polls for. A poll whose run has since
+        finished or been replaced stores nothing and cancels nothing.
+        """
         # One poller at a time, or a stale read could overwrite a finished run.
         with self._poll_lock:
             with self._state_lock:
+                if run_id is not None and run_id != self._run_id:
+                    return self._latest_result or ExecutionResult(ExecutionStatus.IDLE)
                 if not self._active and self._latest_result is not None:
                     return self._latest_result
+                run_id = self._run_id
+                legs = self._legs
             statuses: dict[str, TrajectoryStatus] = {}
-            for leg in self._legs:
-                status = self._get_status(leg)
+            for leg in legs:
+                status = self._get_status(leg, run_id=run_id)
                 if isinstance(status, ExecutionResult):
-                    for other in self._legs:
+                    for other in legs:
                         if other != leg:
                             self._cancel_leg(other)
                     return status
                 statuses[leg] = status
+            with self._state_lock:
+                if run_id != self._run_id or not self._active:
+                    return self._latest_result or ExecutionResult(ExecutionStatus.IDLE)
             result = self._combine(statuses)
-            self._store(result, active=result.status not in _FINISHED)
+            self._store(result, active=result.status not in _FINISHED, run_id=run_id)
             return result
 
     def _combine(self, statuses: dict[str, TrajectoryStatus]) -> ExecutionResult:
@@ -303,10 +323,10 @@ class PlanExecutionManager:
             return ExecutionResult(ExecutionStatus.COMPLETED, trajectory_status=primary)
         return ExecutionResult(ExecutionStatus.EXECUTING, trajectory_status=primary)
 
-    def _watch(self, run_done: threading.Event) -> None:
+    def _watch(self, run_done: threading.Event, run_id: int) -> None:
         # Non-blocking runs are otherwise only polled when someone reads status.
         while not run_done.wait(self._poll_interval):
-            self._poll()
+            self._poll(run_id)
 
     def _start_base(
         self, task: str, trajectory: JointTrajectory
@@ -354,7 +374,7 @@ class PlanExecutionManager:
             watchdog.join(DEFAULT_THREAD_JOIN_TIMEOUT)
 
     def _get_status(
-        self, task: str = JOINT_TRAJECTORY_TASK_NAME
+        self, task: str = JOINT_TRAJECTORY_TASK_NAME, *, run_id: int | None = None
     ) -> TrajectoryStatus | ExecutionResult:
         args: dict[str, None] = {"t_now": None} if task == JOINT_TRAJECTORY_TASK_NAME else {}
         try:
@@ -365,14 +385,14 @@ class PlanExecutionManager:
                 ExecutionStatus.UNCERTAIN,
                 f"{task} get_status RPC failed: {exc}",
             )
-            self._store(result, active=False)
+            self._store(result, active=False, run_id=run_id)
             return result
         if not isinstance(status, TrajectoryStatus):
             result = ExecutionResult(
                 ExecutionStatus.UNCERTAIN,
                 f"{task} get_status returned {type(status).__name__}, expected TrajectoryStatus",
             )
-            self._store(result, active=False)
+            self._store(result, active=False, run_id=run_id)
             return result
         return status
 
@@ -387,8 +407,10 @@ class PlanExecutionManager:
         }[status.state]
         return ExecutionResult(mapped, status.error, trajectory_status=status)
 
-    def _store(self, result: ExecutionResult, *, active: bool) -> None:
+    def _store(self, result: ExecutionResult, *, active: bool, run_id: int | None = None) -> None:
         with self._state_lock:
+            if run_id is not None and run_id != self._run_id:
+                return
             self._latest_result = result
             self._active = active
             if not active:
