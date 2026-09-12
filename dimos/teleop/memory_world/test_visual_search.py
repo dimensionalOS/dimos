@@ -46,6 +46,7 @@ from dimos.teleop.memory_world.visual_search import (
     patch_world_position,
     score_frames,
     search_phrase,
+    sensor_intrinsics,
 )
 
 if TYPE_CHECKING:
@@ -877,3 +878,59 @@ def test_intrinsics_are_scaled_to_the_raster_they_are_indexed_against() -> None:
         intrinsics_size=(848, 480),
     )
     assert same is not None and abs(same[0]) < 0.01 and abs(same[1]) < 0.01
+
+
+def test_a_crop_is_not_a_resize_and_only_a_resize_scales_the_focal_length() -> None:
+    """roi and binning are stated in the message; inferring them from sizes is a guess.
+
+    A top-left 640x480 crop of a 1280x960 calibration publishes a smaller image with the
+    SAME fx -- only the principal point moves. Reading that as a resize halved fx and cx
+    together and moved the sampled pixel from (480, 240) to (240, 120), which on a scene
+    with the object at 2 m against a 5 m background returned the background: (-1.0, -1.5,
+    5.0) where (-0.4, -0.6, 2.0) was right.
+    """
+    full = SimpleNamespace(
+        K=[900.0, 0.0, 640.0, 0.0, 900.0, 480.0, 0.0, 0.0, 1.0],
+        width=1280,
+        height=960,
+        binning_x=0,
+        binning_y=0,
+        roi_x_offset=0,
+        roi_y_offset=0,
+        roi_width=0,
+        roi_height=0,
+    )
+
+    # No roi, no binning: the numbers and the raster are the calibration's own.
+    assert sensor_intrinsics(full) == ((900.0, 900.0, 640.0, 480.0), (1280, 960))
+
+    # A top-left 640x480 crop: fx is untouched, the principal point moves with the window.
+    crop = SimpleNamespace(**{**vars(full), "roi_width": 640, "roi_height": 480})
+    assert sensor_intrinsics(crop) == ((900.0, 900.0, 640.0, 480.0), (640, 480))
+
+    # An offset crop moves it by the offset, and still does not touch fx.
+    offset = SimpleNamespace(**{**vars(crop), "roi_x_offset": 100, "roi_y_offset": 50})
+    assert sensor_intrinsics(offset) == ((900.0, 900.0, 540.0, 430.0), (640, 480))
+
+    # 2x binning halves everything, including fx -- binning really is a resize.
+    binned = SimpleNamespace(**{**vars(full), "binning_x": 2, "binning_y": 2})
+    assert sensor_intrinsics(binned) == ((450.0, 450.0, 320.0, 240.0), (640, 480))
+
+    # And the end-to-end consequence: the crop's own pixel lifts to the crop's own ray.
+    depth_mm = np.full((480, 640), 5.0, dtype=np.float32)  # 5 m background
+    depth_mm[235:245, 475:485] = 2.0  # the object, at the crop's (480, 240)
+    intrinsics, size = sensor_intrinsics(crop)
+    where = patch_world_position(
+        (480 / 640, 240 / 480),
+        depth_mm,
+        intrinsics,
+        np.eye(4),
+        window_px=8,
+        intrinsics_size=size,
+    )
+    assert where is not None
+    assert where[2] == pytest.approx(2.0), "read the background instead of the object"
+    # The crop's own pinhole: (u - cx) * z / fx with the UNSCALED fx, which is the whole
+    # point -- halving fx with the raster would have put it at half this offset.
+    assert where[0] == pytest.approx((480 - 640) * 2.0 / 900.0), where
+    assert where[1] == pytest.approx((240 - 480) * 2.0 / 900.0), where

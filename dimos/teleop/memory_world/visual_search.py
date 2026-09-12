@@ -370,6 +370,31 @@ def body_style_quaternion(optical: np.ndarray) -> tuple[float, float, float, flo
     return quaternion_from_matrix(np.stack([forward, left, up], axis=1))
 
 
+def sensor_intrinsics(info: Any) -> tuple[tuple[float, float, float, float], tuple[int, int]]:
+    """``(fx, fy, cx, cy)`` and the raster they address, after ROI and binning.
+
+    A camera_info's K is solved for the FULL calibrated frame; ``roi`` and ``binning``
+    say which part of it the published image actually is, and the published image is
+    ``roi / binning``. This is the adjustment ROS's own image_proc makes, and it is not
+    the same as scaling by the size ratio: a top-left 640x480 crop of a 1280x960
+    calibration keeps fx exactly and only moves the principal point, so inferring a
+    resize from the dimensions alone moved the sampled pixel from (480, 240) to
+    (240, 120) and read the background instead of the object -- 5 m where 2 m was right.
+
+    Returning the size alongside is what lets the caller tell the remaining difference
+    apart: anything still mismatched after this IS a resize, and scales.
+    """
+    bx = max(int(getattr(info, "binning_x", 0) or 1), 1)
+    by = max(int(getattr(info, "binning_y", 0) or 1), 1)
+    rx = float(getattr(info, "roi_x_offset", 0) or 0)
+    ry = float(getattr(info, "roi_y_offset", 0) or 0)
+    rw = int(getattr(info, "roi_width", 0) or 0) or int(info.width)
+    rh = int(getattr(info, "roi_height", 0) or 0) or int(info.height)
+    k = info.K
+    fx, fy, cx, cy = float(k[0]), float(k[4]), float(k[2]), float(k[5])
+    return (fx / bx, fy / by, (cx - rx) / bx, (cy - ry) / by), (rw // bx, rh // by)
+
+
 def patch_world_position(
     image_uv: tuple[float, float],
     depth_mm: np.ndarray,
@@ -414,8 +439,12 @@ def patch_world_position(
     height, width = depth_mm.shape
     fx, fy, cx, cy = intrinsics
     if intrinsics_size is not None and tuple(intrinsics_size) != (width, height):
+        # A REMAINING mismatch, after `sensor_intrinsics` has already applied whatever roi
+        # and binning the camera_info declared, is a resize -- and a resize is the one
+        # case where fx scales. Deriving the crop from a size ratio instead would move
+        # the principal point of a cropped readout and sample a different surface.
         iwidth, iheight = intrinsics_size
-        if iwidth and iheight:
+        if iwidth > 0 and iheight > 0:
             sx, sy = width / float(iwidth), height / float(iheight)
             fx, cx = fx * sx, cx * sx
             fy, cy = fy * sy, cy * sy

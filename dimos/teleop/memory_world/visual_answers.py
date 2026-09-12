@@ -39,6 +39,7 @@ from dimos.teleop.memory_world.visual_search import (
     cluster_places,
     hot_patches,
     patch_world_position,
+    sensor_intrinsics,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -286,27 +287,24 @@ class VisualAnswers:
                 )
             except LookupError:
                 cinfo = None
-        intrinsics = (float(k[0]), float(k[4]), float(k[2]), float(k[5]))
-        # The raster THOSE numbers were solved for, so they can be scaled to whatever the
-        # depth image turns out to be. Without it a 1280x720 calibration indexed at an
-        # 848x480 depth pixel lifts the patch through cx=640 and lands it 43 cm off-axis.
-        intrinsics_size = (
-            (int(dinfo.width), int(dinfo.height)) if dinfo.width and dinfo.height else None
-        )
-        ck = cinfo.K if cinfo is not None else None
-        colour_intrinsics = (
-            (float(ck[0]), float(ck[4]), float(ck[2]), float(ck[5]))
-            if ck is not None and ck[0] and ck[4]
-            else None
-        )
-        # Its raster too, not the depth image's: those intrinsics are in colour pixels.
-        colour_size = (
-            (int(cinfo.width), int(cinfo.height))
-            if colour_intrinsics is not None and cinfo.width and cinfo.height
-            else None
-        )
-        if colour_size is None:
-            colour_intrinsics = None  # half a calibration is the uncorrected path
+        # Adjusted for whatever roi and binning the message declares, and returned with
+        # the raster those numbers then address -- so a remaining mismatch against the
+        # depth image is a resize and scales, while a crop does not. Without any of this a
+        # 1280x720 calibration indexed at an 848x480 depth pixel lifts the patch through
+        # cx=640 and lands it 43 cm off-axis.
+        intrinsics, intrinsics_size = sensor_intrinsics(dinfo)
+        if not intrinsics_size[0] or not intrinsics_size[1]:
+            intrinsics_size = None
+        # The colour side through the same adjustment. `color_size` is the raster its
+        # intrinsics address, which after a roi or binning is NOT cinfo.width: the uv is
+        # normalised in the published image, so meeting K means multiplying by the
+        # published size, not by the calibrated one.
+        colour_intrinsics: tuple[float, float, float, float] | None = None
+        colour_size: tuple[int, int] | None = None
+        if cinfo is not None and cinfo.K[0] and cinfo.K[4]:
+            colour_intrinsics, colour_size = sensor_intrinsics(cinfo)
+            if not colour_size[0] or not colour_size[1]:
+                colour_intrinsics, colour_size = None, None  # half a calibration
         if info == colour:
             # No depth calibration: `depth_info_stream_for` fell back to the COLOUR info,
             # so `k` above is the colour camera's. Correcting colour-to-colour round-trips
