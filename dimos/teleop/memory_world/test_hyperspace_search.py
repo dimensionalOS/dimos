@@ -21,6 +21,8 @@ import numpy as np
 import pytest
 
 from dimos.teleop.memory_world.hyperspace_search import (
+    KEYFRAME_STREAM,
+    PATCH_STREAM,
     Cluster,
     assign_points,
     cluster_voxels,
@@ -167,3 +169,189 @@ def test_keyframes_in_the_recording_are_not_ready_until_the_ingest_says_so(tmp_p
     db.commit()
     db.close()
     assert memory_db_ready(recording)
+
+
+def _tiny_recording(path, tf_name: str = "tf", with_static: bool = False):  # type: ignore[no-untyped-def]
+    """A recording with just enough of every role for ingest_recording to accept it."""
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+
+    def edge(parent: str, child: str, x: float) -> Transform:
+        return Transform(
+            translation=Vector3(x, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id=parent,
+            child_frame_id=child,
+            ts=1.0,
+        )
+
+    store = SqliteStore(path=str(path), must_exist=False)
+    store.start()
+    store.stream("color_image", Image).append(
+        Image(data=np.zeros((2, 2, 3), dtype=np.uint8), frame_id="cam"), ts=1.0
+    )
+    store.stream("depth_image", Image).append(
+        Image(data=np.zeros((2, 2), dtype=np.uint16), frame_id="cam"), ts=1.0
+    )
+    store.stream("camera_info", CameraInfo).append(CameraInfo(frame_id="cam"), ts=1.0)
+    store.stream(tf_name, TFMessage).append(TFMessage(edge("odom", "base", 1.0)), ts=1.0)
+    if with_static:
+        store.stream("tf_static", TFMessage).append(TFMessage(edge("base", "cam", 2.0)), ts=1.0)
+    return store
+
+
+def _stub_hyperspace(monkeypatch, ingest):  # type: ignore[no-untyped-def]
+    """Stand in for the parts of dimos.mapping.hyperspace an ingest would load.
+
+    The real ones pull torch and a vision tower; what is under test here is which db the
+    keyframes are written into and what survives a failure, not the embedding.
+    """
+    import sys
+    from types import SimpleNamespace
+
+    patches = SimpleNamespace(KeyframeGateConfig=lambda **kw: None)
+    monkeypatch.setitem(
+        sys.modules, "dimos.mapping.hyperspace", SimpleNamespace(patches=patches, __path__=[])
+    )
+    monkeypatch.setitem(sys.modules, "dimos.mapping.hyperspace.patches", patches)
+    monkeypatch.setitem(
+        sys.modules, "dimos.mapping.hyperspace.cli", SimpleNamespace(pick_device=lambda d: "cpu")
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "dimos.mapping.hyperspace.embedder",
+        SimpleNamespace(
+            SigLIP2Patches=lambda **kw: SimpleNamespace(start=lambda: None, stop=lambda: None)
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "dimos.mapping.hyperspace.ingest",
+        SimpleNamespace(IngestConfig=lambda **kw: None),
+    )
+    monkeypatch.setattr("dimos.teleop.memory_world.hyperspace_ingest._ingest", ingest)
+
+
+def test_the_keyframes_are_written_into_the_recording_and_no_companion_appears(  # type: ignore[no-untyped-def]
+    tmp_path, monkeypatch
+) -> None:
+    """One db. A .db recording gets its own keyframes, its own patches and its own marker,
+    and nothing is created beside it -- which is the whole point of the change.
+
+    It also gets one tf tree: a mount declared only in tf_static is invisible to Hyperspace,
+    which reads the moving tf alone, so the statics are folded in before anything is
+    embedded against them.
+    """
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.std_msgs.String import String
+    from dimos.teleop.memory_world.hyperspace_ingest import ingest_recording
+
+    recording = tmp_path / "walk.db"
+    _tiny_recording(recording, with_static=True).stop()
+
+    def fake_ingest(store, memory, model, **kw):  # type: ignore[no-untyped-def]
+        assert memory is store, "the recording IS the memory db"
+        memory.stream(KEYFRAME_STREAM, String).append(String("a keyframe"), ts=1.0)
+        memory.stream(PATCH_STREAM, String).append(String("a patch"), ts=1.0)
+        return {"images": 1, "kept": 1}
+
+    _stub_hyperspace(monkeypatch, fake_ingest)
+    ingest_recording(recording, model_name="stub")
+
+    assert not (tmp_path / "walk.hyperspace.db").exists()
+    assert memory_db_ready(recording)
+    store = SqliteStore(path=str(recording), must_exist=True)
+    store.start()
+    try:
+        names = set(store.list_streams())
+        assert {KEYFRAME_STREAM, PATCH_STREAM, "hyperspace_complete"} <= names
+        assert "tf_static" not in names  # folded into tf, so there is one tree
+        edges = {
+            (str(t.frame_id), str(t.child_frame_id))
+            for obs in store.streams["tf"]
+            for t in obs.data.transforms
+        }
+        assert edges == {("odom", "base"), ("base", "cam")}
+    finally:
+        store.stop()
+
+
+def test_an_ingest_that_fails_before_embedding_keeps_the_index_that_is_there(  # type: ignore[no-untyped-def]
+    tmp_path, monkeypatch
+) -> None:
+    """A bad model name, an unreadable device, a typo'd stream: none of them may cost the
+    search index the recording already has.
+
+    The keyframes live in the recording now, so there is no staging db to throw away -- the
+    old ones are dropped in place. They are therefore dropped as late as possible, after
+    everything that can fail without writing an embedding already has.
+    """
+    from dimos.msgs.std_msgs.String import String
+    from dimos.teleop.memory_world.hyperspace_ingest import ingest_recording
+
+    recording = tmp_path / "walk.db"
+    store = _tiny_recording(recording)
+    store.stream(KEYFRAME_STREAM, String).append(String("from the last run"), ts=1.0)
+    store.stream(PATCH_STREAM, String).append(String("from the last run"), ts=1.0)
+    store.stream("hyperspace_complete", String).append(String("finished"), ts=1.0)
+    store.stop()
+    assert memory_db_ready(recording)
+
+    def never_called(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("the ingest should not have started")
+
+    _stub_hyperspace(monkeypatch, never_called)
+    import sys
+    from types import SimpleNamespace
+
+    def dying_model(**kw):  # type: ignore[no-untyped-def]
+        raise RuntimeError("no such model")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "dimos.mapping.hyperspace.embedder",
+        SimpleNamespace(SigLIP2Patches=dying_model),
+    )
+    with pytest.raises(RuntimeError):
+        ingest_recording(recording, model_name="does-not-exist")
+
+    assert memory_db_ready(recording), "the index that was there survived"
+
+
+def test_the_empty_tf_hyperspace_opens_is_swept_up(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Hyperspace's ingestor opens a stream called "tf" in the memory db, which is now the
+    recording itself.
+
+    On a recording whose tf is called something else, that empty stream would outrank the
+    real one in detect_streams from then on and the world would have no transforms at all --
+    a recording broken by indexing it.
+    """
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.std_msgs.String import String
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.hyperspace_ingest import ingest_recording
+
+    recording = tmp_path / "walk.db"
+    _tiny_recording(recording, tf_name="robot_tf").stop()
+
+    def fake_ingest(store, memory, model, **kw):  # type: ignore[no-untyped-def]
+        memory.stream("tf", TFMessage)  # what PatchIngestor does on construction
+        memory.stream(KEYFRAME_STREAM, String).append(String("a keyframe"), ts=1.0)
+        memory.stream(PATCH_STREAM, String).append(String("a patch"), ts=1.0)
+        return {"images": 1, "kept": 1}
+
+    _stub_hyperspace(monkeypatch, fake_ingest)
+    ingest_recording(recording, model_name="stub")
+
+    store = SqliteStore(path=str(recording), must_exist=True)
+    store.start()
+    try:
+        assert "tf" not in store.list_streams()
+        assert "robot_tf" in store.list_streams()
+    finally:
+        store.stop()

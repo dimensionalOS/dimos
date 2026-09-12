@@ -469,6 +469,123 @@ _STREAM_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 }
 
 
+STAGED_SUFFIX = "__rebuilt"
+
+
+def refuse_if_a_rebuild_is_half_done(store: Store, name: str) -> None:
+    """Stop before touching a stream an earlier rebuild died half way through.
+
+    Checked before the stream is even read, because the run that died may have got as far
+    as dropping it: reading it would then be a KeyError, which says nothing about the copy
+    sitting right there under another name.
+    """
+    staged = name + STAGED_SUFFIX
+    if staged in store.list_streams():
+        raise SystemExit(
+            f"{staged!r} is already in the recording: an earlier run died holding the only"
+            f" copy of {name!r}. Check it, put it back as {name!r} and drop it before"
+            " running this again."
+        )
+
+
+def rebuild_stream(store: Store, name: str, rows: list[tuple[float, Any]], payload: Any) -> None:
+    """Replace a stream's contents, with no moment where the data exists nowhere.
+
+    A stream is rewritten by deleting it and writing it again, and between those two the
+    recording holds nothing. Putting the old contents back only works while the disk still
+    takes writes; when it does not -- a full disk, a read-only remount -- the restore fails
+    too and the stream is gone for good. So the new contents go in under another name
+    FIRST. The worst case is then a recording holding the data under the wrong name, which
+    the error names and which is a minute's work to undo.
+    """
+    refuse_if_a_rebuild_is_half_done(store, name)
+    staged = name + STAGED_SUFFIX
+    try:
+        written = store.stream(staged, payload)
+        for ts, message in rows:
+            written.append(message, ts=ts)
+    except BaseException:  # nothing has been taken away yet
+        if staged in store.list_streams():
+            store.delete_stream(staged)
+        raise
+    store.delete_stream(name)
+    try:
+        written = store.stream(name, payload)
+        for ts, message in rows:
+            written.append(message, ts=ts)
+    except BaseException:
+        raise SystemExit(
+            f"writing {name!r} failed after it was dropped. The new contents are in the"
+            f" recording as {staged!r} and nothing is lost: copy them back to {name!r}."
+        ) from None
+    store.delete_stream(staged)
+
+
+def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
+    """Move a recording's static tf edges into its moving tf, and drop the static stream.
+
+    One tf tree. :func:`build_tf_tree` lays the static edges over the moving stream, but
+    Hyperspace reads the moving stream ALONE, so an edge that lives only in the static one
+    is invisible to search while the map and the markers can see it -- and a stale static
+    copy of an edge the moving stream also carries quietly outvotes it. Either way the two
+    disagree. Returns the number of edges moved; zero means there was nothing to move.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.tf_tree import TfTree
+
+    moving = TfTree.from_stream(store.streams[tf_stream])
+    statics: dict[tuple[str, str], Any] = {}
+    for obs in store.streams[static_stream]:
+        for t in obs.data.transforms:
+            statics.setdefault((str(t.frame_id), str(t.child_frame_id)), t)
+    if not statics:
+        store.delete_stream(static_stream)
+        return 0
+
+    def already_there(edge: tuple[str, str], transform: Any) -> bool:
+        p, q = transform.translation, transform.rotation
+        held = moving.lookup(edge[0], edge[1], 0.0, float("inf"))
+        if held is None:
+            return False
+        want = TfTree()
+        want.add(
+            edge[0],
+            edge[1],
+            0.0,
+            (float(p.x), float(p.y), float(p.z)),
+            (float(q.x), float(q.y), float(q.z), float(q.w)),
+            static=True,
+        )
+        return bool(np.allclose(np.asarray(held), np.asarray(want.lookup(*edge, 0.0))))
+
+    # A static edge the moving stream already carries, with the same value, is not moved:
+    # the tree already agrees with itself, and rewriting sixteen thousand samples to say
+    # what they already say is not free.
+    moving_edges = {
+        (str(t.frame_id), str(t.child_frame_id))
+        for obs in store.streams[tf_stream]
+        for t in obs.data.transforms
+    }
+    folded = {
+        edge: transform
+        for edge, transform in statics.items()
+        if edge not in moving_edges or not already_there(edge, transform)
+    }
+    if not folded:
+        store.delete_stream(static_stream)
+        return 0
+
+    rows = []
+    for obs in store.streams[tf_stream]:
+        kept = [
+            t for t in obs.data.transforms if (str(t.frame_id), str(t.child_frame_id)) not in folded
+        ]
+        rows.append((float(obs.ts), TFMessage(*kept, *folded.values())))
+    rebuild_stream(store, tf_stream, rows, TFMessage)
+    store.delete_stream(static_stream)
+    return len(folded)
+
+
 def build_tf_tree(store: Store, tf_stream: str) -> TfTree:
     """The recording's tf tree: the moving stream, with its static edges over the top.
 

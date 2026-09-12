@@ -310,9 +310,6 @@ def corrected_mount(
     return mount, camera_root, matrix
 
 
-REBUILT_SUFFIX = "__rebuilt"
-
-
 def write_mount_into_tf(
     store: Any, tf_stream: str, mount: str, child: str, matrix: np.ndarray
 ) -> int:
@@ -325,16 +322,18 @@ def write_mount_into_tf(
     own static tf, which build_tf_tree lays over the moving one, would quietly win over
     the correction, so that edge is taken out of it here too.
 
-    The whole stream is rebuilt, because the wrong value is in every sample of that edge
-    and a later sample cannot override an earlier one for a reader that interpolates.
-    The corrected copy is written under another name FIRST, so that no failure and no
-    kill can reach a state where the recording's tf exists nowhere: if the last step
-    dies, the copy is still in the db and the error says how to finish by hand.
+    The whole stream is rebuilt through :func:`recording.rebuild_stream`, because the
+    wrong value is in every sample of that edge and a later sample cannot override an
+    earlier one for a reader that interpolates.
     """
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import (
+        rebuild_stream,
+        refuse_if_a_rebuild_is_half_done,
+    )
 
     x, y, z, w = quaternion_from_matrix(matrix[:3, :3])
     position = tuple(float(v) for v in matrix[:3, 3])
@@ -350,14 +349,7 @@ def write_mount_into_tf(
             ts=t.ts,
         )
 
-    staged = tf_stream + REBUILT_SUFFIX
-    if staged in store.list_streams():
-        raise SystemExit(
-            f"{staged!r} is already in the recording: an earlier run died holding the only"
-            f" corrected copy of {tf_stream!r}. Check it, put it back as {tf_stream!r} and"
-            " drop it before running this again."
-        )
-
+    refuse_if_a_rebuild_is_half_done(store, tf_stream)
     original = [(float(obs.ts), list(obs.data.transforms)) for obs in store.streams[tf_stream]]
     touched = sum(
         1
@@ -368,26 +360,12 @@ def write_mount_into_tf(
     if not touched:
         raise SystemExit(f"{tf_stream!r} carries no {mount} -> {child}; nothing to correct")
 
-    def write(name: str) -> None:
-        written = store.stream(name, TFMessage)
-        for ts, transforms in original:
-            written.append(TFMessage(*[corrected(t) for t in transforms]), ts=ts)
-
-    try:
-        write(staged)
-    except BaseException:  # nothing has been taken away yet
-        if staged in store.list_streams():
-            store.delete_stream(staged)
-        raise
-    store.delete_stream(tf_stream)
-    try:
-        write(tf_stream)
-    except BaseException:
-        raise SystemExit(
-            f"writing {tf_stream!r} failed after it was dropped. The corrected tf is in the"
-            f" recording as {staged!r} and nothing is lost: copy it back to {tf_stream!r}."
-        ) from None
-    store.delete_stream(staged)
+    rebuild_stream(
+        store,
+        tf_stream,
+        [(ts, TFMessage(*[corrected(t) for t in transforms])) for ts, transforms in original],
+        TFMessage,
+    )
     _drop_edge_from_static_tf(store, mount, child)
     return touched
 
@@ -467,7 +445,7 @@ def drop_what_the_mount_invalidates(store: Any, recording: str) -> list[str]:
             payload = type(store.streams[name].first().data).__name__
         except Exception:  # empty or unreadable: nothing of the old mount in it
             continue
-        if payload != "PatchGrid" or name in dropped:
+        if payload != "PatchGrid":
             continue
         try:
             store.delete_stream(name)

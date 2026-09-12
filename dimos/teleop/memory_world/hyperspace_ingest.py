@@ -51,7 +51,7 @@ from dimos.teleop.memory_world.hyperspace_search import (
     PATCH_STREAM,
     memory_db_for,
 )
-from dimos.teleop.memory_world.recording import depth_info_stream_for
+from dimos.teleop.memory_world.recording import depth_info_stream_for, fold_static_tf
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +136,7 @@ def ingest_recording(
     building: Path | None = None  # the db under construction, dropped unless published
     held_lock: int | None = None  # the descriptor holding our claim on this ingest
     published = False
+    writing_started = False  # whether the index that was there has been dropped yet
     memory_path = memory_db_for(recording)
     # Two runs would share the staging db below and publish each other's half of it,
     # so the second one is turned away before either touches it.
@@ -149,6 +150,7 @@ def ingest_recording(
             detected = detect_streams(store, image=chosen.get("image"))
             detected.update(chosen)
             present = set(store.list_streams())
+            had_a_tf_stream = "tf" in present
             missing = [
                 role
                 for role in ("image", "depth", "camera_info", "tf")
@@ -168,13 +170,20 @@ def ingest_recording(
             )
 
             if memory_path == recording:
-                # One db: the recording holds its own keyframes and patches, and reads
-                # its own tf. The two streams are dropped first, because a rerun must not
-                # append a second copy of every keyframe, and again on failure below.
+                # One db: the recording holds its own keyframes and patches, and reads its
+                # own tf. Hyperspace reads that tf ALONE -- no static stream laid over it --
+                # so a recording carrying its mounts in a separate static tf would place
+                # keyframes by a different tree than the map and the markers place by. One
+                # tree, in one stream, before anything is embedded against it.
                 memory = store
-                for stream in (COMPLETE_STREAM, KEYFRAME_STREAM, PATCH_STREAM):
-                    if stream in store.list_streams():
-                        store.delete_stream(stream)
+                if detected.get("tf_static"):
+                    moved = fold_static_tf(store, detected["tf"], detected["tf_static"])
+                    print(
+                        f"tf: {moved} static edge(s) folded into {detected['tf']!r}"
+                        if moved
+                        else f"tf: {detected['tf']!r} already carries every static edge",
+                        flush=True,
+                    )
             else:
                 # An mcap cannot be written to, so its keyframes go in a companion, built
                 # beside the final name and moved into place at the end.
@@ -194,18 +203,40 @@ def ingest_recording(
             model.start()
             opened.append(model)
             started = time.monotonic()
-            stats = _ingest(
-                store,
-                memory,
-                model,
-                streams=detected,
-                depth_info=depth_info,
-                hz=hz,
-                max_seconds=max_seconds,
-                config=IngestConfig(
-                    gate=hs.KeyframeGateConfig(novelty_threshold=novelty), max_depth_m=max_depth_m
-                ),
-            )
+            if memory is store:
+                # Only now, with everything that can fail before a single embedding already
+                # done: a bad stream name or an unreadable model must not cost the index
+                # that is already there. A rerun must not append a second copy either.
+                for stream in (COMPLETE_STREAM, KEYFRAME_STREAM, PATCH_STREAM):
+                    if stream in store.list_streams():
+                        store.delete_stream(stream)
+                writing_started = True
+            try:
+                stats = _ingest(
+                    store,
+                    memory,
+                    model,
+                    streams=detected,
+                    depth_info=depth_info,
+                    hz=hz,
+                    max_seconds=max_seconds,
+                    config=IngestConfig(
+                        gate=hs.KeyframeGateConfig(novelty_threshold=novelty),
+                        max_depth_m=max_depth_m,
+                    ),
+                )
+            finally:
+                # Hyperspace's ingestor opens a stream called "tf" in the memory db, which
+                # here IS the recording. On a recording whose tf is called something else,
+                # that empty stream would outrank the real one in detect_streams from then
+                # on and the world would have no transforms at all.
+                if (
+                    memory is store
+                    and not had_a_tf_stream
+                    and "tf" in store.list_streams()
+                    and not any(True for _ in store.streams["tf"])
+                ):
+                    store.delete_stream("tf")
         finally:  # the db is replaced below, so let go of it first
             for obj in reversed(opened):
                 try:
@@ -238,7 +269,7 @@ def ingest_recording(
                 done.stop()
         published = True
     finally:
-        if building is None and not published and memory_path == recording:
+        if building is None and writing_started and not published and memory_path == recording:
             # Written in place: a half-done set of keyframes must not read as a finished
             # one. The marker is never written on this path, so a viewer would not be
             # fooled either way; these are dropped so a rerun starts from nothing.

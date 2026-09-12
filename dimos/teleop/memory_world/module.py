@@ -203,7 +203,7 @@ class MemoryWorldConfig(ModuleConfig):
     # The viewer's "Add embeddings" button runs siglipify from this flake over
     # the recording, which writes the vectors back into it (see embed.py).
     siglipify_flake: str = "github:jeff-hykin/siglipify"
-    # Hyperspace (dimos.mapping.hyperspace) answers when <recording>.hyperspace.db exists.
+    # Hyperspace (dimos.mapping.hyperspace) answers once the recording has keyframes.
     hyperspace_model_name: str = HYPERSPACE_MODEL_NAME
     hyperspace_voxel_size: float = PydanticField(default=0.1, gt=0.0)
     hyperspace_device: str = "cpu"  # text tower; MPS aborts inside a dimos worker

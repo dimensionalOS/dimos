@@ -17,7 +17,7 @@
 A mixin for :class:`MemoryWorldModule` (``module.py`` is at the repository's
 file-size limit). It owns:
 
-* the :class:`HyperspaceSearch` over ``<recording>.hyperspace.db``, warmed on
+* the :class:`HyperspaceSearch` over the recording's own keyframes, warmed on
   the prepare thread when the db exists, or built on request by the viewer's
   "Prepare search" button (:mod:`hyperspace_ingest` in a subprocess);
 * the answer path: text -> clusters -> ``query_result`` (+ ``MSG_HEATMAP``
