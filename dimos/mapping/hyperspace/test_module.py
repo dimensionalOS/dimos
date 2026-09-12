@@ -545,3 +545,23 @@ def test_tiles_cover_the_frame_exactly_and_stitch_back() -> None:
         r, c = divmod(index, 3)
         tile = block[r * side : (r + 1) * side, c * side : (c + 1) * side]
         assert (tile == index).all(), f"tile {index} landed in the wrong place"
+
+
+def test_ensemble_cell_grid_follows_the_finest_member() -> None:
+    """A tiled member's resolution must survive the common cell grid: pooling
+    two members onto a fixed 24x24 would throw the tiling away."""
+    import numpy as np
+
+    from dimos.mapping.hyperspace.ingest import IngestConfig, PatchIngestor
+
+    ingestor = PatchIngestor.__new__(PatchIngestor)
+    ingestor.config = IngestConfig(gate=hs.KeyframeGateConfig())
+
+    def grids(*shapes: tuple[int, int]) -> list:
+        return [(np.zeros((r * c, 4), np.float32), (r, c)) for r, c in shapes]
+
+    assert ingestor.cell_grid(grids((14, 14))) == (14, 14)  # single member keeps its own
+    assert ingestor.cell_grid(grids((14, 14), (16, 16))) == (24, 24)  # untiled pair unchanged
+    assert ingestor.cell_grid(grids((14, 14), (28, 42))) == (28, 42)  # tiling survives
+    ingestor.config = IngestConfig(gate=hs.KeyframeGateConfig(), cell_grid=(24, 24))
+    assert ingestor.cell_grid(grids((14, 14), (28, 42))) == (24, 24)  # explicit still wins

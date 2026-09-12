@@ -29,6 +29,7 @@ import numpy as np
 
 from dimos.mapping.hyperspace import patches as hs
 from dimos.models.embedding.base import Embedding
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -41,7 +42,6 @@ if TYPE_CHECKING:
     from dimos.memory.store.base import Store
     from dimos.memory.stream import Stream
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-    from dimos.msgs.sensor_msgs.Image import Image
 
 logger = setup_logger()
 
@@ -83,7 +83,8 @@ class IngestConfig:
     depth_thumbnail_stride: int = 4
     # The keyframe's cell grid: what patch_depth is measured on and what the
     # query pools the members' scores onto. None = the model's own grid for a
-    # single fixed-resolution checkpoint (the original layout), else 24x24.
+    # single fixed-resolution checkpoint (the original layout), and for an
+    # ensemble the finest grid any member offers, never coarser than 24x24.
     cell_grid: tuple[int, int] | None = None
     # Fill the depth holes from the colour frame before measuring patch depth
     # (dimos.perception.depth2depth). Stereo returns nothing off glass, shiny
@@ -101,6 +102,23 @@ def grids_of(model: Any, image: Image) -> list[tuple[NDArray[np.float32], tuple[
         return grids if isinstance(grids, list) and grids and isinstance(grids[0], tuple) else grids
     side = int(model.patches_per_side)
     return [(model.embed_patches(image)[0], (side, side))]
+
+
+def decoded(image: Any) -> Image:
+    """A raw frame from whatever the recording holds. Compressed frames go
+    through CompressedImage.decode(), except webp, which it has no branch for
+    (the lite recorder writes webp colour, so the grocery recordings are all
+    webp) -- Pillow reads those."""
+    if not isinstance(getattr(image, "format", None), str) or not hasattr(image, "decode"):
+        return image
+    if not image.format.startswith("webp"):
+        return image.decode()
+    import io
+
+    from PIL import Image as PillowImage
+
+    pixels = np.asarray(PillowImage.open(io.BytesIO(image.data)).convert("RGB"), np.uint8)
+    return Image(data=pixels, format=ImageFormat.RGB, frame_id=image.frame_id, ts=image.ts)
 
 
 class PatchIngestor:
@@ -149,6 +167,7 @@ class PatchIngestor:
         )
 
     def add_depth(self, image: Image) -> None:
+        image = decoded(image)
         depth = np.asarray(image.as_numpy())
         metres = depth.astype(np.float32) * (0.001 if depth.dtype == np.uint16 else 1.0)
         metres[(metres > self.config.max_depth_m) | ~np.isfinite(metres)] = 0.0
@@ -170,6 +189,7 @@ class PatchIngestor:
 
     def add_image(self, image: Image) -> bool:
         """Returns True when this frame produced a keyframe."""
+        image = decoded(image)
         self.stats["images"] += 1
         if self.stats["images"] in (1, 50) or self.stats["images"] % 250 == 0:
             logger.info(f"hyperspace ingest: {self.stats}")
@@ -260,7 +280,16 @@ class PatchIngestor:
             return self.config.cell_grid
         # One fixed grid: keep the model's own layout, so the vector index's
         # patch ids and the keyframe cells are the same thing.
-        return grids[0][1] if len(grids) == 1 else (24, 24)
+        if len(grids) == 1:
+            return grids[0][1]
+        # Several members: the finest grid any of them offers, so a tiled
+        # member's extra resolution is not thrown away resampling onto a
+        # coarser common grid. Floored at 24x24, the layout every ensemble
+        # used before tiling existed, so the untiled defaults are unchanged.
+        return (
+            max(24, max(shape[0] for _, shape in grids)),
+            max(24, max(shape[1] for _, shape in grids)),
+        )
 
     def _write_keyframe(self, kept: hs.BufferedFrame) -> None:
         camera_frame, depth, grids = kept.payload
