@@ -573,11 +573,7 @@ class HyperspaceSearch:
         hits = _hits_of(fast, result, members)
         for cluster in clusters:
             saw_it = [hits[i] for i in members[owner[members] == cluster.index]]
-            # A viewpoint is a camera at a moment, not a record. Segments carry their own
-            # synthetic ids, so counting ids made one camera looking once -- a patch hit and
-            # three segment hits from the same frame -- read as four viewpoints, and that
-            # place then outranked one seen in two real photographs.
-            cluster.views = len({(hit.camera_frame, hit.ts) for hit in saw_it})
+            cluster.views = viewpoints_of(saw_it)
             cluster.evidence = _pick_evidence(saw_it)
         # Ranked by how many viewpoints saw it, which is the question a person is really
         # asking: a thing seen from eight places is more likely to be the thing than one
@@ -731,6 +727,19 @@ def _hits_of(fast: FastQuery, result: FastResult, wanted: NDArray[np.int64]) -> 
                 )
         base += len(patches)
     return out
+
+
+def viewpoints_of(hits: list[Evidence]) -> int:
+    """How many distinct viewpoints saw a place: a camera at a moment, not a record.
+
+    Segments carry their own synthetic ids, so counting ids made one camera looking once --
+    a patch hit and three segment hits from the same frame -- read as four viewpoints, and
+    that place then outranked one seen in two real photographs.
+
+    Named rather than inline so a test can call THIS, instead of a copy of the expression
+    in a test file, which is a test of itself.
+    """
+    return len({(hit.camera_frame, hit.ts) for hit in hits})
 
 
 def _pick_evidence(members: list[Evidence]) -> list[Evidence]:

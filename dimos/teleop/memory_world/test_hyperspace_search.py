@@ -706,6 +706,10 @@ def test_one_camera_looking_once_is_one_viewpoint() -> None:
     Segments carry their own synthetic ids, so counting ids made a place with one patch hit
     and three segment hits from a single frame read as FOUR viewpoints — and rank above a
     place genuinely seen in two photographs. A viewpoint is a camera at a moment.
+
+    Calls the production function. The first version of this test defined the counting
+    expression again locally and asserted on THAT, so it passed no matter what the module
+    did — a test of itself.
     """
     from types import SimpleNamespace
 
@@ -720,8 +724,7 @@ def test_one_camera_looking_once_is_one_viewpoint() -> None:
     ]
     two_real_photographs = [hit(1, 10.0, "patches"), hit(2, 20.0, "patches")]
 
-    def views(records):  # type: ignore[no-untyped-def]
-        return len({(h.camera_frame, h.ts) for h in records})
+    from dimos.teleop.memory_world.hyperspace_search import viewpoints_of as views
 
     assert views(one_frame_four_records) == 1
     assert views(two_real_photographs) == 2

@@ -80,6 +80,9 @@ export class ResultsNav {
         this.scene.clusterFilter = index;
         if (this.heatmap) this.heatmap.setCurrent(index);
         if (this.pyramids) this.pyramids.setCurrent(index);
+        // A photo pinned with P belongs to the place it was pinned in: carried to the
+        // next one it hides that place's pictures while we fly toward one of them.
+        this.scene._queryImageCursor = -1;
         this._showEvidence(index);
         let viewpoint = null;
         // Cleared whether or not we fly: the tour steps through places with fly:false, and
