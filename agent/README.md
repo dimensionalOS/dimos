@@ -94,6 +94,8 @@ Pi owns context loading, skills, compaction, models and coding-tool behavior. Wo
 
 ## Tool rendering
 
+DimOS owns reusable visualizations and encodings for agent understanding: geometry, axes, units, timestamps, legends and selections. Dimcode owns terminal styling and interaction: cards, themes, camera/point presentation, resizing, controls and graphics/Braille adaptation. Terminal styling preserves the meaning of colors and labels in supplied visuals.
+
 DimOS memory owns video/frame/point-cloud analysis. Evaluate the memory operation once with `materialize()`, then use its existing `Space.to_svg()` / `Plot.to_svg()` and selected-frame exports. Pass those exports together to `dimcode_render`:
 
 ```json
@@ -103,6 +105,8 @@ DimOS memory owns video/frame/point-cloud analysis. Evaluate the memory operatio
 The tool rasterizes the original SVG/PNG views for terminal display and model context. Every view reaches the model; the terminal presents a selectable overview. Each export retains its source path and SHA-256. MCP tool results containing multiple images also appear together automatically. No query or filter runs inside the renderer. Existing skills that return only a pose or JSON still require an explicit export; the harness does not invent missing views.
 
 `dimcode_render` also accepts single `image` paths and saved `points` / `series` JSON. Point clouds use XYZ rows; series use timestamp/value pairs. Selection metadata and display decimation remain explicit. See the bundled Dimensional skill for formats.
+
+The agent is instructed to visualize each meaningful sensor/memory operation. When no supported type or existing visualizer applies, it generates a self-contained SVG with inline Python from the evaluated result and displays it through `dimcode_render({kind:"image",path:"result.svg"})`. This supports arbitrary plots, images, simple graphs and labeled proposed overlays. The same rendered image is returned to the model for visual inspection. Rendering failures remain explicit.
 
 Live tools select an existing relay/robot/channel. The terminal receives frames directly through the Web SDK and coalesces drawing to 10 Hz. The gateway retains one final snapshot for model context. Closing/cancelling the tool releases consumers; the last consumer closes the connection. MediaPool is generic over decoded SDK slots and accepts existing decoder registries. The initial live image renderer handles JPEG; other channel types use their owning decoder/renderer or saved exports.
 
