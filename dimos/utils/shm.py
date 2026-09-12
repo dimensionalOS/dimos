@@ -18,11 +18,10 @@
 Between the two the segment exists at size 0, so a concurrent attacher mmaps an
 empty file and dies with ``ValueError: cannot mmap an empty file``.
 
-Readiness here is "the segment exists and maps at a non-zero size". ``ftruncate``
-moves the segment from 0 to its full size in one step and the creator never shrinks
-it, so a segment that maps at all is a segment the creator has finished sizing.
-Attachers poll that predicate against a deadline and raise :class:`ShmNotReadyError`
-when it is not met, rather than retrying blindly and hoping the next mmap lands.
+Readiness here is "the segment exists and maps at a non-zero size". An attach can
+read size 0 before ``ftruncate`` and still map successfully after it, leaving the
+returned object's cached size at 0. Attachers reject both that handle and an empty
+mapping error, then poll against a deadline.
 
 Readiness deliberately stops at "sized": a segment that maps at the *wrong* size was
 built by a peer with a different layout, which is a permanent error its caller must
@@ -84,7 +83,11 @@ def create_or_attach_shm(
 
 def _try_attach(name: str) -> tuple[SharedMemory | None, str]:
     try:
-        return unregister(SharedMemory(name=name)), ""
+        shm = unregister(SharedMemory(name=name))
+        if shm.size == 0:
+            shm.close()
+            return None, "creator has not sized the segment yet"
+        return shm, ""
     except FileNotFoundError:
         return None, "segment does not exist"
     except ValueError:
