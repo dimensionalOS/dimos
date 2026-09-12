@@ -122,6 +122,23 @@ grep -F 'net.core.rmem_max=67108864 net.core.rmem_default=67108864' "$work/outpu
 grep -F '/etc/sysctl.d/99-dimos.conf' "$work/output" >/dev/null
 pass 'privilege failures, subprocess failures, and opt-in network changes'
 
+# Existing Nix installations may have both experimental features disabled.
+mkdir -p "$work/nix-bin"
+cat > "$work/nix-bin/nix" <<'NIX'
+#!/usr/bin/env bash
+set -eu
+[[ "$1" == --extra-experimental-features && "$2" == 'nix-command flakes' ]]
+shift 2
+[[ "$1" == develop && "$2" == --command ]]
+shift 2
+exec "$@"
+NIX
+chmod +x "$work/nix-bin/nix"
+run 'export PATH="$INSTALL_CLI_TEST_ROOT/nix-bin:$PATH"
+    USE_NIX=1; INSTALL_DIR="$INSTALL_CLI_TEST_ROOT"
+    [[ "$(project_cmd printf "%s" "argument with spaces")" == "argument with spaces" ]]'
+pass 'Nix commands explicitly enable required features and preserve arguments'
+
 # Exercise the real main flow with dependency execution mocked, not the argument parser.
 run 'detect_os() { DETECTED_OS=ubuntu; DETECTED_OS_VERSION=24.04; DETECTED_ARCH=x86_64; DETECTED_DISK_GB=50; }
     detect_gpu() { DETECTED_GPU=none; }; detect_python() { :; }; detect_nix() { :; }
@@ -164,8 +181,8 @@ for capabilities in navigation manipulation navigation,manipulation; do
         if [[ ",$capabilities," == *,manipulation,* ]]; then
             grep -Fx '  dimos run keyboard-teleop-xarm7' "$work/output" >/dev/null
         elif grep -F 'keyboard-teleop-xarm7' "$work/output"; then exit 1; fi
-        if [[ "$nix" == 1 ]]; then grep -Fx '  nix develop' "$work/output" >/dev/null
-        elif grep -F 'nix develop' "$work/output"; then exit 1; fi
+        if [[ "$nix" == 1 ]]; then grep -Fx '  nix --extra-experimental-features "nix-command flakes" develop' "$work/output" >/dev/null
+        elif grep -F 'nix --extra-experimental-features' "$work/output"; then exit 1; fi
         if grep -E -- '--viewer none|xarm-perception-sim' "$work/output"; then exit 1; fi
     done
 done

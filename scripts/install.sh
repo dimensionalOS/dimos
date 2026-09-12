@@ -76,7 +76,7 @@ project_cmd() (
     fi
     cd "$INSTALL_DIR" || exit
     if [[ "$USE_NIX" == "1" ]]; then
-        exec nix develop --command "$@"
+        exec nix --extra-experimental-features "nix-command flakes" develop --command "$@"
     else
         exec "$@"
     fi
@@ -478,10 +478,6 @@ install_nix() {
     run_privileged sh -c "$installer" -- --daemon --yes </dev/null
     detect_nix
     has_cmd nix || die "Nix installation failed; install Nix from https://nixos.org/download/ and rerun"
-    mkdir -p "$HOME/.config/nix"
-    if ! grep -q "experimental-features.*flakes" "$HOME/.config/nix/nix.conf" 2>/dev/null; then
-        echo "experimental-features = nix-command flakes" >> "$HOME/.config/nix/nix.conf"
-    fi
     ok "Nix installed"
 }
 
@@ -881,7 +877,7 @@ print_quickstart() {
         "$INSTALL_MODE" "$INSTALL_DIR" "$CAPABILITIES" "$BACKEND"
     dim "  Passed: CLI, native libraries, selected capability dependencies, PyTorch $BACKEND"
     printf '\nActivate:\n  cd %q\n' "$INSTALL_DIR"
-    if [[ "$USE_NIX" == 1 ]]; then printf '  nix develop\n'; fi
+    if [[ "$USE_NIX" == 1 ]]; then printf '  nix --extra-experimental-features "nix-command flakes" develop\n'; fi
     printf '  source .venv/bin/activate\n\nNext commands:\n  dimos list\n'
     if [[ ",$CAPABILITIES," == *,navigation,* ]]; then
         printf '\nTry navigation replay (Rerun viewer, no robot needed):\n  dimos --replay run unitree-go2\n'
