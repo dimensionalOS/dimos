@@ -686,15 +686,16 @@ def test_a_static_edge_is_folded_even_where_the_moving_stream_agrees(tmp_path) -
         tree = build_tf_tree(store, "tf")
         assert tree.lookup("odom", "cam", 3.0)[0, 3] == 5.0  # placed where it had stopped
         assert tree.lookup("odom", "cam", 2.0)[0, 3] == 4.0  # and in the middle
-        # Twice, not once per sample: the value is constant, so the two ends answer
-        # everything between them and a long tf is not multiplied by its mounts.
+        # Once, not once per sample: a single-sample series holds from its stamp forward
+        # for ever, so one copy says what a static says and a long tf is not multiplied
+        # by its mounts.
         mounts = [
             t
             for obs in store.streams["tf"]
             for t in obs.data.transforms
             if (str(t.frame_id), str(t.child_frame_id)) == ("base", "cam")
         ]
-        assert len(mounts) == 2
+        assert len(mounts) == 1
     finally:
         store.stop()
 
@@ -965,3 +966,30 @@ def test_a_recording_the_module_refuses_is_not_left_open_and_half_named(tmp_path
                 module._ensure_store()
     assert module._store is None
     assert stopped == [True, True]
+
+
+def test_a_folded_mount_outlives_the_tf_the_way_a_static_did(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A static edge holds for all time, and folding must not quietly put an end on it.
+
+    An odometry that published once still places at any later moment, because a
+    single-sample series holds forward for ever. A mount folded in as two samples would
+    stop holding after the last of them, so the camera would go missing from a recording
+    whose robot never moved again -- while the odometry beside it carried on.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, fold_static_tf
+
+    store = _tf_store(tmp_path)
+    try:
+        tf = store.stream("tf", TFMessage)
+        tf.append(TFMessage(_edge("odom", "base", 1.0, 1.0)), ts=1.0)  # published once
+        tf.append(TFMessage(_edge("base", "wheel", 1.0, 2.0)), ts=2.0)  # something else, later
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(_edge("base", "cam", 2.0, 1.0)), ts=1.0
+        )
+        assert build_tf_tree(store, "tf").lookup("odom", "cam", 100.0)[0, 3] == 3.0
+
+        fold_static_tf(store, "tf", "tf_static")
+        assert build_tf_tree(store, "tf").lookup("odom", "cam", 100.0)[0, 3] == 3.0
+    finally:
+        store.stop()

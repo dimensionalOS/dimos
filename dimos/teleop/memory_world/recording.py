@@ -556,8 +556,8 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
     the moving stream quietly outvotes the static one. Either way the two disagree.
 
     Every static edge replaces whatever the moving stream said about it, wherever it said
-    it, and is then stated once at each end of the span the stream covers -- twice in all,
-    or once when both ends fall in the same sample. Nothing is compared first: an edge is
+    it, and is then stated once, at the earliest moment the stream can be asked about --
+    where it holds from, for ever after. Nothing is compared first: an edge is
     static because it holds for all time, and a moving stream that happens to agree in the
     samples it carries does not say that anywhere. This runs once per recording, because
     afterwards there is no static stream left to fold. Returns the number of edges moved.
@@ -575,47 +575,39 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
         return 0
 
     # Stale copies of a folded edge come out of every sample, because one left behind is a
-    # later sample of the same edge and wins. The folded value goes back in TWICE: at the
-    # first stamp the stream can be asked about and at the last. _Edge.at interpolates
-    # between the bracketing samples with no limit on the gap, and the value is constant,
-    # so two samples answer every question in between exactly -- where one per sample would
-    # turn a 16000-sample tf into a 209000-transform one to say the same thing.
+    # later sample of the same edge and wins. The folded value goes back in ONCE, at the
+    # earliest moment the stream can be asked about: _Edge.at holds a single-sample series
+    # from that moment forward for ever, which is what a static edge means, and any more
+    # copies would bound it to the last of them -- a mount that stops holding while the
+    # single-sample odometry beside it still does.
     #
-    # The stamps are the messages' own, not the stamps they were recorded at: TfTree reads
-    # the message's, and they are not the same number. Miss that and the edge holds over a
-    # window slightly inside the recording, with the first and last thing the camera saw
-    # placed nowhere.
+    # The stamps are the messages' own, not the stamps they were recorded at, and a
+    # transform stamped 0 is read at its observation's: TfTree.from_stream does both, and
+    # measuring it any other way puts the copy after the first frame the camera took.
     rows = []
     for obs in store.streams[tf_stream]:
         kept = [
             t for t in obs.data.transforms if (str(t.frame_id), str(t.child_frame_id)) not in folded
         ]
-        # `or float(obs.ts)` because TfTree.from_stream reads the transform's own stamp
-        # and falls back to the observation's when it is 0. Measuring the span any other
-        # way puts the folded copy after the first frame the camera took.
         said = [float(t.ts) or float(obs.ts) for t in obs.data.transforms] + [float(obs.ts)]
-        rows.append((float(obs.ts), kept, min(said), max(said)))
+        rows.append((float(obs.ts), kept, min(said)))
     if not rows:
         # Folding into nothing would write nothing and destroy the statics on the way.
         raise SystemExit(
             f"{tf_stream!r} is empty, so there is nowhere to fold {static_stream!r} into."
             " A recording with no moving tf has no tree to place anything in."
         )
-    first = min(low for _, _, low, _ in rows)
-    last = max(high for _, _, _, high in rows)
-    # One sample, not two, when both ends land in the same row: _Edge.at holds a
-    # single-sample series for all time, which is what a static edge means, while two
-    # samples expire a tolerance past the later one.
-    if len(rows) == 1 or first == last:
-        at_end = {0: [first]}
-    else:
-        at_end = {0: [first], len(rows) - 1: [last]}
-    written = []
-    for index, (ts, kept, _, _) in enumerate(rows):
-        ends = at_end.get(index, [])
-        written.append(
-            (ts, TFMessage(*kept, *[_restamped(t, e) for e in ends for t in folded.values()]))
+    first = min(low for _, _, low in rows)
+    written = [
+        (
+            ts,
+            TFMessage(
+                *kept,
+                *([_restamped(t, first) for t in folded.values()] if index == 0 else []),
+            ),
         )
+        for index, (ts, kept, _) in enumerate(rows)
+    ]
     rebuild_stream(store, tf_stream, written, TFMessage)
     store.delete_stream(static_stream)
     return len(folded)
