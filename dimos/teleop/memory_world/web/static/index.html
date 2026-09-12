@@ -255,24 +255,36 @@
                 overflow-x: auto;
                 scrollbar-width: none;
             }
+            /* The buttons keep their size; the wordy bits give way. Freezing everything
+               pushed Next and Orbit off the right edge instead. */
             #timeline > *, #results > * { flex: 0 0 auto; }
+            #resultsLabel, #scrub, #timeLabel {
+                flex: 1 1 auto;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            #resultsLabel { flex-basis: 0; }   /* the first to give, and it can vanish */
+            #timeLabel { flex: 0 1 auto; font-size: 12px; }
             #timeline button { padding: 6px 10px; font-size: 12px; }
             #results button { padding: 7px 10px; }
             /* Both rows are as wide as the screen allows, so their contents wrap inside
                rather than pushing the last button off the right edge. */
             #results, #timeline { width: calc(100% - 24px); box-sizing: border-box; }
-            /* The thumb stick and the one-tap column own the bottom corners, so the two
-               rows sit above the stick and stop short of the column, rather than running
-               underneath both. Left-anchored, because a centred narrower row still
-               reaches the column on the right. */
+            /* The thumb stick and the one-tap column own the bottom of a phone, so the
+               two rows sit ABOVE both and keep the full width. Squeezing them in beside
+               the column left too little for their own buttons: Next and Navigate went
+               off the end, which is worse than the rows sitting higher up. */
             body.desktop-view.touch #timeline,
             body.desktop-view.touch #results {
                 left: 12px;
                 transform: none;
-                width: calc(100% - 140px);
+                width: calc(100% - 24px);
             }
-            body.desktop-view.touch #timeline { bottom: 172px; }
-            body.desktop-view.touch #results { bottom: 240px; }
+            /* Orbit is already one tap away in the column below, and dropping it here is
+               what leaves room for Close at the other end of the row. */
+            body.desktop-view.touch #resultsOrbit { display: none; }
         }
         /* body.touch is set from navigator.maxTouchPoints, which unlike the
            hover media query is true on every phone and tablet. */
@@ -295,7 +307,7 @@
             touch-action: none;
         }
         body:not(.desktop-view) #timeline { display: none; }
-        body.desktop-view.touch #timeline { bottom: 172px; }
+        body.desktop-view.touch #timeline { bottom: 248px; }   /* clear of the one-tap column */
         #timeline button {
             padding: 8px 14px;
             font-size: 14px;
@@ -434,7 +446,7 @@
         }
         #results[hidden] { display: none; }
         body:not(.desktop-view) #results { display: none; }
-        body.desktop-view.touch #results { bottom: 232px; }
+        body.desktop-view.touch #results { bottom: 308px; }    /* and clear of the timeline */
         #resultsCounter { font-size: 14px; font-weight: 700; color: #ff9a6a; white-space: nowrap; }
         #resultsLabel { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         #results button { padding: 8px 12px; }

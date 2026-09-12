@@ -298,6 +298,27 @@ def assign_points(
     return out
 
 
+def _by_viewpoints(
+    clusters: list[Cluster], owner: NDArray[np.int64], cluster_of: NDArray[np.int64]
+) -> tuple[list[Cluster], NDArray[np.int64], NDArray[np.int64]]:
+    """Re-rank the clusters by evidence count, and renumber everything that points at them.
+
+    ``index`` is not a name, it is a position: the viewer steps through clusters by it,
+    the voxel labels carry it, and the pictures are filtered by it. So renumbering means
+    rewriting all three together or the answer comes apart.
+    """
+    order = sorted(
+        range(len(clusters)), key=lambda i: (-len(clusters[i].evidence), -clusters[i].score)
+    )
+    renumbered = np.full(len(clusters) + 1, -1, dtype=np.int64)  # -1 for "no cluster"
+    for rank, old in enumerate(order):
+        renumbered[old] = rank
+    ranked = [clusters[old] for old in order]
+    for rank, cluster in enumerate(ranked):
+        cluster.index = rank
+    return ranked, renumbered[owner], renumbered[cluster_of]
+
+
 def memory_db_for(recording: str | Path) -> Path:
     """Where Hyperspace's ingest puts a recording's keyframes and patches.
 
@@ -518,6 +539,11 @@ class HyperspaceSearch:
             cluster.evidence = _pick_evidence(
                 [hits[i] for i in members[owner[members] == cluster.index]]
             )
+        # Ranked by how many viewpoints saw it, which is the question a person is really
+        # asking: a thing seen from eight places is more likely to be the thing than one
+        # bright patch seen once. Summed score breaks the ties. Only now, because the
+        # evidence is what says how many saw it, and it is attached above.
+        clusters, owner, cluster_of = _by_viewpoints(clusters, owner, cluster_of)
         pyramids = _pyramids(
             fast.patches.frames, result.patches, owner[: len(result.patches)], fast.config
         )
