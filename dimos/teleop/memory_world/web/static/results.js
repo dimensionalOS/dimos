@@ -77,18 +77,50 @@ export class ResultsNav {
         if (this.heatmap) this.heatmap.setCurrent(index);
         if (this.pyramids) this.pyramids.setCurrent(index);
         this._showEvidence(index);
+        let viewpoint = null;
         if (fly && this.flight) {
-            const distance = Math.max(MIN_VIEW_DISTANCE_M, Math.min(MAX_VIEW_DISTANCE_M, cluster.radius * 3 + 1.5));
-            this.flight.lookAt(cluster.centre, { distance, yaw: this._yawFromEvidence(index) });
+            // Stand where the first picture of this place was taken, looking the way it
+            // looked. Flying to the voxels instead put the camera at an arbitrary
+            // distance from a blob, facing whichever way, and you had to work out what
+            // you were looking at; from the camera's own pose the answer is just there.
+            viewpoint = this._firstEvidence(index);
+            if (viewpoint) {
+                this.flight.lookAt(viewpoint.position, {
+                    distance: 0, yaw: viewpoint.yaw, pitch: viewpoint.pitch,
+                });
+            } else {
+                const distance = Math.max(MIN_VIEW_DISTANCE_M, Math.min(MAX_VIEW_DISTANCE_M, cluster.radius * 3 + 1.5));
+                this.flight.lookAt(cluster.centre, { distance, yaw: this._yawFromEvidence(index) });
+            }
         }
         this._render();
-        this.diag('results_go', { index, centre: cluster.centre });
+        // Which of the two it did: a place whose pictures have not arrived still falls
+        // back to the voxels, and from the outside the difference is invisible.
+        this.diag('results_go', {
+            index,
+            centre: cluster.centre,
+            from: viewpoint ? viewpoint.position : null,
+        });
         if (this.onChange) this.onChange(index, cluster);
         return true;
     }
 
     next() { return this.go(this.current + 1); }
     prev() { return this.go(this.current < 0 ? this.clusters.length - 1 : this.current - 1); }
+
+    /** Where the first picture of the cluster was taken, and which way it faced.
+     *  Null when the pictures have not arrived, or were never sent for this cluster:
+     *  only the best few places get them, so the rest still fall back to the voxels. */
+    _firstEvidence(index) {
+        const header = (this.scene._queryImages || []).find((h) => h && h.cluster === index);
+        if (!header || !header.position || !header.forward) return null;
+        const f = header.forward;
+        return {
+            position: header.position,
+            yaw: Math.atan2(-f[0], f[1]),               // robot -> three, as below
+            pitch: Math.asin(Math.max(-1, Math.min(1, f[2]))),   // robot z is up
+        };
+    }
 
     /** Look from where the best picture of the cluster was taken (robot -> three yaw). */
     _yawFromEvidence(index) {
