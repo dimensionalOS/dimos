@@ -400,6 +400,9 @@ def test_an_index_finished_after_startup_is_picked_up_by_the_status_poll() -> No
             )
             self.config = SimpleNamespace(store_path="/nowhere/walk.db")
 
+        def _broadcast(self, message: bytes | str) -> None:
+            pass
+
         def _load_hyperspace(self, reload: bool = False) -> bool:  # type: ignore[override]
             loaded.set()
             return True
@@ -408,10 +411,12 @@ def test_an_index_finished_after_startup_is_picked_up_by_the_status_poll() -> No
     with mock.patch(
         "dimos.teleop.memory_world.hyperspace_answers.memory_db_ready", lambda _p: ready
     ):
-        module._adopt_an_index_that_appeared()
+        # Through the poll the viewer actually calls, not the helper: wiring it up is the
+        # half that can be deleted without any test noticing.
+        assert module._search_status()["ready"] is False
         assert not loaded.wait(0.2), "nothing to adopt yet"
         ready = True
-        module._adopt_an_index_that_appeared()
+        module._search_status()
         assert loaded.wait(2.0), "the index that appeared was never loaded"
 
 
@@ -446,3 +451,52 @@ def test_an_ingest_that_dies_part_way_leaves_no_half_built_index(tmp_path, monke
         assert PATCH_STREAM not in store.list_streams()
     finally:
         store.stop()
+
+
+def test_a_search_that_exits_instead_of_raising_is_recorded_as_failed(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """SystemExit is how this package reports an expected failure, and it is not an Exception.
+
+    Letting it out of the loader leaves the search neither loaded nor failed: the viewer
+    hides its Prepare button because the index is there, and the status poll starts a fresh
+    load thread every second, for ever, with nothing said.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
+
+    class Module(HyperspaceAnswers):
+        def __init__(self) -> None:
+            self._hyperspace = None
+            self._hyperspace_error = None
+            self._hyperspace_lock = threading.Lock()
+            self._adopting = threading.Lock()
+            self._prepare_job = SimpleNamespace(
+                status=lambda: {"embedding": "idle", "progress": 0.0}
+            )
+            self.config = SimpleNamespace(
+                store_path=str(tmp_path / "walk.db"),
+                hyperspace_model_name="m",
+                world_frame="odom",
+                hyperspace_voxel_size=0.1,
+                hyperspace_device="cpu",
+                hyperspace_segments=False,
+                hyperspace_refine=False,
+            )
+
+        def _map_points(self):  # type: ignore[no-untyped-def]
+            return None
+
+        def _broadcast(self, message: bytes | str) -> None:
+            pass
+
+    def exiting_search(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise SystemExit("the memory db is from another model")
+
+    module = Module()
+    with (
+        mock.patch("dimos.teleop.memory_world.hyperspace_answers.memory_db_ready", lambda _p: True),
+        mock.patch("dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch", exiting_search),
+    ):
+        assert module._load_hyperspace() is False
+    assert module._hyperspace_error and "another model" in module._hyperspace_error

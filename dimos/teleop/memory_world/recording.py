@@ -573,41 +573,41 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
         store.delete_stream(static_stream)
         return 0
 
-    # A tf message carries its own stamp, which is not the stamp it was recorded at, and
-    # TfTree reads the message's. So the folded edge is stamped where the messages beside
-    # it say they are, and the first and last rows carry the ends of the whole span --
-    # otherwise the edge holds over a window slightly inside the recording and the frames
-    # at either end are placed nowhere.
+    # Stale copies of a folded edge come out of every sample, because one left behind is a
+    # later sample of the same edge and wins. The folded value goes back in TWICE: at the
+    # first stamp the stream can be asked about and at the last. _Edge.at interpolates
+    # between the bracketing samples with no limit on the gap, and the value is constant,
+    # so two samples answer every question in between exactly -- where one per sample would
+    # turn a 16000-sample tf into a 209000-transform one to say the same thing.
+    #
+    # The stamps are the messages' own, not the stamps they were recorded at: TfTree reads
+    # the message's, and they are not the same number. Miss that and the edge holds over a
+    # window slightly inside the recording, with the first and last thing the camera saw
+    # placed nowhere.
     rows = []
-    stamps = []
     for obs in store.streams[tf_stream]:
         kept = [
             t for t in obs.data.transforms if (str(t.frame_id), str(t.child_frame_id)) not in folded
         ]
         said = [float(t.ts) for t in obs.data.transforms] + [float(obs.ts)]
-        stamps.append((min(said), max(said)))
-        rows.append((float(obs.ts), kept, min(said)))
+        rows.append((float(obs.ts), kept, min(said), max(said)))
     if not rows:
         # Folding into nothing would write nothing and destroy the statics on the way.
         raise SystemExit(
             f"{tf_stream!r} is empty, so there is nowhere to fold {static_stream!r} into."
             " A recording with no moving tf has no tree to place anything in."
         )
-    first, last = min(s for s, _ in stamps), max(e for _, e in stamps)
+    first = min(low for _, _, low, _ in rows)
+    last = max(high for _, _, _, high in rows)
     written = []
-    for index, (ts, kept, said) in enumerate(rows):
-        ends = {said}
+    for index, (ts, kept, _, _) in enumerate(rows):
+        ends = []
         if index == 0:
-            ends.add(first)
+            ends.append(first)
         if index == len(rows) - 1:
-            ends.add(last)
+            ends.append(last)
         written.append(
-            (
-                ts,
-                TFMessage(
-                    *kept, *[_restamped(t, e) for e in sorted(ends) for t in folded.values()]
-                ),
-            )
+            (ts, TFMessage(*kept, *[_restamped(t, e) for e in ends for t in folded.values()]))
         )
     rebuild_stream(store, tf_stream, written, TFMessage)
     store.delete_stream(static_stream)
@@ -669,11 +669,24 @@ def detect_streams(store: Store, image: str | None = None) -> dict[str, Any]:
     each role is filled by payload type first and by the name only to break
     ties. Roles with no candidate come back as None.
     """
+    present = set(store.list_streams())
+    for name in present:
+        # A rebuild that died between dropping the old stream and writing the new one
+        # leaves only the staged copy. Nothing further down would say so: the role comes
+        # back empty and the module goes on without a tf at all, complaining about a
+        # stream named "". A staged copy whose original IS there needs no special case --
+        # it holds the same payload, but it is the longer name of the two and the ranking
+        # below never prefers it.
+        if name.endswith(STAGED_SUFFIX) and name.removesuffix(STAGED_SUFFIX) not in present:
+            raise SystemExit(
+                f"{name!r} is in the recording and {name.removesuffix(STAGED_SUFFIX)!r} is"
+                " not: a rebuild died between dropping the old stream and writing the new"
+                f" one. Rename {name!r} back and nothing is lost."
+            )
+
     by_type: dict[str, list[str]] = {}
-    for name in store.list_streams():
-        # A staged copy left by a rebuild that died is the same payload as the real
-        # stream, and would happily be picked as the role it is a copy of.
-        if name in DERIVED_STREAMS or name.endswith(STAGED_SUFFIX):
+    for name in present:
+        if name in DERIVED_STREAMS:
             continue
         try:
             payload = store.stream(name).data_type

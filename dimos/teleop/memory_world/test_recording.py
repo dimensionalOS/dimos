@@ -684,7 +684,16 @@ def test_a_static_edge_is_folded_even_where_the_moving_stream_agrees(tmp_path) -
         assert "tf_static" not in store.list_streams()
         tree = build_tf_tree(store, "tf")
         assert tree.lookup("odom", "cam", 3.0)[0, 3] == 5.0  # placed where it had stopped
-        assert all(len(obs.data.transforms) == 2 for obs in store.streams["tf"])
+        assert tree.lookup("odom", "cam", 2.0)[0, 3] == 4.0  # and in the middle
+        # Twice, not once per sample: the value is constant, so the two ends answer
+        # everything between them and a long tf is not multiplied by its mounts.
+        mounts = [
+            t
+            for obs in store.streams["tf"]
+            for t in obs.data.transforms
+            if (str(t.frame_id), str(t.child_frame_id)) == ("base", "cam")
+        ]
+        assert len(mounts) == 2
     finally:
         store.stop()
 
@@ -791,5 +800,29 @@ def test_a_folded_mount_covers_the_whole_span_the_tf_can_be_asked_about(tmp_path
         tree = build_tf_tree(store, "tf")
         assert tree.lookup("odom", "cam", 10.0)[0, 3] == 3.0  # the first frame, still placed
         assert tree.lookup("odom", "cam", 20.0)[0, 3] == 4.0  # and the last
+    finally:
+        store.stop()
+
+
+def test_a_rebuild_that_died_before_writing_back_is_caught_at_detection(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The worst moment to die is between dropping the old stream and writing the new one.
+
+    The staged copy is skipped by detection, so nothing would be picked for the role at
+    all: the module would start with no tf, place everything by image stamps, and complain
+    about a stream named "". The whole recording is there, under one wrong name.
+    """
+    import pytest
+
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import detect_streams
+
+    store = _tf_store(tmp_path)
+    try:
+        store.stream("tf__rebuilt", TFMessage).append(
+            TFMessage(_edge("odom", "base", 1.0, 1.0)), ts=1.0
+        )
+        with pytest.raises(SystemExit) as refusal:
+            detect_streams(store)
+        assert "tf__rebuilt" in str(refusal.value)
     finally:
         store.stop()
