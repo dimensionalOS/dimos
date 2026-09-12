@@ -155,8 +155,15 @@ class VisualAnswers:
                 self._index_progress = f"failed: {error}"
                 logger.exception("visual index unusable")
                 return
-        _ = self.whisper  # needs neither the store nor the index
-        logger.info("voice query path warm")
+        # Its own try: faster-whisper is in the optional `agents` group and downloads a
+        # model on first touch, so this raises on a machine without it or with a cold hub.
+        # Outside a try it propagated and reported a fully successful index build as
+        # FAILED -- voice is an extra, and it must not be able to condemn the search.
+        try:
+            _ = self.whisper  # needs neither the store nor the index
+            logger.info("voice query path warm")
+        except Exception:
+            logger.exception("voice query path unavailable; search is unaffected")
 
     def _index_status(self) -> dict[str, Any]:
         """What the viewer shows for search: a query button, or an offer to embed first.

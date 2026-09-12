@@ -64,7 +64,16 @@ export class ReplaySegment {
             this.offsets[i * 3 + 1] = (table[i * 3 + 1] + oy + 0.5) * size;
             this.offsets[i * 3 + 2] = (table[i * 3 + 2] + oz + 0.5) * size;
         }
-        this.bytes = buffer.byteLength;
+        // What this RETAINS, not what arrived. `table`, `slots` and `ops` are views onto
+        // `buffer`, so the whole transfer stays alive as long as the segment does, and
+        // `offsets`, `forward`, `backward` and `scanStart` are allocated on top of it --
+        // `offsets` alone is twice the int16 table it derives from. Counting only the
+        // transfer size let the phone's 80 MB budget hold two to three times that.
+        this.bytes = buffer.byteLength
+            + this.offsets.byteLength
+            + this.forward.byteLength
+            + this.backward.byteLength
+            + this.scanStart.byteLength;
     }
 
     /** Entry range [start, end) of the diff for scan *index*. */
@@ -197,6 +206,10 @@ export class ReplayController {
         if (!index.scans || index.scans.length < 2) {
             throw new Error(`replay index still building (${(index.scans || []).length} scans)`);
         }
+        // A disconnect between the request and the response disposed this controller, and
+        // everything below rebuilds its layer and rebinds the timeline handlers -- onto the
+        // UI the NEXT connection's controller is already driving. dispose() is final.
+        if (this._disposed) throw new Error('replay controller disposed while loading the index');
         this.index = index;
         this.index.keyframeScans = this.index.keyframes.map((k) => k.scan);
         this.t0 = this.index.scans[0];
@@ -256,6 +269,13 @@ export class ReplayController {
                 if (this.targetScan === scan || this.segmentOf(this.targetScan) === number) this.seekScan(this.targetScan);
             }).catch((e) => {
                 if (e && e.name === 'AbortError') return;
+                // The same question the success path asks. Without it, a download that
+                // fails AFTER an exit and a re-entry stops playback and writes "segment
+                // failed" over a perfectly good segment the user had moved to.
+                if ((this._exitedAt || 0) !== exitedAt || !this.active) {
+                    this.diag('replay_segment_failed', { number, error: String(e.message || e), stale: true });
+                    return;
+                }
                 this.diag('replay_segment_failed', { number, error: String(e.message || e) });
                 this.playing = false;  // autoplay would retry this fetch ten times a second
                 this._setLoading(false);
@@ -331,11 +351,10 @@ export class ReplayController {
             })
             .then((buffer) => {
                 const segment = new ReplaySegment(buffer, this.index);
-                segment.bytes = buffer.byteLength;
                 this.segments.set(number, segment);
-                this.cacheBytes += buffer.byteLength;
+                this.cacheBytes += segment.bytes;   // retained, not transferred
                 this.stats.fetches++;
-                this.stats.bytes += buffer.byteLength;
+                this.stats.bytes += buffer.byteLength;   // this one IS the transfer
                 if (preload) this.stats.preloaded++;
                 this._evictSegments();
                 this.diag('replay_segment', { number, slots: segment.slotCount, scans: segment.scans.length, bytes: buffer.byteLength, preload });
@@ -413,7 +432,11 @@ export class ReplayController {
 
     _preloadNext() {
         this._preloadTimer = null;
-        if (!this.index || this.cacheBytes >= this.cacheBudget * 0.9) return;
+        // `active` too: exiting replay stops the user looking at it, and a preload chain
+        // started before that went on pulling segments over the network for a timeline
+        // nobody is watching. `dispose()` clears the timer; `exit()` does not.
+        if (!this.index || !this.active) return;
+        if (this.cacheBytes >= this.cacheBudget * 0.9) return;
         if (this.pending.size) { this._schedulePreload(); return; }   // a seek's own download first
         const n = this._nextToPreload();
         if (n === null) return;
@@ -505,7 +528,12 @@ export class ReplayController {
                 this._frameShown = ts;
             } catch (e) {
                 this.diag('replay_frame_failed', { error: String(e.message || e) });
-                this._frameShown = ts; // don't spin on a missing frame
+                // Show NOTHING rather than the last photo, which is the same rule
+                // _forgetFrame follows for a gap in the stream: a fetch that failed is a
+                // moment we have no picture for, and leaving the previous one up puts a
+                // photograph of somewhere else against the voxels of where you are.
+                this.scene.clearCameraFrame();
+                this._frameShown = ts; // ...but remember we tried, so the pump stops here
             } finally {
                 this._frameBusy = false;
             }
