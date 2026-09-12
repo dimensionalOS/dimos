@@ -256,15 +256,15 @@ def build_r1pro_manipulation(
     coordinator_type: type[ControlCoordinator] = ControlCoordinator,
     prepare_scene_on_build: bool = False,
     initial_joint_positions: list[float] | None = None,
+    simulator_options: dict[str, Any] | None = None,
 ) -> Blueprint:
     """Shared physical robot/camera/coordinator wiring for manipulation profiles."""
     scene_path = scene_path.expanduser().resolve()
     if prepare_scene_on_build:
-        if velocity_base is None:
-            raise ValueError("Deferred scene setup requires a velocity base")
-        # The home sim and coordinator resolve home/limits together during build().
-        mobile, free_tray, position_base = True, True, False
-        joints = R1PRO_PICK_PLACE_JOINTS
+        # The simulator and coordinator resolve the same scene during build().
+        mobile, free_tray = True, True
+        position_base = velocity_base is None
+        joints = (*R1PRO_PICK_PLACE_JOINTS, *(VIRTUAL_BASE_JOINTS if position_base else ()))
         home = []
         ranges = []
     else:
@@ -307,6 +307,7 @@ def build_r1pro_manipulation(
     )
     return autoconnect(
         simulator.blueprint(
+            **(simulator_options or {}),
             address=scene_path,
             dof=len(joints),
             headless=headless,

@@ -14,31 +14,56 @@
 
 """Native selected-object observation stream and measured ACT outcomes."""
 
+import copy
 import json
 from pathlib import Path
+import threading
 import time
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
-from pydantic import TypeAdapter
+from pydantic import Field, TypeAdapter
 from reactivex.disposable import Disposable
+from threadpoolctl import threadpool_limits  # type: ignore[import-untyped]
 
+from dimos.constants import DIMOS_PROJECT_ROOT, RECORDINGS_DIR
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.stream import Out
 from dimos.imitation.observation import VectorObservation
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.robot.galaxea.r1pro.object_packing_scene import ObjectLayout
+from dimos.robot.galaxea.r1pro.grasping_sim import VIRTUAL_BASE_JOINTS
+from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_JOINTS
+from dimos.robot.galaxea.r1pro.object_packing_scene import (
+    ObjectLayout,
+    prepare_object_scene,
+    sample_layout,
+)
 from dimos.robot.galaxea.r1pro.object_packing_state import ObjectPackingState
+from dimos.robot.galaxea.r1pro.object_packing_task import ObjectPackingTask
+from dimos.robot.galaxea.r1pro.object_recovery import plan_object_recovery
 from dimos.simulation.engines.mujoco_engine import MujocoEngine
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+
+
+class R1ProObjectPackingSimConfig(MujocoSimModuleConfig):
+    generate_scene: bool = False
+    seed: int = Field(default=210000, ge=0)
+    scene_package: Path = DIMOS_PROJECT_ROOT / "dimos/data/scene_packages/hssd_102344115"
+    output: Path = Field(default_factory=lambda: RECORDINGS_DIR / "r1pro-object-sim" / uuid4().hex)
 
 
 class R1ProObjectPackingSim(MujocoSimModule):
+    config: R1ProObjectPackingSimConfig
     right_wrist: Out[Image]
     object_goal: Out[VectorObservation]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        self._preparation_lock = threading.Lock()
+        self._session: dict[str, Any] | None = None
+        self._thread_limits: threadpool_limits | None = None
         self._layout: ObjectLayout | None = None
         self._state: ObjectPackingState | None = None
         self._initial: list[dict[str, Any]] | None = None
@@ -46,9 +71,49 @@ class R1ProObjectPackingSim(MujocoSimModule):
         self._error: str | None = None
 
     @rpc
+    def prepare_object_session(self) -> dict[str, Any]:
+        """Prepare once; control and simulation share the scene and calibrated joints."""
+        with self._preparation_lock:
+            if self._session is not None:
+                return dict(self._session)
+            self._thread_limits = threadpool_limits(limits=1, user_api="blas")
+            if self.config.generate_scene:
+                package = (
+                    Path(global_config.scene_package or self.config.scene_package)
+                    .expanduser()
+                    .resolve()
+                )
+                if not package.is_dir():
+                    raise FileNotFoundError(
+                        f"House scene package missing: {package}; set --scene-package"
+                    )
+                output = self.config.output.expanduser().resolve()
+                if (output / "scene.xml").exists():
+                    raise FileExistsError(
+                        f"Session already exists: {output}; choose a new --output"
+                    )
+                self._layout = sample_layout(self.config.seed)
+                scene = prepare_object_scene(
+                    output / "scene.xml", self._layout, scene_package=package
+                )
+                scene.with_suffix(".objects.json").write_text(json.dumps(self._layout.to_dict()))
+                self.config.address = scene
+            scene = Path(self.config.address).expanduser().resolve()
+            self._layout = TypeAdapter(ObjectLayout).validate_json(
+                scene.with_suffix(".objects.json").read_text()
+            )
+            with ObjectPackingTask(scene, self._layout, images=False) as task:
+                joints = (*R1PRO_PICK_PLACE_JOINTS, *VIRTUAL_BASE_JOINTS)
+                self.config.reset_joint_positions = task.home.tolist() + [0.0] * 3
+                limits = [task.model.joint(n).range.tolist() for n in joints]
+            self._session = dict(
+                scene=str(scene), output=str(scene.parent), seed=self._layout.seed, limits=limits
+            )
+            return dict(self._session)
+
+    @rpc
     def build(self) -> None:
-        metadata = Path(self.config.address).with_suffix(".objects.json")
-        self._layout = TypeAdapter(ObjectLayout).validate_python(json.loads(metadata.read_text()))
+        self.prepare_object_session()
         super().build()
 
     @rpc
@@ -139,6 +204,7 @@ class R1ProObjectPackingSim(MujocoSimModule):
                 relative = base.xmat.reshape(3, 3).T @ (np.asarray(row["position"]) - base.xpos)
                 row.update(
                     index=i,
+                    rgba=list(state.layout.objects[i].rgba),
                     id=f"object_{i + 1}",
                     forward_m=float(relative[0]),
                     left_m=float(relative[1]),
@@ -146,6 +212,8 @@ class R1ProObjectPackingSim(MujocoSimModule):
                 )
             return {
                 "seed": state.layout.seed,
+                "supported_arms": ["right"],
+                "source": "simulator_ground_truth",
                 "objects": rows,
                 "selected": state.selected if self._initial is not None else None,
                 "result": state.result().to_dict() if self._initial is not None else None,
@@ -154,6 +222,7 @@ class R1ProObjectPackingSim(MujocoSimModule):
                 and state.pick_complete(),
                 "at_home": bool(np.max(np.abs(engine.data.qpos[state.qids] - state.home)) < 0.015),
                 "error": self._error,
+                "robot_obstacles": state.guard.collisions(engine.data, ignore_cargo=True),
                 "sim_time": float(engine.data.time),
                 "wall_time": time.time(),
             }
@@ -169,3 +238,46 @@ class R1ProObjectPackingSim(MujocoSimModule):
                 self._error = None
                 self._last_check = 0.0
         return applied
+
+    @rpc
+    def plan_object_recovery(self) -> list[dict[str, Any]]:
+        """Plan a supported release and empty-hand retreat without teleporting objects."""
+        engine = self._engine
+        if engine is None:
+            raise RuntimeError("Simulation has not started")
+        with engine._lock:
+            state = self._ensure_state(engine)
+            snapshot = copy.copy(engine.data)
+            layout, home = state.layout, state.home.copy()
+            self._initial = None
+        return plan_object_recovery(engine.model, snapshot, layout, home)
+
+    @rpc
+    def finish_object_recovery(self) -> dict[str, Any]:
+        """Clear failed-rollout metadata only after measured open-handed return home."""
+        engine = self._engine
+        if engine is None:
+            raise RuntimeError("Simulation has not started")
+        with engine._lock:
+            state = self._ensure_state(engine)
+            rows = state.inventory()
+            if np.max(np.abs(engine.data.qpos[state.qids] - state.home)) >= 0.015:
+                raise RuntimeError("Recovery has not reached the calibrated home posture")
+            if any(
+                not row["released"] or not row["upright"] or not row["support_geoms"]
+                for row in rows
+            ):
+                raise RuntimeError("An object is unsupported, tipped or still held")
+            if state.guard.collisions(engine.data, ignore_cargo=True):
+                raise RuntimeError("Robot remains in contact with the environment")
+            self._initial, self._error = None, None
+            return self.object_state()
+
+    @rpc
+    def stop(self) -> None:
+        try:
+            super().stop()
+        finally:
+            if self._thread_limits is not None:
+                self._thread_limits.restore_original_limits()
+                self._thread_limits = None

@@ -92,6 +92,7 @@ class ObjectPackingState:
         geoms = set(map(int, np.flatnonzero(self.model.geom_bodyid == body.id)))
         touching = set()
         supported = False
+        supports = set()
         force = np.zeros(6)
         for i, contact in enumerate(self.data.contact):
             first, second = map(int, contact.geom)
@@ -105,6 +106,10 @@ class ObjectPackingState:
                 touching.add(other)
             normal = contact.frame[:3] * (1 if second in geoms else -1)
             supported |= self.model.geom_bodyid[other] == tray.id and normal[2] > 0.7
+            if normal[2] > 0.7 and int(
+                self.model.geom_bodyid[other]
+            ) not in self.guard.robot_bodies - self.guard.cargo_ids - {self.guard.tray_id}:
+                supports.add(self.model.geom(other).name or f"geom:{other}")
         inside = bool(
             np.all(np.abs(relative[:2]) + extent[:2] < OBJECT_TRAY_HALF_SIZE)
             and abs(relative[2] - extent[2] - 0.015) < 0.008
@@ -115,6 +120,7 @@ class ObjectPackingState:
             position=body.xpos.tolist(),
             inside=inside,
             supported=bool(supported),
+            support_geoms=sorted(supports),
             upright=bool(body.xmat[8] > np.cos(np.deg2rad(15))),
             released=not touching,
             settled=bool(np.linalg.norm(self.data.joint(obj.joint).qvel) < 0.03),

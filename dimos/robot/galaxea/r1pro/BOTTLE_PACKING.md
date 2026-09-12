@@ -19,6 +19,10 @@ On this workstation the user-level `dimos` launcher is installed from the
 `r1pro-act-sim` worktree. Use a fresh terminal if an activated environment from
 another checkout is taking precedence over that launcher.
 
+For the newer interactive scene with randomly placed boxes, cylinders and bottles,
+see [Interactive random-object ACT](OBJECT_INTERACTIVE.md). Its launch command is
+`dimos run r1pro-objects-sim-agent`; it uses the refined random-object checkpoint.
+
 ## Interactive commands
 
 For individual requests through the agent, launch the interactive blueprint:

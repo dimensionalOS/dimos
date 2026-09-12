@@ -1,6 +1,6 @@
 # ACT for randomly generated objects
 
-Status: refinement on the existing 115 demonstrations completed (9/12 single picks; 1/8 complete scenes). Native selected-object ACT works in a validation runner, but repeated-pick reliability, agentic integration and acceptance remain pending. See handoffs-random-objects.md for exact evidence. The user wants actual everyday objects eventually, but explicitly asked to preserve and continue this version rather than restart that expansion now.
+Status: refinement on the existing 115 demonstrations completed (9/12 single picks; 1/8 complete scenes). Interactive native MCP execution is implemented: the 30-action deployment passed eight requested picks across two development layouts, plus recovery/cancellation checks. Live external-language validation awaits API-use approval; broader repeated-pick reliability and left-arm ACT remain pending. See handoffs-random-objects.md for exact evidence. The user wants actual everyday objects eventually, but explicitly asked to preserve and continue this version rather than restart that expansion now.
 
 The user explicitly requires ACT to perform the grasps. The next target is a scene with four or five randomly generated rigid objects, selectable individually and movable into available tray space. Classical bottle unloading and tray transport remain separate skills. Do not substitute classical grasps and report them as ACT successes.
 
