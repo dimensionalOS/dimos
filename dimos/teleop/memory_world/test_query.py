@@ -794,3 +794,41 @@ def test_the_capture_markers_are_built_from_the_poses_on_the_images(tmp_path: Pa
         assert np.allclose(np.linalg.norm(quats, axis=1), 1.0, atol=1e-5)
     finally:
         module.stop()
+
+
+def test_the_voxel_cloud_packs_what_survives_the_height_filter(
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_build_voxel_cloud_from_lidar` end to end, because nothing else in this suite runs it.
+
+    It is the third of the builders moved into world_cache.py, and the only one still
+    uncovered after a dropped import in that same move broke a sibling on the live
+    server while every test passed. Stubbing the SOURCE of the scans is the point --
+    the function under test is the filtering, striding, colouring and packing below it.
+    """
+    memory_world.config.build_replay_on_start = False
+    memory_world.config.map_z_min = 0.0
+    memory_world.config.map_z_max = 2.0
+    # Two inside the height band, one under the floor and one through the ceiling.
+    cloud = np.array(
+        [[0.0, 0.0, 0.5], [1.0, 2.0, 1.5], [3.0, 3.0, -9.0], [4.0, 4.0, 9.0]],
+        dtype=np.float64,
+    )
+    monkeypatch.setattr(memory_world, "_accumulated_cloud", lambda: cloud)
+
+    built = memory_world._build_voxel_cloud_from_lidar()
+    assert built is not None, "a cloud with points inside the band must produce one"
+    header, payload = built
+
+    assert header["n"] == 2, header  # the two outside the band are gone
+    assert header["has_colors"] is True
+    assert len(payload) == 2 * 12 + 2 * 3  # xyz float32, then rgb uint8
+    xyz = np.frombuffer(payload[: 2 * 12], dtype="<f4").reshape(2, 3)
+    assert sorted(float(v) for v in xyz[:, 2]) == [0.5, 1.5]
+    assert header["bounds"]["x_min"] == 0.0 and header["bounds"]["x_max"] == 1.0
+    # The planner gets the whole filtered map, not the strided copy the viewer gets.
+    assert memory_world._map_xyz is not None and memory_world._map_xyz.shape == (2, 3)
+
+    # Nothing inside the band is not a cloud at all, rather than an empty one.
+    monkeypatch.setattr(memory_world, "_accumulated_cloud", lambda: cloud[2:])
+    assert memory_world._build_voxel_cloud_from_lidar() is None
