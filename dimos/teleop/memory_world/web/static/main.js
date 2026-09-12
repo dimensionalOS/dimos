@@ -446,6 +446,12 @@ async function startReplay() {
                 setStatus(`Timeline unavailable: ${reason}`);
                 return;
             }
+            // A settled answer, not progress: this recording is not going to get one.
+            if (reason.includes('turned off')) {
+                diag('replay_turned_off', { error: reason });
+                setStatus('This recording has no timeline');
+                return;
+            }
             idle = reason.includes('not started') ? idle + 1 : 0;
             const slow = idle >= IDLE_ATTEMPTS;
             if (slow && idle === IDLE_ATTEMPTS) {   // say it once, on the way down

@@ -1118,6 +1118,14 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
             raise RuntimeError(f"replay {self._replay_progress}")
         try:
             if self._replay is None and self._replay_error is None:
+                # The flag is the operator saying this recording must not GROW the voxel
+                # replay streams, not merely "skip it at startup". It only ever gated the
+                # startup build, so the first viewer to ask for a timeline started one
+                # anyway -- which rebuilt streams that had been deliberately deleted, and
+                # did it while another writer was on the same file. Said as a settled
+                # answer rather than progress, so the viewer stops asking.
+                if not self.config.build_replay_on_start:
+                    raise RuntimeError("replay build is turned off for this recording")
                 # Never build on a request thread: start it (once) and let the viewer poll.
                 with self._workers_lock:  # paired with stop(): nothing starts once it stops
                     if self._stopping.is_set():

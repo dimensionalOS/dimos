@@ -439,3 +439,40 @@ def test_a_path_nothing_could_place_is_empty_rather_than_a_line_of_origins() -> 
     assert frame_positions([1.0, 2.0, 3.0], lambda ts: None) == []
     assert frame_positions([], lambda ts: None) == []
     assert stamped_positions([SimpleNamespace(pose_tuple=None)] * 3) == []
+
+
+def test_a_viewer_request_cannot_build_a_replay_the_operator_turned_off(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """`build_replay_on_start = False` must mean the streams are not written AT ALL.
+
+    It only ever gated the startup build. `_replay_if_ready` -- which every
+    `/replay/index` request goes through -- started a build thread whenever the replay
+    was not loaded, without consulting the flag, so the first viewer to ask for a
+    timeline rebuilt it anyway.
+
+    That is how a demo launched with the flag OFF, specifically so a deliberate deletion
+    of `voxel_diff`/`voxel_keyframe` would stick, wrote 3,838 diffs and 77 keyframes back
+    into the recording -- while another process was writing to the same file. The refusal
+    is worded as a settled answer so the viewer stops polling instead of waiting for a
+    build that will never start.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world.module import MemoryWorldModule
+
+    module = MemoryWorldModule.__new__(MemoryWorldModule)
+    module._replay = None
+    module._replay_error = None
+    module._replay_index = None
+    module._replay_lock = threading.Lock()
+    module._workers_lock = threading.Lock()
+    module._stopping = threading.Event()
+    module._replay_thread = None
+    module._replay_progress = "not started"
+    module.config = SimpleNamespace(build_replay_on_start=False)
+
+    with pytest.raises(RuntimeError, match="turned off"):
+        module._replay_if_ready()
+    assert module._replay_thread is None, "a build thread was started anyway"
+    assert module._replay_lock.acquire(blocking=False), "the lock was not released"
+    module._replay_lock.release()
