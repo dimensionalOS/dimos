@@ -634,6 +634,39 @@ class HyperspaceAnswers:
             return tuple(float(v) for v in positions[-1])  # type: ignore[return-value]
         raise HTTPException(status_code=503, detail="the robot's path is not known yet")
 
+    def _ground_under_viewer(self) -> tuple[float, float, float] | None:
+        """The map voxel under the viewer's camera -- where their feet are.
+
+        A route has to start where the person asking for it is standing. It used to start
+        where the ROBOT stopped at the end of the recording, so walking anywhere and
+        pressing Navigate drew a green tube that began somewhere else entirely -- across
+        the shop, in the grocery map, which is up to 30 m from the viewer.
+
+        The camera is at eye height and floating, so it is not a start on its own: the
+        planner works on the surface. This takes the map voxels in a column around the
+        camera and returns the HIGHEST one at or below it, which is the floor being stood
+        on rather than the floor under a shelf the camera happens to be above. Nothing in
+        the column (out over a stairwell, off the edge of the map) is not an error worth
+        refusing -- the caller falls back.
+        """
+        with self._clients_lock:
+            viewer = self._viewer_position
+        if viewer is None:
+            return None
+        found = self._map_points()
+        if found is None or len(found) == 0:
+            return None
+        radius = max(float(self.config.voxel_size) * 4.0, 0.25)
+        near = (np.abs(found[:, 0] - viewer[0]) <= radius) & (
+            np.abs(found[:, 1] - viewer[1]) <= radius
+        )
+        if not near.any():
+            return None
+        column = found[near]
+        below = column[column[:, 2] <= viewer[2] + radius]
+        pick = below[np.argmax(below[:, 2])] if len(below) else column[np.argmin(column[:, 2])]
+        return (float(pick[0]), float(pick[1]), float(pick[2]))
+
     def _navigate_to(self, request: NavigateRequest) -> dict[str, Any]:
         with self._clients_lock:
             answer, query_id = self._last_answer
@@ -645,7 +678,9 @@ class HyperspaceAnswers:
         if answer is None or request.cluster >= len(answer.clusters):
             raise HTTPException(status_code=404, detail="no such cluster in the last answer")
         cluster = answer.clusters[request.cluster]
-        start = request.start or self._robot_end_pose()
+        # Where the viewer is, then where the robot ended. An explicit start still wins:
+        # the request carries one when the caller knows better than either.
+        start = request.start or self._ground_under_viewer() or self._robot_end_pose()
         planner = self._planner()
         route = (
             planner.plan(tuple(start), tuple(cluster.centre))

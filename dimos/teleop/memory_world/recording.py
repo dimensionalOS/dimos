@@ -233,7 +233,7 @@ class _CameraInfoWire:
 
 def decode_camera_info(buf: bytes) -> CameraInfo:
     w: _CameraInfoWire = cdr.decode(buf, _CameraInfoWire)[0]
-    return CameraInfo(
+    info = CameraInfo(
         height=w.height,
         width=w.width,
         distortion_model=w.distortion_model,
@@ -246,6 +246,19 @@ def decode_camera_info(buf: bytes) -> CameraInfo:
         frame_id=w.header.frame_id,
         ts=ros._ts(w.header),
     )
+    # The roi is decoded off the wire and then has to be carried across by hand, because
+    # CameraInfo.__init__ takes no roi and zeroes the five fields. Dropping it here made
+    # every camera_info read from an mcap report "no roi", which is exactly the field
+    # `sensor_intrinsics` reads to tell a CROP from a resize -- so a cropped rig had its
+    # patches placed 0.84 m out laterally, with the sign of x flipped, while the same
+    # recording read from a .db was correct because `lcm_decode` copies these over.
+    # Geometry must not depend on which container the recording is in.
+    info.roi_x_offset = int(w.roi.x_offset)
+    info.roi_y_offset = int(w.roi.y_offset)
+    info.roi_height = int(w.roi.height)
+    info.roi_width = int(w.roi.width)
+    info.roi_do_rectify = bool(w.roi.do_rectify)
+    return info
 
 
 @dataclass

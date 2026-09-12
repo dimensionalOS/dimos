@@ -1199,3 +1199,46 @@ def test_a_ros_named_depth_topic_still_finds_its_own_camera_info(tmp_path: Path)
         )
     finally:
         store.stop()
+
+
+def test_the_roi_survives_the_mcap_decode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A camera_info read from an mcap must say the same thing as one read from a db.
+
+    `_CameraInfoWire` decodes the roi correctly and `decode_camera_info` then has to copy
+    it across by hand, because `CameraInfo.__init__` takes no roi and zeroes the five
+    fields. It did not, so every camera_info out of an mcap reported "no roi" -- the exact
+    field `sensor_intrinsics` reads to tell a CROP from a resize. A cropped rig had its
+    patches placed 0.84 m out laterally with the sign of x flipped, while the SAME
+    recording read from a .db was right, because `lcm_decode` copies them over.
+
+    The wire decode was never the broken half, so this stubs it: what is under test is
+    which of the decoded fields `decode_camera_info` carries into the message it returns.
+    Hand-rolling CDR bytes here would test the cdr reader instead, and would be one more
+    probe aimed slightly beside the question.
+    """
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world import recording as rec
+    from dimos.teleop.memory_world.visual_search import sensor_intrinsics
+
+    wire = SimpleNamespace(
+        header=SimpleNamespace(frame_id="camera_optical", stamp=SimpleNamespace(sec=1, nanosec=0)),
+        height=960,
+        width=1280,
+        distortion_model="plumb_bob",
+        d=np.zeros(5),
+        k=np.array([900.0, 0.0, 640.0, 0.0, 900.0, 480.0, 0.0, 0.0, 1.0]),
+        r=np.eye(3).ravel(),
+        p=np.zeros(12),
+        binning_x=0,
+        binning_y=0,
+        roi=SimpleNamespace(x_offset=100, y_offset=50, height=480, width=640, do_rectify=0),
+    )
+    monkeypatch.setattr(rec.cdr, "decode", lambda buf, kind: (wire, 0))
+    monkeypatch.setattr(rec.ros, "_ts", lambda header: 1.0)
+
+    decoded = rec.decode_camera_info(b"")
+    assert (decoded.roi_x_offset, decoded.roi_y_offset) == (100, 50)
+    assert (decoded.roi_width, decoded.roi_height) == (640, 480)
+    # And the consequence the roi is read for: a crop, not a 1280x960 frame to resize.
+    assert sensor_intrinsics(decoded) == ((900.0, 900.0, 540.0, 430.0), (640, 480))

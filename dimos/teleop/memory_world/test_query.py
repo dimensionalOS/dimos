@@ -1204,3 +1204,53 @@ def test_the_client_route_is_normalised_the_way_the_viewer_normalises_it(
         )
     finally:
         module.stop()
+
+
+def test_a_route_starts_under_the_viewer_not_where_the_robot_stopped(
+    memory_world: MemoryWorldModule,
+) -> None:
+    """The person asking for the route is the one who has to walk it.
+
+    The start used to be `_robot_end_pose()` unconditionally, so walking anywhere in the
+    world and pressing Navigate drew a green tube beginning wherever the robot happened
+    to stop recording -- up to 30 m away in the grocery map, and never at the viewer's
+    feet. The viewer's position was already being tracked for the costmap route; this
+    path just never read it.
+
+    The camera floats at eye height, so the start is the map voxel UNDER it: the surface
+    being stood on, not the camera itself and not the lowest thing in the column.
+    """
+    # A floor at z=0 under the viewer, a shelf top at z=1.2 in the same column, and a
+    # far-away patch of floor that must not win.
+    memory_world._map_xyz = np.array(
+        [
+            [4.0, 4.0, 0.0],
+            [4.05, 4.0, 1.2],
+            [4.0, 4.05, -0.4],
+            # Far away AND higher than the shelf, but still below the camera: without the
+            # radius filter this wins on z alone and the route starts across the room.
+            # A far patch merely LOWER than the shelf cannot show that, which is why the
+            # first version of this test passed with the filter removed.
+            [30.0, 30.0, 1.5],
+        ],
+        dtype=np.float32,
+    )
+    memory_world._viewer_position = (4.0, 4.0, 1.6)  # eye height above the shelf top
+
+    under = memory_world._ground_under_viewer()
+    assert under is not None
+    # The shelf top, because it is the highest thing at or below the camera -- standing
+    # on a shelf is where you are, even though the floor is also in the column.
+    assert under == pytest.approx((4.05, 4.0, 1.2), abs=1e-5)
+
+    # Standing on the floor instead: the shelf is above the camera and cannot be it.
+    memory_world._viewer_position = (4.0, 4.0, 0.5)
+    assert memory_world._ground_under_viewer() == pytest.approx((4.0, 4.0, 0.0), abs=1e-5)
+
+    # Off the edge of the map entirely: no answer, so the caller falls back.
+    memory_world._viewer_position = (100.0, 100.0, 1.6)
+    assert memory_world._ground_under_viewer() is None
+
+    # And with no viewer connected at all there is nothing to stand on.
+    memory_world._viewer_position = None
+    assert memory_world._ground_under_viewer() is None
