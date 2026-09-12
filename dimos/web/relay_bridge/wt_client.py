@@ -12,18 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""WebTransport client for the DimOS relay (robot leg, plus a test viewer)."""
+"""WebTransport client for the DimOS relay (robot leg, plus a test viewer),
+and /api/info discovery of its WebTransport endpoint."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
 import contextlib
+from dataclasses import dataclass
 import itertools
+import json
+import ssl
 import time
 from types import TracebackType
 from typing import Any, cast
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
+import urllib.request
 
 from aioquic.asyncio.client import connect as aioquic_connect
 
@@ -55,8 +60,8 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 # forever, so a datagram that cannot fit one packet (~1165 B encoded) wedges
 # every datagram queued behind it - hello resends, pings, all send_control.
 # Refuse to queue one; 1100 keeps margin under the real cliff. Robot hellos
-# left datagrams in v5; this guards the (tiny) viewer hello.
-_HELLO_DATAGRAM_MAX_BYTES = 1100
+# left datagrams in v5; this guards the viewer hello and send_control.
+_DATAGRAM_MAX_BYTES = 1100
 
 
 class RelayRejectedError(ProtocolError):
@@ -68,11 +73,68 @@ class RelayRejectedError(ProtocolError):
         super().__init__(f"relay rejected hello: {code}: {message}")
 
 
+@dataclass(frozen=True)
+class RelayInfo:
+    """What GET /api/info advertises."""
+
+    wt_url: str
+    """WebTransport base URL (no path); clients append /robot or /viewer."""
+    cert_hash: str | None
+    """SHA-256 of the relay's ephemeral certificate; None once a relay serves
+    a real certificate."""
+    v: int
+
+
+def resolve_info_url(base_url: str) -> str:
+    """`<base_url>/api/info`, keeping a path prefix ("https://x/relay" ->
+    "https://x/relay/api/info"); mirror of the SDK's resolveInfoUrl."""
+    return urljoin(base_url if base_url.endswith("/") else base_url + "/", "api/info")
+
+
+def _get_json(url: str, timeout: float, cafile: str | None) -> Any:
+    context = ssl.create_default_context(cafile=cafile) if cafile is not None else None
+    with urllib.request.urlopen(url, timeout=timeout, context=context) as response:
+        body = response.read()
+    try:
+        return json.loads(body)
+    except ValueError:
+        return None  # reported as a shape problem by the caller
+
+
+async def fetch_relay_info(
+    base_url: str, *, timeout: float = 5.0, cafile: str | None = None
+) -> RelayInfo:
+    """Discover the relay's WebTransport endpoint through GET /api/info (the
+    mirror of the SDK's fetchRelayInfo). A relay restart means a new QUIC
+    port and certificate behind the same HTTP URL, so callers fetch on every
+    connect. For an https base, `cafile` (a PEM CA bundle: mkcert, a private
+    CA) replaces the system trust store. Raises OSError when the relay is
+    unreachable, answers an HTTP error, or fails certificate verification
+    (transient), ProtocolError for a non-relay answer or a protocol version
+    mismatch.
+    """
+    url = resolve_info_url(base_url)
+    data = await asyncio.to_thread(_get_json, url, timeout, cafile)
+    if not isinstance(data, dict):
+        raise ProtocolError(f"{url} returned an unexpected shape")
+    wt_url, cert_hash, v = data.get("wtUrl"), data.get("certHash"), data.get("v")
+    if (
+        not isinstance(wt_url, str)
+        or not (cert_hash is None or isinstance(cert_hash, str))
+        or not isinstance(v, int)
+        or isinstance(v, bool)
+    ):
+        raise ProtocolError(f"{url} returned an unexpected shape")
+    if v != PROTOCOL_VERSION:
+        raise ProtocolError(f"relay speaks protocol v{v}, this bridge speaks v{PROTOCOL_VERSION}")
+    return RelayInfo(wt_url=wt_url, cert_hash=cert_hash, v=v)
+
+
 class RelayClient:
     """One WebTransport session with the relay.
 
-    Use :meth:`connect` (or :func:`connect_with_backoff`); the constructor is
-    internal. All methods must be called from the event loop that connected.
+    Use :meth:`connect`; the constructor is internal. All methods must be
+    called from the event loop that connected.
     """
 
     def __init__(self, url: str, role: Role, session: SessionProtocol, ctx: Any) -> None:
@@ -93,23 +155,33 @@ class RelayClient:
         *,
         insecure: bool | None = None,
         timeout: float = 10.0,
+        cafile: str | None = None,
     ) -> RelayClient:
-        """Connect to `url` (the relay's wtUrl, e.g. https://127.0.0.1:4433).
+        """Connect to `url` (the relay's wtUrl, e.g. https://127.0.0.1:4433;
+        the port defaults to 443).
 
         `insecure` skips certificate verification and defaults to True for
         loopback hosts only (the local relay uses an ephemeral self-signed
         cert). Passing insecure=True for a non-loopback host is refused.
+        Otherwise aioquic checks the certificate against the URL host (DNS or
+        IP SANs) and its chain against `cafile` (a PEM CA bundle: mkcert, a
+        private CA), or certifi's bundle without one. `timeout` bounds the
+        QUIC handshake and the WebTransport session setup separately.
         """
         parsed = urlparse(url)
         host = parsed.hostname
-        port = parsed.port
-        if parsed.scheme != "https" or host is None or port is None:
-            raise ValueError(f"relay URL must look like https://host:port, got {url!r}")
+        if parsed.scheme != "https" or host is None:
+            raise ValueError(f"relay URL must look like https://host[:port], got {url!r}")
+        port = parsed.port if parsed.port is not None else 443
         is_loopback = host in _LOOPBACK_HOSTS
         if insecure is None:
             insecure = is_loopback
         if insecure and not is_loopback:
-            raise ValueError(f"insecure=True is only allowed for loopback hosts, got {host!r}")
+            raise ValueError(
+                "insecure=True (trusting the relay's ephemeral self-signed certificate) is "
+                f"only allowed for loopback hosts, got {host!r}; attaching from another host "
+                "needs a relay with a real certificate"
+            )
         expected_path = f"/{role}"
         if parsed.path in ("", "/"):
             path = expected_path
@@ -123,10 +195,14 @@ class RelayClient:
         ctx = aioquic_connect(
             host,
             port,
-            configuration=make_quic_configuration(insecure),
+            configuration=make_quic_configuration(insecure, cafile),
             create_protocol=SessionProtocol,
         )
-        session = cast("SessionProtocol", await ctx.__aenter__())
+        # Bounded: aioquic gives up on an endpoint nobody listens on only at
+        # its 60 s idle timeout (UDP surfaces no ICMP), and a stale wtUrl
+        # after a relay restart must fail fast so the caller rediscovers.
+        # aioquic's own finally closes the socket on cancellation.
+        session = cast("SessionProtocol", await asyncio.wait_for(ctx.__aenter__(), timeout))
         # The robot leg's only incoming uni stream is the relay-opened control
         # carrier: corruption, reset, or an end of it must fail the whole
         # session (the bridge reconnects) instead of leaving it alive without
@@ -197,9 +273,9 @@ class RelayClient:
                 )
         else:
             size = len(encode_datagram(msg))
-            if size > _HELLO_DATAGRAM_MAX_BYTES:
+            if size > _DATAGRAM_MAX_BYTES:
                 raise ProtocolError(
-                    f"hello datagram is {size} B (limit {_HELLO_DATAGRAM_MAX_BYTES}); an "
+                    f"hello datagram is {size} B (limit {_DATAGRAM_MAX_BYTES}); an "
                     "oversized datagram wedges aioquic's whole datagram queue"
                 )
         deadline = time.monotonic() + timeout
@@ -241,8 +317,32 @@ class RelayClient:
             retire_hello_stream()
 
     def send_control(self, msg: Msg) -> None:
-        """Send one control message to the relay (datagram: lossy, ordered-less)."""
+        """Send one control message to the relay (datagram: lossy, ordered-less).
+
+        Refuses a datagram over the packet-size cliff: aioquic would retry it
+        forever and wedge every datagram queued behind it (the hello guard's
+        rule, applied to the test viewer's whole control plane).
+        """
+        size = len(encode_datagram(msg))
+        if size > _DATAGRAM_MAX_BYTES:
+            raise ProtocolError(
+                f"control datagram is {size} B (limit {_DATAGRAM_MAX_BYTES}); an "
+                "oversized datagram wedges aioquic's whole datagram queue"
+            )
         self._session.send_msg(msg)
+
+    def send_control_frame(self, msg: Msg) -> int:
+        """Send one @control frame on a fresh one-shot bidi stream: the
+        reliable robot->relay control path (publish acks; hello wraps the
+        same framing in its own retry/retire loop). Returns the stream id;
+        raises ProtocolError past the control payload cap.
+        """
+        payload = encode_datagram(msg)
+        if len(payload) > MAX_CONTROL_PAYLOAD_BYTES:
+            raise ProtocolError(
+                f"@control payload is {len(payload)} B (limit {MAX_CONTROL_PAYLOAD_BYTES})"
+            )
+        return self.send_frame(CONTROL_CHANNEL, payload)
 
     async def ping(self, timeout: float = 5.0) -> float:
         """Datagram ping; returns the round-trip time in seconds."""
@@ -320,14 +420,15 @@ class RelayClient:
         finally:
             closed.cancel()
 
-    async def control_messages(self) -> AsyncIterator[Msg]:
+    async def control_messages(self) -> AsyncIterator[Msg | DataFrame]:
         """Control messages pushed by the relay (subs snapshots, robots, ...).
 
-        Fed by relay datagrams and, on the robot leg, by @control frames from
-        the relay-opened control carrier. Same contract as :meth:`frames`:
-        buffered messages drain before the close is honored, and cancelling
-        the consumer never orphans the queue getter. Ends when the session
-        closes.
+        Fed by relay datagrams and, on the robot leg, by the relay-opened
+        control carrier: @control frames arrive decoded as messages, and
+        forwarded publishes (tx channel data) arrive as raw DataFrames in the
+        same order. Same contract as :meth:`frames`: buffered messages drain
+        before the close is honored, and cancelling the consumer never
+        orphans the queue getter. Ends when the session closes.
         """
         closed = asyncio.ensure_future(self._session.wait_closed())
         try:
@@ -443,26 +544,3 @@ class LatestChannelWriter:
         finally:
             closed.cancel()
         logger.info(f"latest-wins writer for {self.ch}: session closed, stopping")
-
-
-async def connect_with_backoff(
-    url: str,
-    role: Role,
-    *,
-    insecure: bool | None = None,
-    max_attempts: int = 8,
-    base_delay: float = 0.5,
-    max_delay: float = 10.0,
-) -> RelayClient:
-    """connect() with exponential backoff for flaky startup ordering."""
-    delay = base_delay
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return await RelayClient.connect(url, role, insecure=insecure)
-        except (OSError, asyncio.TimeoutError, ConnectionError) as e:
-            if attempt == max_attempts:
-                raise
-            logger.info(f"relay connect attempt {attempt} failed ({e}); retrying in {delay:.1f}s")
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, max_delay)
-    raise AssertionError("unreachable")

@@ -23,6 +23,32 @@ Using `--local-relay` spawns a relay on `http://127.0.0.1:7780` and bridges the 
 
 The local relay binds loopback and deliberately trusts local browser clients (wildcard CORS on the routes above), so a page from any local origin can connect without configuration. This is a local development mode, not the remote deployment story.
 
+## Relay started by hand
+
+`--local-relay` spawns the relay for you. Start one yourself to work on the relay without restarting the robot, or to share one relay between robots. Build the web dists once (and after changes under `web/`), then run the relay from `web/`:
+
+```bash
+cd web
+deno install --frozen
+deno task -r build
+deno task dev --cockpit-dir cockpit/dist --sdk-dir sdk/dist
+```
+
+Attach a robot with `--relay-url` and the relay's HTTP URL:
+
+```bash
+uv run dimos --replay run unitree-go2 --relay-url http://localhost:7780
+```
+
+The bridge discovers the WebTransport endpoint (an ephemeral QUIC port and certificate) through `/api/info` on every connect, like the browser does. Open `http://localhost:7780/` for the cockpit. Things to know:
+
+- Restart the relay whenever you like: the bridge and the page reconnect on their own.
+- A bridge killed without a clean close keeps its robot id registered until the relay's 30 s idle timeout. Restarting it inside that window waits the conflict out.
+- `--serve-dir` belongs to the relay here (`deno task dev --serve-dir DIR`). `dimos run --serve-dir` is rejected together with `--relay-url`.
+- A second robot on the same relay needs its own `--robot-id`. A synthetic one: `uv run python -m dimos.web.relay_bridge.demo_smoke --url http://localhost:7780`.
+- With several robots on the relay the cockpit lists them; pick one to watch it. "switch robot" in the status bar reopens the list.
+- Another machine requires a relay started with `--cert PEM --key PEM`; pass `--relay-ca` to the robot for a private CA. Non-loopback binding still requires `--unsafe-non-loopback` until relay auth lands.
+
 ## Your first page
 
 Create `ui/index.html`:
@@ -283,3 +309,31 @@ Decoder notes:
 - Each session owns its registry (`connect({decoders})`), so two apps on one page cannot clobber each other. Registering a taken encoding throws unless you pass `{replace: true}`.
 - An encoding with no decoder is not an error. The channel still counts frames and renders as unsupported. A throwing decoder bumps `decodeErrors` and keeps the last good value.
 - Decoders run on the ingest path, so keep them synchronous and cheap. Heavy work (inflate, draw) belongs in the consumer.
+
+## Publishing to the robot
+
+A `dir="tx"` channel with `publish="shared"` is a browser input: any viewer may publish, the bridge decodes the JSON value with the matching `@web_decoder` and publishes it on a typed `Out` port, and your modules consume it like any other stream.
+
+```python skip
+cockpit(channels=[
+    Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
+])
+```
+
+```js
+try {
+  const receipt = await session.publish("human_input", "hello robot");
+  // The bridge decoded the value and published it on the dimOS stream.
+} catch (e) {
+  // e.outcome === "rejected": it definitively did not happen (e.code says why).
+  // e.outcome === "unknown": the connection died before the ack - it MAY have
+  // been published. Never auto-resend an "unknown" command.
+}
+```
+
+Publish notes:
+
+- Only reliable JSON-encoded tx channels declared `publish="shared"` accept `publish()`; everything else (rx channels, teleop) rejects locally with a stable code. Values are any JSON value (`null` included), at most 32 KiB serialized and at most 100 nesting levels deep.
+- The relay rate-limits per viewer and per robot at the channel's `max_hz`, so extra open tabs never multiply the accepted rate.
+- `text.json.v1` (strings) is built in; other encodings need an `@web_decoder` whose return annotation matches the channel's `message_type`. An optional second `PublishContext` parameter carries provenance (request id, principal, relay/client timestamps).
+- `web/examples/chat-input/` in the repository is a minimal publish page.

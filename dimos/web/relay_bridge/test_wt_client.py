@@ -19,9 +19,15 @@ failure path directly.
 """
 
 import asyncio
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+import threading
+from typing import Any
 
 import pytest
 
+from dimos.web.relay_bridge import wt_client
 from dimos.web.relay_bridge.protocol import (
     CONTROL_CHANNEL,
     MAX_CONTROL_PAYLOAD_BYTES,
@@ -32,15 +38,24 @@ from dimos.web.relay_bridge.protocol import (
     Hello,
     Msg,
     ProtocolError,
+    Pub,
+    PubAck,
+    PubNack,
     RobotInfo,
     RobotManifest,
     Role,
+    Sub,
     Subs,
     decode_datagram,
     encode_data_frame,
     encode_datagram,
 )
-from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError
+from dimos.web.relay_bridge.wt_client import (
+    RelayClient,
+    RelayInfo,
+    RelayRejectedError,
+    fetch_relay_info,
+)
 
 
 class StubSession:
@@ -99,9 +114,8 @@ async def test_pump_dies_visibly_on_encode_error() -> None:
     session = StubSession()
     writer = _client(session).latest_writer("cam")
     writer.offer(b"data", meta=object())  # not a dict: header validation rejects it
-    await asyncio.sleep(0.05)  # let the pump run and die
-    assert writer._task.done()
-    assert isinstance(writer._task.exception(), ValueError)  # pydantic ValidationError
+    with pytest.raises(ValueError):  # pydantic ValidationError
+        await asyncio.wait_for(writer._task, timeout=5)
     # The dead channel is visible at the producer, not silently accepting.
     with pytest.raises(RuntimeError):
         writer.offer(b"more")
@@ -111,9 +125,7 @@ async def test_pump_stops_cleanly_on_session_close() -> None:
     session = StubSession()
     writer = _client(session).latest_writer("cam")
     session.closed.set()
-    await asyncio.sleep(0.05)
-    assert writer._task.done()
-    assert writer._task.exception() is None  # a close is not an error
+    await asyncio.wait_for(writer._task, timeout=5)  # a close is not an error
     with pytest.raises(RuntimeError):
         writer.offer(b"x")
 
@@ -331,6 +343,37 @@ async def test_robot_hello_control_payload_boundary_is_exact() -> None:
     assert over_cap.sent_frames == []
 
 
+async def test_send_control_frame_uses_the_hello_framing() -> None:
+    # Publish acks ride the same robot-opened one-shot @control path as
+    # hello: a datagram-encoded payload in an @control data frame.
+    session = StubSession()
+    client = _client(session)
+    ack = PubAck(id="p1", ch="human_input", relayTs=1.5, bridgeTs=2.5)
+    stream_id = client.send_control_frame(ack)
+    assert stream_id > 0
+    ((header, payload),) = session.sent_frames
+    assert header.ch == CONTROL_CHANNEL
+    assert decode_datagram(payload) == ack
+    assert session.sent_msgs == []  # nothing rode datagrams
+    with pytest.raises(ProtocolError, match=str(MAX_CONTROL_PAYLOAD_BYTES)):
+        client.send_control_frame(
+            PubNack(id="p2", code="decode_failed", message="x" * MAX_CONTROL_PAYLOAD_BYTES)
+        )
+    assert len(session.sent_frames) == 1
+
+
+async def test_send_control_refuses_an_unsendable_datagram() -> None:
+    # aioquic retries an oversize datagram forever, wedging the whole queue;
+    # the test viewer's control plane must refuse it locally instead.
+    session = StubSession()
+    client = _client(session)
+    client.send_control(Sub(ch="odom"))
+    assert len(session.sent_msgs) == 1
+    with pytest.raises(ProtocolError, match="wedges aioquic"):
+        client.send_control(Pub(id="a", ch="chat", data="x" * 2048))
+    assert len(session.sent_msgs) == 1
+
+
 async def test_robot_hello_cancellation_is_prompt_and_retires_stream() -> None:
     session = StubSession()
     real_send = session.send_frame
@@ -447,3 +490,153 @@ async def test_hello_rejection_preserves_error_code() -> None:
 async def test_connect_rejects_wrong_endpoint_path(url: str, role: Role) -> None:
     with pytest.raises(ValueError, match="relay URL path"):
         await RelayClient.connect(url, role)
+
+
+async def test_connect_handshake_timeout_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    class HangingConnect:
+        async def __aenter__(self) -> None:
+            await asyncio.Event().wait()
+
+        async def __aexit__(self, *args: Any) -> None:
+            raise AssertionError("a timed-out __aenter__ must not be exited twice")
+
+    monkeypatch.setattr(wt_client, "aioquic_connect", lambda *args, **kwargs: HangingConnect())
+    with pytest.raises(asyncio.TimeoutError):
+        await RelayClient.connect("https://127.0.0.1:1", "robot", timeout=0.01)
+
+
+async def test_connect_defaults_port_to_443_and_loads_relay_ca(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dials: list[tuple[str, int, str | None]] = []
+
+    class Refused:
+        async def __aenter__(self) -> None:
+            raise ConnectionRefusedError
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+    def fake_connect(host: str, port: int, *, configuration: Any, **kwargs: Any) -> Refused:
+        dials.append((host, port, configuration.cafile))
+        return Refused()
+
+    monkeypatch.setattr(wt_client, "aioquic_connect", fake_connect)
+    with pytest.raises(ConnectionRefusedError):
+        await RelayClient.connect("https://relay.example", "robot", cafile="/ca.pem")
+    assert dials == [("relay.example", 443, "/ca.pem")]
+
+
+# /api/info discovery against an in-process HTTP server.
+
+
+class _InfoHandler(BaseHTTPRequestHandler):
+    """Answers every GET with `reply` (status, body) and records the paths."""
+
+    reply: tuple[int, bytes] = (200, b"")
+    paths: list[str] = []
+
+    def do_GET(self) -> None:
+        _InfoHandler.paths.append(self.path)
+        status, body = _InfoHandler.reply
+        self.send_response(status)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass
+
+
+@pytest.fixture
+def info_server() -> Iterator[str]:
+    """A loopback HTTP base whose /api/info answers _InfoHandler.reply."""
+    _InfoHandler.reply = (200, b"")
+    _InfoHandler.paths = []
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _InfoHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _serve(body: Any, status: int = 200) -> None:
+    _InfoHandler.reply = (status, body if isinstance(body, bytes) else json.dumps(body).encode())
+
+
+GOOD_INFO = {"wtUrl": "https://127.0.0.1:4433", "certHash": "aGFzaA==", "v": PROTOCOL_VERSION}
+
+
+async def test_fetch_relay_info_good_shape(info_server: str) -> None:
+    _serve(GOOD_INFO)
+    info = await fetch_relay_info(info_server)
+    assert info == RelayInfo(
+        wt_url="https://127.0.0.1:4433", cert_hash="aGFzaA==", v=PROTOCOL_VERSION
+    )
+    assert _InfoHandler.paths == ["/api/info"]
+
+
+async def test_fetch_relay_info_cert_hash_is_optional(info_server: str) -> None:
+    # A relay with a real certificate (T12c) advertises no hash.
+    _serve({"wtUrl": "https://relay.example:443", "v": PROTOCOL_VERSION})
+    assert (await fetch_relay_info(info_server)).cert_hash is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"certHash": "x", "v": PROTOCOL_VERSION},  # no wtUrl
+        {"wtUrl": "https://127.0.0.1:4433", "certHash": "x", "v": True},  # bool is not a version
+        {"wtUrl": "https://127.0.0.1:4433", "certHash": 7, "v": PROTOCOL_VERSION},
+        [],
+        b"<html>not a relay</html>",
+    ],
+)
+async def test_fetch_relay_info_rejects_bad_shape(info_server: str, body: Any) -> None:
+    _serve(body)
+    with pytest.raises(ProtocolError, match="unexpected shape"):
+        await fetch_relay_info(info_server)
+
+
+async def test_fetch_relay_info_version_mismatch_names_both(info_server: str) -> None:
+    _serve({**GOOD_INFO, "v": 99})
+    with pytest.raises(
+        ProtocolError, match=f"protocol v99, this bridge speaks v{PROTOCOL_VERSION}"
+    ):
+        await fetch_relay_info(info_server)
+
+
+async def test_fetch_relay_info_http_error_stays_os_error(info_server: str) -> None:
+    # A status error (a proxy mid-restart, say) is transient for the bridge's
+    # reconnect loop: it must not look like a protocol problem.
+    _serve(b"nope", status=404)
+    with pytest.raises(OSError) as exc_info:
+        await fetch_relay_info(info_server)
+    assert not isinstance(exc_info.value, ProtocolError)
+
+
+async def test_fetch_relay_info_unreachable_is_os_error() -> None:
+    with pytest.raises(OSError):
+        await fetch_relay_info("http://127.0.0.1:1")
+
+
+@pytest.mark.parametrize(
+    ("suffix", "path"),
+    [
+        ("", "/api/info"),
+        ("/", "/api/info"),
+        ("/relay", "/relay/api/info"),
+        ("/relay/", "/relay/api/info"),
+    ],
+)
+async def test_fetch_relay_info_resolves_like_the_sdk(
+    info_server: str, suffix: str, path: str
+) -> None:
+    _serve(GOOD_INFO)
+    await fetch_relay_info(info_server + suffix)
+    assert _InfoHandler.paths == [path]

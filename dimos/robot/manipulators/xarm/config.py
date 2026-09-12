@@ -69,11 +69,16 @@ XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 XARM7_SIM_BASE_POSE = PoseStamped(frame_id="world", position=Vector3(z=0.12))
 
 
-def make_xarm7_sim_robot_config() -> RobotModelConfig:
+def make_xarm7_sim_robot_config(base_pose: PoseStamped | None = None) -> RobotModelConfig:
+    """Build the sim planning model.
+
+    Pass ``base_pose`` for a scene that mounts ``link_base`` somewhere other than
+    the pedestal ``data/xarm7`` uses.
+    """
     return make_xarm7_model_config(
         add_gripper=True,
         gripper_hardware_id="arm",
-        base_pose=XARM7_SIM_BASE_POSE,
+        base_pose=XARM7_SIM_BASE_POSE if base_pose is None else base_pose,
         tf_extra_links=["link7"],
         home_joints=XARM7_SIM_HOME,
         pre_grasp_offset=0.05,
@@ -98,7 +103,7 @@ def make_dual_xarm6_model_config() -> RobotModelConfig:
                 "add_gripper_1": "true",
                 "add_gripper_2": "true",
             },
-        ),
+        ).with_default_joint_acceleration_limit(2.0),
         joint_names=canonical_joints,
         base_link="world",
         planning_groups=[
@@ -308,7 +313,7 @@ def make_xarm_model_config(
             XARM_MODEL_PATH,
             package_paths=XARM_PACKAGE_PATHS,
             xacro_args=xacro_args,
-        ),
+        ).with_default_joint_acceleration_limit(2.0),
         base_pose=base_pose if base_pose is not None else PoseStamped(),
         joint_names=model_joint_names,
         base_link=f"{prefix}link_base",

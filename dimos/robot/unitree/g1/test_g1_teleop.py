@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Construction and objective tests for shared G1 Quest teleoperation."""
+"""Construction and objective tests for shared G1 WebXR teleoperation."""
 
 from typing import Any, cast
 import xml.etree.ElementTree as ET
@@ -42,12 +42,11 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import (
 )
 from dimos.robot.unitree.g1.manip_config import (
     G1_LEFT_ARM_JOINTS,
-    G1_MANIPULATION_MODEL,
     G1_RIGHT_ARM_JOINTS,
     g1_manipulation_model_config,
 )
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
-from dimos.teleop.quest.quest_extensions import VideoArmTeleopModule
+from dimos.teleop.webxr.extensions import VideoArmTeleopModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -100,7 +99,7 @@ def test_g1_blueprint_keeps_bounded_trajectory_path_below_teleop() -> None:
     ]
 
 
-def test_g1_teleop_wires_arm_and_recording_streams_without_quest_locomotion() -> None:
+def test_g1_teleop_wires_arm_and_recording_streams_without_webxr_locomotion() -> None:
     teleop_kwargs = _module_kwargs(unitree_g1_teleop, VideoArmTeleopModule)
 
     assert "task_names" not in teleop_kwargs
@@ -170,7 +169,6 @@ def test_g1_teleop_wires_manipulation_to_existing_coordinator() -> None:
     model = manipulation_kwargs["model"]
 
     assert manipulation_kwargs["instance_name"] == "G1Manipulation"
-    assert model.model is G1_MANIPULATION_MODEL
     assert model.joint_names == g1_joints
     assert [group.name for group in model.planning_groups] == ["left_arm", "right_arm"]
     assert manipulation_kwargs["visualization"] == ViserVisualizationConfig(host="0.0.0.0")

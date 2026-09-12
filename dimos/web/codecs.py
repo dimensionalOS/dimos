@@ -98,12 +98,20 @@ class EncodedPayload:
 
 @dataclass(frozen=True)
 class PublishContext:
-    """Relay-authored provenance handed to tx decoders (publish ticket, W7)."""
+    """Relay-authored provenance handed to tx decoders.
+
+    `request_id` is the relay's forwarding token (not the viewer's request
+    id), `relay_ts` the relay receive time, `client_ts` the optional
+    browser-supplied send time, `gen` the exclusive publisher lease
+    generation (W8; None for shared channels).
+    """
 
     robot: str
     ch: str
     relay_ts: float
+    request_id: str
     principal: str | None = None
+    client_ts: float | None = None
     gen: int | None = None
 
 
@@ -283,7 +291,9 @@ def web_encoder(
         params = _signature_params(func, "web encoder")
         hints = get_type_hints(func)
         message_type = hints.get(params[0].name)
-        if not isinstance(message_type, type):
+        # TODO(PY311): drop the GenericAlias checks in this module — on 3.10,
+        # isinstance(list[int], type) is True.
+        if not isinstance(message_type, type) or isinstance(message_type, types.GenericAlias):
             raise ValueError(
                 f"web encoder {_describe(func)}: the first parameter must be annotated "
                 f"with the supported message class, got {message_type!r}"
@@ -319,7 +329,11 @@ def web_decoder(encoding: str) -> Callable[[_F], _F]:
                 f"of them), got {value_hint!r}"
             )
         message_type = hints.get("return")
-        if not isinstance(message_type, type) or message_type is type(None):
+        if (
+            not isinstance(message_type, type)
+            or isinstance(message_type, types.GenericAlias)
+            or message_type is type(None)
+        ):
             raise ValueError(
                 f"web decoder {_describe(func)}: the return annotation must be the "
                 f"produced message class, got {message_type!r}"
@@ -356,6 +370,47 @@ def encode_json_v1(msg: Any) -> bytes:
     if dataclasses.is_dataclass(msg) and not isinstance(msg, type):
         value = dataclasses.asdict(msg)
     return json.dumps(value, separators=(",", ":"), allow_nan=False).encode()
+
+
+def decode_json_v1(value: Any) -> Any:
+    """Generic json.v1 decoder: the parsed JSON value passes through and the
+    bridge's declared-message-type check enforces the channel's type."""
+    return value
+
+
+def resolve_decoder(encoding: str, message_type: type[Any]) -> DecoderDef:
+    """The decoder a publish channel (encoding, message type) compiles to;
+    ValueError when the pair is unsupported. Runs in the parent at blueprint
+    authoring time, so this also finishes the pickle-by-reference check
+    deferred from decoration (mirrors resolve_encoder)."""
+    definition = _decoders.get(encoding)
+    if definition is not None:
+        if message_type is not definition.message_type:
+            raise ValueError(
+                f"encoding {encoding!r} decodes to {definition.message_type.__qualname__}, "
+                f"not {message_type.__qualname__}"
+            )
+        if not _resolves_by_reference(definition.decode):
+            raise ValueError(
+                f"decoder {_describe(definition.decode)} for {encoding!r} cannot be "
+                "pickled by reference; it must be importable under its own module "
+                "and qualified name"
+            )
+        return definition
+    if encoding == "json.v1":
+        # Narrower than the encoder side on purpose: reconstructing a
+        # dataclass from untrusted browser JSON needs an explicit decoder.
+        if message_type not in _JSON_V1_TYPES:
+            raise ValueError(
+                f"message type {message_type.__module__}.{message_type.__qualname__} is "
+                "not supported by generic json.v1 decoding (JSON scalars, lists and "
+                "dicts only); register an explicit decoder with @web_decoder(...)"
+            )
+        return DecoderDef("json.v1", message_type, decode_json_v1, takes_context=False)
+    raise ValueError(
+        f"no decoder registered for encoding {encoding!r}; register one with "
+        f"@web_decoder({encoding!r})"
+    )
 
 
 def resolve_encoder(encoding: str, message_type: type[Any]) -> EncoderDef:

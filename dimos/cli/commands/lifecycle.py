@@ -25,6 +25,7 @@ import time
 import traceback
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
 import typer
 
 from dimos.constants import CONFIG_DIR, LOG_DIR
@@ -90,7 +91,15 @@ def run(
         help="Spawn a local cockpit relay and bridge this robot to it",
     ),
     relay_url: str | None = typer.Option(
-        None, "--relay-url", help="Bridge this robot to a running relay (wtUrl)"
+        None,
+        "--relay-url",
+        help="Bridge this robot to a relay started elsewhere (its HTTP URL, e.g. "
+        "http://localhost:7780)",
+    ),
+    relay_ca: str | None = typer.Option(
+        None,
+        "--relay-ca",
+        help="PEM CA bundle that signed the relay's certificate (mkcert, a private CA)",
     ),
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
@@ -134,7 +143,11 @@ def run(
     # These flags are accepted on `run` itself, not just as global options.
     run_overrides = {
         name: value
-        for name, value in (("local_relay", local_relay), ("relay_url", relay_url))
+        for name, value in (
+            ("local_relay", local_relay),
+            ("relay_url", relay_url),
+            ("relay_ca", relay_ca),
+        )
         if value is not None
     }
     if run_overrides:
@@ -152,7 +165,11 @@ def run(
         raise typer.Exit(2) from error
     # Some blueprint modules select their composition at import time, so all
     # global sources must be visible before resolving the requested names.
-    global_config.update(**preparsed_global_config)
+    try:
+        global_config.update(**preparsed_global_config)
+    except ValidationError as error:
+        typer.echo(f"Error: {error.errors()[0]['msg']}", err=True)
+        raise typer.Exit(2) from error
 
     blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names))
 

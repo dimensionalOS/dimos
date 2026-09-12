@@ -19,6 +19,7 @@ import {
   type RobotInfo,
   type RobotManifest,
 } from "@dimos/shared";
+import { makeEphemeralCert } from "./cert.ts";
 import { startRelay } from "./server.ts";
 
 const ROBOT: RobotInfo = { id: "deno-bot", name: "Deno Bot", model: "test" };
@@ -26,6 +27,14 @@ const ROBOT: RobotInfo = { id: "deno-bot", name: "Deno Bot", model: "test" };
 const CHANNELS = [
   { ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 15.5 },
   { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 },
+  {
+    ch: "human_input",
+    dir: "tx",
+    encoding: "text.json.v1",
+    delivery: "reliable",
+    maxHz: 50.5,
+    publish: "shared",
+  },
 ];
 const MANIFEST: RobotManifest = {
   version: 1,
@@ -34,7 +43,8 @@ const MANIFEST: RobotManifest = {
   layout: "color_image",
 };
 
-function certOpts(hashB64: string): WebTransportOptions {
+function certOpts(hashB64: string | undefined): WebTransportOptions {
+  if (hashB64 === undefined) throw new Error("the relay advertises no certificate hash");
   return {
     serverCertificateHashes: [{
       algorithm: "sha-256",
@@ -144,6 +154,40 @@ function robotControl(wt: WebTransport): () => Promise<Msg> {
     const msg = decodeDatagram(payload);
     assert(msg !== null, "undecodable @control payload");
     return msg;
+  };
+}
+
+/** Like robotControl, but splits the carrier into @control messages and
+ * forwarded publish (tx data) frames. Serial use only: nextMsg/nextPub share
+ * one frame cursor. */
+function robotCarrier(wt: WebTransport): {
+  nextMsg: () => Promise<Msg>;
+  nextPub: () => Promise<{ header: FrameHeader; payload: Uint8Array }>;
+} {
+  const nextFrame = frameQueue(wt);
+  const msgs: Msg[] = [];
+  const pubs: { header: FrameHeader; payload: Uint8Array }[] = [];
+  const pump = async (want: "msg" | "pub") => {
+    while ((want === "msg" ? msgs : pubs).length === 0) {
+      const { header, payload } = await nextFrame();
+      if (header.ch === CONTROL_CHANNEL) {
+        const msg = decodeDatagram(payload);
+        assert(msg !== null, "undecodable @control payload");
+        msgs.push(msg);
+      } else {
+        pubs.push({ header, payload });
+      }
+    }
+  };
+  return {
+    nextMsg: async () => {
+      await pump("msg");
+      return msgs.shift()!;
+    },
+    nextPub: async () => {
+      await pump("pub");
+      return pubs.shift()!;
+    },
   };
 }
 
@@ -368,7 +412,7 @@ Deno.test({
   await t.step("/api/info matches the handle; no cockpit dist -> 404 with a hint", async () => {
     const info = await (await fetch(`${httpBase}/api/info`)).json();
     assertEquals(info, {
-      wtUrl: `${relay.wtUrl}/viewer`,
+      wtUrl: relay.wtUrl,
       certHash: relay.certHash,
       v: PROTOCOL_VERSION,
     });
@@ -418,7 +462,8 @@ Deno.test({
   const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
   await within(robot.ready, "robot connect");
   const robotDatagrams = datagramQueue(robot.datagrams.readable);
-  const robotCtrl = robotControl(robot);
+  const carrier = robotCarrier(robot);
+  const robotCtrl = carrier.nextMsg;
 
   await t.step(
     "robot hello (@control stream frame) -> welcome + carrier baseline subs",
@@ -579,6 +624,80 @@ Deno.test({
     assertEquals(got.header.seq, 5);
   });
 
+  await t.step(
+    "publish: pub -> stamped carrier tx frame -> bridge ack -> exactly one pub_ack",
+    async () => {
+      await controlWriter.write(
+        encodeControlFrame({
+          t: "pub",
+          id: "v-1",
+          ch: "human_input",
+          data: { text: "salut β" },
+          clientTs: 42.5,
+        }),
+      );
+      const { header, payload } = await within(carrier.nextPub(), "carrier tx frame");
+      assertEquals(header.ch, "human_input");
+      assertEquals(header.delivery, "reliable");
+      const meta = header.meta as Record<string, unknown>;
+      // Relay-authored token + synthetic local principal, never the viewer id.
+      assertEquals(meta.id, "p1");
+      assertEquals(meta.principal, "local");
+      assertEquals(meta.clientTs, 42.5);
+      assert(typeof meta.relayTs === "number");
+      assertEquals(JSON.parse(new TextDecoder().decode(payload)), { text: "salut β" });
+
+      // The bridge acks on a robot-opened one-shot @control stream after
+      // publishing; the relay routes it back with the viewer's own id.
+      await sendRobotFrame(
+        robot,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 43.5, delivery: "reliable" },
+        encodeDatagram({
+          t: "pub_ack",
+          id: "p1",
+          ch: "human_input",
+          relayTs: 42.5,
+          bridgeTs: 43.5,
+        }),
+      );
+      assertEquals(await nextOfType(nextControl, "pub_ack", "viewer pub_ack"), {
+        t: "pub_ack",
+        id: "v-1",
+        ch: "human_input",
+        relayTs: 42.5,
+        bridgeTs: 43.5,
+      });
+
+      // A duplicate ack is dropped: the ordered control stream shows nothing
+      // between here and the next pong.
+      await sendRobotFrame(
+        robot,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 44.5, delivery: "reliable" },
+        encodeDatagram({
+          t: "pub_ack",
+          id: "p1",
+          ch: "human_input",
+          relayTs: 42.5,
+          bridgeTs: 44.5,
+        }),
+      );
+      await controlWriter.write(encodeControlFrame({ t: "ping", n: 77, ts: 77.5 }));
+      assertEquals(await within(nextControl(), "pong after duplicate ack"), {
+        t: "pong",
+        n: 77,
+        ts: 77.5,
+      });
+    },
+  );
+
+  await t.step("publish: a rejected pub settles with a correlated error", async () => {
+    await controlWriter.write(encodeControlFrame({ t: "pub", id: "v-2", ch: "odom", data: 1.5 }));
+    const err = await nextOfType(nextControl, "error", "correlated error");
+    assert(err.t === "error");
+    assertEquals(err.code, "not_publishable");
+    assertEquals(err.requestId, "v-2");
+  });
+
   await t.step("/api/stats reflects sessions and traffic", async () => {
     // The idle viewer's close is asynchronous on the relay side; poll it out.
     let stats = await (await fetch(`${httpBase}/api/stats`)).json();
@@ -717,6 +836,15 @@ Deno.test({
         wt,
         { ch: "@future", seq: 0, ts: 0.5, delivery: "reliable" },
         encodeDatagram({ t: "ping", n: 1, ts: 1.5 }),
+      ));
+  });
+
+  await t.step("pub_ack before registration -> invalid_control + close", async () => {
+    await expectRobotReject("preregistration-ack", "invalid_control", (wt) =>
+      sendRobotFrame(
+        wt,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "reliable" },
+        encodeDatagram({ t: "pub_ack", id: "p1", ch: "chat", relayTs: 1.5, bridgeTs: 2.5 }),
       ));
   });
 
@@ -1099,4 +1227,53 @@ Deno.test("startRelay rejects a bad served dir with a labeled error", async () =
     Error,
     "sdkDir does not exist: /no/such/dir",
   );
+});
+
+Deno.test("startRelay refuses a certificate without its key (and vice versa)", async () => {
+  const cert = await makeEphemeralCert();
+  await assertRejects(
+    () => startRelay({ port: 0, cert: cert.certPem }),
+    Error,
+    "--cert and --key must be given together",
+  );
+  await assertRejects(
+    () => startRelay({ port: 0, key: cert.keyPem }),
+    Error,
+    "--cert and --key must be given together",
+  );
+});
+
+Deno.test({
+  name: "a relay with --cert/--key serves HTTPS and QUIC on one port and advertises no hash",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  // The ephemeral generator stands in for a CA-issued certificate: the relay
+  // serves whatever PEM it is given, and the client trusts it as a root.
+  const cert = await makeEphemeralCert();
+  const relay = await startRelay({ port: 0, cert: cert.certPem, key: cert.keyPem });
+  // h2 on purpose: over TLS Deno.serve negotiates HTTP/2, where the request
+  // host comes from :authority rather than a Host header.
+  const client = Deno.createHttpClient({ caCerts: [cert.certPem], http1: false, http2: true });
+  try {
+    assertEquals(relay.certHash, undefined);
+    assertEquals(relay.quicPort, relay.httpPort);
+    const res = await fetch(`https://127.0.0.1:${relay.httpPort}/api/info`, { client });
+    const info = await res.json();
+    assertEquals(info, { wtUrl: `https://127.0.0.1:${relay.httpPort}`, v: PROTOCOL_VERSION });
+
+    // The QUIC listener serves the given certificate: pin its locally
+    // computed hash (the relay never advertised one) and complete a hello.
+    const viewer = new WebTransport(`${info.wtUrl}/viewer`, certOpts(cert.certHashB64));
+    await within(viewer.ready, "viewer connect");
+    const control = await within(viewer.createBidirectionalStream(), "control stream");
+    const writer = control.writable.getWriter();
+    const nextControl = controlQueue(control.readable);
+    await writer.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
+    assertEquals(await within(nextControl(), "welcome"), { t: "welcome", v: PROTOCOL_VERSION });
+    viewer.close();
+  } finally {
+    client.close();
+    await relay.shutdown();
+  }
 });

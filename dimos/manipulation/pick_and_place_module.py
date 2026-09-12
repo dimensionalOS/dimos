@@ -46,6 +46,9 @@ from dimos.perception.experimental.object_scene_registration_spec import ObjectS
 class PickAndPlaceModuleConfig(ModuleConfig):
     planning_frame: str = "base_link"
     pregrasp_offset: float = Field(default=0.10, gt=0.0)
+    # A learned provider returns a ranked spread whose best-scoring pose is not
+    # always kinematically reachable; a single-candidate provider is unaffected.
+    max_grasp_attempts: int = Field(default=5, gt=0)
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
 
@@ -141,37 +144,46 @@ class PickAndPlaceModule(Module):
             return SkillResult.fail(
                 "ROBOT_NOT_FOUND", "Gripper-capable planning group is missing or ambiguous"
             )
-        candidate = candidates.candidates[0]
-        grasp = self._apply_yaw_policy(
-            PoseStamped(
-                ts=candidates.header.timestamp,
-                frame_id=candidates.header.frame_id,
-                position=candidate.pose.position,
-                orientation=candidate.pose.orientation,
-            ),
-            group,
-        )
-        pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
         if failure := self._open_gripper(group, "pre-grasp open"):
             return failure
-        if failure := self._move(pregrasp, group):
-            return failure
-        if failure := self._move(grasp, group):
-            return failure
-        if failure := self._close_and_verify(group):
-            return failure
 
-        self._selected_object_id = object_id
-        self._selected_grasp = grasp
-        self._holding_object = True
-        if failure := self._move(pregrasp, group):
-            return failure
-        return SkillResult.ok(
-            "Pick complete",
-            object_id=object_id,
-            rank=0,
-            score=candidate.score,
-            candidates=len(candidates.candidates),
+        unreachable: SkillResult[ManipulationSkillError] | None = None
+        for rank, candidate in enumerate(candidates.candidates[: self.config.max_grasp_attempts]):
+            grasp = self._apply_yaw_policy(
+                PoseStamped(
+                    ts=candidates.header.timestamp,
+                    frame_id=candidates.header.frame_id,
+                    position=candidate.pose.position,
+                    orientation=candidate.pose.orientation,
+                ),
+                group,
+            )
+            pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
+            failure = self._move(pregrasp, group) or self._move(grasp, group)
+            if failure is not None:
+                # Only an unreachable pose is worth demoting to the next candidate;
+                # a drive or execution fault would repeat for every one of them.
+                if failure.error_code != "PLANNING_FAILED":
+                    return failure
+                unreachable = failure
+                continue
+            if failure := self._close_and_verify(group):
+                return failure
+
+            self._selected_object_id = object_id
+            self._selected_grasp = grasp
+            self._holding_object = True
+            if failure := self._move(pregrasp, group):
+                return failure
+            return SkillResult.ok(
+                "Pick complete",
+                object_id=object_id,
+                rank=rank,
+                score=candidate.score,
+                candidates=len(candidates.candidates),
+            )
+        return unreachable or SkillResult.fail(
+            "PLANNING_FAILED", "No grasp candidate was reachable"
         )
 
     @rpc
@@ -268,7 +280,10 @@ class PickAndPlaceModule(Module):
         return None
 
     def _command_and_settle(
-        self, position: float, planning_group: PlanningGroupID
+        self,
+        position: float,
+        planning_group: PlanningGroupID,
+        arrival_tolerance: float | None = None,
     ) -> GripperSettle | SkillResult[ManipulationSkillError]:
         result = self._manipulation.set_gripper_position(position, planning_group)
         if not result.succeeded:
@@ -276,14 +291,22 @@ class PickAndPlaceModule(Module):
                 "GRIPPER_FAILED", result.message or "Gripper command was rejected"
             )
         return await_gripper_settle(
-            lambda: self._gripper_position(planning_group), position, self.config.grasp_verification
+            lambda: self._gripper_position(planning_group),
+            position,
+            self.config.grasp_verification,
+            arrival_tolerance=arrival_tolerance,
         )
 
     def _open_gripper(
         self, planning_group: PlanningGroupID, step: str
     ) -> SkillResult[ManipulationSkillError] | None:
+        # Jaws resting against the open stop never move and never reach the
+        # commanded extreme; open_tolerance is the band that already decides
+        # whether where they stopped counts as open.
         settle = self._command_and_settle(
-            self.config.grasp_verification.open_position, planning_group
+            self.config.grasp_verification.open_position,
+            planning_group,
+            arrival_tolerance=self.config.grasp_verification.open_tolerance,
         )
         if isinstance(settle, SkillResult):
             return settle
