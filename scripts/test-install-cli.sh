@@ -136,7 +136,7 @@ grep -F 'roboplan.core' "$work/output" >/dev/null
 if grep -E 'unitree_webrtc|--replay|from_file|\.build\(' "$work/output"; then exit 1; fi
 pass 'bounded failure propagation and capability-specific asset-free verification'
 
-# PTY tests exercise actual basic prompts and cancellation without a human terminal.
+# PTY tests exercise the built-in multi-select when Gum is unavailable.
 python3 - "$installer" <<'PYTHON'
 import errno
 import os
@@ -149,7 +149,7 @@ import time
 
 installer = sys.argv[1]
 
-def terminal_case(selection, should_pass):
+def terminal_case(selection, expected):
     pid, fd = pty.fork()
     if pid == 0:
         signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -188,7 +188,7 @@ main
                 break
             transcript += data
             for marker, response in [(b'choice [1]:', b'1\n'), (b'path [', b'/tmp/dimos cli test\n'),
-                                     (b'  selection:', selection), (b'Install this environment?', b'y\n')]:
+                                     (b'Space to toggle', selection), (b'Install this environment?', b'y\n')]:
                 if marker in transcript and marker not in sent:
                     sent.add(marker)
                     if response == b'\x03':
@@ -198,11 +198,13 @@ main
         else:
             raise AssertionError(f'prompt timed out: {transcript!r}')
         _, status = os.waitpid(pid, 0)
-        assert (os.waitstatus_to_exitcode(status) == 0) == should_pass, transcript
+        assert (os.waitstatus_to_exitcode(status) == 0) == (expected is not None), transcript
         assert b'MENU_BOOTSTRAP' in transcript, transcript
-        if should_pass:
+        assert b'comma-separated' not in transcript, transcript
+        assert b'[ ] Navigation' in transcript and b'[ ] Manipulation' in transcript, transcript
+        if expected is not None:
             assert transcript.count(b'Install this environment?') == 1, transcript
-            assert b'Capabilities: navigation,manipulation' in transcript, transcript
+            assert f'Capabilities: {expected}'.encode() in transcript, transcript
             assert transcript.index(b'installation summary') < transcript.index(b'PACKAGES'), transcript
             assert b'VERIFIED' in transcript, transcript
         else:
@@ -215,10 +217,12 @@ main
         except ProcessLookupError:
             pass
 
-terminal_case(b'1,2\n', True)
-terminal_case(b'\n', False)
-terminal_case(b'9\n', False)
-terminal_case(b'\x03', False)
+terminal_case(b' \n', 'navigation')
+terminal_case(b'\x1b[B \n', 'manipulation')
+terminal_case(b' \x1b[B \n', 'navigation,manipulation')
+terminal_case(b'\n \x1b[B \n', 'navigation,manipulation')
+terminal_case(b' \x1b[B \x1b[A \n', 'manipulation')
+terminal_case(b'\x03', None)
 
 # A detached process must not open /dev/tty or block when required choices are missing.
 result = subprocess.run(['bash', installer, '--non-interactive'], stdin=subprocess.DEVNULL,
@@ -246,4 +250,4 @@ assert result.returncode == 0 and b'VERIFIED' in result.stdout, result
 assert b'Install this environment?' not in result.stdout, result
 
 PYTHON
-pass 'interactive selection, empty/invalid selection, cancellation, and no-TTY failure'
+pass 'native multi-select, empty selection, toggling off, cancellation, and no-TTY execution'

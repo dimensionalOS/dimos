@@ -162,32 +162,42 @@ prompt_multi() {
         PROMPT_RESULT=$(<"$tmpf"); rm -f "$tmpf"
         if [[ $ec -ne 0 ]]; then die "cancelled"; fi
     else
-        printf "%s%s%s (comma-separated; choose at least one)\n" "$BOLD" "$msg" "$RESET" >/dev/tty
-        local i=1
-        for opt in "${options[@]}"; do
-            printf "  %s%d)%s %s\n" "$CYAN" "$i" "$RESET" "$opt" >/dev/tty
-            ((i++))
-        done
-        printf "  selection: " >/dev/tty
-        local sel; read -r sel </dev/tty || die "cancelled"
-        if [[ -z "$sel" ]]; then
-            die "select navigation, manipulation, or both"
-        else
-            local out=""
-            IFS=',' read -ra nums <<< "$sel"
-            for n in "${nums[@]}"; do
-                n="${n// /}"
-                [[ "$n" =~ ^[0-9]+$ ]] || die "enter comma-separated menu numbers"
-                local idx=$((10#$n - 1))
-                if [[ $idx -ge 0 ]] && [[ $idx -lt ${#options[@]} ]]; then
-                    [[ -n "$out" ]] && out+=$'\n'
-                    out+="${options[$idx]}"
-                else
-                    die "invalid selection: $n"
-                fi
+        # Keep the same keyboard selection when the optional Gum download is unavailable.
+        # Bash read restores terminal settings itself, including on interruption.
+        local -a selected=()
+        local i cursor=0 key mark pointer hint="↑/↓ to move, Space to toggle, Enter to confirm"
+        for ((i=0; i<${#options[@]}; i++)); do selected+=(0); done
+        printf '%s%s%s\n' "$BOLD" "$msg" "$RESET" >/dev/tty
+        while true; do
+            for ((i=0; i<${#options[@]}; i++)); do
+                mark=" "; pointer=" "
+                if [[ "${selected[i]}" == 1 ]]; then mark="x"; fi
+                if [[ "$i" == "$cursor" ]]; then pointer=">"; fi
+                printf '\r\033[2K%s [%s] %s\n' "$pointer" "$mark" "${options[i]}" >/dev/tty
             done
-            PROMPT_RESULT="$out"
-        fi
+            printf '\r\033[2K%s' "$hint" >/dev/tty
+            IFS= read -r -s -n 1 key </dev/tty || exit "$CANCELLED_EXIT"
+            case "$key" in
+                $'\033')
+                    IFS= read -r -s -n 2 -t 1 key </dev/tty || exit "$CANCELLED_EXIT"
+                    case "$key" in
+                        '[A') cursor=$(( (cursor + ${#options[@]} - 1) % ${#options[@]} )) ;;
+                        '[B') cursor=$(( (cursor + 1) % ${#options[@]} )) ;;
+                    esac ;;
+                ' ') selected[cursor]=$((1 - selected[cursor])) ;;
+                '')
+                    PROMPT_RESULT=""
+                    for ((i=0; i<${#options[@]}; i++)); do
+                        if [[ "${selected[i]}" == 1 ]]; then
+                            PROMPT_RESULT="${PROMPT_RESULT:+$PROMPT_RESULT$'\n'}${options[i]}"
+                        fi
+                    done
+                    if [[ -n "$PROMPT_RESULT" ]]; then printf '\n' >/dev/tty; return; fi
+                    hint="Select at least one capability. ↑/↓ to move, Space to toggle, Enter to confirm" ;;
+                $'\004') exit "$CANCELLED_EXIT" ;;
+            esac
+            printf '\r\033[%dA' "${#options[@]}" >/dev/tty
+        done
     fi
 }
 
@@ -888,7 +898,7 @@ main() {
     fi
     if [[ "$NON_INTERACTIVE" != 1 ]]; then
         if ! install_gum 2>/dev/null; then
-            warn "could not load the interactive menu; enter capability numbers instead"
+            info "using the built-in capability multi-select menu (Gum unavailable)"
         fi
     fi
     show_banner

@@ -10,7 +10,7 @@ Choose an installation mode, destination, and one or both capabilities. The inst
 
 ## Choose capabilities
 
-Use the arrow keys to move, Space to toggle navigation and manipulation independently, and Enter to confirm. Nothing is preselected. Interactive runs use Gum (downloaded temporarily if needed); if it cannot be loaded, enter comma-separated menu numbers. Unattended runs do not download the menu helper. The same choices apply to both installation modes:
+Use the arrow keys to move, Space to toggle navigation and manipulation independently, and Enter to confirm. Nothing is preselected. Interactive runs use Gum (downloaded temporarily if needed); if it cannot be loaded, a built-in menu provides the same arrow-key/Space selection. Unattended runs do not download the menu helper. The same choices apply to both installation modes:
 
 | Capability | Included dependencies |
 | --- | --- |
