@@ -360,21 +360,22 @@ def memory_db_for(recording: str | Path) -> Path:
 
 
 def memory_db_ready(recording: str | Path) -> bool:
-    """True when the keyframes and patches are there AND the ingest that wrote them finished.
+    """True when the keyframes and patches are there and at least one keyframe is written.
 
     A companion db is built beside its final name and moved into place, so its mere
     existence says the ingest finished. Keyframes written into the recording itself have
-    no such moment: they appear one at a time, and a viewer that believed the first one
-    would search an index of one picture and call it the whole recording. The ingest
-    writes :data:`COMPLETE_STREAM` last and drops it first, so a run killed outright --
-    which no ``finally`` can clean up after -- still reads as unfinished.
+    no such moment -- they appear one at a time -- and nothing now distinguishes a
+    half-written index from a whole one. This used to require :data:`COMPLETE_STREAM`,
+    and that requirement was removed deliberately: the operator does not want the index
+    marked complete. The cost is real and is not hidden here -- an ingest killed outright
+    leaves an index that reads as finished and is merely short, and the recovery is a
+    rerun. Nothing writes the marker any more; :func:`drop_index` still deletes one it
+    finds, so an old marker cannot vouch for keyframes that have since been dropped.
     """
     path = memory_db_for(recording)
     if not path.is_file():
         return False
     wanted = {KEYFRAME_STREAM, PATCH_STREAM}
-    if path == Path(recording):
-        wanted.add(COMPLETE_STREAM)
     try:
         connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         try:

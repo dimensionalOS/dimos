@@ -25,6 +25,7 @@ so nothing else has to agree on a name. The tool is fetched and run with
 from __future__ import annotations
 
 from collections.abc import Callable
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -158,6 +159,19 @@ class EmbeddingJob:
             logger.exception("%s failed", self.name)
             self._set("failed", str(error)[-200:])
         finally:
+            if process is not None:
+                # The read loop above can leave this child alive and unreaped: anything it
+                # raises skips the process.wait() on the success path, and then nothing
+                # else waits on it. Closing the pipe first makes the child's next write
+                # fail, so one that ignores the terminate still finishes on its own.
+                if process.stdout is not None:
+                    with contextlib.suppress(OSError):
+                        process.stdout.close()
+                if process.poll() is None:
+                    with contextlib.suppress(OSError):
+                        process.terminate()
+                with contextlib.suppress(subprocess.TimeoutExpired, OSError):
+                    process.wait(timeout=10)
             with self._lock:
                 if self._process is process:  # a job started after "done" owns the handle now
                     self._process = None

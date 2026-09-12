@@ -1389,6 +1389,11 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
             if self._web_server_thread is not None:
                 self._web_server_thread.join(timeout=3)
                 self._web_server_thread = None
+            # Cleared with the thread. start() refuses to run while this is set, on the
+            # grounds that the module is "already serving" -- which is exactly false once
+            # stop() has shut it down, so leaving it set made a stopped module one that
+            # could never serve again, and said "already serving on port N" to explain it.
+            self._web_server = None
             with self._workers_lock:  # paired with _replay_if_ready: no worker starts after this
                 self._stopping.set()  # prepare stops between steps; a replay build per scan
                 threads = (self._prepare_thread, self._replay_thread)

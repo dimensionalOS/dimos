@@ -140,20 +140,34 @@ function setupWebSocket() {
         ws = socket;
         ws.binaryType = 'arraybuffer';
 
+        // Settled once: a socket that closes after it opened must not reject the
+        // promise connect() already moved past, and one that closes without ever
+        // opening must not leave connect() awaiting a promise nothing will settle.
+        let settled = false;
         ws.onopen = () => {
             setStatus('Server connected — starting VR…');
             flushPendingDiag();
             diag('ws_open');
+            settled = true;
             resolve();
         };
         ws.onerror = (e) => {
             if (ws !== socket) return;  // a stale socket's error must not touch the live status
             console.error('[ws] error', e);
             setStatus('WebSocket error');
+            settled = true;
             reject(e);
         };
         ws.onclose = () => {
             log('ws closed');
+            if (!settled) {
+                // Closed before it ever opened. A failed handshake fires error first, so
+                // this is normally already settled; without it a close that arrives alone
+                // would hang connect() forever with the button disabled.
+                settled = true;
+                reject(new Error('the websocket closed before it opened'));
+                return;
+            }
             if (ws === socket) void disconnect();  // dropped by the server: same teardown
         };
         ws.onmessage = (event) => {
@@ -978,6 +992,14 @@ async function connect() {
         void loadFrames();
         if (document.body.classList.contains('desktop-view')) orbitBtn.classList.remove('hidden');
     } catch (e) {
+        // The socket may already be open: setupWebSocket resolves before startViewer
+        // runs, so anything startViewer throws (no WebXR, a scene that will not build)
+        // used to leave it open and registered on the server, and the next Connect
+        // opened a second one beside it.
+        if (ws) {
+            try { ws.close(); } catch (_) { /* ignore */ }
+            ws = null;
+        }
         console.error(e);
         setStatus(`Connection failed: ${e.message || e}`);
         connectBtn.disabled = false;

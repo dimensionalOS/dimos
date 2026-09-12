@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 from pathlib import Path
 import sqlite3
+from typing import Any
 from unittest import mock
 
 import numpy as np
@@ -150,13 +151,16 @@ def test_memory_db_ready_needs_both_streams(tmp_path) -> None:
     assert memory_db_ready(recording)
 
 
-def test_keyframes_in_the_recording_are_not_ready_until_the_ingest_says_so(tmp_path) -> None:
-    """An mcap's companion is moved into place whole, so its existence says the ingest
-    finished. Keyframes written into the recording itself appear one at a time.
+def test_keyframes_in_the_recording_are_ready_without_a_completion_marker(tmp_path) -> None:
+    """Keyframes written into the recording itself are ready as soon as one exists.
 
-    Without a marker a viewer opening during an ingest -- or after one was killed outright,
-    which no ``finally`` can clean up after -- would search the handful of pictures that
-    happened to be written by then and present them as the whole recording.
+    This is the deliberate trade made when the operator asked for the completion marker
+    to go: a viewer opening during an ingest -- or after one was killed outright, which
+    no ``finally`` can clean up after -- now sees the handful of pictures written by then
+    and reports a finished index that is merely short. The recovery is a rerun.
+
+    Pinned because it is the surprising half of the behaviour. If someone reinstates a
+    completeness check, this test is the record of why it was removed.
     """
     recording = tmp_path / "walk.db"
     assert memory_db_for(recording) == recording
@@ -165,11 +169,34 @@ def test_keyframes_in_the_recording_are_not_ready_until_the_ingest_says_so(tmp_p
     db.execute("CREATE TABLE _streams (name TEXT)")
     db.execute("INSERT INTO _streams VALUES ('hyperspace_keyframes'), ('hyperspace_patches')")
     db.execute("CREATE TABLE hyperspace_keyframes (id INTEGER)")
+    db.commit()
+    assert not memory_db_ready(recording), "no keyframes written yet"
+
     db.execute("INSERT INTO hyperspace_keyframes VALUES (1)")
     db.commit()
-    assert not memory_db_ready(recording), "an ingest that is still running, or was killed"
+    db.close()
+    # one keyframe, no marker: ready, and indistinguishable from a whole index
+    assert memory_db_ready(recording)
 
-    db.execute("INSERT INTO _streams VALUES ('hyperspace_complete')")
+
+def test_an_old_completion_marker_does_not_make_an_empty_index_ready(tmp_path) -> None:
+    """A marker left behind by a pre-change ingest must not vouch for nothing.
+
+    Recordings indexed before the marker was removed still carry one. It is no longer
+    read, so it can neither help nor hurt -- what decides is whether a keyframe is there.
+    """
+    recording = tmp_path / "old.db"
+    db = sqlite3.connect(recording)
+    db.execute("CREATE TABLE _streams (name TEXT)")
+    db.execute(
+        "INSERT INTO _streams VALUES"
+        " ('hyperspace_keyframes'), ('hyperspace_patches'), ('hyperspace_complete')"
+    )
+    db.execute("CREATE TABLE hyperspace_keyframes (id INTEGER)")
+    db.commit()
+    assert not memory_db_ready(recording), "a marker over an empty keyframe table"
+
+    db.execute("INSERT INTO hyperspace_keyframes VALUES (1)")
     db.commit()
     db.close()
     assert memory_db_ready(recording)
@@ -218,7 +245,20 @@ def _stub_hyperspace(monkeypatch, ingest):  # type: ignore[no-untyped-def]
     import sys
     from types import SimpleNamespace
 
-    patches = SimpleNamespace(KeyframeGateConfig=lambda **kw: None)
+    # Records what the ingest asks for instead of discarding it. The old stub was
+    # `lambda **kw: None`, so no test could tell whether a gate field reached the gate
+    # at all -- a knob wired to nothing would have passed the whole suite.
+    recorded: dict[str, Any] = {"gate": None, "ingest": None}
+
+    def gate_config(**kw: Any) -> Any:
+        recorded["gate"] = kw
+        return SimpleNamespace(**kw)
+
+    def ingest_config(**kw: Any) -> Any:
+        recorded["ingest"] = kw
+        return SimpleNamespace(**kw)
+
+    patches = SimpleNamespace(KeyframeGateConfig=gate_config)
     monkeypatch.setitem(
         sys.modules, "dimos.mapping.hyperspace", SimpleNamespace(patches=patches, __path__=[])
     )
@@ -236,16 +276,18 @@ def _stub_hyperspace(monkeypatch, ingest):  # type: ignore[no-untyped-def]
     monkeypatch.setitem(
         sys.modules,
         "dimos.mapping.hyperspace.ingest",
-        SimpleNamespace(IngestConfig=lambda **kw: None),
+        SimpleNamespace(IngestConfig=ingest_config),
     )
     monkeypatch.setattr("dimos.teleop.memory_world.hyperspace_ingest._ingest", ingest)
+    return recorded
 
 
 def test_the_keyframes_are_written_into_the_recording_and_no_companion_appears(  # type: ignore[no-untyped-def]
     tmp_path, monkeypatch
 ) -> None:
-    """One db. A .db recording gets its own keyframes, its own patches and its own marker,
-    and nothing is created beside it -- which is the whole point of the change.
+    """One db. A .db recording gets its own keyframes and its own patches, and nothing is
+    created beside it -- which is the whole point of the change. No completion marker is
+    written any more, and this asserts its ABSENCE so a reinstated write is caught here.
 
     It also gets one tf tree: a mount declared only in tf_static is invisible to Hyperspace,
     which reads the moving tf alone, so the statics are folded in before anything is
@@ -278,7 +320,8 @@ def test_the_keyframes_are_written_into_the_recording_and_no_companion_appears( 
     store.start()
     try:
         names = set(store.list_streams())
-        assert {KEYFRAME_STREAM, PATCH_STREAM, "hyperspace_complete"} <= names
+        assert {KEYFRAME_STREAM, PATCH_STREAM} <= names
+        assert "hyperspace_complete" not in names, "the marker must not be written again"
         assert "tf_static" not in names  # folded into tf, so there is one tree
         edges = {
             (str(t.frame_id), str(t.child_frame_id))
@@ -766,7 +809,6 @@ def test_the_frames_route_reads_the_store_off_the_event_loop() -> None:
     import asyncio
     import threading
     from types import SimpleNamespace
-    from typing import Any
 
     from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
 
@@ -1026,3 +1068,33 @@ def test_the_last_place_an_answer_names_is_still_sent_its_pictures() -> None:
     assert sent_per_cluster == [EVIDENCE_PER_CLUSTER] * MAX_CLUSTERS, (
         f"a place the answer named was sent no picture: {sent_per_cluster}"
     )
+
+
+def test_the_ingest_hands_its_gate_settings_to_the_keyframe_gate(  # type: ignore[no-untyped-def]
+    tmp_path, monkeypatch
+) -> None:
+    """The novelty the caller asks for must reach KeyframeGateConfig.
+
+    There was no test for this: the stub used to be ``lambda **kw: None``, which threw the
+    kwargs away, so a setting wired to nothing looked exactly like a setting wired
+    correctly. Coverage is set by these knobs, so a silently dropped one is expensive.
+    """
+    from dimos.teleop.memory_world.hyperspace_ingest import ingest_recording
+
+    recording = tmp_path / "walk.db"
+    _tiny_recording(recording).stop()
+
+    def fake_ingest(store, memory, model, **kw):  # type: ignore[no-untyped-def]
+        from dimos.msgs.std_msgs.String import String
+
+        memory.stream(KEYFRAME_STREAM, String).append(String("a keyframe"), ts=1.0)
+        memory.stream(PATCH_STREAM, String).append(String("a patch"), ts=1.0)
+        return {"images": 1, "kept": 1}
+
+    recorded = _stub_hyperspace(monkeypatch, fake_ingest)
+    ingest_recording(recording, model_name="stub", novelty=0.037)
+
+    assert recorded["gate"] is not None, "KeyframeGateConfig was never constructed"
+    assert recorded["gate"]["novelty_threshold"] == 0.037
+    assert recorded["ingest"] is not None, "IngestConfig was never constructed"
+    assert recorded["ingest"]["gate"] is not None, "the gate never reached the ingest config"

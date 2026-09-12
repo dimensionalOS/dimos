@@ -275,20 +275,13 @@ def ingest_recording(
             for suffix in ("-wal", "-shm"):
                 memory_path.with_name(memory_path.name + suffix).unlink(missing_ok=True)
             building.replace(memory_path)
-        else:
-            # The moment the keyframes become a finished index. Nothing else says so:
-            # they were written into the recording one at a time, so the marker is what
-            # tells a viewer opening mid-ingest that it is looking at half of one.
-            from dimos.msgs.std_msgs.String import String
-
-            done = SqliteStore(path=str(recording), must_exist=True)
-            done.start()
-            try:
-                done.stream(COMPLETE_STREAM, String).append(
-                    String(f"{stats.get('kept', 0)} keyframes, {model_name}"), ts=time.time()
-                )
-            finally:
-                done.stop()
+        # Nothing marks the in-place index finished. There used to be a
+        # COMPLETE_STREAM written here, and dropping it is a deliberate trade the
+        # operator asked for: a half-written index is now indistinguishable from a
+        # whole one, so a run killed outright reads as a complete index that happens
+        # to be short, and the only recovery is a rerun. COMPLETE_STREAM is still
+        # DELETED wherever it is found, because recordings indexed before this change
+        # carry one and it would vouch for keyframes that have since been dropped.
         published = True
     finally:
         if building is None and writing_started and not published and memory_path == recording:

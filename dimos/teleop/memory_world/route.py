@@ -282,9 +282,12 @@ class RoutePlanner:
     # ---- planning ----------------------------------------------------------
 
     def cell_of(self, xy: tuple[float, float]) -> tuple[int, int]:
-        col = int((xy[0] - self.origin_xy[0]) / self.resolution)
-        row = int((xy[1] - self.origin_xy[1]) / self.resolution)
-        return row, col
+        # floor, not int(): int() truncates toward zero, so a point up to one cell BELOW
+        # the origin landed on cell 0 instead of -1 and passed the bounds check that
+        # every caller makes on the result. world_of's `+ 0.5` is floor's inverse.
+        col = math.floor((xy[0] - self.origin_xy[0]) / self.resolution)
+        row = math.floor((xy[1] - self.origin_xy[1]) / self.resolution)
+        return int(row), int(col)
 
     def world_of(self, row: int, col: int) -> tuple[float, float]:
         return (
