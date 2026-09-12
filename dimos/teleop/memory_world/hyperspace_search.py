@@ -573,7 +573,11 @@ class HyperspaceSearch:
         hits = _hits_of(fast, result, members)
         for cluster in clusters:
             saw_it = [hits[i] for i in members[owner[members] == cluster.index]]
-            cluster.views = len({hit.keyframe_id for hit in saw_it})
+            # A viewpoint is a camera at a moment, not a record. Segments carry their own
+            # synthetic ids, so counting ids made one camera looking once -- a patch hit and
+            # three segment hits from the same frame -- read as four viewpoints, and that
+            # place then outranked one seen in two real photographs.
+            cluster.views = len({(hit.camera_frame, hit.ts) for hit in saw_it})
             cluster.evidence = _pick_evidence(saw_it)
         # Ranked by how many viewpoints saw it, which is the question a person is really
         # asking: a thing seen from eight places is more likely to be the thing than one

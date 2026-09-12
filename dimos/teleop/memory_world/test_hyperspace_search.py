@@ -681,3 +681,31 @@ def test_the_dense_refine_never_keeps_occupancy() -> None:
 
     assert seen["methods"], "refine was never reached, so this proves nothing"
     assert "occupancy" not in seen["methods"], seen["methods"]
+
+
+def test_one_camera_looking_once_is_one_viewpoint() -> None:
+    """Patches and segments are two readings of the same photograph, not two viewpoints.
+
+    Segments carry their own synthetic ids, so counting ids made a place with one patch hit
+    and three segment hits from a single frame read as FOUR viewpoints — and rank above a
+    place genuinely seen in two photographs. A viewpoint is a camera at a moment.
+    """
+    from types import SimpleNamespace
+
+    def hit(ident: int, ts: float, channel: str):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(keyframe_id=ident, camera_frame="cam", ts=ts, channel=channel)
+
+    one_frame_four_records = [
+        hit(1, 10.0, "patches"),
+        hit(9001, 10.0, "segments"),
+        hit(9002, 10.0, "segments"),
+        hit(9003, 10.0, "segments"),
+    ]
+    two_real_photographs = [hit(1, 10.0, "patches"), hit(2, 20.0, "patches")]
+
+    def views(records):  # type: ignore[no-untyped-def]
+        return len({(h.camera_frame, h.ts) for h in records})
+
+    assert views(one_frame_four_records) == 1
+    assert views(two_real_photographs) == 2
+    assert views(two_real_photographs) > views(one_frame_four_records)
