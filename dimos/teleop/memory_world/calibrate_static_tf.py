@@ -422,10 +422,10 @@ def drop_what_the_mount_invalidates(store: Any, recording: str) -> list[str]:
             continue
         if payload != "PatchGrid":
             continue
-        try:
-            store.delete_stream(name)
-        except ValueError:  # part of the recording itself: not ours to remove
-            continue
+        # No guard for a read-only stream: --write refuses an mcap before it measures
+        # anything (its tf belongs to the recording), so this only ever runs on a .db,
+        # where every stream is ours to remove.
+        store.delete_stream(name)
         dropped.append(name)
     return dropped
 
