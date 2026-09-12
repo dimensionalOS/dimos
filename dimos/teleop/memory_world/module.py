@@ -72,11 +72,8 @@ from dimos.teleop.memory_world.query import (
 )
 from dimos.teleop.memory_world.recording import (
     build_tf_tree,
-    detect_streams,
+    name_streams,
     open_recording,
-    pick_lidar,
-    tf_root,
-    usable_streams,
 )
 from dimos.teleop.memory_world.replay import (
     DIFF_STREAM,
@@ -509,49 +506,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             return self._store
 
     def _name_streams(self, store: Store) -> None:
-        """Name the streams (and the world frame) the config left empty or the recording lacks.
-
-        Roles are filled from the recording's message types, the lidar from
-        whichever point-cloud stream agrees with tf, the world frame from the tf
-        root; a name given on the command line is kept when the recording has it.
-        """
-        # A configured colour stream keeps its own camera_info paired to it.
-        detected = detect_streams(store, image=self.config.image_stream_name or None)
-        usable = usable_streams(store)  # named is not enough; see the note at the check below
-        # tf first: naming the lidar needs the tree.
-        for role, setting in (
-            ("tf", "tf_stream_name"),
-            ("image", "image_stream_name"),
-            ("depth", "depth_stream_name"),
-            ("camera_info", "camera_info_stream_name"),
-            ("lidar", "lidar_stream_name"),
-        ):
-            configured = getattr(self.config, setting)
-            if configured and configured not in usable:
-                # Why, and what "" means: see usable_streams in recording.py. Said HERE
-                # because clearing the name makes this the only place it can be said.
-                why = "empty" if configured in store.list_streams() else "not in the recording"
-                logger.warning("%s: %r is %s; ignoring it", setting, configured, why)
-                setattr(self.config, setting, "")
-                configured = ""
-            if configured or detected[role] is None:
-                continue
-            chosen = detected[role]
-            if role == "lidar" and len(detected["lidar_candidates"]) > 1:
-                tree = self._tf_tree()  # tf is named first, so the tree can be read now
-                if tree is not None:
-                    world = self.config.world_frame
-                    if world not in tree.frames:
-                        world = tf_root(tree) or world
-                    chosen = pick_lidar(store, detected["lidar_candidates"], tree, world) or chosen
-            setattr(self.config, setting, chosen)
-            logger.info("%s: using %r (detected)", setting, chosen)
-        tree = self._tf_tree()
-        if tree is not None and self.config.world_frame not in tree.frames:
-            root = tf_root(tree)
-            if root:
-                logger.info("world_frame: using %r (the tf root)", root)
-                self.config.world_frame = root
+        """Name the streams and the world frame. See `name_streams` in recording.py."""
+        name_streams(store, self.config, self._tf_tree)
 
     def _ensure_world_cache(
         self,
@@ -1489,6 +1445,16 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
 
     @rpc
     def start(self) -> None:
+        # A second start would build a second server over the handle of the first, log
+        # that it started, and only then fail to bind -- inside the thread, where the
+        # Errno 48 reaches nobody. `stop()` would then shut the handle that never bound
+        # and leave the REAL listener serving a module whose store it has just closed,
+        # and `memworld`'s probe takes any answer on the port as success, so the next
+        # launch prints its URLs over the previous recording's world. Seen in the live
+        # log tonight: two "server started" lines from one pid with an Errno 48 between.
+        if self._web_server is not None:
+            logger.warning("already serving on port %d; start() ignored", self.config.server_port)
+            return
         super().start()
         self._web_server = RobotWebInterface(
             host=self.config.listen_host,
@@ -1502,6 +1468,17 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             name="MemoryWorldWebServer",
         )
         self._web_server_thread.start()
+        # Give the bind a moment to fail before saying it worked: uvicorn's Errno 48
+        # arrives a couple of milliseconds after run(), and a thread that has already
+        # exited is the only evidence of it this side of the log. Said, not raised -- a
+        # server that simply returns is not necessarily a failure (a stub in a test does
+        # exactly that), and the orphaned-listener bug is fixed by the guard above.
+        self._web_server_thread.join(0.25)
+        if not self._web_server_thread.is_alive():
+            logger.warning(
+                "the web server thread exited at once; port %d may already be in use",
+                self.config.server_port,
+            )
         logger.info(
             "memory-world server started on https://%s:%d",
             self.config.listen_host,

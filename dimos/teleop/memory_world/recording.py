@@ -27,7 +27,7 @@ info and tf messages are decoded here.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 import json
 import math
@@ -453,6 +453,57 @@ def usable_streams(store: Any) -> set[str]:
         except Exception:  # a stream this build cannot open is not usable either
             continue
     return usable
+
+
+def name_streams(store: Any, config: Any, tf_tree: Callable[[], Any]) -> None:
+    """Name the streams (and the world frame) the config left empty or the recording lacks.
+
+    Roles are filled from the recording's message types, the lidar from whichever
+    point-cloud stream agrees with tf, the world frame from the tf root; a name given on
+    the command line is kept when the recording has it AND it holds something.
+
+    Lives here rather than on the module because everything it decides with --
+    `detect_streams`, `usable_streams`, `pick_lidar`, `tf_root` -- is here, and module.py
+    is at the repository's file-size limit. *tf_tree* is a callable because the tree can
+    only be read after tf itself has been named, which happens inside the loop.
+    """
+    # A configured colour stream keeps its own camera_info paired to it.
+    detected = detect_streams(store, image=config.image_stream_name or None)
+    usable = usable_streams(store)  # named is not enough; see usable_streams above
+    # tf first: naming the lidar needs the tree.
+    for role, setting in (
+        ("tf", "tf_stream_name"),
+        ("image", "image_stream_name"),
+        ("depth", "depth_stream_name"),
+        ("camera_info", "camera_info_stream_name"),
+        ("lidar", "lidar_stream_name"),
+    ):
+        configured = getattr(config, setting)
+        if configured and configured not in usable:
+            # Said HERE because clearing the name makes this the only place it can be
+            # said, and absent and empty are different things for an operator to hear.
+            why = "empty" if configured in store.list_streams() else "not in the recording"
+            logger.warning("%s: %r is %s; ignoring it", setting, configured, why)
+            setattr(config, setting, "")
+            configured = ""
+        if configured or detected[role] is None:
+            continue
+        chosen = detected[role]
+        if role == "lidar" and len(detected["lidar_candidates"]) > 1:
+            tree = tf_tree()  # tf is named first, so the tree can be read now
+            if tree is not None:
+                world = config.world_frame
+                if world not in tree.frames:
+                    world = tf_root(tree) or world
+                chosen = pick_lidar(store, detected["lidar_candidates"], tree, world) or chosen
+        setattr(config, setting, chosen)
+        logger.info("%s: using %r (detected)", setting, chosen)
+    tree = tf_tree()
+    if tree is not None and config.world_frame not in tree.frames:
+        root = tf_root(tree)
+        if root:
+            logger.info("world_frame: using %r (the tf root)", root)
+            config.world_frame = root
 
 
 def depth_info_stream_for(store: Any, depth_stream: str, camera_info: str) -> str:

@@ -16,6 +16,7 @@ from collections.abc import Iterator
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import numpy as np
 from pydantic import ValidationError
@@ -664,7 +665,8 @@ def test_the_operator_is_told_which_way_their_named_stream_was_unusable(
         def __getattr__(self, _name: str):  # info, exception, ... are not under test
             return lambda *a, **k: None
 
-    monkeypatch.setattr("dimos.teleop.memory_world.module.logger", Recorder())
+    # recording.logger, not module.logger: name_streams lives beside the helpers it uses.
+    monkeypatch.setattr("dimos.teleop.memory_world.recording.logger", Recorder())
 
     module = MemoryWorldModule(store_path=str(db_path), image_stream_name="front_camera")
     try:
@@ -676,4 +678,58 @@ def test_the_operator_is_told_which_way_their_named_stream_was_unusable(
         other = "not in the recording" if expected == "empty" else "empty"
         assert other not in about[0], about[0]
     finally:
+        module.stop()
+
+
+def test_a_second_start_does_not_orphan_the_server_that_is_serving(tmp_path: Path) -> None:
+    """`stop()` shut the handle that never bound, and the real listener survived it.
+
+    `start()` had no guard. A second call built a new RobotWebInterface over the first
+    handle, logged "memory-world server started", and only then failed to bind inside the
+    thread, where the Errno 48 reaches nobody. After that `self._web_server` pointed at a
+    server that never bound while the FIRST was still listening -- so `stop()` shut the
+    dead one, the port kept serving a module whose store had just been closed, and
+    `memworld`'s probe (which takes any answer on the port as success) would print its
+    URLs over the PREVIOUS recording's world.
+
+    Seen in the live log: two "server started" lines from one pid, two hours apart, with
+    `[Errno 48] address already in use` between them.
+    """
+    import socket
+    import threading
+
+    db_path = tmp_path / "recording.db"
+    _empty_store(db_path)
+
+    with socket.socket() as probe:  # a port nothing else is on
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+
+    started: list[object] = []
+
+    class FakeWeb:
+        def __init__(self, **kwargs: object) -> None:
+            from fastapi import FastAPI
+
+            self.app = FastAPI()  # _setup_routes registers on it
+            self.done = threading.Event()
+            started.append(self)
+
+        def run(self, **kwargs: object) -> None:
+            self.done.wait(30)  # stays up like a bound server, and stops when asked
+
+        def shutdown(self) -> None:
+            self.done.set()
+
+    module = MemoryWorldModule(store_path=str(db_path), server_port=port)
+    monkey = mock.patch("dimos.teleop.memory_world.module.RobotWebInterface", FakeWeb)
+    monkey.start()
+    try:
+        module.start()
+        first = module._web_server
+        module.start()  # the second one, which used to take over
+        assert module._web_server is first, "a second start replaced the live server"
+        assert len(started) == 1, "a second server was built over the first"
+    finally:
+        monkey.stop()
         module.stop()
