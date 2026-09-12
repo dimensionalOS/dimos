@@ -742,7 +742,17 @@ class FastQuery:
         engine.keyframe(-1)  # loads every keyframe
         place = engine.placer(world_frame)  # one tf pass
         self.patches = PatchBank(list(engine._keyframes.values()), place)
-        self.backgrounds = np.asarray(engine.backgrounds(), np.float32)
+        # One array per ensemble member since the tiled-ingest work landed. This bank
+        # holds ONE grid per keyframe, so it can only mirror one member: taking member 0
+        # silently would answer with the wrong tower on an ensemble store.
+        backgrounds = engine.backgrounds()
+        if len(backgrounds) > 1:
+            raise SystemExit(
+                f"this store was embedded with {len(backgrounds)} ensemble members, and the"
+                " fast path mirrors one. Re-ingest with a single model, or use the engine"
+                " directly."
+            )
+        self.backgrounds = np.asarray(backgrounds[0] if backgrounds else [], np.float32)
         self.patches.background_sims(self.backgrounds)
         # Not gated on segment_weight: the structural gate reads the same bank, and
         # SegmentBank.hot already no-ops at weight 0. Gating here turned the gate off

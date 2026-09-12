@@ -93,6 +93,8 @@ REFINE_MAX_VOXELS = 3000
 # the sparse components here answer instead, or the box would be gigabytes.
 REFINE_MAX_EXTENT_M = 60
 REFINE_MAX_CELLS = 50_000_000  # the dense box refine grids: 200 MB of float32.0
+# The occupancy gate is trusted only when it keeps at least this share of the hot voxels.
+GROUNDED_FLOOR = 0.2
 MAX_PYRAMIDS = 240
 
 
@@ -394,7 +396,6 @@ class HyperspaceSearch:
         config: Any | None = None,
         use_segments: bool = True,
         refine: str = "default",
-        scene: NDArray[np.floating] | None = None,
     ) -> None:
         self.memory_db = Path(memory_db)
         self.model_name = model_name
@@ -408,8 +409,6 @@ class HyperspaceSearch:
         self.refine = refine
         self._config = config
         self._scene_keys: NDArray[np.int64] | None = None
-        if scene is not None:
-            self.set_scene(scene)
         self._lock = threading.Lock()
         self._store: Any = None
         self._model: Any = None
@@ -419,12 +418,26 @@ class HyperspaceSearch:
 
     # ---- lifecycle ---------------------------------------------------------
 
-    def set_scene(self, points: NDArray[np.floating]) -> None:
-        """The map's occupied points (world frame); refine's occupancy step keeps
-        heat only next to them. Quantized to the heat map's voxel size."""
-        points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
-        # Packed keys: np.unique over rows is minutes on a city-scale map, over int64 keys it is seconds.
-        self._scene_keys = np.unique(pack_keys(np.floor(points / self.voxel_size).astype(np.int64)))
+    def _load_scene(self, engine: Any) -> None:
+        """Where the keyframes saw a surface: what grounds a hot voxel.
+
+        NOT the ray-traced map, which is what this used to be. That map clears a voxel
+        the moment a later scan sees through it, so a basket that was moved has its
+        original place cleared -- and the grounding test then throws away the true
+        location and keeps whatever wrong one happens to sit on a surface. The
+        keyframes' own depth thumbnails are a union over time that nothing clears, so
+        a thing that was somewhere at some point stays grounded there.
+        """
+        voxels = engine.scene_voxels(self.world_frame)
+        if not voxels:
+            # Said out loud: with no scene the occupancy gate does nothing at all, and an
+            # answer that floats in mid-air then has nothing to catch it.
+            logger.warning("no scene voxels from the keyframes: heat will not be grounded")
+            self._scene_keys = None
+            return
+        indices = np.asarray([index for index, _ in voxels], dtype=np.int64)
+        self._scene_keys = np.unique(pack_keys(indices))
+        logger.info("scene: %d voxels seen by the keyframes' depth", len(self._scene_keys))
 
     def warm(self) -> None:
         """Load the model, every keyframe and the segments so the first answer is not slow."""
@@ -480,6 +493,7 @@ class HyperspaceSearch:
                 world_frame=self.world_frame,
                 voxel_size=self.voxel_size,
             )
+            self._load_scene(engine)
             fast = FastQuery(
                 engine,
                 world_frame=self.world_frame,
@@ -518,7 +532,13 @@ class HyperspaceSearch:
             # Done here on sorted keys (sparse, fast) rather than by refine's dense grid,
             # which on a city-scale map would span kilometres.
             grounded = near_scene(result.index, self._scene_keys)
-            if (keep & grounded).any():
+            # Only when enough of the heat is grounded to believe the gate. A depth
+            # thumbnail misses glass, dark shelves and anything out of range, so a
+            # location can be real and ungrounded; firing whenever a single voxel
+            # survives turns "the true place was never seen in depth" into "keep only
+            # the wrong places", which is worse than not gating at all.
+            surviving = int((keep & grounded).sum())
+            if surviving and surviving >= GROUNDED_FLOOR * int(keep.sum()):
                 keep &= grounded
         refined = (
             self._refine(text, result, keep) if self.refine not in ("occupancy", "none") else None

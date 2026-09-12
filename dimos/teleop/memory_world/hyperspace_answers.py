@@ -159,7 +159,6 @@ class HyperspaceAnswers:
                     device=self.config.hyperspace_device,
                     use_segments=self.config.hyperspace_segments,
                     refine=self.config.hyperspace_refine,
-                    scene=self._map_points(),
                 )
                 search.warm()
             except (Exception, SystemExit) as error:
