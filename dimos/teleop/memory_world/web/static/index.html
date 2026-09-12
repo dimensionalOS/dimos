@@ -398,6 +398,19 @@
             overflow-wrap: anywhere;
         }
         #answerText[hidden] { display: none; }
+        /* A phone screen is mostly UI otherwise. Everything hidden here is reachable from
+           the ☰ menu, which is why it can go: Disconnect and the orbit-frame button are in
+           it verbatim, and Show map is the "Minimap + answer panel" checkbox. The status
+           line is running commentary that the answer panel and the results bar already
+           say better, so it stays only until the world is up, and for errors. Answer and
+           Camera keep their buttons: nothing in the menu does what they do, and a phone
+           has no keyboard to press J or P with. */
+        body.touch.connected #status,
+        body.touch #disconnectBtn,
+        body.touch #orbitBtn,
+        body.touch #hudBtn,
+        body.touch #orbitTouchBtn { display: none; }
+        body.touch.connected #status.error { display: block; }
         /* On a narrow screen the header stack (title, status, connect row) is tall enough
            to reach the answer's fixed top, and the two overlapped -- measured at 390px,
            the answer ran 84..193 straight through the status line at 70..112. Below that
@@ -581,6 +594,7 @@
         <label><input type="checkbox" id="layerPhotos" checked> Photos</label>
         <label><input type="checkbox" id="layerHud" checked> Minimap + answer panel</label>
         <h2>Advanced</h2>
+        <button id="menuDisconnectBtn">Disconnect</button>
         <button id="embedBtn" class="hidden">Add SigLIP embeddings (siglipify)</button>
         <div class="note">Keys: ← → places · N navigate · O orbit · T tour · H menu · I photos · V voxels · M minimap</div>
     </div>

@@ -112,13 +112,14 @@ try {
     diag('scene_module_failed', { error: String(err && err.message || err) });
 }
 
-function setStatus(msg) {
+function setStatus(msg, isError = false) {
     statusEl.textContent = msg;
+    statusEl.classList.toggle('error', Boolean(isError));
 }
 
 window.onerror = (msg, url, line, col, err) => {
     console.error(`[err] ${msg} at ${url}:${line}:${col}`, err);
-    setStatus(`Error: ${msg}`);
+    setStatus(`Error: ${msg}`, true);
     diag('window_error', { msg: String(msg), url: String(url), line, col });
 };
 window.addEventListener('unhandledrejection', (e) => {
@@ -493,6 +494,9 @@ async function startViewer() {
         diag('vr_unavailable_using_desktop', { error: 'navigator.xr missing' });
     }
     document.body.classList.add('desktop-view');
+    // `connected` gates the phone's chrome: the status line is worth reading while the
+    // world is still coming up and noise once it is there.
+    document.body.classList.add('connected');
     scene.startDesktop(sendViewerPose);
     setStatus('Desktop view — click to look, WASD to walk');
 }
@@ -809,6 +813,12 @@ document.getElementById('menuNextBtn').addEventListener('click', () => results &
 document.getElementById('menuOrbitResultBtn').addEventListener('click', () => results && results.orbitCurrent());
 document.getElementById('menuNavigateBtn').addEventListener('click', () => results && results.navigate());
 document.getElementById('menuOrbitBtn').addEventListener('click', () => setOrbit(!scene?.isOrbiting()));
+// The phone hides the on-screen Disconnect, so the menu has to carry one or there is no
+// way back from a connected session on a device with no keyboard.
+document.getElementById('menuDisconnectBtn').addEventListener('click', () => {
+    document.body.classList.remove('connected');
+    window.app.disconnect();
+});
 const layerBoxes = {
     heat: document.getElementById('layerHeat'),
     pyramids: document.getElementById('layerPyramids'),
