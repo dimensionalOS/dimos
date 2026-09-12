@@ -145,6 +145,42 @@ def test_unreachable_snap_returns_none() -> None:
     assert planner.snap((30.0, 30.0)) is None
 
 
+def test_snap_measures_from_the_point_asked_about_not_the_cell_it_fell_in() -> None:
+    """Every cell in a ring is the same number of hops away; they are not the same distance.
+
+    `snap` ranked candidates by CELL INDEX, so a diagonal neighbour and an orthogonal one
+    were 2 and 1 hops and argmin always took the orthogonal -- however far away it actually
+    was. `radius_m` was a bound on hops too, so the cell handed back could be further than
+    the caller allowed.
+
+    The grid is built by hand because the room fixtures cannot show it: `snap` returns the
+    point unchanged when its own cell is passable, and in a room the free neighbours of a
+    blocked cell are all on one side, where hops and metres happen to agree. Here the only
+    free cells are the diagonal at the corner the query sits in, and an orthogonal one on
+    the far side.
+    """
+    res = 1.0
+    costs = np.full((3, 3), LETHAL, dtype=np.int8)
+    costs[0, 0] = 0  # diagonal, up-left of centre
+    costs[1, 2] = 0  # orthogonal, to the right of centre
+    planner = RoutePlanner(costs, np.zeros((3, 3)), origin_xy=(0.0, 0.0), resolution=res)
+
+    # Hard against the up-left corner of the blocked centre cell, whose centre is (1.5,1.5).
+    asked = (1.05, 1.05)
+    diagonal = planner.world_of(0, 0)  # (0.5, 0.5)
+    orthogonal = planner.world_of(1, 2)  # (2.5, 1.5)
+    assert math.dist(asked, diagonal) < math.dist(asked, orthogonal), "fixture is not asymmetric"
+
+    got = planner.snap(asked, radius_m=5.0)
+
+    assert got == diagonal, (
+        f"snapped to {got} ({math.dist(asked, got):.2f} m) over {diagonal} "
+        f"({math.dist(asked, diagonal):.2f} m): ranked by hops, not metres"
+    )
+    # ...and radius_m bounds METRES: the nearest free cell is 0.78 m away, so 0.5 refuses.
+    assert planner.snap(asked, radius_m=0.5) is None, "returned a cell outside the radius asked for"
+
+
 def test_a_point_below_the_origin_lands_on_a_negative_cell() -> None:
     """`cell_of` floors rather than truncating, and only negative coordinates show it.
 
