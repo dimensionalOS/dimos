@@ -457,33 +457,29 @@ _STREAM_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "image": (("color", "rgb", "camera"), ("depth", "infra", "ir_", "_ir", "mask")),
     "depth": (("depth",), ("color", "rgb", "infra")),
     "camera_info": (("color", "rgb"), ("depth", "infra")),
-    # An icp-stitched recording carries `<lidar>_corrected` beside the raw scans: loop
-    # closures applied, so it wins.
-    "lidar": (("corrected", "lidar", "cloud", "points", "scan"), ("costmap", "map", "accumulated")),
+    # An icp-stitched recording carries `<lidar>_corrected` beside the raw scans. The raw
+    # scans win: the stitch's loop closure moves the clouds out from under Hyperspace's
+    # keyframe poses, so its answers land somewhere the map no longer agrees with.
+    "lidar": (
+        ("lidar", "cloud", "points", "scan"),
+        ("costmap", "map", "accumulated", "corrected"),
+    ),
     "tf": (("tf",), ("static",)),
     "tf_static": (("static",), ()),
 }
 
 
-def corrected_odometry_stream(store: Store) -> str | None:
-    """The loop-closed odometry an icp stitch writes (``*_odometry_corrected``), if any."""
-    for name in sorted(store.list_streams()):
-        if name.endswith("_corrected") and "odom" in name.lower():
-            try:
-                if store.stream(name).data_type is Odometry:
-                    return name
-            except Exception:  # a stream this build cannot open
-                continue
-    return None
-
-
 def build_tf_tree(
     store: Store, tf_stream: str, world_frame: str | None = None, base_frame: str = "base_link"
 ) -> TfTree:
-    """The recording's tf tree, with ``world -> base_link`` replaced by the corrected
-    odometry when the recording carries one: everything the tree places (cameras,
-    scans, the path) then lands in the loop-closed world the corrected map is in."""
-    from dimos.teleop.memory_world.tf_tree import TfTree, _Edge
+    """The recording's tf tree: the moving stream, with its static edges over the top.
+
+    The recording is taken as it is. An icp stitch's loop-closed odometry used to be
+    substituted in here, so that everything the tree placed landed in the world the
+    stitched map was in; that is gone, because the stitch moves the clouds out from
+    under Hyperspace's keyframe poses and its answers then disagree with the map.
+    """
+    from dimos.teleop.memory_world.tf_tree import TfTree
 
     tree = TfTree.from_stream(store.streams[tf_stream])
     static = detect_streams(store).get("tf_static")
@@ -499,70 +495,6 @@ def build_tf_tree(
                     (float(q.x), float(q.y), float(q.z), float(q.w)),
                     static=True,
                 )
-    corrected = corrected_odometry_stream(store)
-    if corrected is None:
-        return tree
-    # The edge the odometry actually describes, not an assumed world -> base_link:
-    # pointlio tracks the lidar, so on those recordings base_link hangs UNDER the lidar
-    # frame and the assumed edge never exists. Getting this wrong is silent and costly:
-    # the map is drawn loop-closed while every camera pose, marker and path is placed
-    # by the uncorrected tf, and the two drift apart by the whole loop closure.
-    # The raw stream first: a corrected stream names its own output frame
-    # (`world -> corrected_odom`), which is nowhere in tf, while the raw odometry it was
-    # derived from names the edge that is.
-    named = [
-        edge
-        for name in (corrected.removesuffix("_corrected"), corrected)
-        if name in store.list_streams()
-        for edge in [_edge_named_by(store, name)]
-        if edge
-    ]
-    world = world_frame if world_frame in tree.frames else tf_root(tree)
-    edge_key = next((pair for pair in named if pair in tree._edges), None)
-    if edge_key is None:
-        # A corrected stream names its OWN OUTPUT frame as the child (`odom ->
-        # corrected_odom`), which is no edge at all, so a miss there says nothing about
-        # the edge -- as long as it agrees about the world. A stream whose parent is a
-        # frame this tree has never heard of is describing some other world, and putting
-        # its poses on this tree's base edge would be the silent substitution this
-        # lookup exists to prevent.
-        parents = {pair[0] for pair in named}
-        if parents and world not in parents:
-            logger.warning(
-                "tf: %r names %s, in neither this tree's world (%s) nor any edge it has;"
-                " the loop-closed poses are NOT applied and the map will disagree with"
-                " everything placed by tf",
-                corrected,
-                named,
-                world,
-            )
-            return tree
-        edge_key = (world, base_frame)
-    if edge_key[0] is None or edge_key not in tree._edges:
-        logger.warning(
-            "tf: %r describes no edge this tree has (tried %s); the loop-closed poses are"
-            " NOT applied and the map will disagree with everything placed by tf",
-            corrected,
-            named or [edge_key],
-        )
-        return tree
-    world, base_frame = edge_key
-    edge = _Edge()
-    n = 0
-    for obs in store.streams[corrected].order_by("ts"):
-        pose = obs.data.pose
-        p, q = pose.position, pose.orientation
-        edge.add(
-            float(getattr(obs.data, "ts", 0.0) or obs.ts),  # the header stamp, like every tf edge
-            (float(p.x), float(p.y), float(p.z)),
-            (float(q.x), float(q.y), float(q.z), float(q.w)),
-        )
-        n += 1
-    if n:
-        tree._edges[(world, base_frame)] = edge
-        tree.substituted = (world, corrected)
-        tree.substituted_child = base_frame
-        logger.info("tf: %s -> %s from %r (%d corrected poses)", world, base_frame, corrected, n)
     return tree
 
 

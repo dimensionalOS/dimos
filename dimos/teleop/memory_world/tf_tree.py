@@ -184,10 +184,6 @@ class TfTree:
         self._neighbours: dict[str, set[str]] = {}
         # (world, odometry stream) once recording.build_tf_tree has replaced the
         # world -> base_link edge with corrected poses; the ingest follows it.
-        self.substituted: tuple[str, str] | None = None
-        # The child of the edge `substituted` replaced: pointlio tracks the lidar on
-        # some rigs, so it is not always base_link and the ingest must not assume it.
-        self.substituted_child = "base_link"
 
     @classmethod
     def from_stream(cls, stream: Iterable[Any]) -> TfTree:

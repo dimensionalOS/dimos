@@ -452,92 +452,6 @@ def test_tf_root_is_the_frame_with_no_parent() -> None:
     assert tf_root(TfTree()) is None
 
 
-def test_build_tf_tree_takes_the_corrected_odometry_for_the_base(tmp_path) -> None:
-    from dimos.memory.store.sqlite import SqliteStore
-    from dimos.msgs.geometry_msgs.Pose import Pose
-    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
-    from dimos.msgs.nav_msgs.Odometry import Odometry
-    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-    from dimos.teleop.memory_world.recording import build_tf_tree, corrected_odometry_stream
-
-    store = SqliteStore(path=str(tmp_path / "stitched.db"), must_exist=False)
-    store.start()
-    tf = store.stream("tf", TFMessage)
-    odom = store.stream("pointlio_odometry_corrected", Odometry)
-    for ts in (1.0, 2.0, 3.0):
-        tf.append(
-            TFMessage(
-                *[
-                    Transform(
-                        translation=Vector3(ts, 0.0, 0.0),
-                        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                        frame_id="odom",
-                        child_frame_id="base_link",
-                        ts=ts,
-                    ),
-                    Transform(
-                        translation=Vector3(0.0, 0.0, 0.5),
-                        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                        frame_id="base_link",
-                        child_frame_id="cam",
-                        ts=ts,
-                    ),
-                ]
-            ),
-            ts=ts,
-        )
-        # The loop closure moved every pose a metre in y.
-        odom.append(
-            Odometry(
-                frame_id="odom",
-                child_frame_id="corrected_odom",
-                pose=Pose(Vector3(ts, 1.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
-                ts=ts,
-            ),
-            ts=ts,
-        )
-    assert corrected_odometry_stream(store) == "pointlio_odometry_corrected"
-    tree = build_tf_tree(store, "tf", "odom")
-    assert tree.substituted == ("odom", "pointlio_odometry_corrected")
-    cam = tree.lookup("odom", "cam", 2.0, 0.1)
-    assert cam is not None
-    assert [round(float(v), 3) for v in cam[:3, 3]] == [2.0, 1.0, 0.5]
-    store.stop()
-
-
-def test_build_tf_tree_keeps_the_original_edge_for_an_empty_corrected_stream(tmp_path) -> None:
-    from dimos.memory.store.sqlite import SqliteStore
-    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
-    from dimos.msgs.nav_msgs.Odometry import Odometry
-    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-    from dimos.teleop.memory_world.recording import build_tf_tree
-
-    store = SqliteStore(path=str(tmp_path / "stitched.db"), must_exist=False)
-    store.start()
-    store.stream("pointlio_odometry_corrected", Odometry)  # declared, never written
-    store.stream("tf", TFMessage).append(
-        TFMessage(
-            Transform(
-                translation=Vector3(4.0, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="odom",
-                child_frame_id="base_link",
-                ts=1.0,
-            )
-        ),
-        ts=1.0,
-    )
-    tree = build_tf_tree(store, "tf", "odom")
-    assert tree.substituted is None  # the ingest follows this: nothing to strip
-    base = tree.lookup("odom", "base_link", 1.0, 0.1)
-    assert base is not None and round(float(base[0, 3]), 3) == 4.0
-    store.stop()
-
-
 def test_open_recording_reads_compressed_images_as_images(tmp_path: Path) -> None:
     """The stitched Pi recordings store colour as webp CompressedImage."""
     import cv2
@@ -611,5 +525,58 @@ def test_build_tf_tree_holds_static_transforms_and_uses_their_stamps(tmp_path: P
         assert np.allclose(camera[:3, 3], [5.0, 0.0, 1.5])  # halfway by the transforms' own stamps
         assert tree.span("odom", "camera") == (10.0, 20.0)  # the static edge does not bound it
         assert tree.lookup("odom", "camera", 500.0) is None  # but the moving one still does
+    finally:
+        store.stop()
+
+
+def test_the_raw_scans_win_over_an_icp_stitch(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A stitched recording carries both, and the stitch is the one we do not want.
+
+    Its loop closure moves the clouds out from under Hyperspace's keyframe poses, so
+    search lands where the map no longer agrees. The recording is taken as it is: the
+    tree is the tf stream plus its statics, with nothing substituted into it.
+    """
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Pose import Pose
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.nav_msgs.Odometry import Odometry
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, detect_streams
+
+    store = SqliteStore(path=str(tmp_path / "stitched.db"), must_exist=False)
+    store.start()
+    try:
+        cloud = PointCloud2.from_numpy(np.zeros((1, 3), np.float32), "livox_frame", 1.0)
+        for name in ("livox_lidar", "livox_lidar_corrected"):
+            store.stream(name, PointCloud2).append(cloud, ts=1.0)
+        store.stream("tf", TFMessage).append(
+            TFMessage(
+                Transform(
+                    translation=Vector3(5.0, 0.0, 0.0),
+                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    frame_id="odom",
+                    child_frame_id="base_link",
+                    ts=1.0,
+                )
+            ),
+            ts=1.0,
+        )
+        # A loop-closed odometry that moved every pose a metre in y. It must be ignored.
+        store.stream("pointlio_odometry_corrected", Odometry).append(
+            Odometry(
+                frame_id="odom",
+                child_frame_id="corrected_odom",
+                pose=Pose(Vector3(5.0, 1.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+                ts=1.0,
+            ),
+            ts=1.0,
+        )
+
+        assert detect_streams(store)["lidar"] == "livox_lidar"  # not the stitched copy
+        base = build_tf_tree(store, "tf").lookup("odom", "base_link", 1.0, 0.1)
+        assert [round(float(v), 3) for v in base[:3, 3]] == [5.0, 0.0, 0.0]  # the recording's own
     finally:
         store.stop()

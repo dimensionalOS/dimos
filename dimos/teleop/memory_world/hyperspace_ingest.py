@@ -237,24 +237,15 @@ def _ingest(
     config: Any,
 ) -> dict[str, int]:
     """Hyperspace's ingest loop (``dimos.mapping.hyperspace.cli.ingest``), with two
-    changes for stitched recordings: keyframes are placed through the corrected tf
-    tree (:func:`build_tf_tree`), and that corrected ``world -> base_link`` is what
-    goes into the memory db's tf, so query-time placement matches the map."""
+    change: keyframes are placed through :func:`build_tf_tree`, so the memory db's tf
+    is the same tf the module places markers and pictures with."""
     from dimos.mapping.hyperspace.ingest import PatchIngestor
-    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
     from dimos.teleop.memory_world.recording import build_tf_tree
 
-    # The module's world, not whatever this tree's root happens to be: build_tf_tree
-    # decides whether to substitute the loop-closed odometry from it, so two trees built
-    # with different worlds can disagree by the whole loop closure.
+    # The module's world, not whatever this tree's root happens to be, so the two trees
+    # are built from the same input.
     tree = build_tf_tree(store, streams["tf"], world_frame)
-    # The one decision is build_tf_tree's: the corrected poses replace world -> base_link
-    # here exactly when they did in the tree, and never for an empty stream.
-    world, corrected = tree.substituted or (None, None)
-    base = tree.substituted_child  # pointlio tracks the lidar on some rigs, not base_link
 
     def lookup(target: str, source: str, ts: float) -> Any:
         matrix = tree.lookup(target, source, ts, TF_TOLERANCE_S)
@@ -274,7 +265,7 @@ def _ingest(
     # Only the tf the slice can use; a whole recording's tf is hundreds of
     # thousands of messages the query side would otherwise decode.
     # Hyperspace reads tf back in time order but skips ids it has passed, so the
-    # originals and the corrected poses are merged chronologically, streamed.
+    # statics come first and the moving stream follows, in time order, streamed.
     def in_window(observation: Any) -> bool:
         return start_ts - 5.0 <= float(observation.ts) <= start_ts + max_seconds + 5.0
 
@@ -291,11 +282,8 @@ def _ingest(
     # samples of it are dropped wherever they appear. A stitched recording republishes
     # its static edges inside the moving stream hundreds of times, and Hyperspace keeps
     # the LAST sample of an edge, so without this the static value is overwritten by a
-    # stale one. TfTree.add does the same thing for the same reason, and the corrected
-    # base poses displace the recorded edge below on the same principle.
+    # stale one. TfTree.add does the same thing for the same reason.
     superseded = set(first_static)
-    if corrected is not None:
-        superseded.add((world, base))
 
     def kept_of(message: TFMessage) -> TFMessage | None:
         if not superseded:
@@ -315,30 +303,6 @@ def _ingest(
             if message is not None:
                 yield float(observation.ts), message
 
-    def corrected_poses() -> Iterator[tuple[float, TFMessage]]:
-        if corrected is None:
-            return
-        for observation in store.streams[corrected].order_by("ts"):
-            if not in_window(observation):
-                continue
-            pose = observation.data.pose
-            p, q = pose.position, pose.orientation
-            stamp = float(
-                getattr(observation.data, "ts", 0.0) or observation.ts
-            )  # as build_tf_tree
-            yield (
-                stamp,
-                TFMessage(
-                    Transform(
-                        translation=Vector3(float(p.x), float(p.y), float(p.z)),
-                        rotation=Quaternion(float(q.x), float(q.y), float(q.z), float(q.w)),
-                        frame_id=world,
-                        child_frame_id=base,
-                        ts=stamp,
-                    )
-                ),
-            )
-
     def statics() -> Iterator[tuple[float, TFMessage]]:
         """The recording's static edges, once, before everything.
 
@@ -349,13 +313,11 @@ def _ingest(
             yield start_ts - 5.0, TFMessage(*held)
 
     transforms = 0
-    for stamp, message in heapq.merge(
-        statics(), originals(), corrected_poses(), key=lambda item: item[0]
-    ):
+    for stamp, message in heapq.merge(statics(), originals(), key=lambda item: item[0]):
         ingestor.add_tf(message, ts=stamp)
         transforms += 1
     print(
-        f"tf: {transforms} messages{' (corrected base poses from ' + corrected + ')' if corrected else ''}",
+        f"tf: {transforms} messages",
         flush=True,
     )
 
