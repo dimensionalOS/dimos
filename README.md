@@ -137,7 +137,9 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 # Installation
 
-## Interactive Install
+## Guided installation (recommended)
+
+Use the official installer to set up system dependencies, Python 3.12, and dimOS:
 
 ```sh skip
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
@@ -145,34 +147,30 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 > See [`scripts/install.sh --help`](scripts/install.sh) for non-interactive and advanced options.
 
-## Manual System Install
-
-To set up your system dependencies, follow one of these guides:
+See [installer options](docs/installation/index.md), or platform notes:
 
 - 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
-- 🟩 [NixOS / General Linux](docs/installation/nix.md)
+- [NixOS / General Linux (not CI-tested)](docs/installation/nix.md)
 - 🟧 [macOS](docs/installation/osx.md)
 
 > Full system requirements, tested configs, and dependency tiers: [docs/requirements.md](docs/requirements.md)
 
-## Python Install
+## Manual installation
 
-### Quickstart
+If you need to install without the script, follow the system-package and Python steps for [Ubuntu](docs/installation/ubuntu.md#manual-installation), [macOS](docs/installation/osx.md#manual-installation), or [Nix](docs/installation/nix.md#manual-installation).
+
+## Quickstart
+
+Activate the environment using the command printed by the installer, then run:
 
 ```bash
-uv venv --python "3.12"
-source .venv/bin/activate
-uv pip install 'dimos[base,unitree]'
-
 # Replay a recorded quadruped session (no hardware needed)
 # NOTE: First run will show a black rerun window while ~75 MB downloads from LFS
 dimos --replay run unitree-go2
 ```
 
 ```bash
-# Install with simulation support
-uv pip install 'dimos[base,unitree,sim]'
-
+# The installer's default extras include simulation support.
 # Run quadruped in MuJoCo simulation
 dimos --simulation run unitree-go2
 

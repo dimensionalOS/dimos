@@ -5,6 +5,8 @@ odometry streaming.
 
 ## Install
 
+Set up dimOS with the [official installer](/docs/installation/index.md) in developer mode, then add the Spot extra to that checkout:
+
 ```bash
 uv sync --extra spot
 ```

@@ -9,8 +9,8 @@ The agentic operating system for generalist robotics. `Modules` communicate via 
 ## Quick Start
 
 ```bash
-# Install (requires uv >=0.9.25)
-uv sync --extra all
+# Set up the current checkout, including test and lint dependencies
+bash scripts/install.sh --mode dev --project-dir .
 
 # List all runnable blueprints
 dimos list

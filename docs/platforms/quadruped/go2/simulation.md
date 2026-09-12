@@ -17,7 +17,7 @@ Opens the command center at [localhost:7779](http://localhost:7779) with Rerun 3
 ## MuJoCo Simulation
 
 ```bash
-uv pip install 'dimos[base,unitree,sim]'
+# The installer's default extras include sim.
 dimos --simulation run unitree-go2
 ```
 

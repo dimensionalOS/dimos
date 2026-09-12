@@ -1,5 +1,7 @@
 # Testing
 
+Start with the [official installer](/docs/installation/index.md) in developer mode to provision system, Python, test, and lint dependencies.
+
 `uv run` syncs the project deps + `tests` group on demand, so the default test suite needs no upfront install: `uv run pytest --numprocesses=auto dimos` (xdist parallelizes across cores).
 
 Self-hosted tests need the heavy optional extras (LFS data, perception models, simulation, hardware SDKs, …). Sync them explicitly before running:
@@ -69,13 +71,10 @@ pytest -m self_hosted dimos/path/to/test_something.py
 
 ## Testing on a fresh Ubuntu install
 
-CI tests dimos with pre-built images and cached deps, so it can't catch gaps
-between what [`installation/ubuntu.md`](/docs/installation/ubuntu.md) tells a new user to
-do and what a clean machine actually needs (e.g. a system package we require but
-forgot to document).
+Installation CI runs `scripts/test-install.sh` in fresh Ubuntu 22.04/24.04 containers on x86_64 and ARM64. It verifies one library or developer installation per job without starting blueprints. See [local installation checks](#test-a-checkout-locally).
 
-The [misc/fresh-ubuntu-tests/](/misc/fresh-ubuntu-tests/) harness closes that
-gap. It replays the documented install + test flow inside a fresh, official,
+The application test suite uses pre-built images and cached dependencies. For additional application tests, the
+[misc/fresh-ubuntu-tests/](/misc/fresh-ubuntu-tests/) harness runs its install and test flow inside a fresh, official,
 **unmodified** Ubuntu Desktop 24.04 VM (VirtualBox).
 
 It's intended to be executed locally.
@@ -191,3 +190,16 @@ If a test needs to be skipped for some reason, please use on of these markers, o
 * `skipif_in_ci`: tests which cannot run in GitHub Actions
 * `skipif_no_openai`: tests which require an `OPENAI_API_KEY` key in the env
 * `skipif_no_alibaba`: tests which require an `ALIBABA_API_KEY` key in the env
+
+## Test a checkout locally
+
+From the repository, run either mode in a fresh temporary directory:
+
+```sh skip
+INSTALL_TEST_ROOT="$(mktemp -d)" bash scripts/test-install.sh library
+INSTALL_TEST_ROOT="$(mktemp -d)" bash scripts/test-install.sh dev
+```
+
+Library mode tests this checkout's installer against the published package. Developer mode clones the current commit (commit local changes first to include them). Logs are saved in `logs/install.log` under each temporary directory.
+
+These checks disable GPU access and skip replay and sysctl changes. The temporary directory isolates the project and Python environment; apt or Homebrew packages are installed on the host. Use a disposable Ubuntu container for isolation. On macOS, these commands test Homebrew setup. On Arch, they require manually installed system dependencies because the test helper disables Nix.

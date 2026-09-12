@@ -1,0 +1,72 @@
+name: Test installation script
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/install.sh'
+      - 'scripts/test-install.sh'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'setup.py'
+      - 'MANIFEST.in'
+      - '.github/workflows/install.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-${{ github.ref }}
+  cancel-in-progress: true
+
+# macOS installation jobs are deferred until runner capacity is available.
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: Shell syntax and lint
+        run: |
+          /bin/bash -n scripts/install.sh
+          /bin/bash -n scripts/test-install.sh
+          uvx --from shellcheck-py shellcheck -e SC1091 scripts/install.sh scripts/test-install.sh
+
+  ubuntu:
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+        version: ['22.04', '24.04']
+        mode: [library, dev]
+    runs-on: ${{ matrix.os }}
+    container: ubuntu:${{ matrix.version }}
+    timeout-minutes: 60
+    env:
+      INSTALL_TEST_ROOT: /tmp/dimos-install-test
+    steps:
+      # curl and Git are prerequisites for fetching and testing the installer.
+      # All DimOS runtime/build prerequisites must be installed by install.sh.
+      - name: Bootstrap checkout tools
+        run: |
+          apt-get update
+          apt-get install -y ca-certificates curl git
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install and verify
+        run: |
+          # checkout's safe.directory setting uses a temporary HOME. The
+          # container's later steps need to trust this mounted checkout too.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/.git"
+          bash scripts/test-install.sh '${{ matrix.mode }}'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: install-${{ matrix.os }}-${{ matrix.version }}-${{ matrix.mode }}
+          path: /tmp/dimos-install-test/logs
