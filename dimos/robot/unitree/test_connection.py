@@ -24,6 +24,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call
 
 import pytest
 from unitree_webrtc_connect.constants import DATA_CHANNEL_TYPE, RTC_TOPIC, SPORT_CMD
+from unitree_webrtc_connect.unitree_auth import AesKeyRequiredError
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
@@ -50,6 +51,17 @@ def test_connect_failure_propagates_to_caller(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(RuntimeError, match="aes_128_key required"):
         UnitreeWebRTCConnection(ip="10.0.0.99")
+
+
+def test_missing_aes_key_explains_how_to_get_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    driver = _stub_driver(connect_exc=AesKeyRequiredError())
+    monkeypatch.setattr(conn_mod, "LegionConnection", MagicMock(return_value=driver))
+
+    with pytest.raises(
+        RuntimeError, match=r"(?s)unitree-fetch-aes-key.*--unitree-aes-128-key"
+    ) as ei:
+        UnitreeWebRTCConnection(ip="10.0.0.99")
+    assert isinstance(ei.value.__cause__, AesKeyRequiredError)
 
 
 @pytest.fixture
