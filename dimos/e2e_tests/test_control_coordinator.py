@@ -36,7 +36,9 @@ from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 class TestControlCoordinatorE2E:
     """End-to-end tests for ControlCoordinator."""
 
-    def test_coordinator_starts_and_responds_to_rpc(self, lcm_spy, start_blueprint) -> None:
+    def test_coordinator_starts_and_responds_to_rpc(
+        self, lcm_spy, start_blueprint, wait_for_system_ready
+    ) -> None:
         """Test that coordinator starts and responds to RPC queries."""
         # Save topics we care about (topic names carry the type suffix)
         joint_state_topic = "/coordinator_joint_state#sensor_msgs.JointState"
@@ -44,6 +46,7 @@ class TestControlCoordinatorE2E:
 
         # Start the mock coordinator blueprint
         start_blueprint("coordinator-mock")
+        wait_for_system_ready()
 
         # Wait for joint state to be published (proves tick loop is running)
         lcm_spy.wait_for_saved_topic(joint_state_topic)
@@ -69,13 +72,16 @@ class TestControlCoordinatorE2E:
         finally:
             client.stop_rpc_client()
 
-    def test_coordinator_executes_trajectory(self, lcm_spy, start_blueprint, wait_until) -> None:
+    def test_coordinator_executes_trajectory(
+        self, lcm_spy, start_blueprint, wait_until, wait_for_system_ready
+    ) -> None:
         """Test that coordinator executes a trajectory via RPC."""
         # Save topics
         lcm_spy.save_topic("/coordinator_joint_state#sensor_msgs.JointState")
 
         # Start coordinator
         start_blueprint("coordinator-mock")
+        wait_for_system_ready()
 
         # Wait for it to be ready
         lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs.JointState")
@@ -119,13 +125,16 @@ class TestControlCoordinatorE2E:
         finally:
             client.stop_rpc_client()
 
-    def test_coordinator_joint_state_published(self, lcm_spy, start_blueprint) -> None:
+    def test_coordinator_joint_state_published(
+        self, lcm_spy, start_blueprint, wait_for_system_ready
+    ) -> None:
         """Test that joint state messages are published at expected rate."""
         joint_state_topic = "/coordinator_joint_state#sensor_msgs.JointState"
         lcm_spy.save_topic(joint_state_topic)
 
         # Start coordinator
         start_blueprint("coordinator-mock")
+        wait_for_system_ready()
 
         # Wait for initial message
         lcm_spy.wait_for_saved_topic(joint_state_topic)
@@ -149,12 +158,15 @@ class TestControlCoordinatorE2E:
         assert len(joint_state.position) == 7
         assert "arm/joint1" in joint_state.name
 
-    def test_coordinator_cancel_trajectory(self, lcm_spy, start_blueprint) -> None:
+    def test_coordinator_cancel_trajectory(
+        self, lcm_spy, start_blueprint, wait_for_system_ready
+    ) -> None:
         """Test that a running trajectory can be cancelled."""
         lcm_spy.save_topic("/coordinator_joint_state#sensor_msgs.JointState")
 
         # Start coordinator
         start_blueprint("coordinator-mock")
+        wait_for_system_ready()
         lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs.JointState")
 
         client = RPCClient(None, ControlCoordinator)
@@ -192,12 +204,15 @@ class TestControlCoordinatorE2E:
         finally:
             client.stop_rpc_client()
 
-    def test_dual_arm_coordinator(self, lcm_spy, start_blueprint, wait_until) -> None:
+    def test_dual_arm_coordinator(
+        self, lcm_spy, start_blueprint, wait_until, wait_for_system_ready
+    ) -> None:
         """Test dual-arm coordinator moving both arms with one combined trajectory."""
         lcm_spy.save_topic("/coordinator_joint_state#sensor_msgs.JointState")
 
         # Start dual-arm mock coordinator
         start_blueprint("coordinator-dual-mock")
+        wait_for_system_ready()
         lcm_spy.wait_for_saved_topic("/coordinator_joint_state#sensor_msgs.JointState")
 
         client = RPCClient(None, ControlCoordinator)
