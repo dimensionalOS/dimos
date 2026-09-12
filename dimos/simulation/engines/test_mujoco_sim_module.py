@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+import sys
 import threading
 import time
 from typing import Any
@@ -27,6 +28,25 @@ import pytest
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+
+
+@pytest.mark.parametrize(
+    ("platform", "headless", "expected"),
+    [
+        ("darwin", False, "mjpython"),
+        ("darwin", True, "python"),
+        ("linux", False, "python"),
+    ],
+)
+def test_worker_runtime_only_uses_mjpython_for_native_macos_viewer(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    headless: bool,
+    expected: str,
+) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
+
+    assert MujocoSimModule.worker_runtime({"headless": headless}) == expected
 
 
 class _FakeData:

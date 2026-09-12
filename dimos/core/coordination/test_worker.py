@@ -17,10 +17,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from dimos.core.coordination.python_worker import PythonWorker
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module
+from dimos.core.module import Module, WorkerRuntime
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
@@ -378,6 +379,27 @@ def test_load_balancing_distributes_modules(manager_and_modules):
     # Each worker should have 2 modules (even distribution)
     counts = [w.module_count for w in manager._workers]
     assert counts == [2, 2]
+
+
+def test_mjpython_runtime_converts_idle_worker_without_growing_pool(mocker) -> None:
+    manager = WorkerManagerPython(g=GlobalConfig(n_workers=1))
+    worker = PythonWorker()
+    manager._workers = [worker]
+    manager._started = True
+    shutdown = mocker.patch.object(worker, "shutdown")
+
+    def record_runtime(runtime: WorkerRuntime = "python") -> None:
+        worker._runtime = runtime
+
+    start_process = mocker.patch.object(worker, "start_process", side_effect=record_runtime)
+
+    selected = manager._select_worker(runtime="mjpython")
+
+    assert selected is worker
+    assert selected.runtime == "mjpython"
+    assert len(manager.workers) == 1
+    shutdown.assert_called_once_with()
+    start_process.assert_called_once_with("mjpython")
 
 
 @pytest.mark.skipif_macos_bug

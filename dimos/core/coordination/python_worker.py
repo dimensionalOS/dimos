@@ -13,12 +13,14 @@
 # limitations under the License.
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 import logging
 import multiprocessing
 from multiprocessing.connection import Connection
 import os
 import signal
+import subprocess
 import sys
 import threading
 import traceback
@@ -38,12 +40,39 @@ from dimos.core.coordination.worker_messages import (
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import shutdown_all_providers
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.mjpython import prepare_mjpython_launch
 from dimos.utils.sequential_ids import SequentialIds
 
 if TYPE_CHECKING:
-    from dimos.core.module import ModuleBase
+    from dimos.core.module import ModuleBase, WorkerRuntime
 
 logger = setup_logger()
+
+_MJPYTHON_WORKER_READY = "dimos-mjpython-worker-ready"
+_MJPYTHON_START_TIMEOUT_S = 15.0
+
+
+class _PopenWorkerProcess:
+    """Adapt a directly launched worker to multiprocessing's process API."""
+
+    def __init__(self, process: subprocess.Popen[bytes]) -> None:
+        self._process = process
+
+    @property
+    def pid(self) -> int:
+        return self._process.pid
+
+    def is_alive(self) -> bool:
+        return self._process.poll() is None
+
+    def join(self, timeout: float | None = None) -> None:
+        try:
+            self._process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return
+
+    def terminate(self) -> None:
+        self._process.terminate()
 
 
 class ActorFuture:
@@ -168,6 +197,7 @@ class PythonWorker:
         self._process: Any = None
         self._conn: Connection | None = None
         self._worker_id: int = _worker_ids.next()
+        self._runtime: WorkerRuntime = "python"
         self.dedicated: bool = False
 
     @property
@@ -194,6 +224,10 @@ class PythonWorker:
         return self._worker_id
 
     @property
+    def runtime(self) -> WorkerRuntime:
+        return self._runtime
+
+    @property
     def module_names(self) -> list[str]:
         return [actor._cls.__name__ for actor in self._modules.values()]
 
@@ -201,7 +235,15 @@ class PythonWorker:
         """Reserve a slot so _select_worker() sees the pending load."""
         self._reserved += 1
 
-    def start_process(self) -> None:
+    def start_process(self, runtime: WorkerRuntime = "python") -> None:
+        if self._process is not None:
+            raise RuntimeError("Worker process already started")
+
+        self._runtime = runtime
+        if runtime == "mjpython":
+            self._start_mjpython_process()
+            return
+
         ctx = get_forkserver_context()
         parent_conn, child_conn = ctx.Pipe()
         self._conn = parent_conn
@@ -212,6 +254,51 @@ class PythonWorker:
             daemon=True,
         )
         self._process.start()
+        child_conn.close()
+
+    def _start_mjpython_process(self) -> None:
+        if sys.platform != "darwin":
+            raise RuntimeError("mjpython workers are only supported on macOS")
+
+        mjpython, env = prepare_mjpython_launch()
+
+        ctx = get_forkserver_context()
+        parent_conn, child_conn = ctx.Pipe()
+        child_fd = child_conn.fileno()
+        try:
+            process = subprocess.Popen(
+                [
+                    str(mjpython),
+                    "-m",
+                    "dimos.core.coordination.python_worker",
+                    "--worker-fd",
+                    str(child_fd),
+                    "--worker-id",
+                    str(self._worker_id),
+                ],
+                pass_fds=(child_fd,),
+                env=env,
+            )
+        except BaseException:
+            parent_conn.close()
+            raise
+        finally:
+            child_conn.close()
+
+        self._conn = parent_conn
+        self._process = _PopenWorkerProcess(process)
+        if not parent_conn.poll(timeout=_MJPYTHON_START_TIMEOUT_S):
+            self._process.terminate()
+            self._process.join(timeout=1.0)
+            self._process = None
+            parent_conn.close()
+            self._conn = None
+            raise RuntimeError(
+                f"mjpython worker did not initialize within {_MJPYTHON_START_TIMEOUT_S:g} seconds"
+            )
+        if parent_conn.recv() != _MJPYTHON_WORKER_READY:
+            self.shutdown()
+            raise RuntimeError("mjpython worker returned an invalid startup handshake")
 
     def deploy_module(
         self,
@@ -446,3 +533,21 @@ def _worker_loop(conn: Connection, state: _WorkerState) -> None:
 
         if state.should_stop:
             break
+
+
+def _run_worker_from_cli() -> None:
+    parser = argparse.ArgumentParser(description="DimOS Python worker")
+    parser.add_argument("--worker-fd", type=int, required=True)
+    parser.add_argument("--worker-id", type=int, required=True)
+    args = parser.parse_args()
+
+    conn = Connection(args.worker_fd)
+    try:
+        conn.send(_MJPYTHON_WORKER_READY)
+        _worker_entrypoint(conn, args.worker_id)
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    _run_worker_from_cli()

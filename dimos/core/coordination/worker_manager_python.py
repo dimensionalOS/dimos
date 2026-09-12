@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.core.coordination.python_worker import PythonWorker
 from dimos.core.global_config import GlobalConfig
-from dimos.core.module import ModuleBase, ModuleSpec
+from dimos.core.module import ModuleBase, ModuleSpec, WorkerRuntime
 from dimos.core.rpc_client import ModuleProxyProtocol, RPCClient
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
@@ -57,7 +57,7 @@ class WorkerManagerPython:
             self._stats_monitor = StatsMonitor(self)
             self._stats_monitor.start()
 
-    def add_workers(self, n: int) -> None:
+    def add_workers(self, n: int, runtime: WorkerRuntime = "python") -> None:
         """Spawn *n* additional worker processes into the pool."""
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
@@ -65,7 +65,7 @@ class WorkerManagerPython:
             raise RuntimeError("WorkerManager not started; call start() first")
         for _ in range(n):
             worker = PythonWorker()
-            worker.start_process()
+            worker.start_process(runtime)
             self._workers.append(worker)
         self._n_workers += n
         logger.info("Added workers to pool.", added=n, total=self._n_workers)
@@ -83,7 +83,11 @@ class WorkerManagerPython:
             self.start()
 
         self._ensure_capacity_for_dedicated([(module_class, global_config, kwargs)])
-        worker = self._select_worker(dedicated=module_class.dedicated_worker)
+        runtime = module_class.worker_runtime(kwargs)
+        worker = self._select_worker(
+            dedicated=module_class.dedicated_worker,
+            runtime=runtime,
+        )
         actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
         return RPCClient(actor, module_class, kwargs.get("instance_name"))
 
@@ -104,8 +108,9 @@ class WorkerManagerPython:
         if not self._started:
             self.start()
 
+        runtime = module_class.worker_runtime(kwargs)
         worker = PythonWorker()
-        worker.start_process()
+        worker.start_process(runtime)
         self._workers.append(worker)
         self._n_workers += 1
         if module_class.dedicated_worker:
@@ -154,10 +159,23 @@ class WorkerManagerPython:
         # Process dedicated specs first so they claim empty workers before
         # non-dedicated specs land on them; preserve input order in output.
         workers_by_index: dict[int, PythonWorker] = {}
-        order = sorted(range(len(specs)), key=lambda i: not specs[i][0].dedicated_worker)
+        runtimes_by_index = {
+            i: module_class.worker_runtime(kwargs)
+            for i, (module_class, _, kwargs) in enumerate(specs)
+        }
+        order = sorted(
+            range(len(specs)),
+            key=lambda i: (
+                runtimes_by_index[i] != "mjpython",
+                not specs[i][0].dedicated_worker,
+            ),
+        )
         for i in order:
             module_class, _, _ = specs[i]
-            worker = self._select_worker(dedicated=module_class.dedicated_worker)
+            worker = self._select_worker(
+                dedicated=module_class.dedicated_worker,
+                runtime=runtimes_by_index[i],
+            )
             worker.reserve_slot()
             workers_by_index[i] = worker
 
@@ -216,23 +234,57 @@ class WorkerManagerPython:
 
         logger.info("All workers shut down")
 
-    def _select_worker(self, dedicated: bool = False) -> PythonWorker:
+    def _select_worker(
+        self,
+        dedicated: bool = False,
+        runtime: WorkerRuntime = "python",
+    ) -> PythonWorker:
         """Pick a worker for a new module and mark it dedicated if needed."""
-        if dedicated:
-            for w in self._workers:
-                if not w.dedicated and w.module_count == 0:
-                    w.dedicated = True
-                    return w
-            self.add_workers(1)
-            w = self._workers[-1]
-            w.dedicated = True
-            return w
 
-        candidates = [w for w in self._workers if not w.dedicated]
-        if not candidates:
-            self.add_workers(1)
-            return self._workers[-1]
-        return min(candidates, key=lambda w: w.module_count)
+        def available(worker: PythonWorker) -> bool:
+            return not worker.dedicated and (not dedicated or worker.module_count == 0)
+
+        exact = [
+            worker for worker in self._workers if available(worker) and worker.runtime == runtime
+        ]
+        if exact:
+            worker = min(exact, key=lambda candidate: candidate.module_count)
+            if dedicated:
+                worker.dedicated = True
+            return worker
+
+        # A worker running under mjpython is also a normal Python worker. Reuse
+        # it for ordinary modules when no standard worker is available.
+        if runtime == "python":
+            compatible = [worker for worker in self._workers if available(worker)]
+            if compatible:
+                worker = min(compatible, key=lambda candidate: candidate.module_count)
+                if dedicated:
+                    worker.dedicated = True
+                return worker
+
+        # Initial pools are normal Python workers. Convert an unused one in
+        # place when a GUI-capable worker is first requested, preserving the
+        # configured worker count and avoiding a nested simulator process.
+        if runtime == "mjpython":
+            idle = [
+                worker
+                for worker in self._workers
+                if not worker.dedicated and worker.module_count == 0
+            ]
+            if idle:
+                worker = idle[0]
+                worker.shutdown()
+                worker.start_process(runtime)
+                if dedicated:
+                    worker.dedicated = True
+                return worker
+
+        self.add_workers(1, runtime=runtime)
+        worker = self._workers[-1]
+        if dedicated:
+            worker.dedicated = True
+        return worker
 
     def _ensure_capacity_for_dedicated(self, specs: Iterable[ModuleSpec]) -> None:
         """Grow the pool so non-dedicated workers >= dedicated workers.
