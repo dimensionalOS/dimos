@@ -26,12 +26,15 @@
             ../../../../Cargo.lock
             ../../../../Cargo.toml
             ../../../../dimos/experimental/memory/rust
-            ../../../../dimos/hardware/sensors/lidar/virtual_mid360
-            ../../../../dimos/mapping/ray_tracing/rust
-            ../../../../dimos/navigation/nav_3d/mls_planner/rust
-            ../../../../examples/native-modules/rust
             ../../../../native/rust/dimos-module
             ../../../../native/rust/dimos-module-macros
+            ../../../../dimos/mapping/ray_tracing/rust
+            ../../../../dimos/mapping/ray_tracing/rust/py
+            ../../../../dimos/navigation/nav_3d/mls_planner/rust
+            ../../../../dimos/navigation/nav_3d/mls_planner/rust/py
+            ../../../../dimos/hardware/sensors/lidar/livox/rust
+            ../../../../dimos/hardware/sensors/lidar/virtual_mid360
+            ../../../../examples/native-modules/rust
           ];
         };
 

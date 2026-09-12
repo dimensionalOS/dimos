@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Objective tests for Dual OpenYAM Quest teleoperation."""
+"""Objective tests for Dual OpenYAM WebXR teleoperation."""
 
 import numpy as np
 import pytest
@@ -21,7 +21,7 @@ from dimos.control.tasks.pose_target_ik import PoseTargetIKTaskConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
-    _dual_openyam_quest_task,
+    _dual_openyam_webxr_task,
 )
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_ARM_JOINTS,
@@ -35,7 +35,7 @@ _TARGET_FRAMES = ("left_grasp_frame", "right_grasp_frame")
 
 
 def _solver() -> DualOpenYamPinkPoseTargetSolver:
-    task = _dual_openyam_quest_task
+    task = _dual_openyam_webxr_task
     config = PoseTargetIKTaskConfig(
         joint_names=tuple(task.joint_names),
         robot_model=task.params["robot_model"],
@@ -65,7 +65,7 @@ def test_solver_uses_nominal_posture_without_manipulability() -> None:
 
 
 @pytest.mark.self_hosted
-def test_quest_solver_matches_a1z_target_tracking_speed() -> None:
+def test_webxr_solver_matches_a1z_target_tracking_speed() -> None:
     solver = _solver()
     state = JointState(
         name=DUAL_OPENYAM_ARM_JOINTS,

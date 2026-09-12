@@ -29,8 +29,8 @@ from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     DualOpenYamCoordinator,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
-    DUAL_OPENYAM_QUEST_TASK_NAME,
-    teleop_quest_dual_openyam,
+    DUAL_OPENYAM_WEBXR_TASK_NAME,
+    teleop_webxr_dual_openyam,
 )
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_ARM_JOINTS,
@@ -38,7 +38,7 @@ from dimos.robot.manipulators.dual_openyam.config import (
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
 )
-from dimos.teleop.quest.quest_types import Buttons
+from dimos.teleop.webxr.controller_types import Buttons
 
 pytestmark = pytest.mark.self_hosted
 
@@ -47,8 +47,8 @@ def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
     return next(atom.kwargs for atom in blueprint.blueprints if atom.module is module_type)
 
 
-def test_quest_blueprint_selects_physical_hardware_from_both_can_ports() -> None:
-    parsed = BlueprintConfigParser(teleop_quest_dual_openyam).parse(
+def test_webxr_blueprint_selects_physical_hardware_from_both_can_ports() -> None:
+    parsed = BlueprintConfigParser(teleop_webxr_dual_openyam).parse(
         [
             "--left-can-port",
             "follower_l",
@@ -65,10 +65,10 @@ def test_quest_blueprint_selects_physical_hardware_from_both_can_ports() -> None
     assert parsed.module_kwargs("manipulationmodule")["visualization"]["host"] == "0.0.0.0"
 
 
-def test_mock_quest_coordinator_commands_both_arms_and_grippers(
+def test_mock_webxr_coordinator_commands_both_arms_and_grippers(
     mocker: MockerFixture,
 ) -> None:
-    kwargs = _module_kwargs(teleop_quest_dual_openyam, DualOpenYamCoordinator)
+    kwargs = _module_kwargs(teleop_webxr_dual_openyam, DualOpenYamCoordinator)
     mocker.patch.object(DualOpenYamPinkPoseTargetSolver, "_validate_frame_targets")
     mocker.patch.object(
         DualOpenYamPinkPoseTargetSolver,
@@ -88,7 +88,7 @@ def test_mock_quest_coordinator_commands_both_arms_and_grippers(
 
     coordinator.start()
     try:
-        task = cast("TeleopIKTask", coordinator._tasks[DUAL_OPENYAM_QUEST_TASK_NAME])
+        task = cast("TeleopIKTask", coordinator._tasks[DUAL_OPENYAM_WEBXR_TASK_NAME])
         assert set(task.claim().joints) == set(DUAL_OPENYAM_ARM_JOINTS)
         buttons = Buttons()
         buttons.left_primary = True
@@ -99,11 +99,11 @@ def test_mock_quest_coordinator_commands_both_arms_and_grippers(
         coordinator._dispatch("right_gripper_command", Float32(data=0.25))
         coordinator._dispatch(
             "left_cartesian_command",
-            PoseStamped(frame_id=DUAL_OPENYAM_QUEST_TASK_NAME, position=[1.0, 0.0, 0.0]),
+            PoseStamped(frame_id=DUAL_OPENYAM_WEBXR_TASK_NAME, position=[1.0, 0.0, 0.0]),
         )
         coordinator._dispatch(
             "right_cartesian_command",
-            PoseStamped(frame_id=DUAL_OPENYAM_QUEST_TASK_NAME, position=[-1.0, 0.0, 0.0]),
+            PoseStamped(frame_id=DUAL_OPENYAM_WEBXR_TASK_NAME, position=[-1.0, 0.0, 0.0]),
         )
         assert coordinator._tick_loop is not None
         coordinator._tick_loop._tick()

@@ -23,6 +23,7 @@ import contextlib
 from dataclasses import dataclass
 import itertools
 import json
+import ssl
 import time
 from types import TracebackType
 from typing import Any, cast
@@ -90,8 +91,9 @@ def resolve_info_url(base_url: str) -> str:
     return urljoin(base_url if base_url.endswith("/") else base_url + "/", "api/info")
 
 
-def _get_json(url: str, timeout: float) -> Any:
-    with urllib.request.urlopen(url, timeout=timeout) as response:
+def _get_json(url: str, timeout: float, cafile: str | None) -> Any:
+    context = ssl.create_default_context(cafile=cafile) if cafile is not None else None
+    with urllib.request.urlopen(url, timeout=timeout, context=context) as response:
         body = response.read()
     try:
         return json.loads(body)
@@ -99,16 +101,20 @@ def _get_json(url: str, timeout: float) -> Any:
         return None  # reported as a shape problem by the caller
 
 
-async def fetch_relay_info(base_url: str, *, timeout: float = 5.0) -> RelayInfo:
+async def fetch_relay_info(
+    base_url: str, *, timeout: float = 5.0, cafile: str | None = None
+) -> RelayInfo:
     """Discover the relay's WebTransport endpoint through GET /api/info (the
     mirror of the SDK's fetchRelayInfo). A relay restart means a new QUIC
     port and certificate behind the same HTTP URL, so callers fetch on every
-    connect. Raises OSError when the relay is unreachable or answers an HTTP
-    error (transient), ProtocolError for a non-relay answer or a protocol
-    version mismatch.
+    connect. For an https base, `cafile` (a PEM CA bundle: mkcert, a private
+    CA) replaces the system trust store. Raises OSError when the relay is
+    unreachable, answers an HTTP error, or fails certificate verification
+    (transient), ProtocolError for a non-relay answer or a protocol version
+    mismatch.
     """
     url = resolve_info_url(base_url)
-    data = await asyncio.to_thread(_get_json, url, timeout)
+    data = await asyncio.to_thread(_get_json, url, timeout, cafile)
     if not isinstance(data, dict):
         raise ProtocolError(f"{url} returned an unexpected shape")
     wt_url, cert_hash, v = data.get("wtUrl"), data.get("certHash"), data.get("v")
@@ -149,20 +155,24 @@ class RelayClient:
         *,
         insecure: bool | None = None,
         timeout: float = 10.0,
+        cafile: str | None = None,
     ) -> RelayClient:
-        """Connect to `url` (the relay's wtUrl, e.g. https://127.0.0.1:4433).
+        """Connect to `url` (the relay's wtUrl, e.g. https://127.0.0.1:4433;
+        the port defaults to 443).
 
         `insecure` skips certificate verification and defaults to True for
         loopback hosts only (the local relay uses an ephemeral self-signed
         cert). Passing insecure=True for a non-loopback host is refused.
-        `timeout` bounds the QUIC handshake and the WebTransport session
-        setup separately.
+        Otherwise aioquic checks the certificate against the URL host (DNS or
+        IP SANs) and its chain against `cafile` (a PEM CA bundle: mkcert, a
+        private CA), or certifi's bundle without one. `timeout` bounds the
+        QUIC handshake and the WebTransport session setup separately.
         """
         parsed = urlparse(url)
         host = parsed.hostname
-        port = parsed.port
-        if parsed.scheme != "https" or host is None or port is None:
-            raise ValueError(f"relay URL must look like https://host:port, got {url!r}")
+        if parsed.scheme != "https" or host is None:
+            raise ValueError(f"relay URL must look like https://host[:port], got {url!r}")
+        port = parsed.port if parsed.port is not None else 443
         is_loopback = host in _LOOPBACK_HOSTS
         if insecure is None:
             insecure = is_loopback
@@ -185,7 +195,7 @@ class RelayClient:
         ctx = aioquic_connect(
             host,
             port,
-            configuration=make_quic_configuration(insecure),
+            configuration=make_quic_configuration(insecure, cafile),
             create_protocol=SessionProtocol,
         )
         # Bounded: aioquic gives up on an endpoint nobody listens on only at

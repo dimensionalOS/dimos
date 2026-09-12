@@ -82,6 +82,17 @@ def test_relay_run_cmd_dir_flags() -> None:
     assert cmd[cmd.index("--sdk-dir") + 1] == "/sdk/dist"
     assert cmd[cmd.index("--serve-dir") + 1] == "/my/ui"
 
+    # The relay reads the PEM files itself, so they join the read scope.
+    cmd = relay_run_cmd(
+        "deno",
+        Path("/web"),
+        cert=Path("/etc/relay/fullchain.pem"),
+        key=Path("/etc/relay/privkey.pem"),
+    )
+    assert "--allow-read=/web,/etc/relay/fullchain.pem,/etc/relay/privkey.pem" in cmd
+    assert cmd[cmd.index("--cert") + 1] == "/etc/relay/fullchain.pem"
+    assert cmd[cmd.index("--key") + 1] == "/etc/relay/privkey.pem"
+
 
 def test_relay_run_cmd_resolves_symlinked_dirs(tmp_path: Path) -> None:
     # The relay realpath-checks served files, so --allow-read must be granted
@@ -92,6 +103,16 @@ def test_relay_run_cmd_resolves_symlinked_dirs(tmp_path: Path) -> None:
     link.symlink_to(real)
     cmd = relay_run_cmd("deno", link)
     assert f"--allow-read={real.resolve()}" in cmd
+
+
+def test_relay_process_reports_unpaired_tls_flag_before_reading_pem(tmp_path: Path) -> None:
+    process = RelayProcess(cert=tmp_path / "missing.pem", timeout=2.0)
+
+    try:
+        with pytest.raises(RuntimeError, match="--cert and --key must be given together"):
+            process.start()
+    finally:
+        process.stop()
 
 
 def test_relay_serves_cockpit_dist(tmp_path: Path) -> None:

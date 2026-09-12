@@ -48,6 +48,7 @@ describe("StatusBar", () => {
           pages={[]}
           page={null}
           onPageChange={() => {}}
+          onSwitchRobot={null}
           {...over}
         />,
       )
@@ -65,6 +66,18 @@ describe("StatusBar", () => {
     expect(testId("status").getAttribute("data-phase")).toBe("connected");
     expect(testId("status").textContent).toBe("connected");
     expect(testId("robot").textContent).toBe("Go2 (go2)");
+  });
+
+  it("offers 'switch robot' only with a handler and keeps it out of the robot readout", () => {
+    const go2 = { id: "a", name: "Go2", model: "go2" };
+    render(makeStatus({ watchedRobot: go2 }));
+    expect(container.querySelector('[data-testid="switch-robot"]')).toBeNull();
+    let clicks = 0;
+    render(makeStatus({ watchedRobot: go2 }), { onSwitchRobot: () => clicks++ });
+    expect(testId("switch-robot").textContent).toBe("switch robot");
+    expect(testId("robot").textContent).toBe("Go2 (go2)");
+    act(() => (testId("switch-robot") as HTMLElement).click());
+    expect(clicks).toBe(1);
   });
 
   it("shows 'no robot' when none is picked", () => {

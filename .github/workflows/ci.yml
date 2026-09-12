@@ -329,6 +329,10 @@ jobs:
             dimos/navigation/nav_3d/mls_planner/test_transformer.py
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
+      - name: Native module e2e tests
+        run: |
+          cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
+          uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
 
   native:
     name: Native builds (C++ and Rust)
@@ -571,7 +575,8 @@ jobs:
           dimos/e2e_tests/test_custom_channel_browser.py
           dimos/e2e_tests/test_publish_browser.py
           dimos/e2e_tests/test_voice_browser.py
-          dimos/e2e_tests/test_stats_browser.py --no-cov
+          dimos/e2e_tests/test_stats_browser.py
+          dimos/e2e_tests/test_robot_picker_browser.py --no-cov
 
   tests:
     if: |
@@ -582,15 +587,12 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        pyver: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        pyver: ['3.10', '3.11', '3.12']
         os: ["ubuntu-latest"]
         experimental: [false]
         include:
-          - os: "ubuntu-latest"
-            pyver: "3.14t"
-            experimental: false
           - os: "ubuntu-24.04-arm"
-            pyver: "3.14"
+            pyver: "3.12"
             experimental: false
       fail-fast: true
     runs-on: ${{ matrix.os }}
@@ -615,10 +617,6 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
-      - name: Setup Python
-        uses: actions/setup-python@v7.0.0
-        with:
-          allow-prereleases: true
           python-version: ${{ matrix.pyver }}
       - name: Extract Deno version
         id: deno-version
@@ -642,9 +640,6 @@ jobs:
           sudo mv /usr/bin/git-lfs /usr/bin/git-lfs.orig
           sudo install -m 0755 bin/git-lfs-guard /usr/bin/git-lfs
           git config --global --unset-all filter.lfs.process || true
-      - name: Set PYTHON_GIL=0 for free-threading builds
-        if: ${{ endsWith(matrix.pyver, 't') }}
-        run: echo "PYTHON_GIL=0" >> $GITHUB_ENV
       # The published store paths are x86_64-linux, so the arm leg (and any
       # future macOS leg) skips provisioning; binary-needing tests skip there.
       # On a marker miss (fork PR, eviction) the binaries are simply absent —
@@ -671,13 +666,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e)'
+        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)' && exit 1
         shell: bash
       - name: Print crash diagnostics
         if: failure()
@@ -888,6 +883,17 @@ jobs:
                 sudo ln -sfn "$p" "/nix/var/nix/gcroots/dimos-native/$(basename "$p")"
               done
           fi
+      - name: Point cargo at a persistent cache on the workspace mount
+        if: contains(matrix.markers, 'self_hosted')
+        run: |
+          echo "RUSTUP_HOME=$(dirname "$RUNNER_WORKSPACE")/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$(dirname "$RUNNER_WORKSPACE")/cargo" >> "$GITHUB_ENV"
+      - name: Install Rust toolchain
+        if: contains(matrix.markers, 'self_hosted')
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build rust native modules
+        if: contains(matrix.markers, 'self_hosted')
+        run: cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity

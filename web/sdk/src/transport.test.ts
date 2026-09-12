@@ -4,6 +4,7 @@ import {
   backoffDelayMs,
   CONNECT_TIMEOUT_MS,
   connectWebTransport,
+  fetchRelayInfo,
   ReconnectingTransport,
   type RelayInfo,
   resolveInfoUrl,
@@ -74,6 +75,54 @@ describe("connectWebTransport", () => {
       expect(calls).toHaveLength(1);
       expect(calls[0][0]).toBe("https://127.0.0.1:1234/viewer");
       expect(calls[0][1].serverCertificateHashes?.[0]?.algorithm).toBe("sha-256");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("omits serverCertificateHashes when the relay advertises no hash", () => {
+    const calls: [string, WebTransportOptions][] = [];
+    vi.stubGlobal(
+      "WebTransport",
+      class {
+        constructor(url: string, options: WebTransportOptions) {
+          calls.push([url, options]);
+        }
+      },
+    );
+    try {
+      connectWebTransport({ wtUrl: "https://relay.example", v: PROTOCOL_VERSION });
+      expect(calls).toHaveLength(1);
+      expect(calls[0][0]).toBe("https://relay.example/viewer");
+      expect(calls[0][1]).toEqual({});
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("fetchRelayInfo", () => {
+  function stubFetch(body: unknown): void {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify(body)))));
+  }
+
+  it("accepts a body without certHash (a relay with a real certificate)", async () => {
+    stubFetch({ wtUrl: "https://relay.example", v: PROTOCOL_VERSION });
+    try {
+      const info = await fetchRelayInfo("/api/info", new AbortController().signal);
+      expect(info).toEqual({ wtUrl: "https://relay.example", v: PROTOCOL_VERSION });
+      expect(info.certHash).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("rejects a certHash that is present but not a string", async () => {
+    stubFetch({ wtUrl: "https://relay.example", certHash: 7, v: PROTOCOL_VERSION });
+    try {
+      await expect(fetchRelayInfo("/api/info", new AbortController().signal)).rejects.toThrow(
+        "unexpected shape",
+      );
     } finally {
       vi.unstubAllGlobals();
     }
