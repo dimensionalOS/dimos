@@ -377,6 +377,7 @@ def patch_world_position(
     camera_to_world: np.ndarray,
     window_px: int = 16,
     color_intrinsics: tuple[float, float, float, float] | None = None,
+    color_size: tuple[int, int] | None = None,
 ) -> tuple[float, float, float] | None:
     """Back-project the centre of the winning patch through the depth image.
 
@@ -388,22 +389,31 @@ def patch_world_position(
     *image_uv* is normalised in the COLOUR image and the depth camera is a different
     camera: on a d455 its fx differs by about 1% and its principal point by several
     pixels, which sampling at the same normalised position turns into centimetres of
-    error at a few metres. Given *color_intrinsics* the patch is turned into a ray and
-    the ray into the depth camera's own pixel, which is exact apart from the ~1.5 cm
-    baseline between the two -- under the voxel size, and not correctable without
-    already knowing the depth.
+    error at a few metres. Given *color_intrinsics* and *color_size* the patch is turned
+    into a ray and the ray into the depth camera's own pixel, which is exact apart from
+    the ~1.5 cm baseline between the two -- under the voxel size, and not correctable
+    without already knowing the depth.
+
+    *color_size* is (width, height) of the colour raster, and it is not optional with
+    *color_intrinsics*: those intrinsics are in colour PIXELS, so the normalised uv has
+    to be multiplied by the colour raster to meet them. Using the depth raster costs
+    nothing while the two cameras publish the same size -- the demo rig publishes 1280x720
+    for both -- and puts the sample 213 px away on a bag whose depth is 848x480.
     """
     if depth_mm.dtype.kind == "f":  # 32FC1 depth is metres
         depth_mm = depth_mm * 1000.0
     height, width = depth_mm.shape
     fx, fy, cx, cy = intrinsics
     if color_intrinsics is not None:
+        if color_size is None:  # loudly, rather than silently sampling the wrong pixel
+            raise ValueError("color_intrinsics needs color_size: the uv is normalised in it")
+        cwidth, cheight = color_size
         cfx, cfy, ccx, ccy = color_intrinsics
-        ray_x = (image_uv[0] * width - ccx) / cfx
-        ray_y = (image_uv[1] * height - ccy) / cfy
+        ray_x = (image_uv[0] * cwidth - ccx) / cfx
+        ray_y = (image_uv[1] * cheight - ccy) / cfy
         u = round(ray_x * fx + cx)
         v = round(ray_y * fy + cy)
-    else:  # no colour calibration: the normalised position is all there is
+    else:  # no colour calibration: the same normalised position, in the depth raster
         u = round(image_uv[0] * width)
         v = round(image_uv[1] * height)
     if not (0 <= u < width and 0 <= v < height):

@@ -383,6 +383,28 @@ class HyperspaceAnswers:
             for client in tuple(self._world_clients):
                 client.send_threadsafe(message)
 
+    def empty_overlay_messages(self, query_id: str) -> tuple[bytes, str]:
+        """The pair that takes a previous answer's heat map and frusta off the screen.
+
+        Here rather than at the caller because this is where the header's shape is
+        decided: the viewer's `heatmap.set` clears and returns on ``n == 0``, but the
+        tour card reads ``header.seconds`` without guarding it, so a short header
+        throws in the browser instead of clearing it.
+        """
+        header = {
+            "query_id": query_id,
+            "n": 0,
+            "voxel_size": 0.0,
+            "frame": self.config.world_frame,
+            "clusters": 0,
+            "stats": {},
+            "seconds": 0.0,
+        }
+        return (
+            encode_binary(MSG_HEATMAP, header, b""),
+            encode_text("query_pyramids", query_id=query_id, pyramids=[]),
+        )
+
     def _publish_pyramids(self, query_id: str, answer: HeatmapAnswer) -> None:
         message = encode_text(
             "query_pyramids",

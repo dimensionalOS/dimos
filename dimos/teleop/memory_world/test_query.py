@@ -15,6 +15,7 @@
 from collections.abc import Iterator
 import json
 from pathlib import Path
+import struct
 from types import SimpleNamespace
 from unittest import mock
 
@@ -24,6 +25,7 @@ import pytest
 import pytest_mock
 
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.teleop.memory_world.messages import MSG_HEATMAP
 from dimos.teleop.memory_world.module import MemoryWorldModule
 from dimos.teleop.memory_world.query import MemoryQueryResult
 
@@ -121,9 +123,9 @@ def test_start_initializes_only_memory_world_server(
 def test_analyze_memory_publishes_and_replaces_result(memory_world: MemoryWorldModule) -> None:
     class Client:
         def __init__(self) -> None:
-            self.messages: list[str] = []
+            self.messages: list[str | bytes] = []
 
-        def send_threadsafe(self, message: str) -> None:
+        def send_threadsafe(self, message: str | bytes) -> None:
             self.messages.append(message)
 
     client = Client()
@@ -143,9 +145,23 @@ def test_analyze_memory_publishes_and_replaces_result(memory_world: MemoryWorldM
     assert memory_world._active_query_result is not None
     assert memory_world._active_query_result["answer"] == "Replacement"
     assert memory_world._active_query_result["revision"] == 2
-    messages = [json.loads(message) for message in client.messages]
-    assert [message["revision"] for message in messages] == [1, 2]
-    assert messages[0]["query_id"] != messages[1]["query_id"]
+    texts = [json.loads(m) for m in client.messages if isinstance(m, str)]
+    results = [m for m in texts if m.get("type") == "query_result"]
+    assert [message["revision"] for message in results] == [1, 2]
+    assert results[0]["query_id"] != results[1]["query_id"]
+
+    # Neither answer is a Hyperspace one, so each also takes the previous answer's
+    # overlays off the screen -- an empty heat map and an empty frustum list, per answer.
+    # Clearing only the server's copy left them drawn in every connected viewer.
+    heatmaps = [m for m in client.messages if isinstance(m, bytes) and m[0] == MSG_HEATMAP]
+    assert len(heatmaps) == 2
+    for frame, result in zip(heatmaps, results, strict=True):
+        size = struct.unpack("<I", frame[1:5])[0]
+        header = json.loads(frame[5 : 5 + size])
+        assert header["n"] == 0 and header["query_id"] == result["query_id"]
+        assert header["seconds"] == 0.0  # the tour card reads this without guarding it
+    pyramids = [m for m in texts if m.get("type") == "query_pyramids"]
+    assert [m["pyramids"] for m in pyramids] == [[], []]
 
 
 def test_analyze_memory_rejects_missing_result(memory_world: MemoryWorldModule) -> None:

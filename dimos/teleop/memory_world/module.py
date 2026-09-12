@@ -965,13 +965,21 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             payload.update(query_id=query_id, revision=self._query_revision)
             self._active_query_result = payload
             self._active_query_images = []
+            clears: tuple[bytes | str, ...] = ()
             if payload.get("engine") != "hyperspace":  # no heat map or frusta go with it
                 self._active_heatmap = self._active_pyramids = None
                 self._last_answer = (None, None)
+                # And SAY so: clearing only this side leaves the previous answer's voxels
+                # and frusta drawn in every connected viewer, beside an answer that has
+                # nothing to do with them, while a viewer connecting later gets a clean
+                # world.
+                clears = self.empty_overlay_messages(query_id)
             # Queued under the lock: two answers then reach every viewer in revision order.
             message = encode_text("query_result", **payload)
             for client in tuple(self._world_clients):
                 client.send_threadsafe(message)
+                for clear in clears:
+                    client.send_threadsafe(clear)
         return query_id
 
     def _marker_ids_for(self, result: MemoryQueryResult) -> list[int]:

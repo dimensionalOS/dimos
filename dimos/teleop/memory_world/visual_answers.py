@@ -273,17 +273,26 @@ class VisualAnswers:
             # turns them into a ray; without them the depth is sampled at the wrong pixel.
             colour = self.config.camera_info_stream_name
             try:
-                ck = (
-                    store.streams[colour].first().data.K if colour in store.list_streams() else None
+                cinfo = (
+                    store.streams[colour].first().data if colour in store.list_streams() else None
                 )
             except LookupError:
-                ck = None
+                cinfo = None
         intrinsics = (float(k[0]), float(k[4]), float(k[2]), float(k[5]))
+        ck = cinfo.K if cinfo is not None else None
         colour_intrinsics = (
             (float(ck[0]), float(ck[4]), float(ck[2]), float(ck[5]))
             if ck is not None and ck[0] and ck[4]
             else None
         )
+        # Its raster too, not the depth image's: those intrinsics are in colour pixels.
+        colour_size = (
+            (int(cinfo.width), int(cinfo.height))
+            if colour_intrinsics is not None and cinfo.width and cinfo.height
+            else None
+        )
+        if colour_size is None:
+            colour_intrinsics = None  # half a calibration is the uncorrected path
 
         hits: list[PatchHit] = []
         with self._store_lock:
@@ -308,6 +317,7 @@ class VisualAnswers:
                     intrinsics,
                     camera_to_world,
                     color_intrinsics=colour_intrinsics,
+                    color_size=colour_size,
                 )
                 if position is not None:
                     hits.append(

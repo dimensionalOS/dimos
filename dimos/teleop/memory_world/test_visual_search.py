@@ -525,7 +525,9 @@ def test_a_colour_patch_is_sampled_at_the_depth_camera_s_own_pixel() -> None:
     depth_mm = np.full((720, 1280), 2000, dtype=np.uint16)
     uv = (0.75, 0.5)
 
-    corrected = patch_world_position(uv, depth_mm, depth, np.eye(4), color_intrinsics=colour)
+    corrected = patch_world_position(
+        uv, depth_mm, depth, np.eye(4), color_intrinsics=colour, color_size=(1280, 720)
+    )
     naive = patch_world_position(uv, depth_mm, depth, np.eye(4))
     assert corrected is not None and naive is not None
 
@@ -536,9 +538,41 @@ def test_a_colour_patch_is_sampled_at_the_depth_camera_s_own_pixel() -> None:
 
     # A patch whose ray leaves the depth camera's view has no depth to read.
     assert (
-        patch_world_position((1.02, 0.5), depth_mm, depth, np.eye(4), color_intrinsics=colour)
+        patch_world_position(
+            (1.02, 0.5), depth_mm, depth, np.eye(4), color_intrinsics=colour, color_size=(1280, 720)
+        )
         is None
     )
+
+
+def test_the_colour_uv_is_scaled_by_the_colour_raster_not_the_depth_one() -> None:
+    """The two cameras need not publish the same size, and then the sizes are the bug.
+
+    The demo rig publishes 1280x720 for both, which is why this costs nothing there and
+    why a test using one size for both cannot see it. A bag with unaligned depth --
+    1280x720 colour, 848x480 depth -- puts the sampled pixel 200-odd columns away.
+    """
+    from dimos.teleop.memory_world.visual_search import patch_world_position
+
+    colour = (644.07, 643.06, 642.15, 363.14)  # 1280x720
+    depth = (424.30, 424.30, 424.90, 237.30)  # 848x480, a different raster
+    depth_mm = np.full((480, 848), 2000, dtype=np.uint16)  # a wall two metres off
+    uv = (0.75, 0.5)
+
+    got = patch_world_position(
+        uv, depth_mm, depth, np.eye(4), color_intrinsics=colour, color_size=(1280, 720)
+    )
+    assert got is not None
+    truth_x = (uv[0] * 1280 - colour[2]) / colour[0] * 2.0
+    assert abs(got[0] - truth_x) < 0.01, f"{got[0]} is not the colour ray {truth_x}"
+
+    # Scaling that uv by the DEPTH width instead lands near the optical axis -- a metre
+    # of error, not a centimetre -- which is what this test exists to catch.
+    assert abs(truth_x) > 0.9
+
+    # And half a calibration is refused rather than silently sampling the wrong pixel.
+    with pytest.raises(ValueError):
+        patch_world_position(uv, depth_mm, depth, np.eye(4), color_intrinsics=colour)
 
 
 def test_the_siglip_fallback_answers_end_to_end() -> None:
