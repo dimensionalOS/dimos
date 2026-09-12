@@ -624,3 +624,37 @@ def test_one_frame_straddling_a_bearing_boundary_is_still_one_view() -> None:
     places = cluster_hits(straddle + two_sides, radius=0.75, max_places=6)
     assert [place.views for place in places] == [2, 1]
     assert places[0].similarity == 0.20
+
+
+def test_the_answer_sentence_names_the_place_it_flies_to() -> None:
+    """ "best match 0.150" beside a marker reading "0.170" is a contradiction.
+
+    `cluster_hits` ranks by VIEWING DIRECTIONS first, so its `places[0]` -- the place the
+    camera flies to and the sentence describes -- is the most-seen one, not the
+    highest-scoring one. The sentence called it "best match" anyway, while a higher score
+    was drawn in the same world at the same moment with its own number on it. This is the
+    fixture two tests above: a cone at 0.15 seen three ways, a stray at 0.17 seen once.
+    """
+    from dimos.teleop.memory_world.visual_answers import _best_phrase
+
+    cone = [
+        hit(5.0, 5.0, 0.15, camera=(0.0, 5.0, 0.0), frame=1),
+        hit(5.1, 5.0, 0.14, camera=(5.0, 0.0, 0.0), frame=2),
+        hit(5.0, 5.1, 0.13, camera=(10.0, 5.0, 0.0), frame=3),
+    ]
+    stray = [hit(-5.0, -5.0, 0.17, camera=(0.0, 0.0, 0.0), frame=4)]
+    # cluster_hits, not cluster_places: the depth path is the one that ranks by views.
+    places = cluster_hits(cone + stray, radius=0.75, max_places=6)
+
+    # The place the answer flies to is NOT the highest-scoring one ...
+    assert places[0].similarity < max(place.similarity for place in places)
+    # ... so the sentence must not call its number the best match. It names the two
+    # numbers the marker beside it shows.
+    sentence = _best_phrase(places[0], located=True)
+    assert "best match" not in sentence
+    assert f"{places[0].similarity:+.3f}" in sentence
+    assert f"{places[0].views} views" in sentence
+
+    # On the branch that really does rank by similarity, "best match" is true and stays.
+    ranked_by_score = _best_phrase(places[0], located=False)
+    assert ranked_by_score == f"best match {places[0].similarity:+.3f}"

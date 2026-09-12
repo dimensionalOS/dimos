@@ -45,6 +45,22 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+def _best_phrase(best: Place, located: bool) -> str:
+    """How to describe the place an answer flies to.
+
+    The two producers rank differently, and the sentence has to say which one it got.
+    `cluster_hits` (the depth path) ranks by VIEWING DIRECTIONS first, so its `places[0]`
+    is the most-seen place and a higher-scoring one is drawn in the same world at the same
+    moment with its own number printed on it -- "best match 0.150" beside a marker reading
+    "0.170" is a contradiction the reader has no way to resolve. Name both numbers there,
+    the way the Hyperspace sentence already does. `cluster_places` (no depth) really does
+    rank by similarity, so "best match" is true on that branch and stays.
+    """
+    if not located:
+        return f"best match {best.similarity:+.3f}"
+    return f"best {best.similarity:+.3f} from {best.views} view{'s' if best.views != 1 else ''}"
+
+
 class VisualAnswers:
     """Needs, from the module: ``config``, the store and index locks,
     ``_ensure_store``, ``_ensure_visual_index``, ``_reopen_recording``,
@@ -342,13 +358,22 @@ class VisualAnswers:
         result = MemoryQueryResult(
             engine="siglip",
             query_text=phrase,
-            answer=f"Found {phrase} in {len(places)} place(s), best match {places[0].similarity:+.3f}",
+            answer=f"Found {phrase} in {len(places)} place(s), {_best_phrase(places[0], located)}",
             focus_point=places[0].position,
             points=[
                 HighlightPoint(
                     position=place.position,
-                    label=f"{phrase[:80]} ({place.similarity:+.3f}, {place.views} view"
-                    f"{'s' if place.views != 1 else ''})",
+                    label=f"{phrase[:80]} ({place.similarity:+.3f}"
+                    # Only the depth path measures viewing directions. On the other one
+                    # `views` is the dataclass default, so printing "1 view" beside a
+                    # score would report a constant in the place of a measurement -- and
+                    # `cluster_places` has just thrown away the near-identical frames
+                    # that would have made it interesting.
+                    + (
+                        f", {place.views} view{'s' if place.views != 1 else ''})"
+                        if located
+                        else ")"
+                    ),
                     radius=self.config.object_radius_m if located else None,
                 )
                 for place in places
