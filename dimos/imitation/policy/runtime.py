@@ -12,35 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run trained LeRobot policies in an isolated Python environment."""
+"""Shared observation, lifecycle, and execution loop for isolated policy backends."""
 
 from __future__ import annotations
 
-from contextlib import nullcontext
-from dataclasses import dataclass
+from functools import partial
+from importlib import import_module
+import json
 from threading import Condition, Event, RLock, Thread, current_thread
 import time
-from typing import Any
+from typing import Any, cast
 
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.factory import get_policy_class, make_pre_post_processors
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.utils import prepare_observation_for_inference
-from lerobot.processor import PolicyProcessorPipeline
-from lerobot.types import PolicyAction, RobotObservation
-from lerobot.utils.import_utils import register_third_party_plugins
 import numpy as np
 from numpy.typing import NDArray
 from reactivex.disposable import Disposable
-import torch
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.core import rpc
-from dimos.imitation.policy.lerobot.module import (
-    LeRobotPolicyModule,
-    RolloutStatus,
-)
+from dimos.imitation.policy.backend import Images, PolicyBackend
+from dimos.imitation.policy.module import PolicyModule, RolloutStatus, policy_class
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -50,33 +41,14 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_IMAGE_FEATURE = "observation.images.wrist"
-_STATE_FEATURE = "observation.state"
-_ACTION_FEATURE = "action"
 
-RawObservation = dict[str, NDArray[np.uint8] | NDArray[np.float32]]
-
-
-@dataclass(frozen=True)
-class _LoadedPolicy:
-    policy: PreTrainedPolicy
-    device: torch.device
-    preprocessor: PolicyProcessorPipeline[RobotObservation, RobotObservation]
-    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction]
-    use_amp: bool
-    chunk_size: int | None
-    n_action_steps: int
-    action_lower: NDArray[np.float32]
-    action_upper: NDArray[np.float32]
-
-
-class LeRobotPolicyRuntime(LeRobotPolicyModule):
-    """Concrete LeRobot implementation loaded by ``LeRobotPolicyModule``."""
+class _PolicyRuntime(PolicyModule):
+    """Shared rollout implementation loaded by ``PolicyModule``."""
 
     _lock: RLock
     _observation_changed: Condition
-    _loaded_policy: _LoadedPolicy | None
-    _latest_image: tuple[NDArray[np.uint8], float] | None
+    _loaded_policy: PolicyBackend | None
+    _latest_images: dict[str, tuple[NDArray[np.uint8], float]]
     _latest_joint_state: JointState | None
     _stop_event: Event
     _thread: Thread | None
@@ -89,7 +61,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         self._lock = RLock()
         self._observation_changed = Condition(self._lock)
         self._loaded_policy = None
-        self._latest_image = None
+        self._latest_images = {}
         self._latest_joint_state = None
         self._stop_event = Event()
         self._thread = None
@@ -100,7 +72,13 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
     @rpc
     def start(self) -> None:
         super().start()
-        self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
+        missing = set(self.config.image_mapping) - self.inputs.keys()
+        if missing:
+            raise ValueError(f"Image mapping names undeclared policy ports: {sorted(missing)}")
+        for port in self.config.image_mapping:
+            self.register_disposable(
+                Disposable(self.inputs[port].subscribe(partial(self._on_image, port)))
+            )
         self.register_disposable(
             Disposable(self.coordinator_joint_state.subscribe(self._on_joint_state))
         )
@@ -110,6 +88,11 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
     def stop(self) -> None:
         if not self._stop_policy():
             self._cancel_after_stop_timeout()
+        if self._loaded_policy is not None and (
+            self._thread is None or not self._thread.is_alive()
+        ):
+            self._loaded_policy.close()
+            self._loaded_policy = None
         super().stop()
 
     @rpc
@@ -123,6 +106,8 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             try:
                 self._snapshot_observation(time.time())
             except Exception as exc:
+                if loaded_policy is not None:
+                    loaded_policy.close()
                 self._loaded_policy = None
                 self._last_error = str(exc)
                 return self._status_locked()
@@ -137,18 +122,31 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             if loaded_policy is None:
                 loaded_policy = self._load_policy()
                 logger.info(
-                    "Loaded LeRobot policy during preflight",
+                    "Loaded policy during preflight",
                     path=self.config.policy_path,
                     runtime_fps=self.config.fps,
                     chunk_size=loaded_policy.chunk_size,
                     n_action_steps=loaded_policy.n_action_steps,
                 )
             with self._lock:
+                images, state, _ = self._snapshot_observation(time.time())
+            sample = loaded_policy.predict(images, state, task=self.config.task)
+            if (
+                sample.ndim != 2
+                or sample.shape[1] != len(self.config.joint_names)
+                or sample.shape[0] < loaded_policy.n_action_steps
+                or not np.all(np.isfinite(sample))
+            ):
+                raise ValueError("Policy preflight returned an invalid action chunk")
+            loaded_policy.reset()
+            with self._lock:
                 self._loaded_policy = loaded_policy
                 self._snapshot_observation(time.time())
                 self._last_error = None
                 return self._status_locked()
         except Exception as exc:
+            if loaded_policy is not None:
+                loaded_policy.close()
             with self._lock:
                 self._loaded_policy = None
                 self._last_error = str(exc)
@@ -175,7 +173,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             self._active = True
             self._thread = Thread(
                 target=self._run_rollout,
-                name="lerobot-policy-rollout",
+                name="policy-rollout",
                 daemon=True,
             )
             self._thread.start()
@@ -199,6 +197,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         except RuntimeError:
             observations_ready = False
         return {
+            "backend": self.config.backend,
             "active": self._active,
             "policy_path": self.config.policy_path,
             "task": self.config.task,
@@ -209,20 +208,15 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             "last_error": self._last_error,
         }
 
-    def _on_color_image(self, image: Image) -> None:
+    def _on_image(self, port: str, image: Image) -> None:
         if image.format != ImageFormat.RGB or image.data.dtype != np.uint8:
-            logger.warning("Ignoring non-uint8 RGB policy image", image=str(image))
+            logger.warning("Ignoring non-uint8 RGB policy image", port=port)
             return
-        expected_shape = (self.config.image_height, self.config.image_width, 3)
-        if image.data.shape != expected_shape:
-            logger.warning(
-                "Ignoring policy image with unexpected shape",
-                shape=image.data.shape,
-                expected=expected_shape,
-            )
+        if image.data.ndim != 3 or image.data.shape[2] != 3:
+            logger.warning("Ignoring malformed RGB policy image", port=port)
             return
         with self._lock:
-            self._latest_image = (np.ascontiguousarray(image.data), image.ts)
+            self._latest_images[port] = (np.ascontiguousarray(image.data).copy(), image.ts)
 
     def _on_joint_state(self, state: JointState) -> None:
         with self._observation_changed:
@@ -240,23 +234,25 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         else:
             self.start_rollout()
 
-    def _snapshot_observation(
-        self, now: float
-    ) -> tuple[NDArray[np.uint8], NDArray[np.float32], float]:
-        if self._latest_image is None:
-            raise RuntimeError("no camera image has been received")
+    def _snapshot_observation(self, now: float) -> tuple[Images, NDArray[np.float32], float]:
+        images: Images = {}
+        max_age = self.config.max_observation_age_s
+        for port, feature in self.config.image_mapping.items():
+            if port not in self._latest_images:
+                raise RuntimeError(f"no camera image has been received on {port}")
+            image, timestamp = self._latest_images[port]
+            if not np.isfinite(timestamp) or not 0 <= now - timestamp <= max_age:
+                raise RuntimeError(f"camera image on {port} is stale or has an invalid timestamp")
+            images[feature] = image.copy()
         if self._latest_joint_state is None:
             raise RuntimeError("no coordinator joint state has been received")
-
-        image, image_ts = self._latest_image
         state = self._latest_joint_state
-        max_age = self.config.max_observation_age_s
-        if now - image_ts > max_age:
-            raise RuntimeError(f"camera image is stale by {now - image_ts:.2f}s")
-        if now - state.ts > max_age:
-            raise RuntimeError(f"joint state is stale by {now - state.ts:.2f}s")
+        if not np.isfinite(state.ts) or not 0 <= now - state.ts <= max_age:
+            raise RuntimeError("joint state is stale or has an invalid timestamp")
 
-        positions = dict(zip(state.name, state.position, strict=False))
+        if len(state.name) != len(state.position) or len(set(state.name)) != len(state.name):
+            raise RuntimeError("joint state names must be unique and match its position count")
+        positions = dict(zip(state.name, state.position, strict=True))
         missing = [name for name in self.config.joint_names if name not in positions]
         if missing:
             raise RuntimeError(f"joint state is missing configured joints: {missing}")
@@ -266,111 +262,14 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         )
         if not np.all(np.isfinite(vector)):
             raise RuntimeError("joint state contains non-finite positions")
-        return image.copy(), vector, state.ts
+        return images, vector, state.ts
 
-    def _load_policy(self) -> _LoadedPolicy:
-        register_third_party_plugins()
-        policy_config = PreTrainedConfig.from_pretrained(self.config.policy_path)
-        if self.config.device is not None:
-            policy_config.device = self.config.device
-        if policy_config.device is None:
-            raise RuntimeError("LeRobot did not resolve an inference device")
-
-        self._validate_features(policy_config)
-        device = torch.device(policy_config.device)
-        if device.type == "cuda" and not torch.cuda.is_available():
-            raise RuntimeError(
-                f"Policy requested device {policy_config.device!r}, but CUDA is not available"
-            )
-
-        policy_class = get_policy_class(policy_config.type)
-        loaded_policy = policy_class.from_pretrained(self.config.policy_path, config=policy_config)
-        preprocessor, postprocessor = make_pre_post_processors(
-            policy_cfg=policy_config,
-            pretrained_path=self.config.policy_path,
-            preprocessor_overrides={"device_processor": {"device": str(device)}},
-        )
-        action_lower, action_upper = _checkpoint_action_bounds(
-            postprocessor,
-            len(self.config.joint_names),
-        )
-        return _LoadedPolicy(
-            policy=loaded_policy,
-            device=device,
-            preprocessor=preprocessor,
-            postprocessor=postprocessor,
-            use_amp=bool(policy_config.use_amp),
-            chunk_size=_optional_int_attribute(policy_config, "chunk_size"),
-            n_action_steps=_positive_int_attribute(policy_config, "n_action_steps"),
-            action_lower=action_lower,
-            action_upper=action_upper,
-        )
-
-    def _validate_features(self, policy_config: PreTrainedConfig) -> None:
-        inputs = policy_config.input_features or {}
-        outputs = policy_config.output_features or {}
-        missing = {_IMAGE_FEATURE, _STATE_FEATURE} - set(inputs)
-        if missing:
-            raise ValueError(
-                "Policy is incompatible with the DimOS single-camera runtime; "
-                f"missing input features: {sorted(missing)}"
-            )
-        if _ACTION_FEATURE not in outputs:
-            raise ValueError(f"Policy has no {_ACTION_FEATURE!r} output feature")
-        if getattr(policy_config, "temporal_ensemble_coeff", None) is not None:
-            raise ValueError("Policies using temporal ensembling are not supported")
-
-        state_shape = tuple(inputs[_STATE_FEATURE].shape)
-        image_shape = tuple(inputs[_IMAGE_FEATURE].shape)
-        action_shape = tuple(outputs[_ACTION_FEATURE].shape)
-        joint_count = len(self.config.joint_names)
-        expected_image_shape = (3, self.config.image_height, self.config.image_width)
-        if image_shape != expected_image_shape:
-            raise ValueError(
-                f"Policy image shape {image_shape} does not match {expected_image_shape}"
-            )
-        if not state_shape or state_shape[0] != joint_count:
-            raise ValueError(
-                f"Policy state dimension {state_shape} does not match {joint_count} configured joints"
-            )
-        if not action_shape or action_shape[0] != joint_count:
-            raise ValueError(
-                f"Policy action dimension {action_shape} does not match {joint_count} configured joints"
-            )
-
-    def _predict(
-        self,
-        loaded_policy: _LoadedPolicy,
-        image: NDArray[np.uint8],
-        state: NDArray[np.float32],
-        *,
-        task: str,
-    ) -> NDArray[np.float32]:
-        observation: RawObservation = {
-            _IMAGE_FEATURE: image,
-            _STATE_FEATURE: state,
-        }
-        with (
-            torch.inference_mode(),
-            torch.autocast(device_type="cuda")
-            if loaded_policy.device.type == "cuda" and loaded_policy.use_amp
-            else nullcontext(),
-        ):
-            prepared = prepare_observation_for_inference(
-                observation,
-                loaded_policy.device,
-                task=task,
-                robot_type=self.config.robot_type,
-            )
-            prepared = loaded_policy.preprocessor(prepared)
-            predict = getattr(loaded_policy.policy, "predict_action_chunk", None)
-            if not callable(predict):
-                raise TypeError("Policy does not provide predict_action_chunk()")
-            action_chunk = loaded_policy.postprocessor(predict(prepared))
-        return np.asarray(action_chunk.to("cpu").numpy(), dtype=np.float32)
+    def _load_policy(self) -> PolicyBackend:
+        backend_module = import_module(f"dimos_{self.config.backend}.backend")
+        return cast("PolicyBackend", backend_module.Backend(self.config))
 
     def _run_rollout(self) -> None:
-        loaded_policy: _LoadedPolicy | None = None
+        loaded_policy: PolicyBackend | None = None
         try:
             with self._lock:
                 loaded_policy = self._loaded_policy
@@ -383,29 +282,32 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             while not self._stop_event.is_set():
                 with self._lock:
                     image, state, state_ts = self._snapshot_observation(time.time())
-                action_chunk = self._predict(loaded_policy, image, state, task=self.config.task)
+                inference_started = time.perf_counter()
+                action_chunk = loaded_policy.predict(image, state, task=self.config.task)
+                inference_s = time.perf_counter() - inference_started
                 expected_width = len(self.config.joint_names)
-                if action_chunk.ndim != 3 or action_chunk.shape[0] != 1:
+                if action_chunk.ndim != 2:
                     raise RuntimeError(
                         f"policy returned action chunk shape {action_chunk.shape}, expected "
-                        f"(1, steps, {expected_width})"
+                        f"(steps, {expected_width})"
                     )
-                if action_chunk.shape[2] != expected_width:
+                if action_chunk.shape[1] != expected_width:
                     raise RuntimeError(
-                        f"policy returned action width {action_chunk.shape[2]}, expected {expected_width}"
+                        f"policy returned action width {action_chunk.shape[1]}, expected {expected_width}"
                     )
-                if action_chunk.shape[1] < loaded_policy.n_action_steps:
+                if action_chunk.shape[0] < loaded_policy.n_action_steps:
                     raise RuntimeError(
-                        f"policy returned {action_chunk.shape[1]} action steps, but n_action_steps "
+                        f"policy returned {action_chunk.shape[0]} action steps, but n_action_steps "
                         f"is {loaded_policy.n_action_steps}"
                     )
-                actions = action_chunk[0, : loaded_policy.n_action_steps]
+                actions = action_chunk[: loaded_policy.n_action_steps]
                 if not np.all(np.isfinite(actions)):
                     raise RuntimeError("policy returned non-finite joint targets")
-                bounded_actions = np.clip(
-                    actions,
-                    loaded_policy.action_lower,
-                    loaded_policy.action_upper,
+                bounded_actions = (
+                    np.clip(actions, loaded_policy.action_lower, loaded_policy.action_upper)
+                    if loaded_policy.action_lower is not None
+                    and loaded_policy.action_upper is not None
+                    else actions
                 )
                 clipped = np.any(actions != bounded_actions, axis=0)
                 if np.any(clipped):
@@ -435,11 +337,18 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                     )
                 with self._lock:
                     self._chunks_accepted += 1
-                self._stop_event.wait(loaded_policy.n_action_steps / self.config.fps)
+                logger.info(
+                    "Policy chunk accepted",
+                    backend=self.config.backend,
+                    inference_s=inference_s,
+                    execution_steps=loaded_policy.n_action_steps,
+                    fps=loaded_policy.fps,
+                )
+                self._stop_event.wait(loaded_policy.n_action_steps / loaded_policy.fps)
         except Exception as exc:
             with self._lock:
                 self._last_error = str(exc)
-            logger.exception("LeRobot policy execution stopped", error=str(exc))
+            logger.exception("Policy execution stopped", error=str(exc))
         finally:
             self._stop_event.set()
             cancellation_error = self._cancel_trajectory()
@@ -455,10 +364,8 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                 self._active = False
 
     @staticmethod
-    def _reset_policy(loaded_policy: _LoadedPolicy) -> None:
-        _reset(loaded_policy.policy)
-        _reset(loaded_policy.preprocessor)
-        _reset(loaded_policy.postprocessor)
+    def _reset_policy(loaded_policy: PolicyBackend) -> None:
+        loaded_policy.reset()
 
     def _stop_policy(self) -> bool:
         with self._lock:
@@ -484,6 +391,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         state: NDArray[np.float32],
         actions: NDArray[np.float32],
     ) -> JointTrajectory:
+        assert self._loaded_policy is not None
         zeros = [0.0] * len(self.config.joint_names)
         points = [
             TrajectoryPoint(
@@ -496,7 +404,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             TrajectoryPoint(
                 positions=[float(value) for value in action],
                 velocities=zeros,
-                time_from_start=(index + 1) / self.config.fps,
+                time_from_start=(index + 1) / self._loaded_policy.fps,
             )
             for index, action in enumerate(actions)
         )
@@ -532,52 +440,10 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         return message
 
 
-def _checkpoint_action_bounds(
-    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
-    expected_width: int,
-) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
-    lower_tensor: torch.Tensor | None = None
-    upper_tensor: torch.Tensor | None = None
-    for step in postprocessor.steps:
-        state = step.state_dict()
-        if "action.min" in state and "action.max" in state:
-            lower_tensor = state["action.min"]
-            upper_tensor = state["action.max"]
-            break
-    if lower_tensor is None or upper_tensor is None:
-        raise ValueError("Policy postprocessor has no action min/max statistics")
-
-    lower = np.asarray(lower_tensor.detach().cpu().numpy(), dtype=np.float32)
-    upper = np.asarray(upper_tensor.detach().cpu().numpy(), dtype=np.float32)
-    expected_shape = (expected_width,)
-    if lower.shape != expected_shape or upper.shape != expected_shape:
-        raise ValueError(
-            "Policy action range shape does not match configured joints: "
-            f"min={lower.shape}, max={upper.shape}, expected={expected_shape}"
-        )
-    if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
-        raise ValueError("Policy action range contains non-finite values")
-    if np.any(lower > upper):
-        raise ValueError("Policy action range has min greater than max")
-    return lower, upper
-
-
-def _reset(instance: object) -> None:
-    reset = getattr(instance, "reset", None)
-    if not callable(reset):
-        raise TypeError(f"{type(instance).__name__} does not provide reset()")
-    reset()
-
-
-def _optional_int_attribute(instance: object, name: str) -> int | None:
-    value = getattr(instance, name, None)
-    if value is not None and not isinstance(value, int):
-        raise TypeError(f"{name} must be an int, got {type(value).__name__}")
-    return value
-
-
-def _positive_int_attribute(instance: object, name: str) -> int:
-    value = _optional_int_attribute(instance, name)
-    if value is None or value <= 0:
-        raise ValueError(f"{name} must be a positive int")
-    return value
+def __getattr__(name: str) -> Any:
+    if not name.startswith("PolicyRuntime_"):
+        raise AttributeError(name)
+    ports = tuple(json.loads(bytes.fromhex(name.removeprefix("PolicyRuntime_")).decode()))
+    cls = type(name, (_PolicyRuntime, policy_class(ports)), {"__module__": __name__})
+    globals()[name] = cls
+    return cls

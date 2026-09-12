@@ -20,9 +20,9 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.imitation.policy.lerobot.module import (
+from dimos.imitation.policy.module import (
     POLICY_ROLLOUT_TASK_NAME,
-    LeRobotPolicyModule,
+    PolicyModule,
 )
 from dimos.robot.manipulators.openyam.blueprints.learning_rollout import (
     build_openyam_rollout,
@@ -69,7 +69,7 @@ def test_rollout_uses_the_shared_learning_profile() -> None:
     blueprint = build_openyam_rollout(
         checkpoint="checkpoint", task="pick up block", camera_device="/dev/camera", device="cuda"
     )
-    policy = _module_kwargs(blueprint, LeRobotPolicyModule)
+    policy = _module_kwargs(blueprint, PolicyModule)
     camera = _module_kwargs(blueprint, CameraModule)
 
     assert policy["policy_path"] == "checkpoint"

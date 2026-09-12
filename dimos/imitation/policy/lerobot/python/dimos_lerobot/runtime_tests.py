@@ -19,8 +19,7 @@ from threading import Event, Thread
 import time
 from typing import Any, Protocol
 
-from dimos_lerobot import runtime as policy_runtime
-from dimos_lerobot.runtime import LeRobotPolicyRuntime
+from dimos_lerobot import backend as policy_runtime
 from lerobot.configs.policies import PreTrainedConfig
 import numpy as np
 from numpy.typing import NDArray
@@ -35,6 +34,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
+from dimos.imitation.policy.runtime import _PolicyRuntime
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
@@ -129,7 +129,7 @@ class RuntimeFactory(Protocol):
         policy: FakePolicy,
         *,
         device: str | None = None,
-    ) -> tuple[LeRobotPolicyRuntime, Any]: ...
+    ) -> tuple[_PolicyRuntime, Any]: ...
 
 
 @pytest.fixture
@@ -139,13 +139,13 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
     mocker.patch.object(LCMRPC, "serve_module_rpc", return_value=None)
     mocker.patch.object(LCMRPC, "start", return_value=None)
     mocker.patch.object(LCMRPC, "stop", return_value=None)
-    built: list[LeRobotPolicyRuntime] = []
+    built: list[_PolicyRuntime] = []
 
     def _make(
         policy: FakePolicy,
         *,
         device: str | None = None,
-    ) -> tuple[LeRobotPolicyRuntime, Any]:
+    ) -> tuple[_PolicyRuntime, Any]:
         def load_config(_path: str) -> FakeUpstreamConfig:
             policy.config_load_count += 1
             return policy.upstream_config
@@ -183,7 +183,7 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
         )
         mocker.patch.object(policy_runtime, "register_third_party_plugins")
 
-        module = LeRobotPolicyRuntime(
+        module = _PolicyRuntime(
             _isolated_python_runtime=True,
             policy_path="checkpoint/default",
             task="pick up the test object",
@@ -191,8 +191,6 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
             joint_names=JOINTS,
             fps=50.0,
             robot_type="test_arm",
-            image_width=5,
-            image_height=4,
         )
         control = mocker.MagicMock()
         control.execute_trajectory.return_value = TrajectoryExecutionResult(
@@ -218,7 +216,7 @@ def _action_chunk(steps: int = 3) -> NDArray[np.float32]:
 
 
 def _provide_observation(
-    module: LeRobotPolicyRuntime,
+    module: _PolicyRuntime,
     *,
     positions: list[float] | None = None,
     ts: float | None = None,
@@ -229,12 +227,12 @@ def _provide_observation(
     rgb[..., 2] = 30
     values = positions or [float(i) / 10 for i in range(len(JOINTS))]
     timestamp = time.time() if ts is None else ts
-    module._on_color_image(Image(data=rgb, format=ImageFormat.RGB, ts=timestamp))
+    module._on_image("color_image", Image(data=rgb, format=ImageFormat.RGB, ts=timestamp))
     module._on_joint_state(JointState(ts=timestamp, name=JOINTS, position=values))
     return rgb, values, timestamp
 
 
-def _preflight(module: LeRobotPolicyRuntime) -> None:
+def _preflight(module: _PolicyRuntime) -> None:
     status = module.preflight_rollout()
     assert status["policy_ready"] is True
     assert status["observations_ready"] is True
@@ -338,7 +336,7 @@ def test_start_mismatch_waits_for_new_joint_state_before_retry(
     module.start_rollout()
     wait_until(lambda: control.execute_trajectory.call_count == 1, timeout=1.0)
 
-    _provide_observation(module, positions=[0.2] * len(JOINTS), ts=time.time() + 0.01)
+    _provide_observation(module, positions=[0.2] * len(JOINTS), ts=time.time())
     wait_until(lambda: control.execute_trajectory.call_count >= 2, timeout=1.0)
     module.stop_rollout()
 
@@ -415,12 +413,14 @@ def test_invalid_action_chunk_cancels_and_latches_rollout_off(
     make_runtime: RuntimeFactory,
     actions: NDArray[np.float32],
     message: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    policy = FakePolicy(actions)
+    policy = FakePolicy(_action_chunk())
     module, control = make_runtime(policy)
     _provide_observation(module)
 
     _preflight(module)
+    monkeypatch.setattr(policy, "action_chunk", torch.from_numpy(actions).unsqueeze(0))
     module.start_rollout()
 
     wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
@@ -504,7 +504,7 @@ def test_policy_refuses_stale_observations(make_runtime: RuntimeFactory) -> None
     result = module.preflight_rollout()
 
     assert result["active"] is False
-    assert "camera image is stale" in (result["last_error"] or "")
+    assert "is stale" in (result["last_error"] or "")
     assert policy.config_load_count == 0
     control.execute_trajectory.assert_not_called()
 
@@ -581,8 +581,9 @@ def test_preflight_rejects_invalid_live_joints(
     policy = FakePolicy(_action_chunk())
     module, control = make_runtime(policy)
     timestamp = time.time()
-    module._on_color_image(
-        Image(data=np.zeros((4, 5, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=timestamp)
+    module._on_image(
+        "color_image",
+        Image(data=np.zeros((4, 5, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=timestamp),
     )
     module._on_joint_state(JointState(ts=timestamp, name=names, position=positions))
 
@@ -594,27 +595,28 @@ def test_preflight_rejects_invalid_live_joints(
 
 
 @pytest.mark.parametrize(
-    ("image", "image_format"),
+    ("image", "image_format", "message"),
     [
-        (np.zeros((8, 8, 3), dtype=np.uint8), ImageFormat.RGB),
-        (np.zeros((4, 5, 3), dtype=np.uint8), ImageFormat.BGR),
+        (np.zeros((8, 8, 3), dtype=np.uint8), ImageFormat.RGB, "Policy image shape"),
+        (np.zeros((4, 5, 3), dtype=np.uint8), ImageFormat.BGR, "no camera image"),
     ],
 )
 def test_preflight_requires_exact_live_rgb_contract(
     make_runtime: RuntimeFactory,
     image: NDArray[np.uint8],
     image_format: ImageFormat,
+    message: str,
 ) -> None:
     policy = FakePolicy(_action_chunk())
     module, control = make_runtime(policy)
     timestamp = time.time()
-    module._on_color_image(Image(data=image, format=image_format, ts=timestamp))
+    module._on_image("color_image", Image(data=image, format=image_format, ts=timestamp))
     module._on_joint_state(JointState(ts=timestamp, name=JOINTS, position=[0.0] * len(JOINTS)))
 
     status = module.preflight_rollout()
 
     assert status["policy_ready"] is False
-    assert "no camera image" in (status["last_error"] or "")
+    assert message in (status["last_error"] or "")
     control.execute_trajectory.assert_not_called()
 
 
@@ -657,3 +659,27 @@ def test_preflight_rejects_unavailable_cuda(
     assert status["policy_ready"] is False
     assert "CUDA is not available" in (status["last_error"] or "")
     control.execute_trajectory.assert_not_called()
+
+
+def test_checkpoint_joint_order_is_applied_to_state_actions_and_bounds(
+    make_runtime: RuntimeFactory,
+) -> None:
+    actions = np.tile([0.1, 0.2, 0.3, 0.4], (3, 1)).astype(np.float32)
+    policy = FakePolicy(
+        actions, n_action_steps=1, action_lower=[-1, -2, -3, -4], action_upper=[1, 2, 3, 4]
+    )
+    module, control = make_runtime(policy)
+    module.config.policy_joint_names = list(reversed(JOINTS))
+    _provide_observation(module, positions=[0.4, 0.3, 0.2, 0.1])
+    _preflight(module)
+    assert policy.batch is not None
+    state = policy.batch["observation.state"]
+    assert isinstance(state, torch.Tensor)
+    np.testing.assert_allclose(state.numpy(), np.array([[0.1, 0.2, 0.3, 0.4]]))
+    module.start_rollout()
+    wait_until(lambda: control.execute_trajectory.called, timeout=1)
+    module.stop_rollout()
+    trajectory = control.execute_trajectory.call_args.args[0]
+    np.testing.assert_allclose(trajectory.points[1].positions, [0.4, 0.3, 0.2, 0.1])
+    assert module._loaded_policy is not None
+    np.testing.assert_array_equal(module._loaded_policy.action_upper, [4, 3, 2, 1])

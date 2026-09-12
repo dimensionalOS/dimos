@@ -73,28 +73,35 @@ _dual_openyam_quest_task = teleop_ik_task(
     },
 )
 
+
+def dual_openyam_quest_tasks(*additional: TaskConfig) -> list[TaskConfig]:
+    """Compose existing Quest tasks with additional coordinator tasks."""
+    return [
+        _dual_openyam_quest_task,
+        TaskConfig(
+            name="left_arm_gripper",
+            type="gripper",
+            joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[0]],
+            priority=20,
+            stream_bind={"gripper_command": "left_gripper_command"},
+        ),
+        TaskConfig(
+            name="right_arm_gripper",
+            type="gripper",
+            joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[1]],
+            priority=20,
+            stream_bind={"gripper_command": "right_gripper_command"},
+        ),
+        dual_openyam_trajectory_task(priority=20),
+        *additional,
+    ]
+
+
 teleop_quest_dual_openyam = autoconnect(
     ArmTeleopModule.blueprint(),
     DualOpenYamCoordinator.blueprint(
         instance_name="ControlCoordinator",
-        tasks=[
-            _dual_openyam_quest_task,
-            TaskConfig(
-                name="left_arm_gripper",
-                type="gripper",
-                joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[0]],
-                priority=20,
-                stream_bind={"gripper_command": "left_gripper_command"},
-            ),
-            TaskConfig(
-                name="right_arm_gripper",
-                type="gripper",
-                joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[1]],
-                priority=20,
-                stream_bind={"gripper_command": "right_gripper_command"},
-            ),
-            dual_openyam_trajectory_task(priority=20),
-        ],
+        tasks=dual_openyam_quest_tasks(),
     ),
     ManipulationModule.blueprint(
         model=_dual_openyam_quest_model,

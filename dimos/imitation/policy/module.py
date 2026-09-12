@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Host contract for isolated LeRobot policy rollout."""
+"""Host contract for isolated, configurable policy rollout."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from functools import cache
+import json
+import keyword
 from pathlib import Path
-from typing import Protocol, TypedDict
+from typing import Any, Literal, Protocol, TypedDict
 
 from pydantic import Field, field_validator
 
@@ -25,6 +29,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryCancellationResult,
     TrajectoryExecutionResult,
 )
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.experimental.isolated_python.module import (
@@ -36,6 +41,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.spec.utils import Spec
 from dimos.teleop.quest.quest_types import BUTTON_ALIASES, Buttons
+from dimos.utils.generic import classproperty
 
 POLICY_ROLLOUT_TASK_NAME = "policy_rollout"
 
@@ -57,6 +63,7 @@ class PolicyControlSpec(Spec, Protocol):
 class RolloutStatus(TypedDict):
     """Operator-facing state of the configured policy rollout."""
 
+    backend: str
     active: bool
     policy_path: str
     task: str
@@ -76,20 +83,38 @@ class RolloutControlSpec(Spec, Protocol):
     def rollout_status(self) -> RolloutStatus: ...
 
 
-class LeRobotPolicyModuleConfig(IsolatedPythonModuleConfig):
+class PolicyModuleConfig(IsolatedPythonModuleConfig):
     """Configuration for one checkpoint shared with the isolated runtime."""
 
+    backend: Literal["lerobot", "abc"] = "lerobot"
+    image_mapping: dict[str, str] = Field(
+        default_factory=lambda: {"color_image": "observation.images.wrist"}, min_length=1
+    )
+    policy_joint_names: list[str] | None = None
+    fast_inference: bool = True
+    diffusion_steps: int = Field(default=10, gt=0)
+    execution_steps: int | None = Field(default=None, gt=0)
+    norm_stats_path: str | None = None
+    clip_cache_dir: str | None = None
     policy_path: str = Field(min_length=1)
     task: str = Field(min_length=1)
     device: str | None = None
     joint_names: list[str] = Field(min_length=1)
-    fps: float = Field(default=30.0, gt=0)
+    fps: float | None = Field(default=None, gt=0)
     robot_type: str = ""
-    image_width: int = Field(default=640, gt=0)
-    image_height: int = Field(default=480, gt=0)
     max_observation_age_s: float = Field(default=0.5, gt=0)
     trajectory_task_name: str = POLICY_ROLLOUT_TASK_NAME
     rollout_button: str = "A"
+
+    @field_validator("image_mapping")
+    @classmethod
+    def image_mapping_must_be_valid(cls, mapping: dict[str, str]) -> dict[str, str]:
+        return validate_image_mapping(mapping)
+
+    @field_validator("norm_stats_path", "clip_cache_dir")
+    @classmethod
+    def norm_stats_path_is_absolute(cls, path: str | None) -> str | None:
+        return str(Path(path).expanduser().resolve()) if path is not None else None
 
     @field_validator("policy_path")
     @classmethod
@@ -121,17 +146,24 @@ class LeRobotPolicyModuleConfig(IsolatedPythonModuleConfig):
         return name
 
 
-class LeRobotPolicyModule(IsolatedPythonModule):
+class PolicyModule(IsolatedPythonModule):
     """Convert live image and joint-state observations into joint targets."""
 
-    implementation = "dimos_lerobot.runtime:LeRobotPolicyRuntime"
-    config: LeRobotPolicyModuleConfig
+    implementation = "dimos.imitation.policy.runtime:_PolicyRuntime"
+    config: PolicyModuleConfig
 
-    color_image: In[Image]
     coordinator_joint_state: In[JointState]
     button_pressed: In[Buttons]
 
     _control: PolicyControlSpec
+
+    @classproperty
+    def blueprint(self) -> Callable[..., Blueprint]:
+        return policy_module
+
+    @property
+    def runtime_project(self) -> Path:
+        return backend_project(self.config.backend)
 
     @rpc
     def preflight_rollout(self) -> RolloutStatus:
@@ -152,3 +184,68 @@ class LeRobotPolicyModule(IsolatedPythonModule):
     def rollout_status(self) -> RolloutStatus:
         """Return the lifecycle and observation state of the configured policy."""
         raise NotImplementedError
+
+
+def backend_project(backend: str) -> Path:
+    """Locate the independently locked dependency project for a backend."""
+    if backend not in {"abc", "lerobot"}:
+        raise ValueError(f"Unknown policy backend {backend!r}")
+    return Path(__file__).resolve().parent / backend / "python"
+
+
+def validate_image_mapping(mapping: dict[str, str]) -> dict[str, str]:
+    for port, feature in mapping.items():
+        if (
+            not port.isidentifier()
+            or keyword.iskeyword(port)
+            or port.startswith("_")
+            or port in dir(PolicyModule)
+            or port in {"coordinator_joint_state", "button_pressed"}
+        ):
+            raise ValueError(f"Invalid or reserved policy image port {port!r}")
+        if not feature.strip():
+            raise ValueError("Policy image feature names must not be blank")
+    if not mapping or len(set(mapping.values())) != len(mapping):
+        raise ValueError("Policy image features must be nonempty and unique")
+    return mapping
+
+
+@cache
+def policy_class(ports: tuple[str, ...]) -> type[PolicyModule]:
+    """Encode ports in the import name so ordinary pickle works in fresh workers."""
+    validate_image_mapping({port: port for port in ports})
+    suffix = json.dumps(list(ports), separators=(",", ":")).encode().hex()
+    name = "PolicyModule_" + suffix
+    cls = type(
+        name,
+        (PolicyModule,),
+        {
+            "__module__": __name__,
+            "__annotations__": {port: In[Image] for port in ports},
+            "implementation": "dimos.imitation.policy.runtime:PolicyRuntime_" + suffix,
+        },
+    )
+    globals()[name] = cls
+    return cls
+
+
+def __getattr__(name: str) -> Any:
+    if name.startswith("PolicyModule_"):
+        ports = tuple(json.loads(bytes.fromhex(name.removeprefix("PolicyModule_")).decode()))
+        return policy_class(ports)
+    raise AttributeError(name)
+
+
+def policy_module(
+    *, image_mapping: dict[str, str] | None = None, instance_name: str = "policy", **kwargs: Any
+) -> Blueprint:
+    """Declare typed camera ports before blueprint autoconnection."""
+    mapping = validate_image_mapping(
+        image_mapping if image_mapping is not None else {"color_image": "observation.images.wrist"}
+    )
+    return Blueprint.create(
+        policy_class(tuple(sorted(mapping))),
+        image_mapping=mapping,
+        instance_name=instance_name,
+        **kwargs,
+    )
