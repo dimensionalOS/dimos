@@ -23,12 +23,16 @@ relay e2e tests; the matching JS decoders live in web/sdk/src/decoders/.
 
 from collections.abc import Mapping
 import json
+import math
+import time
 from typing import Any
 import zlib
 
 import numpy as np
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.web.codecs import EncodedPayload, web_decoder, web_encoder
@@ -63,6 +67,28 @@ def decode_text(msg: str) -> str:
     if not isinstance(msg, str):
         raise ValueError(f"text.json.v1 wants a string, got {type(msg).__name__}")
     return msg
+
+
+@web_decoder("goal.json.v1")
+def decode_goal(msg: dict[str, Any]) -> PoseStamped:
+    """A navigation goal from a map click: {x, y, yaw?, frame?} in metres/rad."""
+    if not isinstance(msg, dict):
+        raise ValueError(f"goal.json.v1 wants an object, got {type(msg).__name__}")
+    try:
+        x, y, yaw = float(msg["x"]), float(msg["y"]), float(msg.get("yaw", 0.0))
+    except (KeyError, TypeError, ValueError) as e:
+        raise ValueError(f"goal.json.v1 wants numeric x, y (and optional yaw): {e}") from e
+    if not all(math.isfinite(v) for v in (x, y, yaw)):
+        raise ValueError("goal.json.v1 coordinates must be finite")
+    frame = msg.get("frame", "world")
+    if not isinstance(frame, str) or not frame:
+        raise ValueError("goal.json.v1 frame must be a non-empty string")
+    return PoseStamped(
+        ts=time.time(),
+        frame_id=frame,
+        position=(x, y, 0.0),
+        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+    )
 
 
 @web_encoder("pose.json.v1")

@@ -285,11 +285,12 @@ def parse_manifest(data: Any) -> Manifest:
                     f"video panel {panel.id} needs a jpeg.v1 latest rx channel",
                 )
         if panel.kind == "map2d":
-            # channels[0] is the costmap; channels[1] (optional) the pose overlay.
-            if len(panel.channels) not in (1, 2):
+            # channels[0] is the costmap, then an optional pose overlay (rx),
+            # then an optional click-to-goal output (tx, always last).
+            if len(panel.channels) not in (1, 2, 3):
                 raise ManifestError(
                     "invalid_map2d_panel",
-                    f"map2d panel {panel.id} must bind one or two channels",
+                    f"map2d panel {panel.id} must bind one to three channels",
                 )
             costmap = ch_ids[panel.channels[0]]
             if (
@@ -301,13 +302,24 @@ def parse_manifest(data: Any) -> Manifest:
                     "invalid_map2d_panel",
                     f"map2d panel {panel.id} needs a costmap.zlib.v1 latest rx channel first",
                 )
-            if len(panel.channels) == 2:
-                pose = ch_ids[panel.channels[1]]
-                if pose.encoding != "pose.json.v1" or pose.dir != "rx":
-                    raise ManifestError(
-                        "invalid_map2d_panel",
-                        f"map2d panel {panel.id} pose channel must be a pose.json.v1 rx channel",
-                    )
+            rest = [ch_ids[ch] for ch in panel.channels[1:]]
+            goals = [c for c in rest if c.dir == "tx"]
+            poses = [c for c in rest if c.dir == "rx"]
+            if len(poses) > 1 or len(goals) > 1 or (goals and rest[-1] is not goals[0]):
+                raise ManifestError(
+                    "invalid_map2d_panel",
+                    f"map2d panel {panel.id} binds costmap, optional pose, optional goal last",
+                )
+            if poses and poses[0].encoding != "pose.json.v1":
+                raise ManifestError(
+                    "invalid_map2d_panel",
+                    f"map2d panel {panel.id} pose channel must be a pose.json.v1 rx channel",
+                )
+            if goals and (goals[0].encoding != "goal.json.v1" or goals[0].publish != "shared"):
+                raise ManifestError(
+                    "invalid_map2d_panel",
+                    f"map2d panel {panel.id} goal channel must be a goal.json.v1 shared tx channel",
+                )
         if panel.kind == "teleop":
             if len(panel.channels) != 1:
                 raise ManifestError(

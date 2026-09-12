@@ -351,11 +351,12 @@ export function parseManifest(value: unknown): Manifest {
       }
     }
     if (panel.kind === "map2d") {
-      // channels[0] is the costmap; channels[1] (optional) the pose overlay.
-      if (panel.channels.length !== 1 && panel.channels.length !== 2) {
+      // channels[0] is the costmap, then an optional pose overlay (rx), then
+      // an optional click-to-goal output (tx, always last).
+      if (panel.channels.length < 1 || panel.channels.length > 3) {
         throw new ManifestError(
           "invalid_map2d_panel",
-          `map2d panel ${panel.id} must bind one or two channels`,
+          `map2d panel ${panel.id} must bind one to three channels`,
         );
       }
       const costmap = chIds.get(panel.channels[0])!;
@@ -368,14 +369,31 @@ export function parseManifest(value: unknown): Manifest {
           `map2d panel ${panel.id} needs a costmap.zlib.v1 latest rx channel first`,
         );
       }
-      if (panel.channels.length === 2) {
-        const pose = chIds.get(panel.channels[1])!;
-        if (pose.encoding !== "pose.json.v1" || dirOf(pose) !== "rx") {
-          throw new ManifestError(
-            "invalid_map2d_panel",
-            `map2d panel ${panel.id} pose channel must be a pose.json.v1 rx channel`,
-          );
-        }
+      const rest = panel.channels.slice(1).map((c) => chIds.get(c)!);
+      const goals = rest.filter((c) => dirOf(c) === "tx");
+      const poses = rest.filter((c) => dirOf(c) === "rx");
+      if (
+        poses.length > 1 || goals.length > 1 || (goals.length === 1 && rest.at(-1) !== goals[0])
+      ) {
+        throw new ManifestError(
+          "invalid_map2d_panel",
+          `map2d panel ${panel.id} binds costmap, optional pose, optional goal last`,
+        );
+      }
+      if (poses.length === 1 && poses[0].encoding !== "pose.json.v1") {
+        throw new ManifestError(
+          "invalid_map2d_panel",
+          `map2d panel ${panel.id} pose channel must be a pose.json.v1 rx channel`,
+        );
+      }
+      if (
+        goals.length === 1 &&
+        (goals[0].encoding !== "goal.json.v1" || publishOf(goals[0]) !== "shared")
+      ) {
+        throw new ManifestError(
+          "invalid_map2d_panel",
+          `map2d panel ${panel.id} goal channel must be a goal.json.v1 shared tx channel`,
+        );
       }
     }
     if (panel.kind === "teleop") {

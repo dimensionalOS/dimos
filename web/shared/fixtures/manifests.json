@@ -1665,6 +1665,282 @@
       "error": "invalid_map2d_panel"
     },
     {
+      "name": "map2d_panel_goal",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5,
+            "publish": "shared"
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "global_costmap",
+              "odom",
+              "goal_request"
+            ],
+            "params": {
+              "goal": "goal_request"
+            }
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "dir": "rx",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5,
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
+          },
+          {
+            "ch": "odom",
+            "dir": "rx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5,
+            "params": {},
+            "publish": "shared",
+            "requiredScope": null
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "title": "",
+            "channels": [
+              "global_costmap",
+              "odom",
+              "goal_request"
+            ],
+            "params": {
+              "goal": "goal_request"
+            }
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "map2d_panel_goal_no_pose",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5,
+            "publish": "shared"
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "global_costmap",
+              "goal_request"
+            ],
+            "params": {
+              "goal": "goal_request"
+            }
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "dir": "rx",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5,
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5,
+            "params": {},
+            "publish": "shared",
+            "requiredScope": null
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "title": "",
+            "channels": [
+              "global_costmap",
+              "goal_request"
+            ],
+            "params": {
+              "goal": "goal_request"
+            }
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "map2d_panel_goal_not_last",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5,
+            "publish": "shared"
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "global_costmap",
+              "goal_request",
+              "odom"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map2d_panel"
+    },
+    {
+      "name": "map2d_panel_goal_wrong_encoding",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5,
+            "publish": "shared"
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "global_costmap",
+              "goal_request"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map2d_panel"
+    },
+    {
+      "name": "map2d_panel_goal_not_shared",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5,
+            "publish": "none"
+          }
+        ],
+        "panels": [
+          {
+            "id": "map",
+            "kind": "map2d",
+            "channels": [
+              "global_costmap",
+              "goal_request"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map2d_panel"
+    },
+    {
       "name": "teleop_panel_valid",
       "data": {
         "version": 1,

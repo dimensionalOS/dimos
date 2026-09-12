@@ -1,19 +1,22 @@
 // Live 2D costmap: canvas drawing driven by the store's direct-subscribe path
 // (React is not involved at grid or pose rate; the badge rides the 500 ms UI
-// tick). channels[0] is the costmap, channels[1] (optional) the pose overlay
-// - both bindings come from the manifest, never hardcoded stream names.
+// tick). channels[0] is the costmap, channels[1] (optional) the pose overlay,
+// and params.goal (optional) names the tx channel a click publishes a goal
+// on - all bindings come from the manifest, never hardcoded stream names.
 
-import { useEffect, useRef } from "react";
+import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { Badge, type DrawHealth, PanelFrame } from "../layout/PanelFrame.tsx";
 import { type ChannelStore, type CostmapValue, inflateCostmap } from "@dimos/sdk";
 import { useStoreChannel } from "@dimos/sdk/react";
 import styles from "./MapPanel.module.css";
 import {
+  canvasToWorld,
   drawPose,
   fitTransform,
   gridBlit,
   type GridPlacement,
   gridToImageData,
+  type MapTransform,
   type Pose2d,
 } from "./mapRenderer.ts";
 import type { PanelProps } from "./registry.tsx";
@@ -29,6 +32,22 @@ export interface MapSinkDeps {
   hidden?: () => boolean;
   /** Calls back on element size changes; returns the disposer. */
   observeResize?: (el: Element, cb: () => void) => () => void;
+  /** Reports the fitted transform (device px) after every draw. */
+  onDraw?: (t: MapTransform) => void;
+}
+
+/** World metres under a click at CSS offset (cssX, cssY): the backing store is
+ * DPR-scaled, so scale by width/clientWidth before the inverse transform. */
+export function goalFromClick(
+  t: MapTransform,
+  cssX: number,
+  cssY: number,
+  box: { width: number; height: number; clientWidth: number; clientHeight: number },
+): { x: number; y: number } {
+  const sx = box.clientWidth > 0 ? box.width / box.clientWidth : 1;
+  const sy = box.clientHeight > 0 ? box.height / box.clientHeight : 1;
+  const [x, y] = canvasToWorld(t, cssX * sx, cssY * sy);
+  return { x: Math.round(x * 1000) / 1000, y: Math.round(y * 1000) / 1000 };
 }
 
 function isCostmapValue(v: unknown): v is CostmapValue {
@@ -98,6 +117,7 @@ export function startMapSink(
     }
     ctx.clearRect(0, 0, w, h);
     const t = fitTransform(place, w, h);
+    deps.onDraw?.(t);
     ctx.imageSmoothingEnabled = false; // crisp cells when zoomed in
     const { ax, ay, rot, dw, dh } = gridBlit(t, place);
     ctx.save();
@@ -164,8 +184,10 @@ export function startMapSink(
   };
 }
 
-export function MapPanel({ spec, store }: PanelProps) {
+export function MapPanel({ spec, store, session }: PanelProps) {
   const costmapCh = spec.channels[0] as string | undefined;
+  const goalCh = typeof spec.params.goal === "string" ? spec.params.goal : undefined;
+  const second = spec.channels[1] as string | undefined;
   if (costmapCh === undefined) {
     // A map panel without a costmap channel is a bridge authoring mistake;
     // render it visibly instead of crashing the grid.
@@ -180,26 +202,48 @@ export function MapPanel({ spec, store }: PanelProps) {
       spec={spec}
       store={store}
       costmapCh={costmapCh}
-      poseCh={spec.channels[1] as string | undefined}
+      poseCh={second === goalCh ? undefined : second}
+      goalCh={goalCh}
+      session={session}
     />
   );
 }
 
 function MapCanvas(
-  { spec, store, costmapCh, poseCh }: PanelProps & {
+  { spec, store, session, costmapCh, poseCh, goalCh }: PanelProps & {
     costmapCh: string;
     poseCh: string | undefined;
+    goalCh: string | undefined;
   },
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const transformRef = useRef<MapTransform | null>(null);
   const health = useRef<DrawHealth>({ lastDrawOkAtMs: Date.now(), failures: 0 }).current;
   const { slot } = useStoreChannel(store, costmapCh);
+  const [note, setNote] = useState<string | null>(null);
+  const clickable = goalCh !== undefined && session !== undefined;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas === null) return;
-    return startMapSink(store, costmapCh, poseCh, canvas, health);
+    return startMapSink(store, costmapCh, poseCh, canvas, health, {
+      onDraw: (t) => {
+        transformRef.current = t;
+      },
+    });
   }, [store, costmapCh, poseCh, health]);
+
+  const onClick = (e: MouseEvent<HTMLCanvasElement>): void => {
+    const t = transformRef.current;
+    if (!clickable || t === null) return;
+    const canvas = e.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    const goal = goalFromClick(t, e.clientX - rect.left, e.clientY - rect.top, canvas);
+    setNote(`goal (${goal.x.toFixed(2)}, ${goal.y.toFixed(2)})`);
+    session.publish(goalCh, goal).catch((err: unknown) => {
+      setNote(`goal not sent: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  };
 
   return (
     <PanelFrame
@@ -217,12 +261,14 @@ function MapCanvas(
     >
       <canvas
         ref={canvasRef}
-        className={styles.canvas}
+        className={clickable ? styles.clickable : styles.canvas}
         data-testid={`map2d-${costmapCh}-canvas`}
         role="img"
         aria-label={spec.id}
+        onClick={onClick}
       />
       {slot === null && <span className={styles.waiting}>waiting for data...</span>}
+      {note !== null && <span className={styles.note} data-testid="map2d-note">{note}</span>}
     </PanelFrame>
   );
 }

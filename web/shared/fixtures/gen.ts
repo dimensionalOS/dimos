@@ -222,6 +222,14 @@ const chCostmap = {
   delivery: "latest",
   maxHz: 5.5,
 };
+const chGoal = {
+  ch: "goal_request",
+  dir: "tx",
+  encoding: "goal.json.v1",
+  delivery: "reliable",
+  maxHz: 5.5,
+  publish: "shared",
+};
 const chTwist = {
   ch: "tele_cmd_vel",
   dir: "tx",
@@ -440,6 +448,41 @@ const manifestCases: Record<string, unknown> = {
     version: 1,
     channels: [chCostmap, { ...chOdom, dir: "tx" }],
     panels: [{ id: "map", kind: "map2d", channels: ["global_costmap", "odom"] }],
+  },
+  map2d_panel_goal: {
+    version: 1,
+    channels: [chCostmap, chOdom, chGoal],
+    panels: [{
+      id: "map",
+      kind: "map2d",
+      channels: ["global_costmap", "odom", "goal_request"],
+      params: { goal: "goal_request" },
+    }],
+  },
+  map2d_panel_goal_no_pose: {
+    version: 1,
+    channels: [chCostmap, chGoal],
+    panels: [{
+      id: "map",
+      kind: "map2d",
+      channels: ["global_costmap", "goal_request"],
+      params: { goal: "goal_request" },
+    }],
+  },
+  map2d_panel_goal_not_last: {
+    version: 1,
+    channels: [chCostmap, chOdom, chGoal],
+    panels: [{ id: "map", kind: "map2d", channels: ["global_costmap", "goal_request", "odom"] }],
+  },
+  map2d_panel_goal_wrong_encoding: {
+    version: 1,
+    channels: [chCostmap, { ...chGoal, encoding: "text.json.v1" }],
+    panels: [{ id: "map", kind: "map2d", channels: ["global_costmap", "goal_request"] }],
+  },
+  map2d_panel_goal_not_shared: {
+    version: 1,
+    channels: [chCostmap, { ...chGoal, publish: "none" }],
+    panels: [{ id: "map", kind: "map2d", channels: ["global_costmap", "goal_request"] }],
   },
   teleop_panel_valid: {
     version: 1,
