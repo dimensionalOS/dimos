@@ -56,7 +56,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, Unpack
+from typing import TYPE_CHECKING, Any, TypedDict, TypeVar
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -73,6 +73,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     import gtsam  # type: ignore[import-not-found,import-untyped]
+    from typing_extensions import Unpack  # TODO(PY311): import from typing
 
 T = TypeVar("T")
 

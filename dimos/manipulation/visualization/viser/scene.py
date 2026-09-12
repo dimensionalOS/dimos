@@ -98,7 +98,7 @@ OBSTACLE_FALLBACK_OPACITY = 0.55
 OBSTACLE_PROXY_COLOR = (255, 45, 25)
 
 
-class RobotDisplayMode(str, Enum):
+class RobotDisplayMode(str, Enum):  # TODO(PY311): switch to enum.StrEnum
     VISUAL = "visual"
     COLLISION = "collision"
     BOTH = "both"

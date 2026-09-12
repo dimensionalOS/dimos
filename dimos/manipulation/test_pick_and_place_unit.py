@@ -128,6 +128,61 @@ def test_pick_object_rejects_non_planning_frame(module: PickAndPlaceModule) -> N
     assert result.error_code == "GRASP_FRAME_MISMATCH"
 
 
+def test_pick_falls_through_to_the_next_reachable_candidate(
+    module: PickAndPlaceModule,
+) -> None:
+    """A learned provider's best-scoring pose is not always kinematically reachable."""
+    manipulation: Any = module._manipulation
+    module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [_candidate(0.1, score=0.9), _candidate(0.3, score=0.4)]
+    )
+    manipulation.plan_to_poses.side_effect = [
+        SimpleNamespace(succeeded=False, message="unreachable"),
+        SimpleNamespace(succeeded=True, message=""),
+        SimpleNamespace(succeeded=True, message=""),
+        SimpleNamespace(succeeded=True, message=""),
+    ]
+
+    result = module.pick_object("cup-1")
+
+    assert result.success
+    assert result.metadata["rank"] == 1
+    assert result.metadata["score"] == 0.4
+
+
+def test_pick_stops_walking_candidates_on_a_drive_fault(module: PickAndPlaceModule) -> None:
+    """An execution fault would repeat for every candidate, so it is not a demotion."""
+    manipulation: Any = module._manipulation
+    module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [_candidate(0.1), _candidate(0.3)]
+    )
+    manipulation.execute.return_value = SimpleNamespace(succeeded=False, message="drive fault")
+
+    result = module.pick_object("cup-1")
+
+    assert not result.success
+    assert result.error_code == "EXECUTION_FAILED"
+    assert manipulation.plan_to_poses.call_count == 1
+
+
+def test_pick_reports_no_reachable_candidate_when_every_attempt_fails(
+    module: PickAndPlaceModule,
+) -> None:
+    manipulation: Any = module._manipulation
+    module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [_candidate(0.1), _candidate(0.3)]
+    )
+    manipulation.plan_to_poses.return_value = SimpleNamespace(
+        succeeded=False, message="unreachable"
+    )
+
+    result = module.pick_object("cup-1")
+
+    assert not result.success
+    assert result.error_code == "PLANNING_FAILED"
+    assert not module._holding_object
+
+
 def test_pick_object_rejects_empty_candidates(module: PickAndPlaceModule) -> None:
     module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
         Header(1.0, "world"), []
