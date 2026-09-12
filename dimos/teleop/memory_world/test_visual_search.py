@@ -612,6 +612,10 @@ def test_the_siglip_fallback_answers_end_to_end() -> None:
     class Module(VisualAnswers):
         def __init__(self) -> None:
             self._store_lock = threading.RLock()
+            # The real host holds this and the answer path publishes `_last_answer` under
+            # it, so a stub without one is a stub that has drifted from the mixin's host.
+            self._clients_lock = threading.RLock()
+            self._last_answer = (None, None)
             self.config = SimpleNamespace(
                 store_path="/nowhere/walk.db",
                 search_top_k=5,
@@ -744,6 +748,10 @@ def _siglip_module(places_from_depth: list, places_from_search: list):
     class Module(VisualAnswers):
         def __init__(self) -> None:
             self._store_lock = threading.RLock()
+            # The real host holds this and the answer path publishes `_last_answer` under
+            # it, so a stub without one is a stub that has drifted from the mixin's host.
+            self._clients_lock = threading.RLock()
+            self._last_answer = (None, None)
             self.config = SimpleNamespace(
                 store_path="/nowhere/walk.db",
                 search_top_k=5,

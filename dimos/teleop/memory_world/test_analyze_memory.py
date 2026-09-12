@@ -248,3 +248,50 @@ def test_analyze_memory_rejects_oversized_result(memory_world: MemoryWorldModule
 
     assert not outcome.success
     assert outcome.error_code == "RESULT_TOO_LARGE"
+
+
+def test_navigate_works_against_an_embedding_answer(
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Navigate has to route to a place the embeddings found.
+
+    `_navigate_to` reads the answer's places off `_last_answer`, and only the Hyperspace
+    path ever set it -- so with Hyperspace gone every Navigate press answered 409, "the
+    last answer is not a Hyperspace one". Nothing caught that: no test drove /navigate
+    after a SigLIP answer, because until now there was always a Hyperspace answer to use.
+    """
+    from dimos.teleop.memory_world.hyperspace_answers import NavigateRequest
+
+    places = [SimpleNamespace(position=(3.0, 0.0, 0.5)), SimpleNamespace(position=(9.0, 0.0, 0.5))]
+    query_id = "q-clip"
+    memory_world._active_query_result = {"query_id": query_id}
+    memory_world._active_query_images = []
+    with memory_world._clients_lock:
+        memory_world._last_answer = (
+            SimpleNamespace(
+                clusters=[
+                    SimpleNamespace(index=i, centre=tuple(p.position), radius=None)
+                    for i, p in enumerate(places)
+                ]
+            ),
+            query_id,
+        )
+    monkeypatch.setattr(memory_world, "_ground_under_viewer", lambda: (0.0, 0.0, 0.0))
+    monkeypatch.setattr(memory_world, "_broadcast", lambda *a, **k: None)
+    monkeypatch.setattr(
+        memory_world,
+        "_planner",
+        lambda: SimpleNamespace(
+            plan=lambda start, goal: SimpleNamespace(
+                points=[(0.0, 0.0, 0.0), (float(goal[0]), 0.0, 0.0)],
+                length_m=float(goal[0]),
+                cells=4,
+                planner="mls",
+            )
+        ),
+    )
+
+    payload = memory_world._navigate_to(NavigateRequest(cluster=1, query_id=query_id))
+
+    assert payload["length_m"] == 9.0, "did not route to the second place the embeddings found"
+    assert payload["goal"] == [9.0, 0.0, 0.5]

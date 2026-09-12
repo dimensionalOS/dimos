@@ -21,6 +21,7 @@ one the demo uses, this one answers when a recording has no Hyperspace memory.""
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -428,6 +429,21 @@ class VisualAnswers:
         )
         self._add_route_to_result(result)
         query_id = self._publish_query_result(result)
+        # Navigate reads the answer's PLACES off `_last_answer`, which only the Hyperspace
+        # path used to set -- so /navigate 409'd ("the last answer is not a Hyperspace one")
+        # against every embedding answer, which is now every answer there is. It wants two
+        # fields per place, an index and a centre, so the places give it those directly
+        # rather than the route growing a second way to be asked.
+        with self._clients_lock:
+            self._last_answer = (
+                SimpleNamespace(
+                    clusters=[
+                        SimpleNamespace(index=i, centre=tuple(place.position), radius=None)
+                        for i, place in enumerate(places)
+                    ]
+                ),
+                query_id,
+            )
         self._publish_query_images(query_id, phrase, places)
 
         return SkillResult(
