@@ -1,6 +1,6 @@
 # Installation
 
-The recommended way to install dimOS is the guided `install.sh` script. It installs system dependencies, uv, Python, and dimOS into a project virtual environment (or a source checkout for contributors). Recent clean Ubuntu CI installs took about 2–4 minutes (allow longer on a laptop, slower connection, or first Homebrew/Nix setup). Run it from a terminal:
+The recommended way to install dimOS is the guided `install.sh` script. It installs system dependencies, uv, Python, and dimOS into a project virtual environment (or a source checkout for contributors). Run it from a terminal:
 
 ```sh skip
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
