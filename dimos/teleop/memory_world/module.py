@@ -1542,20 +1542,28 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                     "%s is still running; its stores are left to the process exit", busy[0].name
                 )
             else:
-                if self._hyperspace is not None:
-                    self._hyperspace.close()
-                if self._visual_index is not None:
-                    self._visual_index.stop()
-                    self._visual_index = None
-                # Under the store lock: the evidence and adopt threads are not joined
-                # here, and closing a store out from under a read in flight gives a page
-                # of sqlite ProgrammingError on every `memworld --stop` after a question.
-                # With a deadline, because an evidence read decodes up to 64 frames and
-                # --stop should not wait on it -- the process exit closes it either way,
-                # which is what the busy branch above already decides for its threads.
+                # ALL of the teardown is under the store lock, not just the store's own
+                # close. The evidence, query and adopt threads are not joined here, and
+                # each holds this lock while it reads: taking the index and the model out
+                # from under one leaves it reading a dismantled index, and closing the
+                # store under one gives a page of sqlite ProgrammingError on every
+                # `memworld --stop` issued after a question.
+                #
+                # Store then index, the order every reader uses. With a deadline on the
+                # store, because an evidence read decodes up to 64 frames and --stop must
+                # not wait on it; past the deadline NOTHING is torn down and the process
+                # exit does all of it, which is what the busy branch above already decides
+                # for its own threads. Tearing half of it down and leaving the rest is the
+                # one outcome worse than either.
                 if self._store_lock.acquire(timeout=5):
                     try:
-                        store, self._store = self._store, None
+                        with self._index_lock:
+                            if self._hyperspace is not None:
+                                self._hyperspace.close()
+                            if self._visual_index is not None:
+                                self._visual_index.stop()
+                                self._visual_index = None
+                            store, self._store = self._store, None
                     finally:
                         self._store_lock.release()
                     if store is not None:

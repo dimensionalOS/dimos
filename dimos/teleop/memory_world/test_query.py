@@ -220,7 +220,11 @@ def test_route_is_generated_by_server(
     planned_path = SimpleNamespace(
         poses=[SimpleNamespace(x=1.0, y=2.0, z=0.0), SimpleNamespace(x=3.0, y=4.0, z=0.0)]
     )
-    costmap_stream = SimpleNamespace(last=lambda: SimpleNamespace(data="costmap"))
+    # A costmap with a real resolution: the waypoints come back as grid_to_world
+    # CORNERS and have to be moved to the centres of the cells A* planned through.
+    costmap_stream = SimpleNamespace(
+        last=lambda: SimpleNamespace(data=SimpleNamespace(resolution=0.5))
+    )
     store = SimpleNamespace(
         list_streams=lambda: ["global_costmap"],
         streams=SimpleNamespace(global_costmap=costmap_stream),
@@ -242,7 +246,8 @@ def test_route_is_generated_by_server(
     memory_world._add_route_to_result(result)
 
     assert result.route is not None
-    assert result.route.points == [(1.0, 2.0, 0.08), (3.0, 4.0, 0.08)]
+    # Half a cell on from the corners A* returned, not the corners themselves.
+    assert result.route.points == [(1.25, 2.25, 0.08), (3.25, 4.25, 0.08)]
 
 
 def test_height_colours_run_from_purple_to_light_green(memory_world: MemoryWorldModule) -> None:
@@ -398,6 +403,10 @@ def test_stop_does_not_close_the_store_under_a_read_in_flight(tmp_path: Path) ->
     module._ensure_store()
     assert module._store is not None
 
+    # A stand-in for the SigLIP index a query or an adopt build would be reading.
+    torn_down = threading.Event()
+    module._visual_index = SimpleNamespace(stop=torn_down.set)
+
     holding = threading.Event()
     may_finish = threading.Event()
 
@@ -412,14 +421,17 @@ def test_stop_does_not_close_the_store_under_a_read_in_flight(tmp_path: Path) ->
         assert holding.wait(5), "the reader never took the lock"
         stopped = threading.Thread(target=module.stop, name="stop")
         stopped.start()
-        # While the read holds the lock, the store must still be open.
+        # While the read holds the lock, NOTHING may be torn down -- not the store, and
+        # not the index and model the same reader is using.
         time.sleep(1.0)
         assert module._store is not None, "stop() closed the store under a read in flight"
+        assert not torn_down.is_set(), "stop() dismantled the index under a read in flight"
         may_finish.set()
         stopped.join(timeout=20)
         assert not stopped.is_alive()
         # And once the read is done, it does close it.
         assert module._store is None
+        assert torn_down.is_set(), "the index was never torn down at all"
     finally:
         may_finish.set()
         reader.join(timeout=5)

@@ -561,7 +561,13 @@ class HyperspaceAnswers:
             )
             if route is None:
                 return
-            points = [(pose.x, pose.y, pose.z + 0.08) for pose in route.poses]
+            # Half a cell, for the same reason RoutePlanner.plan adds it: min_cost_astar
+            # returns OccupancyGrid.grid_to_world, which is `origin + cell * resolution`
+            # -- the cell's CORNER. Without it every waypoint of a route over the
+            # recording's own costmap sits down and left of the cell it was planned
+            # through. The round-41 fix only reached the other caller.
+            half = costmap.resolution / 2
+            points = [(pose.x + half, pose.y + half, pose.z + 0.08) for pose in route.poses]
             if len(points) >= 2:
                 result.route = HighlightPath(
                     points=points,
