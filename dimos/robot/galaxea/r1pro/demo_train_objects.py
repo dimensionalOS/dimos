@@ -46,9 +46,12 @@ def monitor_progress(job: Path, stop: Event) -> None:
             if log.exists():
                 with log.open("rb") as source:
                     source.seek(max(0, log.stat().st_size - 32768))
-                    steps = re.findall(rb"step:(\d+)", source.read())
-                if steps:
-                    progress["training_step"] = int(steps[-1])
+                    tail = source.read()
+                    # Progress bars retain exact counts; INFO uses rounded 13K notation.
+                    counts = re.findall(rb"(\d+)/(\d+)\s*\[", tail)
+                if counts:
+                    progress["training_step"] = int(counts[-1][0])
+                    progress["training_steps"] = int(counts[-1][1])
             for name in ("eval-single", "eval-sequences"):
                 result = job / name / "result.json"
                 if result.exists():

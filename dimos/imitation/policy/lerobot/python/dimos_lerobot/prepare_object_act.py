@@ -38,6 +38,12 @@ def prepare(source: Path, dataset: Path, output: Path) -> None:
         or "observation.environment_state" not in config.input_features
     ):
         raise ValueError("Initialize from an ACT with an existing environment token")
+    source_width = tuple(config.input_features["observation.environment_state"].shape)
+    warm_start = source_width == (len(OBJECT_GOAL_FEATURES),)
+    if warm_start:
+        metadata = json.loads((source / "deployment.json").read_text())
+        if metadata.get("profile") != OBJECT_PACKING_IO.name:
+            raise ValueError("A same-width checkpoint must declare the exact object profile")
     torch.manual_seed(173)
     config.input_features["observation.environment_state"] = PolicyFeature(
         type=FeatureType.ENV, shape=(len(OBJECT_GOAL_FEATURES),)
@@ -49,10 +55,14 @@ def prepare(source: Path, dataset: Path, output: Path) -> None:
     policy = ACTPolicy(config)
     weights = load_file(source / "model.safetensors")
     state = policy.state_dict()
-    replaced = {
-        "model.encoder_env_state_input_proj.weight",
-        "model.encoder_env_state_input_proj.bias",
-    }
+    replaced = (
+        set()
+        if warm_start
+        else {
+            "model.encoder_env_state_input_proj.weight",
+            "model.encoder_env_state_input_proj.bias",
+        }
+    )
     if state.keys() != weights.keys():
         raise ValueError("Source and target ACT architectures differ beyond goal features")
     for key, value in weights.items():
@@ -62,9 +72,28 @@ def prepare(source: Path, dataset: Path, output: Path) -> None:
             raise ValueError(f"Unexpected checkpoint dimension: {key}")
         state[key].copy_(value)
     policy.load_state_dict(state)
+    stats_path = dataset / "meta/stats.json"
+    raw_stats = json.loads(stats_path.read_text())
+    if warm_start:
+        # LeRobot replaces saved processor statistics with dataset statistics
+        # while fine-tuning. Keep the original coordinate scales so adding data
+        # does not change the learned physical action mapping before the first update.
+        normalizers = list(
+            source.glob("policy_preprocessor_step_*_normalizer_processor.safetensors")
+        )
+        if len(normalizers) != 1:
+            raise ValueError("Expected one saved observation/action normalizer")
+        saved = load_file(normalizers[0])
+        (dataset / "normalization-before-warm-start.json").write_text(
+            json.dumps(raw_stats, indent=2) + "\n"
+        )
+        for key in (*config.input_features, *config.output_features):
+            for statistic in ("mean", "std"):
+                raw_stats[key][statistic] = saved[f"{key}.{statistic}"].tolist()
+        stats_path.write_text(json.dumps(raw_stats, indent=2) + "\n")
     stats = {
         key: {name: torch.tensor(value) for name, value in values.items()}
-        for key, values in json.loads((dataset / "meta/stats.json").read_text()).items()
+        for key, values in raw_stats.items()
     }
     pre, post = make_pre_post_processors(config, dataset_stats=stats)
     policy.save_pretrained(output)
@@ -76,7 +105,9 @@ def prepare(source: Path, dataset: Path, output: Path) -> None:
                 source=str(source.resolve()),
                 profile=OBJECT_PACKING_IO.name,
                 reinitialized=sorted(replaced),
-                object_trained=False,
+                object_trained=warm_start,
+                normalization_preserved=warm_start,
+                fine_tuning_pending=True,
             ),
             indent=2,
         )

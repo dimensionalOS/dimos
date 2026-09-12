@@ -315,6 +315,7 @@ all_modules = {
     "r1-pro-home-skills": "dimos.robot.galaxea.r1pro.home_skills.R1ProHomeSkills",
     "r1-pro-interactive-sim": "dimos.robot.galaxea.r1pro.interactive_sim.R1ProInteractiveSim",
     "r1-pro-navigation-sim": "dimos.robot.galaxea.r1pro.navigation_sim.R1ProNavigationSim",
+    "r1-pro-object-packing-sim": "dimos.robot.galaxea.r1pro.object_packing_sim.R1ProObjectPackingSim",
     "r1-pro-packing-sim": "dimos.robot.galaxea.r1pro.packing_blueprint.R1ProPackingSim",
     "ray-tracing-voxel-map": "dimos.mapping.ray_tracing.module.RayTracingVoxelMap",
     "real-sense-camera": "dimos.hardware.sensors.camera.realsense.camera.RealSenseCamera",

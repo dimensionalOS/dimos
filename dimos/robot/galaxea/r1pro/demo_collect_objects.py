@@ -24,7 +24,11 @@ import numpy as np
 
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_FPS, R1PRO_PICK_PLACE_JOINTS
 from dimos.robot.galaxea.r1pro.object_packing import OBJECT_PACKING_IO
-from dimos.robot.galaxea.r1pro.object_packing_scene import prepare_object_scene, sample_layout
+from dimos.robot.galaxea.r1pro.object_packing_scene import (
+    perturb_tray_occupants,
+    prepare_object_scene,
+    sample_layout,
+)
 from dimos.robot.galaxea.r1pro.object_packing_task import ObjectPackingTask
 from dimos.robot.galaxea.r1pro.tray_sim import prepare_tray_delivery_scene
 
@@ -51,6 +55,10 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         occupied_max=args.occupied_max,
         scene_package=str(args.scene_package.resolve()) if args.scene_package else None,
     )
+    if args.tray_jitter or args.start_joint_jitter:
+        contract.update(
+            version=2, tray_jitter=args.tray_jitter, start_joint_jitter=args.start_joint_jitter
+        )
     manifest = (
         json.loads(path.read_text())
         if path.exists()
@@ -65,6 +73,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     for number, seed in enumerate(range(args.start_seed, args.start_seed + args.layouts)):
         try:
             layout = sample_layout(seed, occupied=number % (args.occupied_max + 1))
+            layout = perturb_tray_occupants(layout, args.tray_jitter)
         except RuntimeError as exc:
             if (seed, -1) not in done:
                 manifest["rejected"].append(
@@ -79,7 +88,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             for index in map(int, order):
                 if (seed, index) in done:
                     continue
-                task.reset(seed)
+                task.reset(seed, start_joint_jitter=args.start_joint_jitter)
                 started = time.monotonic()
                 frames: dict[str, list[Any]] = {}
                 cameras: dict[str, Any] = {}
@@ -158,7 +167,11 @@ def main() -> None:
     parser.add_argument("--occupied-max", type=int, choices=range(4), default=3)
     parser.add_argument("--image-stride", type=int, choices=range(1, 5), default=2)
     parser.add_argument("--no-images", action="store_true")
+    parser.add_argument("--tray-jitter", type=float, default=0.0)
+    parser.add_argument("--start-joint-jitter", type=float, default=0.0)
     args = parser.parse_args()
+    if not 0 <= args.tray_jitter <= 0.02 or not 0 <= args.start_joint_jitter <= 0.05:
+        parser.error("Use tray jitter up to 0.02 metres and start joint jitter up to 0.05 radians")
     if args.layouts < 1 or args.start_seed < 0:
         parser.error("Use positive layouts and a nonnegative seed")
     result = collect(args)

@@ -24,9 +24,10 @@ from dimos.robot.galaxea.r1pro.grasping_sim import TABLE_Z
 from dimos.robot.galaxea.r1pro.object_packing_scene import (
     OBJECT_SLOT_BOUNDS,
     OBJECT_TRAY_HALF_SIZE,
+    perturb_tray_occupants,
     sample_layout,
 )
-from dimos.robot.galaxea.r1pro.object_packing_task import object_extent
+from dimos.robot.galaxea.r1pro.object_packing_state import object_extent
 from dimos.robot.galaxea.r1pro.packing import OccupiedFootprint, empty_slots
 
 
@@ -89,3 +90,27 @@ def test_short_objects_leave_room_to_open_fingers_and_stop_when_tray_is_full():
         assert OBJECT_TRAY_HALF_SIZE[1] - abs(y) > 0.075
         occupied.append(OccupiedFootprint(x, y, 0.024))
     assert empty_slots(0.024, tuple(occupied), inner_half_size=OBJECT_SLOT_BOUNDS) == []
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_imperfect_tray_placements_preserve_sources_and_physical_fit(seed):
+    layout = sample_layout(seed, occupied=3)
+    changed = perturb_tray_occupants(layout, 0.012)
+    assert changed == perturb_tray_occupants(layout, 0.012)
+    for before, after in zip(layout.objects, changed.objects, strict=True):
+        if not before.in_tray:
+            assert after == before
+        else:
+            assert math.dist(before.position, after.position) <= math.sqrt(2) * 0.012
+            assert all(
+                abs(p - c) + after.radius < half
+                for p, c, half in zip(
+                    after.position[:2], (0.34, -0.04), OBJECT_TRAY_HALF_SIZE, strict=True
+                )
+            )
+            for other in changed.objects:
+                if other.in_tray and other.name != after.name:
+                    assert (
+                        math.dist(other.position[:2], after.position[:2])
+                        > other.radius + after.radius
+                    )

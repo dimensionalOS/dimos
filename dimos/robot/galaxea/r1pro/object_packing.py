@@ -14,9 +14,14 @@
 
 """Observation contract for a reusable selected-object ACT pick and place."""
 
+from typing import Literal
+
 from dimos.imitation.profile import PolicyIOProfile, VectorSource
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_IO
-from dimos.robot.galaxea.r1pro.object_packing_scene import MAX_OBJECTS, SHAPES
+
+ObjectShape = Literal["cylinder", "box", "bottle"]
+SHAPES: tuple[ObjectShape, ...] = ("cylinder", "box", "bottle")
+MAX_OBJECTS = 5
 
 OBJECT_GOAL_FEATURES = (
     *(f"selected_from_tcp_{axis}" for axis in "xyz"),

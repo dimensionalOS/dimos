@@ -2,24 +2,27 @@
 
 ## Current state — 2026-09-12
 
-The user requires ACT grasps for four or five randomly generated objects and requested sparse checks while training continues across terminal disconnects. Nothing further is needed from the user for this phase. Work is in `/home/mustafa/dimos-wt/r1pro-act-sim`; the shared root checkout and its environment are untouched.
+The user requires ACT grasps for four or five randomly generated objects, and sparse checks while long jobs survive terminal disconnects. Work is in `/home/mustafa/dimos-wt/r1pro-act-sim`. The shared root checkout and its environment are untouched.
 
-The first learned pilot is complete: **6/12 unseen single-object picks, 0/8 complete scenes** (4/12 successful attempted picks within those sequences). There were no classical grasp interventions. This is not ready to replace the working bottle demo. Main failures include approaches that hover or miss, disturbing neighboring objects, and failing to finish the return-home requirement. New evaluation reports distinguish those failure categories.
+**Latest steering:** everyday objects such as mugs, stationery and toys remain the eventual goal, but the user explicitly asked not to restart or discard the current work to pursue that expansion now. Preserve the 115 image demonstrations and trained weights; reuse them with targeted new examples when further fitting is justified. The 30,000 figure was optimizer updates, **not episodes**. No new long training run has been started. Downloaded household scans are preparation for later, not a claim of learned household grasping.
 
-A controlled fitting experiment is running in `recordings/r1pro-act-task/jobs/random-objects-act-refine-v1`: 30,000 additional updates from the pilot weights, on exactly the same demonstrations and diagnostic split, followed by 12 single-pick and eight full-sequence evaluations. This tests whether additional fitting improves precision before spending more time collecting data. Initial measured speed remains about five updates/second; allow approximately 1.5–2 hours including evaluation. The run does not promote any artifact automatically. The native random-object blueprint is still pending.
+The original 10,000-update pilot scored **6/12 single picks and 0/8 complete scenes**. Refinement completed another **30,000 updates on those same 115 demonstrations**, taking 97m35s and scoring **9/12 singles and 1/8 complete scenes** (14/21 attempted sequence picks). There were no classical grasp interventions. The current checkpoint is `recordings/r1pro-act-task/jobs/random-objects-act-refine-v1/policy`; its deployment default remains 20 actions per inference. Do not promote it as reliable full-scene or agentic random-object support.
 
-Supervisor PID at launch: **1018189**, with its own session ID and no terminal stdin. Training was confirmed advancing past 146/30000 updates. Do not assume that PID or stage remains current: read `status.json`, `progress.json`, and `exit-code`. The supervisor now writes a compact progress file every five minutes itself, without an LLM/API call. `train.log` and `evaluate-*.log` contain details. The job survives terminal disconnects; a machine reboot requires restarting the command below.
+A completed execution-horizon comparison reused the same saved model and development seeds, without training:
 
-```bash
-cd /home/mustafa/dimos-wt/r1pro-act-sim
-.home-venv/bin/python -m dimos.robot.galaxea.r1pro.demo_train_objects \
-  --output "$PWD/recordings/r1pro-act-task/jobs/random-objects-act-refine-v1" \
-  --reuse-job "$PWD/recordings/r1pro-act-task/jobs/random-objects-act-v1" \
-  --scene-package /home/mustafa/dimos/data/scene_packages/hssd_102344115 \
-  --steps 30000 --background
-```
+| Actions executed per inference | Single picks | Complete scenes | Successful sequence picks |
+|---|---:|---:|---:|
+| 20 (checkpoint default) | 9/12 | 1/8 | 14/21 |
+| 30 | 11/12 | 2/8 | 14/20 |
+| 10 | 7/12 | 0/8 | 13/21 |
 
-Completed stages are reused. Training can resume from its saved optimizer checkpoint. A failure before the first checkpoint can still require examining the incomplete training directory; do not discard or overwrite artifacts blindly. A file lock prevents duplicate supervisors for one output directory. No external service or API key is used.
+Evidence: `jobs/random-objects-act-horizons-v1/comparison.json`. These small development sets do not establish acceptance or justify silently changing the saved artifact. Refinement and horizon supervisors have finished; read each job's `status.json` and exit marker for status instead of relying on an old PID.
+
+Native Zenoh + ControlCoordinator integration now has a standalone validation runner, `dimos.robot.galaxea.r1pro.demo_object_packing_stack`. The selected-object run in `jobs/random-objects-native-01` physically passed for seed 210000, index 2. The complete native sequence in `jobs/random-objects-native-02` placed indices 2, 0 and 3; index 1 timed out without lifting. ACT stopped cleanly. Existing SHM resource-tracker teardown warnings were also observed. **A registered random-object agentic blueprint and recovery integration remain pending.**
+
+The start/occupancy variation physics pilot completed **23 accepted / 24 attempted** demonstrations across 12 layouts. It perturbs the initial right-arm posture by up to .02 rad and preloaded tray occupants by .012 m, preserving geometric clearance. One approach failed at seed 120007, target 1; all failures are retained. This was a no-image demonstrator check, **not 23 additional trainable RGB episodes**. Results: `jobs/random-objects-variation-smoke/manifest.json`.
+
+The demonstration generator uses the SDK's Pink IK with a weak current-posture task (`posture_cost=1e-5`) and an inward joint-limit margin. It favors continuity near the preceding pose, not a fixed neutral elbow/torso posture. ACT rollout itself commands joint targets; it does not run this teacher IK. Do not add a competing posture controller during ACT execution without validating the resulting behavior. Stronger demonstration posture preferences should be tested separately before changing the training distribution.
 
 ## Implementation and actual evidence
 
@@ -32,18 +35,26 @@ Completed stages are reused. Training can resume from its saved optimizer checkp
 - Initial evaluation attempts crashed when a successful pick returned `numpy.bool_` to JSON. `pick_complete()` now returns a Python bool, with a real physical grasp + JSON regression. Incomplete reports are archived under `eval-*-incomplete*`; use only the current complete `eval-single/result.json` and `eval-sequences/result.json`. The corrected evaluation finished at **6/12 and 0/8**. The pipeline now rejects incomplete evaluation reports instead of treating partial totals as a completed evaluation.
 - Recorded-state prediction diagnostics are saved in `fit-diagnostics.json`: typical active-joint MAE .003–.016 rad, with some held-out lift errors up to .027 rad. Additional fitting is a hypothesis being tested, not an established fix. Current physical seeds (200000+ and 210000+) are development evaluations; freeze a new final test set before acceptance.
 
-## Verification and git
+## Incremental training and verification
 
-The latest combined object geometry and physical-completion suite passed all 21 tests (15.99 seconds). Related geometry/recovery/tray checks also passed. Strict mypy passed for the six production task/pipeline files and four backend integration files. The original single-bottle physical regression passed. The new physical box-pick/JSON-completion regression also passed (10.8 seconds). When running explicit physical tests, disable unrelated ROS pytest plugin autoload rather than altering the shared environment.
+- `prepare_object_act.py` can initialize from an already-trained, matching object profile without reinitializing its environment projection. Same-width but incompatible profiles are rejected.
+- Warm starting also preserves the original observation/action normalization. LeRobot otherwise replaces saved processor statistics with the new dataset statistics when fine-tuning, which can change physical predictions before the first update. The initializer saves the new dataset's original statistics in `normalization-before-warm-start.json`, then uses the checkpoint's mean/std. Pass a **newly converted dataset**, never the archived baseline dataset. The source checkpoint is read-only.
+- A small local ACT regression proves bit-exact physical action predictions before/after warm-start preparation despite deliberately different new-data statistics. Both initializer tests pass. Mixing additional image demonstrations with old episodes and choosing the next training budget still require a deliberate follow-up; no expanded-data run has been launched.
+- Shared `ObjectPackingState` provides the same read-only geometry, goal vector and physical evidence to native/offline execution. The physical regression compares both monitors without allowing metadata queries to change qpos/qvel/ctrl. Both nominal and perturbed initial postures pass.
+- The geometry/physical tests passed (30 tests), and the generated blueprint registry check passed (6 tests) after its expected regeneration. Strict typing is checked separately in native and isolated LeRobot environments.
 
-Prior interactive work was committed as `14f90296c6`; random-object collection/evaluation as `cf2346856c`. Both were pushed to `origin/feat/r1pro-act-sim`, without coauthor trailers. Follow-up evaluation/pipeline fixes are committed separately with this handoff. Recordings, weights, logs, the `.venv` symlink and local data links are not committed.
+Previous commits `14f90296c6`, `cf2346856c`, and `a1137b2c81` were pushed to `origin/feat/r1pro-act-sim` without coauthor trailers. This follow-up contains native integration, variation collection support, exact training progress counts, warm-start preservation and this updated handoff. Recordings, weights, downloaded assets, logs, `.venv` and local data links are excluded from commits.
 
 Main integration remains pending: a rebase tried to replay 92 dependency commits and conflicted with main's relocation of the isolated Python runtime. It was aborted cleanly; `backup/r1pro-before-random-objects-20260911` preserves the previous branch. Do not claim this branch is rebased or force-push it casually.
 
+## Later household-asset work
+
+The existing HSSD package includes a real `flower_mug` mesh and 12 convex collision pieces. Its local mesh is about 7.4 × 10.5 × 8.2 cm; world AABB dimensions must not be mistaken for local geometry. Other local assets include a whiskey bottle, bowl, journal and camera. Scans of a small wind-up dog, shark toy, tape roll, scissors and coffee mug were downloaded to `recordings/r1pro-act-task/household-assets`, with their Google Scanned Objects source metadata/license files retained. These are not integrated, grasp-qualified or used in training. Do not replace their geometry with disguised bottle colliders or shrink them silently to fit the hand. Preserve handles/cavities through appropriate collision decomposition, and establish grasp/support frames before changing the observation contract.
+
 ## Next work
 
-1. Read the refinement's final physical results. Compare the unchanged development scenes with the pilot; do not keep extending training if it fails to help.
-2. If necessary collect broader independent layouts and off-demonstration start/approach corrections, preserving requested-object conditioning and all failure records. ACT must continue to execute grasps; do not add a hidden classical fallback.
-3. Implement and validate the new profile through the native ControlCoordinator, simulator observation stream and agent skills. The current learned evaluator is a direct MuJoCo runner; a new `dimos run` random-object blueprint has not been shipped.
-4. Test repeated requested targets, stop-when-full, infeasible requests and recovery in the native stack, plus a fresh final test set. Do not promote merely because loss decreases.
-5. Integrate current main carefully. The earlier multi-stop unloading/regrasp SDK QP failure is separate and remains unresolved; existing tray carrying remains classical.
+1. Preserve the current image dataset and refined checkpoint. Continue improving repeated selected-object execution and explicit failure recovery; avoid another long fit on unchanged data without evidence.
+2. Validate native requested-target selection, stop-when-full and repeated picks. The last native four-object sequence passed only three picks; do not call it accepted. Keep ACT as the grasp executor.
+3. If collecting more training data, add targeted start-state/approach/occupancy corrections with images, retain the original demonstrations, and fine-tune a new artifact from the saved weights. Keep source artifacts and normalization intact; freeze a fresh final test set before acceptance.
+4. Revisit actual household geometry after the current version is stable, per the user's latest steering. Current primitive data remain useful rehearsal/pretraining but are not demonstrations of handles, thin stationery or irregular toys.
+5. Integrate current main carefully. The earlier multi-stop unloading/regrasp SDK QP failure remains separate; existing tray carrying remains classical.

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -242,7 +243,7 @@ def build_r1pro_manipulation(
     artifact: str,
     device: str,
     headless: bool,
-    simulator: type[R1ProGraspingSim],
+    simulator: type[MujocoSimModule],
     policy_module: type[_PolicyModule],
     task_description: str,
     background_camera_rendering: bool = False,
@@ -254,6 +255,7 @@ def build_r1pro_manipulation(
     navigation_task: TaskConfig | None = None,
     coordinator_type: type[ControlCoordinator] = ControlCoordinator,
     prepare_scene_on_build: bool = False,
+    initial_joint_positions: list[float] | None = None,
 ) -> Blueprint:
     """Shared physical robot/camera/coordinator wiring for manipulation profiles."""
     scene_path = scene_path.expanduser().resolve()
@@ -266,20 +268,28 @@ def build_r1pro_manipulation(
         home = []
         ranges = []
     else:
-        with GraspingTask(scene_path, images=False) as task:
+        with ExitStack() as resources:
+            task = (
+                resources.enter_context(GraspingTask(scene_path, images=False))
+                if initial_joint_positions is None
+                else None
+            )
+            model = (
+                task.model if task is not None else mujoco.MjModel.from_xml_path(str(scene_path))
+            )
+            initial = task.home.tolist() if task is not None else initial_joint_positions
+            if initial is None or len(initial) != len(R1PRO_PICK_PLACE_JOINTS):
+                raise ValueError("Provide one initial position per manipulation joint")
             mobile = (
-                mujoco.mj_name2id(task.model, mujoco.mjtObj.mjOBJ_JOINT, VIRTUAL_BASE_JOINTS[0])
-                >= 0
+                mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, VIRTUAL_BASE_JOINTS[0]) >= 0
             )
-            free_tray = (
-                mujoco.mj_name2id(task.model, mujoco.mjtObj.mjOBJ_JOINT, "task_tray_free") >= 0
-            )
+            free_tray = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "task_tray_free") >= 0
             if velocity_base is not None and not (mobile and free_tray):
                 raise ValueError("Velocity navigation requires the mobile base and free tray scene")
             position_base = mobile and velocity_base is None
             joints = (*R1PRO_PICK_PLACE_JOINTS, *(VIRTUAL_BASE_JOINTS if position_base else ()))
-            home = task.home.tolist() + ([0.0] * 3 if position_base else [])
-            ranges = [task.model.joint(name).range.tolist() for name in joints]
+            home = list(initial) + ([0.0] * 3 if position_base else [])
+            ranges = [model.joint(name).range.tolist() for name in joints]
     camera = SimCameraSpec(name="right_wrist", stream="right_wrist", width=160, height=160, fps=40)
     hardware = HardwareComponent(
         hardware_id="r1pro",

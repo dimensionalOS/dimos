@@ -14,21 +14,23 @@
 
 """Seeded rigid-object layouts and local MuJoCo overlays for ACT collection."""
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import math
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 import xml.etree.ElementTree as ET
 
 import numpy as np
 
 from dimos.robot.galaxea.r1pro.grasping_sim import TABLE_Z
+from dimos.robot.galaxea.r1pro.object_packing import (
+    MAX_OBJECTS as MAX_OBJECTS,
+    SHAPES as SHAPES,
+    ObjectShape,
+)
 from dimos.robot.galaxea.r1pro.packing import OccupiedFootprint, empty_slots
 from dimos.robot.galaxea.r1pro.tray_sim import prepare_tray_delivery_scene
 
-ObjectShape = Literal["cylinder", "box", "bottle"]
-SHAPES: tuple[ObjectShape, ...] = ("cylinder", "box", "bottle")
-MAX_OBJECTS = 5
 OBJECT_TRAY_XY = (0.34, -0.04)
 OBJECT_TRAY_HALF_SIZE = (0.145, 0.145)
 # Reserve room along Y for opening fingers below the rim of shorter objects.
@@ -137,6 +139,36 @@ def sample_layout(seed: int, *, count: int | None = None, occupied: int = 0) -> 
         except RuntimeError:
             continue
     raise RuntimeError("Could not generate a separated layout after 32 attempts")
+
+
+def perturb_tray_occupants(layout: ObjectLayout, distance: float) -> ObjectLayout:
+    """Model imperfect earlier placements while keeping source geometry identical."""
+    if not 0 <= distance <= 0.02:
+        raise ValueError("Tray perturbations must be between zero and two centimetres")
+    if distance == 0:
+        return layout
+    rng = np.random.default_rng(layout.seed + 701)
+    objects = list(layout.objects)
+    for i, obj in enumerate(objects):
+        if not obj.in_tray:
+            continue
+        for _ in range(100):
+            xy = np.asarray(obj.position[:2]) + rng.uniform(-distance, distance, 2)
+            relative = xy - OBJECT_TRAY_XY
+            if np.any(np.abs(relative) + obj.radius + 0.005 >= OBJECT_TRAY_HALF_SIZE):
+                continue
+            if any(
+                other.in_tray
+                and j != i
+                and np.linalg.norm(xy - other.position[:2]) <= obj.radius + other.radius + 0.015
+                for j, other in enumerate(objects)
+            ):
+                continue
+            objects[i] = replace(obj, position=(float(xy[0]), float(xy[1]), obj.position[2]))
+            break
+        else:
+            raise RuntimeError("Could not perturb a tray occupant without overlap")
+    return ObjectLayout(layout.seed, tuple(objects))
 
 
 def prepare_object_scene(

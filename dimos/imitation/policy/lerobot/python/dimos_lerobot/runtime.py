@@ -38,6 +38,7 @@ from dimos.imitation.policy.lerobot.module import (
     LeRobotPolicyConfig,
     OpenYamLeRobotPolicy,
     R1ProLeRobotPolicy,
+    R1ProObjectPackingPolicy,
     R1ProPackingPolicy,
     R1ProPickPlacePolicy,
 )
@@ -239,4 +240,9 @@ R1ProPickPlacePolicyRuntime = declare_policy_runtime(
 
 R1ProPackingPolicyRuntime = declare_policy_runtime(
     "R1ProPackingPolicyRuntime", __name__, R1ProPackingPolicy, LeRobotBackend
+)
+
+
+R1ProObjectPackingPolicyRuntime = declare_policy_runtime(
+    "R1ProObjectPackingPolicyRuntime", __name__, R1ProObjectPackingPolicy, LeRobotBackend
 )

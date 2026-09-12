@@ -20,6 +20,7 @@ from dimos.robot.galaxea.r1pro.learning import (
     R1PRO_PICK_PLACE_IO,
     R1PRO_SIM_ACT_IO,
 )
+from dimos.robot.galaxea.r1pro.object_packing import OBJECT_PACKING_IO
 from dimos.robot.manipulators.dual_openyam.learning_profile import DUAL_OPENYAM_LEROBOT_IO
 from dimos.robot.manipulators.openyam.learning_profile import OPENYAM_QUEST_IO
 
@@ -70,4 +71,13 @@ R1ProPackingPolicy = declare_policy_module(
     R1PRO_PACKING_IO,
     LeRobotPolicyConfig,
     "dimos_lerobot.runtime:R1ProPackingPolicyRuntime",
+)
+
+
+R1ProObjectPackingPolicy = declare_policy_module(
+    "R1ProObjectPackingPolicy",
+    __name__,
+    OBJECT_PACKING_IO,
+    LeRobotPolicyConfig,
+    "dimos_lerobot.runtime:R1ProObjectPackingPolicyRuntime",
 )
