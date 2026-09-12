@@ -14,7 +14,6 @@ site_dir: site
 # docs/ is a workspace as well as a page tree; keep the non-pages out.
 exclude_docs: |
   node_modules/
-  .gitattributes
   logs/
   todo.md
   # agent instructions, not pages
