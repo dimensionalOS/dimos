@@ -24,13 +24,13 @@ top; drive those with `dimos agent-send "..."`.
 on Linux x86_64 with a CUDA GPU compatible with Torch 2.7.1 / CUDA 12.8.
 Install `uv >=0.9.25` on PATH. The first launch automatically prepares the separately
 locked dependencies;
-no GraspGenX extra is installed in the main DimOS environment. Virtual environments
+no GraspGenX extra is installed in the main dimOS environment. Virtual environments
 live under `~/.cache/dimos/isolated-python` (or `$XDG_CACHE_HOME/dimos/isolated-python`).
 Pinned checkpoints download from Hugging Face during module startup and reuse
 its normal cache under `~/.cache/huggingface`.
 
-Source checkouts supply their current DimOS code to the runtime. Wheel installations
-resolve the exact installed DimOS version from the configured package source; that
+Source checkouts supply their current dimOS code to the runtime. Wheel installations
+resolve the exact installed dimOS version from the configured package source; that
 version must be available there. For a locally built wheel, make it available through
 uv's `--find-links` configuration (`UV_FIND_LINKS`) before launching.
 
@@ -43,6 +43,20 @@ uv run python -m dimos.manipulation.grasping.grasp_gen_x.demo_inference
 This checks the actual isolated environment, loads the model, proposes grasps for
 a recorded object cloud, and verifies output and process cleanup. Missing CUDA or
 failed model initialization fails the check.
+
+The proposal behavior tests run separately in the runtime project, with the model
+backend mocked. From the repository root:
+
+```bash
+cd dimos/manipulation/grasping/grasp_gen_x/python
+UV_PROJECT_ENVIRONMENT="${XDG_CACHE_HOME:-$HOME/.cache}/dimos/graspgenx-tests" \
+  uv run --frozen --group tests --with-editable ../../../../.. \
+  python -m pytest -c pyproject.toml --confcutdir=.
+```
+
+The host test suite covers the public contract and excludes nested Python projects.
+CI runs the runtime suite once on Linux x86_64 with Python 3.12; it needs no GPU or
+checkpoint download.
 
 What differs between the arm and the sim is decided at import time: the hardware
 adapter, the base pose, the camera (RealSense plus its mount edge, versus the

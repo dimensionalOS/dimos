@@ -92,7 +92,7 @@ class GraspGenXError(RuntimeError):
 class GraspGenXModule(IsolatedPythonModule, GraspGenSpec):
     """Grasp proposals implemented in a separately locked Python environment."""
 
-    implementation = "graspgenx_runtime.runtime:_GraspGenXRuntimeModule"
+    implementation = "graspgenx_runtime.runtime:GraspGenXRuntimeModule"
     config: GraspGenXConfig
 
     @rpc

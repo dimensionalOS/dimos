@@ -90,6 +90,13 @@ values, exceptions, timeouts, async methods, skills, streams, and module
 references. Restarting the contract starts a fresh interpreter and reloads the
 runtime package.
 
+Nested Python projects own their runtime classes and tests. Host blueprint discovery
+and pytest collection stop at directories containing another `pyproject.toml`.
+Runtime classes can use public names without becoming host registry entries.
+Run runtime tests explicitly with their project's pytest configuration and
+`--confcutdir=.` to avoid loading the host's test fixtures. Keep test environments
+outside `dimos/`, where repository source checks would otherwise scan dependencies.
+
 ## Example
 
 The source tree includes a complete example with a locked external project:

@@ -45,7 +45,7 @@ def _create_runtime(config: GraspGenXConfig) -> GraspGenXRuntime:
     return GraspGenXRuntime(config)
 
 
-class _GraspGenXRuntimeModule(GraspGenXModule):
+class GraspGenXRuntimeModule(GraspGenXModule):
     """Direct adapter whose optional runtime is loaded synchronously by ``start``."""
 
     def __init__(self, **kwargs: Any) -> None:

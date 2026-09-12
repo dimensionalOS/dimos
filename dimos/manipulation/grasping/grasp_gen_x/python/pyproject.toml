@@ -4,7 +4,15 @@ version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = ["graspgenx", "matplotlib>=3.7.1"]
 
+[dependency-groups]
+tests = ["pytest==8.3.5", "pytest-mock==3.15.0", "pytest-timeout==2.4.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["graspgenx_runtime"]
+addopts = "--confcutdir=. --import-mode=importlib --timeout=60 -ra"
+
 [tool.uv]
+default-groups = []
 package = false
 required-version = ">=0.9.25"
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]

@@ -61,6 +61,7 @@ exclude = [
 # and the native (C++/nix) build tree, which is built separately.
 "dimos" = [
     "manipulation/grasping/grasp_gen_x/fixtures/**",
+    "manipulation/grasping/grasp_gen_x/python/graspgenx_runtime/test_*.py",
     "agents/fixtures/**",
     "agents/mcp/fixtures/**",
     "mapping/google_maps/fixtures/**",
