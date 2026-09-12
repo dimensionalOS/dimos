@@ -75,11 +75,12 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# How many times a reload of the SAME index is retried before it is left alone, and the
-# unit of the widening gap between those tries.
 # A storey. Used to decide which floor the viewer is standing on: they cannot be standing
 # on one above their own head, and the one they are on is within a storey below it.
 STOREY_M = 3.0
+
+# How many times a reload of the SAME index is retried before it is left alone, and the
+# unit of the widening gap between those tries.
 RELOAD_ATTEMPTS = 3
 RELOAD_BACKOFF_S = 10.0
 
@@ -649,9 +650,11 @@ class HyperspaceAnswers:
         where the ROBOT stopped at the end of the recording, so walking anywhere and
         pressing Navigate drew a green tube that began somewhere else entirely.
 
-        Only the viewer's x and y are used, because only those exist: the client sends
-        `getViewerRobotPosition()`, which is `[x, y, 0]` -- a literal zero for z, not a
-        head height.
+        The viewer's x and y are kept exactly. Their z is not: it is a CAMERA height, not
+        a floor, and the client only started sending a real one recently -- for most of
+        this package's history `getViewerRobotPosition()` returned `[x, y, 0]`, a literal
+        zero. So z is used only to decide WHICH FLOOR, never as the answer, and a zero
+        from an old client has to keep working.
 
         The height comes from the nearest sample of the robot's own path, and that is the
         point of this function. Two earlier versions took it from the map voxels in a
@@ -665,7 +668,8 @@ class HyperspaceAnswers:
         on claiming the viewer's position.
 
         The robot drove its path, so every height along it is one the planner can stand
-        at. Nearest in x and y, then take that z.
+        at. Restrict to the samples on the viewer's own floor, then take the nearest of
+        those in x and y and use its z.
         """
         with self._clients_lock:
             viewer = self._viewer_position

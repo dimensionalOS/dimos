@@ -1215,10 +1215,11 @@ def test_a_route_starts_under_the_viewer_not_where_the_robot_stopped(
     pressing Navigate drew a green tube beginning wherever the robot stopped recording --
     up to 30 m away in the grocery map, and never at the viewer's feet.
 
-    The viewer's x and y are all that exist to go on: the client sends
-    `getViewerRobotPosition()`, which is `[x, y, 0]` with a literal zero for z. The HEIGHT
-    comes from the nearest sample of the robot's own path, because the robot drove there
-    and so the planner can stand there. Two earlier versions took it from the map voxels
+    The viewer's x and y are kept exactly; their z is a CAMERA height, not a floor, so it
+    only decides WHICH FLOOR and is never the answer. For most of this package's history
+    `getViewerRobotPosition()` returned `[x, y, 0]` -- a literal zero -- so a zero still
+    has to work. The HEIGHT comes from the nearest sample of the robot's own path on that
+    floor, because the robot drove there and so the planner can stand there. Two earlier versions took it from the map voxels
     instead -- the highest at or below `viewer[2]` (a test against zero, matching nothing
     on a floor at 0.7) and then the lowest in the column (a stray return under the floor,
     z=-1.24 live). Both are covered below, because both looked reasonable and neither was.
@@ -1243,7 +1244,9 @@ def test_a_route_starts_under_the_viewer_not_where_the_robot_stopped(
     # ...and the height of the nearest thing the robot actually stood on.
     assert under[2] == pytest.approx(0.66), "took a height from the voxels, not the path"
 
-    # A nonsense z from the client must change nothing, because the real one is always 0.
+    # A z far above every sample leaves nothing on the viewer's floor. That falls back to
+    # nearest-in-plane over the whole path -- the behaviour before floors existed -- and
+    # must not invent a height of its own.
     memory_world._viewer_position = (4.1, 3.9, 99.0)
     assert memory_world._ground_under_viewer()[2] == pytest.approx(0.66)
 
