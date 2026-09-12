@@ -3,6 +3,26 @@
 Use `dimos run` to launch and configure a collection blueprint. The imitation
 TUI attaches to its episode-control interface; it does not own the robot.
 
+## Learning workflow
+
+Collect demonstrations, prepare a dataset, train a policy, then run a compatible
+checkpoint on the robot. The examples below use one OpenYAM arm and a wrist RGB
+camera. Direct hand teaching does not require Quest.
+
+| Step | Command | Result |
+| --- | --- | --- |
+| Launch collection | `dimos run openyam-teach-collection --daemon` with module options | Running robot, camera, recorder, and episode controller |
+| Record takes | `dimos imitation collect` | Saved or discarded episodes in a recording directory |
+| Inspect recording | `dimos imitation inspect recordings/session-001` | JSON recording summary |
+| Prepare data | `dimos imitation prepare recordings/session-001 --output datasets/session-001` | LeRobot dataset containing saved episodes |
+| Train | `dimos imitation train` with LeRobot arguments | Training outputs and checkpoints |
+| Launch rollout | `dimos run openyam-lerobot-rollout --daemon` with module options | Policy stack ready for operator controls |
+| Execute policy | `dimos imitation rollout` | Explicit policy start/stop controls |
+
+Launch commands configure the hardware and task. The attached panels control
+episodes or policy execution. Use `dimos stop` to shut down a running stack
+before switching from collection to rollout.
+
 ## Collect demonstrations
 
 | Blueprint | Cameras | State and action |
@@ -24,10 +44,28 @@ These are ordinary module-config flags. Use `dimos run BLUEPRINT --help` to see
 all options, including camera hardware settings. JSON config and environment
 overrides use the same matching rules as other DimOS blueprints.
 
-Space starts or saves an episode; D discards it. Q detaches. During an active
-episode, Q asks for confirmation: **recording and the robot continue after the
-TUI exits**. Use `dimos stop` separately to stop the stack; stopping real
-hardware may de-torque the arms, so support them first.
+The panel shows the task, recording state, elapsed time, and saved/discarded
+episode counts. Reset the scene before each take, then guide the arm through
+the demonstration.
+
+| Key | Action |
+| --- | --- |
+| Space, while ready | Start an episode |
+| Space, while recording | Save the episode and return to ready |
+| D, while recording | Discard the episode and return to ready |
+| Q | Detach from the running collection |
+
+During an active episode, Q asks for confirmation; press Q again to detach.
+**Recording and the robot continue after the TUI exits.** Run
+`dimos imitation collect` again to reattach. A connection error disables panel
+controls but does not stop the running stack.
+
+When collection is finished, save or discard the final take and detach. Support
+the arm before stopping the stack, since shutdown may de-torque it:
+
+```bash skip
+dimos stop
+```
 
 ## Recording directories
 
@@ -104,15 +142,32 @@ The controller class must be importable in the client.
 
 ## Prepare and train
 
+After stopping collection, inspect the recording and export its saved episodes:
+
 ```bash
 dimos imitation inspect recordings/session-001
 dimos imitation prepare recordings/session-001 --output datasets/session-001
+dimos imitation inspect datasets/session-001
+```
+
+`inspect` prints a JSON summary for either a recording or a prepared dataset.
+Preparation requires a new output directory. Without `--output`, it writes to
+`~/.local/state/dimos/datasets/<recording-directory-name>` by default.
+
+Start ACT training with the prepared dataset:
+
+```bash
 dimos imitation train \
   --dataset.repo_id=local/openyam-teach \
   --dataset.root=datasets/session-001 \
   --policy.type=act \
   --output_dir=outputs/openyam-act
 ```
+
+Training forwards all arguments to `lerobot-train` in its isolated Python
+environment, including `--help`. Its output streams to the terminal and a failed
+training process returns its exit status. Use `dimos imitation train --help` to
+see the available training options.
 
 Preparation reads the saved schema, not the current robot blueprint. Python
 callers can use `RecordingSchema.read(directory).dataprep_config(directory, output)`
@@ -125,6 +180,10 @@ packages in the conversion environment.
 
 ## Existing policy rollout
 
+Stop the collection stack before launching rollout. Replace `CHECKPOINT_DIR`
+with a compatible pretrained-model directory, such as
+`outputs/openyam-act/checkpoints/last/pretrained_model`.
+
 ```bash
 dimos --can-port follower_l run openyam-lerobot-rollout --daemon \
   --policy.policy-path CHECKPOINT_DIR \
@@ -135,12 +194,20 @@ dimos imitation rollout
 ```
 
 Use `openyam-lerobot-quest-rollout` for the graph with Quest takeover.
-The optional rollout panel discovers `RolloutControlSpec`; Space explicitly
-starts/stops policy execution. A start request checks preflight readiness.
-Quitting only detaches, even while the policy is active. Neither UI is a
-deadman switch: lost connectivity does not guarantee stopping motion.
+The optional rollout panel discovers `RolloutControlSpec` and shows policy
+state and errors. Space explicitly starts/stops policy execution. Before
+starting, preflight loads the checkpoint and checks the control task and fresh
+observations without sending a trajectory. A failed check leaves the policy
+stopped and reports the error.
+
+Q only detaches, even while the policy is active. Run `dimos imitation rollout`
+again to reattach. To finish, stop the policy with Space, detach, support the
+arm, and use `dimos stop` to shut down the runtime. Neither UI is a deadman
+switch: lost connectivity does not guarantee stopping motion.
 
 See the [LeRobot module contract](/dimos/imitation/policy/lerobot/README.md)
-for checkpoint and control requirements. This refactor retains its existing
-single-camera contract. ABC integration, dual-arm policy rollout, and policy
+for checkpoint and control requirements. Rollout uses the existing single-arm,
+single-camera contract with absolute joint targets in the hardware's native
+coordinates. A prepared dataset does not establish checkpoint compatibility
+with another robot. ABC integration, dual-arm policy rollout, and policy
 backend generalization are deferred.
