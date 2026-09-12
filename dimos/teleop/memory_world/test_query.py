@@ -948,14 +948,57 @@ def test_the_capture_markers_are_built_from_the_poses_on_the_images(tmp_path: Pa
     try:
         (header, payload), thumbnails = module._build_image_poses()
         n = header["n"]
-        assert n >= 2, header
+        # EXACTLY one marker per frame. `>= 2` was the assertion here, which any count at
+        # all satisfies -- scaling n_image_markers by five changed nothing it could see.
+        # The sampler asks for n_image_markers evenly spaced stamps, and `after(ts).limit(1)`
+        # returns the last frame for every probe past the end, so this recording's three
+        # frames published two hundred markers -- 197 of them the same picture in the same
+        # place, each with its own JPEG encode.
+        assert n == 3, header
         assert len(payload) == n * 12 + n * 16  # xyz float32 then xyzw float32
         assert len(thumbnails) == n
         assert any(thumbnails), "every thumbnail failed to encode"
         xs = np.frombuffer(payload[: n * 12], dtype="<f4").reshape(n, 3)[:, 0]
         assert xs[0] == pytest.approx(0.0) and xs[-1] > xs[0]  # walked along +x
+        assert sorted(float(x) for x in xs) == [0.0, 1.0, 2.0], "the same frame more than once"
         quats = np.frombuffer(payload[n * 12 :], dtype="<f4").reshape(n, 4)
         assert np.allclose(np.linalg.norm(quats, axis=1), 1.0, atol=1e-5)
+    finally:
+        module.stop()
+
+
+def test_n_image_markers_caps_the_markers_when_there_are_more_frames_than_that(
+    tmp_path: Path,
+) -> None:
+    """The dedup above makes the marker count the FRAME count when frames are scarce.
+
+    That is right, and it also means the test above can no longer see `n_image_markers`
+    at all: with three frames, every cap from three upwards gives three. The setting is a
+    ceiling, so the case that shows it is the other one -- more frames than markers.
+    """
+    from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+
+    ok, encoded = cv2.imencode(".jpg", np.zeros((8, 12, 3), dtype=np.uint8))
+    assert ok
+
+    db_path = tmp_path / "many.db"
+    store = SqliteStore(path=str(db_path))
+    store.start()
+    images = store.stream("color_image", CompressedImage)
+    for k in range(20):
+        images.append(
+            CompressedImage(data=encoded.tobytes(), format="jpeg", frame_id="cam", ts=float(k)),
+            ts=float(k),
+            pose=(float(k), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
+        )
+    store.stop()
+
+    module = MemoryWorldModule(store_path=str(db_path))
+    module.config.n_image_markers = 4
+    try:
+        (header, _payload), thumbnails = module._build_image_poses()
+        assert header["n"] == 4, f"asked for 4 markers of 20 frames, got {header['n']}"
+        assert len(thumbnails) == 4, "encoded a thumbnail for a frame it did not publish"
     finally:
         module.stop()
 

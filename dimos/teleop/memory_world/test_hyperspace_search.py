@@ -1627,6 +1627,97 @@ def test_a_reload_that_keeps_failing_does_not_retry_for_ever(tmp_path) -> None: 
     )
 
 
+def test_a_failed_reload_waits_longer_before_each_retry(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The retries are SPACED, which is half of what the backoff is for.
+
+    The two reload tests either side of this one patch RELOAD_BACKOFF_S to 0.0 --
+    deliberately, to isolate the COUNT bound -- so between them nothing exercised the
+    spacing their docstrings promise, and deleting the gap left the whole suite green.
+
+    Two things this needs that are easy to get wrong. The backoff only applies while
+    REPLACING a working search: a first load that fails latches `_hyperspace_error`
+    instead, so a working one has to be in place first. And time is moved by winding
+    `_failed_at` backwards rather than by patching the clock, because `time.monotonic` is
+    what threading itself waits on -- replacing it globally makes the adopt thread's own
+    lock behave strangely and the test measures the mock.
+    """
+
+    class Search:
+        keyframe_count = 1
+        segment_count = 0
+
+        def warm(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    module = _loader_module(tmp_path, None)
+    with (
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (1, 1.0),
+        ),
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch",
+            lambda *a, **k: Search(),
+        ),
+    ):
+        assert module._load_hyperspace() is True
+
+    attempts: list[int] = []
+
+    def build_broken(*a, **k):  # type: ignore[no-untyped-def]
+        attempts.append(1)
+        raise SystemExit("the memory db is from another model")
+
+    def settle() -> None:
+        for _ in range(200):
+            if module._adopting.acquire(blocking=False):
+                module._adopting.release()
+                return
+            time.sleep(0.01)
+
+    adopt = type(module)._adopt_an_index_that_appeared
+    with (
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (2, 2.0),  # a DIFFERENT index, so a reload is due
+        ),
+        mock.patch("dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch", build_broken),
+        mock.patch("dimos.teleop.memory_world.hyperspace_answers.RELOAD_BACKOFF_S", 10.0),
+    ):
+        adopt(module)
+        settle()
+        assert len(attempts) == 1, attempts
+        assert module._failed_count == 1
+
+        # Inside the first gap (10 s x 1 failure): refused without building anything.
+        module._failed_at = time.monotonic() - 9.0
+        adopt(module)
+        settle()
+        assert len(attempts) == 1, "retried before the backoff had elapsed"
+
+        # Past it.
+        module._failed_at = time.monotonic() - 11.0
+        adopt(module)
+        settle()
+        assert len(attempts) == 2, "never retried after the backoff elapsed"
+        assert module._failed_count == 2
+
+        # The second gap is 10 s x 2 failures, so 11 s is now still INSIDE it. That is
+        # what "spaced further apart each time" means; a flat gap fails this line.
+        module._failed_at = time.monotonic() - 11.0
+        adopt(module)
+        settle()
+        assert len(attempts) == 2, "the second gap was no longer than the first"
+
+        module._failed_at = time.monotonic() - 21.0
+        adopt(module)
+        settle()
+        assert len(attempts) == 3, attempts
+
+
 def test_a_reload_that_fails_once_recovers_when_it_stops_failing(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """A TRANSIENT failure must not be permanent.
 
