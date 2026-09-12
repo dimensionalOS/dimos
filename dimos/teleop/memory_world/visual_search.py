@@ -537,9 +537,18 @@ class VisualMemoryIndex:
             # that codec is not registered. `StoredEmbeddings.count()` is what `count()`
             # below already uses on this same stream, so it is known to work on the real
             # thing.
-            has_rows = (
-                name in self.store.list_streams() and StoredEmbeddings(self.store, name).count() > 0
-            )
+            # And a stream this build cannot COUNT is not one either -- the same clause
+            # `detect_streams` ends with. On a SqliteStore that count is a raw
+            # `SELECT count(*) FROM "<name>"`, so a registry entry whose table the killed
+            # writer never created raises `no such table` here, where the old name lookup
+            # simply returned. Turning a dormant trap into a live crash is how the FIRST
+            # version of this fix went wrong; this is the same mistake one layer out.
+            has_rows = False
+            if name in self.store.list_streams():
+                try:
+                    has_rows = StoredEmbeddings(self.store, name).count() > 0
+                except Exception:
+                    logger.warning("embeddings stream %r cannot be read; not adopting", name)
             self._precomputed = name if has_rows else None
         return self._precomputed
 

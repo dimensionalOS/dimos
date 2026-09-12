@@ -784,3 +784,21 @@ def test_an_empty_siglipify_stream_is_not_adopted_as_the_index(sqlite_store: Sql
     assert index.precomputed_stream_name is None, "an empty stream is not an index"
     # And with it refused, the ordinary path is available again rather than wedged.
     assert index.count() == 0
+
+    # A registry entry whose TABLE the killed writer never created is not an index
+    # either, and must not RAISE: on a SqliteStore the count is a raw SELECT, so it
+    # throws "no such table" where the old name lookup simply returned. Turning a
+    # dormant trap into a live crash is how the first version of this fix went wrong.
+    name = f"color_image_{model_slug(GIANT)}"
+
+    class WillNotCount:
+        def __getitem__(self, _name: str) -> object:
+            raise sqlite3.OperationalError(f"no such table: {name}")
+
+    unreadable = VisualMemoryIndex(
+        SimpleNamespace(list_streams=lambda: [name], streams=WillNotCount()),
+        image_stream_name="color_image",
+        model_name=GIANT,
+        pose_of=_placed,
+    )
+    assert unreadable.precomputed_stream_name is None, "an unreadable stream is not an index"
