@@ -21,14 +21,15 @@ pytest.importorskip("roboplan.core")
 from dimos.manipulation.planning.planners import roboplan_planner as roboplan_planner_module
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanPlannerConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.world import roboplan_world as roboplan_world_module
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.manip_config import (
     G1_LEFT_ARM_JOINTS,
-    G1_READY_JOINTS,
     G1_RIGHT_ARM_JOINTS,
     g1_manipulation_model_config,
 )
+from dimos.robot.unitree.g1.ready_pose import G1_READY_JOINTS
 
 pytestmark = pytest.mark.self_hosted
 
@@ -36,7 +37,7 @@ pytestmark = pytest.mark.self_hosted
 def test_full_body_state_supports_collision_checked_arm_only_plan() -> None:
     config = g1_manipulation_model_config()
     world = roboplan_world_module.RoboPlanWorld()
-    world.load_model(config)
+    world.load_model(prepare_robot_model(config))
     world.finalize()
     full_body_state = JointState(
         name=list(config.joint_names),

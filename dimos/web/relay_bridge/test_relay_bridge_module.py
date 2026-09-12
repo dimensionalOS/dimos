@@ -14,8 +14,8 @@
 
 """RelayBridgeModule unit tests: no network, no Deno, no LCM.
 
-A fake relay client is injected under `connect_with_backoff` and fake
-transports under the module's `In` streams (module_test_support.py), so lazy
+Relay discovery and `RelayClient.connect` are replaced by fakes and fake
+transports sit under the module's `In` streams (module_test_support.py), so lazy
 subscribe/unsubscribe, the maxHz gate, the encode path, and reconnect are all
 observable directly. cockpit()-authored channels and the publish path are
 covered in test_relay_bridge_authoring.py.
@@ -59,10 +59,13 @@ from dimos.web.relay_bridge.module_test_support import (
     kill_session,
     make_bridge,
     odom_transport,
+    patch_relay,
     push,
     wait_until,
 )
 from dimos.web.relay_bridge.protocol import (
+    PROTOCOL_VERSION,
+    ProtocolError,
     Stop as WireStop,
     Subs,
     TeleopStart as WireTeleopStart,
@@ -75,7 +78,7 @@ from dimos.web.relay_bridge.relay_bridge_module import (
     default_manifest,
     resolve_robot_info,
 )
-from dimos.web.relay_bridge.wt_client import RelayRejectedError
+from dimos.web.relay_bridge.wt_client import RelayInfo, RelayRejectedError
 
 
 def test_manifest_and_robot_info_content() -> None:
@@ -577,7 +580,7 @@ def test_failed_respawn_retries_until_success(bridge, monkeypatch) -> None:
         if len(spawns) == 1:
             raise RuntimeError("ready-line timeout")
         module._relay = FakeRelay(running=True)
-        return "https://127.0.0.1:2"
+        return "http://127.0.0.1:2/"
 
     module._relay = FakeRelay(running=False)  # the post-failed-start poison
     monkeypatch.setattr(module, "_spawn_relay", fake_spawn)
@@ -605,7 +608,7 @@ def test_stop_waits_for_in_flight_respawn_and_stops_spawned_child(monkeypatch) -
         assert release_spawn.wait(timeout=5.0)
         module._relay = spawned_relay
         spawn_completed.set()
-        return "https://127.0.0.1:2"
+        return "http://127.0.0.1:2/"
 
     real_stop_main = module._stop_main
 
@@ -779,11 +782,11 @@ def test_start_with_invalid_manifest_fails(monkeypatch) -> None:
     async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
         raise AssertionError("must not reach the relay with an invalid manifest")
 
-    monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fake_connect)
+    patch_relay(monkeypatch, fake_connect)
 
     def start_with(manifest: dict[str, Any]) -> RelayBridgeModule:
         module = RelayBridgeModule(
-            relay_url="https://127.0.0.1:1", robot_id="unit-bot", manifest=manifest
+            relay_url="http://127.0.0.1:1", robot_id="unit-bot", manifest=manifest
         )
         module.odom.transport = FakeTransport()
         try:
@@ -868,14 +871,195 @@ def test_default_manifest_matches_cockpit_default_preset() -> None:
 
 
 def test_relay_hello_rejection_stops_reconnect_attempts(monkeypatch) -> None:
-    conflict = RelayRejectedError("robot_id_conflict", "already connected")
-    module, clients = make_bridge(monkeypatch, hello_errors=(None, conflict))
+    # Every rejection but a robot id conflict is permanent (the conflict is
+    # covered by test_reconnect_retries_robot_id_conflict).
+    mismatch = RelayRejectedError("hello_mismatch", "hello may not change robot identity")
+    module, clients = make_bridge(monkeypatch, hello_errors=(None, mismatch))
     try:
         kill_session(module, clients[0])
         assert wait_until(lambda: len(clients) == 2)
         flush_loop(module)
         assert module._session is None
         assert len(clients) == 2
+    finally:
+        stop_module(module)
+
+
+def test_start_waits_out_robot_id_conflict(monkeypatch) -> None:
+    # A predecessor killed without a clean close stays registered until the
+    # relay's idle timeout: the first hello's conflict is waited out, not fatal.
+    monkeypatch.setattr(relay_bridge_module, "_RECONNECT_PAUSE_S", 0.01)
+    conflict = RelayRejectedError("robot_id_conflict", "already connected")
+    module, clients = make_bridge(monkeypatch, hello_errors=(conflict, None))
+    try:
+        assert len(clients) == 2
+        assert clients[0].close_count == 1  # the rejected session is closed
+        assert module._session is not None and module._session.client is clients[1]
+    finally:
+        stop_module(module)
+
+
+def test_start_retries_transient_connect_and_rediscovers(monkeypatch) -> None:
+    monkeypatch.setattr(relay_bridge_module, "_RECONNECT_PAUSE_S", 0.01)
+    fetches: list[str] = []
+    dials: list[str] = []
+    client = FakeClient()
+
+    async def changing_fetch(base_url: str, **kwargs: Any) -> RelayInfo:
+        fetches.append(base_url)
+        return RelayInfo(
+            wt_url=f"https://127.0.0.1:{len(fetches)}",
+            cert_hash="fake",
+            v=PROTOCOL_VERSION,
+        )
+
+    async def flaky_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
+        dials.append(url)
+        if len(dials) == 1:
+            raise TimeoutError("transient QUIC timeout")
+        return client
+
+    monkeypatch.setattr(relay_bridge_module, "fetch_relay_info", changing_fetch)
+    monkeypatch.setattr(relay_bridge_module.RelayClient, "connect", flaky_connect)
+    module = RelayBridgeModule(
+        relay_url="http://127.0.0.1:7780", open_browser=False, robot_id="unit-bot"
+    )
+    try:
+        module.start()
+        assert fetches == ["http://127.0.0.1:7780", "http://127.0.0.1:7780"]
+        assert dials == ["https://127.0.0.1:1", "https://127.0.0.1:2"]
+        assert module._session is not None and module._session.client is client
+    finally:
+        stop_module(module)
+
+
+def test_discovered_ephemeral_cert_is_refused_off_loopback(monkeypatch) -> None:
+    async def remote_info(base_url: str, **kwargs: Any) -> RelayInfo:
+        return RelayInfo(
+            wt_url="https://10.0.0.5:4433",
+            cert_hash="ephemeral",
+            v=PROTOCOL_VERSION,
+        )
+
+    monkeypatch.setattr(relay_bridge_module, "fetch_relay_info", remote_info)
+    module = RelayBridgeModule(
+        relay_url="http://10.0.0.5:7780", open_browser=False, robot_id="unit-bot"
+    )
+    try:
+        with pytest.raises(ValueError, match="loopback"):
+            module.start()
+    finally:
+        stop_module(module)
+
+
+def test_relay_ca_reaches_discovery_and_connect(monkeypatch) -> None:
+    ca = "/ca.pem"
+    seen: list[tuple[Any, ...]] = []
+    client = FakeClient()
+
+    async def fake_fetch(base_url: str, **kwargs: Any) -> RelayInfo:
+        seen.append(("fetch", kwargs.get("cafile")))
+        # A relay with a real certificate advertises no hash.
+        return RelayInfo(wt_url="https://127.0.0.1:1", cert_hash=None, v=PROTOCOL_VERSION)
+
+    async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
+        seen.append(("connect", kwargs.get("cafile"), kwargs.get("insecure")))
+        return client
+
+    monkeypatch.setattr(relay_bridge_module, "fetch_relay_info", fake_fetch)
+    monkeypatch.setattr(relay_bridge_module.RelayClient, "connect", fake_connect)
+    module = RelayBridgeModule(
+        relay_url="http://127.0.0.1:7780", relay_ca=ca, open_browser=False, robot_id="unit-bot"
+    )
+    try:
+        module.start()
+        assert seen == [("fetch", ca), ("connect", ca, False)]
+    finally:
+        stop_module(module)
+
+
+def test_local_relay_ignores_relay_ca(monkeypatch) -> None:
+    seen: list[tuple[str | None, bool | None]] = []
+    client = FakeClient()
+
+    async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
+        seen.append((kwargs.get("cafile"), kwargs.get("insecure")))
+        return client
+
+    monkeypatch.setattr(relay_bridge_module, "_probe_local_port", lambda _: None)
+    patch_relay(monkeypatch, fake_connect)
+    monkeypatch.setattr(
+        RelayBridgeModule,
+        "_spawn_relay",
+        lambda self, open_browser, serve_dir: "http://127.0.0.1:7780",
+    )
+    module = RelayBridgeModule(
+        relay_ca="/missing/ca.pem",
+        open_browser=False,
+        web_build=False,
+        robot_id="unit-bot",
+    )
+    try:
+        module.start()
+        assert seen == [(None, True)]
+    finally:
+        stop_module(module)
+
+
+def test_start_gives_up_on_robot_id_conflict_after_deadline(monkeypatch) -> None:
+    monkeypatch.setattr(relay_bridge_module, "_RECONNECT_PAUSE_S", 0.01)
+    monkeypatch.setattr(relay_bridge_module, "_CONFLICT_RETRY_S", 0.05)
+    clients: list[FakeClient] = []
+
+    async def always_conflict(url: str, role: str, **kwargs: Any) -> FakeClient:
+        clients.append(FakeClient(hello_error=RelayRejectedError("robot_id_conflict", "held")))
+        return clients[-1]
+
+    patch_relay(monkeypatch, always_conflict)
+    # Built by hand: make_bridge only returns from a successful start.
+    module = RelayBridgeModule(
+        relay_url="http://127.0.0.1:1", open_browser=False, robot_id="unit-bot"
+    )
+    with pytest.raises(RelayRejectedError, match="robot_id_conflict"):
+        module.start()
+    stop_module(module)
+    assert len(clients) >= 2
+
+
+def test_reconnect_retries_robot_id_conflict(monkeypatch) -> None:
+    # After a session loss the relay may still hold our previous registration
+    # (no clean close reached it): retry, unlike any other rejection.
+    monkeypatch.setattr(relay_bridge_module, "_RECONNECT_PAUSE_S", 0.01)
+    conflict = RelayRejectedError("robot_id_conflict", "already connected")
+    module, clients = make_bridge(monkeypatch, hello_errors=(None, conflict, None))
+    try:
+        kill_session(module, clients[0])
+        assert wait_until(lambda: len(clients) == 3)
+        assert wait_until(
+            lambda: module._session is not None and module._session.client is clients[2]
+        )
+    finally:
+        stop_module(module)
+
+
+def test_reconnect_gives_up_on_discovery_error(monkeypatch) -> None:
+    # /api/info answering another protocol version is permanent, like a hello
+    # rejection: supervision ends instead of retrying every pause.
+    monkeypatch.setattr(relay_bridge_module, "_RECONNECT_PAUSE_S", 0.01)
+    module, clients = make_bridge(monkeypatch)
+    fetches: list[int] = []
+
+    async def bad_fetch(base_url: str, **kwargs: Any) -> RelayInfo:
+        fetches.append(1)
+        raise ProtocolError("relay speaks protocol v99, this bridge speaks v5")
+
+    try:
+        monkeypatch.setattr(relay_bridge_module, "fetch_relay_info", bad_fetch)
+        kill_session(module, clients[0])
+        assert wait_until(lambda: len(fetches) == 1)
+        time.sleep(0.1)  # several pauses' worth: a retry loop would show here
+        flush_loop(module)
+        assert (len(fetches), len(clients), module._session) == (1, 1, None)
     finally:
         stop_module(module)
 
@@ -939,7 +1123,7 @@ def test_build_cancellation_is_bounded(monkeypatch) -> None:
 
     monkeypatch.setattr(relay_bridge_module, "ensure_web_dist", fake_ensure)
     monkeypatch.setattr(relay_bridge_module, "find_web_dir", lambda: Path("/nonexistent"))
-    module = RelayBridgeModule(relay_url="https://127.0.0.1:1", open_browser=False)
+    module = RelayBridgeModule(relay_url="http://127.0.0.1:1", open_browser=False)
     try:
         assert module._loop is not None
         future = asyncio.run_coroutine_threadsafe(module._build_web_dist(), module._loop)
@@ -954,7 +1138,7 @@ def test_build_cancellation_is_bounded(monkeypatch) -> None:
 def test_close_cancels_in_flight_build() -> None:
     # stop() racing a still-starting main() (start blocked in the build) must
     # cancel the build via _close_module rather than wait for its timeout.
-    module = RelayBridgeModule(relay_url="https://127.0.0.1:1", open_browser=False)
+    module = RelayBridgeModule(relay_url="http://127.0.0.1:1", open_browser=False)
     cancel = threading.Event()
     module._build_cancel = cancel
     stop_module(module)
@@ -965,7 +1149,7 @@ def test_serve_dir_rejected_with_relay_url(tmp_path: Path) -> None:
     # serve_dir is a local-relay feature; silently ignoring it against an
     # external relay would leave the user's page unserved.
     module = RelayBridgeModule(
-        relay_url="https://127.0.0.1:1", serve_dir=str(tmp_path), open_browser=False
+        relay_url="http://127.0.0.1:1", serve_dir=str(tmp_path), open_browser=False
     )
     with pytest.raises(RuntimeError, match="serve_dir requires"):
         module.start()
@@ -995,10 +1179,12 @@ def test_missing_serve_dir_fails_before_build_and_spawn(monkeypatch, tmp_path: P
 def test_failed_start_stops_spawned_relay(monkeypatch) -> None:
     # First-connect failure after a successful spawn happens before main yields;
     # its unified finally must still reap the fresh child.
+    monkeypatch.setattr(relay_bridge_module, "_RECONNECT_PAUSE_S", 0.01)
+
     async def fail_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
         raise OSError("connect refused")
 
-    monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fail_connect)
+    patch_relay(monkeypatch, fail_connect)
     # web_build=False: the build now runs in main() before _spawn_relay,
     # so the fake spawn below no longer shields this test from it.
     module = RelayBridgeModule(
@@ -1008,7 +1194,7 @@ def test_failed_start_stops_spawned_relay(monkeypatch) -> None:
 
     def fake_spawn(open_browser: bool, serve_dir: Path | None) -> str:
         module._relay = relay
-        return "https://127.0.0.1:2"
+        return "http://127.0.0.1:2/"
 
     monkeypatch.setattr(module, "_spawn_relay", fake_spawn)
     with pytest.raises(OSError):
@@ -1304,11 +1490,11 @@ def test_teleop_manifest_validation_fails_start(monkeypatch) -> None:
     async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
         raise AssertionError("must not reach the relay with an invalid manifest")
 
-    monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fake_connect)
+    patch_relay(monkeypatch, fake_connect)
 
     def start_with(manifest: dict[str, Any]) -> None:
         module = RelayBridgeModule(
-            relay_url="https://127.0.0.1:1", robot_id="unit-bot", manifest=manifest
+            relay_url="http://127.0.0.1:1", robot_id="unit-bot", manifest=manifest
         )
         try:
             module.start()

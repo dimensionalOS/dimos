@@ -49,6 +49,7 @@ from dimos.web.relay_bridge.module_test_support import (
     FakeClient,
     FakeTransport,
     flush_loop,
+    patch_relay,
     push,
     start_authored,
     transport_of,
@@ -312,7 +313,7 @@ def test_channels_without_manifest_fails(monkeypatch) -> None:
     async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
         raise AssertionError("must not reach the relay without a manifest")
 
-    monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fake_connect)
+    patch_relay(monkeypatch, fake_connect)
     spec = RuntimeChannelSpec(
         ch="odom",
         message_type=PoseStamped,
@@ -324,7 +325,7 @@ def test_channels_without_manifest_fails(monkeypatch) -> None:
         encoder=builtin_codecs.encode_pose,
     )
     module = RelayBridgeModule(
-        relay_url="https://127.0.0.1:1", robot_id="unit-bot", channels=(spec,)
+        relay_url="http://127.0.0.1:1", robot_id="unit-bot", channels=(spec,)
     )
     with pytest.raises(RuntimeError, match="require a manifest"):
         try:
@@ -337,7 +338,7 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
     async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
         raise AssertionError("must not reach the relay with mismatched specs")
 
-    monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fake_connect)
+    patch_relay(monkeypatch, fake_connect)
     manifest = {
         "version": 1,
         "channels": [
@@ -347,7 +348,7 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
 
     def start_with(spec: RuntimeChannelSpec, match: str) -> None:
         module = RelayBridgeModule(
-            relay_url="https://127.0.0.1:1",
+            relay_url="http://127.0.0.1:1",
             robot_id="unit-bot",
             manifest=manifest,
             channels=(spec,),

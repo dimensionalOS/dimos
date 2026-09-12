@@ -17,8 +17,6 @@
 
 from __future__ import annotations
 
-import math
-
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
@@ -40,8 +38,6 @@ R1PRO_PACKAGE_ROOT = R1PRO_DESCRIPTION_SOURCE / "R1Pro" / "urdf_r1pro_g1z_2026"
 R1PRO_MODEL_PATH = R1PRO_PACKAGE_ROOT / "urdf" / "r1pro_2026.urdf"
 
 R1PRO_PLANAR_BASE = PlanarBaseDefinition(
-    workspace_lower=(-5.0, -5.0, -math.pi),
-    workspace_upper=(5.0, 5.0, math.pi),
     velocity_limits=(1.0, 1.0, 2.0),
     acceleration_limits=(2.0, 2.0, 4.0),
     root_link="r1pro_planar_base_root",
@@ -88,6 +84,7 @@ R1PRO_MODEL = (
         R1PRO_MODEL_PATH,
         package_paths={"r1pro_urdf": R1PRO_PACKAGE_ROOT},
     )
+    .with_default_joint_acceleration_limit(2.0)
     .with_fixed_joints(*PASSIVE_JOINTS)
     .with_renamed_joints({joint: coordinator_name(joint) for joint in UPPER_BODY_JOINTS})
 )
@@ -127,8 +124,6 @@ def make_r1pro_model_config() -> RobotModelConfig:
         planning_groups=list(_R1PRO_UPPER_BODY_PLANNING_GROUPS),
         auto_convert_meshes=True,
         collision_exclusion_pairs=list(R1PRO_COLLISION_EXCLUSIONS),
-        max_velocity=0.5,
-        max_acceleration=1.0,
         home_joints=[0.0] * len(R1PRO_UPPER_BODY_PLANNING_JOINTS),
     )
 
@@ -149,7 +144,5 @@ def make_r1pro_planar_model_config() -> RobotModelConfig:
         ],
         auto_convert_meshes=True,
         collision_exclusion_pairs=list(R1PRO_COLLISION_EXCLUSIONS),
-        max_velocity=0.5,
-        max_acceleration=1.0,
         home_joints=[0.0] * len(R1PRO_PLANNING_JOINTS),
     )
