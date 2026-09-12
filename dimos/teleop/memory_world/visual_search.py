@@ -524,7 +524,23 @@ class VisualMemoryIndex:
         """
         if isinstance(self._precomputed, _Unresolved):
             name = embedding_stream_name(self.image_stream_name, self.model_name)
-            self._precomputed = name if name in self.store.list_streams() else None
+            # An empty stream cannot fill a role, the same rule `detect_streams` applies
+            # and for the same reason: a killed ingest leaves the NAME behind. Adopted on
+            # the name alone, an empty one is a trap with no way out from inside the
+            # product -- `count()` reads 0 so `build()` says "nothing to build" and never
+            # builds, while `_index_status` reports the vectors PRESENT, which hides the
+            # viewer's "Add embeddings" button. And this module makes that artifact
+            # itself: `stop()` terminates the embed job, so a `memworld --stop` during an
+            # "Add embeddings" run kills siglipify mid-write.
+            # Counted, not iterated: these rows are siglipify's cdr-encoded vectors, and
+            # walking the stream DECODES them, which raises `Unknown codec: 'cdr'` wherever
+            # that codec is not registered. `StoredEmbeddings.count()` is what `count()`
+            # below already uses on this same stream, so it is known to work on the real
+            # thing.
+            has_rows = (
+                name in self.store.list_streams() and StoredEmbeddings(self.store, name).count() > 0
+            )
+            self._precomputed = name if has_rows else None
         return self._precomputed
 
     def count(self) -> int:

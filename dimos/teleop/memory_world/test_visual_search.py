@@ -753,3 +753,34 @@ def test_the_real_answer_path_says_which_producer_ranked_it() -> None:
     assert "best match" in published["result"].answer
     assert "views" not in published["result"].answer
     assert "views" not in outcome.metadata["places"][0]
+
+
+def test_an_empty_siglipify_stream_is_not_adopted_as_the_index(sqlite_store: SqliteStore) -> None:
+    """The name is not the vectors, and an empty one is a trap with no way out.
+
+    `detect_streams` has skipped empty streams since round 33, with a comment naming the
+    incident: a killed ingest leaves the NAME behind and it outranks a real stream. This
+    sibling adopted on the name alone, and an empty adoption is worse than a wrong one --
+    `count()` reads 0 so `build()` says "nothing to build" and never builds on any run,
+    while `_index_status` reports the vectors PRESENT, which hides the viewer's "Add
+    embeddings" button. Nothing inside the product can clear it.
+
+    The module makes that artifact itself: `stop()` terminates the embed job, so a
+    `memworld --stop` during an "Add embeddings" run kills siglipify mid-write.
+    """
+    # The stream exists, with the exact name adoption looks for, and holds nothing --
+    # which is what a killed siglipify leaves behind.
+    images = sqlite_store.stream("color_image", int)
+    for source_id, ts in ((1, 1.0), (2, 2.0)):
+        images.append(source_id, ts=ts, pose=None)
+    empty = f"color_image_{model_slug(GIANT)}"
+    sqlite_store.stream(empty, int)  # created, never appended to
+    assert empty in sqlite_store.list_streams()
+    assert not any(True for _ in sqlite_store.streams[empty])
+
+    index = VisualMemoryIndex(
+        sqlite_store, image_stream_name="color_image", model_name=GIANT, pose_of=_placed
+    )
+    assert index.precomputed_stream_name is None, "an empty stream is not an index"
+    # And with it refused, the ordinary path is available again rather than wedged.
+    assert index.count() == 0
