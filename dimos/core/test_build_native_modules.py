@@ -217,6 +217,26 @@ def test_no_module_hashes_the_repo_root() -> None:
         )
 
 
+def test_recorder_fileset_covers_every_workspace_member() -> None:
+    """Cargo resolves the workspace from the root manifest, so the recorder's
+    fileset src must carry every [workspace] member — as static path literals,
+    because the publish gate can only hash literals. Deriving the list from
+    Cargo.toml at eval time (fromTOML) is invisible to the flake parser, which
+    then hashes the fileset root instead: the repo-root tree SHA busts the
+    publish marker on every commit."""
+    flake = DIMOS_PROJECT_ROOT / "dimos" / "experimental" / "memory" / "rust" / "flake.nix"
+    block = re.search(r"members\s*=\s*\[([^]]*)\]", (DIMOS_PROJECT_ROOT / "Cargo.toml").read_text())
+    assert block is not None, "no [workspace] members array in Cargo.toml"
+    members = re.findall(r'"([^"]+)"', block.group(1))
+    assert members, "no [workspace] members parsed from Cargo.toml"
+    literals, _path_inputs = _SCRIPT._flake_refs(flake)
+    for member in members:
+        assert any(member == lit or member.startswith(lit + "/") for lit in literals), (
+            f"workspace member {member!r} has no covering path literal in {flake} — "
+            "list it in the fileset.unions so the publish gate hashes it"
+        )
+
+
 @pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs git HEAD for object hashes")
 def test_manifest_is_deterministic() -> None:
     modules = _SCRIPT.discover()
