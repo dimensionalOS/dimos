@@ -221,9 +221,18 @@ class WorldCache:
             # on an mcap a full pass decompresses every image chunk (minutes),
             # while a read from a stamp touches only the chunk that holds it.
             def sampled() -> Any:
+                # `after(ts).limit(1)` is a FILTER, not a cursor: when the recording holds
+                # fewer frames than markers asked for, every remaining probe lands on the
+                # same last frame. With n=200 over a 3-frame stream that published 200
+                # markers, 197 of them the same picture in the same place, and ran 200
+                # JPEG encodes to do it -- and because module.py keys `sources` by id, the
+                # duplicates then collapsed and analyze_memory's ids snapped to the last
+                # marker of each run. One marker per frame, however many probes hit it.
+                seen: set[float] = set()
                 for k in range(n):
                     found = stream.after(float(first.ts) + k * interval - 1e-6).limit(1).to_list()
-                    if found:
+                    if found and float(found[0].ts) not in seen:
+                        seen.add(float(found[0].ts))
                         yield found[0]
 
             for k, obs in enumerate(sampled()):

@@ -864,7 +864,12 @@ async function setOrbitFrame(frame) {
         const body = await response.json();
         orbitPositions = body.positions || [];
         if (orbitPositions.length && scene) {
-            const at = replay ? Math.min(replay.scan ?? orbitPositions.length - 1, orbitPositions.length - 1) : orbitPositions.length - 1;
+            // `??` guarded the wrong sentinel: ReplayController starts at scan = -1, not
+            // null, so this asked for orbitPositions[-1], got undefined, and setOrbitTarget
+            // returned without doing anything -- picking an orbit frame before touching the
+            // timeline was a silent no-op. Before the first scan, orbit the last pose.
+            const shown = replay && replay.scan >= 0 ? replay.scan : orbitPositions.length - 1;
+            const at = Math.min(shown, orbitPositions.length - 1);
             scene.setOrbitTarget(orbitPositions[at]);
             if (replay) replay.onScan = (scan) => scene.setOrbitTarget(orbitPositions[Math.min(scan, orbitPositions.length - 1)]);
         }

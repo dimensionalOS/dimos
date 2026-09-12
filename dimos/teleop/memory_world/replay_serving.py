@@ -73,8 +73,18 @@ class ReplayServing:
         # Frame stamps let the viewer ask for exact frames, so its cache hits.
         payload["frames"] = [round(float(obs.ts), 4) for obs in images]
         payload["hfov_deg"] = self._camera_hfov()
-        # The viewer colours replayed voxels itself, on the static map's ramp.
+        # The viewer colours replayed voxels itself, on the static map's ramp -- so the
+        # ramp has to be measured on the voxels it will actually colour. The keyframe is
+        # the UNFILTERED cloud; the replay draws only the z slab (`_grid_indices`), and
+        # the static map is cut to the same band in world_cache. Measured on a keyframe
+        # holding strays at -4.0 and 9.0 with a slab of -0.5..3.0: the ramp went out as
+        # floor -2.8 span 9.7 where the voxels on screen wanted floor 0.1 span 1.8 --
+        # 2.9 m of offset and five times the span, so every replayed voxel was the wrong
+        # colour against a static map that had the band applied.
         final = replay.final_keyframe().data.points_f32()
+        if len(final):
+            inside = final[(final[:, 2] >= replay.z_min) & (final[:, 2] <= replay.z_max)]
+            final = inside if len(inside) else final
         z = final[:, 2] if len(final) else np.zeros(1)
         low = float(np.percentile(z, self.config.height_ramp_low_percentile))
         high = float(np.percentile(z, self.config.height_ramp_high_percentile))
@@ -108,6 +118,13 @@ class ReplayServing:
             # pose with a different scan's voxels.
             scans = self._ensure_store().streams[self.config.lidar_stream_name]
             positions = stamped_positions(scans)[: len(stamps)]
+            # ...and PADDED to the scan count, which the tf branch above always satisfies.
+            # Truncating alone let this come back shorter when only some scans carry a
+            # pose, so the viewer's `orbitPositions[scan]` ran off the end and
+            # `_robot_end_pose()` read `positions[-1]` as "where the robot ended" when it
+            # was really wherever the last POSED scan was, many scans earlier.
+            if positions and len(positions) < len(stamps):
+                positions = positions + [positions[-1]] * (len(stamps) - len(positions))
         return {"frame": frame, "positions": positions}
 
     def _replay_frame(self, ts: float) -> tuple[bytes, dict[str, Any]] | None:

@@ -215,7 +215,13 @@ def test_two_frames_a_fraction_of_a_millisecond_apart_are_not_one_cached_frame(
         memory_world, "_ensure_store", lambda: SimpleNamespace(streams={"": stream})
     )
     monkeypatch.setattr(memory_world.config, "image_stream_name", "")
-    monkeypatch.setattr(memory_world, "_encode_jpeg", lambda data, *a: str(data).encode())
+    encodes: list[str] = []
+
+    def encode(data, *a):  # type: ignore[no-untyped-def]
+        encodes.append(str(data))
+        return str(data).encode()
+
+    monkeypatch.setattr(memory_world, "_encode_jpeg", encode)
     monkeypatch.setattr(memory_world, "_camera_hfov", lambda: 60.0)
     monkeypatch.setattr(memory_world, "_camera_pose_of", lambda obs: None)
 
@@ -224,9 +230,32 @@ def test_two_frames_a_fraction_of_a_millisecond_apart_are_not_one_cached_frame(
 
     assert got_first == b"FIRST"
     assert got_second == b"SECOND", "served the neighbouring frame's picture from the cache"
-    # ...and the cache is still a cache: asking again returns the same object, not a re-encode.
+    # ...and the cache is still a cache. Counting ENCODES is the only thing that shows
+    # that: comparing the returned bytes and the dict length passes just as well with the
+    # cache lookup deleted outright, because a re-encode returns equal bytes.
+    assert encodes == ["FIRST", "SECOND"]
     assert memory_world._replay_frame(1.00001)[0] == b"FIRST"
+    assert encodes == ["FIRST", "SECOND"], "re-encoded a frame it had already cached"
     assert len(memory_world._replay_frames) == 2
+
+
+def test_analyze_memory_survives_analysis_that_printed_without_a_newline(
+    memory_world: MemoryWorldModule,
+) -> None:
+    """Analysis code may leave stdout mid-line, and often does.
+
+    The marker is found by looking for a line that STARTS with it. The bootstrap printed
+    it with no leading newline, so a `print(..., end="")` anywhere in the analysis put
+    that output and the marker on one line and the answer vanished -- EXECUTION_FAILED on
+    a run that worked. Found by a reviewer immediately after the line-based parse landed:
+    fixing the substring search had opened this next to it.
+    """
+    outcome = memory_world.analyze_memory(
+        "print('progress', end=''); result = {'answer': 'ok'}", timeout=10
+    )
+
+    assert outcome.success, f"unterminated stdout swallowed the answer: {outcome.message}"
+    assert outcome.message == "ok"
 
 
 def test_analyze_memory_reads_the_sentinel_as_a_line_not_a_substring(
@@ -1333,14 +1362,19 @@ def test_a_route_starts_under_the_viewer_not_where_the_robot_stopped(
     # nearest-in-plane puts a viewer on a mezzanine three metres below their own feet,
     # and nearest-in-3-D is worse on the single-storey maps we actually have, because the
     # gap between a camera and the sensor that drove the path is metres.
+    # The mezzanine is NEARER in the plane than the ground floor, which is the whole point
+    # of the arrangement: with it further away, deleting the "no floor above your head"
+    # half of the band left nearest-in-plane picking the ground floor anyway and this
+    # test passed with the guard removed. The assertion message below claims to catch
+    # exactly that, so the fixture has to be able to.
     levels = [
-        [5.0, 2.0, 0.30],  # the ground floor, directly below
-        [5.4, 2.3, 2.80],  # a mezzanine, a little further in x and y
+        [5.4, 2.3, 0.30],  # the ground floor, a little further in x and y
+        [5.0, 2.0, 2.80],  # a mezzanine, directly overhead
     ]
     monkeypatch.setattr(memory_world, "_orbit_positions_for", lambda frame: {"positions": levels})
     # A viewer on the GROUND floor with their camera 1.7 m up. Nearest-in-3-D picks the
-    # mezzanine here -- |1.7 - 2.8| = 1.1 beats |1.7 - 0.3| = 1.4 -- which is a floor
-    # above their own head.
+    # mezzanine here -- |1.7 - 2.8| = 1.1 beats |1.7 - 0.3| = 1.4 -- and so does plain
+    # nearest-in-plane, which is why only the height band gets this right.
     memory_world._viewer_position = (5.0, 2.0, 1.7)
     assert memory_world._ground_under_viewer()[2] == pytest.approx(0.30), (
         "chose a floor above the viewer's head"
@@ -1353,7 +1387,7 @@ def test_a_route_starts_under_the_viewer_not_where_the_robot_stopped(
     # A client sending no height at all -- which this one did for its whole history --
     # has nothing in the band and falls back to the plane, as it did before any of this.
     memory_world._viewer_position = (5.0, 2.0, 0.0)
-    assert memory_world._ground_under_viewer()[2] == pytest.approx(0.30)
+    assert memory_world._ground_under_viewer()[2] == pytest.approx(2.80)
 
     monkeypatch.setattr(memory_world, "_orbit_positions_for", lambda frame: {"positions": path})
     memory_world._viewer_position = (4.1, 3.9, 0.0)

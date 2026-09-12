@@ -672,6 +672,11 @@ class VoxelReplay:
     def _diffs_between(self, start: int, end: int) -> Iterable[Any]:
         """Diff messages for scans [start, end), by their stamps."""
         window = self.index.scan_ts[start:end]  # min/max: stamps need not rise with the index
+        if not len(window):
+            # An empty window reached `.min()` and came out as numpy's "zero-size array to
+            # reduction operation minimum", which says nothing about scans or segments. The
+            # diagnostic four lines below is the one worth showing, so say the same thing.
+            raise RuntimeError(f"no scans in the range {start}..{end}")
         t0, t1 = float(window.min()), float(window.max())
         # By scan index: two scans can share a stamp, and the range then over-fetches.
         by_index = {

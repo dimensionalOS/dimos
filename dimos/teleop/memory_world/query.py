@@ -143,6 +143,14 @@ try:
             return value.item()
         raise TypeError(f"{{type(value).__name__}} is not JSON serializable")
 
+    # The bare print() is load-bearing: the parent finds this marker by looking for a line
+    # that STARTS with it, and analysis code is free to `print(..., end="")` right before
+    # returning. Without a line break first, that output and this marker share a line, the
+    # parent finds nothing, and a perfectly good answer comes back as EXECUTION_FAILED.
+    # (A "\\n" prefix would be the obvious way to write this and is wrong here: the
+    # bootstrap is an f-string, so the escape resolves when the TEMPLATE is built and puts
+    # a real newline inside the child's string literal, which will not compile.)
+    print()
     print("{RESULT_SENTINEL}" + json.dumps(result, default=json_default, separators=(",", ":")))
 finally:
     store.stop()
