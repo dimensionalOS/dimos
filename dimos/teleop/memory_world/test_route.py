@@ -118,6 +118,40 @@ def test_no_route_when_walled_off() -> None:
     assert planner.plan((1.0, 1.0), (9.0, 1.0)) is None
 
 
+def test_one_pose_jump_across_a_wall_does_not_open_a_door_in_it() -> None:
+    """A SLAM relocalisation is a teleport, and `densify` draws a straight line through
+    it. Those fabricated points were counted as "the robot was here", and the near-path
+    clause then erased the real wall voxels the line passed through -- so the planner
+    routed through the hole its own interpolation had made.
+
+    The same drive, the only difference being one 2 m jump in the recorded path:
+    continuous, the wall's cells cost 100 and there is no route; with the jump, they
+    dropped to 88-90 and a 7.90 m route ran straight through x = 5.
+
+    `densify` itself stays: the corridor and the floor height need it, and the sibling
+    test above needs ~3 m of it. Only the claim about the robot's own body is now made
+    from the samples the robot actually reported.
+    """
+    voxels = np.concatenate([_floor(0, 10, 0, 6), _wall(4.9, 5.1, -1.0, 7.0)])  # no doorway
+
+    # The robot drove up the left side and back, never crossing.
+    continuous = _path((1, 1), (1, 5), (4, 5), (4, 1))
+    assert (
+        RoutePlanner.from_voxels(voxels, continuous, voxel_size=VOXEL).plan((1.0, 1.0), (9.0, 1.0))
+        is None
+    )
+
+    # The same drive with ONE extra pose on the far side of the wall: a relocalisation,
+    # not a drive, so there are no samples in between -- 2.83 m from the last real one.
+    # `_path` would lay samples every 5 cm along that leg, which is a robot driving
+    # through, not a jump, so the sample is appended by hand.
+    jumped = np.concatenate([continuous, np.asarray([[6.0, 3.0, BODY_Z]])])
+    planner = RoutePlanner.from_voxels(voxels, jumped, voxel_size=VOXEL)
+    assert planner.plan((1.0, 1.0), (9.0, 1.0)) is None, (
+        "the route went through the wall that one jump interpolated a line across"
+    )
+
+
 def test_sparse_path_samples_still_make_one_corridor() -> None:
     """A path sampled far apart still has to carve ONE connected corridor.
 

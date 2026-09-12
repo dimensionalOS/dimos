@@ -41,6 +41,52 @@ def test_static_chain_composes_parent_to_child() -> None:
     assert matrix[:3, 3] == pytest.approx((1.0, 1.0, 0.0))
 
 
+def test_two_routes_of_equal_length_are_not_chosen_by_the_hash_seed() -> None:
+    """The same recording has to place its map the same way on every run.
+
+    `_path` walked `self._neighbours[frame]`, a set, and a set of strings iterates in an
+    order that depends on hash randomisation -- which Python re-rolls per PROCESS. A tf
+    tree with two equally short routes between the same pair of frames therefore answered
+    with one route on one run and the other on the next, with nothing in the recording or
+    the code having changed, and each route composes to a different matrix.
+
+    So this asks several interpreters, each with a different PYTHONHASHSEED, and requires
+    that they agree. A single process cannot see this: within one run the order is fixed.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+
+    program = """
+import json
+from dimos.teleop.memory_world.tf_tree import TfTree
+
+tree = TfTree()
+# A diamond: world -> left -> tool and world -> right -> tool, both two hops, and the
+# two routes put `tool` in very different places.
+tree.add("world", "left", 0.0, (0.0, 10.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+tree.add("left", "tool", 0.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+tree.add("world", "right", 0.0, (2.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+tree.add("right", "tool", 0.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+matrix = tree.lookup("world", "tool", 0.0)
+print(json.dumps([round(float(v), 6) for v in matrix[:3, 3]]))
+"""
+    answers = set()
+    for seed in ("1", "2", "3", "4", "5", "6", "7", "8"):
+        environment = {**os.environ, "PYTHONHASHSEED": seed}
+        out = subprocess.run(
+            [sys.executable, "-c", program],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=environment,
+        )
+        answers.add(json.dumps(json.loads(out.stdout.strip())))
+
+    assert len(answers) == 1, f"the route depends on the hash seed: {sorted(answers)}"
+
+
 def test_lookup_walks_edges_backwards_too() -> None:
     tree = TfTree()
     tree.add("world", "body", 0.0, (1.0, 2.0, 0.0), IDENTITY)

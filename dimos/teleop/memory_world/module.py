@@ -65,6 +65,7 @@ from dimos.teleop.memory_world.messages import (
     encode_text,
 )
 from dimos.teleop.memory_world.query import (
+    MAX_HIGHLIGHT_RADIUS_M,
     MemoryQueryResult,
     answer_positions,
 )
@@ -249,7 +250,7 @@ class MemoryWorldConfig(ModuleConfig):
     # Best frames whose hot patches are raycast, and how close two raycast
     # hits must land to be the same object.
     locate_frames: int = PydanticField(default=12, ge=1)
-    object_radius_m: float = PydanticField(default=0.75, gt=0.0)
+    object_radius_m: float = PydanticField(default=0.75, gt=0.0, le=MAX_HIGHLIGHT_RADIUS_M)
     # ---- timeline replay ------------------------------------------------------
     # Keyframe and per-scan diff streams written once (replay.py); the viewer scrubs
     # a segment at a time. A longer interval means fewer, larger segments.
@@ -923,36 +924,45 @@ class MemoryWorldModule(
         if self.config.camera_optical_frame is not None:
             return self.config.camera_optical_frame
         if self._camera_frame_cache is None:  # read once, even when it is empty
-            try:
-                with self._store_lock:  # the payload read too: a reopen closes the old store
+            # The WRITE is inside the lock too, not just the read. `_reopen_recording`
+            # sets this back to None while holding the same lock; a reopen landing in the
+            # window between the two had its invalidation overwritten with the previous
+            # recording's answer, which nothing then recomputes.
+            with self._store_lock:  # the payload read too: a reopen closes the old store
+                try:
                     first = self._ensure_store().streams[self.config.image_stream_name].first()
                     frame = str(getattr(first.data, "frame_id", "") or "")
-            except LookupError:  # no image stream, or an empty one
-                frame = ""
-            self._camera_frame_cache = frame.lstrip("/")
+                except LookupError:  # no image stream, or an empty one
+                    frame = ""
+                self._camera_frame_cache = frame.lstrip("/")
         return self._camera_frame_cache
 
     def _lidar_world_aligned(self) -> bool:
         """Whether the lidar scans are stored already registered in the world frame."""
         if self._lidar_world_aligned_cache is None:
-            aligned = self.config.lidar_world_frame
-            if aligned is None:
-                with self._store_lock:
+            # Read AND write under the lock a reopen invalidates under -- see
+            # `_camera_frame`. The lock is re-entrant, so `_tf_tree()` taking it again
+            # below is free.
+            with self._store_lock:
+                aligned = self.config.lidar_world_frame
+                if aligned is None:
                     first = self._ensure_store().streams[self.config.lidar_stream_name].first()
                     frame_id = str(getattr(first.data, "frame_id", "")).lower().lstrip("/")
-                world = str(self.config.world_frame or "").lower().lstrip("/")
-                # Any other fixed frame goes through tf: map <- odom is not the identity.
-                aligned = frame_id == world or "corrected" in frame_id
-                if not aligned and frame_id in {"map", "odom", "world"}:
-                    tree = self._tf_tree()
-                    known = set() if tree is None else {f.lower().lstrip("/") for f in tree.frames}
-                    aligned = frame_id not in known  # tf cannot place it: it is the world
-                logger.info(
-                    "lidar frame %r detected as %s",
-                    frame_id,
-                    "world-aligned" if aligned else "sensor-relative",
-                )
-            self._lidar_world_aligned_cache = bool(aligned)
+                    world = str(self.config.world_frame or "").lower().lstrip("/")
+                    # Any other fixed frame goes through tf: map <- odom is not the identity.
+                    aligned = frame_id == world or "corrected" in frame_id
+                    if not aligned and frame_id in {"map", "odom", "world"}:
+                        tree = self._tf_tree()
+                        known = (
+                            set() if tree is None else {f.lower().lstrip("/") for f in tree.frames}
+                        )
+                        aligned = frame_id not in known  # tf cannot place it: it is the world
+                    logger.info(
+                        "lidar frame %r detected as %s",
+                        frame_id,
+                        "world-aligned" if aligned else "sensor-relative",
+                    )
+                self._lidar_world_aligned_cache = bool(aligned)
         return self._lidar_world_aligned_cache
 
     def _accumulated_cloud(self) -> np.ndarray | None:
@@ -1040,9 +1050,17 @@ class MemoryWorldModule(
         stream too: the index lists its frame stamps. A build that places no scan is
         deleted again and raises; the failure is remembered until a reopen.
 
-        Lock order everywhere: planner, world cache, replay, store, index. The
-        build runs under the replay lock alone: the lidar and derived streams
-        have their own connections and nothing serves replay data until it is done.
+        Lock order everywhere: planner, world cache, replay, store, index. The build
+        takes the store lock as well as the replay lock, for its whole length. It used
+        to run under the replay lock alone, on the reasoning that the lidar and derived
+        streams "have their own connections" -- they do not, it is handed the shared
+        `Store` -- and that nothing serves replay data until it is done, which is true
+        and beside the point: evidence frames, `/replay/frame` and the world-cache reads
+        all use that same store and all take the store lock, so the build ran against
+        them. Measured 6 of 10 concurrent trials corrupted, against 0 of 10 under the
+        lock, with short reads and a `ValueError: not enough values to unpack` out of the
+        builder. The cost is that a first build on a new recording serialises questions
+        behind it; the fix that would not is a second connection for the builder.
         """
         with self._replay_lock:
             return self._replay_locked()
@@ -1118,22 +1136,26 @@ class MemoryWorldModule(
             if not available:
                 self._replay_progress = "building"
                 logger.info("building the voxel replay streams into %s", self.config.store_path)
-                stats = build_replay_streams(
-                    store,
-                    lidar_stream_name=self.config.lidar_stream_name,
-                    to_scan=self._scan_frame,
-                    voxel_size=self.config.voxel_size,
-                    max_range=self.config.replay_max_range_m,
-                    keyframe_interval_s=self.config.replay_keyframe_interval_s,
-                    cancelled=self._stopping.is_set,
-                    world_frame=self.config.world_frame,
-                )
-                if self._stopping.is_set():  # cut short: the streams lack their last keyframe
-                    raise RuntimeError("cancelled")
-                if stats.added == 0:  # nothing placed: the streams would pass as finished
-                    for name in (DIFF_STREAM, KEYFRAME_STREAM):
-                        store.delete_stream(name)
-                    raise RuntimeError("no voxel came out of the scans (tf, frame or range)")
+                # Under the store lock, like every other use of this store: it is the
+                # shared one, the build reads and writes it for minutes, and the readers
+                # it was racing take this lock. See the docstring for the measurement.
+                with self._store_lock:
+                    stats = build_replay_streams(
+                        store,
+                        lidar_stream_name=self.config.lidar_stream_name,
+                        to_scan=self._scan_frame,
+                        voxel_size=self.config.voxel_size,
+                        max_range=self.config.replay_max_range_m,
+                        keyframe_interval_s=self.config.replay_keyframe_interval_s,
+                        cancelled=self._stopping.is_set,
+                        world_frame=self.config.world_frame,
+                    )
+                    if self._stopping.is_set():  # cut short: no last keyframe on the streams
+                        raise RuntimeError("cancelled")
+                    if stats.added == 0:  # nothing placed: the streams would pass as finished
+                        for name in (DIFF_STREAM, KEYFRAME_STREAM):
+                            store.delete_stream(name)
+                        raise RuntimeError("no voxel came out of the scans (tf, frame or range)")
                 logger.info(
                     "voxel replay built: %d scans, %d keyframes, +%d/-%d edits in %.1f s",
                     stats.scans,

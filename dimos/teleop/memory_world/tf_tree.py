@@ -280,7 +280,12 @@ class TfTree:
             frame = queue.popleft()
             if frame == source:
                 break
-            for neighbour in self._neighbours[frame]:
+            # sorted, not the set's own order: two routes of equal length between the same
+            # pair of frames are both shortest, and a set iterates in an order that depends
+            # on string hashing, which is randomised PER PROCESS. The same recording then
+            # placed its map one way on one run and the other way on the next, with nothing
+            # in the recording or the code having changed.
+            for neighbour in sorted(self._neighbours[frame]):
                 if neighbour not in previous:
                     previous[neighbour] = frame
                     queue.append(neighbour)

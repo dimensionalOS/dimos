@@ -33,6 +33,30 @@ def _empty_store(path: Path) -> None:
     store.stop()
 
 
+def test_the_object_radius_a_config_accepts_is_one_an_answer_can_carry() -> None:
+    """`object_radius_m` is what fills `HighlightPoint.radius`, and the two bounds
+    disagreed: the config took anything above zero, the schema stopped at 5.
+
+    An `object_radius_m` of 6 -- legal, accepted at startup, no warning -- then made
+    every depth-located answer raise a ValidationError deep inside the answer path,
+    which the user was shown as "The SigLIP index cannot answer". A setting, reported
+    as a broken index, on every query, with nothing naming the setting.
+    """
+    import pydantic
+    import pytest
+
+    from dimos.teleop.memory_world.module import MemoryWorldConfig
+    from dimos.teleop.memory_world.query import MAX_HIGHLIGHT_RADIUS_M, HighlightPoint
+
+    # The largest radius the config accepts is one an answer can actually carry.
+    largest = MemoryWorldConfig(object_radius_m=MAX_HIGHLIGHT_RADIUS_M).object_radius_m
+    HighlightPoint(position=(0.0, 0.0, 0.0), radius=largest)
+
+    # And one past it is refused where it can be explained, not at query time.
+    with pytest.raises(pydantic.ValidationError):
+        MemoryWorldConfig(object_radius_m=MAX_HIGHLIGHT_RADIUS_M + 1.0)
+
+
 def test_memory_query_result_validates_spatial_geometry() -> None:
     result = MemoryQueryResult.model_validate(
         {

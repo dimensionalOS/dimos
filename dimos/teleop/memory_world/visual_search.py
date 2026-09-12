@@ -339,7 +339,11 @@ def cluster_hits(hits: Iterable[PatchHit], radius: float, max_places: int) -> li
         # thing the docstring above says cannot happen and the primary rank key.
         anchor = nearest["best"].position
         dx, dy = anchor[0] - hit.camera_position[0], anchor[1] - hit.camera_position[1]
-        nearest["bearings"].add(int(np.degrees(np.arctan2(dy, dx)) // 45))
+        # `% 8`, because arctan2 spans (-180, 180] and `// 45` therefore has NINE values
+        # for eight sectors: -4 and 4 are both the sector pointing straight back along
+        # -x, so one place seen only from behind could count as two directions -- and
+        # directions are the primary rank key.
+        nearest["bearings"].add(int(np.degrees(np.arctan2(dy, dx)) // 45) % 8)
 
     ranked = sorted(
         clusters, key=lambda c: (len(c["bearings"]), c["best"].similarity), reverse=True

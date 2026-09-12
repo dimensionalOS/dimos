@@ -42,6 +42,14 @@ class HighlightRegion(BaseModel):
     opacity: float = Field(default=0.35, ge=0.0, le=1.0)
 
 
+# The most a single answer may repaint. The module's `object_radius_m` is what fills
+# `HighlightPoint.radius`, so the two bounds have to be the same number: they were not,
+# and an `object_radius_m` the config accepted (anything over 5) made every located
+# answer raise a ValidationError here, which the user was shown as "The SigLIP index
+# cannot answer" -- a query failure, reported at query time, for a setting.
+MAX_HIGHLIGHT_RADIUS_M = 5.0
+
+
 class HighlightPoint(BaseModel):
     """A world-frame point of interest."""
 
@@ -50,7 +58,7 @@ class HighlightPoint(BaseModel):
     color: Color = "#ff4d6d"
     # Metres around the point whose voxels the viewer repaints. Only set when
     # the point is an object, not a capture pose.
-    radius: float | None = Field(default=None, gt=0.0, le=5.0)
+    radius: float | None = Field(default=None, gt=0.0, le=MAX_HIGHLIGHT_RADIUS_M)
 
 
 class ClusterSummary(BaseModel):

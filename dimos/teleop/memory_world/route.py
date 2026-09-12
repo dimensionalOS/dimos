@@ -257,10 +257,23 @@ class RoutePlanner:
         body = (z > -BODY_BELOW_M) & (z <= BODY_ABOVE_M)
         obstacle = np.zeros((height, width), dtype=bool)
         obstacle[row[body], col[body]] = True
-        # The robot was where it drove, so voxels there are its own body or
-        # people walking beside it, not walls: nothing within its radius of the
-        # path blocks.
-        obstacle &= off_path > robot_radius_m
+        # The robot was where it drove, so voxels there are its own body or people
+        # walking beside it, not walls: nothing within its radius of the path blocks.
+        #
+        # Measured from the SAMPLES, not from `dense`. `densify` bridges a gap of any
+        # length, and the bridge is a straight line between two poses -- so one SLAM
+        # jump across a room made this erase the real wall voxels the line passed
+        # through, and the planner then routed through the hole it had just made. A 2 m
+        # jump took the wall's cells from cost 100 to 88-90 and produced a 7.90 m plan
+        # straight through it. The corridor and the floor height still come from the
+        # dense line, which is what they are for and what needs ~3 m of bridging on a
+        # real recording; only the claim "the robot's own body was here" is restricted
+        # to where the robot actually reported being.
+        sampled = np.zeros((height, width), dtype=bool)
+        sampled_r, sampled_c = cells(path)
+        sampled[sampled_r, sampled_c] = True
+        off_sampled = ndimage.distance_transform_edt(~sampled) * resolution
+        obstacle &= off_sampled > robot_radius_m
         # Cells the robot's footprint would overlap are lethal; a cost ramp
         # beyond that keeps the route off the walls when there is room.
         distance = ndimage.distance_transform_edt(~obstacle) * resolution

@@ -731,6 +731,42 @@ def test_one_frame_straddling_a_bearing_boundary_is_still_one_view() -> None:
     assert places[0].similarity == 0.20
 
 
+def test_the_bearing_behind_a_place_is_one_direction_and_not_two() -> None:
+    """`arctan2` spans (-180, 180], so `// 45` has NINE values for eight sectors.
+
+    -4 and 4 are the same sector -- straight back along -x -- and a place is ranked by how
+    many distinct sectors saw it. Two cameras a millimetre apart, driving past the same
+    side of an object, land on either side of that seam: one reads exactly +180 and the
+    other -179.99. The place is then reported as seen from two directions when it was
+    seen from one, and it outranks a place that really was.
+    """
+    anchor_x, anchor_y = 0.0, 0.0
+    seam = [
+        # Due east of the place, dead level with it: arctan2(+0.0, -10) is exactly +180.
+        hit(anchor_x, anchor_y, 0.30, camera=(10.0, 0.0, 0.0), frame=1),
+        # A millimetre to the north of that. Same direction; arctan2 says -179.994.
+        hit(anchor_x, anchor_y, 0.29, camera=(10.0, 0.001, 0.0), frame=2),
+    ]
+    assert cluster_hits(seam, radius=0.75, max_places=6)[0].views == 1
+
+    # The eight real sectors still count as eight, so the wrap has not merged any of them.
+    # The cameras sit at the MIDDLE of each sector: on a boundary it is floating point
+    # that decides the side, and then the fixture is what is being tested.
+    import math
+
+    around = [
+        hit(
+            anchor_x,
+            anchor_y,
+            0.10,
+            camera=(10.0 * math.cos(a), 10.0 * math.sin(a), 0.0),
+            frame=10 + i,
+        )
+        for i, a in enumerate(math.radians(d + 22.5) for d in range(0, 360, 45))
+    ]
+    assert cluster_hits(around, radius=0.75, max_places=6)[0].views == 8
+
+
 def test_the_answer_sentence_names_the_place_it_flies_to() -> None:
     """ "best match 0.150" beside a marker reading "0.170" is a contradiction.
 

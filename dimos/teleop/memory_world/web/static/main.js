@@ -1181,9 +1181,14 @@ window.app = {
         // A negative index is not "from the end" here: points[-1] is undefined and the
         // old length test let it through to a read of `.position`.
         if (!Number.isInteger(index) || index < 0 || index >= points.length) return false;
-        // Standing at the photograph is the better answer; focusOn is what there is when
-        // this place has no photograph to stand at.
-        if (scene.viewFrom(index)) return true;
+        // `index` counts PLACES, and `viewFrom` counts PHOTOGRAPHS -- there are several
+        // per place. Passing it straight through took you to photograph 1, which belongs
+        // to place 1, when you asked for place 2: 0.00 m from where you already were
+        // instead of the 14.27 m to the place you named. Find this place's first
+        // photograph; standing at it is the better answer, and focusOn is what there is
+        // when the place has none.
+        const photo = scene._queryImages.findIndex((h) => h && h.cluster === index);
+        if (photo >= 0 && scene.viewFrom(photo)) return true;
         scene.focusOn(points[index].position);
         return true;
     },
