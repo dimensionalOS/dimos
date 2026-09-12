@@ -94,6 +94,11 @@ REFINE_MAX_VOXELS = 3000
 REFINE_MAX_EXTENT_M = 60
 REFINE_MAX_CELLS = 50_000_000  # the dense box refine grids: 200 MB of float32.0
 # The occupancy gate is trusted only when it keeps at least this share of the hot voxels.
+# Measured on grocery_stitch.db, the grounded share runs 0.59 to 0.91 across six queries, so
+# this has never fired: it is insurance against a query whose true place was never seen in
+# depth, not a tuned threshold. A depth thumbnail is decimated by depth_thumbnail_stride (4),
+# so it is far sparser than the depth that was available -- if grounding ever rejects
+# something that plainly has depth, that stride is the first suspect.
 GROUNDED_FLOOR = 0.2
 MAX_PYRAMIDS = 240
 
