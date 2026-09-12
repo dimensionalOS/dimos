@@ -758,6 +758,7 @@ ignore = [
     "uv.lock",
     "dimos/experimental/isolated_python/example/python/uv.lock",
     "*/package-lock.json",
+    "agent/npm-shrinkwrap.json",
     "Cargo.lock",
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",

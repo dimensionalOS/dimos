@@ -8,7 +8,6 @@ import { Gateway } from "./gateway.js";
 import { Connection, reachable } from "./protocol.js";
 import { setup, needsSetup } from "./setup.js";
 import { service } from "./service.js";
-import { installDimos } from "./install.js";
 import { terminal } from "./terminal.js";
 
 const { values, positionals } = parseArgs({
@@ -26,6 +25,9 @@ const { values, positionals } = parseArgs({
 });
 const p = paths();
 let config = await loadConfig(p);
+let onboarding = false;
+const setupPrompt =
+  "Help me set up DimOS using the dimensional-install skill. Start by asking me to drop an existing checkout/environment path or describe what I want to build. Wait for my answer before installing anything.";
 if (values.cwd) config.workspace = resolve(values.cwd);
 async function ensureGateway(): Promise<void> {
   if (await reachable(p.socket)) return;
@@ -69,18 +71,19 @@ async function main(): Promise<void> {
   const [command, ...args] = positionals;
   if (values.help || command === "help") {
     console.log(
-      "dimcode [tui] [--session ID] [--cwd DIR] [--view]\ndimcode setup [--provider NAME] [--oauth | --key-env VAR]\ndimcode gateway | --foreground | service install/status/uninstall\ndimcode connect NAME MCP_URL | dimos PATH | python PATH | relay URL [ROBOT]\ndimcode install-dimos [VENV] | sessions | stop | run PROMPT | config",
+      "dimcode [tui] [--session ID] [--cwd DIR] [--view]\ndimcode setup [--provider NAME] [--oauth | --key-env VAR]\ndimcode gateway | --foreground | service install/status/uninstall\ndimcode connect NAME MCP_URL | dimos PATH | python PATH | workspace PATH | relay URL [ROBOT]\ndimcode sessions | stop | run PROMPT | config",
     );
     return;
   }
   if (command === "setup") {
-    await setup(p, {
+    onboarding = await setup(p, {
       provider: values.provider,
       oauth: values.oauth,
       keyEnv: values["key-env"],
       workspace: values.cwd,
     });
-    return;
+    if (!onboarding) return;
+    config = await loadConfig(p);
   }
   if (command === "config") {
     console.log(JSON.stringify(config, null, 2));
@@ -96,8 +99,13 @@ async function main(): Promise<void> {
     console.log("Saved endpoint; reload sessions to discover tools.");
     return;
   }
-  if (command === "dimos" || command === "python") {
-    if (!args[0]) throw new Error("Executable path required");
+  if (command === "dimos" || command === "python" || command === "workspace") {
+    if (!args[0]) throw new Error("Path required");
+    if (
+      command === "workspace" &&
+      !(await stat(resolve(args[0]))).isDirectory()
+    )
+      throw new Error("Workspace must be a directory");
     config[command] = resolve(args[0]);
     await saveConfig(p, config);
     return;
@@ -107,24 +115,20 @@ async function main(): Promise<void> {
     await saveConfig(p, config);
     return;
   }
-  if (command === "install-dimos") {
-    await installDimos(args[0] ?? config.workspace + "/.venv", config, p);
-    return;
-  }
   if (command === "service") {
     await service(args[0], config, p, process.argv[1]);
     return;
   }
   if (
     command &&
-    !["gateway", "stop", "sessions", "run", "tui"].includes(command)
+    !["gateway", "stop", "sessions", "run", "tui", "setup"].includes(command)
   )
     throw new Error("Unknown command: " + command + ". Run dimcode --help.");
   if (
     (!command || command === "tui" || values.foreground) &&
     (await needsSetup(p))
   ) {
-    await setup(p, { workspace: values.cwd });
+    onboarding = await setup(p, { workspace: values.cwd });
     config = await loadConfig(p);
   }
   if (command === "gateway" || values.foreground) {
@@ -139,7 +143,10 @@ async function main(): Promise<void> {
     await gateway.start();
     if (values.foreground) {
       try {
-        await terminal(p.socket, { cwd: config.workspace });
+        await terminal(p.socket, {
+          cwd: config.workspace,
+          initialPrompt: onboarding ? setupPrompt : undefined,
+        });
       } finally {
         await gateway.close();
       }
@@ -202,9 +209,10 @@ async function main(): Promise<void> {
     return;
   }
   await terminal(p.socket, {
-    sessionId: values.session,
+    sessionId: onboarding ? undefined : values.session,
     cwd: config.workspace,
-    view: values.view,
+    view: onboarding ? false : values.view,
+    initialPrompt: onboarding ? setupPrompt : undefined,
   });
 }
 await main().catch((error) => {

@@ -1,6 +1,6 @@
 {
-  "name": "@dimensional/dimcode",
-  "version": "0.1.0",
+  "name": "@spomichter/dimcode",
+  "version": "0.1.0-next.0",
   "description": "Persistent DimOS coding agent and terminal, built on Pi",
   "type": "module",
   "license": "Apache-2.0",
@@ -10,7 +10,9 @@
   "files": [
     "dist",
     "skills",
-    "README.md"
+    "README.md",
+    "install.sh",
+    "npm-shrinkwrap.json"
   ],
   "engines": {
     "node": ">=24 <25 || >=26 <27"

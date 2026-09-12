@@ -5,7 +5,7 @@ description: Install DimOS, build and operate apps/blueprints, invoke deployed s
 
 Use the selected DimOS executable/Python environment and workspace from the session instructions. Check installed help when versions differ. Never replace an existing environment silently.
 
-- Installation: use `dimcode install-dimos NEW_VENV` for the base package, or the existing DimOS installation recipe for required robot extras. For a checkout use its documented uv setup. Harness setup and model auth are independent of DimOS installation.
+- Installation: read the dimensional-install skill, inspect the selected environment and follow that DimOS version's own installation instructions using normal coding tools. Harness setup and model auth are independent of DimOS installation.
 - Apps: `dimos list`, `dimos show-config`, `dimos bake`, source editing, and external package entry points in the `dimos.blueprints` group. Run external apps by the qualified `distribution-name.blueprint-name` shown by `dimos list`; bare names select built-ins. Do not edit the built-in registry for an external app.
 - Runtime: `dimos run BLUEPRINT --daemon`; inspect `dimos status --run ID`, `dimos log --run ID`, `dimos stop --run ID`, `dimos restart --run ID`. Older versions may lack exact targeting: use the existing public run_registry APIs, never silently act on the latest run instead.
 - Python-launched coordinators: `Dimos.connect()` and its public module/RPC inspection APIs; `stop()` on that connection disconnects only. Use separate configured transport buses/endpoints for independent coordinators.

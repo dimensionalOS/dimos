@@ -36,7 +36,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: agent/package-lock.json
+          cache-dependency-path: agent/npm-shrinkwrap.json
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.6.10

@@ -4,12 +4,24 @@ Persistent terminal agent for DimOS, built on Pi. The gateway runs independently
 
 ## Install
 
-The local executable is ready to use:
+Test release: **`@spomichter/dimcode@next`**. Install on Linux x64/arm64 or Apple Silicon:
 
 ```sh
-dimcode setup
-dimcode
+curl -fsSL https://github.com/dimensionalOS/dimos/releases/download/dimcode-v0.1.0-next.0/install.sh | sh
 ```
+
+The installer downloads and checks a private Node 24 runtime, installs the npm package and creates `~/.local/bin/dimcode`. It offers to open setup immediately. No system Node upgrade, sudo, source checkout or build commands are needed. If `~/.local/bin` is not on your PATH, use the absolute launcher path printed by the installer.
+
+With Node **24 or 26** already installed, npm also works:
+
+```sh
+npm install -g @spomichter/dimcode@next
+dimcode setup
+```
+
+`setup` signs you in, selects a model and asks whether to start the gateway at login, then opens **agent-led DimOS setup** in the terminal. Drop a checkout/environment path or describe what you want to build. The agent reads DimOS's own installation instructions and uses its ordinary coding tools to inspect, install, verify and connect it. There is no hard-coded DimOS installer in dimcode.
+
+Run `dimcode` to launch again. Existing credentials, recordings and sessions are preserved. The shell installer itself starts no daemon or blueprint; setup offers the optional Linux user service. Windows, Homebrew and WinGet distribution are not part of this prerelease.
 
 `dimcode` opens the fullscreen Pi-based terminal: scrollable chat, a multiline editor with command/file completion, compact tool output, and a persistent model/status footer. Shift+Enter adds a line; Ctrl-C detaches from the running gateway.
 
@@ -26,24 +38,6 @@ Cloud exports use `{ "points": [[x, y, z]], "frame": "world", "timestamp": 123.4
 
 Point-cloud results from `dimcode_render` open the same inspector through `/view`. The terminal verifies the source hash before loading interactive geometry; if the file changed, the original tool preview remains available. `/expand` toggles details for the latest tool. Images use supported terminal graphics; Braille supports point-cloud inspection without image support.
 
-`dimcode setup` walks through:
-
-1. Provider and authentication: paste an API key into a masked field, use existing credentials, or sign in with a ChatGPT subscription.
-2. Model selection.
-3. Workspace directory.
-4. DimOS: choose an existing installation, create a new environment, or connect later.
-5. An existing DimOS MCP endpoint, if available.
-6. Daemon setup: select **Start at login** to install and enable the systemd user service, or start the gateway when you open dimcode.
-
-To install the packaged local build on another machine, use Node **24 or 26** and the supplied tarball:
-
-```sh
-npm install -g ./dimensional-dimcode-0.1.0.tgz
-dimcode
-```
-
-This prerelease is distributed locally; it is not published to npm yet. No source build or test commands are needed to install the tarball.
-
 A fresh `dimcode` launch opens setup automatically. Repeating `dimcode setup` lets you change the choices; configured providers offer **Use configured credentials** so you do not need to paste a key again. Credentials never enter chat.
 
 ```sh
@@ -52,13 +46,13 @@ dimcode tui         # open the terminal (same as dimcode)
 dimcode --help      # all launch commands
 ```
 
-The setup can create a new DimOS environment using `uv` (Python 3.12), or select a `dimos` executable from a pip environment or editable checkout. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first if you choose a new environment. Use DimOS's installation instructions for robot extras and system packages. The harness can run before DimOS is installed.
+The bundled [`dimensional-install` skill](skills/dimensional-install/SKILL.md) handles DimOS onboarding. Existing environments and editable checkouts are inspected and reused; a new install follows the selected version's README and OS-specific instructions, including its Python requirements and requested extras. Commands and failures appear in normal tool cards. The resulting conversation can be detached and resumed like any session. Agent-led setup needs a working model; `setup --provider NAME --key-env VAR` configures credentials without launching a model or installing DimOS.
 
 ## What is installed / where is the source?
 
 This package uses **upstream Pi 0.85.1**, pinned as npm dependencies. It is not a Pi fork or a native binary. `dimcode` is a Node CLI with a Dimensional gateway, terminal frontend and extensions. Pi supplies the agent runtime, provider login, coding tools, message components and tool cards. A fork is unnecessary for these customizations.
 
-All source is in this repository's [`agent/src/`](src): [`main.ts`](src/main.ts) launches the CLI; [`setup.ts`](src/setup.ts) handles onboarding; [`terminal.ts`](src/terminal.ts) renders chat; [`gateway.ts`](src/gateway.ts) owns persistent sessions; [`media.ts`](src/media.ts) lazily connects the existing Web SDK. [`skills/dimensional`](skills/dimensional) supplies DimOS instructions.
+All source is in this repository's [`agent/src/`](src): [`main.ts`](src/main.ts) launches the CLI; [`setup.ts`](src/setup.ts) handles private bootstrap; [`skills/dimensional-install`](skills/dimensional-install) guides agent-led installation; [`terminal.ts`](src/terminal.ts) renders chat; [`gateway.ts`](src/gateway.ts) owns persistent sessions; [`media.ts`](src/media.ts) lazily connects the existing Web SDK. [`skills/dimensional`](skills/dimensional) supplies DimOS instructions.
 
 ## Authentication and service
 
@@ -79,6 +73,7 @@ Config/auth live in `$XDG_CONFIG_HOME/dimcode` (or `~/.config/dimcode`), session
 ```sh
 dimcode connect go2 http://127.0.0.1:9990/mcp
 dimcode relay http://127.0.0.1:7780 my-robot
+dimcode workspace /path/to/app   # save the default workspace
 dimcode --cwd /path/to/app
 dimcode sessions
 dimcode --session SESSION_ID
@@ -148,10 +143,15 @@ These commands are for working on the source, not the user installation:
 cd agent
 npm ci
 npm run check
-npm link
+node dist/main.js setup
+node dist/main.js
 ```
 
-`npm pack` produces the distributable tarball; `npm publish --access public` requires access to the `@dimensional` npm scope. Building alone does not publish it.
+These commands run the source build without installing the `dimcode` command. `npm pack` produces the distributable tarball. `npm-shrinkwrap.json` pins the published dependency tree.
+
+Prereleases are published by [dimcode-release.yml](../.github/workflows/dimcode-release.yml) from `dimcode-vVERSION` tags matching the package's `-next.N` version. The workflow checks Linux/macOS, publishes to npm's `next` tag using `DIMCODE_NPM_TOKEN`, then creates a GitHub prerelease with the tarball and installer. Ordinary branch pushes do not publish. The personal npm scope is for this test release.
+
+Installer options: `DIMCODE_VERSION` selects a version/tag (default `next`), `DIMCODE_INSTALL_DIR` selects private runtime/releases, `DIMCODE_BIN_DIR` selects the launcher directory, and `DIMCODE_SETUP=0` skips the setup offer. Downloads are verified before extraction. Run the installer again to update the launcher; older releases remain available to running sessions. Existing gateways continue using their current release until restarted with `dimcode service install` after active turns finish.
 
 To run the complete integration suite with an existing DimOS environment and Go2 recording:
 

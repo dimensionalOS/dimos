@@ -25,6 +25,7 @@ export async function openSession(
   await mkdir(paths.config, { recursive: true, mode: 0o700 });
   await mkdir(paths.sessions, { recursive: true, mode: 0o700 });
   const mcp = new McpTools(async () => (await loadConfig(paths)).mcp, report);
+  let selected = config;
   const services = await createAgentSessionServices({
     cwd: manager.getCwd(),
     agentDir: paths.config,
@@ -36,15 +37,26 @@ export async function openSession(
         mcp.extension(),
         renderExtension(paths),
         (pi) => {
+          pi.on("before_agent_start", async (event) => {
+            selected = await loadConfig(paths);
+            return {
+              systemPrompt:
+                event.systemPrompt +
+                "\nSelected configuration: " +
+                JSON.stringify(selected),
+            };
+          });
           pi.registerTool(
             createBashToolDefinition(manager.getCwd(), {
               spawnHook: (context) => ({
                 ...context,
                 env: {
                   ...context.env,
+                  DIMCODE_NODE: process.execPath,
+                  DIMCODE_CLI: process.argv[1],
                   PATH: [
-                    config.dimos && dirname(config.dimos),
-                    config.python && dirname(config.python),
+                    selected.dimos && dirname(selected.dimos),
+                    selected.python && dirname(selected.python),
                     context.env.PATH,
                   ]
                     .filter(Boolean)
@@ -58,7 +70,7 @@ export async function openSession(
       appendSystemPrompt: [
         "You are dimcode, Dimensional's coding and robotics agent. Use DimOS CLI/public Python APIs and the advertised MCP skills. Do not create a parallel runtime or transport service. Select the intended run and endpoint explicitly; never assume the latest run is the intended one. Render actual saved results with dimcode_render. Live previews are labeled context, not historical query results.",
         "Visualize each meaningful sensor or memory operation with dimcode_render. Prefer supported types and existing DimOS visualizers; otherwise generate a self-contained SVG with inline Python from the already evaluated result and render that file. Label proposed ideas or overlays distinctly from observations. Use returned images as visual feedback when interpreting results. DimOS owns reusable visualization semantics; dimcode owns terminal-specific styling and interaction. Built-in views are only point clouds and images/SVGs. For a saved sequence, use the Dimensional skill’s finite frame index format; the model sees a contact sheet and can request an original frame index for closer inspection. Clips loop inline without playback controls. If the user asks for a still at a timestamp, select the original frame from the saved index and render it. Never imply a contact sheet covers every frame.",
-        "Selected configuration: " + JSON.stringify(config),
+        'For installing or connecting DimOS, use the dimensional-install skill and the selected version’s own installation instructions. The dimcode CLI is available in Bash as "$DIMCODE_NODE" "$DIMCODE_CLI", even when dimcode is not on PATH. Never read or print provider credentials; use /login for authentication.',
       ],
     },
   });

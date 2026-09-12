@@ -3,9 +3,11 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { SettingsManager } from "@earendil-works/pi-coding-agent";
+import { stripVTControlCharacters } from "node:util";
+import { initTheme, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { loadConfig, paths } from "../src/config.js";
 import { needsSetup, setup } from "../src/setup.js";
+import { ChatInput } from "../src/input.js";
 
 for (const cancel of [false, true])
   test(
@@ -21,10 +23,15 @@ for (const cancel of [false, true])
       let asked = 0;
       const configure = setup(
         p,
-        {},
+        { workspace: home },
         {
           prompt: async (question) => {
             asked++;
+            assert(
+              !/environment directory|MCP URL|Workspace directory/.test(
+                question.message,
+              ),
+            );
             if (cancel && asked === 2) throw new Error("Cancelled");
             if (question.type === "select") {
               if (question.options.some((item) => item.id === "openai"))
@@ -46,7 +53,12 @@ for (const cancel of [false, true])
         assert(await needsSetup(p));
         return;
       }
-      await configure;
+      assert.equal(
+        await configure,
+        true,
+        "interactive bootstrap hands off to the agent",
+      );
+      await assert.rejects(stat(join(home, ".venv")), { code: "ENOENT" });
       assert(!(await needsSetup(p)));
       assert.equal((await loadConfig(p)).workspace, home);
       assert.equal(
@@ -65,3 +77,18 @@ for (const cancel of [false, true])
       );
     },
   );
+
+test("setup fields use their own placeholder and discard credential history", () => {
+  initTheme("dark", false);
+  const input = new ChatInput("Drop a directory path…");
+  const visible = () => stripVTControlCharacters(input.render(80).join(""));
+  assert.match(visible(), /Drop a directory path/);
+  assert(!input.render(80).join("").includes("Ask about"));
+  input.secret = true;
+  input.handleInput("fixture-secret");
+  assert(!input.render(80).join("").includes("fixture-secret"));
+  input.secret = false;
+  input.handleInput("\x1f");
+  assert.equal(input.getValue(), "");
+  assert.match(visible(), /Drop a directory path/);
+});

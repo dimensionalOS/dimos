@@ -1,5 +1,5 @@
-import { access, constants, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { access } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
 import {
   ModelRuntime,
@@ -17,7 +17,6 @@ import {
 import type { AuthInteraction, AuthPrompt } from "@earendil-works/pi-ai";
 import { loadConfig, saveConfig, type Paths } from "./config.js";
 import { ChatInput } from "./input.js";
-import { installDimos } from "./install.js";
 import { service } from "./service.js";
 
 /** Pi's login callbacks, with credentials confined to a disposable masked input. */
@@ -56,7 +55,9 @@ function setupUI(): AuthInteraction & { close(): void } {
       body.addChild(new Text(question.message, 1, 1));
       return new Promise<string>((resolve, reject) => {
         const cancel = () => finish(undefined);
-        const input = new ChatInput();
+        const input = new ChatInput(
+          question.type === "select" ? "" : question.placeholder,
+        );
         const finish = (value: string | undefined) => {
           abort.signal.removeEventListener("abort", cancel);
           question.signal?.removeEventListener("abort", cancel);
@@ -132,7 +133,7 @@ export async function setup(
   paths: Paths,
   options: SetupOptions = {},
   interaction?: AuthInteraction,
-): Promise<void> {
+): Promise<boolean> {
   const config = await loadConfig(paths);
   if (options.workspace) config.workspace = resolve(options.workspace);
   const runtime = await ModelRuntime.create({
@@ -149,8 +150,7 @@ export async function setup(
     message: string,
     items: readonly { id: string; label: string; description?: string }[],
   ) => ask({ type: "select", message, options: items });
-  let install: string | undefined,
-    atLogin = false;
+  let atLogin = false;
   try {
     const providers = runtime
       .getProviders()
@@ -239,89 +239,15 @@ export async function setup(
         )
       : ordered[0].id;
     if (wizard) {
-      config.workspace = resolve(
-        (
-          await ask({
-            type: "text",
-            message:
-              "3. Workspace directory (Enter for " + config.workspace + ")",
-          })
-        ).trim() || config.workspace,
-      );
-      if (!(await stat(config.workspace)).isDirectory())
-        throw new Error("Workspace must be a directory");
-      await access(config.workspace, constants.R_OK | constants.X_OK);
-      const mode = await choose("4. Connect DimOS", [
-        {
-          id: "later",
-          label: "Set up later",
-          description:
-            "Start coding now; connect a local or remote runtime later",
-        },
-        {
-          id: "existing",
-          label: "Use an existing DimOS installation",
-          description: "pip environment or editable checkout",
-        },
-        {
-          id: "install",
-          label: "Install DimOS",
-          description: "Create a new Python environment using uv",
-        },
-      ]);
-      if (mode === "existing") {
-        const executable = resolve(
-          (
-            await ask({
-              type: "text",
-              message:
-                "Path to the DimOS executable (e.g. /path/to/.venv/bin/dimos)",
-            })
-          ).trim(),
-        );
-        if (!(await stat(executable)).isFile())
-          throw new Error("Select a dimos executable file");
-        await access(executable, constants.X_OK);
-        config.dimos = executable;
-        const python = join(dirname(executable), "python");
-        try {
-          await access(python, constants.X_OK);
-          config.python = python;
-        } catch {
-          config.python = undefined;
-        }
-      } else if (mode === "install") {
-        install = resolve(
-          (
-            await ask({
-              type: "text",
-              message:
-                "New environment directory (Enter for " +
-                join(config.workspace, ".venv") +
-                ")",
-            })
-          ).trim() || join(config.workspace, ".venv"),
-        );
-      }
-      const url = (
-        await ask({
-          type: "text",
-          message: "5. Existing DimOS MCP URL (Enter to connect later)",
-        })
-      ).trim();
-      if (url)
-        config.mcp = [
-          ...config.mcp.filter((e) => e.name !== "default"),
-          { name: "default", url: new URL(url).href },
-        ];
       if (process.platform === "linux")
         atLogin =
-          (await choose("6. Start the gateway at login?", [
+          (await choose("3. Start the gateway at login?", [
             { id: "no", label: "Start when I open dimcode" },
             {
               id: "yes",
               label: "Start at login",
-              description: "Install a systemd user service",
+              description:
+                "Keep dimcode available in the background; no robot starts",
             },
           ])) === "yes";
     }
@@ -331,7 +257,9 @@ export async function setup(
   } finally {
     if (ui && "close" in ui && typeof ui.close === "function") ui.close();
   }
-  if (install) await installDimos(install, config, paths);
   if (atLogin) await service("install", config, paths, process.argv[1]);
-  stdout.write("dimcode configured. Run dimcode (or dimcode tui) to chat.\n");
+  stdout.write(
+    wizard ? "Opening agent-led DimOS setup…\n" : "Provider configured.\n",
+  );
+  return wizard;
 }

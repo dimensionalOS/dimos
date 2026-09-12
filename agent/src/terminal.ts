@@ -54,7 +54,12 @@ const resultSchema = z.object({
 });
 export async function terminal(
   socket: string,
-  options: { sessionId?: string; cwd?: string; view?: boolean } = {},
+  options: {
+    sessionId?: string;
+    cwd?: string;
+    view?: boolean;
+    initialPrompt?: string;
+  } = {},
 ): Promise<void> {
   initTheme("dark", false);
   const client = new Connection(socket),
@@ -783,13 +788,16 @@ export async function terminal(
       }
       return undefined;
     });
-    tui.start();
-    await new Promise<void>((resolve) => {
+    const disconnected = new Promise<void>((resolve) => {
       client.onClose = () => {
         stop();
         resolve();
       };
     });
+    tui.start();
+    if (options.initialPrompt && !options.sessionId && !options.view)
+      input.onSubmit(options.initialPrompt);
+    await disconnected;
   } finally {
     stop();
   }

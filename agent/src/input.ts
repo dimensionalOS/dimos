@@ -76,14 +76,14 @@ export class PromptEditor extends Editor {
 }
 
 export class ChatInput implements Component {
-  private editor = new Input({
-    prompt: "dimcode › ",
-    placeholder: "Ask about your robot or app…",
-  });
+  private editor: Input;
   private masked = false;
   focused = false;
   onSubmit?: (value: string) => void;
   onEscape?: () => void;
+  constructor(private placeholder = "") {
+    this.editor = new Input({ prompt: "› ", placeholder });
+  }
   get secret(): boolean {
     return this.masked;
   }
@@ -91,7 +91,7 @@ export class ChatInput implements Component {
     if (value === this.masked) return;
     this.masked = value;
     // Discard the credential editor and its undo/kill-ring history on mode change.
-    this.editor = new Input({ prompt: "dimcode › " });
+    this.editor = new Input({ prompt: "› ", placeholder: this.placeholder });
   }
   getValue(): string {
     return this.editor.getValue();

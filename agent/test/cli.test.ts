@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -51,6 +51,22 @@ test(
       { env: { ...env, DIMCODE_FIXTURE_KEY: key } },
     );
     assert(!configured.stdout.includes(key));
+    assert(
+      !(await reachable(paths(env).socket)),
+      "provider-only setup does not launch an agent",
+    );
+    const workspace = join(home, "app with spaces");
+    await mkdir(workspace);
+    await run("workspace", workspace);
+    assert.equal(JSON.parse((await run("config")).stdout).workspace, workspace);
+    await assert.rejects(run("workspace", cli), /must be a directory/);
+    await assert.rejects(
+      run("install-dimos", join(home, "unexpected-env")),
+      /Unknown command/,
+    );
+    await assert.rejects(stat(join(home, "unexpected-env")), {
+      code: "ENOENT",
+    });
     const child = spawn(process.execPath, [cli, "tui"], {
       env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -83,6 +99,127 @@ test(
     assert.match(output, /Build apps/);
     assert.match(output, /\/resume ID/);
     assert.match((await run("gateway")).stdout, /Gateway already running/);
+  },
+);
+
+test(
+  "interactive setup hands off once to a normal agent session without installing DimOS",
+  { timeout: 20000, skip: process.platform !== "linux" },
+  async (t) => {
+    const home = await mkdtemp(join(tmpdir(), "dimcode-onboard-"));
+    t.after(() => rm(home, { recursive: true, force: true }));
+    const env = {
+      ...process.env,
+      DIMCODE_HOME: join(home, "config"),
+      XDG_STATE_HOME: join(home, "state"),
+      XDG_CACHE_HOME: join(home, "cache"),
+      XDG_CONFIG_HOME: join(home, "xdg-config"),
+      XDG_RUNTIME_DIR: home,
+      DIMCODE_FIXTURE_KEY: "onboarding-private-fixture",
+      TERM: "xterm-256color",
+    };
+    const cli = resolve(".test/src/main.js");
+    await exec(
+      process.execPath,
+      [
+        cli,
+        "setup",
+        "--provider",
+        "openai",
+        "--key-env",
+        "DIMCODE_FIXTURE_KEY",
+        "--cwd",
+        home,
+      ],
+      { env },
+    );
+    const sockets = new Set<Socket>();
+    let prompts = 0;
+    const server = createServer((socket) => {
+      sockets.add(socket);
+      socket.on("error", () => {});
+      socket.on("close", () => sockets.delete(socket));
+      readLines(socket, (value) => {
+        const request = requestSchema.parse(value);
+        if (request.command.type === "new_session") {
+          send(socket, {
+            type: "response",
+            id: request.id,
+            data: {
+              sessionId: "onboarding",
+              cwd: home,
+              seq: 0,
+              busy: false,
+              writable: true,
+              messages: [],
+              text: "",
+              notices: [],
+              tools: [],
+            },
+          });
+        } else if (request.command.type === "prompt") {
+          prompts++;
+          assert.match(request.command.message, /dimensional-install skill/);
+          assert.match(request.command.message, /Wait for my answer/);
+          send(socket, { type: "response", id: request.id, data: null });
+          send(socket, {
+            type: "event",
+            sessionId: "onboarding",
+            seq: 1,
+            event: {
+              type: "notice",
+              message: "fixture: agent received setup request",
+            },
+          });
+        }
+      });
+    });
+    await new Promise<void>((done) => server.listen(paths(env).socket, done));
+    t.after(() => {
+      for (const socket of sockets) socket.destroy();
+      return new Promise<void>((done) => server.close(() => done()));
+    });
+    const quote = (arg: string) => "'" + arg.replaceAll("'", "'\\''") + "'";
+    const child = spawn(
+      "script",
+      [
+        "-q",
+        "-e",
+        "-c",
+        [process.execPath, cli, "setup"].map(quote).join(" "),
+        "/dev/null",
+      ],
+      { env, stdio: ["pipe", "pipe", "pipe"] },
+    );
+    t.after(() => child.kill());
+    let output = "",
+      stage = 0;
+    const screens = [
+      "1. Choose your model provider",
+      "Sign in",
+      "2. Choose a model",
+      "3. Start the gateway at login?",
+      "fixture: agent received setup request",
+    ];
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+      if (stage < screens.length && output.includes(screens[stage])) {
+        stage++;
+        child.stdin.write(stage === screens.length ? "/exit\r" : "\r");
+      }
+    });
+    let errors = "";
+    child.stderr.on("data", (chunk) => {
+      errors += chunk;
+    });
+    const timer = setTimeout(() => child.kill(), 15000);
+    const [code] = await once(child, "exit");
+    clearTimeout(timer);
+    assert.equal(code, 0, errors + output);
+    assert.equal(stage, screens.length, output);
+    assert.equal(prompts, 1);
+    assert(!output.includes(env.DIMCODE_FIXTURE_KEY));
+    await assert.rejects(stat(join(home, ".venv")), { code: "ENOENT" });
   },
 );
 
