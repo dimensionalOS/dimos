@@ -217,6 +217,63 @@
             body.desktop-view #hints, body.desktop-view #desktopHints { display: none; }
             body.desktop-view h1 { display: none; }
         }
+        /* A phone shows every layer at once, because none of them can fade in on hover.
+           They were all sized for a desktop, so they landed on top of one another: the
+           status bar was wider than the screen and sat under the ask bar, and the button
+           column ran down over the answer. Everything here is about fitting, not styling. */
+        @media (max-width: 640px) {
+            /* The ask bar owns the top strip; everything in #ui starts below it. */
+            body.desktop-view #ui { padding-top: 58px; }
+            body.desktop-view #askBar { width: calc(100% - 68px); left: 12px; transform: none; }
+            body.desktop-view #status {
+                min-width: 0;
+                max-width: calc(100% - 24px);
+                font-size: 11px;
+                padding: 7px 10px;
+                margin-bottom: 8px;
+                letter-spacing: 0.06em;
+                text-transform: none;   /* it is a sentence, and uppercase wraps to two lines */
+            }
+            /* The three desktop buttons become a row of chips instead of a column of
+               slabs, so they stop covering the answer panel behind them. */
+            body.desktop-view #ui > button {
+                padding: 8px 12px;
+                font-size: 11px;
+                letter-spacing: 0.08em;
+                margin-top: 6px;
+                clip-path: none;
+            }
+            #menu { width: calc(100% - 24px); right: 12px; }
+            /* The two rows were wider than the screen, so the clock sat on the buttons.
+               They stay ONE line and scroll sideways if they must: letting them wrap
+               makes their height depend on the answer, and then no fixed offset above
+               them is right for long. */
+            #timeline, #results {
+                gap: 6px;
+                padding: 6px 8px;
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                scrollbar-width: none;
+            }
+            #timeline > *, #results > * { flex: 0 0 auto; }
+            #timeline button { padding: 6px 10px; font-size: 12px; }
+            #results button { padding: 7px 10px; }
+            /* Both rows are as wide as the screen allows, so their contents wrap inside
+               rather than pushing the last button off the right edge. */
+            #results, #timeline { width: calc(100% - 24px); box-sizing: border-box; }
+            /* The thumb stick and the one-tap column own the bottom corners, so the two
+               rows sit above the stick and stop short of the column, rather than running
+               underneath both. Left-anchored, because a centred narrower row still
+               reaches the column on the right. */
+            body.desktop-view.touch #timeline,
+            body.desktop-view.touch #results {
+                left: 12px;
+                transform: none;
+                width: calc(100% - 140px);
+            }
+            body.desktop-view.touch #timeline { bottom: 172px; }
+            body.desktop-view.touch #results { bottom: 240px; }
+        }
         /* body.touch is set from navigator.maxTouchPoints, which unlike the
            hover media query is true on every phone and tablet. */
         body.desktop-view.touch #stick { display: block; }

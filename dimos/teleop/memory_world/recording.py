@@ -528,10 +528,8 @@ def rebuild_stream(store: Store, name: str, rows: list[tuple[float, Any]], paylo
 def _restamped(transform: Any, ts: float) -> Any:
     """The same joint, said at another moment.
 
-    A static edge carries the one stamp it was latched at, and means it for all time.
-    Copied unchanged into every sample of the moving stream it becomes a series of
-    identical stamps -- which holds at that instant and nowhere else -- so a camera mount
-    would expire seconds into a ten-minute recording and place nothing after that.
+    A static edge carries the one stamp it was latched at. Folding has to restate it at
+    the moment it is being put, because TfTree reads the transform's own stamp.
     """
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
     from dimos.msgs.geometry_msgs.Transform import Transform
@@ -556,11 +554,18 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
     the moving stream quietly outvotes the static one. Either way the two disagree.
 
     Every static edge replaces whatever the moving stream said about it, wherever it said
-    it, and is then stated once, at the earliest moment the stream can be asked about --
-    where it holds from, for ever after. Nothing is compared first: an edge is
-    static because it holds for all time, and a moving stream that happens to agree in the
-    samples it carries does not say that anywhere. This runs once per recording, because
-    afterwards there is no static stream left to fold. Returns the number of edges moved.
+    it, and is then stated once, at the earliest moment any tf message in the recording
+    claims -- ``_Edge.at`` holds a single-sample series from there forward for ever.
+    Nothing is compared first: an edge is static because it holds for all time, and a
+    moving stream that happens to agree in the samples it carries does not say that
+    anywhere. This runs once per recording, because afterwards there is no static stream
+    left to fold. Returns the number of edges moved.
+
+    What it cannot keep: a static edge was unbounded in BOTH directions, and a stream
+    cannot say that. So a path made only of folded edges stops answering more than a
+    tolerance before that earliest stamp. Any path through a moving edge is unaffected,
+    because the moving edge ends there too, and on the cart recordings tf starts
+    milliseconds before the first image.
     """
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
