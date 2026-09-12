@@ -509,8 +509,12 @@ def test_an_ensemble_store_is_refused_by_the_fast_path() -> None:
     The first version of this guard counted the arrays `engine.backgrounds()` returned,
     which counts what the EMBEDDER produced — and this module hands the engine a
     single-model embedder, so a two-member store sailed through and was then searched on
-    its primary grid alone. Silently: the right shape, the wrong answer. The store is what
-    has to be asked.
+    its primary grid alone. Silently: the right shape, the wrong answer.
+
+    Two cases, because an earlier version of this TEST did not isolate the check: its store
+    also had a mismatched grid, so reverting the members question still raised — from the
+    other refusal — and the test passed while proving nothing. The first case here has
+    grids that AGREE, so only the members check can fire.
     """
     from types import SimpleNamespace
 
@@ -518,31 +522,44 @@ def test_an_ensemble_store_is_refused_by_the_fast_path() -> None:
 
     from dimos.teleop.memory_world.hyperspace_fast import FastQuery
 
-    # With a real keyframe in it, whose member grid also differs from its cell grid: the
-    # earlier version of this test had an EMPTY store, so it passed even while the members
-    # check ran too late to be the thing that fired. An ensemble store has to be diagnosed
-    # as an ensemble store, not by the grid mismatch its members happen to also produce.
-    keyframe = SimpleNamespace(
-        id=0,
-        rows=24,
-        cols=24,
-        camera_frame="cam",
-        ts=1.0,
-        intrinsics=SimpleNamespace(fx=1.0, fy=1.0, cx=0.0, cy=0.0, width=24.0, height=24.0),
-        patch_depth=np.ones(24 * 24, np.float32),
-    )
-    engine = SimpleNamespace(
-        members=lambda: ["base-patch16-224-2x3", "base-patch16-256-2x3"],
-        backgrounds=lambda: [np.zeros((8, 768), np.float32)],  # ONE, from one embedder
-        config=SimpleNamespace(),
-        keyframe=lambda _n: None,
-        placer=lambda _frame: (lambda _kf: np.eye(4)),
-        _keyframes={0: (keyframe, np.zeros((14 * 14, 4), np.float16))},
-        store=None,
-    )
-    with pytest.raises(SystemExit) as refusal:
-        FastQuery(engine, world_frame="odom", voxel_size=0.1, embed_texts=lambda _t: None)
-    assert "2 ensemble members" in str(refusal.value)
+    def engine_of(patches: int):  # type: ignore[no-untyped-def]
+        keyframe = SimpleNamespace(
+            id=0,
+            rows=24,
+            cols=24,
+            camera_frame="cam",
+            ts=1.0,
+            intrinsics=SimpleNamespace(fx=1.0, fy=1.0, cx=0.0, cy=0.0, width=24.0, height=24.0),
+            patch_depth=np.ones(24 * 24, np.float32),
+        )
+        return SimpleNamespace(
+            members=lambda: ["base-patch16-224-2x3", "base-patch16-256-2x3"],
+            backgrounds=lambda: [np.zeros((8, 768), np.float32)],  # ONE, from one embedder
+            config=SimpleNamespace(),
+            keyframe=lambda _n: None,
+            placer=lambda _frame: (lambda _kf: np.eye(4)),
+            # 768 wide to match the backgrounds above: a narrower grid would blow up in
+            # the matmul instead, and a test that fails for that reason proves nothing.
+            _keyframes={0: (keyframe, np.zeros((patches, 768), np.float16))},
+            store=None,
+        )
+
+    def refuse(engine):  # type: ignore[no-untyped-def]
+        with pytest.raises(SystemExit) as refusal:
+            FastQuery(
+                engine,
+                world_frame="odom",
+                voxel_size=0.1,
+                embed_texts=lambda _t: None,
+                with_segments=False,  # else it reaches for a store this stub does not have,
+            )  # and the test fails on THAT rather than on the check
+        return str(refusal.value)
+
+    # Grids agree, so the ONLY thing wrong is the member count.
+    assert "2 ensemble members" in refuse(engine_of(24 * 24))
+    # And when both are wrong, the member count is the diagnosis: it is the reason the
+    # grids differ, and naming the symptom instead sends the reader somewhere useless.
+    assert "2 ensemble members" in refuse(engine_of(14 * 14))
 
 
 def test_places_rank_by_viewpoints_not_by_pictures_shown() -> None:

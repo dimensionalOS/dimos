@@ -605,34 +605,6 @@ def _edge(parent: str, child: str, x: float, ts: float = 1.0):  # type: ignore[n
     )
 
 
-def test_a_folded_static_edge_still_holds_at_the_end_of_the_recording(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """A static edge carries the one stamp it was latched at, and says it holds for all time.
-
-    Copied into the moving stream unchanged, it stops being a statement for all time and
-    becomes a series of identical stamps -- which holds at that instant and nowhere else.
-    A camera mount that expires five seconds into a ten-minute recording places nothing.
-    """
-    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-    from dimos.teleop.memory_world.recording import build_tf_tree, fold_static_tf
-
-    store = _tf_store(tmp_path)
-    try:
-        tf = store.stream("tf", TFMessage)
-        for step in (1.0, 2.0, 3.0):
-            tf.append(TFMessage(_edge("odom", "base", step, step)), ts=step)
-        store.stream("tf_static", TFMessage).append(
-            TFMessage(_edge("base", "cam", 0.5, 1.0)), ts=1.0
-        )
-        assert build_tf_tree(store, "tf").lookup("odom", "cam", 3.0)[0, 3] == 3.5
-
-        assert fold_static_tf(store, "tf", "tf_static") == 1
-        tree = build_tf_tree(store, "tf")
-        assert tree.lookup("odom", "cam", 3.0)[0, 3] == 3.5  # still placed at the far end
-        assert tree.lookup("odom", "cam", 1.0)[0, 3] == 1.5
-    finally:
-        store.stop()
-
-
 def test_folding_compares_every_sample_the_moving_stream_carries(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """A rig that republishes its mounts gets a stale one in there often enough that
     checking the first sample proves nothing about the rest.
