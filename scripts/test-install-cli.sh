@@ -77,6 +77,20 @@ run 'for os in ubuntu wsl macos linux nixos; do
     USE_NIX=0; NO_NIX=1; DETECTED_OS=linux; select_setup_method; [[ "$SETUP_METHOD" == manual ]]'
 pass 'backend and platform defaults and overrides'
 
+# Cover fresh machines without downloading a tool during the fast tests.
+mkdir -p "$work/gum-archive"
+printf '#!/bin/sh\nexit 0\n' > "$work/gum-archive/gum"
+tar czf "$work/gum.tar.gz" -C "$work/gum-archive" gum
+run 'has_cmd() { [[ "$1" != gum ]] && command -v "$1" >/dev/null; }
+    curl() { cat "$INSTALL_CLI_TEST_ROOT/gum.tar.gz"; }
+    install_gum
+    [[ -x "$GUM" ]]
+    printf "%s" "$GUM_TEMP_DIR" > "$INSTALL_CLI_TEST_ROOT/gum-directory"'
+[[ ! -e "$(cat "$work/gum-directory")" ]]
+run 'gum() { :; }; install_gum; [[ "$GUM" == gum && -z "$GUM_TEMP_DIR" ]]'
+pass 'Gum bootstrap, reuse, and temporary helper cleanup'
+
+
 reject 'administrator access required' 'NON_INTERACTIVE=1; id() { echo 1000; }; sudo() { [[ "$*" == "-n -v" ]]; return 1; }; require_admin apt'
 run 'id() { echo 1000; }; run_cmd() { [[ "$*" == "sudo -n apt-get update" ]]; }; run_privileged apt-get update'
 run 'id() { echo 0; }; run_cmd() { [[ "$*" == "apt-get update" ]]; }; run_privileged apt-get update'
@@ -146,7 +160,7 @@ detect_os() { DETECTED_OS=ubuntu; DETECTED_OS_VERSION=24.04; DETECTED_ARCH=x86_6
 detect_gpu() { DETECTED_GPU=none; }
 detect_python() { :; }
 detect_nix() { :; }
-has_cmd() { return 1; }
+install_gum() { echo MENU_BOOTSTRAP; return 1; }
 find_system_packages() { NEEDED_PACKAGES=(); }
 check_disk_space() { :; }
 install_system_deps() { echo PACKAGES; }
@@ -185,6 +199,7 @@ main
             raise AssertionError(f'prompt timed out: {transcript!r}')
         _, status = os.waitpid(pid, 0)
         assert (os.waitstatus_to_exitcode(status) == 0) == should_pass, transcript
+        assert b'MENU_BOOTSTRAP' in transcript, transcript
         if should_pass:
             assert transcript.count(b'Install this environment?') == 1, transcript
             assert b'Capabilities: navigation,manipulation' in transcript, transcript
@@ -212,6 +227,7 @@ assert result.returncode != 0 and b'--mode' in result.stderr, result
 
 # Exercise successful unattended main orchestration with no controlling terminal.
 script = '''source "$1"
+install_gum() { exit 99; }
 detect_os() { DETECTED_OS=ubuntu; DETECTED_OS_VERSION=24.04; DETECTED_ARCH=x86_64; }
 detect_gpu() { DETECTED_GPU=none; }
 detect_python() { :; }

@@ -42,6 +42,7 @@ SETUP_METHOD=""
 INSTALL_DIR=""
 INSTALL_PYTHON="3.12"
 GUM=""
+GUM_TEMP_DIR=""
 NEEDED_PACKAGES=()
 CHILD_PID=""
 
@@ -82,6 +83,31 @@ project_cmd() (
 )
 
 has_cmd() { command -v "$1" &>/dev/null; }
+
+# Use the original interactive chooser even on machines without Gum installed.
+# Keep the downloaded UI helper temporary; unattended runs never need it.
+install_gum() {
+    if has_cmd gum; then GUM=$(command -v gum); return 0; fi
+    local version="0.17.0" os arch url bin
+    os=$(uname -s)
+    case "$os" in Linux|Darwin) ;; *) return 1 ;; esac
+    case "$(uname -m)" in
+        x86_64|amd64) arch="x86_64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        armv7*|armhf) arch="armv7" ;;
+        *) return 1 ;;
+    esac
+    GUM_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/dimos-gum.XXXXXX") || return 1
+    url="https://github.com/charmbracelet/gum/releases/download/v${version}/gum_${version}_${os}_${arch}.tar.gz"
+    if curl -fsSL --connect-timeout 10 --max-time 60 "$url" | tar xz -C "$GUM_TEMP_DIR"; then
+        bin=$(find "$GUM_TEMP_DIR" -type f -name gum | head -n 1)
+        if [[ -n "$bin" ]] && chmod +x "$bin" && [[ -x "$bin" ]]; then
+            GUM="$bin"
+            return 0
+        fi
+    fi
+    return 1
+}
 
 # prompt wrappers (gum with fallback)
 
@@ -128,7 +154,7 @@ prompt_multi() {
     if [[ -n "$GUM" ]]; then
         local tmpf; tmpf=$(mktemp)
         local ec=0
-        "$GUM" choose --no-limit --selected="" --header "$msg  (space to toggle, enter to confirm)" \
+        "$GUM" choose --no-limit --selected="" --header "$msg  (↑/↓ to move, space to toggle, enter to confirm)" \
             --cursor "❯ " --cursor.foreground="44" \
             --header.foreground="255" --header.bold \
             --selected.foreground="44" \
@@ -843,6 +869,7 @@ cleanup() {
         kill -TERM "$CHILD_PID" 2>/dev/null || true
         wait "$CHILD_PID" 2>/dev/null || true
     fi
+    if [[ -n "$GUM_TEMP_DIR" ]]; then rm -rf "$GUM_TEMP_DIR"; fi
     [[ $ec -eq 130 ]] && { warn "interrupted"; }
     [[ $ec -ne 0 ]] && [[ $ec -ne 130 ]] && { printf "\n"; err "installation failed (exit ${ec})"; err "help: https://github.com/dimensionalOS/dimos/issues"; }
     return 0
@@ -859,7 +886,11 @@ main() {
     elif ! (true </dev/tty) 2>/dev/null; then
         die "no terminal available; use --non-interactive with --mode, --project-dir, and --capabilities"
     fi
-    if has_cmd gum && [[ "$NON_INTERACTIVE" != 1 ]]; then GUM=$(command -v gum); fi
+    if [[ "$NON_INTERACTIVE" != 1 ]]; then
+        if ! install_gum 2>/dev/null; then
+            warn "could not load the interactive menu; enter capability numbers instead"
+        fi
+    fi
     show_banner
     detect_os; detect_gpu; detect_python; detect_nix
     print_sysinfo
