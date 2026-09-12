@@ -500,3 +500,32 @@ def test_a_search_that_exits_instead_of_raising_is_recorded_as_failed(tmp_path) 
     ):
         assert module._load_hyperspace() is False
     assert module._hyperspace_error and "another model" in module._hyperspace_error
+
+
+def test_an_ensemble_store_is_refused_by_the_fast_path() -> None:
+    """This bank holds ONE grid per keyframe, so it cannot answer an ensemble store.
+
+    The first version of this guard counted the arrays `engine.backgrounds()` returned,
+    which counts what the EMBEDDER produced — and this module hands the engine a
+    single-model embedder, so a two-member store sailed through and was then searched on
+    its primary grid alone. Silently: the right shape, the wrong answer. The store is what
+    has to be asked.
+    """
+    from types import SimpleNamespace
+
+    import pytest
+
+    from dimos.teleop.memory_world.hyperspace_fast import FastQuery
+
+    engine = SimpleNamespace(
+        members=lambda: ["base-patch16-224-2x3", "base-patch16-256-2x3"],
+        backgrounds=lambda: [np.zeros((8, 768), np.float32)],  # ONE, from one embedder
+        config=SimpleNamespace(),
+        keyframe=lambda _n: None,
+        placer=lambda _frame: (lambda _kf: None),
+        _keyframes={},
+        store=None,
+    )
+    with pytest.raises(SystemExit) as refusal:
+        FastQuery(engine, world_frame="odom", voxel_size=0.1, embed_texts=lambda _t: None)
+    assert "2 ensemble members" in str(refusal.value)

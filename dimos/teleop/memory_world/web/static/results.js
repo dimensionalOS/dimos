@@ -45,6 +45,9 @@ export class ResultsNav {
 
     /** A new answer arrived (the `query_result` message). */
     setResult(msg) {
+        // The last answer's corridor belongs to the last answer: a new question that
+        // never reaches a picture would otherwise leave a hole in the map for good.
+        if (this.scene.setSightLine) this.scene.setSightLine(null);
         this.clusters = msg.clusters || [];
         this.queryId = msg.query_id || null;
         this.queryText = msg.query_text || '';
@@ -95,6 +98,8 @@ export class ResultsNav {
                     this.scene.setSightLine(viewpoint.position, viewpoint.at, viewpoint.radius);
                 }
             } else {
+                // No picture for this place, so nothing to see past: the map goes back.
+                if (this.scene.setSightLine) this.scene.setSightLine(null);
                 const distance = Math.max(MIN_VIEW_DISTANCE_M, Math.min(MAX_VIEW_DISTANCE_M, cluster.radius * 3 + 1.5));
                 this.flight.lookAt(cluster.centre, { distance, yaw: this._yawFromEvidence(index) });
             }

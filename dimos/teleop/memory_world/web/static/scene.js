@@ -6,6 +6,7 @@
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
 import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms, viewportHeight, viewportHeightPx } from '/static_mw/voxel_sprites.js';
+import { ANSWER_PANEL_W, HUD_PANEL_SIZE, placeHud } from '/static_mw/hud.js';
 import { addQueryImage } from '/static_mw/evidence.js';
 import { OrbitControl } from '/static_mw/orbit.js';
 
@@ -23,13 +24,7 @@ const DESKTOP_SPRINT_MULTIPLIER = 3.0;
 const DESKTOP_MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE']);
 const TOUCH_LOOK_SENSITIVITY = 0.006;         // radians per CSS pixel of one-finger drag
 const TOUCH_WALK_GAIN = 40;                   // two-finger drag: a screen-height sweep = full stick x40
-const HUD_PANEL_SIZE = 0.22;          // metres (square)
 const HUD_MARKER_RADIUS = 0.008;
-const HUD_DISTANCE = 0.55;            // metres in front of head
-const HUD_OFFSET_DOWN = 0.25;
-const HUD_OFFSET_LEFT = 0.32;
-const HUD_FOLLOW_LERP = 0.18;         // damping per frame
-const ANSWER_PANEL_W = 0.62;          // metres; the canvas behind it is 4:1
 const ANSWER_PANEL_H = 0.155;
 const CAMERA_PANEL_W = 0.40;          // replay camera frame, 16:9, above the answer
 const CAMERA_FRUSTUM_M = 0.5;         // how far the drawn frustum reaches from the camera
@@ -584,7 +579,7 @@ export class WorldScene {
         }
 
         this._updateImageLod(dt);
-        this._updateHud();
+        placeHud(this);
         if (this.onTick) this.onTick(dt);
     }
 
@@ -637,77 +632,6 @@ export class WorldScene {
             this._cameraFrustum.children[0].position.copy(eye);
             this._cameraFrustum.userData.posed = true;
             this._cameraFrustum.visible = this._replayGroup.visible;
-        }
-    }
-
-    _updateHud() {
-        // Place the HUD panel relative to the head: forward + down + left in
-        // the head's yaw frame, kept upright (pitch ignored) so it doesn't
-        // tumble when the user looks up.
-        const cam = this.three.xr.isPresenting
-            ? this.three.xr.getCamera(this.camera)
-            : this.camera;
-        const headPos = new THREE.Vector3();
-        cam.getWorldPosition(headPos);
-
-        // Extract camera local axes directly from its world matrix. More
-        // robust than getWorldDirection in XR mode where the matrix may be
-        // set externally and getWorldDirection's auto-update can miss it.
-        cam.updateMatrixWorld();
-        const right = new THREE.Vector3();
-        const fwd = new THREE.Vector3();
-        right.setFromMatrixColumn(cam.matrixWorld, 0);   // camera local +X = user's right
-        fwd.setFromMatrixColumn(cam.matrixWorld, 2);     // camera local +Z = backward
-        fwd.negate();                                    // flip to forward (-Z is forward)
-        right.y = 0; fwd.y = 0;
-        if (right.lengthSq() < 1e-6 || fwd.lengthSq() < 1e-6) return;
-        right.normalize(); fwd.normalize();
-
-        // HUD goes to the user's LEFT, which is -right. A headset's field of
-        // view swallows that offset; a desktop window's does not, so there the
-        // offset shrinks until the answer panel's far edge stays on screen.
-        let offsetLeft = HUD_OFFSET_LEFT;
-        if (!this.three.xr.isPresenting) {
-            const halfHeight = HUD_DISTANCE * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2);
-            const halfWidth = halfHeight * this.camera.aspect;
-            // The panel is turned toward the head, so its near edge projects wider than flat: keep a fat margin.
-            offsetLeft = Math.max(0, Math.min(HUD_OFFSET_LEFT, halfWidth - ANSWER_PANEL_W / 2 - 0.12));
-            // A portrait phone is narrower than the panel itself: shrink it to fit.
-            const fit = Math.min(1, (2 * halfWidth - 0.08) / ANSWER_PANEL_W);
-            this._answerPanel.scale.setScalar(fit);
-            this._cameraPanel.scale.setScalar(fit);
-        } else if (this._answerPanel.scale.x !== 1) {
-            this._answerPanel.scale.setScalar(1);
-            this._cameraPanel.scale.setScalar(1);
-        }
-        const target = new THREE.Vector3()
-            .copy(headPos)
-            .addScaledVector(fwd, HUD_DISTANCE)
-            .addScaledVector(right, -offsetLeft);
-        target.y -= HUD_OFFSET_DOWN;
-        // Tilt the panel slightly toward the user (downward tilt around X).
-        this._hudGroup.position.lerp(target, HUD_FOLLOW_LERP);
-        // Face the user — look at head from panel position, then tilt up a bit.
-        this._hudGroup.lookAt(headPos);
-
-        // Update marker dot position to where the camera is *in world*.
-        // We need the camera's robot-frame XY. Camera is at headPos in three-world;
-        // un-apply worldGroup transform + frameRotate to get robot frame.
-        if (this._topDownBounds) {
-            const robotXY = this._worldPosToRobotXY(headPos);
-            if (robotXY) {
-                const uv = this._robotXYToHudUV(robotXY[0], robotXY[1]);
-                // Panel is HUD_PANEL_SIZE wide centred at (0,0). Map u,v in [0,1]
-                // to [-S/2, S/2].
-                const s = HUD_PANEL_SIZE;
-                this._hudMarker.position.x = (uv[0] - 0.5) * s;
-                this._hudMarker.position.y = (0.5 - uv[1]) * s;
-                this._hudHeading.position.copy(this._hudMarker.position);
-                // The needle wants yaw in the map frame, not three's. After the
-                // frame-rotate, robot +X is three +X and robot +Y is three -Z.
-                const robotYaw = Math.atan2(fwd.x, -fwd.z);
-                this._hudHeading.rotation.z = -robotYaw;
-            }
         }
     }
 
@@ -984,7 +908,12 @@ export class WorldScene {
                     vec3 axis = sightTo - sightFrom;
                     float len2 = dot(axis, axis);
                     if (len2 <= 0.0) return false;
-                    float t = clamp(dot(p - sightFrom, axis) / len2, 0.0, 1.0);
+                    float t = dot(p - sightFrom, axis) / len2;
+                    // Strictly between the eye and the picture. Clamping instead would
+                    // measure anything past the far end from that end, carving a sphere
+                    // out of whatever stands BEHIND the photograph -- which is the part
+                    // of the map you came here to look at.
+                    if (t < 0.0 || t > 1.0) return false;
                     float radius = mix(0.15, sightRadius, t);
                     return distance(p, sightFrom + axis * t) < radius;
                 }

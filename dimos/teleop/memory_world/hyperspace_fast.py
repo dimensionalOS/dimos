@@ -742,17 +742,20 @@ class FastQuery:
         engine.keyframe(-1)  # loads every keyframe
         place = engine.placer(world_frame)  # one tf pass
         self.patches = PatchBank(list(engine._keyframes.values()), place)
-        # One array per ensemble member since the tiled-ingest work landed. This bank
-        # holds ONE grid per keyframe, so it can only mirror one member: taking member 0
-        # silently would answer with the wrong tower on an ensemble store.
-        backgrounds = engine.backgrounds()
-        if len(backgrounds) > 1:
+        # How many members the STORE holds, which is the question. Counting the arrays
+        # engine.backgrounds() returns counts what the EMBEDDER produced, and this module
+        # hands it a single-model embedder -- so an ensemble store passed that test and
+        # was then searched on its primary grid alone, silently, which is exactly what
+        # the check exists to stop. `members()` is empty for a single-grid store.
+        members = engine.members()
+        if len(members) > 1:
             raise SystemExit(
-                f"this store was embedded with {len(backgrounds)} ensemble members, and the"
-                " fast path mirrors one. Re-ingest with a single model, or use the engine"
-                " directly."
+                f"this store was embedded with {len(members)} ensemble members "
+                f"({', '.join(members)}), and the fast path holds one grid per keyframe."
+                " Re-ingest with a single model, or query through the engine."
             )
-        self.backgrounds = np.asarray(backgrounds[0] if backgrounds else [], np.float32)
+        backgrounds = engine.backgrounds()
+        self.backgrounds = np.asarray(backgrounds[0] if len(backgrounds) else [], np.float32)
         self.patches.background_sims(self.backgrounds)
         # Not gated on segment_weight: the structural gate reads the same bank, and
         # SegmentBank.hot already no-ops at weight 0. Gating here turned the gate off
