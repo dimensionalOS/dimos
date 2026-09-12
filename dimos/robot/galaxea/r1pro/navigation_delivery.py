@@ -65,6 +65,8 @@ def follow_navigation_path(
     turns = float(np.abs(np.diff(poses[:, 2])).sum())
     deadline = time.monotonic() + 60 + length / 0.02 + turns / 0.04
     last_sim_time, last_update = state["sim_time"], time.monotonic()
+    progress_pose = np.asarray(state["base_pose"])
+    progress_time = time.monotonic()
     try:
         while time.monotonic() < deadline:
             state = sim.task_state()
@@ -84,6 +86,14 @@ def follow_navigation_path(
             if state["tray"]["tilt_radians"] > 0.25:
                 raise RuntimeError("Navigation exceeded the carrying tilt limit")
             status = control.task_invoke(NAV_TASK, "get_state", {})
+            measured_pose = np.asarray(state["base_pose"])
+            if np.linalg.norm(measured_pose - progress_pose) > 0.002:
+                progress_pose, progress_time = measured_pose, time.monotonic()
+            if status == "tracking" and time.monotonic() - progress_time > 5.0:
+                raise RuntimeError(
+                    f"Base made no progress for 5 seconds during {phase}; "
+                    "check the base command and odometry transport connections"
+                )
             if status == "aborted":
                 raise RuntimeError("Holonomic task was aborted")
             if status == "arrived":
@@ -134,7 +144,18 @@ def run_navigation_transport(
         "cloud": str(cloud.resolve()),
     }
     prepare_navigation_map(sim, cloud, pause=pause)
-    target = report["destination"]["base_position"]
+    destination = report["destination"]
+    target = destination.get("approach_position", destination["base_position"])
+    source_approach = report.get("source", {}).get("approach_position")
+    if source_approach is not None:
+        # Leave the furniture's overhang before asking the 2D planner to travel.
+        # The whole robot/cargo sweep is checked against the actual 3D scene.
+        heading = sim.task_state()["base_pose"][2]
+        departure_path = sim.plan_transport(source_approach[0], source_approach[1], heading)
+        report["surface_departure_path"] = departure_path
+        follow_navigation_path(
+            control, sim, departure_path, "surface_departure", report, pause=pause, speed=0.10
+        )
     departure = sim.plan_departure(target[2])
     for index, (a, b) in enumerate(pairwise(departure)):
         follow_navigation_path(
@@ -152,7 +173,13 @@ def run_navigation_transport(
             raise RuntimeError("KronkNav did not return a complete route")
         pause(0.1)
     report["navigation"].update(status)
-    report["path"] = status["path"]
+    report["path"] = sim.refine_navigation_path(status["path"])
     report["arrival"] = follow_navigation_path(
-        control, sim, status["path"], "kronknav_carry", report, pause=pause, speed=0.6
+        control, sim, report["path"], "kronknav_carry", report, pause=pause, speed=0.6
     )
+    if "approach_position" in destination:
+        docking = sim.plan_transport(*destination["base_position"])
+        report["docking_path"] = docking
+        report["arrival"] = follow_navigation_path(
+            control, sim, docking, "surface_docking", report, pause=pause, speed=0.10
+        )

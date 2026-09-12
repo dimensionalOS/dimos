@@ -19,6 +19,62 @@ On this workstation the user-level `dimos` launcher is installed from the
 `r1pro-act-sim` worktree. Use a fresh terminal if an activated environment from
 another checkout is taking precedence over that launcher.
 
+## Interactive commands
+
+For individual requests through the agent, launch the interactive blueprint:
+
+```bash
+dimos run r1pro-home-sim-agent
+```
+
+The agent needs `OPENAI_API_KEY` in its environment. From a second desktop terminal:
+
+```bash
+dimos humancli
+```
+
+The robot starts idle. For example, ask it to pick the nearest bottle, wait for
+completion, then pick another bottle. Ask it to go to the dining table, place one
+bottle there, then carry the remaining tray contents to the kitchen and place
+another bottle. Stable IDs (`bottle_1` through `bottle_5`) also work. Only bottles
+actually loaded are included in the carried cargo checks.
+
+The tools `get_scene` and `get_surfaces` report measured simulator geometry.
+Spatial selectors use the robot's frame: rightmost has the smallest `left_m`,
+and nearest has the smallest `distance_m`. The requested ID is recorded before
+ACT runs; failed picks never silently substitute another bottle.
+
+`go_to` carries the tray and holds it on arrival. `put_down_tray` places it on
+the current surface. `place_bottle` puts the tray down if necessary, then unloads
+one bottle with classical planning. Bottle unloading currently supports the
+dining table and kitchen counter. Bed and floor destinations use measured support
+geometry and checked low tray placement. A complete native run passed two ACT
+picks, bed placement, bed regrasp, floor placement, reset, and a fresh ACT pick
+(`jobs/interactive-recovery-11/results.json`). These destinations refer to specific
+clear patches in this house, not arbitrary points on every surface.
+
+All motion tools return acceptance first. `wait_for_action` returns the eventual
+result. After a failed worktop pick, recovery can lower a stable grasp just above its
+original worktop in 3 mm steps, up to 24 mm. It releases only after measuring
+support, then returns to the calibrated ACT home posture. Other unsupported
+grasps remain held. `recover_action` can finish a supported unloading attempt or clear a stopped,
+stable carry; it reports when recovery is blocked. `stop_action` cancels motion
+and holds position. An explicit request to reset uses `reset_scene` and clears all
+packing and delivery progress. Reset is never performed automatically.
+
+The interactive default still uses the original accessible-order ACT checkpoint.
+An arbitrary rear-bottle request can fail even though its selected ID is correct.
+The experimental 5k flexible checkpoint passed each first choice individually.
+A further 10,000 updates completed, but that candidate regressed on bottle 2; it
+has not replaced the default. Saved checkpoints are being compared on mixed
+orders such as 5→4→1→2→3, checking the requested bottle, free tray space, and
+undisturbed neighbors at every pick. Arbitrary ordering is not yet reliable.
+The automatic demonstration below still follows its validated dining-table route.
+
+Each interactive run saves `action-001.json`, `action-002.json`, and so on under
+its session directory, with selection, snapshots, motion stages, physical checks,
+and recovery outcomes.
+
 ## Speed
 
 The previous navigation cruise was **0.055 m/s**, with an actuator cap of
@@ -187,8 +243,10 @@ Jobs use independent sessions and survive terminal disconnection. A zero exit
 code from the demo now means success; an unsuccessful completed rollout exits 1.
 Closing with Ctrl-C exits 130 after saving result.json. Historical job wrappers
 have their own exit behavior, so check physical success in result.json as well.
-All fitting and validation jobs are complete, and their runtime processes have
-exited. No further training is queued. Raw demonstrations, datasets and weights
+The original fixed-order fitting and validation jobs below are complete.
+Interactive mixed-order checkpoint evaluation is tracked separately under
+`jobs/flexible-horizon-sweep` and `jobs/interactive-unloading-verified-03`; these jobs
+run detached and survive a terminal disconnect. Raw demonstrations, datasets and weights
 are ignored local artifacts, separate from source commits. Keep them when moving
 or cleaning this worktree.
 

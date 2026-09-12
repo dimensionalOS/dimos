@@ -32,7 +32,11 @@ from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.robot.galaxea.r1pro.grasping_task import GraspingTask
-from dimos.robot.galaxea.r1pro.home_spec import HomeControlSpec, HomeSceneSpec, PackingPolicySpec
+from dimos.robot.galaxea.r1pro.home_spec import (
+    HomeReadyControlSpec,
+    HomeSceneSpec,
+    PackingPolicySpec,
+)
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_JOINTS
 from dimos.robot.galaxea.r1pro.navigation_cloud import save_environment_cloud
 from dimos.robot.galaxea.r1pro.navigation_sim import (
@@ -55,6 +59,7 @@ class R1ProHomeSimConfig(R1ProNavigationSimConfig):
     scene_package: Path = DIMOS_PROJECT_ROOT / "dimos/data/scene_packages/hssd_102344115"
     output: Path = Field(default_factory=lambda: RECORDINGS_DIR / "r1pro-home-sim" / uuid4().hex)
     seed: int = 5000
+    left_shoulder_home: float = Field(default=0.0, ge=0, le=0.8)
     jitter: float = Field(default=0.003, ge=0, le=0.01)
 
 
@@ -109,6 +114,7 @@ class R1ProHomeSim(R1ProNavigationSim):
             cloud = output / "navigation-cloud.npy"
             save_environment_cloud(scene, cloud)
             with GraspingTask(scene, images=False) as task:
+                task.home[5] = self.config.left_shoulder_home
                 self.config.reset_joint_positions = task.home.tolist()
                 limits = [task.model.joint(name).range.tolist() for name in R1PRO_PICK_PLACE_JOINTS]
             self.config.address = scene
@@ -149,7 +155,7 @@ class R1ProHomeDemo(Module):
 
     config: R1ProHomeDemoConfig
     _sim: HomeSceneSpec
-    _control: HomeControlSpec
+    _control: HomeReadyControlSpec
     _policy: PackingPolicySpec
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -180,6 +186,13 @@ class R1ProHomeDemo(Module):
             ):
                 if time.monotonic() > deadline:
                     raise RuntimeError("House simulation and control did not become ready")
+                self._pause(0.1)
+            deadline = time.monotonic() + 10
+            while not self._control.base_connection_status()["ready"]:
+                if time.monotonic() > deadline:
+                    raise RuntimeError(
+                        "Base adapter received no odometry; check transport wiring before starting the demo"
+                    )
                 self._pause(0.1)
             self._state = "running"
             logger.info(

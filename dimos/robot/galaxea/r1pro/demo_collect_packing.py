@@ -27,11 +27,13 @@ from typing import Any
 
 import numpy as np
 
+from dimos.robot.galaxea.r1pro.flexible_packing_task import FlexiblePackingTask
 from dimos.robot.galaxea.r1pro.learning import (
     R1PRO_PACKING_IO,
     R1PRO_PICK_PLACE_FPS,
     R1PRO_PICK_PLACE_JOINTS,
 )
+from dimos.robot.galaxea.r1pro.packing_checks import validate_other_bottles
 from dimos.robot.galaxea.r1pro.packing_sim import prepare_packing_scene
 from dimos.robot.galaxea.r1pro.packing_task import PackingTask
 
@@ -42,6 +44,9 @@ def collect(args: argparse.Namespace) -> None:
     contract = {
         "profile": R1PRO_PACKING_IO.name,
         "version": 2,
+        "arbitrary_order": args.arbitrary_order,
+        "order": args.order,
+        "image_stride": args.image_stride,
         "fps": R1PRO_PICK_PLACE_FPS,
         "joints": list(R1PRO_PICK_PLACE_JOINTS),
         "jitter_m": args.jitter,
@@ -55,7 +60,8 @@ def collect(args: argparse.Namespace) -> None:
             raise ValueError("Cannot resume with a different collection contract")
     completed = {row["seed"] for row in manifest["sequences"] + manifest["rejected"]}
     scene = prepare_packing_scene(args.output / "scene.xml", scene_package=args.scene_package)
-    with PackingTask(scene, images=not args.no_images) as task:
+    task_type = FlexiblePackingTask if args.arbitrary_order else PackingTask
+    with task_type(scene, images=not args.no_images) as task:
         for seed in range(args.start_seed, args.start_seed + args.sequences * 3):
             if len(manifest["sequences"]) >= args.sequences:
                 break
@@ -63,7 +69,11 @@ def collect(args: argparse.Namespace) -> None:
                 continue
             started = time.monotonic()
             task.reset_packing(seed, args.jitter)
-            order = task.pick_order(seed)
+            order = (
+                [int(value) - 1 for value in args.order.split(",")]
+                if args.order
+                else task.pick_order(seed)
+            )
             records = []
             error = None
             try:
@@ -71,12 +81,23 @@ def collect(args: argparse.Namespace) -> None:
                     if not task.select_bottle(index):
                         raise RuntimeError("No feasible empty slot remains")
                     frames: dict[str, list[Any]] = {}
+                    initial = task.report()["bottles"]
                     phases = []
-                    for phase, action in task.teacher_actions():
-                        for key, value in {**task.observation(), "action": action}.items():
+                    cameras: dict[str, Any] = {}
+                    for frame, (phase, action) in enumerate(task.teacher_actions()):
+                        observation = task.observation(render_images=frame % args.image_stride == 0)
+                        cameras.update(
+                            {
+                                k: v
+                                for k, v in observation.items()
+                                if k.startswith("observation.images.")
+                            }
+                        )
+                        for key, value in {**cameras, **observation, "action": action}.items():
                             frames.setdefault(key, []).append(value)
                         phases.append(phase)
                         task.step(action)
+                        validate_other_bottles(initial, task.report()["bottles"], index)
                     task.remember_result()
                     if not task.pick_complete():
                         raise RuntimeError(f"Pick {pick + 1} failed: {task.result().to_dict()}")
@@ -130,9 +151,21 @@ def main() -> None:
     parser.add_argument("--start-seed", type=int, default=8000)
     parser.add_argument("--jitter", type=float, default=0.006)
     parser.add_argument("--no-images", action="store_true")
+    parser.add_argument("--arbitrary-order", action="store_true")
+    parser.add_argument("--order", help="Explicit five-bottle training order, e.g. 3,1,5,2,4")
+    parser.add_argument("--image-stride", type=int, default=1, choices=range(1, 5))
     args = parser.parse_args()
     if args.sequences < 1 or not 0 <= args.jitter <= 0.01:
         parser.error("Use positive sequences and jitter up to one centimetre")
+    if args.order:
+        try:
+            order = [int(value) for value in args.order.split(",")]
+        except ValueError:
+            parser.error("Order must contain comma-separated bottle numbers")
+        if len(order) != 5 or set(order) != set(range(1, 6)) or not args.arbitrary_order:
+            parser.error(
+                "An explicit order needs --arbitrary-order and each bottle 1..5 exactly once"
+            )
     collect(args)
 
 

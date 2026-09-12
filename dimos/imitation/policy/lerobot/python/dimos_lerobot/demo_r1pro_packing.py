@@ -38,6 +38,7 @@ from dimos.robot.galaxea.r1pro.learning import (
     R1PRO_PACKING_TASK,
     R1PRO_PICK_PLACE_FPS as FPS,
 )
+from dimos.robot.galaxea.r1pro.packing_checks import validate_other_bottles
 from dimos.robot.galaxea.r1pro.packing_sim import prepare_packing_scene
 from dimos.robot.galaxea.r1pro.packing_task import PackingTask
 
@@ -60,6 +61,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     results = []
     with ExitStack() as resources:
         task = resources.enter_context(PackingTask(scene))
+        task.home[5] = args.left_shoulder_home
         viewer = None
         if not args.no_viewer:
             viewer = resources.enter_context(mujoco.viewer.launch_passive(task.model, task.data))
@@ -69,7 +71,13 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             viewer.cam.elevation = -35
         for seed in range(args.start_seed, args.start_seed + args.episodes):
             task.reset_packing(seed, args.jitter)
-            order = task.pick_order(None if args.canonical_order else seed)
+            order = (
+                [int(value) - 1 for value in args.order.split(",")]
+                if args.order
+                else list(map(int, np.random.default_rng(seed).permutation(5)))
+                if args.arbitrary_order
+                else task.pick_order(None if args.canonical_order else seed)
+            )
             picks = []
             reason = "completed"
             started = time.monotonic()
@@ -77,6 +85,8 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                 if not task.select_bottle(index):
                     reason = "tray_full"
                     break
+                initial_bottles = task.report()["bottles"]
+                disturbance = None
                 backend.reset()
                 actions: NDArray[np.float32] = np.empty((0, len(task.home)), dtype=np.float32)
                 stable = 0
@@ -103,6 +113,11 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                     if viewer is not None:
                         viewer.sync()
                         time.sleep(max(0, 1 / FPS - (time.monotonic() - tick)))
+                    try:
+                        validate_other_bottles(initial_bottles, task.report()["bottles"], index)
+                    except RuntimeError as error:
+                        disturbance = str(error)
+                        break
                     if stable >= 3:
                         break
                 # Mirror coordinator cancellation: hardware retains the last
@@ -122,13 +137,18 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                     if viewer is not None:
                         viewer.sync()
                         time.sleep(max(0, 1 / FPS - (time.monotonic() - tick)))
-                complete = stable >= 3 and task.pick_complete()
+                try:
+                    validate_other_bottles(initial_bottles, task.report()["bottles"], index)
+                except RuntimeError as error:
+                    disturbance = str(error)
+                complete = disturbance is None and stable >= 3 and task.pick_complete()
                 task.remember_result()
                 row = {
                     "bottle": index + 1,
                     "goal": task.goal.tolist(),
                     **task.result().to_dict(),
                     "pick_complete": complete,
+                    "disturbance": disturbance,
                     "stop_hold_frames": FPS // 2,
                     "stop_hold_target": "last_policy_command",
                     "frames": len(history),
@@ -154,7 +174,9 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                     "order": order,
                     "picks": picks,
                     **report,
-                    "success": report["success"] and reason == "completed",
+                    "success": len(picks) == len(order)
+                    and all(p["pick_complete"] for p in picks)
+                    and reason == "completed",
                     "completion_reason": reason,
                     "elapsed_s": time.monotonic() - started,
                 }
@@ -163,7 +185,13 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                 "artifact": str(args.artifact.resolve()),
                 "action_steps": steps,
                 "jitter_m": args.jitter,
-                "order_mode": "left_to_right" if args.canonical_order else "random",
+                "order_mode": "explicit"
+                if args.order
+                else "arbitrary"
+                if args.arbitrary_order
+                else "left_to_right"
+                if args.canonical_order
+                else "accessible_random",
                 "episodes": results,
                 "successes": sum(row["success"] for row in results),
                 "total": len(results),
@@ -196,7 +224,23 @@ def main() -> None:
     parser.add_argument("--action-steps", type=int)
     parser.add_argument("--no-viewer", action="store_true")
     parser.add_argument("--stay-open", action="store_true")
+    parser.add_argument("--order", help="Explicit unique bottle numbers, e.g. 5,4 or 3,1,5,2,4")
+    parser.add_argument("--arbitrary-order", action="store_true")
+    parser.add_argument("--left-shoulder-home", type=float, default=0.0)
     args = parser.parse_args()
+    if args.order:
+        try:
+            selected = [int(value) for value in args.order.split(",")]
+        except ValueError:
+            parser.error("Order must contain comma-separated bottle numbers")
+        if (
+            not selected
+            or len(set(selected)) != len(selected)
+            or any(not 1 <= i <= 5 for i in selected)
+        ):
+            parser.error("Order must contain unique bottle numbers from 1 to 5")
+    if not 0 <= args.left_shoulder_home <= 0.8:
+        parser.error("Left shoulder home must be between 0 and 0.8 radians")
     if args.episodes < 1 or not 0 < args.seconds <= 120 or not 0 <= args.jitter <= 0.01:
         parser.error("Invalid episode count, pick duration or position jitter")
     evaluate(args)

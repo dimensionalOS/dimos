@@ -686,7 +686,8 @@ def _is_name_unique(blueprint: Blueprint, name: str) -> bool:
 
 
 def _get_transport_for(blueprint: Blueprint, name: str, stream_type: type) -> PubSubTransport[Any]:
-    topic = f"/{name}" if _is_name_unique(blueprint, name) else f"/{short_id()}"
+    # Remappings may already be absolute; adapters use one leading slash.
+    topic = "/" + (name.lstrip("/") if _is_name_unique(blueprint, name) else short_id())
     return make_transport(topic, stream_type)
 
 

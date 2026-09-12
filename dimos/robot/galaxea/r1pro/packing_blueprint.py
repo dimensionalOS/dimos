@@ -16,7 +16,7 @@
 
 from pathlib import Path
 import time
-from typing import Any, ClassVar
+from typing import Any
 
 import numpy as np
 from reactivex.disposable import Disposable
@@ -43,7 +43,7 @@ class R1ProPackingSim(R1ProGraspingSim):
     """Publish an explicit simulator goal alongside each head camera observation."""
 
     packing_goal: Out[VectorObservation]
-    cargo_bodies: ClassVar[tuple[str, ...]] = PACKING_BODIES
+    cargo_bodies: tuple[str, ...] = PACKING_BODIES
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -142,7 +142,11 @@ class R1ProPackingSim(R1ProGraspingSim):
                 **state,
                 **cargo,
                 **{
-                    key: all(bottle[key] for bottle in cargo["bottles"])
+                    key: all(
+                        bottle[key]
+                        for bottle in cargo["bottles"]
+                        if PACKING_BODIES[bottle["bottle"] - 1] in self.cargo_bodies
+                    )
                     for key in ("inside_bin", "released", "settled", "upright")
                 },
             }

@@ -16,8 +16,10 @@
 
 import pytest
 
+from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_JOINTS
-from dimos.robot.galaxea.r1pro.tray_delivery import _arm_motion, _check_cargo
+from dimos.robot.galaxea.r1pro.tray_delivery import _arm_motion, _check_cargo, _execute
 
 
 def test_phase_handoffs_keep_grip_command_instead_of_relaxing_to_measured_opening(mocker):
@@ -55,3 +57,54 @@ def test_delivery_stops_when_any_cargo_is_outside_or_tipped(field, message):
     state[field] = False
     with pytest.raises(RuntimeError, match=message):
         _check_cargo(state, grasp=True)
+
+
+@pytest.mark.parametrize("contact", ["mattress_b", "chair"])
+def test_pickup_accepts_other_meshes_of_its_source_support_but_rejects_other_objects(
+    mocker, contact
+):
+    control, sim = mocker.Mock(), mocker.Mock()
+    clock = [0.0]
+    mocker.patch(
+        "dimos.robot.galaxea.r1pro.tray_delivery.time.monotonic", side_effect=lambda: clock[0]
+    )
+    control.execute_trajectory.return_value = mocker.Mock(status=TrajectoryExecutionStatus.ACCEPTED)
+    control.get_joint_positions.return_value = {"joint": 0.0}
+    sim.task_state.side_effect = lambda: {
+        "inside_bin": True,
+        "upright": True,
+        "tray": {
+            "tilt_radians": 0.0,
+            "bimanual_grasp": True,
+            "velocity_norm": 0.0,
+            "support_geoms": [contact] if clock[0] < 0.2 else [],
+        },
+    }
+    report = {
+        "stages": [],
+        "initial": {"tray": {"support_geoms": ["mattress_a"]}},
+        "pickup_support_geoms": ["mattress_a", "mattress_b"],
+    }
+    points = [
+        TrajectoryPoint(positions=[0.0], velocities=[0.0], time_from_start=t) for t in [0.0, 0.2]
+    ]
+
+    def run():
+        return _execute(
+            control,
+            sim,
+            ["joint"],
+            points,
+            "tray_manipulation",
+            "lift_tray",
+            report,
+            grasp=True,
+            pause=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+        )
+
+    if contact == "chair":
+        with pytest.raises(RuntimeError, match="unexpected object"):
+            run()
+    else:
+        assert run()["tray"]["support_geoms"] == []
+    control.cancel_trajectory.assert_called_once_with("tray_manipulation")

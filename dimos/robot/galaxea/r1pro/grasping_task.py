@@ -176,9 +176,9 @@ class GraspingTask:
         self.peak_lift = 0.0
         self.bilateral_grasp = False
 
-    def observation(self) -> dict[str, NDArray[Any]]:
+    def observation(self, *, render_images: bool = True) -> dict[str, NDArray[Any]]:
         observation = {"observation.state": self.data.qpos[self.qids].astype(np.float32)}
-        if self.renderer is not None:
+        if self.renderer is not None and render_images:
             for camera in ("head", "right_wrist"):
                 self.renderer.update_scene(self.data, camera=camera)
                 observation[f"observation.images.{camera}"] = self.renderer.render().copy()

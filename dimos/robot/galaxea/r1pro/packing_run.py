@@ -23,6 +23,7 @@ from typing import Any
 
 from dimos.robot.galaxea.r1pro.home_spec import HomeControlSpec, HomeSimSpec, PackingPolicySpec
 from dimos.robot.galaxea.r1pro.navigation_delivery import prepare_navigation_map
+from dimos.robot.galaxea.r1pro.packing_checks import validate_other_bottles
 from dimos.robot.galaxea.r1pro.tray_delivery import run_tray_delivery
 
 
@@ -34,6 +35,72 @@ class PackingRunConfig:
     random_order: bool = False
     seconds: float = 30.0
     deliver_to_laptop: bool = True
+
+
+def run_bottle_pick(
+    policy: PackingPolicySpec,
+    sim: HomeSimSpec,
+    index: int,
+    pick: dict[str, Any],
+    *,
+    seconds: float = 30.0,
+    pause: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    """Execute one selected ACT goal and verify grasp, release, and return home."""
+    pick.update(bottle=index + 1, history=[], success=False)
+    pause(0)
+    selected = sim.select_bottle(index)
+    pick["selection"] = selected
+    if not selected["selected"]:
+        pick["reason"] = selected["reason"]
+        return pick
+    initial_bottles = sim.packing_state()["bottles"]
+    policy.clear_rollout_observations()
+    deadline = time.monotonic() + 45
+    while True:
+        status = policy.preflight_rollout()
+        if status["policy_ready"] and status["observations_ready"] and not status["last_error"]:
+            break
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"Packing preflight failed: {status}")
+        pause(0.1)
+    pause(0)
+    status = policy.start_rollout()
+    if not status["active"]:
+        raise RuntimeError(f"Packing policy did not start: {status}")
+    deadline = time.monotonic() + seconds
+    stable_since = None
+    try:
+        while time.monotonic() < deadline:
+            status = policy.rollout_status()
+            if status["last_error"] or not status["active"]:
+                raise RuntimeError(f"Packing rollout failed: {status}")
+            state = sim.packing_state()
+            pick["history"].append(state)
+            validate_other_bottles(initial_bottles, state["bottles"], index)
+            if state["selected"]["pick_complete"]:
+                stable_since = time.monotonic() if stable_since is None else stable_since
+                if time.monotonic() - stable_since >= 0.1:
+                    pick["success"] = True
+                    break
+            else:
+                stable_since = None
+            pause(0.05)
+    finally:
+        pick["stopped"] = policy.stop_rollout()
+        # Cancel at arrival, then verify while the coordinator holds.
+        # Keeping ACT active here can start another approach to the old goal.
+        pause(0.5)
+        pick["final"] = sim.packing_state()
+        validate_other_bottles(initial_bottles, pick["final"]["bottles"], index)
+        pick["success"] = bool(pick["success"] and pick["final"]["selected"]["pick_complete"])
+    if pick["stopped"]["active"] or pick["stopped"]["last_error"]:
+        raise RuntimeError(f"Packing policy did not stop cleanly: {pick['stopped']}")
+    print(
+        json.dumps({key: pick[key] for key in ("bottle", "success", "stopped", "final")}),
+        flush=True,
+    )
+    return pick
 
 
 def run_packing_sequence(
@@ -68,62 +135,10 @@ def run_packing_sequence(
         for index in report["order"]:
             pick: dict[str, Any] = {"bottle": index + 1, "history": [], "success": False}
             report["picks"].append(pick)
-            pause(0)
-            selected = sim.select_bottle(index)
-            pick["selection"] = selected
-            if not selected["selected"]:
-                report["completion_reason"] = selected["reason"]
+            run_bottle_pick(policy, sim, index, pick, seconds=config.seconds, pause=pause)
+            if pick.get("reason"):
+                report["completion_reason"] = pick["reason"]
                 break
-            policy.clear_rollout_observations()
-            deadline = time.monotonic() + 45
-            while True:
-                status = policy.preflight_rollout()
-                if (
-                    status["policy_ready"]
-                    and status["observations_ready"]
-                    and not status["last_error"]
-                ):
-                    break
-                if time.monotonic() > deadline:
-                    raise RuntimeError(f"Packing preflight failed: {status}")
-                pause(0.1)
-            pause(0)
-            status = policy.start_rollout()
-            if not status["active"]:
-                raise RuntimeError(f"Packing policy did not start: {status}")
-            deadline = time.monotonic() + config.seconds
-            stable_since = None
-            try:
-                while time.monotonic() < deadline:
-                    status = policy.rollout_status()
-                    if status["last_error"] or not status["active"]:
-                        raise RuntimeError(f"Packing rollout failed: {status}")
-                    state = sim.packing_state()
-                    pick["history"].append(state)
-                    if state["selected"]["pick_complete"]:
-                        stable_since = time.monotonic() if stable_since is None else stable_since
-                        if time.monotonic() - stable_since >= 0.1:
-                            pick["success"] = True
-                            break
-                    else:
-                        stable_since = None
-                    pause(0.05)
-            finally:
-                pick["stopped"] = policy.stop_rollout()
-                # Cancel at arrival, then verify while the coordinator holds.
-                # Keeping ACT active here can start another approach to the old goal.
-                pause(0.5)
-                pick["final"] = sim.packing_state()
-                pick["success"] = bool(
-                    pick["success"] and pick["final"]["selected"]["pick_complete"]
-                )
-                (config.output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
-            if pick["stopped"]["active"] or pick["stopped"]["last_error"]:
-                raise RuntimeError(f"Packing policy did not stop cleanly: {pick['stopped']}")
-            print(
-                json.dumps({key: value for key, value in pick.items() if key != "history"}),
-                flush=True,
-            )
             if not pick["success"]:
                 report["completion_reason"] = "pick_failed"
                 break

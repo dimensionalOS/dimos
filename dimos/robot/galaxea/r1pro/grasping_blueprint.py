@@ -18,10 +18,11 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 from uuid import uuid4
 
 import mujoco
+import numpy as np
 
 from dimos.constants import RECORDINGS_DIR
 from dimos.control.components import HardwareComponent, HardwareType
@@ -53,13 +54,14 @@ class R1ProGraspingSim(MujocoSimModule):
     """Native simulation with wrist RGB and read-only task evidence for evaluation."""
 
     right_wrist: Out[Image]
-    cargo_bodies: ClassVar[tuple[str, ...]] = ("task_bottle",)
+    cargo_bodies: tuple[str, ...] = ("task_bottle",)
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._initial_bottle_z: float | None = None
         self._peak_lift = 0.0
         self._bilateral_grasp = False
+        self._packing_biasprm: np.ndarray | None = None
         self._transport_planner: PlanarTransport | None = None
 
     @rpc
@@ -134,7 +136,10 @@ class R1ProGraspingSim(MujocoSimModule):
     def plan_transport(self, x: float, y: float, yaw: float | None = None) -> list[list[float]]:
         """Plan a local collision-free planar path after ACT has loaded the tray."""
         engine = self._engine
-        if engine is None or self.config.dof <= 20:
+        if engine is None or any(
+            mujoco.mj_name2id(engine.model, mujoco.mjtObj.mjOBJ_JOINT, name) < 0
+            for name in VIRTUAL_BASE_JOINTS
+        ):
             raise RuntimeError("This scene has no movable planar base")
         with engine._lock:
             planner = PlanarTransport(engine.model, engine.data, cargo_bodies=self.cargo_bodies)
@@ -165,6 +170,8 @@ class R1ProGraspingSim(MujocoSimModule):
             raise RuntimeError("Simulation has not started")
         engine.set_camera_streaming_enabled(False)
         with engine._lock:
+            if self._packing_biasprm is None:
+                self._packing_biasprm = engine.model.actuator_biasprm.copy()
             configure_tray_holding(engine.model)
 
     @rpc

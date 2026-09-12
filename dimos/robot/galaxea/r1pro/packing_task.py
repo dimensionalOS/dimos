@@ -99,8 +99,11 @@ class PackingTask(GraspingTask):
         self.bilateral_grasp = False
         return True
 
-    def observation(self) -> dict[str, NDArray[Any]]:
-        return {**super().observation(), "observation.environment_state": self.goal.copy()}
+    def observation(self, *, render_images: bool = True) -> dict[str, NDArray[Any]]:
+        return {
+            **super().observation(render_images=render_images),
+            "observation.environment_state": self.goal.copy(),
+        }
 
     def result(self) -> PackingResult:
         return score_packing(

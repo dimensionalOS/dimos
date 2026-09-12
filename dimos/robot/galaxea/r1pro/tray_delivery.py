@@ -80,9 +80,13 @@ def _execute(
         "retreat_from_tray",
     }
     allowed_support = (
-        set(report["initial"]["tray"]["support_geoms"])
+        set(report.get("pickup_support_geoms", report["initial"]["tray"]["support_geoms"]))
         if phase in source_phases
-        else ({report["destination"]["support_geom"]} if phase in destination_phases else set())
+        else (
+            set(report["destination"].get("support_geoms", [report["destination"]["support_geom"]]))
+            if phase in destination_phases
+            else set()
+        )
     )
     start = time.monotonic()
     duration = points[-1].time_from_start
@@ -133,10 +137,9 @@ def _arm_motion(
     for phase, group in groupby(
         waypoints, key=lambda p: "lift_tray" if p["phase"].startswith("lift_tray") else p["phase"]
     ):
-        if (
-            phase == "release_tray"
-            and report["destination"]["support_geom"] not in state["tray"]["support_geoms"]
-        ):
+        if phase == "release_tray" and not set(
+            report["destination"].get("support_geoms", [report["destination"]["support_geom"]])
+        ).intersection(state["tray"]["support_geoms"]):
             raise RuntimeError(
                 "Tray is not supported by the destination table; keeping both hands closed"
             )

@@ -25,6 +25,7 @@ import copy
 import heapq
 from itertools import pairwise
 import math
+import time
 from typing import Any
 
 import mujoco
@@ -120,6 +121,25 @@ class PlanarTransport:
                 return False
         return True
 
+    def shorten_path(self, path: list[list[float]]) -> list[list[float]]:
+        """Shorten a proposed path only across collision-free full-pose sweeps."""
+        poses = np.asarray(path, dtype=float)
+        if poses.ndim != 2 or poses.shape[1] != 3 or len(poses) < 2 or not np.isfinite(poses).all():
+            raise ValueError("Expected at least two finite planar poses")
+        poses = np.vstack([self.start, poses])
+        poses[:, 2] = np.unwrap(poses[:, 2])
+        shortened = [poses[0]]
+        index = 0
+        while index < len(poses) - 1:
+            for candidate in range(len(poses) - 1, index, -1):
+                if self.clear_pose_segment(poses[index], poses[candidate]):
+                    shortened.append(poses[candidate])
+                    index = candidate
+                    break
+            else:
+                raise RuntimeError(f"Native path cannot clear the loaded robot at pose {index}")
+        return [[float(value) for value in pose] for pose in shortened]
+
     def clear_segment(self, first: NDArray[Any], second: NDArray[Any]) -> bool:
         return self.clear_pose_segment(np.r_[first, self.start[2]], np.r_[second, self.start[2]])
 
@@ -130,6 +150,7 @@ class PlanarTransport:
             raise ValueError("Delivery destination must be a finite planar pose")
         if not self.clear_pose_segment(target, target):
             raise RuntimeError("Tray delivery parking pose is obstructed")
+        deadline = time.monotonic() + 30.0
         # The kitchen exit is narrow: turn near the workbench, then plan
         # translation with the carrying posture aligned down the corridor.
         for dx, dy in ((-0.2, 0.0), (-0.1, 0.0), (-0.3, 0.0), (-0.2, -0.1), (0.0, 0.0)):
@@ -141,14 +162,26 @@ class PlanarTransport:
                 continue
             aligned = PlanarTransport(self.model, self.probe, cargo_bodies=self.cargo_bodies)
             try:
-                path = aligned.plan(tuple(target[:2]), resolution=0.025, max_distance=6.0)
+                path = aligned.plan(
+                    tuple(target[:2]),
+                    resolution=0.025,
+                    max_distance=6.0,
+                    timeout=max(0.0, deadline - time.monotonic()),
+                )
             except RuntimeError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Local docking planning exceeded 30 seconds") from None
                 continue
             return [self.start.tolist(), departure.tolist(), *path]
-        raise RuntimeError("No collision-free departure turn and route to the laptop table")
+        raise RuntimeError("No collision-free departure turn and route to the destination")
 
     def plan(
-        self, goal: tuple[float, float], *, resolution: float = 0.05, max_distance: float = 3.0
+        self,
+        goal: tuple[float, float],
+        *,
+        resolution: float = 0.05,
+        max_distance: float = 3.0,
+        timeout: float = 30.0,
     ) -> list[list[float]]:
         """Use bounded A* over translation with fixed yaw and a carried tray."""
         if (
@@ -160,6 +193,16 @@ class PlanarTransport:
         if not self.clear_segment(exact_goal, exact_goal):
             raise RuntimeError("Transport goal is obstructed")
         origin = self.start[:2]
+        # Docking often needs just a translation or an elbow around furniture.
+        # Check these full-body sweeps before exploring a fine grid in the house.
+        for points in (
+            [origin, exact_goal],
+            [origin, np.array([origin[0], exact_goal[1]]), exact_goal],
+            [origin, np.array([exact_goal[0], origin[1]]), exact_goal],
+        ):
+            if all(self.clear_segment(a, b) for a, b in pairwise(points)):
+                return [[float(x), float(y), float(self.start[2])] for x, y in points]
+        deadline = time.monotonic() + timeout
         target = tuple(round(value / resolution) for value in (np.asarray(goal) - origin))
         start = (0, 0)
         frontier = [(0.0, start)]
@@ -168,6 +211,8 @@ class PlanarTransport:
         blocked: dict[tuple[tuple[int, int], tuple[int, int]], bool] = {}
         found = False
         while frontier and len(cost) < 12000:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Local transport planning timed out")
             _, current = heapq.heappop(frontier)
             if current == target:
                 found = True

@@ -27,11 +27,13 @@ from typing import Any
 
 import numpy as np
 
+from dimos.robot.galaxea.r1pro.flexible_packing_task import FlexiblePackingTask
 from dimos.robot.galaxea.r1pro.learning import (
     R1PRO_PACKING_IO,
     R1PRO_PICK_PLACE_FPS,
     R1PRO_PICK_PLACE_JOINTS,
 )
+from dimos.robot.galaxea.r1pro.packing_checks import validate_other_bottles
 from dimos.robot.galaxea.r1pro.packing_sim import prepare_packing_scene
 from dimos.robot.galaxea.r1pro.packing_task import PackingTask
 
@@ -42,13 +44,15 @@ def collect(args: argparse.Namespace) -> None:
     contract = {
         "profile": R1PRO_PACKING_IO.name,
         "version": 2,
+        "arbitrary_order": args.arbitrary_order,
+        "image_stride": args.image_stride,
         "images": True,
         "fps": R1PRO_PICK_PLACE_FPS,
         "joints": list(R1PRO_PICK_PLACE_JOINTS),
         "jitter_m": args.jitter,
         "scene_package": str(args.scene_package.resolve()),
         "purpose": "paired_initial_choices",
-        "choices": [0, 1, 3],
+        "choices": list(range(5)) if args.arbitrary_order else [0, 1, 3],
     }
     manifest: dict[str, Any] = {**contract, "episodes": [], "choice_groups": [], "rejected": []}
     if path.exists():
@@ -57,7 +61,8 @@ def collect(args: argparse.Namespace) -> None:
             raise ValueError("Cannot resume a different choice collection")
     completed = {row["seed"] for row in manifest["choice_groups"] + manifest["rejected"]}
     scene = prepare_packing_scene(args.output / "scene.xml", scene_package=args.scene_package)
-    with PackingTask(scene) as task:
+    task_type = FlexiblePackingTask if args.arbitrary_order else PackingTask
+    with task_type(scene) as task:
         for seed in range(args.start_seed, args.start_seed + args.layouts * 3):
             if len(manifest["choice_groups"]) >= args.layouts:
                 break
@@ -66,17 +71,28 @@ def collect(args: argparse.Namespace) -> None:
             started = time.monotonic()
             records = []
             error = None
-            for index in (0, 1, 3):
+            for index in contract["choices"]:
                 # Identical initial physics, RGB and joints for all three goals.
                 task.reset_packing(seed, args.jitter)
                 if not task.select_bottle(index):
                     raise RuntimeError("Initial tray must have an empty slot")
+                initial = task.report()["bottles"]
                 frames: dict[str, list[Any]] = {}
                 try:
-                    for _, action in task.teacher_actions():
-                        for key, value in {**task.observation(), "action": action}.items():
+                    cameras: dict[str, Any] = {}
+                    for frame, (_, action) in enumerate(task.teacher_actions()):
+                        observation = task.observation(render_images=frame % args.image_stride == 0)
+                        cameras.update(
+                            {
+                                k: v
+                                for k, v in observation.items()
+                                if k.startswith("observation.images.")
+                            }
+                        )
+                        for key, value in {**cameras, **observation, "action": action}.items():
                             frames.setdefault(key, []).append(value)
                         task.step(action)
+                        validate_other_bottles(initial, task.report()["bottles"], index)
                     if not task.pick_complete():
                         raise RuntimeError(str(task.result().to_dict()))
                 except RuntimeError as exc:
@@ -124,6 +140,8 @@ def main() -> None:
     parser.add_argument("--layouts", type=int, default=10)
     parser.add_argument("--start-seed", type=int, default=8300)
     parser.add_argument("--jitter", type=float, default=0.003)
+    parser.add_argument("--arbitrary-order", action="store_true")
+    parser.add_argument("--image-stride", type=int, default=1, choices=range(1, 5))
     args = parser.parse_args()
     if args.layouts < 1 or not 0 <= args.jitter <= 0.01:
         parser.error("Use positive layouts and jitter up to one centimetre")

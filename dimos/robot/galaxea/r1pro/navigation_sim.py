@@ -99,6 +99,7 @@ class R1ProNavigationSim(R1ProPackingSim):
         super().__init__(*args, **kwargs)
         self._servo: PlanarVelocityServo | None = None
         self._last_odom = float("-inf")
+        self._last_command = float("-inf")
         self._offset = np.zeros(2)
         self._map_points = 0
         self._surface_points = 0
@@ -125,6 +126,7 @@ class R1ProNavigationSim(R1ProPackingSim):
             return
         with self._engine._lock:
             if self._servo is not None:
+                self._last_command = time.monotonic()
                 self._servo.command_twist(
                     np.array([twist.linear.x, twist.linear.y, twist.angular.z]), time.monotonic()
                 )
@@ -221,8 +223,12 @@ class R1ProNavigationSim(R1ProPackingSim):
                 self._engine.model, self._engine.data, checker.robot_bodies
             )
         for dx, dy in ((-0.2, 0.0), (-0.1, 0.0), (-0.3, 0.0), (-0.2, -0.1)):
-            departure = checker.start + np.array([dx, dy, 0])
-            turned = np.r_[departure[:2], yaw]
+            c, s = np.cos(checker.start[2]), np.sin(checker.start[2])
+            departure = checker.start + np.array([c * dx - s * dy, s * dx + c * dy, 0])
+            angle = checker.start[2] + np.arctan2(
+                np.sin(yaw - checker.start[2]), np.cos(yaw - checker.start[2])
+            )
+            turned = np.r_[departure[:2], angle]
             if checker.clear_pose_segment(checker.start, departure) and checker.clear_pose_segment(
                 departure, turned
             ):
@@ -246,6 +252,7 @@ class R1ProNavigationSim(R1ProPackingSim):
     def navigation_status(self) -> dict[str, Any]:
         """Return native planner evidence; partial or invalid paths never execute."""
         result: dict[str, Any] = {
+            "command_age": time.monotonic() - self._last_command,
             "map_points": self._map_points,
             "surface_points": self._surface_points,
             "footprint_offset": self._offset.tolist(),
@@ -264,6 +271,17 @@ class R1ProNavigationSim(R1ProPackingSim):
         if not np.isfinite(poses).all() or np.linalg.norm(poses[-1, :2] - goal[:2]) > 0.015:
             return {**result, "error": "KronkNav returned a partial route; destination not reached"}
         return {**result, "path": poses.tolist(), "planner_path_ts": path.ts}
+
+    @rpc
+    def refine_navigation_path(self, path: list[list[float]]) -> list[list[float]]:
+        """Shorten the native route using the complete held robot collision geometry."""
+        if self._engine is None:
+            raise RuntimeError("Simulation has not started")
+        with self._engine._lock:
+            checker = PlanarTransport(
+                self._engine.model, self._engine.data, cargo_bodies=self.cargo_bodies
+            )
+        return checker.shorten_path(path)
 
     @rpc
     def validate_navigation_path(self, path: list[list[float]]) -> None:

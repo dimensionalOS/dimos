@@ -25,7 +25,13 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.robot.galaxea.r1pro.grasping_transport import PlanarTransport
+from dimos.robot.galaxea.r1pro.home_kinematics import (
+    ORIENTATION_TOLERANCE,
+    POSITION_TOLERANCE,
+    HomeKinematics,
+)
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_JOINTS
 from dimos.robot.galaxea.r1pro.tray_sim import TRAY_HANDLE_Y, TRAY_TCP_HEIGHT
 
@@ -48,6 +54,7 @@ class TrayMotion:
         cargo_bodies: tuple[str, ...] = ("task_bottle",),
     ) -> None:
         self.model = model
+        self._body_kinematics: HomeKinematics | None = None
         self.cargo_bodies = cargo_bodies
         self.probe = mujoco.MjData(model)
         self.probe.qpos[:] = data.qpos
@@ -102,17 +109,65 @@ class TrayMotion:
             return best
         raise RuntimeError(f"Unreachable {side} gripper target {target.tolist()}")
 
+    def body_pose(
+        self,
+        left: NDArray[Any] | None,
+        right: NDArray[Any],
+        *,
+        position_tolerance: float = POSITION_TOLERANCE,
+        orientation_tolerance: float = ORIENTATION_TOLERANCE,
+    ) -> None:
+        """Use the manipulation SDK backend when torso participation is required."""
+        mujoco.mj_forward(self.model, self.probe)
+        if self._body_kinematics is None:
+            self._body_kinematics = HomeKinematics(self.model, self.probe)
+        targets = {"right": right}
+        if left is not None:
+            targets["left"] = left
+        self.probe.qpos[self.qids] = self._body_kinematics.solve(
+            self.probe,
+            targets,
+            position_tolerance=position_tolerance,
+            orientation_tolerance=orientation_tolerance,
+        )
+
+    def right_pose(self, target: NDArray[Any]) -> None:
+        """Move the right TCP while preserving the left hand's actual world pose."""
+        mujoco.mj_forward(self.model, self.probe)
+        left = self.probe.site("left_tcp")
+        orientation = Quaternion.from_rotation_matrix(left.xmat.reshape(3, 3))
+        targets = {"left": left.xpos.copy(), "right": target}
+        if self._body_kinematics is None:
+            self._body_kinematics = HomeKinematics(self.model, self.probe)
+        self.probe.qpos[self.qids] = self._body_kinematics.solve(
+            self.probe, targets, orientations={"left": orientation}
+        )
+
     def waypoint(
         self, phase: str, centre: NDArray[Any], opening: float, seconds: float
     ) -> TrayWaypoint:
         mujoco.mj_kinematics(self.model, self.probe)  # type: ignore[attr-defined]
         rotation = self.probe.body("base_link").xmat.reshape(3, 3).copy()
-        for side, sign in (("left", 1), ("right", -1)):
-            self.arm_pose(side, centre + rotation @ np.array([0, sign * TRAY_HANDLE_Y, 0]))
+        seed = self.probe.qpos.copy()
+        try:
+            for side, sign in (("left", 1), ("right", -1)):
+                self.arm_pose(side, centre + rotation @ np.array([0, sign * TRAY_HANDLE_Y, 0]))
+        except RuntimeError:
+            self.probe.qpos[:] = seed
+            self.body_pose(
+                centre + rotation @ np.array([0, TRAY_HANDLE_Y, 0]),
+                centre + rotation @ np.array([0, -TRAY_HANDLE_Y, 0]),
+            )
         self.probe.qpos[self.qids[-2:]] = opening
         return TrayWaypoint(phase, self.probe.qpos[self.qids].tolist(), seconds)
 
-    def _checked(self, points: list[TrayWaypoint], data: mujoco.MjData) -> list[TrayWaypoint]:
+    def _checked(
+        self,
+        points: list[TrayWaypoint],
+        data: mujoco.MjData,
+        *,
+        allow_tray_contact: bool = True,
+    ) -> list[TrayWaypoint]:
         planner = PlanarTransport(self.model, data, cargo_bodies=self.cargo_bodies)
         start = self.initial.copy()
         for point in points:
@@ -121,6 +176,14 @@ class TrayMotion:
             for t in np.linspace(0, 1, count + 1):
                 planner.probe.qpos[self.qids] = start + (goal - start) * t
                 mujoco.mj_forward(planner.model, planner.probe)
+                if not allow_tray_contact:
+                    robot = planner.robot_bodies - planner.cargo_ids - {planner.tray_id}
+                    for contact in planner.probe.contact:
+                        bodies = set(map(int, planner.model.geom_bodyid[contact.geom]))
+                        if contact.dist <= 0.015 and planner.tray_id in bodies and bodies & robot:
+                            raise RuntimeError(
+                                f"{point.phase} arm path contacts the supported tray"
+                            )
                 obstacles = planner.collisions(planner.probe, ignore_cargo=True)
                 if obstacles:
                     raise RuntimeError(f"{point.phase} arm path is obstructed: {obstacles}")
@@ -134,17 +197,15 @@ class TrayMotion:
         # Raise the parked left arm sideways before reaching across the table.
         # The complete joint interpolation is collision checked below.
         shoulder = self.qids[5]
-        self.probe.qpos[shoulder] = max(float(self.probe.qpos[shoulder]), 0.8)
+        if data.site("left_tcp").xpos[2] < grasp[2]:
+            self.probe.qpos[shoulder] = max(float(self.probe.qpos[shoulder]), 0.8)
         self.probe.qpos[self.qids[-2:]] = 0.05
         points = [
             TrayWaypoint("raise_hands", self.probe.qpos[self.qids].tolist(), 2.0),
             self.waypoint("approach_tray", above, 0.05, 1.5),
             self.waypoint("lower_to_handles", grasp, 0.05, 1.5),
             self.waypoint("grasp_handles", grasp, 0.009, 2.0),
-            *[
-                self.waypoint(f"lift_tray_{i}", grasp + np.array([0, 0, i * 0.015]), 0.009, 0.5)
-                for i in range(1, 11)
-            ],
+            self.waypoint("lift_tray", grasp + np.array([0, 0, 0.15]), 0.009, 3.0),
         ]
         return self._checked(points, data)
 
@@ -153,7 +214,14 @@ class TrayMotion:
         position = data.body("task_bin").xpos.copy()
         centre = (data.site("left_tcp").xpos + data.site("right_tcp").xpos) / 2
         offset = centre - position
-        above = np.array(target) + offset + [0, 0, 0.07]
+        above = np.array(target) + offset
+        # Preserve carrying height when it already clears the support. Raising
+        # another 7 cm at a high counter can exceed the bimanual workspace.
+        above[2] = max(float(centre[2]), float(above[2]) + 0.03)
+        if target[2] < position[2] - 0.10:
+            # Reach down and outward together for low supports. Extending at
+            # full carrying height first can lie outside the bimanual workspace.
+            above[2] = min(float(centre[2]), float(target[2] + offset[2]) + 0.15)
         resting = np.array(target) + offset - [0, 0, 0.005]
         points = []
         for phase, first, last, opening in (

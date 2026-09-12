@@ -36,6 +36,7 @@ from dimos.core.coordination.module_coordinator import (
     ModuleCoordinator,
     _check_requirements,
     _deploy_all_modules,
+    _get_transport_for,
     _materialize_transports,
     _verify_no_conflicts_with_existing,
     _verify_no_name_conflicts,
@@ -43,11 +44,11 @@ from dimos.core.coordination.module_coordinator import (
 )
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import IO, In, Out, Stream
 from dimos.core.transport import CloudflareTransport, PubSubTransport
-from dimos.core.transport_factory import transport_topic
+from dimos.core.transport_factory import make_transport, transport_topic
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -1192,3 +1193,14 @@ def test_io_port_autoconnects_and_flows_both_ways(wait_until) -> None:
         wait_until(lambda: "from_echo" in echo.seen(), timeout=10.0)
     finally:
         coordinator.stop()
+
+
+@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
+def test_absolute_remapping_matches_direct_adapter_topic(monkeypatch, backend):
+    monkeypatch.setattr(global_config, "transport", backend)
+    blueprint = autoconnect(SourceModule.blueprint()).remappings(
+        [(SourceModule, "color_image", "/base/cmd_vel")]
+    )
+    stream = _get_transport_for(blueprint, "/base/cmd_vel", Data1)
+    adapter = make_transport("/base/cmd_vel", Data1)
+    assert stream.topic == adapter.topic

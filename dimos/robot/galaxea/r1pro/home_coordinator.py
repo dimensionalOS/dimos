@@ -15,7 +15,9 @@
 """Coordinator setup that stays importable by the isolated policy runtime."""
 
 from pathlib import Path
+from typing import Any
 
+from dimos.control.hardware_interface import ConnectedTwistBase
 from dimos.control.path_following_coordinator import PathFollowingCoordinator
 from dimos.core.core import rpc
 from dimos.hardware.spec import JointLimits
@@ -38,3 +40,13 @@ class R1ProHomeCoordinator(PathFollowingCoordinator):
             velocity_max=[2.0] * 18 + [0.25, 0.25],
         )
         super().build()
+
+    @rpc
+    def base_connection_status(self) -> dict[str, Any]:
+        """Require actual adapter odometry rather than the coordinator's zero fallback."""
+        with self._hardware_lock:
+            base = self._hardware.get("r1pro_nav_base")
+            if not isinstance(base, ConnectedTwistBase):
+                return {"ready": False, "odometry": None}
+            pose = base.adapter.read_odometry()
+            return {"ready": pose is not None, "odometry": pose}
