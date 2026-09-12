@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -232,3 +234,32 @@ def test_combine_keeps_support_when_one_channel_is_empty() -> None:
     )
     got = combine(a, empty, weight=1.0)
     assert got.frames.tolist() == [3] and got.bins.tolist() == [2]
+
+
+def test_support_counts_viewpoints_not_records() -> None:
+    """Three segments of one photograph are one viewpoint, not three.
+
+    The segment channel mints a pseudo-keyframe per segment RECORD, so pooling by record id
+    made a single camera at a single moment support a voxel three times over — and
+    `min_frames` is a filter that exists to ask whether several viewpoints agree. This is
+    the fourth place in this package where a record id stood in for a thing in the world.
+    """
+    import numpy as np
+
+    from dimos.teleop.memory_world.hyperspace_fast import Rasterized, pool
+
+    config = SimpleNamespace(lse_temperature=0.02, yaw_hot_threshold=0.0, yaw_bins=8)
+    one_voxel = np.zeros((4, 3), dtype=np.int64)
+    evidence = Rasterized(
+        index=one_voxel,
+        # One patch record and three segment records, all of one photograph.
+        frame_id=np.array([7, -1, -2, -3], dtype=np.int64),
+        score=np.array([0.5, 0.5, 0.5, 0.5]),
+        yaw_bin=np.zeros(4, dtype=np.int64),
+        viewpoint=np.array([3, 3, 3, 3], dtype=np.int64),
+    )
+    assert pool(evidence, config).frames.tolist() == [1]
+
+    # And two genuinely different moments still count as two.
+    evidence.viewpoint = np.array([3, 3, 3, 4], dtype=np.int64)
+    assert pool(evidence, config).frames.tolist() == [2]

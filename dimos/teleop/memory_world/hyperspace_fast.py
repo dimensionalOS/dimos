@@ -73,6 +73,18 @@ class Frames:
     # Extra per-frame facts the viewer wants back (camera frame, stamp).
     camera_frame: list[str]
     ts: NDArray[np.float64]
+    # Which VIEWPOINT each frame is: a camera at a moment. `ids` is a record id, and the
+    # segment channel mints one per segment, so three segments of one photograph are three
+    # `ids` and one viewpoint. Support counts viewpoints; anything that counts ids counts
+    # the same photograph several times. Shared across channels, so a patch frame and a
+    # segment frame of the same picture get the same number.
+    # Derived when it is not given, so no caller can build a Frames whose viewpoints
+    # disagree with its own stamps.
+    viewpoint: NDArray[np.int64] | None = None
+
+    def __post_init__(self) -> None:
+        if self.viewpoint is None:
+            self.viewpoint = viewpoint_ids(self.camera_frame, self.ts)
 
     def __len__(self) -> int:
         return len(self.ids)
@@ -96,9 +108,14 @@ class Rasterized:
     """Voxel evidence: one row per (voxel, patch) the pyramid covered."""
 
     index: NDArray[np.int64]  # (M, 3)
-    frame_id: NDArray[np.int64]
+    frame_id: NDArray[np.int64]  # the RECORD id, as Hyperspace's reference emits
     score: NDArray[np.float64]
     yaw_bin: NDArray[np.int64]
+    # Which viewpoint that record came from. Separate from frame_id because the two differ
+    # for segments -- three segments of one photograph are three records and one viewpoint
+    # -- and because frame_id has to stay the record id for the reference comparison to
+    # mean anything. Support counts THIS.
+    viewpoint: NDArray[np.int64] | None = None
 
 
 @dataclass
@@ -266,6 +283,7 @@ def rasterize(
         frame_id=frames.ids[cand_frame[hit]],
         score=score[p_of[hit]],
         yaw_bin=yaw_bin[hit],
+        viewpoint=frames.viewpoint[cand_frame[hit]],
     )
 
 
@@ -279,10 +297,12 @@ def pool(evidence: Rasterized, config: Any) -> Pooled:
         )
     keys = pack_keys(evidence.index)
     # Best entry per (voxel, frame): sort by voxel, frame, score descending; keep the first of each run.
-    order = np.lexsort((-evidence.score, evidence.frame_id, keys))
+    # By VIEWPOINT, not by record: see Rasterized.viewpoint.
+    seen_from = evidence.viewpoint if evidence.viewpoint is not None else evidence.frame_id
+    order = np.lexsort((-evidence.score, seen_from, keys))
     keys, frame, score, yaw = (
         keys[order],
-        evidence.frame_id[order],
+        seen_from[order],
         evidence.score[order],
         evidence.yaw_bin[order],
     )
@@ -335,12 +355,18 @@ def combine(patch_map: Pooled, segment_map: Pooled, weight: float) -> Pooled:
         # A channel without support counts (an empty one) contributes nothing.
         patch_map = _with_support(patch_map)
         segment_map = _with_support(segment_map)
-        # Frames add up across the channels; the bin count is the larger one (as patches.combine).
-        frames = np.bincount(
-            inverse,
-            weights=np.concatenate([patch_map.frames, segment_map.frames]),
-            minlength=len(unique),
-        ).astype(np.int64)
+        # The LARGER of the two channels, not their sum. Both channels are derived from
+        # the same photographs, so a voxel seen by both is usually seen from the same
+        # viewpoints twice -- and adding then counts one camera at one moment as two.
+        # max is a lower bound on the true union: it can undercount a voxel whose channels
+        # saw it from genuinely different frames, which drops a voxel min_frames would have
+        # kept, where the sum ADMITS voxels the filter exists to remove. Exact would mean
+        # carrying the viewpoint sets through combine, which nothing here needs today --
+        # this deployment runs with no segments at all.
+        frames = np.zeros(len(unique), dtype=np.int64)
+        np.maximum.at(
+            frames, inverse, np.concatenate([patch_map.frames, segment_map.frames]).astype(np.int64)
+        )
         bins = np.zeros(len(unique), dtype=np.int64)
         np.maximum.at(bins, inverse, np.concatenate([patch_map.bins, segment_map.bins]))
     return Pooled(unpack_keys(unique), summed, frames, bins)
@@ -686,6 +712,20 @@ def structural_mask(patches: PatchBank, segments: SegmentBank, config: Any) -> N
     return mask
 
 
+_VIEWPOINTS: dict[tuple[str, float], int] = {}
+
+
+def viewpoint_ids(camera_frames: list[str], stamps: NDArray[np.float64]) -> NDArray[np.int64]:
+    """One number per (camera, moment), stable within the process and across channels."""
+    return np.asarray(
+        [
+            _VIEWPOINTS.setdefault((frame, float(ts)), len(_VIEWPOINTS))
+            for frame, ts in zip(camera_frames, stamps, strict=True)
+        ],
+        dtype=np.int64,
+    )
+
+
 def _frames_of(rows: list[tuple[int, NDArray[np.float64], Any, int, int, str, float]]) -> Frames:
     if not rows:
         z = np.zeros(0)
@@ -702,6 +742,7 @@ def _frames_of(rows: list[tuple[int, NDArray[np.float64], Any, int, int, str, fl
             np.zeros(0, np.int64),
             [],
             z,
+            np.zeros(0, np.int64),
         )
     return Frames(
         ids=np.asarray([r[0] for r in rows], np.int64),
@@ -716,6 +757,7 @@ def _frames_of(rows: list[tuple[int, NDArray[np.float64], Any, int, int, str, fl
         cols=np.asarray([r[4] for r in rows], np.int64),
         camera_frame=[r[5] for r in rows],
         ts=np.asarray([r[6] for r in rows], np.float64),
+        viewpoint=viewpoint_ids([r[5] for r in rows], np.asarray([r[6] for r in rows], np.float64)),
     )
 
 

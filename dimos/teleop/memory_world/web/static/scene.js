@@ -444,7 +444,19 @@ export class WorldScene {
         if (event.code === 'KeyM') this.toggleHud();
         if (event.code === 'KeyO') this.setOrbit(!this._orbit.active);
         if (event.code === 'KeyP' && this._queryImages.length) {
-            this.viewFrom((this._queryImageCursor + 1) % this._queryImages.length);
+            // Only this place's photographs. Stepping past them moved the camera to
+            // another cluster's picture while the filter still named this one, so the
+            // visibility rule hid both and the bar described somewhere you had left.
+            const here = this._queryImages
+                .map((header, index) => [header, index])
+                .filter(([header]) => header && (this.clusterFilter < 0
+                    || header.cluster === undefined
+                    || header.cluster === this.clusterFilter))
+                .map(([, index]) => index);
+            if (here.length) {
+                const at = here.indexOf(this._queryImageCursor);
+                this.viewFrom(here[(at + 1) % here.length]);
+            }
         }
         else if (event.code === 'KeyI') this.toggleImages();
         else if (event.code === 'KeyV') this.toggleCloud();
@@ -1178,6 +1190,10 @@ export class WorldScene {
      */
     _applyQueryImageVisibility() {
         const photos = this._imageQuadGroup.visible;
+        // The corridor exists to show a photograph. With Photos off there is none, so the
+        // cut is a hole in the map with nothing behind it -- and turning them off is one
+        // of the ways to arrive there, not just arriving with them already off.
+        if (!photos) this.setSightLine(null);
         const cursor = this._queryImageCursor;
         const filter = this.clusterFilter;
         this._queryImageMeshes.forEach((mesh, i) => {
@@ -1444,6 +1460,12 @@ export class WorldScene {
         this._activeQueryId = null;
         this.setSightLine(null);
         this._answerPanel.visible = false;
+        // The painted voxels and the selection are part of the answer too: left behind,
+        // J still flew to a place that had been closed, and the voxels stayed lit.
+        this._highlightVoxels([]);
+        this._lastResultPoints = [];
+        this._highlightedVoxels = [];
+        this._selectedImageIds.clear();   // a Set, not a list
     }
 
     _clearHighlightGroup() {

@@ -611,9 +611,10 @@ async function ask(text) {
     if (!session) return null;
     askBtn.disabled = true;
     // The previous answer stops being the answer the moment another question is asked --
-    // not when a new result arrives, because a question that FAILS never brings one, and
-    // its predecessor's corridor stayed cut through the map.
-    if (scene && scene.clearAnswer) scene.clearAnswer();
+    // not when a new result arrives, because a question that FAILS never brings one and
+    // its predecessor stayed on screen. Through the nav, which owns the heat map, the
+    // pyramids and the route as well as the scene: clearing only the scene left those.
+    if (results) results.clear();
     setStatus(`Asking: ${text}`);
     diag('ask', { text });
     try {

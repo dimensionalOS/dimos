@@ -95,6 +95,10 @@ export class ResultsNav {
             // distance from a blob, facing whichever way, and you had to work out what
             // you were looking at; from the camera's own pose the answer is just there.
             viewpoint = this._firstEvidence(index);
+            // A corridor is the way to SEE a photograph. With Photos off there is nothing
+            // to see past, so cutting one takes geometry out of the map and shows nothing
+            // in its place -- which is what the tour's Places station did.
+            if (viewpoint && this.scene._photosPinnedOff) viewpoint = null;
             if (viewpoint) {
                 this.flight.lookAt(viewpoint.position, {
                     distance: 0, yaw: viewpoint.yaw, pitch: viewpoint.pitch,
