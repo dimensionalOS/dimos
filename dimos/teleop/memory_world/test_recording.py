@@ -1064,3 +1064,44 @@ def test_an_empty_depth_camera_info_does_not_outrank_a_populated_one(tmp_path: P
             bare.stop()
     finally:
         store.stop()
+
+
+def test_the_ingest_preflight_refuses_a_half_done_rebuild_before_it_deletes(tmp_path: Path) -> None:
+    """An empty stream is not the only way the ingest refuses AFTER deleting the index.
+
+    `_ingest` calls `build_tf_tree`, which refuses a staged rebuild -- and a killed
+    calibration leaves exactly that, `tf` and `tf__rebuilt` both non-empty. The preflight
+    guard added a round earlier checked five stream NAMES for emptiness and missed this,
+    so the index was deleted and the run then died anyway. Rebuilding a Hyperspace index
+    is a long GPU run, so that is real loss, and it is the ninth time in this loop a fix
+    reached one of its cases and not a sibling.
+
+    This is the guard as the ingest calls it, on the artifact the calibration leaves.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import (
+        STAGED_SUFFIX,
+        refuse_if_a_rebuild_is_half_done,
+    )
+
+    store = SqliteStore(path=str(tmp_path / "r.db"))
+    store.start()
+    try:
+        for name in ("tf", "tf" + STAGED_SUFFIX):
+            stream = store.stream(name, TFMessage)
+            stream.append(TFMessage(_edge("odom", "base", 1.0, 0.0)), ts=0.0)
+
+        with pytest.raises(SystemExit) as refused:
+            refuse_if_a_rebuild_is_half_done(store, "tf")
+        assert "tf" in str(refused.value)
+
+        # And with no staged copy it says nothing, so the ordinary ingest is not blocked.
+        plain = SqliteStore(path=str(tmp_path / "plain.db"))
+        plain.start()
+        try:
+            plain.stream("tf", TFMessage).append(TFMessage(_edge("odom", "base", 1.0, 0.0)), ts=0.0)
+            refuse_if_a_rebuild_is_half_done(plain, "tf")
+        finally:
+            plain.stop()
+    finally:
+        store.stop()

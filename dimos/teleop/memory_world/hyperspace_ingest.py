@@ -51,7 +51,11 @@ from dimos.teleop.memory_world.hyperspace_search import (
     PATCH_STREAM,
     memory_db_for,
 )
-from dimos.teleop.memory_world.recording import depth_info_stream_for, fold_static_tf
+from dimos.teleop.memory_world.recording import (
+    depth_info_stream_for,
+    fold_static_tf,
+    refuse_if_a_rebuild_is_half_done,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +214,13 @@ def ingest_recording(
                 ):
                     if next(iter(store.streams[name].order_by("ts")), None) is None:
                         raise SystemExit(f"stream {name!r} is empty")
+                # An empty stream is not the only way _ingest refuses AFTER the deletes:
+                # build_tf_tree refuses a half-done rebuild, and a killed calibration
+                # leaves exactly that (`tf` and `tf__rebuilt` both non-empty). Five names
+                # checked and this one missed was the same stop-short again.
+                refuse_if_a_rebuild_is_half_done(store, detected["tf"])
+                if detected.get("tf_static"):
+                    refuse_if_a_rebuild_is_half_done(store, detected["tf_static"])
                 # Only now, with everything that can fail before a single embedding already
                 # done: a bad stream name or an unreadable model must not cost the index
                 # that is already there, nor rewrite the recording's tf.

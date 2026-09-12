@@ -527,9 +527,13 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             ("lidar", "lidar_stream_name"),
         ):
             configured = getattr(self.config, setting)
-            # `usable`, not merely named: detect_streams has already refused an empty one,
-            # and taking it back from the raw list threw that correction away.
-            if (configured and configured in usable) or detected[role] is None:
+            if configured and configured not in usable:
+                # Dropped, not just outranked: kept when detection had no replacement, an
+                # empty `tf` became a non-None zero-frame tree. `""` is what the
+                # missing-stream fallbacks look for.
+                setattr(self.config, setting, "")
+                configured = ""
+            if configured or detected[role] is None:
                 continue
             chosen = detected[role]
             if role == "lidar" and len(detected["lidar_candidates"]) > 1:
@@ -1554,19 +1558,15 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                     "%s is still running; its stores are left to the process exit", busy[0].name
                 )
             else:
-                # ALL of the teardown is under the store lock, not just the store's own
-                # close. The evidence, query and adopt threads are not joined here, and
-                # each holds this lock while it reads: taking the index and the model out
-                # from under one leaves it reading a dismantled index, and closing the
-                # store under one gives a page of sqlite ProgrammingError on every
-                # `memworld --stop` issued after a question.
-                #
-                # Store then index, the order every reader uses. With a deadline on the
-                # store, because an evidence read decodes up to 64 frames and --stop must
-                # not wait on it; past the deadline NOTHING is torn down and the process
-                # exit does all of it, which is what the busy branch above already decides
-                # for its own threads. Tearing half of it down and leaving the rest is the
-                # one outcome worse than either.
+                # ALL of the teardown is under the store lock, store then index, the
+                # order every reader uses. The evidence, query and adopt threads are not
+                # joined here and each holds it while reading: dismantle the index under
+                # one and it reads a dismantled index; close the store under one and every
+                # `memworld --stop` after a question prints a page of ProgrammingError.
+                # The deadline is because an evidence read decodes many frames and --stop
+                # must not wait; past it NOTHING is torn down and the process exit does it
+                # all, as the busy branch above already decides for its threads. Tearing
+                # half of it down is the one outcome worse than either.
                 if self._store_lock.acquire(timeout=5):
                     try:
                         with self._index_lock:
