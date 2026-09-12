@@ -132,7 +132,7 @@ def decode_compressed_image(buf: bytes) -> Image:
     return image_from_encoded(bytes(w.data), w.format, w.header.frame_id, ros._ts(w.header))
 
 
-def image_from_encoded(data: bytes, fmt: str, frame_id: str, ts: float) -> Image:
+def image_from_encoded(data: bytes, fmt: ImageFormat | str, frame_id: str, ts: float) -> Image:
     """jpeg, png or webp bytes decoded to pixels.
 
     The Pi recorder stores colour and infrared this way; depth stays raw. The

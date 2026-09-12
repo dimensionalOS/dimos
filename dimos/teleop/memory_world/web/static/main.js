@@ -1018,7 +1018,7 @@ async function disconnect() {
     connectBtn.classList.remove('hidden');
     connectBtn.disabled = false;
     disconnectBtn.classList.add('hidden');
-    micBtn.classList.add('hidden');
+    applyAskAvailability();  // ws is null by now: the ask box goes dead with the mic
     embedBtn.classList.add('hidden');
     prepareBtn.classList.add('hidden');
     orbitBtn.classList.add('hidden');
