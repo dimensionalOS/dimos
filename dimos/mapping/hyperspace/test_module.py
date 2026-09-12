@@ -504,10 +504,44 @@ def test_member_specs_and_tags() -> None:
     assert parse_member("google/siglip2-base-patch16-naflex@576") == (
         "google/siglip2-base-patch16-naflex",
         576,
+        None,
     )
     assert parse_member("/models/siglip2-so400m-patch16-384") == (
         "/models/siglip2-so400m-patch16-384",
         None,
+        None,
+    )
+    assert parse_member("google/siglip2-base-patch16-224#2x3") == (
+        "google/siglip2-base-patch16-224",
+        None,
+        (2, 3),
     )
     assert member_tag("google/siglip2-base-patch16-naflex@576") == "base-patch16-naflex-576"
     assert member_tag("/models/siglip2-so400m-patch16-384") == "so400m-patch16-384"
+    assert member_tag("google/siglip2-base-patch16-224#2x3") == "base-patch16-224-2x3"
+
+
+def test_tiles_cover_the_frame_exactly_and_stitch_back() -> None:
+    """A tiled member must rebuild the frame's geometry with no patch dropped,
+    duplicated or averaged -- the stitched grid is the tiles laid side by side."""
+    import numpy as np
+    from PIL import Image as PILImage
+
+    from dimos.mapping.hyperspace.embedder import stitch_tiles, tile_image
+
+    frame = PILImage.fromarray(np.arange(480 * 848 * 3, dtype=np.uint8).reshape(480, 848, 3))
+    crops = tile_image(frame, 2, 3)
+    assert len(crops) == 6
+    assert [c.size for c in crops] == [(282, 240), (283, 240), (283, 240)] * 2
+    assert sum(w * h for w, h in (c.size for c in crops)) == 848 * 480  # exact cover
+
+    side, dim = 14, 4
+    # Each tile carries its own index, so a mis-stitch shows up as a wrong block.
+    grids = [np.full((side * side, dim), i, np.float32) for i in range(6)]
+    stitched = stitch_tiles(grids, 2, 3, side)
+    assert stitched.shape == (2 * side * 3 * side, dim)
+    block = stitched.reshape(2 * side, 3 * side, dim)
+    for index in range(6):
+        r, c = divmod(index, 3)
+        tile = block[r * side : (r + 1) * side, c * side : (c + 1) * side]
+        assert (tile == index).all(), f"tile {index} landed in the wrong place"
