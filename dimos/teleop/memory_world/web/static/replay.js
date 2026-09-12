@@ -450,11 +450,26 @@ export class ReplayController {
         let lo = 0, hi = frames.length;
         while (lo < hi) { const mid = (lo + hi) >> 1; if (frames[mid] < ts) lo = mid + 1; else hi = mid; }
         const candidates = [frames[lo - 1], frames[lo]].filter((t) => t !== undefined);
-        if (!candidates.length) return;
-        const nearest = candidates.reduce((a, b) => (Math.abs(b - ts) < Math.abs(a - ts) ? b : a));
-        if (Math.abs(nearest - ts) > FRAME_TOLERANCE_S) return;
+        const nearest = candidates.length
+            ? candidates.reduce((a, b) => (Math.abs(b - ts) < Math.abs(a - ts) ? b : a))
+            : null;
+        if (nearest === null || Math.abs(nearest - ts) > FRAME_TOLERANCE_S) {
+            this._forgetFrame();
+            return;
+        }
         this._frameWanted = nearest;   // also when it is already shown: a download in flight must not replace it
         if (nearest !== this._frameShown) this._pumpFrame();
+    }
+
+    /** Do what FRAME_TOLERANCE_S says: show NONE. Returning and leaving the last photo
+     *  on screen is how scrubbing into a gap in the camera stream -- the robot turned the
+     *  camera off, or the stream simply stops before the lidar does -- keeps showing a
+     *  picture of somewhere else for the rest of the gap. */
+    _forgetFrame() {
+        this._frameWanted = null;
+        if (this._frameShown === null) return;
+        this._frameShown = null;
+        this.scene.clearCameraFrame();
     }
 
     async _pumpFrame() {

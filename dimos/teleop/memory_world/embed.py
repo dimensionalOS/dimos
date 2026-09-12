@@ -142,6 +142,12 @@ class EmbeddingJob:
                         last = line[-160:]
                         self._set("running", last)
                         logger.info("%s: %s", self.name, line)
+            # Whatever is left when the pipe closes: a process that dies mid-line ends
+            # without a newline, and that unterminated last line is the one saying why.
+            tail = pending.strip()
+            if tail:
+                self._set("running", tail[-160:])
+                logger.info("%s: %s", self.name, tail)
             code = process.wait()
             if code != 0:
                 raise RuntimeError(f"{self.name} exited with {code}: {last}")

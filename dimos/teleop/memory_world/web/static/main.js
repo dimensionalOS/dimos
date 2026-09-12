@@ -351,7 +351,7 @@ function startPerfReadout() {
         perfEl.textContent = [
             `${s.fps.toFixed(1)} fps  (${s.median_ms.toFixed(1)} ms med, ${s.p95_ms.toFixed(1)} p95)`,
             `${s.draw_calls} draws  ${(s.triangles / 1000).toFixed(0)}k tris`,
-            `${s.textures} textures  ${s.live_quads} quads`,
+            `${s.textures} textures  ${s.live_quads} quads${s.images_visible ? '' : ' (resident, hidden)'}`,
             `quality ${s.quality}${s.quality_auto ? ' auto' : ' pinned'}  ${(s.voxels_drawn / 1000).toFixed(0)}k/${(s.voxels_total / 1000).toFixed(0)}k voxels`,
             `images ${s.images_visible ? 'on' : 'off'}  cloud ${s.cloud_visible ? 'on' : 'off'}`,
         ].join('\n');
@@ -686,12 +686,26 @@ function applySearchStatus(status) {
         setStatus(`Prepare search failed: ${searchStatus.prepare.progress}`);
     }
     if (!failed) lastPrepareFailure = null;
-    askInput.disabled = !connected || !(ready || indexStatus.present);
-    askInput.placeholder = ready ? 'Ask the recording, e.g. where did I see a chair'
-        : (indexStatus.present ? 'Ask (SigLIP frame search)' : 'Search not ready — see the menu');
     if (connected && preparing && !preparePoll) preparePoll = setInterval(pollSearchStatus, 3000);
     if (!preparing && preparePoll) { clearInterval(preparePoll); preparePoll = null; }
-    micBtn.classList.toggle('hidden', !connected || !(ready || indexStatus.present));
+    applyAskAvailability();
+}
+
+/** Whether you can ask at all, which depends on BOTH statuses, so both handlers end here.
+ *
+ *  Hyperspace being ready is one way; a SigLIP frame index present is the other. Only the
+ *  search handler used to set this, so finishing "Add embeddings" -- which arrives as an
+ *  index status and nothing else -- showed the microphone and left the ask box disabled
+ *  for the rest of the session.
+ */
+function applyAskAvailability() {
+    const connected = !!ws;
+    const ready = !!searchStatus.ready;
+    const canAsk = ready || !!indexStatus.present;
+    askInput.disabled = !connected || !canAsk;
+    askInput.placeholder = ready ? 'Ask the recording, e.g. where did I see a chair'
+        : (indexStatus.present ? 'Ask (SigLIP frame search)' : 'Search not ready — see the menu');
+    micBtn.classList.toggle('hidden', !connected || !canAsk);
 }
 
 async function pollSearchStatus() {
@@ -859,7 +873,7 @@ function applyIndexStatus(status) {
     indexStatus = status || indexStatus;
     const connected = !!ws;
     const running = indexStatus.embedding === 'running';
-    micBtn.classList.toggle('hidden', !connected || !(indexStatus.present || searchStatus.ready));
+    applyAskAvailability();
     embedBtn.classList.toggle('hidden', !connected || indexStatus.present || searchStatus.ready);
     embedBtn.disabled = running;
     if (running) {
@@ -931,8 +945,7 @@ window.addEventListener('keydown', (event) => {
     if (event.code === 'KeyO' && scene) setTimeout(() => setOrbit(scene.isOrbiting()), 0);
 });
 document.getElementById('cameraBtn').addEventListener('click', () => {
-    if (!scene || !scene._queryImages.length) return;
-    scene.viewFrom((scene._queryImageCursor + 1) % scene._queryImages.length);
+    if (scene) scene.stepQueryImage();  // the same filtered step the P key takes
 });
 
 micBtn.addEventListener('pointerdown', startRecording);

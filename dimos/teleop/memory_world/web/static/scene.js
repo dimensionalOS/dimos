@@ -5,6 +5,7 @@
 // Locomotion moves `_worldGroup`, not the camera (WebXR drives that).
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
+import { DESKTOP_PITCH_LIMIT, installTouch } from './touch.js';
 import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms, viewportHeight, viewportHeightPx } from '/static_mw/voxel_sprites.js';
 import { ANSWER_PANEL_W, HUD_PANEL_SIZE, placeHud } from '/static_mw/hud.js';
 import { addQueryImage, sightLineFor } from '/static_mw/evidence.js';
@@ -19,11 +20,8 @@ const MIN_SCALE = 0.05;
 const MAX_SCALE = 10.0;
 const EYE_HEIGHT_M = 1.6;
 const DESKTOP_LOOK_SENSITIVITY = 0.0022;      // radians per pixel of mouse travel
-const DESKTOP_PITCH_LIMIT = 1.45;             // just under 90deg, avoids gimbal flip
 const DESKTOP_SPRINT_MULTIPLIER = 3.0;
 const DESKTOP_MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE']);
-const TOUCH_LOOK_SENSITIVITY = 0.006;         // radians per CSS pixel of one-finger drag
-const TOUCH_WALK_GAIN = 40;                   // two-finger drag: a screen-height sweep = full stick x40
 const HUD_MARKER_RADIUS = 0.008;
 const ANSWER_PANEL_H = 0.155;
 const CAMERA_PANEL_W = 0.40;          // replay camera frame, 16:9, above the answer
@@ -402,7 +400,7 @@ export class WorldScene {
         window.addEventListener('keydown', (event) => this._onDesktopKey(event, true), { signal });
         window.addEventListener('keyup', (event) => this._onDesktopKey(event, false), { signal });
         window.addEventListener('resize', () => this._resizeDesktopCamera(), { signal });
-        this._installTouch(dom);
+        installTouch(this, dom);
 
         this.three.setAnimationLoop((time) => {
             this._applyDesktopKeys();
@@ -444,21 +442,7 @@ export class WorldScene {
         }
         if (event.code === 'KeyM') this.toggleHud();
         if (event.code === 'KeyO') this.setOrbit(!this._orbit.active);
-        if (event.code === 'KeyP' && this._queryImages.length) {
-            // Only this place's photographs. Stepping past them moved the camera to
-            // another cluster's picture while the filter still named this one, so the
-            // visibility rule hid both and the bar described somewhere you had left.
-            const here = this._queryImages
-                .map((header, index) => [header, index])
-                .filter(([header]) => header && (this.clusterFilter < 0
-                    || header.cluster === undefined
-                    || header.cluster === this.clusterFilter))
-                .map(([, index]) => index);
-            if (here.length) {
-                const at = here.indexOf(this._queryImageCursor);
-                this.viewFrom(here[(at + 1) % here.length]);
-            }
-        }
+        if (event.code === 'KeyP') this.stepQueryImage();
         else if (event.code === 'KeyI') this.toggleImages();
         else if (event.code === 'KeyV') this.toggleCloud();
     }
@@ -523,49 +507,6 @@ export class WorldScene {
     }
 
     /** Phone controls: one finger looks, two fingers walk (drag) and scale (pinch). */
-    _installTouch(dom) {
-        dom.style.touchAction = 'none';
-        this._touchStick = { x: 0, y: 0 };
-        let last = null;   // {x, y} of one finger, or {x, y, spread} of two
-        const centre = (touches) => {
-            const points = Array.from(touches);
-            const x = points.reduce((sum, t) => sum + t.clientX, 0) / points.length;
-            const y = points.reduce((sum, t) => sum + t.clientY, 0) / points.length;
-            const spread = points.length > 1
-                ? Math.hypot(points[0].clientX - points[1].clientX, points[0].clientY - points[1].clientY)
-                : 0;
-            return { x, y, spread, count: points.length };
-        };
-        const begin = (event) => { last = centre(event.touches); };
-        dom.addEventListener('touchstart', (event) => { event.preventDefault(); begin(event); }, { passive: false });
-        dom.addEventListener('touchmove', (event) => {
-            event.preventDefault();
-            const now = centre(event.touches);
-            if (!last || last.count !== now.count) { last = now; return; }
-            if (now.count === 1) {
-                this._desktopYaw -= (now.x - last.x) * TOUCH_LOOK_SENSITIVITY;
-                this._desktopPitch -= (now.y - last.y) * TOUCH_LOOK_SENSITIVITY;
-                this._desktopPitch = Math.max(-DESKTOP_PITCH_LIMIT, Math.min(DESKTOP_PITCH_LIMIT, this._desktopPitch));
-                this.camera.rotation.set(this._desktopPitch, this._desktopYaw, 0);
-            } else {
-                // Two fingers: drag walks (up = forward), pinch scales the world.
-                const height = dom.clientHeight || 1;
-                this._touchStick = {
-                    x: Math.max(-1, Math.min(1, (now.x - last.x) / height * TOUCH_WALK_GAIN)),
-                    y: Math.max(-1, Math.min(1, (now.y - last.y) / height * TOUCH_WALK_GAIN)),
-                };
-                if (last.spread > 0 && now.spread > 0) this.applyScale({ factor: now.spread / last.spread });
-            }
-            last = now;
-        }, { passive: false });
-        const end = (event) => {
-            this._touchStick = { x: 0, y: 0 };
-            last = event.touches.length ? centre(event.touches) : null;
-        };
-        dom.addEventListener('touchend', end);
-        dom.addEventListener('touchcancel', end);
-    }
-
     _tick(timeMs) {
         viewportHeight.value = viewportHeightPx(this.three);
         const frameMs = this._lastTickMs ? timeMs - this._lastTickMs : 0;
@@ -651,6 +592,24 @@ export class WorldScene {
             this._cameraFrustum.userData.posed = true;
             this._cameraFrustum.visible = this._replayGroup.visible;
         }
+    }
+
+    /** Show no photograph at all: the scrubber is at a moment the camera did not cover.
+     *
+     *  FRAME_TOLERANCE_S in replay.js says "no camera frame closer than this: show none",
+     *  and leaving the previous one up instead shows a picture of somewhere else, posed
+     *  where that other place was, against the voxels of where you actually are.
+     */
+    clearCameraFrame() {
+        const material = this._cameraPanel.material;
+        if (material.map) {
+            material.map.dispose();
+            material.map = null;
+            material.needsUpdate = true;
+        }
+        this._cameraPanel.visible = false;
+        this._cameraFrustum.visible = false;
+        this._cameraFrustum.userData.posed = false;
     }
 
     _worldPosToRobotXY(worldPos) {
@@ -1422,6 +1381,27 @@ export class WorldScene {
     /** Hang each photograph behind an answer where its camera stood (evidence.js). */
     addQueryImage(header, jpegArrayBuffer) {
         addQueryImage(this, header, jpegArrayBuffer);
+    }
+
+    /** Step to the next photograph OF THE PLACE NOW SHOWN, and say whether it moved.
+     *
+     *  The filter is the point: stepping through every frame of the answer moved the
+     *  camera to another cluster's picture while the filter still named this one, so
+     *  the visibility rule hid both and the bar described somewhere you had left. Both
+     *  the P key and the Camera button come through here, because the button used to
+     *  step the unfiltered list and land you at a pose with every photo hidden.
+     */
+    stepQueryImage() {
+        if (!this._queryImages.length) return false;
+        const here = this._queryImages
+            .map((header, index) => [header, index])
+            .filter(([header]) => header && (this.clusterFilter < 0
+                || header.cluster === undefined
+                || header.cluster === this.clusterFilter))
+            .map(([, index]) => index);
+        if (!here.length) return false;
+        const at = here.indexOf(this._queryImageCursor);
+        return this.viewFrom(here[(at + 1) % here.length]);
     }
 
     /** Stand where the camera behind answer *index* stood and look the way it
