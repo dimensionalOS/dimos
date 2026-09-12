@@ -82,6 +82,11 @@ SCORE_CUTOFF = 0.3
 CLUSTER_GAP_VOXELS = 2
 MIN_CLUSTER_VOXELS = 4
 MAX_CLUSTERS = 12
+# How many places are clustered before the viewpoint ranking picks the MAX_CLUSTERS that
+# survive. Capping at MAX_CLUSTERS while clustering means capping by SCORE, and the place
+# seen from twenty viewpoints is then thrown away before the ranking it would have won ever
+# runs. Evidence is gathered for the whole pool, which is the cost of the wider net.
+CLUSTER_POOL = MAX_CLUSTERS * 3
 # A cluster whose summed score is under this fraction of the best is dropped.
 MIN_CLUSTER_FRACTION = 0.05
 EVIDENCE_PER_CLUSTER = 8  # distinct PICTURES shown per place, not distinct records
@@ -312,9 +317,16 @@ def assign_points(
 
 
 def _by_viewpoints(
-    clusters: list[Cluster], owner: NDArray[np.int64], cluster_of: NDArray[np.int64]
+    clusters: list[Cluster],
+    owner: NDArray[np.int64],
+    cluster_of: NDArray[np.int64],
+    limit: int = MAX_CLUSTERS,
 ) -> tuple[list[Cluster], NDArray[np.int64], NDArray[np.int64]]:
-    """Re-rank the clusters by evidence count, and renumber everything that points at them.
+    """Rank the clusters by viewpoints, keep the best *limit*, and renumber what points at them.
+
+    The cut is made HERE and not while clustering, because a cut made there is made by
+    score: a place seen from twenty viewpoints, scoring less than twelve one-view blobs,
+    was dropped before this ranking ever saw it.
 
     Ranked on `views`, not on `len(evidence)`: evidence is capped at EVIDENCE_PER_CLUSTER,
     so ranking by it ties every cluster seen from that many places or more -- which is
@@ -326,6 +338,7 @@ def _by_viewpoints(
     rewriting all three together or the answer comes apart.
     """
     order = sorted(range(len(clusters)), key=lambda i: (-clusters[i].views, -clusters[i].score))
+    order = order[:limit]
     renumbered = np.full(len(clusters) + 1, -1, dtype=np.int64)  # -1 for "no cluster"
     for rank, old in enumerate(order):
         renumbered[old] = rank
@@ -564,7 +577,9 @@ class HyperspaceSearch:
         if refined is not None:
             indices, scores, clusters, cluster_of = refined
         else:
-            clusters, cluster_of = cluster_voxels(indices, scores, self.voxel_size)
+            clusters, cluster_of = cluster_voxels(
+                indices, scores, self.voxel_size, max_clusters=CLUSTER_POOL
+            )
         centres = ((indices + 0.5) * self.voxel_size).astype(np.float32)
 
         points = np.concatenate([result.patch_points, result.segment_points]).reshape(-1, 3)
@@ -671,7 +686,7 @@ class HyperspaceSearch:
             return None
         # Best first, and no more places than the viewer steps through (a broad
         # question in a shop can return 70+ blobs; the rest stay as dim heat).
-        ranked = sorted(refined.clusters, key=lambda c: c.rank)[:MAX_CLUSTERS]
+        ranked = sorted(refined.clusters, key=lambda c: c.rank)[:CLUSTER_POOL]
         rank_to_index = {c.rank: i for i, c in enumerate(ranked)}
         score_of = dict(refined.voxels)
         out_index = np.asarray([ijk for ijk, _ in refined.voxels], dtype=np.int64).reshape(-1, 3)

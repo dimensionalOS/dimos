@@ -1425,6 +1425,23 @@ export class WorldScene {
         this._highlightGroup.add(new THREE.Mesh(geometry, material));
     }
 
+    /** Take the current answer off the world: its highlights, its photographs, the
+     *  corridor carved toward one of them, and the panel that says what it was.
+     *
+     *  One place, because Close used to reset the nav bar and leave 269 objects in the
+     *  scene, and a question that failed left the corridor cut. Every caller wants all
+     *  of it; none of them wants half. */
+    clearAnswer() {
+        this._clearHighlightGroup();
+        this._queryImages = [];
+        this._queryImageMeshes = [];
+        this._queryMatchMarks = [];
+        this._queryImageCursor = -1;
+        this._activeQueryId = null;
+        this.setSightLine(null);
+        this._answerPanel.visible = false;
+    }
+
     _clearHighlightGroup() {
         while (this._highlightGroup.children.length) {
             const child = this._highlightGroup.children.pop();

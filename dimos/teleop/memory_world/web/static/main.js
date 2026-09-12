@@ -610,6 +610,10 @@ async function ask(text) {
     const session = ws;  // the answer belongs to this connection only, and there must be one
     if (!session) return null;
     askBtn.disabled = true;
+    // The previous answer stops being the answer the moment another question is asked --
+    // not when a new result arrives, because a question that FAILS never brings one, and
+    // its predecessor's corridor stayed cut through the map.
+    if (scene && scene.clearAnswer) scene.clearAnswer();
     setStatus(`Asking: ${text}`);
     diag('ask', { text });
     try {

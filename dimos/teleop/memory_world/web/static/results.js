@@ -63,7 +63,7 @@ export class ResultsNav {
     clear() {
         this.clusters = [];
         this.current = -1;
-        if (this.scene.setSightLine) this.scene.setSightLine(null);
+        if (this.scene.clearAnswer) this.scene.clearAnswer();
         this.clearRoute();
         this.scene.clusterFilter = -1;
         if (this.heatmap) this.heatmap.clear();
