@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -13,22 +13,31 @@ import { paths } from "../src/config.js";
 import { renderFiles } from "../src/render.js";
 import { ResultImages } from "../src/tool-images.js";
 
-test("memory tool keeps all native exports, provenance and selectable panels", async (t) => {
+test("memory tool keeps all SVG/PNG exports, provenance and selectable panels", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "dimcode-memory-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const p = paths({ XDG_CACHE_HOME: dir });
   const views = [
-    { label: "Timeline", path: "plot_plantness_marked.svg" },
-    { label: "Spatial", path: "embedding_focused.svg" },
+    { label: "Timeline", path: "timeline.svg" },
+    { label: "Spatial", path: "space.svg" },
     { label: "Frames", path: "grid.png" },
   ];
-  const cwd = resolve("../docs/capabilities/memory/assets");
-  const result = await renderFiles(
-    p,
-    cwd,
-    views,
-    "Memory · documentation fixture",
-  );
+  // Unit fixtures stay independent of the documentation's Git LFS assets.
+  const cwd = dir;
+  for (const [name, shape] of [
+    ["timeline.svg", '<path d="M0 100L200 20L400 150" stroke="green"/>'],
+    ["space.svg", '<circle cx="150" cy="100" r="50" fill="blue"/>'],
+  ])
+    await writeFile(
+      join(dir, name),
+      `<svg xmlns="http://www.w3.org/2000/svg" width="500" height="300">${shape}</svg>`,
+    );
+  await sharp({
+    create: { width: 300, height: 200, channels: 3, background: "#8b7c35" },
+  })
+    .png()
+    .toFile(join(dir, "grid.png"));
+  const result = await renderFiles(p, cwd, views, "Memory · format fixture");
   const images = result.content.filter((item) => item.type === "image");
   assert.equal(images.length, 3, "every view reaches model context");
   assert.deepEqual(
