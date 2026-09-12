@@ -110,6 +110,20 @@ def slerp(q0: np.ndarray, q1: np.ndarray, t: float) -> np.ndarray:
     return np.asarray(q0 * np.cos(theta) + q2 * np.sin(theta))
 
 
+def canonical_frame(name: str) -> str:
+    """A frame name with the leading slash off.
+
+    ROS 1 wrote `/base_link`, ROS 2 writes `base_link`, and a recording can carry both
+    spellings of the same frame -- on tf and on the sensor, or across a bag conversion.
+    The sensor side of this package already stripped it (`recording.py`'s lidar and
+    camera reads) and the tf side did not, so a recording published with slashes had
+    `pick_lidar` return None and `rigidly_joined` return False against a tf tree that
+    held every transform it needed, and `calibrate_static_tf` refused a rig that is
+    rigidly joined. The tree now stores and answers in one spelling.
+    """
+    return name.lstrip("/")
+
+
 @dataclass
 class _Edge:
     """The time series of one parent->child transform."""
@@ -211,6 +225,7 @@ class TfTree:
         orientation: tuple[float, float, float, float],
         static: bool = False,
     ) -> None:
+        parent, child = canonical_frame(parent), canonical_frame(child)
         edge = self._edges.setdefault((parent, child), _Edge())
         if static:
             if edge.static:  # a latched tf_static republished: the one sample holds
@@ -257,6 +272,7 @@ class TfTree:
         None when the frames are not connected, or when any edge on the way
         has no sample within *tolerance_s* of *ts*.
         """
+        target, source = canonical_frame(target), canonical_frame(source)
         if target == source:
             return np.eye(4)
         path = self._path(target, source)
@@ -272,6 +288,7 @@ class TfTree:
 
     def _path(self, target: str, source: str) -> list[tuple[str, str, bool]] | None:
         """Edges from *target* to *source*; ``forward`` says the edge runs parent->child that way."""
+        target, source = canonical_frame(target), canonical_frame(source)
         if target not in self._neighbours or source not in self._neighbours:
             return None
         previous: dict[str, str | None] = {target: None}

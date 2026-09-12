@@ -243,7 +243,26 @@ class HyperspaceAnswers:
                         RELOAD_ATTEMPTS,
                     )
                     return False
-                self._hyperspace_error = str(error)[-200:] or type(error).__name__
+                # The FIRST load used to latch `_hyperspace_error` right here, and
+                # `_adopt_an_index_that_appeared` returns at its first line whenever that
+                # is set -- so no retry could ever run, and one transient failure (an MPS
+                # hiccup, a MemoryError) cost the index for the life of the process with a
+                # full GPU re-ingest as the only way back. A reload gets RELOAD_ATTEMPTS
+                # spaced tries; there is no reason the first load deserves fewer. The
+                # error latches when those are spent, which is when it is honestly
+                # permanent.
+                if self._failed_stamp == stamp:
+                    self._failed_count += 1
+                else:
+                    self._failed_stamp, self._failed_count = stamp, 1
+                self._failed_at = time.monotonic()
+                logger.warning(
+                    "hyperspace did not load; attempt %d of %d on this index",
+                    self._failed_count,
+                    RELOAD_ATTEMPTS,
+                )
+                if self._failed_count >= RELOAD_ATTEMPTS:
+                    self._hyperspace_error = str(error)[-200:] or type(error).__name__
                 return False
             # A module stopped while this was warming must not be handed a live search:
             # stop() neither joins this thread nor holds `_hyperspace_lock`, so it sees

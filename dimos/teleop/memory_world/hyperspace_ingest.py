@@ -346,7 +346,16 @@ def _ingest(
 
     colors = store.streams[streams["image"]].order_by("ts")
     depths = store.streams[streams["depth"]].order_by("ts")
-    start_ts = float(colors.first().ts)
+    # The SAME anchor the embed loop below uses. Its first frame is the first colour
+    # frame that has a depth frame beside it, and depth routinely starts later than
+    # colour on a RealSense; anchoring on `colors.first()` instead copied tf for
+    # 0.0..13.0 s while the frames actually embedded ran 10.0..18.0 s, so the last five
+    # seconds of embedded frames had no tf copied for them at all and nothing could place
+    # them. Only bites with a finite --max-seconds, which is how the tool is usually run.
+    first_pair = next(iter(colors.align(depths, tolerance=config.depth_max_dt)), None)
+    if first_pair is None:
+        raise SystemExit("no colour frame has a depth frame beside it; nothing to ingest")
+    start_ts = float(first_pair.data[0].ts)
 
     # Only the tf the slice can use; a whole recording's tf is hundreds of
     # thousands of messages the query side would otherwise decode.

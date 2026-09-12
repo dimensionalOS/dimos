@@ -41,6 +41,36 @@ def test_static_chain_composes_parent_to_child() -> None:
     assert matrix[:3, 3] == pytest.approx((1.0, 1.0, 0.0))
 
 
+def test_a_frame_answers_to_both_spellings_of_its_name() -> None:
+    """ROS 1 writes `/base_link`, ROS 2 writes `base_link`, and one recording can carry
+    both -- tf published one way and the sensor the other, or a bag conversion in between.
+
+    The sensor side of this package strips the slash before it looks anything up and the
+    tf side stored the name verbatim, so a recording written with slashes had every
+    lookup miss against a tree holding exactly the transform it asked for: `pick_lidar`
+    returned None, `rigidly_joined` returned False, and `calibrate_static_tf` refused a
+    rig that is rigidly joined. Same recording without the slashes: all three right.
+    """
+    slashed = TfTree()
+    slashed.add("/world", "/livox_frame", 0.0, (1.0, 2.0, 3.0), IDENTITY)
+
+    bare = TfTree()
+    bare.add("world", "livox_frame", 0.0, (1.0, 2.0, 3.0), IDENTITY)
+
+    for tree in (slashed, bare):
+        # Asked either way, answered either way.
+        for target, source in (
+            ("world", "livox_frame"),
+            ("/world", "/livox_frame"),
+            ("world", "/livox_frame"),
+        ):
+            matrix = tree.lookup(target, source, 0.0)
+            assert matrix is not None, f"{target!r} <- {source!r} was not found"
+            assert matrix[:3, 3] == pytest.approx((1.0, 2.0, 3.0))
+        # And `frames` names them the one way, which is what the callers compare against.
+        assert tree.frames == {"world", "livox_frame"}
+
+
 def test_two_routes_of_equal_length_are_not_chosen_by_the_hash_seed() -> None:
     """The same recording has to place its map the same way on every run.
 
