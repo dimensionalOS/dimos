@@ -1254,3 +1254,71 @@ def test_a_route_starts_under_the_viewer_not_where_the_robot_stopped(
     # And with no viewer connected at all there is nothing to stand on.
     memory_world._viewer_position = None
     assert memory_world._ground_under_viewer() is None
+
+
+def test_navigate_walks_to_the_photo_being_looked_at_not_the_middle_of_the_blob(
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stepping to a picture and pressing Navigate has to route to THAT picture.
+
+    A cluster's centre is a weighted mean of its voxels, so for a thing on a shelf it
+    sits inside the shelf: not where you are looking, and nowhere a body can stand. The
+    route went there regardless of which of the place's photos was up. A photo's camera
+    pose is somewhere the robot already was, so it is reachable by construction.
+
+    The view is named by the index the query-image header carries -- the viewer names a
+    picture it was actually sent, rather than posting a position of its own.
+    """
+    from fastapi import HTTPException
+
+    from dimos.teleop.memory_world.hyperspace_answers import NavigateRequest
+
+    centre = (5.0, 5.0, 0.0)
+    photo = (2.0, 1.0, 0.4)
+    cluster = SimpleNamespace(index=0, centre=centre, radius=1.0)
+    answer = SimpleNamespace(clusters=[cluster])
+    query_id = "q1"
+
+    memory_world._last_answer = (answer, query_id)
+    memory_world._active_query_result = {"query_id": query_id}
+    memory_world._active_query_images = [
+        ({"query_id": query_id, "cluster": 0, "index": 0, "position": [9.0, 9.0, 0.0]}, b""),
+        ({"query_id": query_id, "cluster": 0, "index": 1, "position": list(photo)}, b""),
+    ]
+
+    planned: list[tuple] = []
+
+    class Planner:
+        def plan(self, start, goal):  # type: ignore[no-untyped-def]
+            # This planner is not an MlsRoutePlanner, so it is handed (x, y) pairs; the
+            # points it returns are always 3-D, which is what the payload unpacks.
+            planned.append((tuple(start), tuple(goal)))
+            return SimpleNamespace(
+                points=[(start[0], start[1], 0.0), (goal[0], goal[1], 0.0)],
+                length_m=1.0,
+                cells=2,
+                planner="test",
+            )
+
+    monkeypatch.setattr(memory_world, "_planner", lambda: Planner())
+    monkeypatch.setattr(memory_world, "_ground_under_viewer", lambda: (0.0, 0.0, 0.0))
+    monkeypatch.setattr(memory_world, "_broadcast", lambda *a, **k: None)
+
+    # No picture stepped to: the centre, as before.
+    payload = memory_world._navigate_to(NavigateRequest(cluster=0, query_id=query_id))
+    assert payload["goal"] == [5.0, 5.0, 0.0]
+    assert payload["view"] is None
+
+    # Stepped to the second picture: THAT is where the route goes.
+    payload = memory_world._navigate_to(NavigateRequest(cluster=0, query_id=query_id, view=1))
+    assert payload["goal"] == [2.0, 1.0, 0.4], "routed to the blob, not to the photo"
+    assert payload["view"] == 1
+    assert planned[-1][1][:2] == (2.0, 1.0)
+
+    # And the route starts under the viewer, not where the robot stopped.
+    assert planned[-1][0][:2] == (0.0, 0.0)
+
+    # A view that is not in this answer is refused rather than silently ignored.
+    with pytest.raises(HTTPException) as raised:
+        memory_world._navigate_to(NavigateRequest(cluster=0, query_id=query_id, view=99))
+    assert raised.value.status_code == 404

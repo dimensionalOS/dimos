@@ -443,7 +443,7 @@ export class WorldScene {
         }
         if (event.code === 'KeyM') this.toggleHud();
         if (event.code === 'KeyO') this.setOrbit(!this._orbit.active);
-        if (event.code === 'KeyP') this.stepQueryImage();
+        if (event.code === 'KeyP') this.stepQueryImage(event.shiftKey ? -1 : 1);
         else if (event.code === 'KeyI') this.toggleImages();
         else if (event.code === 'KeyV') this.toggleCloud();
     }
@@ -1397,17 +1397,31 @@ export class WorldScene {
      *  the P key and the Camera button come through here, because the button used to
      *  step the unfiltered list and land you at a pose with every photo hidden.
      */
-    stepQueryImage() {
-        if (!this._queryImages.length) return false;
-        const here = this._queryImages
+    /** The pictures of the place being stepped through, in the order they were sent. */
+    queryImagesHere() {
+        return this._queryImages
             .map((header, index) => [header, index])
             .filter(([header]) => header && (this.clusterFilter < 0
                 || header.cluster === undefined
                 || header.cluster === this.clusterFilter))
             .map(([, index]) => index);
+    }
+
+    /** Step to the next/previous picture of this place. `step` is +1 or -1.
+     *
+     * Backwards was missing: places stepped both ways and pictures only forward, so the
+     * one you wanted a second look at took a full lap of the place to reach.
+     */
+    stepQueryImage(step = 1) {
+        if (!this._queryImages.length) return false;
+        const here = this.queryImagesHere();
         if (!here.length) return false;
         const at = here.indexOf(this._queryImageCursor);
-        return this.viewFrom(here[(at + 1) % here.length]);
+        // From nowhere, forward means the first and backward means the last.
+        const to = at < 0
+            ? (step > 0 ? 0 : here.length - 1)
+            : (at + (step > 0 ? 1 : -1) + here.length) % here.length;
+        return this.viewFrom(here[to]);
     }
 
     /** Stand where the camera behind answer *index* stood and look the way it

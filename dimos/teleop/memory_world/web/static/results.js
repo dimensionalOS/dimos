@@ -205,10 +205,20 @@ export class ResultsNav {
         if (this.current < 0 && !this.go(0, { fly: false })) return null;
         const cluster = this.current;
         try {
+            // Walk to the PHOTO being looked at, when one has been stepped to. The
+            // cluster centre is a weighted mean of voxels and can sit inside the shelf
+            // the thing is on, so routing there while a picture is up sent you to
+            // somewhere you cannot stand and were not looking. -1 means no picture yet,
+            // and the server falls back to the centre.
+            const view = this.scene ? this.scene._queryImageCursor : -1;
             const response = await fetch(`${this.baseUrl}/navigate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cluster, query_id: this.queryId }),
+                body: JSON.stringify({
+                    cluster,
+                    query_id: this.queryId,
+                    ...(view >= 0 ? { view } : {}),
+                }),
             });
             const body = await response.json();
             if (this._disposed) return null;

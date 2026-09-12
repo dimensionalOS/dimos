@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -96,8 +97,12 @@ class AskRequest(BaseModel):
 class NavigateRequest(BaseModel):
     query_id: str | None = None  # the answer the cluster belongs to, when the viewer knows it
     cluster: int = Field(default=0, ge=0)
-    # Start from here (world xyz) instead of where the robot ended the recording.
+    # Start from here (world xyz) instead of under the viewer.
     start: tuple[float, float, float] | None = None
+    # Walk to the PHOTO the viewer has stepped to, not to the middle of the blob. The
+    # index is the one the query-image header carries, so the viewer names a picture it
+    # was actually sent rather than posting a position of its own.
+    view: int | None = None
 
 
 class HyperspaceAnswers:
@@ -681,11 +686,33 @@ class HyperspaceAnswers:
         # Where the viewer is, then where the robot ended. An explicit start still wins:
         # the request carries one when the caller knows better than either.
         start = request.start or self._ground_under_viewer() or self._robot_end_pose()
+        goal, goal_view = tuple(cluster.centre), None
+        if request.view is not None:
+            # The centre of a cluster is a weighted mean of voxels, so it can sit inside
+            # the shelf the thing is ON. Stepping to a picture and pressing Navigate
+            # routed to that mean anyway, which is neither where you are looking nor
+            # anywhere you can stand. A picture's camera pose is somewhere a body already
+            # was, so it is reachable by construction.
+            with self._clients_lock:
+                images = list(self._active_query_images)
+            if not 0 <= request.view < len(images):
+                raise HTTPException(status_code=404, detail="no such view in the last answer")
+            header = images[request.view][0]
+            if header.get("query_id") != query_id or header.get("cluster") != cluster.index:
+                raise HTTPException(status_code=409, detail="that view is not in this place")
+            position = header.get("position") or []
+            try:
+                where = tuple(float(v) for v in position)
+            except (TypeError, ValueError):
+                where = ()
+            if len(where) != 3 or not all(math.isfinite(v) for v in where):
+                raise HTTPException(status_code=422, detail="that view has no usable pose")
+            goal, goal_view = where, request.view
         planner = self._planner()
         route = (
-            planner.plan(tuple(start), tuple(cluster.centre))
+            planner.plan(tuple(start), tuple(goal))
             if isinstance(planner, MlsRoutePlanner)
-            else planner.plan(start[:2], cluster.centre[:2])
+            else planner.plan(start[:2], goal[:2])
         )
         if route is None:
             raise HTTPException(status_code=422, detail="no route through the known free space")
@@ -696,7 +723,8 @@ class HyperspaceAnswers:
             "query_id": query_id,
             "cluster": cluster.index,
             "start": [float(v) for v in start],
-            "goal": [float(v) for v in cluster.centre],
+            "goal": [float(v) for v in goal],
+            "view": goal_view,  # which picture, when the route is to one
             "length_m": round(route.length_m, 2),
             "points": [[round(v, 3) for v in p] for p in points],
             "cells": route.cells,
