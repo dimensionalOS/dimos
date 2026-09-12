@@ -268,6 +268,9 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
                 **self._channel_kwargs,
             )
             st = SharedMemoryPubSubBase._TopicState(ch, cap, None)
+            if isinstance(ch, CpuShmChannel):
+                # A frame left in the segment by an earlier owner is not new.
+                st.last_seq = ch.read(require_new=False)[0]
             self._topics[topic] = st
             return st
 
