@@ -401,17 +401,6 @@ class PatchBank:
             if pose is not None:
                 kept.append((keyframe, grid, np.asarray(pose, dtype=np.float64)))
         self.unplaced = len(keyframes) - len(kept)
-        self.frames = _frames_of(
-            [
-                (k.id, pose, k.intrinsics, k.rows, k.cols, k.camera_frame, k.ts)
-                for k, _, pose in kept
-            ]
-        )
-        grids = [grid for _, grid, _ in kept]
-        self.matrix = (
-            torch.from_numpy(np.concatenate(grids, axis=0)) if grids else torch.zeros((0, 1))
-        )
-        sizes = np.asarray([len(g) for g in grids], dtype=np.int64)
         # patch_cell below numbers patches within the MEMBER grid, while patch_depth comes
         # from the keyframe's CELL grid. They are the same grid only when the model's own
         # shape equals the cell grid, and since the cell grid became "the finest member,
@@ -428,6 +417,17 @@ class PatchBank:
                 f" ({len(mismatched)} such): this store's model grid is not its cell grid,"
                 " and the fast path stacks the two together. Query through the engine."
             )
+        self.frames = _frames_of(
+            [
+                (k.id, pose, k.intrinsics, k.rows, k.cols, k.camera_frame, k.ts)
+                for k, _, pose in kept
+            ]
+        )
+        grids = [grid for _, grid, _ in kept]
+        self.matrix = (
+            torch.from_numpy(np.concatenate(grids, axis=0)) if grids else torch.zeros((0, 1))
+        )
+        sizes = np.asarray([len(g) for g in grids], dtype=np.int64)
         self.patch_frame = np.repeat(np.arange(len(kept)), sizes)
         self.patch_cell = (
             np.concatenate([np.arange(s) for s in sizes]) if len(sizes) else np.zeros(0, np.int64)

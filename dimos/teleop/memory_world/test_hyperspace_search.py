@@ -529,3 +529,90 @@ def test_an_ensemble_store_is_refused_by_the_fast_path() -> None:
     with pytest.raises(SystemExit) as refusal:
         FastQuery(engine, world_frame="odom", voxel_size=0.1, embed_texts=lambda _t: None)
     assert "2 ensemble members" in str(refusal.value)
+
+
+def test_places_rank_by_viewpoints_not_by_pictures_shown() -> None:
+    """A place seen from sixty-six viewpoints outranks one seen from forty-four.
+
+    The first version of this ranked on `len(evidence)`, and evidence is capped at
+    EVIDENCE_PER_CLUSTER — so every cluster seen from that many places or more reported the
+    cap, tied, and fell back to score. That is exactly the clusters most likely to be the
+    answer, so the ranking did nothing precisely where it was asked to do something. The
+    two here have IDENTICAL evidence lists and differ only in `views`.
+    """
+    from dimos.teleop.memory_world.hyperspace_search import Cluster, _by_viewpoints
+
+    shown = list(range(8))  # what the viewer would display: the cap, for both
+    weak_but_seen_often = Cluster(
+        index=0,
+        centre=(0.0, 0.0, 0.0),
+        radius=0.2,
+        score=0.3,
+        peak=0.4,
+        n_voxels=5,
+        views=66,
+        evidence=shown,  # type: ignore[arg-type]
+    )
+    strong_but_seen_once = Cluster(
+        index=1,
+        centre=(9.0, 9.0, 9.0),
+        radius=0.2,
+        score=0.9,
+        peak=1.0,
+        n_voxels=5,
+        views=44,
+        evidence=shown,  # type: ignore[arg-type]
+    )
+    owner = np.array([0, 1, -1, 1], dtype=np.int64)
+    cluster_of = np.array([1, 0, 0], dtype=np.int64)
+
+    ranked, owner_out, cluster_of_out = _by_viewpoints(
+        [strong_but_seen_once, weak_but_seen_often], owner, cluster_of
+    )
+
+    assert [c.views for c in ranked] == [66, 44]  # views win over score
+    assert [c.index for c in ranked] == [0, 1]  # and are renumbered in place
+    # index is a position, so everything pointing at one has to move with it.
+    assert owner_out.tolist() == [1, 0, -1, 0]
+    assert cluster_of_out.tolist() == [0, 1, 1]
+    assert ranked[0].summary()["n_views"] == 66
+
+
+def test_a_store_whose_model_grid_is_not_its_cell_grid_is_refused() -> None:
+    """Patches are numbered within the MODEL's grid; depth comes from the CELL grid.
+
+    They are the same grid only when the model's shape equals the cell grid, and since the
+    cell grid became "the finest member, floored at 24x24" they differ for a single member
+    too — a 14x14 model against a 24x24 cell grid. Stacked anyway, one keyframe's patches
+    are rasterized at another keyframe's depth: no exception, just placements taken from
+    the wrong frame.
+    """
+    from types import SimpleNamespace
+
+    import pytest
+
+    from dimos.teleop.memory_world.hyperspace_fast import PatchBank
+
+    def keyframe(ident: int, rows: int, cols: int, patches: int):  # type: ignore[no-untyped-def]
+        return (
+            SimpleNamespace(
+                id=ident,
+                rows=rows,
+                cols=cols,
+                camera_frame="cam",
+                ts=float(ident),
+                intrinsics=SimpleNamespace(fx=1.0, fy=1.0, cx=0.0, cy=0.0, width=24.0, height=24.0),
+                patch_depth=np.ones(rows * cols, np.float32),
+            ),
+            np.zeros((patches, 4), np.float16),
+        )
+
+    place = lambda _kf: np.eye(4)  # noqa: E731 — every keyframe is placeable
+    # 14x14 of model against a 24x24 cell grid: the shape ba9cf1822's floor produces.
+    with pytest.raises(SystemExit) as refusal:
+        PatchBank([keyframe(0, 24, 24, 14 * 14)], place)
+    assert "196 patches against a 576-cell grid" in str(refusal.value)
+
+    # And the ordinary store, where they agree, is built without complaint.
+    bank = PatchBank([keyframe(0, 24, 24, 24 * 24)], place)
+    assert len(bank.patch_cell) == 576
