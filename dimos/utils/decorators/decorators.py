@@ -33,7 +33,12 @@ class CachedMethod(Protocol[_CacheResult_co]):
     def invalidate_cache(self, instance: Any) -> None: ...
 
 
-def limit(max_freq: float, accumulator: Accumulator | None = None):  # type: ignore[no-untyped-def, type-arg]
+def limit(  # type: ignore[no-untyped-def]
+    max_freq: float,
+    accumulator: Accumulator | None = None,  # type: ignore[type-arg]
+    *,
+    clock: Callable[[], float] = time.time,
+):
     """
     Decorator that limits function call frequency.
 
@@ -43,6 +48,7 @@ def limit(max_freq: float, accumulator: Accumulator | None = None):  # type: ign
     Args:
         max_freq: Maximum frequency in Hz (calls per second)
         accumulator: Optional accumulator to collect skipped calls (defaults to LatestAccumulator)
+        clock: Source of the current time, injectable so tests need not race a real one
 
     Returns:
         Decorated function that respects the frequency limit
@@ -66,14 +72,14 @@ def limit(max_freq: float, accumulator: Accumulator | None = None):  # type: ign
             with lock:
                 if len(accumulator):
                     acc_args, acc_kwargs = accumulator.get()  # type: ignore[misc]
-                    last_call_time = time.time()
+                    last_call_time = clock()
                     timer = None
                     func(*acc_args, **acc_kwargs)
 
         @wraps(func)
         def wrapper(*args, **kwargs):  # type: ignore[no-untyped-def]
             nonlocal last_call_time, timer
-            current_time = time.time()
+            current_time = clock()
 
             with lock:
                 time_since_last = current_time - last_call_time
