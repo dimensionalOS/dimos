@@ -540,3 +540,78 @@ def test_two_ids_naming_one_marker_light_and_count_as_one() -> None:
     # Order is the agent's own, and survives the deduplication.
     reversed_order = MemoryQueryResult(answer="a", engine="agent", observation_ids=[200, 100, 200])
     assert snap(module, reversed_order) == [2, 1]
+
+
+def test_every_place_the_answer_names_can_still_be_given_a_picture() -> None:
+    """The image budget must be at least what the answer can name.
+
+    At 64, with MAX_CLUSTERS=12 places of EVIDENCE_PER_CLUSTER=8 evidence each, the budget
+    was spent FIRST-COME and the last places got no photograph at all -- while `n_evidence`
+    went on reporting how many they had. Measured on sf_office1_2/main.db: "a monitor"
+    reported [8,8,8,6,6,6,6,5,4,4,4,4] and published [8,8,8,6,6,6,6,5,4,4,3,0]. This pins
+    the relationship rather than the number, so raising either constant cannot re-open it.
+    """
+    from dimos.teleop.memory_world.hyperspace_answers import (
+        EVIDENCE_CLUSTERS,
+        EVIDENCE_IMAGES_MAX,
+    )
+    from dimos.teleop.memory_world.hyperspace_search import (
+        EVIDENCE_PER_CLUSTER,
+        MAX_CLUSTERS,
+    )
+
+    assert EVIDENCE_IMAGES_MAX >= MAX_CLUSTERS * EVIDENCE_PER_CLUSTER, (
+        "the last places an answer names would get no picture"
+    )
+    # And the outer cap must not bite before the ranking has had its say.
+    assert EVIDENCE_CLUSTERS >= MAX_CLUSTERS
+
+
+def test_a_configured_stream_name_that_is_empty_is_refused_at_startup(tmp_path: Path) -> None:
+    """A name the operator gave is still only a name.
+
+    `--...-tf-stream-name tf` against a recording holding the empty `tf` a killed ingest
+    leaves behind used to be kept, and `_load_tf_tree` then cached a NON-None, zero-frame
+    tree -- which defeats every `tree is None` fallback, so map, trail and index all came
+    out empty with nothing reported. Cleared to "" now, which is what those fallbacks
+    look for.
+    """
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+
+    def moving(ts: float) -> TFMessage:
+        return TFMessage(
+            Transform(
+                translation=Vector3(ts, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="odom",
+                child_frame_id="base_link",
+                ts=ts,
+            )
+        )
+
+    db_path = tmp_path / "recording.db"
+    store = SqliteStore(path=str(db_path))
+    store.start()
+    try:
+        # The empty `tf` a killed ingest leaves, and NOTHING for detection to fall back
+        # to. With a replacement present the old code already did the right thing -- it is
+        # this case, where `detected["tf"] is None` takes the other half of the condition,
+        # that kept an unusable name. A first version of this test seeded a populated
+        # `robot_tf` and passed against the unfixed code for that reason.
+        store.stream("tf", TFMessage)
+        assert moving(0.0) is not None  # the helper is real; the recording just has no tf
+    finally:
+        store.stop()
+
+    module = MemoryWorldModule(store_path=str(db_path), tf_stream_name="tf")
+    try:
+        opened = module._ensure_store()
+        module._name_streams(opened)
+        assert module.config.tf_stream_name != "tf", (
+            "an empty stream was kept because it was named on the command line"
+        )
+    finally:
+        module.stop()
