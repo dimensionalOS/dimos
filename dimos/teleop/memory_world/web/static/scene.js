@@ -6,6 +6,7 @@
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
 import { robotToWorldDir, robotToWorldOffset, worldPosToRobotXY } from '/static_mw/world_frame.js';
+import { drawAnswer } from '/static_mw/answer_panel.js';
 import { DESKTOP_PITCH_LIMIT, installTouch } from './touch.js';
 import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms, viewportHeight, viewportHeightPx } from '/static_mw/voxel_sprites.js';
 import { ANSWER_PANEL_W, HUD_PANEL_SIZE, placeHud } from '/static_mw/hud.js';
@@ -1501,35 +1502,12 @@ export class WorldScene {
     }
 
     _setAnswer(answer) {
-        const ctx = this._answerCanvas.getContext('2d');
-        ctx.clearRect(0, 0, this._answerCanvas.width, this._answerCanvas.height);
-        ctx.fillStyle = 'rgba(5, 10, 16, 0.92)';
-        ctx.fillRect(0, 0, this._answerCanvas.width, this._answerCanvas.height);
-        ctx.strokeStyle = '#7af0a8';
-        ctx.lineWidth = 8;
-        ctx.strokeRect(4, 4, this._answerCanvas.width - 8, this._answerCanvas.height - 8);
-        ctx.fillStyle = '#d8e6f4';
-        ctx.font = '42px monospace';
-        const words = String(answer).split(/\s+/);
-        const lines = [];
-        let line = '';
-        for (const word of words) {
-            const candidate = line ? `${line} ${word}` : word;
-            if (ctx.measureText(candidate).width > 930 && line) {
-                lines.push(line);
-                line = word;
-            } else {
-                line = candidate;
-            }
-            if (lines.length === 3) break;
-        }
-        if (line && lines.length < 4) lines.push(line);
-        lines.slice(0, 4).forEach((text, i) => ctx.fillText(text, 42, 62 + i * 50));
+        drawAnswer(this._answerCanvas, answer);
         this._answerTexture.needsUpdate = true;
         // Real text on the page, and the drawn quad only where HTML cannot go. The canvas
-        // above is unselectable, blurry off-axis, and drops everything past four wrapped
-        // lines; an immersive XR session is the one place that is still the best
-        // available, because the DOM is not composited into it.
+        // is unselectable, blurry off-axis, and truncates at four wrapped lines; an
+        // immersive XR session is the one place it is still the best available, because
+        // the DOM is not composited into it.
         const inXr = this.three.xr.isPresenting;
         this._answerPanel.visible = inXr;
         if (this.onAnswerText) this.onAnswerText(inXr ? null : String(answer));
