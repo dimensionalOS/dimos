@@ -77,8 +77,9 @@ logger = setup_logger()
 
 # How many times a reload of the SAME index is retried before it is left alone, and the
 # unit of the widening gap between those tries.
-# How many of a place's viewpoints to try before giving up on reaching it at all.
-NAVIGATE_ATTEMPTS = 8
+# A storey. Used to decide which floor the viewer is standing on: they cannot be standing
+# on one above their own head, and the one they are on is within a storey below it.
+STOREY_M = 3.0
 RELOAD_ATTEMPTS = 3
 RELOAD_BACKOFF_S = 10.0
 
@@ -676,20 +677,23 @@ class HyperspaceAnswers:
         path = np.asarray(known, dtype=np.float64).reshape(-1, 3)
         if not len(path):
             return None
-        # Nearest in THREE dimensions, not in the plane. The viewer's own height differs
-        # from the path's by a roughly constant offset -- eye against sensor -- which adds
-        # the same amount to every candidate and so cannot change the ranking within one
-        # level. Across levels it is the only thing that separates them: on a map with a
-        # mezzanine, nearest-in-plane hands a viewer standing upstairs a start on the
-        # ground floor, three metres below their feet, and the route then fails or begins
-        # somewhere they are not.
-        nearest = int(
-            np.argmin(
-                (path[:, 0] - viewer[0]) ** 2
-                + (path[:, 1] - viewer[1]) ** 2
-                + (path[:, 2] - viewer[2]) ** 2
-            )
-        )
+        # Which floor, then which point on it. Nearest in the plane alone puts a viewer
+        # standing on a mezzanine three metres below their own feet; nearest in 3-D is
+        # worse, and worse on the maps we actually have -- the gap between a camera and
+        # the sensor that drove the path is metres, so on a SINGLE-storey map a sample
+        # upstairs can be nearer the viewer's eyes than the floor they are standing on
+        # (measured: samples at z=0.3 and z=2.8, a ground-floor viewer at 1.7, and 2.8
+        # wins).
+        #
+        # The signal that does not need a guess about human height: you cannot be standing
+        # on a floor above your own head, and the one you are on is within a storey below
+        # it. Restrict to those, then take the nearest in the plane. Nothing in the band
+        # (an old client sending z=0, a viewer flying) falls back to the plane over every
+        # sample, which is the behaviour before any of this.
+        flat = (path[:, 0] - viewer[0]) ** 2 + (path[:, 1] - viewer[1]) ** 2
+        on_this_floor = (path[:, 2] <= viewer[2]) & (path[:, 2] >= viewer[2] - STOREY_M)
+        usable = np.flatnonzero(on_this_floor)
+        nearest = int(usable[np.argmin(flat[usable])]) if len(usable) else int(np.argmin(flat))
         return (float(viewer[0]), float(viewer[1]), float(path[nearest, 2]))
 
     def _navigate_to(self, request: NavigateRequest) -> dict[str, Any]:
@@ -721,6 +725,7 @@ class HyperspaceAnswers:
                 return None
             return where  # type: ignore[return-value]
 
+        asked: tuple[float, float, float] | None = None
         if request.view is not None:
             if not 0 <= request.view < len(images):
                 raise HTTPException(status_code=404, detail="no such view in the last answer")
@@ -742,14 +747,23 @@ class HyperspaceAnswers:
         # refusing, and saying WHICH one it picked keeps it honest.
         others = [i for i in range(len(images)) if i != request.view and pose_of(i) is not None]
         candidates: list[tuple[int | None, tuple[float, float, float]]] = []
-        if request.view is not None:
+        if request.view is not None and asked is not None:
             candidates.append((request.view, asked))
         candidates.append((None, tuple(cluster.centre)))
         candidates.extend((i, pose) for i in others if (pose := pose_of(i)) is not None)
 
         planner = self._planner()
-        goal, goal_view, points = None, None, []
-        for view_index, candidate in candidates[:NAVIGATE_ATTEMPTS]:
+        # Everything the payload needs is captured HERE, not read off the loop variable
+        # afterwards. `route` does survive the loop correctly today, because the only way
+        # out with a goal is the break -- but a payload that reads a name the loop last
+        # happened to leave behind is one edit away from reporting a rejected candidate's
+        # length beside the accepted candidate's points.
+        goal, goal_view, points, taken = None, None, [], None
+        # Every candidate, with no cap. A cap of 8 was arbitrary and did the very thing
+        # this loop exists to stop: with twelve photos of a place and only the ninth
+        # reachable, it refused while a 9 m route existed. The list is already bounded --
+        # it is one place's photographs, not the whole answer's.
+        for view_index, candidate in candidates:
             route = (
                 planner.plan(tuple(start), tuple(candidate))
                 if isinstance(planner, MlsRoutePlanner)
@@ -762,9 +776,9 @@ class HyperspaceAnswers:
                 continue
             if math.dist(found[0], found[-1]) <= 1e-9:
                 continue  # went nowhere; see below
-            goal, goal_view, points = candidate, view_index, found
+            goal, goal_view, points, taken = candidate, view_index, found, route
             break
-        if goal is None:
+        if goal is None or taken is None:
             raise HTTPException(status_code=422, detail="no route through the known free space")
         # The "went nowhere" test in the loop above: a route has to GO somewhere. The
         # planner can return a handful of identical points when it cannot connect the
@@ -786,10 +800,10 @@ class HyperspaceAnswers:
             "start": [float(v) for v in start],
             "goal": [float(v) for v in goal],
             "view": goal_view,  # which picture, when the route is to one
-            "length_m": round(route.length_m, 2),
+            "length_m": round(taken.length_m, 2),
             "points": [[round(v, 3) for v in p] for p in points],
-            "cells": route.cells,
-            "planner": route.planner,
+            "cells": taken.cells,
+            "planner": taken.planner,
         }
         with self._clients_lock:  # still the answer on screen? then reconnects get the route too
             if self._active_query_result is active:

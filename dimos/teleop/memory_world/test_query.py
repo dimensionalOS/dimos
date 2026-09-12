@@ -1251,21 +1251,31 @@ def test_a_route_starts_under_the_viewer_not_where_the_robot_stopped(
     memory_world._viewer_position = (8.9, 9.1, 0.0)
     assert memory_world._ground_under_viewer()[2] == pytest.approx(0.80)
 
-    # A mezzanine: the viewer upstairs must not be given a start on the ground floor.
-    # Nearest-in-plane does exactly that -- the ground sample is directly below them and
-    # so wins on x and y alone -- and the route then fails or starts where they are not.
-    upstairs = [
-        [5.0, 2.0, 0.05],  # directly below the viewer, on the ground floor
-        [5.4, 2.3, 3.10],  # the mezzanine, a little further in x and y
+    # Which FLOOR, then which point on it. Both obvious rules are wrong and both shipped:
+    # nearest-in-plane puts a viewer on a mezzanine three metres below their own feet,
+    # and nearest-in-3-D is worse on the single-storey maps we actually have, because the
+    # gap between a camera and the sensor that drove the path is metres.
+    levels = [
+        [5.0, 2.0, 0.30],  # the ground floor, directly below
+        [5.4, 2.3, 2.80],  # a mezzanine, a little further in x and y
     ]
-    monkeypatch.setattr(memory_world, "_orbit_positions_for", lambda frame: {"positions": upstairs})
-    memory_world._viewer_position = (5.0, 2.0, 3.0)  # standing upstairs
-    assert memory_world._ground_under_viewer()[2] == pytest.approx(3.10), (
-        "put the start on the floor below the viewer"
+    monkeypatch.setattr(memory_world, "_orbit_positions_for", lambda frame: {"positions": levels})
+    # A viewer on the GROUND floor with their camera 1.7 m up. Nearest-in-3-D picks the
+    # mezzanine here -- |1.7 - 2.8| = 1.1 beats |1.7 - 0.3| = 1.4 -- which is a floor
+    # above their own head.
+    memory_world._viewer_position = (5.0, 2.0, 1.7)
+    assert memory_world._ground_under_viewer()[2] == pytest.approx(0.30), (
+        "chose a floor above the viewer's head"
     )
-    # And standing on the ground floor at the same x and y still gets the ground floor.
+    # The same viewer standing UPSTAIRS, camera above the mezzanine floor.
+    memory_world._viewer_position = (5.0, 2.0, 4.4)
+    assert memory_world._ground_under_viewer()[2] == pytest.approx(2.80), (
+        "left a viewer upstairs standing on the ground floor"
+    )
+    # A client sending no height at all -- which this one did for its whole history --
+    # has nothing in the band and falls back to the plane, as it did before any of this.
     memory_world._viewer_position = (5.0, 2.0, 0.0)
-    assert memory_world._ground_under_viewer()[2] == pytest.approx(0.05)
+    assert memory_world._ground_under_viewer()[2] == pytest.approx(0.30)
 
     monkeypatch.setattr(memory_world, "_orbit_positions_for", lambda frame: {"positions": path})
     memory_world._viewer_position = (4.1, 3.9, 0.0)
@@ -1456,6 +1466,29 @@ def test_navigate_tries_every_viewpoint_before_saying_there_is_no_route(
     # The one asked for is tried FIRST, and the centre before the rest.
     assert tried[0][:2] == (1.0, 1.0), tried
     assert tried[1][:2] == (5.0, 5.0), tried
+
+    # A place with twelve photographs where only the NINTH can be reached. A cap of 8 on
+    # the attempts refused this while a 9 m route existed -- the very failure the loop
+    # exists to prevent, reintroduced by an arbitrary constant. The test above cannot see
+    # it: with only three photos it passes with the cap set to 4.
+    memory_world._active_query_images = [
+        ({"query_id": "q1", "cluster": 0, "index": i, "position": [float(i), 0.0, 0.0]}, b"")
+        for i in range(12)
+    ]
+    far = (8.0, 0.0)
+
+    class OnlyTheNinth:
+        def plan(self, start, goal):  # type: ignore[no-untyped-def]
+            if tuple(round(float(v), 3) for v in goal[:2]) != far:
+                return None
+            return SimpleNamespace(
+                points=[(0.0, 0.0, 0.0), (8.0, 0.0, 0.0)], length_m=9.0, cells=9, planner="mls"
+            )
+
+    monkeypatch.setattr(memory_world, "_planner", lambda: OnlyTheNinth())
+    payload = memory_world._navigate_to(NavigateRequest(cluster=0, query_id="q1", view=0))
+    assert payload["view"] == 8, "stopped before reaching the only viewpoint that works"
+    assert payload["length_m"] == 9.0
 
     # When nothing at all can be reached it still refuses, rather than inventing one.
     monkeypatch.setattr(memory_world, "_planner", lambda: SimpleNamespace(plan=lambda *a: None))
