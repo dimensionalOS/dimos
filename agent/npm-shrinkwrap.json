@@ -1,12 +1,12 @@
 {
   "name": "@spomichter/dimcode",
-  "version": "0.1.0-next.0",
+  "version": "0.1.0-next.1",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@spomichter/dimcode",
-      "version": "0.1.0-next.0",
+      "version": "0.1.0-next.1",
       "license": "Apache-2.0",
       "dependencies": {
         "@earendil-works/pi-ai": "0.85.1",

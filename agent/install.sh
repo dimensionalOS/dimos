@@ -49,13 +49,24 @@ main() {
   PATH="$data/node/bin:$PATH"
   export PATH
   npm="$data/node/bin/npm"
-  resolved=$("$npm" view "$package@$version" version)
+  curl -fsSL "https://registry.npmjs.org/$package/$version" -o "$staging/metadata.json"
+  resolved=$("$node" -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1])).version' "$staging/metadata.json")
   case "$resolved" in ''|*[!a-zA-Z0-9._-]*) echo 'Invalid package version from registry.' >&2; exit 1 ;; esac
   release="$data/releases/$resolved"
   entry="$release/node_modules/$package/dist/main.js"
   if [ ! -f "$entry" ]; then
     printf 'Installing %s@%s…\n' "$package" "$resolved"
-    "$npm" install --prefix "$staging/package" --ignore-scripts --min-release-age=0 --omit=dev --no-audit --no-fund "$package@$resolved"
+    tarball=$("$node" -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1])).dist.tarball' "$staging/metadata.json")
+    case "$tarball" in https://registry.npmjs.org/*) ;; *) echo 'Unexpected package registry.' >&2; exit 1 ;; esac
+    curl -fsSL "$tarball" -o "$staging/dimcode.tgz"
+    "$node" - "$staging/metadata.json" "$staging/dimcode.tgz" "$package" <<'NODE'
+const fs = require('node:fs');
+const crypto = require('node:crypto');
+const metadata = JSON.parse(fs.readFileSync(process.argv[2]));
+const actual = 'sha512-' + crypto.createHash('sha512').update(fs.readFileSync(process.argv[3])).digest('base64');
+if (metadata.name !== process.argv[4] || actual !== metadata.dist.integrity) throw new Error('Package integrity check failed');
+NODE
+    "$npm" install --prefix "$staging/package" --ignore-scripts --min-release-age=0 --omit=dev --no-audit --no-fund "$staging/dimcode.tgz"
     "$node" "$staging/package/node_modules/$package/dist/main.js" --help >/dev/null
     mkdir -p "$data/releases"
     [ ! -e "$release" ] || { echo "Incomplete release at $release; choose another DIMCODE_INSTALL_DIR." >&2; exit 1; }

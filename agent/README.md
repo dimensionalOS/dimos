@@ -7,7 +7,7 @@ Persistent terminal agent for DimOS, built on Pi. The gateway runs independently
 Test release: **`@spomichter/dimcode@next`**. Install on Linux x64/arm64 or Apple Silicon:
 
 ```sh
-curl -fsSL https://github.com/dimensionalOS/dimos/releases/download/dimcode-v0.1.0-next.0/install.sh | sh
+curl -fsSL https://github.com/dimensionalOS/dimos/releases/download/dimcode-v0.1.0-next.1/install.sh | sh
 ```
 
 The installer downloads and checks a private Node 24 runtime, installs the npm package and creates `~/.local/bin/dimcode`. It offers to open setup immediately. No system Node upgrade, sudo, source checkout or build commands are needed. If `~/.local/bin` is not on your PATH, use the absolute launcher path printed by the installer.
@@ -15,7 +15,7 @@ The installer downloads and checks a private Node 24 runtime, installs the npm p
 With Node **24 or 26** already installed, npm also works:
 
 ```sh
-npm install -g @spomichter/dimcode@next
+npm install -g https://registry.npmjs.org/@spomichter/dimcode/-/dimcode-0.1.0-next.1.tgz
 dimcode setup
 ```
 
@@ -151,7 +151,7 @@ These commands run the source build without installing the `dimcode` command. `n
 
 Prereleases are published by [dimcode-release.yml](../.github/workflows/dimcode-release.yml) from `dimcode-vVERSION` tags matching the package's `-next.N` version. The workflow checks Linux/macOS, publishes to npm's `next` tag using `DIMCODE_NPM_TOKEN`, then creates a GitHub prerelease with the tarball and installer. Ordinary branch pushes do not publish. The personal npm scope is for this test release.
 
-Installer options: `DIMCODE_VERSION` selects a version/tag (default `next`), `DIMCODE_INSTALL_DIR` selects private runtime/releases, `DIMCODE_BIN_DIR` selects the launcher directory, and `DIMCODE_SETUP=0` skips the setup offer. Downloads are verified before extraction. Run the installer again to update the launcher; older releases remain available to running sessions. Existing gateways continue using their current release until restarted with `dimcode service install` after active turns finish.
+Installer options: `DIMCODE_VERSION` selects a version/tag (default `next`), `DIMCODE_INSTALL_DIR` selects private runtime/releases, `DIMCODE_BIN_DIR` selects the launcher directory, and `DIMCODE_SETUP=0` skips the setup offer. Node downloads and npm tarballs are verified before installation. The installer resolves npm’s version metadata directly and checks the package SHA-512, so a newly published release does not depend on npm’s package-index propagation. Run the installer again to update the launcher; older releases remain available to running sessions. Existing gateways continue using their current release until restarted with `dimcode service install` after active turns finish.
 
 To run the complete integration suite with an existing DimOS environment and Go2 recording:
 
