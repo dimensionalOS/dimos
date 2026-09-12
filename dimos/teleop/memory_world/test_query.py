@@ -897,3 +897,60 @@ def test_the_operator_can_say_whether_the_lidar_is_already_in_the_world_frame(
     memory_world.config.lidar_world_frame = False
     memory_world._lidar_world_aligned_cache = None
     assert memory_world._lidar_world_aligned() is False
+
+
+@pytest.mark.parametrize(
+    ("value", "acceptable"),
+    [
+        (0, True),
+        (-3, True),
+        (1.5, True),
+        (10**30, True),  # wide, but a real place
+        (10**400, False),  # np.isfinite raised TypeError here; math.isfinite OverflowError
+        (float("inf"), False),
+        (float("nan"), False),
+        (True, False),  # a bool is not a coordinate
+        ("2", False),
+        (None, False),
+    ],
+)
+def test_the_viewer_pose_guard_never_raises_on_what_it_rejects(
+    value: object, acceptable: bool
+) -> None:
+    """This guard has now been broken twice, the same way both times.
+
+    It exists to reject a bad `viewer_pose`, and twice it has died on one instead and taken
+    the websocket loop with it: `np.isfinite` raises TypeError on a python int wider than
+    int64, and `math.isfinite` raises OverflowError converting one to a float. The second
+    was introduced fixing the first, which is what a test here would have caught.
+    """
+    from dimos.teleop.memory_world.module import _is_finite_number
+
+    assert _is_finite_number(value) is acceptable
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        ("/memory_world", "/memory_world"),
+        (
+            "/custom/",
+            "/custom",
+        ),  # registered "/custom//replay/index"; the viewer asks "/custom/..."
+        ("/", ""),  # registered "//ws"; the viewer asks "/ws"
+        ("walk", "/walk"),
+    ],
+)
+def test_the_client_route_is_normalised_the_way_the_viewer_normalises_it(
+    tmp_path: Path, configured: str, expected: str
+) -> None:
+    """The viewer computes its base as `pathname.replace(/\\/$/, "")`, and every API path
+    and the websocket hang off it on both sides. When the two rules disagree the page
+    loads and everything under it 404s, which looks like a working server."""
+    db_path = tmp_path / "route.db"
+    _empty_store(db_path)
+    module = MemoryWorldModule(store_path=str(db_path), client_route=configured)
+    try:
+        assert module.config.client_route == expected
+    finally:
+        module.stop()

@@ -100,6 +100,24 @@ from dimos.web.robot_web_interface import RobotWebInterface
 
 logger = setup_logger()
 
+
+def _is_finite_number(value: Any) -> bool:
+    """True for a real number the viewer can be at, False for anything else.
+
+    Two different exceptions have escaped this guard and killed the websocket loop:
+    `np.isfinite` raises TypeError on a python int wider than int64, and `math.isfinite`
+    raises OverflowError converting one to a float. Swapping the first for the second
+    fixed the first input and not the second. A guard whose whole job is to reject bad
+    input must not raise on any of it.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (OverflowError, ValueError, TypeError):
+        return False
+
+
 STATIC_DIR = Path(__file__).parent / "web" / "static"
 
 
@@ -309,7 +327,10 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
         # "/custom/" would register "/custom//replay/index" while the viewer, which builds
         # its base with pathname.replace(/\/$/, ""), asks for "/custom/replay/index": the
         # page loads and every API call 404s. The viewer's rule, applied on this side too.
-        self.config.client_route = "/" + self.config.client_route.strip("/")
+        route = self.config.client_route.rstrip("/")
+        if route and not route.startswith("/"):
+            route = "/" + route
+        self.config.client_route = route  # "" at the root, exactly what the viewer computes
 
     @staticmethod
     def _resolve_store_path(name_or_path: str) -> Path:
@@ -329,7 +350,9 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
 
         self._setup_hyperspace_routes(app)
 
-        @app.get(self.config.client_route, response_class=HTMLResponse)  # type: ignore[misc]
+        # `or "/"`: the base is "" at the root so that "/ws" and "/replay/index" come out
+        # right, but the PAGE itself still has to be registered at "/".
+        @app.get(self.config.client_route or "/", response_class=HTMLResponse)  # type: ignore[misc]
         async def memory_world_index() -> HTMLResponse:
             index_path = STATIC_DIR / "index.html"
             # The newest static file stamps the script URLs, so a reload never
@@ -1248,12 +1271,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
             if (
                 isinstance(position, list)
                 and len(position) == 3
-                # math.isfinite, not np.isfinite: the latter raises TypeError on a python
-                # int too wide for int64, so the guard meant to reject bad input died on it
-                # and took the websocket down with it.
-                and all(
-                    isinstance(value, int | float) and math.isfinite(value) for value in position
-                )
+                and all(_is_finite_number(value) for value in position)
             ):
                 with self._clients_lock:
                     self._viewer_position = (

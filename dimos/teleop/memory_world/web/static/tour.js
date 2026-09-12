@@ -118,10 +118,12 @@ export class Tour {
                     <ul><li>${this._answerLine()}</li>
                     <li>The search is a single matrix product over every patch of every keyframe — a few milliseconds.</li></ul>`,
                 enter: async () => {
+                    const mine = this.index;
                     this._layers({ voxels: true, heat: false, pyramids: true, photos: false });
                     if (!this.results || !this.results.count || this.results.queryText !== this.question) {
                         await this.ask(this.question);
                     }
+                    if (!this._onStation(mine)) return;   // stepped away while the server answered
                     this._overview(0.75);
                 },
             },
@@ -169,9 +171,15 @@ export class Tour {
                     and the route is planned in <b>3D</b> on that graph, so stairs, ramps and a mezzanine all count.
                     <ul><li>${this._routeLine()}</li><li>The green tube is what the navigation stack would drive.</li></ul>`,
                 enter: async () => {
+                    const mine = this.index;
                     this._layers({ voxels: true, heat: true, pyramids: false, photos: false });
                     if (this.results && this.results.count) {
                         const route = this.results.route || await this.results.navigate();
+                        // The first navigate builds the MLS graph over the whole map and takes
+                        // seconds. Stepping on with the arrow keys during it is ordinary use,
+                        // and without this the resolved body cut the roof and flew the camera
+                        // on whatever station the user had reached by then.
+                        if (!this._onStation(mine)) return;
                         this._refresh();
                         if (route && route.points && route.points.length) {
                             const mid = route.points[Math.floor(route.points.length / 2)];
@@ -277,6 +285,16 @@ export class Tour {
 
     /** Cut the voxels above head height (on/off), so an overview shows rooms, not ceilings.
      *  Outdoors (or on a hilly ride) there is no ceiling and no single floor, so nothing is cut. */
+    /** Still on the station that started this, and still touring?
+     *
+     *  `!this.active` alone is not enough: it catches Exit but not the forward arrow, and
+     *  a station body resuming after its own `await` is exactly as able to cut the ceiling
+     *  and fly the camera on somebody else's station as it is after the tour closes.
+     */
+    _onStation(index) {
+        return this.active && !this._disposed && this.index === index;
+    }
+
     _roof(cut) {
         // Only while the tour is on. A station resuming after Exit used to cut the ceiling
         // and leave it cut: setRoofCut has three callers and all of them are in here, so
@@ -465,7 +483,7 @@ export class Tour {
         const result = station.enter();
         if (result && typeof result.then === 'function') {
             result.then(() => {
-                if (this._disposed || !this.active || this.index !== index) return;
+                if (!this._onStation(index)) return;
                 this._refresh();
                 this._buildPlacards();
             }).catch((e) => this.diag('tour_station_failed', { index, error: String(e.message || e) }));
