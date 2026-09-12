@@ -143,6 +143,11 @@ class Cluster:
     score: float
     peak: float
     n_voxels: int
+    # Distinct keyframes that saw this place, UNCAPPED. `evidence` is the handful of them
+    # worth showing, so its length says how many pictures are on screen, not how many
+    # viewpoints agreed -- which is what a person means by "seen from 8 places", and what
+    # the ranking has to sort on.
+    views: int = 0
     evidence: list[Evidence] = field(default_factory=list)
 
     def summary(self) -> dict[str, Any]:
@@ -153,6 +158,7 @@ class Cluster:
             "score": round(self.score, 3),
             "peak": round(self.peak, 3),
             "n_voxels": self.n_voxels,
+            "n_views": self.views,
             "n_evidence": len(self.evidence),
         }
 
@@ -310,13 +316,16 @@ def _by_viewpoints(
 ) -> tuple[list[Cluster], NDArray[np.int64], NDArray[np.int64]]:
     """Re-rank the clusters by evidence count, and renumber everything that points at them.
 
+    Ranked on `views`, not on `len(evidence)`: evidence is capped at EVIDENCE_PER_CLUSTER,
+    so ranking by it ties every cluster seen from that many places or more -- which is
+    exactly the clusters most likely to be the answer, so the ranking would be a no-op
+    where it matters most.
+
     ``index`` is not a name, it is a position: the viewer steps through clusters by it,
     the voxel labels carry it, and the pictures are filtered by it. So renumbering means
     rewriting all three together or the answer comes apart.
     """
-    order = sorted(
-        range(len(clusters)), key=lambda i: (-len(clusters[i].evidence), -clusters[i].score)
-    )
+    order = sorted(range(len(clusters)), key=lambda i: (-clusters[i].views, -clusters[i].score))
     renumbered = np.full(len(clusters) + 1, -1, dtype=np.int64)  # -1 for "no cluster"
     for rank, old in enumerate(order):
         renumbered[old] = rank
@@ -506,7 +515,9 @@ class HyperspaceSearch:
                 embed_texts=lambda texts: model.embed_text_array(*texts),
                 with_segments=self.use_segments,
             )
-        except Exception:
+        except BaseException:
+            # BaseException: this package reports an expected failure with SystemExit, and
+            # letting that past here leaks the open store and a loaded text tower.
             self._release()
             raise
         self._engine, self._fast = engine, fast
@@ -561,9 +572,9 @@ class HyperspaceSearch:
         members = np.flatnonzero(owner >= 0)
         hits = _hits_of(fast, result, members)
         for cluster in clusters:
-            cluster.evidence = _pick_evidence(
-                [hits[i] for i in members[owner[members] == cluster.index]]
-            )
+            saw_it = [hits[i] for i in members[owner[members] == cluster.index]]
+            cluster.views = len({hit.keyframe_id for hit in saw_it})
+            cluster.evidence = _pick_evidence(saw_it)
         # Ranked by how many viewpoints saw it, which is the question a person is really
         # asking: a thing seen from eight places is more likely to be the thing than one
         # bright patch seen once. Summed score breaks the ties. Only now, because the
@@ -610,12 +621,13 @@ class HyperspaceSearch:
         )
         if config is None or not keep.any():
             return None
-        # Occupancy is applied on sparse keys in _query, but only when there IS a scene:
-        # the world cache can fail and Hyperspace still loads. Stripping the dense method
-        # unconditionally would then ground the answer nowhere at all, and a blob floating
-        # metres out in free space becomes a cluster the user is invited to walk to.
-        if self._scene_keys is not None:
-            config = replace(config, methods=[m for m in config.methods if m != "occupancy"])
+        # Occupancy always comes out of the dense chain. _query applies it on sparse keys
+        # when there is a scene, and the dense method is handed `scene=[]` below, on which
+        # it keeps NOTHING -- so leaving it in for the no-scene case, which is what this
+        # used to do to avoid grounding an answer nowhere, silently deleted the entire
+        # answer instead. With no scene nothing can ground anything; _load_scene says so
+        # when that happens.
+        config = replace(config, methods=[m for m in config.methods if m != "occupancy"])
         if int(keep.sum()) > REFINE_MAX_VOXELS:
             ranked = np.flatnonzero(keep)
             ranked = ranked[np.argsort(-result.score[ranked])[:REFINE_MAX_VOXELS]]

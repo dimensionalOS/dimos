@@ -287,12 +287,12 @@ class HyperspaceAnswers:
         short = phrase[:80]  # labels are capped at 120 characters; questions at 400
         result = MemoryQueryResult(
             answer=f"{phrase}: {len(answer.clusters)} place{'s' if len(answer.clusters) != 1 else ''}, "
-            f"best {best.peak:.2f} from {len(best.evidence)} view{'s' if len(best.evidence) != 1 else ''}",
+            f"best {best.peak:.2f} from {best.views} view{'s' if best.views != 1 else ''}",
             focus_point=best.centre,
             points=[
                 HighlightPoint(
                     position=cluster.centre,
-                    label=f"#{cluster.index + 1} {short} ({cluster.peak:.2f}, {len(cluster.evidence)} views)",
+                    label=f"#{cluster.index + 1} {short} ({cluster.peak:.2f}, {cluster.views} views)",
                     color="#ff5c3a" if cluster.index == 0 else "#ffb347",
                 )
                 for cluster in answer.clusters
@@ -305,6 +305,7 @@ class HyperspaceAnswers:
                     score=cluster.score,
                     peak=cluster.peak,
                     n_voxels=cluster.n_voxels,
+                    n_views=cluster.views,
                     n_evidence=len(cluster.evidence),
                     label=f"{short} #{cluster.index + 1}",
                 )

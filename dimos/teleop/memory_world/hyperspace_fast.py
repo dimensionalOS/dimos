@@ -412,6 +412,22 @@ class PatchBank:
             torch.from_numpy(np.concatenate(grids, axis=0)) if grids else torch.zeros((0, 1))
         )
         sizes = np.asarray([len(g) for g in grids], dtype=np.int64)
+        # patch_cell below numbers patches within the MEMBER grid, while patch_depth comes
+        # from the keyframe's CELL grid. They are the same grid only when the model's own
+        # shape equals the cell grid, and since the cell grid became "the finest member,
+        # floored at 24x24" they can differ for a single member too -- a 14x14 model
+        # against a 24x24 cell grid. Stacked anyway, the depth of one keyframe is read for
+        # the patches of another: no exception, just placements from the wrong frame.
+        mismatched = [
+            (k.id, len(g), k.rows * k.cols) for (k, g, _) in kept if len(g) != k.rows * k.cols
+        ]
+        if mismatched:
+            keyframe, patches, cells = mismatched[0]
+            raise SystemExit(
+                f"keyframe {keyframe} holds {patches} patches against a {cells}-cell grid"
+                f" ({len(mismatched)} such): this store's model grid is not its cell grid,"
+                " and the fast path stacks the two together. Query through the engine."
+            )
         self.patch_frame = np.repeat(np.arange(len(kept)), sizes)
         self.patch_cell = (
             np.concatenate([np.arange(s) for s in sizes]) if len(sizes) else np.zeros(0, np.int64)

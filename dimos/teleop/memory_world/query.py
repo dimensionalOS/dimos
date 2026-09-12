@@ -62,6 +62,7 @@ class ClusterSummary(BaseModel):
     score: float = Field(ge=0.0)
     peak: float = Field(ge=0.0, le=1.0)
     n_voxels: int = Field(ge=1)
+    n_views: int = Field(default=0, ge=0)
     n_evidence: int = Field(default=0, ge=0)
     label: str = Field(default="", max_length=120)
 
