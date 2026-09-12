@@ -58,8 +58,9 @@ class PlanarBaseTrajectoryTaskConfig:
     kp: tuple[float, float, float] = (1.0, 1.0, 1.0)
     max_linear: float = 1.0
     max_angular: float = 2.0
-    start_tolerance: float = 0.1
-    goal_tolerance: float = 0.05
+    start_position_tolerance: float = 0.1
+    start_orientation_tolerance: float = 0.1
+    position_goal_tolerance: float = 0.05
     orientation_goal_tolerance: float = 0.1
     max_tracking_error: float = 0.5
     max_yaw_tracking_error: float = 0.5
@@ -187,7 +188,10 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
             yaw_error = abs(angle_diff(reference[2], pose[2]))
 
             config = self._config
-            if first_tick and max(position_error, yaw_error) > config.start_tolerance:
+            if first_tick and (
+                position_error > config.start_position_tolerance
+                or yaw_error > config.start_orientation_tolerance
+            ):
                 return self._fail(
                     state.t_now,
                     f"trajectory starts {position_error:.3f} m / {yaw_error:.3f} rad from the "
@@ -203,7 +207,7 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
                 )
             if self._elapsed >= self._trajectory.duration:
                 if (
-                    position_error < config.goal_tolerance
+                    position_error < config.position_goal_tolerance
                     and yaw_error < config.orientation_goal_tolerance
                 ):
                     self._stop(state.t_now, TrajectoryState.COMPLETED, "")
@@ -315,8 +319,9 @@ class PlanarBaseTrajectoryTaskParams(BaseConfig):
     kp: tuple[NonNegativeFloat, NonNegativeFloat, NonNegativeFloat] = (1.0, 1.0, 1.0)
     max_linear: PositiveFloat = 1.0
     max_angular: PositiveFloat = 2.0
-    start_tolerance: PositiveFloat = 0.1
-    goal_tolerance: PositiveFloat = 0.05
+    start_position_tolerance: PositiveFloat = 0.1
+    start_orientation_tolerance: PositiveFloat = 0.1
+    position_goal_tolerance: PositiveFloat = 0.05
     orientation_goal_tolerance: PositiveFloat = 0.1
     max_tracking_error: PositiveFloat = 0.5
     max_yaw_tracking_error: PositiveFloat = 0.5
