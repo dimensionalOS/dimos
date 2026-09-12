@@ -160,7 +160,7 @@ participate as auxiliary IK degrees of freedom. Select both arms for a bimanual
 goal; RoboPlan composes the selected groups automatically.
 
 A plan that moves the planar base executes when the module config names a
-`base_trajectory_task`, a coordinator task of type `base_trajectory` claiming
+`base_trajectory_task`, a coordinator task of type `planar_base_trajectory` claiming
 the base's twist joints. The plan's base columns go to that task and the rest to
 the joint trajectory task, both driven by the coordinator's tick clock. A
 failure on either side cancels the other, because collision checking only covers

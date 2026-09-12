@@ -52,7 +52,7 @@ def _clamp(value: float, limit: float) -> float:
 
 
 @dataclass
-class BaseTrajectoryTaskConfig:
+class PlanarBaseTrajectoryTaskConfig:
     joint_names: list[str]
     priority: int = 10
     kp: tuple[float, float, float] = (1.0, 1.0, 1.0)
@@ -60,7 +60,7 @@ class BaseTrajectoryTaskConfig:
     max_angular: float = 2.0
     start_tolerance: float = 0.1
     goal_tolerance: float = 0.05
-    orientation_tolerance: float = 0.1
+    orientation_goal_tolerance: float = 0.1
     max_tracking_error: float = 0.5
     max_yaw_tracking_error: float = 0.5
     settle_timeout: float = 2.0
@@ -68,7 +68,7 @@ class BaseTrajectoryTaskConfig:
     stale_pose_timeout: float = 0.3
 
 
-class BaseTrajectoryTask(BaseControlTask):
+class PlanarBaseTrajectoryTask(BaseControlTask):
     """Follow an (x, y, yaw) trajectory in the odometry frame with feedforward and feedback.
 
     The trajectory's three columns are x, y and yaw in that order; yaw may be
@@ -78,10 +78,10 @@ class BaseTrajectoryTask(BaseControlTask):
     for ``stop_hold_s``.
     """
 
-    def __init__(self, name: str, config: BaseTrajectoryTaskConfig) -> None:
+    def __init__(self, name: str, config: PlanarBaseTrajectoryTaskConfig) -> None:
         if len(config.joint_names) != 3:
             raise ValueError(
-                f"BaseTrajectoryTask '{name}' needs 3 joints (vx, vy, wz), "
+                f"PlanarBaseTrajectoryTask '{name}' needs 3 joints (vx, vy, wz), "
                 f"got {len(config.joint_names)}"
             )
         self._name = name
@@ -204,7 +204,7 @@ class BaseTrajectoryTask(BaseControlTask):
             if self._elapsed >= self._trajectory.duration:
                 if (
                     position_error < config.goal_tolerance
-                    and yaw_error < config.orientation_tolerance
+                    and yaw_error < config.orientation_goal_tolerance
                 ):
                     self._stop(state.t_now, TrajectoryState.COMPLETED, "")
                     return self._command(0.0, 0.0, 0.0)
@@ -226,7 +226,7 @@ class BaseTrajectoryTask(BaseControlTask):
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         with self._lock:
             if joints & set(self._joints) and self._state == TrajectoryState.EXECUTING:
-                logger.warning(f"BaseTrajectoryTask '{self._name}' preempted by {by_task}")
+                logger.warning(f"PlanarBaseTrajectoryTask '{self._name}' preempted by {by_task}")
                 self._stop(None, TrajectoryState.ABORTED, f"preempted by {by_task}")
 
     def _read_pose(self, state: CoordinatorState) -> tuple[float, float, float] | None:
@@ -259,7 +259,7 @@ class BaseTrajectoryTask(BaseControlTask):
         )
 
     def _fail(self, t_now: float, message: str) -> JointCommandOutput:
-        logger.error(f"BaseTrajectoryTask '{self._name}' aborted: {message}")
+        logger.error(f"PlanarBaseTrajectoryTask '{self._name}' aborted: {message}")
         self._stop(t_now, TrajectoryState.ABORTED, message)
         return self._command(0.0, 0.0, 0.0)
 
@@ -281,7 +281,7 @@ class BaseTrajectoryTask(BaseControlTask):
 
 
 def _trajectory_problem(
-    trajectory: JointTrajectory | None, config: BaseTrajectoryTaskConfig
+    trajectory: JointTrajectory | None, config: PlanarBaseTrajectoryTaskConfig
 ) -> str:
     if trajectory is None or not trajectory.points:
         return "Base trajectory has no points"
@@ -309,7 +309,7 @@ def _trajectory_problem(
     return ""
 
 
-class BaseTrajectoryTaskParams(BaseConfig):
+class PlanarBaseTrajectoryTaskParams(BaseConfig):
     model_config = ConfigDict(allow_inf_nan=False)
 
     kp: tuple[NonNegativeFloat, NonNegativeFloat, NonNegativeFloat] = (1.0, 1.0, 1.0)
@@ -317,7 +317,7 @@ class BaseTrajectoryTaskParams(BaseConfig):
     max_angular: PositiveFloat = 2.0
     start_tolerance: PositiveFloat = 0.1
     goal_tolerance: PositiveFloat = 0.05
-    orientation_tolerance: PositiveFloat = 0.1
+    orientation_goal_tolerance: PositiveFloat = 0.1
     max_tracking_error: PositiveFloat = 0.5
     max_yaw_tracking_error: PositiveFloat = 0.5
     settle_timeout: NonNegativeFloat = 2.0
@@ -325,11 +325,11 @@ class BaseTrajectoryTaskParams(BaseConfig):
     stale_pose_timeout: PositiveFloat = 0.3
 
 
-def create_task(cfg: Any, hardware: Any) -> BaseTrajectoryTask:
-    params = BaseTrajectoryTaskParams.model_validate(cfg.params)
-    return BaseTrajectoryTask(
+def create_task(cfg: Any, hardware: Any) -> PlanarBaseTrajectoryTask:
+    params = PlanarBaseTrajectoryTaskParams.model_validate(cfg.params)
+    return PlanarBaseTrajectoryTask(
         cfg.name,
-        BaseTrajectoryTaskConfig(
+        PlanarBaseTrajectoryTaskConfig(
             joint_names=list(cfg.joint_names), priority=cfg.priority, **params.model_dump()
         ),
     )

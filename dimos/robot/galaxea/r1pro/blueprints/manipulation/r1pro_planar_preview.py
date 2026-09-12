@@ -61,7 +61,7 @@ r1pro_planar_preview = autoconnect(
             trajectory_task(_r1pro_hardware),
             TaskConfig(
                 name="base_trajectory",
-                type="base_trajectory",
+                type="planar_base_trajectory",
                 joint_names=_chassis_hardware.joints,
                 # The planner limits x and y separately, so a diagonal is faster.
                 params={

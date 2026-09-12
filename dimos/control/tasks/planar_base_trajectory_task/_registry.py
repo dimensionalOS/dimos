@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 TASK_FACTORIES = {
-    "base_trajectory": (
-        "dimos.control.tasks.base_trajectory_task.base_trajectory_task:create_task"
+    "planar_base_trajectory": (
+        "dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task:create_task"
     ),
 }
 
 TASK_EXPOSES: dict[str, list[str]] = {
-    "base_trajectory": ["execute", "cancel", "get_status"],
+    "planar_base_trajectory": ["execute", "cancel", "get_status"],
 }

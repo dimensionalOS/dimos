@@ -17,9 +17,9 @@ import math
 import pytest
 
 from dimos.control.task import CoordinatorState, JointStateSnapshot
-from dimos.control.tasks.base_trajectory_task.base_trajectory_task import (
-    BaseTrajectoryTask,
-    BaseTrajectoryTaskConfig,
+from dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task import (
+    PlanarBaseTrajectoryTask,
+    PlanarBaseTrajectoryTaskConfig,
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -80,8 +80,8 @@ def _run(task, base, seconds, t=100.0):
 
 
 def _task(**overrides):
-    return BaseTrajectoryTask(
-        "base_traj", BaseTrajectoryTaskConfig(joint_names=JOINTS, **overrides)
+    return PlanarBaseTrajectoryTask(
+        "base_traj", PlanarBaseTrajectoryTaskConfig(joint_names=JOINTS, **overrides)
     )
 
 
