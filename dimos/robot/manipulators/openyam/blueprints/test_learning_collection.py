@@ -15,6 +15,7 @@
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import create_task
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
@@ -53,6 +54,16 @@ def test_teach_collection_is_a_minimal_native_stack():
     assert len(modules) == 4
 
 
+def test_teach_collection_task_can_be_created_without_starting_motion():
+    coordinator = next(
+        atom
+        for atom in openyam_teach_collection.active_blueprints
+        if atom.module is ControlCoordinator
+    )
+    task = create_task(coordinator.kwargs["tasks"][0], hardware={})
+    assert not task.is_active()
+
+
 def test_openyam_teach_collection_uses_gravity_compensation_and_zero_stiffness(
     tmp_path,
 ) -> None:
@@ -78,6 +89,6 @@ def test_openyam_teach_collection_uses_gravity_compensation_and_zero_stiffness(
             "trajectory",
             OPENYAM_JOINTS,
             10,
-            {"hold_position_when_idle": True},
+            {},
         ),
     ]

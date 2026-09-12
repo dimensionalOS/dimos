@@ -56,7 +56,6 @@ def _teach_robot() -> Blueprint:
                 type="trajectory",
                 joint_names=list(OPENYAM_JOINTS),
                 priority=10,
-                params={"hold_position_when_idle": True},
             )
         ],
     )
