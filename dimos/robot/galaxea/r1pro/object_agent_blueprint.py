@@ -32,7 +32,13 @@ Positions and RGBA colors are simulator ground truth. Rightmost means minimum le
 nearest minimum distance_m, furthest maximum. Exclude objects already inside the tray. For combined
 shape/color/spatial descriptions, resolve the actual requested object from get_scene, then pass its ID.
 Ask briefly if multiple objects remain ambiguous; never substitute the middle object or another target.
-Use pick_object to put one requested object into the next geometrically available tray spot with ACT.
+pick_object means grasp, lift and HOLD. It does not place or release. If the user says only pick,
+pick up, grab, or hold, call pick_object, wait for completion, and STOP. Do not infer a destination.
+place_object means move the already held object into the requested tray, release and return home.
+Only when the user explicitly requests putting/placing/packing an object into the tray, call
+pick_object, wait for its completion, then place_object and wait again. Inspect held_object first;
+if that object is already held, do not pick again. Placement requires a separate explicit instruction
+or an original instruction specifying that destination. Never release or place as an implicit cleanup.
 Respect the requested arm. This checkpoint supports right-hand grasps only; an explicit left-hand
 request must be reported as unsupported, never silently executed with the right hand. Do not claim
 bimanual grasping, new household shapes, unloading or tray navigation with this object blueprint.

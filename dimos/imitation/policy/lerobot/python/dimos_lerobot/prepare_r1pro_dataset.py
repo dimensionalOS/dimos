@@ -39,6 +39,7 @@ from dimos.robot.galaxea.r1pro.object_packing import (
     OBJECT_PACKING_IO,
     OBJECT_PACKING_TASK,
 )
+from dimos.robot.galaxea.r1pro.object_primitive_data import episode_frame_slice
 
 
 def stable_joint_statistics(
@@ -76,10 +77,11 @@ def update_joint_statistics(source: Path, output: Path) -> None:
     states, actions, goals = [], [], []
     for episode in manifest["episodes"]:
         with np.load(source / episode["file"], allow_pickle=False) as data:
-            states.append(data["observation.state"])
-            actions.append(data["action"])
+            frames = episode_frame_slice(episode, len(data["action"]))
+            states.append(data["observation.state"][frames])
+            actions.append(data["action"][frames])
             if "observation.environment_state" in data:
-                goals.append(data["observation.environment_state"])
+                goals.append(data["observation.environment_state"][frames])
     stats_path = output / "meta" / "stats.json"
     stats = json.loads(stats_path.read_text())
     stats.update(stable_joint_statistics(np.concatenate(states), np.concatenate(actions)))
@@ -140,6 +142,7 @@ def convert(source: Path, output: Path) -> None:
     task_text = (
         OBJECT_PACKING_TASK if objects else R1PRO_PACKING_TASK if packing else R1PRO_PICK_PLACE_TASK
     )
+    task_text = manifest.get("task", task_text)
     if packing:
         if not manifest.get("images") or not (
             manifest.get("sequences")
@@ -170,7 +173,8 @@ def convert(source: Path, output: Path) -> None:
             if not episode["success"]:
                 raise ValueError("Refusing a failed demonstration")
             with np.load(source / episode["file"], allow_pickle=False) as data:
-                arrays = {key: data[key] for key in features}
+                frames = episode_frame_slice(episode, len(data["action"]))
+                arrays = {key: data[key][frames] for key in features}
                 for index in range(episode["frames"]):
                     dataset.add_frame(
                         {

@@ -123,22 +123,20 @@ class ObjectPackingState:
             support_geoms=sorted(supports),
             upright=bool(body.xmat[8] > np.cos(np.deg2rad(15))),
             released=not touching,
+            grasped=touching == self.pad_ids,
             settled=bool(np.linalg.norm(self.data.joint(obj.joint).qvel) < 0.03),
         )
 
     def inventory(self) -> list[dict[str, Any]]:
         return [self.geometry(i) for i in range(len(self.layout.objects))]
 
-    def select_object(self, index: int) -> bool:
-        if not 0 <= index < len(self.layout.objects):
-            raise ValueError("Unknown object index")
-        if self.geometry(index)["inside"]:
-            raise ValueError("Selected object is already in the tray")
+    def placement_target(self, index: int, *, occupied: bool = True) -> NDArray[np.float64] | None:
+        """Compute a tray goal without changing the selected object or grasp evidence."""
         tray = self.data.body("task_bin")
         rotation = tray.xmat.reshape(3, 3)
-        occupied = []
+        footprints = []
         for j, other in enumerate(self.layout.objects):
-            if j == index:
+            if j == index or not occupied:
                 continue
             body = self.data.body(other.name)
             pos = rotation.T @ (body.xpos - tray.xpos)
@@ -150,18 +148,44 @@ class ObjectPackingState:
                 else other.radius,
             )
             if np.all(np.abs(pos[:2]) < np.asarray(OBJECT_TRAY_HALF_SIZE) + radius):
-                occupied.append(OccupiedFootprint(float(pos[0]), float(pos[1]), radius))
+                footprints.append(OccupiedFootprint(float(pos[0]), float(pos[1]), radius))
         obj = self.layout.objects[index]
-        slots = empty_slots(obj.radius, tuple(occupied), inner_half_size=OBJECT_SLOT_BOUNDS)
+        slots = empty_slots(obj.radius, tuple(footprints), inner_half_size=OBJECT_SLOT_BOUNDS)
         if not slots:
+            return None
+        return np.asarray(tray.xpos + rotation @ np.array((*slots[0], 0.015 + obj.half_size[2])))
+
+    def select_object(self, index: int, *, grasp_only: bool = False) -> bool:
+        if not 0 <= index < len(self.layout.objects):
+            raise ValueError("Unknown object index")
+        if self.geometry(index)["inside"]:
+            raise ValueError("Selected object is already in the tray")
+        # The existing checkpoint still takes a tray-goal input during grasping.
+        # For pick-only this is context, never a placement reservation or action.
+        # A full tray must not prevent picking; place recomputes real free space.
+        target = self.placement_target(index)
+        if target is None and grasp_only:
+            target = self.placement_target(index, occupied=False)
+        if target is None:
             return False
+        obj = self.layout.objects[index]
         self.selected = index
         self.bottle_id = self.model.body(obj.name).id
         self.bottle_geoms = set(map(int, np.flatnonzero(self.model.geom_bodyid == self.bottle_id)))
-        self.target = tray.xpos + rotation @ np.array((*slots[0], 0.015 + obj.half_size[2]))
+        self.target = target
         self.initial_height = float(self.data.body(obj.name).xpos[2])
         self.peak_lift, self.bilateral_grasp = 0.0, False
         return True
+
+    def holding(self) -> bool:
+        """Require current two-pad contact and measured lift, not historical grasp success."""
+        row = self.geometry(self.selected)
+        return bool(
+            row["grasped"]
+            and row["upright"]
+            and not row["support_geoms"]
+            and row["position"][2] - self.initial_height >= 0.10
+        )
 
     def goal(self) -> NDArray[np.float32]:
         base = self.data.body("base_link")

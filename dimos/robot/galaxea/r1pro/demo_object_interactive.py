@@ -101,6 +101,9 @@ def run(args: argparse.Namespace) -> None:
         coordinator = ModuleCoordinator.build(blueprint)
         try:
             with requests.Session() as client:
+                # A human pause can coincide with the server's idle keepalive close.
+                # Use a fresh connection per command; never retry a motion POST.
+                client.headers["Connection"] = "close"
                 url = f"http://127.0.0.1:{args.mcp_port}/mcp"
 
                 def call(tool: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -154,6 +157,21 @@ def run(args: argparse.Namespace) -> None:
                         outcome=outcome,
                         after=call("get_scene"),
                     )
+                    if outcome.get("success"):
+                        held = row["after"]
+                        assert held["holding"] and not held["result"]["inside_bin"]
+                        time.sleep(args.hold_seconds)
+                        row["after_hold"] = call("get_scene")
+                        assert row["after_hold"]["holding"]
+                        assert row["after_hold"]["held_object"] == held["held_object"]
+                        assert not row["after_hold"]["result"]["inside_bin"]
+                        if args.place_after_pick:
+                            placement = call(
+                                "place_object", {"destination": "tray", "arm": "right"}
+                            )
+                            assert placement["accepted"]
+                            row["place"] = wait()
+                            row["after_place"] = call("get_scene")
                     report["actions"].append(row)
                     (args.output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
                     print(json.dumps(dict(selector=selector, outcome=outcome)), flush=True)
@@ -178,10 +196,12 @@ def main() -> None:
     parser.add_argument("--scene-package", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=210000)
     parser.add_argument("--seconds", type=float, default=50)
-    parser.add_argument("--selectors", nargs="+", default=["rightmost", "nearest"])
+    parser.add_argument("--selectors", nargs="+", default=["rightmost"])
     parser.add_argument("--zenoh-scout-addr", required=True)
     parser.add_argument("--mcp-port", type=int, required=True)
     parser.add_argument("--reset-check", action="store_true")
+    parser.add_argument("--place-after-pick", action="store_true")
+    parser.add_argument("--hold-seconds", type=float, default=3.0)
     parser.add_argument("--cancel-after", type=float)
     parser.add_argument("--agent-message")
     parser.add_argument("--model-fixture", type=Path, help="Local recorded responses; no model API")
@@ -190,7 +210,11 @@ def main() -> None:
     args = parser.parse_args()
     if args.model_fixture and (not args.agent_message or os.getenv("RECORD")):
         parser.error("Fixture playback needs --agent-message and RECORD must be unset")
-    if args.seconds <= 0 or (args.cancel_after is not None and args.cancel_after < 0):
+    if (
+        args.seconds <= 0
+        or args.hold_seconds < 0
+        or (args.cancel_after is not None and args.cancel_after < 0)
+    ):
         parser.error("Use a positive timeout and a nonnegative cancellation delay")
     run(args)
 

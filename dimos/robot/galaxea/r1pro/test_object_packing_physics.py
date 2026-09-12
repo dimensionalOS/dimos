@@ -46,10 +46,12 @@ def test_random_box_is_physically_placed_and_completion_serializes(tmp_path, sta
         ):
             np.testing.assert_array_equal(before_array, after_array)
         before = task.inventory()
+        saw_current_hold = False
         for _, action in task.teacher_actions():
             task.step(action)
             task.validate(before)
             monitor.observe()
+            saw_current_hold |= monitor.holding()
             np.testing.assert_array_equal(
                 monitor.goal(), task.observation()["observation.environment_state"]
             )
@@ -57,6 +59,8 @@ def test_random_box_is_physically_placed_and_completion_serializes(tmp_path, sta
         result = json.loads(
             json.dumps({"complete": task.pick_complete(), "physical": task.result().to_dict()})
         )
+        assert saw_current_hold
+        assert not monitor.holding()
         assert result["complete"] is True
         assert monitor.pick_complete() is True
         assert result["physical"]["bilateral_grasp"] is True

@@ -192,3 +192,45 @@ def test_recovery_tolerates_numerical_feedback_noise_at_joint_stop(skills, mocke
     assert np.all(values[:, -1] <= 0.05)
     assert values[0, -1] == 0.05
     skills._sim.finish_object_recovery.assert_called_once()
+
+
+def test_pick_stops_with_held_object_and_never_calls_place(skills, mocker):
+    def hold(policy, sim, index, report, **kwargs):
+        assert kwargs["grasp_only"] is True
+        report.update(success=True, history=[{"holding": True}])
+
+    mocker.patch("dimos.robot.galaxea.r1pro.object_skills.run_object_pick", side_effect=hold)
+    place = mocker.patch("dimos.robot.galaxea.r1pro.object_skills.run_object_place")
+    assert json.loads(skills.pick_object("object_1"))["accepted"]
+    outcome = json.loads(skills.wait_for_action(5))
+    assert outcome["state"] == "completed"
+    place.assert_not_called()
+    skills._sim.reset.assert_not_called()
+
+
+def test_place_requires_a_held_object_and_preserves_destination_and_hand(skills, mocker):
+    place = mocker.patch("dimos.robot.galaxea.r1pro.object_skills.run_object_place")
+    assert json.loads(skills.place_object())["accepted"] is False
+    skills._sim.object_state.return_value.update(holding=True, held_object="object_1")
+    assert json.loads(skills.place_object("kitchen"))["reason"] == "unsupported_destination"
+    assert json.loads(skills.place_object("tray", "left"))["reason"] == "unsupported_arm"
+    place.assert_not_called()
+
+
+def test_held_object_blocks_another_pick_but_can_be_explicitly_placed(skills, mocker):
+    skills._sim.object_state.return_value.update(holding=True, held_object="object_1")
+    pick = mocker.patch("dimos.robot.galaxea.r1pro.object_skills.run_object_pick")
+    assert json.loads(skills.pick_object("object_2"))["accepted"] is False
+    pick.assert_not_called()
+
+    def placed(policy, sim, report, **kwargs):
+        report.update(success=True, history=[{"pick_complete": True}])
+
+    place = mocker.patch(
+        "dimos.robot.galaxea.r1pro.object_skills.run_object_place", side_effect=placed
+    )
+    assert json.loads(skills.place_object())["accepted"]
+    outcome = json.loads(skills.wait_for_action(5))
+    assert outcome["success"] is True
+    assert json.loads(Path(outcome["evidence"]).read_text())["held_object"] == "object_1"
+    place.assert_called_once()

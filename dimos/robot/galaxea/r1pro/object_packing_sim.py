@@ -165,7 +165,7 @@ class R1ProObjectPackingSim(MujocoSimModule):
         return bool(engine and engine._sim_thread and engine._sim_thread.is_alive())
 
     @rpc
-    def select_object(self, index: int) -> dict[str, Any]:
+    def select_object(self, index: int, grasp_only: bool = False) -> dict[str, Any]:
         """Assign an object and available tray slot while ACT is stopped at home."""
         engine = self._engine
         if engine is None:
@@ -179,7 +179,7 @@ class R1ProObjectPackingSim(MujocoSimModule):
                 or np.max(np.abs(engine.data.qpos[state.qids] - state.home)) >= 0.015
             ):
                 raise RuntimeError("Wait for the open gripper to return home before selecting")
-            if not state.select_object(index):
+            if not state.select_object(index, grasp_only=grasp_only):
                 self._initial = None
                 return {"selected": False, "reason": "tray_full"}
             self._initial = state.inventory()
@@ -188,6 +188,28 @@ class R1ProObjectPackingSim(MujocoSimModule):
                 "selected": True,
                 "object": state.layout.objects[index].name,
                 "goal": state.target.tolist(),
+            }
+
+    @rpc
+    def prepare_object_place(self) -> dict[str, Any]:
+        """Plan free tray space for the currently held object without resetting grasp history."""
+        engine = self._engine
+        if engine is None:
+            raise RuntimeError("Simulation has not started")
+        with engine._lock:
+            state = self._ensure_state(engine)
+            if self._initial is None or not state.holding():
+                raise RuntimeError("Pick and hold an object before placing")
+            state.validate(self._initial)
+            target = state.placement_target(state.selected)
+            if target is None:
+                return {"selected": False, "reason": "tray_full; object remains held"}
+            state.target = target
+            self._error = None
+            return {
+                "selected": True,
+                "object": state.layout.objects[state.selected].name,
+                "goal": target.tolist(),
             }
 
     @rpc
@@ -214,6 +236,10 @@ class R1ProObjectPackingSim(MujocoSimModule):
                 "seed": state.layout.seed,
                 "supported_arms": ["right"],
                 "source": "simulator_ground_truth",
+                "holding": self._initial is not None and state.holding(),
+                "held_object": f"object_{state.selected + 1}"
+                if self._initial is not None and state.holding()
+                else None,
                 "objects": rows,
                 "selected": state.selected if self._initial is not None else None,
                 "result": state.result().to_dict() if self._initial is not None else None,

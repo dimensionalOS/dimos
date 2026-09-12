@@ -12,6 +12,9 @@ Then open another terminal:
 dimos humancli
 ```
 
+If the root checkout's `(dimos)` environment is active, use `~/.local/bin/dimos`
+in place of `dimos` in both commands; that launcher selects this worktree.
+
 The agent uses your existing `OPENAI_API_KEY` configuration. The blueprint opens
 MuJoCo, generates four or five objects, starts Zenoh and stays idle until asked.
 No environment activation, LCM/scout address or EGL setting is needed with the
@@ -21,7 +24,9 @@ and trained checkpoint must be installed; those large assets are not in git.
 Try one request at a time:
 
 - “What objects are on the table?”
-- “Put object_3 in the tray with your right hand.”
+- “Pick up object_3 with your right hand.” (grasp, lift and hold)
+- “Place the held object in the tray.” (separate placement)
+- “Put object_3 in the tray with your right hand.” (explicitly requests both)
 - “Put the rightmost remaining object in the tray.”
 - “Put the nearest box in the tray.”
 - “Stop.”
@@ -32,11 +37,19 @@ IDs remain stable throughout a run. Spatial descriptions use the robot's frame,
 not the viewer camera. The agent resolves combined descriptions using measured
 positions and shapes; the skill also accepts `nearest`, `furthest`, `rightmost`
 and `leftmost` directly. Ambiguous or unavailable objects are not replaced by a
-different one. Placement uses a planned empty spot and stops when no object-sized
-spot remains. Coordinates and object identities currently come from simulator
+different one. A bare pick stops with the object held; it never implies placing or releasing.
+A second pick is rejected while an object is held. Explicit placement computes a
+free tray spot and preserves the held object if none fits. Coordinates and object identities currently come from simulator
 ground truth, not visual detection.
 
-The current checkpoint was trained for **right-hand grasps**. Explicit left-hand
+The current checkpoint was trained for **right-hand grasps**. The separate commands
+currently reuse that checkpoint with different measured stopping conditions and
+fresh inference when placement starts. These are not yet independently trained
+pick/place policies. Its grasp still receives the legacy tray-goal context; a bare
+pick does not reserve that spot, depend on free tray capacity or execute placement.
+See [the primitive-policy design](OBJECT_PRIMITIVES.md) for the training transition.
+
+This implementation supports right-hand table picks followed by tray placement. Explicit left-hand
 requests return `unsupported_arm` before motion. Left-hand transfer is ongoing
 work; this blueprint does not claim bimanual ACT picking. The larger household
 mesh collection is also deferred. Current objects are boxes, cylinders and
@@ -60,8 +73,19 @@ dimos mcp call wait_for_action --arg seconds=20
 ```
 
 Repeat `wait_for_action` until the state is `completed`, `failed` or `cancelled`.
-Acceptance is not completion. The robot executes the grasp, lift, placement and
-return using ACT through the ControlCoordinator. It stays idle between requests.
+Acceptance is not completion. The robot executes the grasp and lift using ACT through the ControlCoordinator,
+then stops with the object held. Check `get_scene` for `holding` and `held_object`.
+It holds that pose until another explicit command:
+
+```bash
+dimos mcp call place_object --json-args '{"destination":"tray","arm":"right"}'
+dimos mcp call wait_for_action --arg seconds=20
+```
+
+Repeat the wait until completion. ACT now places, releases on support and returns
+home. The old offline/full-sequence runners still execute their requested complete
+pick-and-place tasks. The interactive agent composes the two commands only when
+the user's request specifies placement.
 
 ```bash
 dimos mcp call stop_action
@@ -94,11 +118,13 @@ An alternative checkpoint can be supplied with `--artifact /path/to/policy`.
 
 ## Validation and limits
 
-Native MCP testing of the default completed eight requested picks across two
-four-object layouts (seeds 210000 and 210006), with different request orders.
+The split interface passed four picks, five-second holds and separately requested
+placements on seed 210000 (object order 3,1,4,2), followed by explicit reset.
+Earlier full-sequence MCP testing passed eight picks across seeds 210000 and 210006.
 These are development layouts, not a fresh generalization test. A separate
-desktop GLFW run completed one ACT pick. Deliberate timeouts recovered twice in succession without a reset, and
-cancellation followed by explicit reset passed. Unit/physics regressions cover
+desktop GLFW run completed one full-sequence ACT pick. Deliberate timeouts
+recovered twice in succession without a reset; cancellation followed by explicit
+reset also passed. Unit/physics regressions cover
 selection, incorrect arm requests, concurrent commands, supported recovery and
 refusing to release an airborne grasp.
 

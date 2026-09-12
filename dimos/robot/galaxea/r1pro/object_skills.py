@@ -33,7 +33,11 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.galaxea.r1pro.home_spec import HomeControlSpec, PackingPolicySpec
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_JOINTS
-from dimos.robot.galaxea.r1pro.object_packing_run import ObjectPackingSimSpec, run_object_pick
+from dimos.robot.galaxea.r1pro.object_packing_run import (
+    ObjectPackingSimSpec,
+    run_object_pick,
+    run_object_place,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -151,7 +155,7 @@ class R1ProObjectSkills(Module):
         except Exception as exc:
             logger.exception("Object action failed", error=str(exc))
             terminal["error"] = str(exc)
-            moved = bool(report.get("pick", {}).get("history"))
+            moved = any(report.get(phase, {}).get("history") for phase in ("pick", "place"))
             terminal["recovery_required"] = moved or bool(self._status().get("recovery_required"))
             if moved and self.config.auto_recover and not self._cancel.is_set():
                 try:
@@ -191,7 +195,7 @@ class R1ProObjectSkills(Module):
 
     @skill
     def get_scene(self) -> str:
-        """Read stable object IDs, shapes, RGBA colors, robot-frame positions and tray contents.
+        """Read object IDs, shapes, colors, robot-frame positions, tray contents and current held-object state.
 
         Coordinates are simulator ground truth. Rightmost has the smallest left_m;
         nearest has the smallest distance_m. Current learned grasps support the right arm.
@@ -200,7 +204,7 @@ class R1ProObjectSkills(Module):
 
     @skill
     def pick_object(self, object: str = "nearest", arm: str = "right") -> str:
-        """Use ACT to put exactly one selected source object into a planned empty tray spot.
+        """Use ACT to grasp and lift one selected object, then STOP with it held. Never place or release.
 
         Args:
             object: Stable object_1..object_5 ID, unique shape, nearest, furthest, rightmost or leftmost.
@@ -215,8 +219,13 @@ class R1ProObjectSkills(Module):
                     requested_arm=arm,
                 )
             )
+        state = self._sim.object_state()
+        if state.get("held_object") or any(not row["released"] for row in state["objects"]):
+            return json.dumps(
+                dict(accepted=False, reason="Place the held object before another pick")
+            )
         try:
-            index = resolve_object(self._sim.object_state()["objects"], object)
+            index = resolve_object(state["objects"], object)
         except ValueError as exc:
             return json.dumps(dict(accepted=False, reason=str(exc)))
 
@@ -237,13 +246,58 @@ class R1ProObjectSkills(Module):
                 report["pick"],
                 seconds=self.config.pick_timeout,
                 pause=self._pause,
+                grasp_only=True,
             )
             if not report["pick"]["success"]:
                 raise RuntimeError(
-                    report["pick"].get("reason", "Pick did not remain physically complete")
+                    report["pick"].get("reason", "Grasp did not remain held after stopping")
                 )
 
         return self._start(f"pick object_{index + 1} with right", operation)
+
+    @skill
+    def place_object(self, destination: str = "tray", arm: str = "right") -> str:
+        """Use ACT to place the held object, release on support, and return home.
+
+        Args:
+            destination: Requested destination. This checkpoint currently supports the tray only.
+            arm: Hand holding the object. Currently right only; never substitutes another arm.
+        """
+        if arm.strip().lower() != "right":
+            return json.dumps(
+                dict(accepted=False, reason="unsupported_arm", supported_arms=["right"])
+            )
+        if destination.strip().lower() != "tray":
+            return json.dumps(
+                dict(
+                    accepted=False,
+                    reason="unsupported_destination",
+                    supported_destinations=["tray"],
+                )
+            )
+        state = self._sim.object_state()
+        if not state.get("holding"):
+            return json.dumps(dict(accepted=False, reason="Pick and hold an object before placing"))
+
+        def operation(report: dict[str, Any]) -> None:
+            report.update(
+                destination=destination, arm="right", held_object=state["held_object"], place={}
+            )
+            run_object_place(
+                self._policy,
+                self._sim,
+                report["place"],
+                seconds=self.config.pick_timeout,
+                pause=self._pause,
+            )
+            if not report["place"]["success"]:
+                raise RuntimeError(
+                    report["place"].get("reason", "Placement did not remain complete")
+                )
+
+        return self._start(
+            f"place {state['held_object']} in tray with right", operation, recovery=True
+        )
 
     def _recover(self, report: dict[str, Any]) -> None:
         self._stop_control()
