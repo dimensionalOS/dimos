@@ -61,6 +61,23 @@ visualization, not MuJoCo's native window. A selected scene package is composed
 into the same physics model and its cooked GLB is logged to Rerun. The first
 office launch can be slower while its assets are extracted and compiled.
 
+## Browser cockpit
+
+Two blueprints put the duck in the web cockpit. Both add the mapping and
+planning stack (RGB-D pointcloud, voxel map, costmap, A* planner, movement
+manager) on top of `microduck-sim`:
+
+```sh skip
+uv run dimos --simulation mujoco run microduck-cockpit --local-relay
+uv run dimos --simulation mujoco run microduck-agentic-cockpit --local-relay
+```
+
+Open the URL the relay prints. `microduck-cockpit` shows the head camera, the
+costmap with the duck's pose, and a keyboard teleop pad; clicking the map
+publishes a `goal_request` for the planner. `microduck-agentic-cockpit` adds
+the agent chat (needs `OPENAI_API_KEY`) with `go_to`, `stop_moving`, `where_am_i`,
+`observe`, `perform`, `sit` and `stand_up` skills on top of the policy task.
+
 ## Drive and inspect
 
 Focus the DimOS Rerun viewer and use W/S for forward/reverse, Q/E for strafe,

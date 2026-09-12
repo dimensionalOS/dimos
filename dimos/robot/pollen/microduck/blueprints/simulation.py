@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,7 @@ if global_config.simulation and global_config.simulation != "mujoco":
 
 def _microduck_mujoco_backend(
     scene_package: str | Path | None,
+    sim_overrides: Mapping[str, Any] | None = None,
 ) -> tuple[Blueprint, str | Path]:
     common: dict[str, Any] = {
         "headless": True,
@@ -81,6 +83,7 @@ def _microduck_mujoco_backend(
         "robot_sim_spec": MICRODUCK_SIM_SPEC,
         "imu_gyro_sensor_names": ["imu_ang_vel", "angular-velocity"],
         "imu_accel_sensor_names": ["imu_accel"],
+        **(sim_overrides or {}),
     }
     package = resolve_scene_package(scene_package)
     if package is None:
@@ -109,33 +112,39 @@ def _microduck_mujoco_backend(
     )
 
 
-_simulator, _adapter_address = _microduck_mujoco_backend(global_config.scene_package)
+MICRODUCK_POLICY_TASK = "microduck_policy"
 
-_coordinator = _MicroDuckCoordinator.blueprint(
-    instance_name="ControlCoordinator",
-    tick_rate=50.0,
-    publish_robot_joint_states=True,
-    hardware=[make_microduck_sim_hardware(_adapter_address)],
-    tasks=[
-        TaskConfig(
-            name="microduck_policy",
-            type="microduck_policy",
-            joint_names=list(MICRODUCK_JOINTS),
-            priority=50,
-            auto_start=True,
-            params={
-                "policy_dir": MICRODUCK_POLICY_DIR,
-                "hardware_id": "microduck",
-                "auto_arm": True,
-            },
-        )
-    ],
-)
 
-microduck_sim = (
-    autoconnect(
-        _simulator,
-        _coordinator,
+def microduck_stack(sim_overrides: Mapping[str, Any] | None = None) -> Blueprint:
+    """Physics + coordinator + policy task + viewer: the base every microduck
+    blueprint composes. `sim_overrides` patch MujocoSimModule's kwargs (a
+    cockpit turns the pointcloud on for mapping)."""
+    simulator, adapter_address = _microduck_mujoco_backend(
+        global_config.scene_package, sim_overrides
+    )
+    coordinator = _MicroDuckCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        tick_rate=50.0,
+        publish_robot_joint_states=True,
+        hardware=[make_microduck_sim_hardware(adapter_address)],
+        tasks=[
+            TaskConfig(
+                name=MICRODUCK_POLICY_TASK,
+                type="microduck_policy",
+                joint_names=list(MICRODUCK_JOINTS),
+                priority=50,
+                auto_start=True,
+                params={
+                    "policy_dir": MICRODUCK_POLICY_DIR,
+                    "hardware_id": "microduck",
+                    "auto_arm": True,
+                },
+            )
+        ],
+    )
+    return autoconnect(
+        simulator,
+        coordinator,
         vis_module(
             viewer_backend=global_config.viewer,
             rerun_config={
@@ -151,15 +160,7 @@ microduck_sim = (
                 },
             },
         ),
-    )
-    .remappings(
-        [
-            (_MicroDuckCoordinator, "twist_command", "cmd_vel"),
-            (RerunWebSocketServer, "tele_cmd_vel", "cmd_vel"),
-            (WebsocketVisModule, "tele_cmd_vel", "cmd_vel"),
-        ]
-    )
-    .transports(
+    ).transports(
         {
             ("cmd_vel", Twist): LCMTransport("/microduck/cmd_vel", Twist),
             ("microduck_joints", JointState): LCMTransport("/microduck/joints", JointState),
@@ -172,6 +173,17 @@ microduck_sim = (
                 "/microduck/depth_camera_info", CameraInfo
             ),
         }
+    )
+
+
+microduck_sim = (
+    microduck_stack()
+    .remappings(
+        [
+            (_MicroDuckCoordinator, "twist_command", "cmd_vel"),
+            (RerunWebSocketServer, "tele_cmd_vel", "cmd_vel"),
+            (WebsocketVisModule, "tele_cmd_vel", "cmd_vel"),
+        ]
     )
     .global_config(robot_model="microduck", simulation="mujoco", n_workers=3)
 )
