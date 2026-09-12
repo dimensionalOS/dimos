@@ -19,15 +19,13 @@ This module provides frontier detection and exploration goal selection
 for autonomous navigation using the dimos Costmap and Vector types.
 """
 
-from collections import deque
-from dataclasses import dataclass
-from enum import IntFlag
 import threading
 from typing import Any
 
 from dimos_lcm.std_msgs import Bool
 import numpy as np
 from reactivex.disposable import Disposable
+from scipy import ndimage
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
@@ -43,43 +41,6 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance
 
 logger = setup_logger()
-
-
-class PointClassification(IntFlag):
-    """Point classification flags for frontier detection algorithm."""
-
-    NoInformation = 0
-    MapOpen = 1
-    MapClosed = 2
-    FrontierOpen = 4
-    FrontierClosed = 8
-
-
-@dataclass
-class GridPoint:
-    """Represents a point in the grid map with classification."""
-
-    x: int
-    y: int
-    classification: int = PointClassification.NoInformation
-
-
-class FrontierCache:
-    """Cache for grid points to avoid duplicate point creation."""
-
-    def __init__(self) -> None:
-        self.points = {}  # type: ignore[var-annotated]
-
-    def get_point(self, x: int, y: int) -> GridPoint:
-        """Get or create a grid point at the given coordinates."""
-        key = (x, y)
-        if key not in self.points:
-            self.points[key] = GridPoint(x, y)
-        return self.points[key]  # type: ignore[no-any-return]
-
-    def clear(self) -> None:
-        """Clear the point cache."""
-        self.points.clear()
 
 
 class WavefrontConfig(ModuleConfig):
@@ -133,7 +94,6 @@ class WavefrontFrontierExplorer(Module):
             num_no_gain_attempts: Maximum number of consecutive attempts with no information gain
         """
         super().__init__(**kwargs)
-        self._cache = FrontierCache()
         self.explored_goals = []  # type: ignore[var-annotated]  # list of explored goals
         self.exploration_direction = Vector3(0.0, 0.0, 0.0)  # current exploration direction
         self.last_costmap = None  # store last costmap for information comparison
@@ -227,78 +187,6 @@ class WavefrontFrontierExplorer(Module):
         obstacle_count = np.sum(costmap.grid >= self.config.occupancy_threshold)
         return int(free_count + obstacle_count)
 
-    def _get_neighbors(self, point: GridPoint, costmap: OccupancyGrid) -> list[GridPoint]:
-        """Get valid neighboring points for a given grid point."""
-        neighbors = []
-
-        # 8-connected neighbors
-        for dx in [-1, 0, 1]:
-            for dy in [-1, 0, 1]:
-                if dx == 0 and dy == 0:
-                    continue
-
-                nx, ny = point.x + dx, point.y + dy
-
-                # Check bounds
-                if 0 <= nx < costmap.width and 0 <= ny < costmap.height:
-                    neighbors.append(self._cache.get_point(nx, ny))
-
-        return neighbors
-
-    def _is_frontier_point(self, point: GridPoint, costmap: OccupancyGrid) -> bool:
-        """
-        Check if a point is a frontier point.
-        A frontier point is an unknown cell adjacent to at least one free cell
-        and not adjacent to any occupied cells.
-        """
-        # Point must be unknown
-        cost = costmap.grid[point.y, point.x]
-        if cost != CostValues.UNKNOWN:
-            return False
-
-        has_free = False
-
-        for neighbor in self._get_neighbors(point, costmap):
-            neighbor_cost = costmap.grid[neighbor.y, neighbor.x]
-
-            # If adjacent to occupied space, not a frontier
-            if neighbor_cost > self.config.occupancy_threshold:
-                return False
-
-            # Check if adjacent to free space
-            if neighbor_cost == CostValues.FREE:
-                has_free = True
-
-        return has_free
-
-    def _find_free_space(
-        self, start_x: int, start_y: int, costmap: OccupancyGrid
-    ) -> tuple[int, int]:
-        """
-        Find the nearest free space point using BFS from the starting position.
-        """
-        queue = deque([self._cache.get_point(start_x, start_y)])
-        visited = set()
-
-        while queue:
-            point = queue.popleft()
-
-            if (point.x, point.y) in visited:
-                continue
-            visited.add((point.x, point.y))
-
-            # Check if this point is free space
-            if costmap.grid[point.y, point.x] == CostValues.FREE:
-                return (point.x, point.y)
-
-            # Add neighbors to search
-            for neighbor in self._get_neighbors(point, costmap):
-                if (neighbor.x, neighbor.y) not in visited:
-                    queue.append(neighbor)
-
-        # If no free space found, return original position
-        return (start_x, start_y)
-
     def _compute_centroid(self, frontier_points: list[Vector3]) -> Vector3:
         """Compute the centroid of a list of frontier points."""
         if not frontier_points:
@@ -314,6 +202,22 @@ class WavefrontFrontierExplorer(Module):
         """
         Main frontier detection algorithm using wavefront exploration.
 
+        Vectorized with numpy/scipy morphology instead of the per-cell Python
+        BFS: identical frontiers (see the parity test), ~100x faster. On a
+        Jetson Orin Nano with a 36k-cell costmap the BFS took ~16 s per goal
+        selection, which left the robot idle between goals; this runs in
+        ~100 ms there and milliseconds on a workstation.
+
+        Semantics (unchanged):
+        - reachable space = the 8-connected region of FREE + UNKNOWN cells
+          containing the FREE cell nearest to the robot
+        - a frontier point is an UNKNOWN reachable cell with at least one
+          FREE 8-neighbour and no occupied (> occupancy_threshold) 8-neighbour
+        - frontier points are clustered 8-connected; clusters smaller than
+          min_frontier_perimeter / resolution cells are dropped
+        - returns cluster centroids in world coordinates, ranked by
+          _rank_frontiers
+
         Args:
             robot_pose: Current robot position in world coordinates
             costmap: Costmap for frontier detection
@@ -321,101 +225,59 @@ class WavefrontFrontierExplorer(Module):
         Returns:
             List of frontier centroids in world coordinates
         """
-        self._cache.clear()
+        grid = costmap.grid
+        free = grid == CostValues.FREE
+        unknown = grid == CostValues.UNKNOWN
+        occupied = grid > self.config.occupancy_threshold
+        if not free.any():
+            return []
 
-        # Convert robot pose to grid coordinates
+        eight = np.ones((3, 3), dtype=bool)
+
+        # Start from the nearest free cell to the robot (was _find_free_space)
         grid_pos = costmap.world_to_grid(robot_pose)
-        grid_x, grid_y = int(grid_pos.x), int(grid_pos.y)
+        height, width = grid.shape
+        start_x = int(np.clip(int(grid_pos.x), 0, width - 1))
+        start_y = int(np.clip(int(grid_pos.y), 0, height - 1))
+        if not free[start_y, start_x]:
+            # Chessboard (Chebyshev) metric to match the 8-connected BFS layers of
+            # the previous implementation: with disconnected explorable regions the
+            # Euclidean-nearest free cell can lie in a different component than the
+            # Chebyshev-nearest one (caught by Greptile on this PR).
+            _, nearest = ndimage.distance_transform_cdt(
+                ~free, metric="chessboard", return_indices=True
+            )
+            start_y, start_x = int(nearest[0][start_y, start_x]), int(nearest[1][start_y, start_x])
 
-        # Find nearest free space to start exploration
-        free_x, free_y = self._find_free_space(grid_x, grid_y, costmap)
-        start_point = self._cache.get_point(free_x, free_y)
-        start_point.classification = PointClassification.MapOpen
+        # Reachable region: 8-connected component of FREE | UNKNOWN holding the start
+        explorable_labels, _ = ndimage.label(free | unknown, structure=eight)
+        reachable = explorable_labels == explorable_labels[start_y, start_x]
 
-        # Main exploration queue - explore ALL reachable free space
-        map_queue = deque([start_point])
-        frontiers = []
+        # Frontier points: unknown, reachable, next to free, not next to occupied
+        frontier = (
+            unknown
+            & reachable
+            & ndimage.binary_dilation(free, structure=eight)
+            & ~ndimage.binary_dilation(occupied, structure=eight)
+        )
+        if not frontier.any():
+            return []
+
+        # 8-connected clusters, dropping those below the minimum perimeter
+        cluster_labels, cluster_count = ndimage.label(frontier, structure=eight)
+        min_cells = int(self.config.min_frontier_perimeter / costmap.resolution)
+        sizes = ndimage.sum(frontier, cluster_labels, index=np.arange(1, cluster_count + 1))
+
+        frontier_centroids = []
         frontier_sizes = []
-
-        points_checked = 0
-        frontier_candidates = 0
-
-        while map_queue:
-            current_point = map_queue.popleft()
-            points_checked += 1
-
-            # Skip if already processed
-            if current_point.classification & PointClassification.MapClosed:
+        for label_index, size in enumerate(sizes, start=1):
+            if size < min_cells:
                 continue
-
-            # Mark as processed
-            current_point.classification |= PointClassification.MapClosed
-
-            # Check if this point starts a new frontier
-            if self._is_frontier_point(current_point, costmap):
-                frontier_candidates += 1
-                current_point.classification |= PointClassification.FrontierOpen
-                frontier_queue = deque([current_point])
-                new_frontier = []
-
-                # Explore this frontier region using BFS
-                while frontier_queue:
-                    frontier_point = frontier_queue.popleft()
-
-                    # Skip if already processed
-                    if frontier_point.classification & PointClassification.FrontierClosed:
-                        continue
-
-                    # If this is still a frontier point, add to current frontier
-                    if self._is_frontier_point(frontier_point, costmap):
-                        new_frontier.append(frontier_point)
-
-                        # Add neighbors to frontier queue
-                        for neighbor in self._get_neighbors(frontier_point, costmap):
-                            if not (
-                                neighbor.classification
-                                & (
-                                    PointClassification.FrontierOpen
-                                    | PointClassification.FrontierClosed
-                                )
-                            ):
-                                neighbor.classification |= PointClassification.FrontierOpen
-                                frontier_queue.append(neighbor)
-
-                    frontier_point.classification |= PointClassification.FrontierClosed
-
-                # Check if we found a large enough frontier
-                # Convert minimum perimeter to minimum number of cells based on resolution
-                min_cells = int(self.config.min_frontier_perimeter / costmap.resolution)
-                if len(new_frontier) >= min_cells:
-                    world_points = []
-                    for point in new_frontier:
-                        world_pos = costmap.grid_to_world(
-                            Vector3(float(point.x), float(point.y), 0.0)
-                        )
-                        world_points.append(world_pos)
-
-                    # Compute centroid in world coordinates (already correctly scaled)
-                    centroid = self._compute_centroid(world_points)
-                    frontiers.append(centroid)  # Store centroid
-                    frontier_sizes.append(len(new_frontier))  # Store frontier size
-
-            # Add ALL neighbors to main exploration queue to explore entire free space
-            for neighbor in self._get_neighbors(current_point, costmap):
-                if not (
-                    neighbor.classification
-                    & (PointClassification.MapOpen | PointClassification.MapClosed)
-                ):
-                    # Check if neighbor is free space or unknown (explorable)
-                    neighbor_cost = costmap.grid[neighbor.y, neighbor.x]
-
-                    # Add free space and unknown space to exploration queue
-                    if neighbor_cost == CostValues.FREE or neighbor_cost == CostValues.UNKNOWN:
-                        neighbor.classification |= PointClassification.MapOpen
-                        map_queue.append(neighbor)
-
-        # Extract just the centroids for ranking
-        frontier_centroids = frontiers
+            centroid_y, centroid_x = ndimage.center_of_mass(frontier, cluster_labels, label_index)
+            frontier_centroids.append(
+                costmap.grid_to_world(Vector3(float(centroid_x), float(centroid_y), 0.0))
+            )
+            frontier_sizes.append(int(size))
 
         if not frontier_centroids:
             return []
@@ -698,7 +560,6 @@ class WavefrontFrontierExplorer(Module):
         self.exploration_direction = Vector3(0.0, 0.0, 0.0)  # Reset exploration direction
         self.last_costmap = None  # Clear last costmap comparison
         self.no_gain_counter = 0  # Reset no-gain attempt counter
-        self._cache.clear()  # Clear frontier point cache
 
         logger.info("Exploration session reset - all state variables cleared")
 
