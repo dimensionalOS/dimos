@@ -225,6 +225,6 @@ unitree_go2_nav_3d_relocalization = autoconnect(
     LocalMapRelocalization.blueprint(
         world_frame="odom",
         republish_loaded_map=30.0,
-        relocalize=MID360.model_copy(update={"fitness_threshold": 0.8}),
+        relocalize=MID360.model_copy(update={"fitness_threshold": 0.8, "ransac_restarts": 3}),
     ),
 ).global_config(n_workers=11)
