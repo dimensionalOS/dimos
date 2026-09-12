@@ -39,6 +39,7 @@ MRO and ``start()`` chains through ``super()``.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import reactivex as rx
@@ -143,7 +144,11 @@ class RelocalizationModule(Module):
             f"relocalize {source}: expected {world!r} -> {map_frame!r}, "
             f"got {tf.frame_id!r} -> {tf.child_frame_id!r}"
         )
-        logger.info(f"relocalize {source}: TF {world!r} -> {map_frame!r} t={tf.translation}")
+        yaw_deg = math.degrees(tf.rotation.euler.z)
+        logger.info(
+            f"relocalize {source}: TF {world!r} -> {map_frame!r} "
+            f"t={tf.translation} yaw={yaw_deg:.1f}deg"
+        )
         self.fixes.on_next(tf)
         if not self._placed and self.config.relocalize_once:
             logger.info(f"relocalize {source}: placed, no further attempts (relocalize_once)")

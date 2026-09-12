@@ -29,6 +29,7 @@ from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
+from dimos.mapping.relocalization.lidar.relocalize import MID360
 from dimos.memory.module import pose_setter_for
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -221,5 +222,9 @@ if _RECORD_PCAP:
 # The republish covers a ray tracer that missed the one-shot loaded_map publish.
 unitree_go2_nav_3d_relocalization = autoconnect(
     unitree_go2_nav_3d,
-    LocalMapRelocalization.blueprint(world_frame="odom", republish_loaded_map=30.0),
+    LocalMapRelocalization.blueprint(
+        world_frame="odom",
+        republish_loaded_map=30.0,
+        relocalize=MID360.model_copy(update={"fitness_threshold": 0.8}),
+    ),
 ).global_config(n_workers=11)
