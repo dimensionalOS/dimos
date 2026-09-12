@@ -331,7 +331,10 @@ def accumulate_scans(
     from dimos.mapping.voxels.module import VoxelMapTransformer
     from dimos.memory.transform import FnTransformer, throttle
 
-    first, last = stream.first(), stream.last()
+    try:
+        first, last = stream.first(), stream.last()
+    except LookupError:  # declared but empty: no scans is "no cloud", not a stream error
+        return None
     span = max(float(last.ts) - float(first.ts), 1e-3)
 
     def placed(obs: Any) -> Any:
@@ -341,11 +344,17 @@ def accumulate_scans(
         return cloud if cloud is obs else obs.derive(data=cloud)
 
     pipeline = stream if n_scans <= 0 else stream.transform(throttle(span / n_scans))
-    result = (
-        pipeline.transform(FnTransformer(placed))
-        .transform(VoxelMapTransformer(emit_every=0, voxel_size=voxel_size))
-        .last()
-    )
+    try:
+        result = (
+            pipeline.transform(FnTransformer(placed))
+            .transform(VoxelMapTransformer(emit_every=0, voxel_size=voxel_size))
+            .last()
+        )
+    except LookupError:
+        # tf placed no scan at all, which is the commonest reason a memory world comes up
+        # empty. The `-> ndarray | None` above promised this, and last() raising instead
+        # sent the operator a traceback from the stream layer rather than the real answer.
+        return None
     if result is None or result.data is None:
         return None
     xyz, _ = result.data.as_numpy()

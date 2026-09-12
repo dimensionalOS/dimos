@@ -1237,6 +1237,14 @@ export class WorldScene {
         if (this._imageLodAccumS < IMAGE_LOD_INTERVAL_S) return;
         this._imageLodAccumS = 0;
         if (!this._imageQuadGroup.visible || this._imagePoseMeta.length === 0) return;
+        // An answer that brought its own photographs has already said which pictures are
+        // relevant; the capture-pose markers are every photo in the recording, and drawing
+        // the nearest two dozen of those beside the answer's own is what made it impossible
+        // to tell which pictures the answer was actually claiming.
+        if (this._queryImageMeshes.some(Boolean)) {
+            this._releaseAllThumbnails();
+            return;
+        }
 
         const eye = this._imageQuadGroup.worldToLocal(this.camera.getWorldPosition(new THREE.Vector3()));
         const scale = this._worldGroup.scale.x || 1;

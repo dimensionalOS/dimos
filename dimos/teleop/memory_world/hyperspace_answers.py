@@ -70,7 +70,8 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-EVIDENCE_CLUSTERS = 8
+EVIDENCE_CLUSTERS = 16  # every place an answer names, in practice
+EVIDENCE_IMAGES_MAX = 64  # a ceiling, so one question cannot decode the whole recording
 
 
 class AskRequest(BaseModel):
@@ -365,6 +366,8 @@ class HyperspaceAnswers:
         # best places get pictures; the rest still have their heat and markers.
         for cluster in answer.clusters[:EVIDENCE_CLUSTERS]:
             for evidence in cluster.evidence:
+                if len(sent) >= EVIDENCE_IMAGES_MAX:
+                    break
                 try:
                     with self._store_lock:  # resolved and read together: a reopen swaps the store
                         images = self._ensure_store().streams[self.config.image_stream_name]

@@ -80,7 +80,7 @@ MIN_CLUSTER_VOXELS = 4
 MAX_CLUSTERS = 12
 # A cluster whose summed score is under this fraction of the best is dropped.
 MIN_CLUSTER_FRACTION = 0.05
-EVIDENCE_PER_CLUSTER = 2
+EVIDENCE_PER_CLUSTER = 8  # distinct keyframes shown per place
 # Hyperspace's refine chain works on dense grids over the heat's bounding box; on a
 # city-scale map a broad question lights thousands of voxels kilometres apart, so
 # only the best ones are refined (the rest never made a cluster anyway).
