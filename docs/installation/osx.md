@@ -8,7 +8,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 macOS 14 is the supported minimum for the current installer. The default developer environment includes ONNX Runtime 1.24.1 and Drake 1.45.0, whose Apple Silicon wheels require macOS 14. Some older library combinations may work on earlier macOS releases, but this installer does not support or validate those combinations.
 
-The installer sets up Homebrew dependencies, uv, Python 3.12, and dimOS. Choose **library** for the published package or **dev** for a source checkout. Follow the printed activation command when it finishes.
+Choose native Homebrew dependencies or Nix. Native setup installs Homebrew dependencies, uv, Python 3.12, and dimOS; unattended installation defaults to Homebrew. Choose **library** for the published package or **dev** for a source checkout. Select navigation, manipulation, or both, and follow the printed activation command when it finishes.
 
 Apple Silicon is the target macOS configuration. macOS CI is paused because runner capacity is exhausted; the current installer needs local validation. Package and hardware support can differ from Linux.
 

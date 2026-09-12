@@ -34,6 +34,8 @@ jobs:
           /bin/bash -n scripts/install.sh
           /bin/bash -n scripts/test-install.sh
           uvx --from shellcheck-py shellcheck -e SC1091 scripts/install.sh scripts/test-install.sh
+      - name: Installer behavior
+        run: bash scripts/test-install.sh
 
   ubuntu:
     needs: lint

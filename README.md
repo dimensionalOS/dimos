@@ -137,7 +137,13 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 # Installation
 
-## Guided installation (recommended)
+## Install with an agent (recommended)
+
+Give your coding agent this prompt (works before cloning or in an existing checkout):
+
+> Read https://raw.githubusercontent.com/dimensionalOS/dimos/main/.agents/skills/setup-dimos/SKILL.md and help me install DimOS. Ask about installation options, then install, verify, and show the next commands.
+
+## Install from a terminal
 
 Use the official installer to set up system dependencies, Python 3.12, and dimOS:
 
@@ -145,9 +151,9 @@ Use the official installer to set up system dependencies, Python 3.12, and dimOS
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-> See [`scripts/install.sh --help`](scripts/install.sh) for non-interactive and advanced options.
+Choose **navigation**, **manipulation**, or both, then native packages or Nix. Review the summary to install.
 
-See [installer options](docs/installation/index.md), or platform notes:
+See [installer options and unattended commands](docs/installation/index.md), or platform notes:
 
 - 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
 - [NixOS / General Linux (not CI-tested)](docs/installation/nix.md)
@@ -170,7 +176,7 @@ dimos --replay run unitree-go2
 ```
 
 ```bash
-# The installer's default extras include simulation support.
+# The navigation capability includes simulation support.
 # Run quadruped in MuJoCo simulation
 dimos --simulation run unitree-go2
 
