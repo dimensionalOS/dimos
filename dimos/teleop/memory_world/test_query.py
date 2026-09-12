@@ -485,3 +485,31 @@ def test_the_store_is_closed_while_the_lock_is_still_held(tmp_path: Path) -> Non
     assert held_during_close.get("held") is True, (
         "the store was closed after the lock was released, not while it was held"
     )
+
+
+def test_the_agent_is_told_how_many_frames_were_actually_lit(
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`analyze_memory` reported the agent's own input back to it.
+
+    `_publish_query_result` translates whatever the engine counted in into MARKER ids --
+    the only frames the viewer holds thumbnails for -- and it did that with `model_copy`,
+    a new object and a local rebind. The caller kept the original, so the number the agent
+    was told was the number it had sent, not the number that lit. The translation itself
+    was already tested; the report about it was not.
+    """
+    lit: list[int] = [7]
+    monkeypatch.setattr(memory_world, "_marker_ids_for", lambda result: list(lit))
+
+    result = MemoryQueryResult.model_validate(
+        {"answer": "two frames, says the agent", "observation_ids": [101, 202]}
+    )
+    memory_world._publish_query_result(result)
+
+    # The object the caller still holds is the one it reports on.
+    assert result.observation_ids == [7], "the caller was left with the untranslated ids"
+
+    # And the other direction: an answer naming no frame still lights the nearest marker.
+    empty = MemoryQueryResult.model_validate({"answer": "no frames, says the agent"})
+    memory_world._publish_query_result(empty)
+    assert empty.observation_ids == [7]

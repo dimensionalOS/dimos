@@ -993,7 +993,12 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         naming a frame that is not one of them has no picture to show; the markers
         nearest the answer do.
         """
-        result = result.model_copy(update={"observation_ids": self._marker_ids_for(result)})
+        # In place, not model_copy: the caller keeps a reference and reports on it.
+        # `analyze_memory` answers the agent with len(result.observation_ids), and with a
+        # copy that number stayed the agent's OWN INPUT rather than what was lit -- it
+        # differs in both directions, since the ids collapse through a set and an answer
+        # naming no frame still gets the nearest marker.
+        result.observation_ids = self._marker_ids_for(result)
         with self._clients_lock:
             query_id = uuid.uuid4().hex
             self._query_revision += 1
