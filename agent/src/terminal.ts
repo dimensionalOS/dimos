@@ -2,16 +2,18 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   Container,
-  Input,
+  Markdown,
+  Spacer,
   ProcessTerminal,
   Text,
   TuiMainScreen,
-  truncateToWidth,
-  type Component,
 } from "@earendil-works/pi-tui";
 import sharp from "sharp";
 import {
   ToolExecutionComponent,
+  AssistantMessageComponent,
+  UserMessageComponent,
+  getMarkdownTheme,
   initTheme,
   createBashToolDefinition,
   createReadToolDefinition,
@@ -22,6 +24,7 @@ import { z } from "zod";
 import { Connection, type Event, type Snapshot } from "./protocol.js";
 import { imageComponent, renderDetails } from "./render.js";
 import { MediaPool, type MediaLease } from "./media.js";
+import { ChatInput } from "./input.js";
 import type { Slot } from "@dimos/sdk";
 
 const resultSchema = z.object({
@@ -39,50 +42,6 @@ const resultSchema = z.object({
     .default([]),
   details: z.unknown().optional(),
 });
-export class ChatInput implements Component {
-  private editor = new Input({
-    prompt: "dimcode › ",
-    placeholder: "/help · Ctrl-C detaches",
-  });
-  private masked = false;
-  focused = false;
-  onSubmit?: (value: string) => void;
-  onEscape?: () => void;
-  get secret(): boolean {
-    return this.masked;
-  }
-  set secret(value: boolean) {
-    if (value === this.masked) return;
-    this.masked = value;
-    // Discard the credential editor and its undo/kill-ring history on mode change.
-    this.editor = new Input({ prompt: "dimcode › " });
-  }
-  getValue(): string {
-    return this.editor.getValue();
-  }
-  setValue(value: string): void {
-    this.editor.setValue(value);
-  }
-  invalidate(): void {
-    this.editor.invalidate();
-  }
-  handleInput(data: string): void {
-    this.editor.focused = this.focused;
-    this.editor.onSubmit = (value) => this.onSubmit?.(value);
-    this.editor.onEscape = () => this.onEscape?.();
-    this.editor.handleInput(data);
-  }
-  render(width: number): string[] {
-    return this.secret
-      ? [
-          truncateToWidth(
-            "credential › " + "*".repeat(this.getValue().length),
-            width,
-          ),
-        ]
-      : this.editor.render(width);
-  }
-}
 export async function terminal(
   socket: string,
   options: { sessionId?: string; cwd?: string; view?: boolean } = {},
@@ -106,13 +65,22 @@ export async function terminal(
     }
   >();
   let current: Snapshot,
-    assistant = new Text("", 0, 0),
+    assistant = new Container(),
     text = "",
     stopped = false;
   let auth: Extract<Event, { type: "auth_prompt" }> | undefined;
   let restoring = true;
-  const pending: Array<{ seq: number; event: Event }> = [];
+  const pending: Array<{ sessionId: string; seq: number; event: Event }> = [];
   const add = (value: string) => transcript.addChild(new Text(value, 0, 0));
+  const setAssistant = (value: string) => {
+    assistant.clear();
+    assistant.addChild(new Markdown(value, 1, 1, getMarkdownTheme()));
+  };
+  const ready = () =>
+    "  " +
+    (current.writable ? "Ready" : "Read-only") +
+    " · " +
+    current.sessionId.slice(0, 8);
   const notice = (error: unknown) => {
     add(String(error));
     tui.requestRender();
@@ -256,7 +224,7 @@ export async function terminal(
       );
     } else if (event.type === "text_delta") {
       text += event.delta;
-      assistant.setText(text);
+      setAssistant(text);
     } else if (
       event.type === "message_end" &&
       event.message.role === "assistant"
@@ -265,22 +233,24 @@ export async function terminal(
         .filter((item) => item.type === "text")
         .map((item) => item.text)
         .join("\n");
-      assistant.setText(text);
+      assistant.clear();
+      assistant.addChild(new AssistantMessageComponent(event.message, true));
     } else if (event.type === "message_start") {
       if (event.message.role === "assistant") {
         text = "";
-        assistant = new Text("", 0, 0);
+        assistant = new Container();
         transcript.addChild(assistant);
       } else if (event.message.role === "user") {
         const content = event.message.content;
-        add(
-          "you: " +
-            (typeof content === "string"
+        transcript.addChild(
+          new UserMessageComponent(
+            typeof content === "string"
               ? content
               : content
                   .filter((item) => item.type === "text")
                   .map((item) => item.text)
-                  .join("\n")),
+                  .join("\n"),
+          ),
         );
       }
     } else if (event.type === "tool_execution_start") {
@@ -310,19 +280,27 @@ export async function terminal(
       );
     else if (event.type === "notice" || event.type === "turn_error")
       notice(event.message);
-    else if (event.type === "idle")
-      status.setText(current.sessionId + " · idle");
+    else if (event.type === "idle") status.setText(ready());
     tui.requestRender();
   };
-  client.onEvent = (seq, event) => {
-    if (restoring) pending.push({ seq, event });
-    else apply(event);
+  client.onEvent = (seq, event, sessionId) => {
+    if (restoring) pending.push({ sessionId, seq, event });
+    else if (sessionId === current.sessionId) apply(event);
   };
   const restore = (snapshot: Snapshot) => {
     closeCards();
     transcript.clear();
     current = snapshot;
-    add("dimcode · " + current.cwd + (current.writable ? "" : " · read-only"));
+    add("\x1b[1;36m  dimcode\x1b[0m  ·  Dimensional agent");
+    add("\x1b[2m  " + current.cwd + "\x1b[0m");
+    if (!current.messages.length) {
+      transcript.addChild(new Spacer(1));
+      add("  Build apps. Run blueprints. Explore sensor memory.");
+      add(
+        "\x1b[2m  Try: inspect this workspace, or show available DimOS blueprints.\x1b[0m",
+      );
+      transcript.addChild(new Spacer(1));
+    }
     const argumentsByCall = new Map<string, unknown>();
     for (const message of current.messages) {
       if (message.role === "assistant")
@@ -348,21 +326,25 @@ export async function terminal(
                   .filter((item) => item.type === "text")
                   .map((item) => item.text)
                   .join("\n");
-          if (content) add(message.role + ": " + content);
+          if (message.role === "assistant")
+            transcript.addChild(new AssistantMessageComponent(message, true));
+          else if (message.role === "user")
+            transcript.addChild(new UserMessageComponent(content));
+          else if (content) add(content);
         }
       }
     }
     for (const message of current.notices) add(message);
     text = current.text;
-    assistant = new Text(text, 0, 0);
+    assistant = new Container();
+    if (text) setAssistant(text);
     transcript.addChild(assistant);
     for (const event of current.tools) apply(event);
-    status.setText(
-      current.sessionId + " · " + (current.busy ? "running" : "idle"),
-    );
+    status.setText(current.busy ? "  Running · Esc to cancel" : ready());
     restoring = false;
     for (const packet of pending.splice(0))
-      if (packet.seq > current.seq) apply(packet.event);
+      if (packet.sessionId === current.sessionId && packet.seq > current.seq)
+        apply(packet.event);
     tui.requestRender();
   };
   const stop = () => {
@@ -386,8 +368,16 @@ export async function terminal(
       ),
     );
     tui.addChild(transcript);
+    tui.addChild(new Spacer(1));
     tui.addChild(status);
     tui.addChild(input);
+    tui.addChild(
+      new Text(
+        "\x1b[2m  /help commands · /models choose model · Esc cancel · Ctrl-C detach\x1b[0m",
+        0,
+        0,
+      ),
+    );
     tui.setFocus(input);
     input.onSubmit = (value) => {
       input.setValue("");
@@ -510,7 +500,7 @@ export async function terminal(
           return;
         }
         if (value.trim()) {
-          status.setText(current.sessionId + " · running");
+          status.setText("  Running · Esc to cancel");
           await client.call({ type: "prompt", message: value });
         }
       })()

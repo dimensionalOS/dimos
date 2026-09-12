@@ -99,7 +99,7 @@ export interface Results {
 }
 export type Packet =
   | { type: "response"; id: string; data?: Results[Kind]; error?: string }
-  | { type: "event"; seq: number; event: Event };
+  | { type: "event"; sessionId: string; seq: number; event: Event };
 
 const MAX_BYTES = 16 * 1024 * 1024;
 export function send(socket: Socket, packet: Packet | Request): void {
@@ -146,14 +146,15 @@ export class Connection {
     string,
     { resolve: (value: Results[Kind]) => void; reject: (error: Error) => void }
   >();
-  onEvent: (seq: number, event: Event) => void = () => {};
+  onEvent: (seq: number, event: Event, sessionId: string) => void = () => {};
   onClose: () => void = () => {};
   constructor(path: string) {
     this.socket = createConnection(path);
     readLines(this.socket, (value) => {
       // Both ends share Packet; only the user-owned local socket is accepted.
       const packet = value as Packet;
-      if (packet.type === "event") this.onEvent(packet.seq, packet.event);
+      if (packet.type === "event")
+        this.onEvent(packet.seq, packet.event, packet.sessionId);
       else if (packet.type === "response") {
         const pending = this.pending.get(packet.id);
         this.pending.delete(packet.id);

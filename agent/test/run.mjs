@@ -6,7 +6,8 @@ const tests = (await readdir("test")).filter((name) =>
   name.endsWith(".test.ts"),
 );
 await build({
-  entryPoints: tests.map((name) => "test/" + name),
+  entryPoints: [...tests.map((name) => "test/" + name), "src/main.ts"],
+  outbase: ".",
   outdir: ".test",
   bundle: true,
   format: "esm",
@@ -21,7 +22,10 @@ await build({
 });
 const child = spawn(
   process.execPath,
-  ["--test", ...tests.map((name) => ".test/" + name.replace(/\.ts$/, ".js"))],
+  [
+    "--test",
+    ...tests.map((name) => ".test/test/" + name.replace(/\.ts$/, ".js")),
+  ],
   { stdio: "inherit" },
 );
 child.on("exit", (code) => {

@@ -37,5 +37,14 @@
     "esbuild": "^0.25.0",
     "prettier": "^3.6.0",
     "typescript": "5.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dimensionalOS/dimos.git",
+    "directory": "agent"
+  },
+  "homepage": "https://github.com/dimensionalOS/dimos/tree/main/agent#readme",
+  "publishConfig": {
+    "access": "public"
   }
 }

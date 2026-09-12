@@ -166,3 +166,82 @@ test(
     );
   },
 );
+
+test(
+  "large image history remains attachable and events identify their originating session",
+  { timeout: 15000 },
+  async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "dimcode-history-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const p: Paths = {
+      config: join(root, "config"),
+      state: root,
+      cache: join(root, "cache"),
+      sessions: join(root, "sessions"),
+      socket: join(root, "test.sock"),
+    };
+    await mkdir(p.config);
+    await mkdir(p.sessions);
+    const factory = fixtureFactory(Promise.resolve(), () => {});
+    let completeHistory = 0;
+    const gateway = new Gateway(
+      configSchema.parse({ workspace: root }),
+      p,
+      async (...args) => {
+        const manager = args[2];
+        for (let i = 0; i < 3; i++)
+          manager.appendMessage({
+            role: "user",
+            content: [
+              {
+                type: "image",
+                mimeType: "image/png",
+                data: "A".repeat(6 * 1024 * 1024),
+              },
+            ],
+            timestamp: Date.now(),
+          });
+        manager.appendMessage({
+          role: "user",
+          content: "most recent message",
+          timestamp: Date.now(),
+        });
+        const handle = await factory(...args);
+        completeHistory = handle.session.messages.length;
+        return handle;
+      },
+    );
+    await gateway.start();
+    t.after(() => gateway.close());
+    const client = new Connection(p.socket);
+    t.after(() => client.close());
+    const first = await client.call({ type: "new_session" });
+    assert.equal(completeHistory, 4);
+    assert(first.messages.length < completeHistory);
+    const latest = first.messages.at(-1);
+    assert(latest?.role === "user");
+    assert.equal(latest.content, "most recent message");
+    assert(
+      first.notices.some((text) => text.includes("earlier messages omitted")),
+    );
+    const origin = deferred<string>();
+    client.onEvent = (_seq, _event, sessionId) => origin.resolve(sessionId);
+    await client.call({ type: "abort" });
+    assert.equal(await origin.promise, first.sessionId);
+    const second = await client.call({ type: "new_session" });
+    assert.notEqual(second.sessionId, first.sessionId);
+    const next = deferred<string>();
+    client.onEvent = (_seq, _event, sessionId) => next.resolve(sessionId);
+    await client.call({ type: "abort" });
+    assert.equal(await next.promise, second.sessionId);
+    const resumed = await client.call({
+      type: "attach",
+      sessionId: first.sessionId,
+      writable: true,
+    });
+    const restored = resumed.messages.at(-1);
+    assert(restored?.role === "user");
+    assert.equal(restored.content, "most recent message");
+    assert.equal(completeHistory, 4);
+  },
+);

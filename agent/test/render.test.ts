@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import sharp from "sharp";
 import { plot } from "../src/render.js";
-import { ChatInput } from "../src/terminal.js";
+import { ChatInput } from "../src/input.js";
 
 test("point projection and measured series produce real images without mutating inputs", async () => {
   const input = {

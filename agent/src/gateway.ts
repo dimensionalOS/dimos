@@ -85,7 +85,12 @@ export class Gateway {
       entry.notices.push(event.message);
       entry.notices = entry.notices.slice(-10);
     }
-    const packet: Packet = { type: "event", seq: ++entry.seq, event };
+    const packet: Packet = {
+      type: "event",
+      sessionId: entry.handle.session.sessionId,
+      seq: ++entry.seq,
+      event,
+    };
     for (const peer of entry.peers) send(peer, packet);
   }
   private async restore(
@@ -240,17 +245,43 @@ export class Gateway {
   }
   private snapshot(entry: Entry, socket: Socket): Snapshot {
     const session = entry.handle.session;
-    return {
+    const snapshot: Snapshot = {
       sessionId: session.sessionId,
       cwd: session.sessionManager.getCwd(),
       seq: entry.seq,
       busy: entry.running,
       writable: entry.owner === socket,
-      messages: session.messages,
-      text: entry.text,
-      notices: entry.notices,
-      tools: [...entry.tools.values()],
+      messages: [],
+      text: entry.text.slice(-256_000),
+      notices: entry.notices.map((message) => message.slice(-4096)),
+      tools: [],
     };
+    // Bound only the terminal transfer; Pi retains the complete session and model context.
+    let budget =
+      8 * 1024 * 1024 - Buffer.byteLength(JSON.stringify(snapshot)) - 1024;
+    for (const tool of entry.tools.values()) {
+      const size = Buffer.byteLength(JSON.stringify(tool)) + 1;
+      if (size > budget) continue;
+      snapshot.tools.push(tool);
+      budget -= size;
+    }
+    for (let index = session.messages.length - 1; index >= 0; index--) {
+      const message = session.messages[index];
+      const size = Buffer.byteLength(JSON.stringify(message)) + 1;
+      if (size > budget) break;
+      snapshot.messages.unshift(message);
+      budget -= size;
+    }
+    const omitted = session.messages.length - snapshot.messages.length;
+    if (omitted)
+      snapshot.notices.push(
+        `${omitted} earlier messages omitted from this terminal view. Full agent history is retained on disk.`,
+      );
+    if (snapshot.tools.length < entry.tools.size)
+      snapshot.notices.push(
+        "Oversized active tool previews omitted from this terminal view.",
+      );
+    return snapshot;
   }
   private detach(socket: Socket): void {
     const entry = this.peers.get(socket);
@@ -341,6 +372,7 @@ export class Gateway {
           signal?.addEventListener("abort", aborted, { once: true });
           send(entry.owner, {
             type: "event",
+            sessionId: entry.handle.session.sessionId,
             seq: ++entry.seq,
             event: { type: "auth_prompt", promptId, prompt: wirePrompt },
           });
@@ -349,6 +381,7 @@ export class Gateway {
         if (entry.owner)
           send(entry.owner, {
             type: "event",
+            sessionId: entry.handle.session.sessionId,
             seq: ++entry.seq,
             event: { type: "auth_info", info },
           });

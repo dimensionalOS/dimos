@@ -1,13 +1,14 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, rm, rmdir, stat } from "node:fs/promises";
+import { mkdir, rm, rmdir, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { paths, loadConfig, saveConfig } from "./config.js";
 import { Gateway } from "./gateway.js";
 import { Connection, reachable } from "./protocol.js";
-import { setup } from "./setup.js";
-import { service, execute } from "./service.js";
+import { setup, needsSetup } from "./setup.js";
+import { service } from "./service.js";
+import { installDimos } from "./install.js";
 import { terminal } from "./terminal.js";
 
 const { values, positionals } = parseArgs({
@@ -23,8 +24,8 @@ const { values, positionals } = parseArgs({
     help: { type: "boolean" },
   },
 });
-const p = paths(),
-  config = await loadConfig(p);
+const p = paths();
+let config = await loadConfig(p);
 if (values.cwd) config.workspace = resolve(values.cwd);
 async function ensureGateway(): Promise<void> {
   if (await reachable(p.socket)) return;
@@ -68,7 +69,7 @@ async function main(): Promise<void> {
   const [command, ...args] = positionals;
   if (values.help || command === "help") {
     console.log(
-      "dimcode [--session ID] [--cwd DIR] [--view]\ndimcode setup [--provider NAME] [--oauth | --key-env VAR]\ndimcode gateway | --foreground | service install/status/uninstall\ndimcode connect NAME MCP_URL | dimos PATH | python PATH | relay URL [ROBOT]\ndimcode install-dimos [VENV] | sessions | stop | run PROMPT | config",
+      "dimcode [tui] [--session ID] [--cwd DIR] [--view]\ndimcode setup [--provider NAME] [--oauth | --key-env VAR]\ndimcode gateway | --foreground | service install/status/uninstall\ndimcode connect NAME MCP_URL | dimos PATH | python PATH | relay URL [ROBOT]\ndimcode install-dimos [VENV] | sessions | stop | run PROMPT | config",
     );
     return;
   }
@@ -107,35 +108,32 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "install-dimos") {
-    const venv = resolve(args[0] ?? config.workspace + "/.venv");
-    let exists = true;
-    try {
-      await access(venv);
-    } catch {
-      exists = false;
-    }
-    if (exists)
-      throw new Error(
-        "Destination exists; select its dimos/python executables or choose a new venv.",
-      );
-    await execute("uv", ["venv", "--python", "3.12", venv]);
-    await execute("uv", [
-      "pip",
-      "install",
-      "--python",
-      venv + "/bin/python",
-      "dimos",
-    ]);
-    config.python = venv + "/bin/python";
-    config.dimos = venv + "/bin/dimos";
-    await saveConfig(p, config);
+    await installDimos(args[0] ?? config.workspace + "/.venv", config, p);
     return;
   }
   if (command === "service") {
     await service(args[0], config, p, process.argv[1]);
     return;
   }
+  if (
+    command &&
+    !["gateway", "stop", "sessions", "run", "tui"].includes(command)
+  )
+    throw new Error("Unknown command: " + command + ". Run dimcode --help.");
+  if (
+    (!command || command === "tui" || values.foreground) &&
+    (await needsSetup(p))
+  ) {
+    await setup(p, { workspace: values.cwd });
+    config = await loadConfig(p);
+  }
   if (command === "gateway" || values.foreground) {
+    if (!values.foreground && (await reachable(p.socket))) {
+      console.log(
+        "Gateway already running. Open the terminal with dimcode tui.",
+      );
+      return;
+    }
     if (values.foreground) p.socket = p.socket + "." + process.pid;
     const gateway = new Gateway(config, p);
     await gateway.start();
@@ -203,7 +201,6 @@ async function main(): Promise<void> {
     }
     return;
   }
-  if (command) throw new Error("Unknown command: " + command);
   await terminal(p.socket, {
     sessionId: values.session,
     cwd: config.workspace,
