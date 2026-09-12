@@ -698,6 +698,7 @@ def test_suites_and_agents_importable() -> None:
         assert module.SUITE, module.__name__
     agents = list_agents()
     assert {m.rsplit(".", 1)[1] for m in agents} == {
+        "bash_only",
         "question_answer",
         "blind",
         "mcp_client_adapter",

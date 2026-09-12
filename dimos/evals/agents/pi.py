@@ -180,9 +180,7 @@ class PiAdapter(Agent):
             raw_dir, upstream, max_requests=self.config.max_steps, limit_reached=limit_reached
         ) as proxy_url:
             self._write_model_config(run_dir, proxy_url)
-            files = dict(env.artifacts)
-            if env.streams:
-                files["recording"] = recording_file(env.streams, run_dir / "recording.db")
+            files = self._prepare_files(env, run_dir)
             system_prompt = self._write_system_prompt(files, env.mcp_url, run_dir)
             command = self._build_pi_command(inputs, system_prompt, run_dir)
             try:
@@ -195,6 +193,12 @@ class PiAdapter(Agent):
         if events.error and ended_by not in ("timeout", "max_steps"):
             return events.trajectory.build("error", error=events.error)
         return events.trajectory.build(ended_by)
+
+    def _prepare_files(self, env: RunningEnvironment, run_dir: Path) -> dict[str, Path]:
+        files = dict(env.artifacts)
+        if env.streams:
+            files["recording"] = recording_file(env.streams, run_dir / "recording.db")
+        return files
 
     def _write_system_prompt(self, files: dict[str, Path], mcp_url: str, run_dir: Path) -> str:
         parts = [self.config.system_prompt, self.config.instructions]

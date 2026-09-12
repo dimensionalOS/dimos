@@ -36,7 +36,53 @@ Every runner invocation writes one `~/.local/state/dimos/evals/run-*/` directory
 To generate deterministic image questions from recordings, see
 [Visual Question Answering](/docs/usage/vqa.md).
 
-## Paired Pi and dimcode pilots
+## Baseline Bash versus dimcode + DimOS
+
+For the complete-stack comparison, use `BashOnly` against `DimcodeAdapter`
+with the **same model**. The primary pair is Astra with Bash versus Astra in
+dimcode with DimOS. This measures the combined product/robotics-stack effect;
+it does not isolate the harness contribution.
+
+```bash skip
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.bash_only \
+  --set model=gpt-6-astra --set thinking=medium \
+  --set max_steps=12 --set max_output_tokens=4096
+
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.dimcode \
+  --set model=gpt-6-astra --set thinking=medium \
+  --set max_steps=12 --set max_output_tokens=4096
+```
+
+`BashOnly` reuses Pi's stock loop, provider support, tracing, limits and cleanup.
+It exposes one tool, Bash. Linux bubblewrap isolates each command's filesystem,
+processes, environment and network. The shell can read selected observations in
+`/input` and write `/workspace`; host homes, DimOS source, virtual environments,
+credentials, MCP, and host services are unavailable. The ordinary system tools
+under `/usr` are read-only, with `/usr/local` hidden. Bash, grep, coreutils and
+system Python remain available. Record the host system package versions when
+freezing a pilot; this is not a portable pinned container image.
+
+The baseline receives selected point coordinates/colors as CSV, camera frames
+as lossless PNG and primitive observations as JSON, with timestamps and hashes.
+Selected PNGs are also attached to its initial model message because Bash has
+no image-reading tool. No `agent_encode` summaries, labels, semantic tags or
+original database are exported. Dimcode receives the same selected observations
+through the DimOS store and retains its production tools. Representation and
+image-delivery differences are part of this stack comparison and must be reported.
+
+The baseline rejects extra tools, skills, modules and MCP endpoints. Missing or
+unsupported isolation fails preflight; there is no unrestricted fallback. This
+adapter currently supports recordings only. Live tasks need a separately bounded
+vendor SDK/robot connection available to the baseline, without DimOS. A blocked
+robot interface is an unsupported case, not a baseline failure.
+
+Other native harnesses added to this report must use the same no-DimOS boundary.
+Using the DimOS CLI in that baseline violates the experiment's access policy.
+Do not relabel earlier unrestricted Pi pilots as results of this comparison.
+Dimcode's current adapter still needs grader and unrelated-data isolation before
+publication runs. Neither arm may receive task-specific solutions or hidden truth.
+
+## Unrestricted Pi and dimcode integration pilots
 
 Use the same model, reasoning setting, output cap, case selection and timeout
 for each harness. Pi and dimcode use Pi's provider SDKs and built-in model
