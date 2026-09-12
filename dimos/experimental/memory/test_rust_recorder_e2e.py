@@ -18,6 +18,7 @@ import importlib.util
 import os
 from pathlib import Path
 import select
+import shutil
 import signal
 import socket
 import subprocess
@@ -75,6 +76,8 @@ class FakeTransport:
 
 @pytest.fixture(scope="module")
 def rust_recorder_executable() -> Path:
+    if shutil.which("nix") is None:
+        pytest.skip("nix builds the recorder binary")
     subprocess.run(
         [
             "nix",

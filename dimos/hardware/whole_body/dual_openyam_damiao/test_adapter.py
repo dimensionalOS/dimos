@@ -29,7 +29,11 @@ pytestmark = pytest.mark.self_hosted
 
 @pytest.fixture
 def adapter(mocker: MockerFixture) -> Iterator[DualOpenYamDamiaoAdapter]:
-    mocker.patch.object(can_motor_control, "SocketCanBus", can_motor_control.MockCanBus)
+    mocker.patch.object(
+        DualOpenYamDamiaoAdapter,
+        "_make_can_bus",
+        side_effect=lambda name: can_motor_control.MockCanBus(name),
+    )
     result = DualOpenYamDamiaoAdapter(
         runtime_config=DamiaoRuntimeConfig(
             bus_devices={"left": "can8", "right": "can9"},
