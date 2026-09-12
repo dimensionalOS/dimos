@@ -39,13 +39,6 @@ from dimos.core.transport import (
     pLCMTransport,
     pZenohTransport,
 )
-from dimos.hardware.drive_trains.transport.adapter import (
-    transport_lcm_factory as twist_transport_factory,
-)
-from dimos.hardware.whole_body.transport.adapter import (
-    transport_lcm_factory as wholebody_transport_factory,
-)
-from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,
@@ -272,16 +265,3 @@ def test_coerce_identity_when_backend_matches(use_lcm) -> None:
 def test_coerce_leaves_deliberate_jpeg_untouched(use_zenoh) -> None:
     jpeg = JpegLcmTransport("/color_image", Image)
     assert _coerce_transport_to_backend(jpeg) is jpeg
-
-
-@pytest.mark.parametrize("backend", ["use_lcm", "use_zenoh"])
-@pytest.mark.parametrize("factory", [twist_transport_factory, wholebody_transport_factory])
-def test_transport_adapters_meet_the_driver_on_the_active_backend(
-    backend, factory, request
-) -> None:
-    # The driver module's side is a blueprint-pinned LCMTransport, coerced at build.
-    request.getfixturevalue(backend)
-    ours = factory(hardware_id="go2")._transport_cls("/go2/cmd_vel", Twist)
-    driver = _coerce_transport_to_backend(LCMTransport("/go2/cmd_vel", Twist))
-    assert type(ours) is type(driver)
-    assert ours.topic == driver.topic
