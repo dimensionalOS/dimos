@@ -198,12 +198,22 @@ class HyperspaceAnswers:
                 # fresh load thread every second, for ever, silently.
                 logger.exception("hyperspace failed to load")
                 if previous is not None:
-                    # A reload that fails must not cost the working search. It used to:
-                    # the close happened first, so `_hyperspace` was already None, and
-                    # `_adopt_an_index_that_appeared` returns for ever once
-                    # `_hyperspace_error` is set -- so one failed reload permanently left
-                    # a module with no search and no way back.
-                    logger.warning("keeping the index that is already loaded")
+                    # A reload that fails must not cost the working search -- it used to,
+                    # because the close happened first and the error latched with nothing
+                    # behind it. But returning without recording anything traded that for
+                    # the opposite: the adopt compares `stamp` against `_adopted_stamp`,
+                    # so an unchanged stamp and no error meant EVERY status poll started
+                    # another full build and warm, for ever, with no backoff and nothing
+                    # said. Measured at 7 attempts over 10 polls and climbing.
+                    #
+                    # Recording the stamp says "this index has been tried". The search we
+                    # have keeps answering, no error is latched (the module is not
+                    # broken), and an index that changes AGAIN still gets a fresh attempt,
+                    # which is the one case worth retrying.
+                    logger.warning(
+                        "keeping the index that is already loaded; not retrying this one"
+                    )
+                    self._adopted_stamp = stamp
                     return False
                 self._hyperspace_error = str(error)[-200:] or type(error).__name__
                 return False

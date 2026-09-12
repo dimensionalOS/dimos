@@ -1125,7 +1125,14 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, WorldCa
                 # did it while another writer was on the same file. Said as a settled
                 # answer rather than progress, so the viewer stops asking.
                 if not self.config.build_replay_on_start:
-                    raise RuntimeError("replay build is turned off for this recording")
+                    # Said through `_replay_progress`, because that is what the routes put
+                    # on the wire: they answer `f"replay {self._replay_progress}"` and
+                    # DISCARD this exception's message. Raising it alone left the browser
+                    # reading "replay not started" -- so the viewer's "turned off" branch
+                    # was unreachable and it went on polling for ever for a build that is
+                    # refused by design.
+                    self._replay_progress = "build is turned off for this recording"
+                    raise RuntimeError(f"replay {self._replay_progress}")
                 # Never build on a request thread: start it (once) and let the viewer poll.
                 with self._workers_lock:  # paired with stop(): nothing starts once it stops
                     if self._stopping.is_set():

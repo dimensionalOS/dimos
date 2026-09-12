@@ -477,6 +477,16 @@ def test_a_viewer_request_cannot_build_a_replay_the_operator_turned_off(tmp_path
     assert module._replay_lock.acquire(blocking=False), "the lock was not released"
     module._replay_lock.release()
 
+    # And the refusal has to reach the BROWSER. The routes discard this exception and
+    # answer `f"replay {self._replay_progress}"`, so a refusal that only raises left the
+    # viewer reading "replay not started" -- its "turned off" branch unreachable, polling
+    # for ever for a build that is refused by design.
+    detail = f"replay {module._replay_progress}"
+    assert "turned off" in detail, (
+        f"the viewer would receive {detail!r}, which it treats as a build that has not"
+        " started yet rather than one that will never happen"
+    )
+
 
 def test_a_started_build_reports_building_not_not_started(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """While a build thread is alive the status must not say "not started".

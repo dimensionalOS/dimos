@@ -1492,3 +1492,88 @@ def test_a_question_can_be_answered_while_a_replacement_warms(tmp_path) -> None:
         " the whole warm, and the status poll says ready throughout"
     )
     assert module._hyperspace is not None and module._hyperspace.tag == 2
+
+
+def test_a_reload_that_keeps_failing_does_not_retry_for_ever(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A failed reload must be recorded, or every status poll starts another warm.
+
+    Two bugs in sequence here. The reload used to close the search first, so a failure
+    latched `_hyperspace_error` with nothing behind it and the adopt gave up for ever.
+    Fixing that by returning early traded it for the opposite: the adopt compares the
+    db's stamp against `_adopted_stamp`, so an unchanged stamp with no error meant every
+    poll spawned a fresh build and warm -- 7 attempts over 10 polls and climbing --
+    each one loading the text tower and every keyframe, while the status kept reporting
+    `ready: true` and the OLD keyframe count.
+
+    Recording the stamp says "this index has been tried". An index that changes again
+    still gets a fresh attempt, which is the one case worth retrying.
+    """
+
+    class Search:
+        keyframe_count = 1
+        segment_count = 0
+
+        def warm(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    module = _loader_module(tmp_path, None)
+    with (
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (1, 1.0),
+        ),
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch",
+            lambda *a, **k: Search(),
+        ),
+    ):
+        assert module._load_hyperspace() is True
+    working = module._hyperspace
+    assert working is not None
+
+    attempts: list[int] = []
+
+    def build_broken(*a, **k):  # type: ignore[no-untyped-def]
+        attempts.append(1)
+        raise SystemExit("the memory db is from another model")
+
+    def settle() -> None:
+        for _ in range(200):
+            if module._adopting.acquire(blocking=False):
+                module._adopting.release()
+                return
+            time.sleep(0.01)
+
+    adopt = type(module)._adopt_an_index_that_appeared
+    with (
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (2, 2.0),  # the db changed once and then stopped changing
+        ),
+        mock.patch("dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch", build_broken),
+    ):
+        for _ in range(10):
+            adopt(module)
+            settle()
+
+    assert len(attempts) == 1, (
+        f"a failing reload was retried {len(attempts)} times over 10 polls; each one loads"
+        " the text tower and every keyframe, and nothing is ever recorded or reported"
+    )
+    assert module._hyperspace is working, "the working search was lost"
+    assert module._hyperspace_error is None, "the module is not broken; nothing should latch"
+
+    # An index that changes AGAIN is still worth one more attempt.
+    with (
+        mock.patch(
+            "dimos.teleop.memory_world.hyperspace_answers.memory_db_index_stamp",
+            lambda _p: (3, 3.0),
+        ),
+        mock.patch("dimos.teleop.memory_world.hyperspace_answers.HyperspaceSearch", build_broken),
+    ):
+        adopt(module)
+        settle()
+    assert len(attempts) == 2, "a genuinely new index was not retried"
