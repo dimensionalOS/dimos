@@ -372,8 +372,10 @@ def memory_db_ready(recording: str | Path) -> bool:
     and that requirement was removed deliberately: the operator does not want the index
     marked complete. The cost is real and is not hidden here -- an ingest killed outright
     leaves an index that reads as finished and is merely short, and the recovery is a
-    rerun. Nothing writes the marker any more; :func:`drop_index` still deletes one it
-    finds, so an old marker cannot vouch for keyframes that have since been dropped.
+    rerun. Nothing writes the marker any more, and the ingest deletes any it finds along
+    with the keyframes when it rebuilds, so an old marker cannot vouch for keyframes that
+    have since been dropped. (There is no `drop_index` function; dropping an index means
+    deleting those streams, which is what `refuse_if_a_rebuild_is_half_done` guards.)
     """
     return memory_db_index_stamp(recording)[0] > 0
 
@@ -383,8 +385,8 @@ def memory_db_index_stamp(recording: str | Path) -> tuple[int, float]:
     when it has none.
 
     Identity, not just size, because without a completion marker this is all a reader
-    has to tell one index from another. A count alone cannot see a ``drop_index`` and
-    re-ingest that lands on the same number of keyframes, nor one that lands on fewer --
+    has to tell one index from another. A count alone cannot see a drop and re-ingest
+    that lands on the same number of keyframes, nor one that lands on fewer --
     and a reader comparing only "did it grow" would serve the deleted index for ever.
     The newest stamp moves whenever the keyframes are rewritten, so the pair changes
     whenever the index does.

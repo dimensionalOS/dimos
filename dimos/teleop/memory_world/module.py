@@ -739,7 +739,6 @@ class MemoryWorldModule(
             logger.exception("failed to build the camera trail")
             return {"n": 0}, b""
 
-    @skill
     def _broadcast(self, message: bytes | str) -> None:
         with self._clients_lock:
             clients = tuple(self._world_clients)

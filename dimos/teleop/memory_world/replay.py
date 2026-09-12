@@ -693,10 +693,14 @@ class VoxelReplay:
     def encode_segment(header: dict[str, Any], payload: bytes) -> bytes:
         """``[u32 header length][header JSON, padded to a multiple of 4][payload]``.
 
-        The padding keeps the int16 table and the uint32 slots aligned for
-        typed-array views on the viewer without copying (the table's byte
-        length is a multiple of 6, so the slots follow it 2-byte aligned; the
-        viewer copies them when 4-byte alignment is not met).
+        The padding keeps the payload 4-byte aligned from the start of the buffer, and
+        `build_segment` pads again between the int16 table and the uint32 slots
+        (`slots_offset` rounds the table's `n * 6` bytes up to a multiple of 4). Both
+        are load-bearing: `replay.js` takes ZERO-COPY views over this buffer --
+        `new Int16Array(buffer, base, ...)` and `new Uint32Array(buffer, slotsOffset,
+        ...)` -- and a typed-array view whose offset is not a multiple of its element
+        size throws a RangeError outright. It does not copy on a miss; there is no miss
+        to handle. Dropping either pad breaks roughly half of all segments.
         """
         header_bytes = json.dumps(header, separators=(",", ":")).encode("utf-8")
         header_bytes += b" " * (-(4 + len(header_bytes)) % 4)

@@ -33,6 +33,27 @@ def _empty_store(path: Path) -> None:
     store.stop()
 
 
+def test_the_module_can_list_its_skills() -> None:
+    """Every `@skill` in this module has to be one an agent can actually be handed.
+
+    Splitting `analyze_memory` into its own mixin left the decorator behind on the
+    method that had followed it -- `_broadcast`, which is an internal helper with no
+    docstring -- and `get_skills()` raises `ValueError: Function must have a docstring
+    if description not provided.` rather than returning anything. So the module has no
+    skills at all: not the stray one, and not `find_in_memory` or `analyze_memory`
+    either. Nothing else in the suite calls `get_skills`, which is why it went unseen.
+    """
+    from dimos.teleop.memory_world.module import MemoryWorldModule
+
+    module = MemoryWorldModule.__new__(MemoryWorldModule)  # no I/O: only the decorators
+    names = {info.func_name for info in MemoryWorldModule.get_skills(module)}
+
+    assert "find_in_memory" in names, f"the one skill a question needs is missing: {names}"
+    assert "analyze_memory" in names, f"the mixin's skill did not survive the split: {names}"
+    # And nothing private came along with them.
+    assert not any(name.startswith("_") for name in names), f"a private method is a skill: {names}"
+
+
 def test_the_object_radius_a_config_accepts_is_one_an_answer_can_carry() -> None:
     """`object_radius_m` is what fills `HighlightPoint.radius`, and the two bounds
     disagreed: the config took anything above zero, the schema stopped at 5.

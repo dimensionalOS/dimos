@@ -33,6 +33,7 @@ from typing import Annotated, Any
 
 from pydantic import Field as PydanticField
 
+from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
 from dimos.teleop.memory_world.query import (
     MEMORY_ANALYSIS_BOOTSTRAP,
@@ -57,6 +58,7 @@ class MemoryAnalysis:
     _add_route_to_result: Callable[[MemoryQueryResult], None]
     _publish_query_result: Callable[[MemoryQueryResult], str]
 
+    @skill
     def analyze_memory(
         self,
         code: str,

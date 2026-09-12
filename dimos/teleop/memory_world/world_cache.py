@@ -119,9 +119,12 @@ class WorldCache:
             # that never looks at it. Copying the clause turned a bad-data failure into a
             # total one whenever a stop happened to be in flight: the re-raise is caught
             # by this function's own trailing handler, which returns None for the WHOLE
-            # build and skips the very fall-through the guard was added to provide. A
-            # genuine cancellation still propagates -- from_replay is next in the chain
-            # and raises it there.
+            # build and skips the very fall-through the guard was added to provide.
+            #
+            # Nor is one needed: `_replay_read` here is a plain stream read that never
+            # looks at `_stopping`, so no cancellation is raised in this function to
+            # propagate. The sources that DO watch it raise it themselves -- from_replay
+            # when it is reached, which is only when this one yields nothing.
             try:
                 found = self._replay_read(self._global_map_cloud)
             except Exception:

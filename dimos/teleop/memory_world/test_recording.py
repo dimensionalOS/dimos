@@ -477,6 +477,49 @@ def test_embedding_job_failure_keeps_the_last_line() -> None:
     assert status["embedding"] == "failed" and "no such stream" in status["progress"]
 
 
+def test_a_finished_job_cleaning_up_does_not_mark_its_successor_failed() -> None:
+    """The guard in the sibling below must only ever speak for its OWN run.
+
+    `_run` publishes "done" before it reaches its finally block, so a second job can
+    start in that window -- and the finally then found a state reading "running" and
+    flipped it to "failed". The live job was reported as failed, and a third job was let
+    in beside it, which is the one thing `start()` exists to prevent.
+
+    Checking the process handle instead is not enough, and that is the point: a new run
+    sets `_process` only once its subprocess has spawned, so in this window the handle
+    still says the OLD run owns it while the new one already reads "running".
+
+    Made deterministic rather than raced: B is started from inside the very `_set("done")`
+    call that opens the window, so A always walks into its cleanup with B live.
+    """
+    from dimos.teleop.memory_world.embed import EmbeddingJob
+
+    job = EmbeddingJob()
+    started_b: list[bool] = []
+    real_set = job._set
+
+    def set_and_hand_over(state: str, progress: str) -> None:
+        real_set(state, progress)
+        if state == "done" and not started_b:
+            # The window: A has published "done" and has not reached its finally.
+            started_b.append(job.start(["true"], "", adopt=lambda: time.sleep(0.5)))
+
+    job._set = set_and_hand_over  # type: ignore[method-assign]
+    assert job.start(["true"], "", adopt=lambda: None)
+
+    for _ in range(500):  # A's thread runs to completion, cleanup included
+        if started_b:
+            break
+        time.sleep(0.01)
+    assert started_b == [True], "B never got the window this test is about"
+    time.sleep(0.2)  # A's finally has every chance to run
+
+    assert job.status()["embedding"] == "running", (
+        f"the finished job reported its live successor as {job.status()['embedding']!r}"
+    )
+    assert not job.start(["true"], "", adopt=lambda: None), "a third job was let in"
+
+
 def test_an_embedding_job_that_dies_without_an_exception_does_not_wedge_the_next_one() -> None:
     """`start()` refuses to run while the state reads "running", so a state stuck there
     is not one dead job -- it is every future job, for the life of the process, with the

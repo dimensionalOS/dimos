@@ -72,6 +72,8 @@ class EmbeddingJob:
         self.done_message = done
         self._lock = threading.Lock()
         self.state = "idle"
+        # Which run owns the shared state. See the finally block in `_run`.
+        self._run_id = 0
         self.progress = ""
         self._process: subprocess.Popen[str] | None = None
         self._terminated = False
@@ -97,10 +99,12 @@ class EmbeddingJob:
             if self.state == "running":
                 return False
             self._terminated = False
+            self._run_id += 1
+            run_id = self._run_id
             self.state, self.progress = "running", f"starting {self.name}"
         threading.Thread(
             target=self._run,
-            args=(command, config_text, adopt),
+            args=(command, config_text, adopt, run_id),
             daemon=True,
             name="MemoryWorldEmbed",
         ).start()
@@ -113,7 +117,9 @@ class EmbeddingJob:
         if process is not None:
             process.terminate()
 
-    def _run(self, command: list[str], config_text: str | None, adopt: Callable[[], None]) -> None:
+    def _run(
+        self, command: list[str], config_text: str | None, adopt: Callable[[], None], run_id: int
+    ) -> None:
         last = ""
         config_path: str | None = None
         process: subprocess.Popen[bytes] | None = None
@@ -179,10 +185,16 @@ class EmbeddingJob:
                 # `start()` refuses to run anything while it reads that, so the job would
                 # be dead, the viewer would wait for it forever, and no later attempt
                 # could replace it. `except Exception` does not cover SystemExit or
-                # KeyboardInterrupt, and the handler can raise on its own besides. No
-                # other run can be in this state: start() will not begin a second one
-                # while the first still says "running".
-                if self.state == "running":
+                # KeyboardInterrupt, and the handler can raise on its own besides.
+                #
+                # `run_id`, not the state alone and not `_process`: this method publishes
+                # "done" BEFORE it reaches here, so a second job can start in that window
+                # -- and it sets `_process` only once its own subprocess has spawned, so
+                # for a moment the handle above still says this run owns it while the new
+                # one is already "running". Flipping the state then reports the LIVE job
+                # as failed and lets a third start beside it. The counter is taken under
+                # the same lock `start()` bumps it under, so it cannot be stale.
+                if self._run_id == run_id and self.state == "running":
                     self.state = "failed"
                     self.progress = f"{self.name} stopped without saying why"
             if config_path is not None:
