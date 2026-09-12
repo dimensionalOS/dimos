@@ -310,6 +310,9 @@ def corrected_mount(
     return mount, camera_root, matrix
 
 
+REBUILT_SUFFIX = "__rebuilt"
+
+
 def write_mount_into_tf(
     store: Any, tf_stream: str, mount: str, child: str, matrix: np.ndarray
 ) -> int:
@@ -318,11 +321,15 @@ def write_mount_into_tf(
     One tf tree. Everything downstream -- the map, the markers, the pictures and
     Hyperspace's keyframes -- reads the recording's `tf`, so a correction that lives
     anywhere else is a second source that can drift from the first. A separate static
-    stream would not even be seen by Hyperspace, which reads `tf` alone.
+    stream would not even be seen by Hyperspace, which reads `tf` alone; the recording's
+    own static tf, which build_tf_tree lays over the moving one, would quietly win over
+    the correction, so that edge is taken out of it here too.
 
     The whole stream is rebuilt, because the wrong value is in every sample of that edge
     and a later sample cannot override an earlier one for a reader that interpolates.
-    Nothing else in it is touched, and the original is put back if the write fails.
+    The corrected copy is written under another name FIRST, so that no failure and no
+    kill can reach a state where the recording's tf exists nowhere: if the last step
+    dies, the copy is still in the db and the error says how to finish by hand.
     """
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
     from dimos.msgs.geometry_msgs.Transform import Transform
@@ -343,8 +350,15 @@ def write_mount_into_tf(
             ts=t.ts,
         )
 
+    staged = tf_stream + REBUILT_SUFFIX
+    if staged in store.list_streams():
+        raise SystemExit(
+            f"{staged!r} is already in the recording: an earlier run died holding the only"
+            f" corrected copy of {tf_stream!r}. Check it, put it back as {tf_stream!r} and"
+            " drop it before running this again."
+        )
+
     original = [(float(obs.ts), list(obs.data.transforms)) for obs in store.streams[tf_stream]]
-    rebuilt = [(ts, [corrected(t) for t in transforms]) for ts, transforms in original]
     touched = sum(
         1
         for _, transforms in original
@@ -354,23 +368,62 @@ def write_mount_into_tf(
     if not touched:
         raise SystemExit(f"{tf_stream!r} carries no {mount} -> {child}; nothing to correct")
 
+    def write(name: str) -> None:
+        written = store.stream(name, TFMessage)
+        for ts, transforms in original:
+            written.append(TFMessage(*[corrected(t) for t in transforms]), ts=ts)
+
+    try:
+        write(staged)
+    except BaseException:  # nothing has been taken away yet
+        if staged in store.list_streams():
+            store.delete_stream(staged)
+        raise
     store.delete_stream(tf_stream)
     try:
-        written = store.stream(tf_stream, TFMessage)
-        for ts, transforms in rebuilt:
-            written.append(TFMessage(*transforms), ts=ts)
+        write(tf_stream)
     except BaseException:
-        # Between the delete and the last append the recording has no tf at all. Whatever
-        # went wrong, what was there goes back.
-        try:
-            if tf_stream in store.list_streams():
-                store.delete_stream(tf_stream)
-            restored = store.stream(tf_stream, TFMessage)
-            for ts, transforms in original:
-                restored.append(TFMessage(*transforms), ts=ts)
-        finally:
-            raise
+        raise SystemExit(
+            f"writing {tf_stream!r} failed after it was dropped. The corrected tf is in the"
+            f" recording as {staged!r} and nothing is lost: copy it back to {tf_stream!r}."
+        ) from None
+    store.delete_stream(staged)
+    _drop_edge_from_static_tf(store, mount, child)
     return touched
+
+
+def _drop_edge_from_static_tf(store: Any, mount: str, child: str) -> None:
+    """Take the corrected edge out of the recording's static tf, if it declares one.
+
+    ``build_tf_tree`` lays the static edges over the moving stream, so a stale static
+    mount would go on winning over the correction that was just written and the write
+    would look like it had done nothing.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import detect_streams
+
+    static = detect_streams(store).get("tf_static")
+    if not static or static not in store.list_streams():
+        return
+    dropped = 0
+    kept = []
+    for obs in store.streams[static]:
+        surviving = [
+            t
+            for t in obs.data.transforms
+            if (str(t.frame_id), str(t.child_frame_id)) != (mount, child)
+        ]
+        dropped += len(obs.data.transforms) - len(surviving)
+        if surviving:
+            kept.append((float(obs.ts), surviving))
+    if not dropped:
+        return  # it never declared this edge
+    store.delete_stream(static)
+    if not kept:
+        return  # that edge was all it held
+    written = store.stream(static, TFMessage)
+    for ts, transforms in kept:
+        written.append(TFMessage(*transforms), ts=ts)
 
 
 def drop_what_the_mount_invalidates(store: Any, recording: str) -> list[str]:

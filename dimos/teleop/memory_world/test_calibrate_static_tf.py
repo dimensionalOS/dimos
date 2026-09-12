@@ -261,6 +261,11 @@ def test_the_tf_keeps_its_sample_timeline_when_the_mount_is_corrected(tmp_path) 
         rows = list(store.streams["tf"])
         assert [float(obs.ts) for obs in rows] == [0.0, 1.0, 2.0, 3.0, 4.0]
         assert all(len(obs.data.transforms) == 2 for obs in rows)  # no edge duplicated
+        assert "tf__rebuilt" not in store.list_streams()  # the staged copy is cleaned up
+        for step, obs in enumerate(rows):  # and the correction really is in every sample
+            by_edge = {(str(t.frame_id), str(t.child_frame_id)): t for t in obs.data.transforms}
+            assert by_edge[("lidar", "cam")].translation.x == 0.0  # was 9.0
+            assert by_edge[("odom", "lidar")].translation.x == float(step)  # untouched
     finally:
         store.stop()
 
@@ -361,12 +366,12 @@ def test_writing_a_mount_removes_only_what_it_invalidated(tmp_path) -> None:  # 
         store.stop()
 
 
-def test_a_failed_write_puts_the_other_tf_edges_back(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """The write deletes the tf before writing the corrected one, so a crash in between
-    would leave the recording with no tf at all: no map, no markers, no search.
+def test_a_tf_write_that_fails_early_takes_nothing_away(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The corrected copy is written first, under another name, so a failure there is
+    free: the recording still has its tf and the half-written copy is swept up.
 
-    A full disk or a Ctrl-C in that window would take the lidar mount, the imu and
-    everything else with it, permanently and with only a traceback to say so.
+    This is the ordinary failure -- a transient write error, a Ctrl-C -- and it must cost
+    nothing at all.
     """
     from dimos.memory.store.sqlite import SqliteStore
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -375,13 +380,13 @@ def test_a_failed_write_puts_the_other_tf_edges_back(tmp_path) -> None:  # type:
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
     from dimos.teleop.memory_world.calibrate_static_tf import write_mount_into_tf
 
-    def edge(parent: str, child: str, x: float, ts: float = 1.0) -> Transform:
+    def edge(parent: str, child: str, x: float) -> Transform:
         return Transform(
             translation=Vector3(x, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
             frame_id=parent,
             child_frame_id=child,
-            ts=ts,
+            ts=1.0,
         )
 
     store = SqliteStore(path=str(tmp_path / "rec.db"), must_exist=False)
@@ -396,11 +401,9 @@ def test_a_failed_write_puts_the_other_tf_edges_back(tmp_path) -> None:  # type:
         real_stream = store.stream
 
         def dying_stream(name: str, *args, **kwargs):  # type: ignore[no-untyped-def]
-            # Only the WRITE call names a payload type; reads do not. Dying on the first
-            # read would be a different, harmless failure: this has to die in the window
-            # between the delete and the append, which is the one that loses data.
-            if name == "tf" and args and not getattr(dying_stream, "fired", False):
-                dying_stream.fired = True  # type: ignore[attr-defined]
+            # Only the WRITE call names a payload type; reads do not. This dies on the
+            # staged copy, before the recording's own tf has been touched.
+            if name == "tf__rebuilt" and args:
                 raise OSError(28, "No space left on device")
             return real_stream(name, *args, **kwargs)
 
@@ -409,12 +412,13 @@ def test_a_failed_write_puts_the_other_tf_edges_back(tmp_path) -> None:  # type:
             write_mount_into_tf(store, "tf", "mount", "cam", np.eye(4))
         store.stream = real_stream  # type: ignore[assignment]
 
+        assert "tf__rebuilt" not in store.list_streams()  # no half-written copy left over
         surviving = {
-            (str(t.frame_id), str(t.child_frame_id))
+            (str(t.frame_id), str(t.child_frame_id), t.translation.x)
             for obs in store.streams["tf"]
             for t in obs.data.transforms
         }
-        assert surviving == {("mount", "cam"), ("mount", "imu"), ("mount", "gps")}
+        assert surviving == {("mount", "cam", 9.0), ("mount", "imu", 4.0), ("mount", "gps", 2.0)}
     finally:
         store.stop()
 
@@ -467,3 +471,139 @@ def test_answer_positions_reads_both_places_an_answer_can_point() -> None:
         points=[HighlightPoint(position=(1.0, 0.0, 0.0), label="x")],
     )
     assert answer_positions(both) == [(1.0, 0.0, 0.0), (9.0, 9.0, 9.0)]
+
+
+def test_a_tf_write_that_dies_leaves_the_corrected_copy_in_the_recording(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A write that fails persistently must still not leave the recording without a tf.
+
+    Putting the original back is only possible while the disk still takes writes. If it
+    does not -- a full disk, a read-only remount -- the restore fails too and the tf is
+    gone for good. So the corrected copy is written under another name first: the worst
+    case is then a recording that holds its tf under the wrong name, which is a minute's
+    work to undo, instead of one that holds no tf at all.
+    """
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.calibrate_static_tf import write_mount_into_tf
+
+    def edge(parent: str, child: str, x: float) -> Transform:
+        return Transform(
+            translation=Vector3(x, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id=parent,
+            child_frame_id=child,
+            ts=1.0,
+        )
+
+    store = SqliteStore(path=str(tmp_path / "rec.db"), must_exist=False)
+    store.start()
+    try:
+        store.stream("tf", TFMessage).append(
+            TFMessage(edge("mount", "cam", 9.0), edge("mount", "imu", 4.0)), ts=1.0
+        )
+        real_stream = store.stream
+
+        def dying_stream(name: str, *args, **kwargs):  # type: ignore[no-untyped-def]
+            # Every write of "tf" fails, forever: the disk is not coming back.
+            if name == "tf" and args:
+                raise OSError(28, "No space left on device")
+            return real_stream(name, *args, **kwargs)
+
+        store.stream = dying_stream  # type: ignore[assignment]
+        with pytest.raises(SystemExit):
+            write_mount_into_tf(store, "tf", "mount", "cam", np.eye(4))
+        store.stream = real_stream  # type: ignore[assignment]
+
+        assert "tf" not in store.list_streams()  # the window this is about
+        surviving = [
+            (str(t.frame_id), str(t.child_frame_id), t.translation.x)
+            for obs in store.streams["tf__rebuilt"]
+            for t in obs.data.transforms
+        ]
+        assert ("mount", "cam", 0.0) in surviving  # corrected, and nothing was lost
+        assert ("mount", "imu", 4.0) in surviving
+
+        # And a second run refuses rather than overwriting the only copy there is.
+        store.stream = real_stream  # type: ignore[assignment]
+        with pytest.raises(SystemExit):
+            write_mount_into_tf(store, "tf", "mount", "cam", np.eye(4))
+    finally:
+        store.stop()
+
+
+def test_a_stale_static_mount_cannot_outvote_the_correction(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """build_tf_tree lays tf_static over the moving tf, so a static copy of the corrected
+    edge would go on winning and the write would look like it had done nothing.
+
+    This is the whole failure the one-tf-tree change is about, in miniature: two places
+    declaring one joint, and the reader picking the stale one.
+    """
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.calibrate_static_tf import write_mount_into_tf
+    from dimos.teleop.memory_world.recording import build_tf_tree
+
+    def edge(parent: str, child: str, x: float) -> Transform:
+        return Transform(
+            translation=Vector3(x, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id=parent,
+            child_frame_id=child,
+            ts=1.0,
+        )
+
+    store = SqliteStore(path=str(tmp_path / "rec.db"), must_exist=False)
+    store.start()
+    try:
+        store.stream("tf", TFMessage).append(
+            TFMessage(edge("lidar", "mount", 1.0), edge("mount", "cam", 9.0)), ts=1.0
+        )
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(edge("mount", "cam", 9.0), edge("mount", "imu", 4.0)), ts=1.0
+        )
+
+        fixed = np.eye(4)
+        fixed[0, 3] = 2.0
+        write_mount_into_tf(store, "tf", "mount", "cam", fixed)
+
+        tree = build_tf_tree(store, "tf")
+        assert tree.lookup("lidar", "cam", 1.0)[0, 3] == 3.0  # the correction, not 10.0
+        assert tree.lookup("mount", "imu", 1.0)[0, 3] == 4.0  # the rest of the statics stay
+    finally:
+        store.stop()
+
+
+def test_a_static_tf_holding_only_the_corrected_edge_goes_away(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A static stream left behind holding nothing is a stream the next reader must still
+    open, decode and reason about. If the corrected edge was all it declared, it goes."""
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.calibrate_static_tf import write_mount_into_tf
+
+    def edge(parent: str, child: str, x: float) -> Transform:
+        return Transform(
+            translation=Vector3(x, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id=parent,
+            child_frame_id=child,
+            ts=1.0,
+        )
+
+    store = SqliteStore(path=str(tmp_path / "rec.db"), must_exist=False)
+    store.start()
+    try:
+        store.stream("tf", TFMessage).append(TFMessage(edge("mount", "cam", 9.0)), ts=1.0)
+        store.stream("tf_static", TFMessage).append(TFMessage(edge("mount", "cam", 9.0)), ts=1.0)
+        write_mount_into_tf(store, "tf", "mount", "cam", np.eye(4))
+        assert "tf_static" not in store.list_streams()
+    finally:
+        store.stop()

@@ -18,8 +18,10 @@ Hyperspace's own CLI opens an mcap raw, so its ``camera_info`` arrives as
 undecoded bytes and its streams are picked by name; this entry point opens
 the recording through :func:`recording.open_recording` (ROS 2 CDR decoded by
 schema) and names the streams by payload type, then hands the store to the
-same :func:`dimos.mapping.hyperspace.cli.ingest`. Output goes to
-``<recording>.hyperspace.db`` (see :func:`hyperspace_search.memory_db_for`).
+same :func:`dimos.mapping.hyperspace.cli.ingest`. A ``.db`` recording gets the
+keyframes written into itself -- one db, one tf tree; only an mcap, which cannot
+be written to, gets a ``<recording>.hyperspace.db`` beside it (see
+:func:`hyperspace_search.memory_db_for`).
 
     python -m dimos.teleop.memory_world.hyperspace_ingest <recording.db|.mcap> \
         [--model-name DIR_OR_HF_ID] [--device mps|cuda|cpu] [--hz 5] \
@@ -43,6 +45,7 @@ from typing import Any
 import numpy as np
 
 from dimos.teleop.memory_world.hyperspace_search import (
+    COMPLETE_STREAM,
     HYPERSPACE_MODEL_NAME,
     KEYFRAME_STREAM,
     PATCH_STREAM,
@@ -169,7 +172,7 @@ def ingest_recording(
                 # its own tf. The two streams are dropped first, because a rerun must not
                 # append a second copy of every keyframe, and again on failure below.
                 memory = store
-                for stream in (KEYFRAME_STREAM, PATCH_STREAM):
+                for stream in (COMPLETE_STREAM, KEYFRAME_STREAM, PATCH_STREAM):
                     if stream in store.list_streams():
                         store.delete_stream(stream)
             else:
@@ -209,25 +212,41 @@ def ingest_recording(
                     obj.stop()
                 except Exception:
                     logger.exception("stopping %s", type(obj).__name__)
-        if not stats.get("kept"):  # nothing indexed: whatever search db was there stays
+        if not stats.get("kept"):
             raise SystemExit(
                 f"no keyframe was kept from {stats.get('images', 0)} images (stamps never matched"
-                " depth, or tf placed none); the search db is unchanged"
+                " depth, or tf placed none); there is no search index now, and whatever was"
+                " there before this run is gone"
             )
         if building is not None:
             for suffix in ("-wal", "-shm"):
                 memory_path.with_name(memory_path.name + suffix).unlink(missing_ok=True)
             building.replace(memory_path)
+        else:
+            # The moment the keyframes become a finished index. Nothing else says so:
+            # they were written into the recording one at a time, so the marker is what
+            # tells a viewer opening mid-ingest that it is looking at half of one.
+            from dimos.msgs.std_msgs.String import String
+
+            done = SqliteStore(path=str(recording), must_exist=True)
+            done.start()
+            try:
+                done.stream(COMPLETE_STREAM, String).append(
+                    String(f"{stats.get('kept', 0)} keyframes, {model_name}"), ts=time.time()
+                )
+            finally:
+                done.stop()
         published = True
     finally:
         if building is None and not published and memory_path == recording:
             # Written in place: a half-done set of keyframes must not read as a finished
-            # one, and memory_db_ready only checks that the streams exist and are non-empty.
+            # one. The marker is never written on this path, so a viewer would not be
+            # fooled either way; these are dropped so a rerun starts from nothing.
             try:
                 reopened = SqliteStore(path=str(recording), must_exist=True)
                 reopened.start()
                 try:
-                    for stream in (KEYFRAME_STREAM, PATCH_STREAM):
+                    for stream in (COMPLETE_STREAM, KEYFRAME_STREAM, PATCH_STREAM):
                         if stream in reopened.list_streams():
                             reopened.delete_stream(stream)
                 finally:

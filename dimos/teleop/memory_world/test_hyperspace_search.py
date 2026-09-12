@@ -142,3 +142,28 @@ def test_memory_db_ready_needs_both_streams(tmp_path) -> None:
     db.commit()
     db.close()
     assert memory_db_ready(recording)
+
+
+def test_keyframes_in_the_recording_are_not_ready_until_the_ingest_says_so(tmp_path) -> None:
+    """An mcap's companion is moved into place whole, so its existence says the ingest
+    finished. Keyframes written into the recording itself appear one at a time.
+
+    Without a marker a viewer opening during an ingest -- or after one was killed outright,
+    which no ``finally`` can clean up after -- would search the handful of pictures that
+    happened to be written by then and present them as the whole recording.
+    """
+    recording = tmp_path / "walk.db"
+    assert memory_db_for(recording) == recording
+
+    db = sqlite3.connect(recording)
+    db.execute("CREATE TABLE _streams (name TEXT)")
+    db.execute("INSERT INTO _streams VALUES ('hyperspace_keyframes'), ('hyperspace_patches')")
+    db.execute("CREATE TABLE hyperspace_keyframes (id INTEGER)")
+    db.execute("INSERT INTO hyperspace_keyframes VALUES (1)")
+    db.commit()
+    assert not memory_db_ready(recording), "an ingest that is still running, or was killed"
+
+    db.execute("INSERT INTO _streams VALUES ('hyperspace_complete')")
+    db.commit()
+    db.close()
+    assert memory_db_ready(recording)

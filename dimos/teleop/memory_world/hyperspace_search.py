@@ -28,8 +28,9 @@ viewer walks through:
 
 The arithmetic runs on :mod:`hyperspace_fast` (resident arrays, ~100 ms a
 query); Hyperspace's own engine only loads the keyframes and embeds text.
-Nothing here embeds images: the memory db (``<recording>.hyperspace.db``)
-must already hold ``hyperspace_keyframes`` and ``hyperspace_patches``.
+Nothing here embeds images: ``hyperspace_keyframes`` and ``hyperspace_patches``
+must already be there. A ``.db`` recording holds them itself; only an mcap,
+which cannot be written to, gets a ``<recording>.hyperspace.db`` beside it.
 """
 
 from __future__ import annotations
@@ -64,6 +65,9 @@ logger = setup_logger()
 
 KEYFRAME_STREAM = "hyperspace_keyframes"
 PATCH_STREAM = "hyperspace_patches"
+# Written last by the ingest and dropped first: the keyframes go into the recording one
+# at a time, so their presence alone cannot say the ingest finished.
+COMPLETE_STREAM = "hyperspace_complete"
 MEMORY_DB_SUFFIX = ".hyperspace.db"
 
 # The model a memory db is embedded with, in ONE place. An ingest run by hand with a
@@ -306,15 +310,26 @@ def memory_db_for(recording: str | Path) -> Path:
 
 
 def memory_db_ready(recording: str | Path) -> bool:
-    """True when the recording's memory db exists and holds keyframes and patches."""
+    """True when the keyframes and patches are there AND the ingest that wrote them finished.
+
+    A companion db is built beside its final name and moved into place, so its mere
+    existence says the ingest finished. Keyframes written into the recording itself have
+    no such moment: they appear one at a time, and a viewer that believed the first one
+    would search an index of one picture and call it the whole recording. The ingest
+    writes :data:`COMPLETE_STREAM` last and drops it first, so a run killed outright --
+    which no ``finally`` can clean up after -- still reads as unfinished.
+    """
     path = memory_db_for(recording)
     if not path.is_file():
         return False
+    wanted = {KEYFRAME_STREAM, PATCH_STREAM}
+    if path == Path(recording):
+        wanted.add(COMPLETE_STREAM)
     try:
         connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         try:
             names = {row[0] for row in connection.execute("SELECT name FROM _streams")}
-            if not {KEYFRAME_STREAM, PATCH_STREAM} <= names:
+            if not wanted <= names:
                 return False
             (count,) = connection.execute(f'SELECT count(*) FROM "{KEYFRAME_STREAM}"').fetchone()
             return int(count) > 0
