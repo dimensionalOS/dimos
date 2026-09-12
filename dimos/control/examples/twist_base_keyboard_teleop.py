@@ -19,9 +19,9 @@ WASD keys publish Twist → coordinator's twist_command port → virtual joints
 → tick loop → MockTwistBaseAdapter.
 
 Controls:
-    W/S: Forward/backward (linear.x)
-    Q/E: Strafe left/right (linear.y)
-    A/D: Turn left/right (angular.z)
+    W/S or Up/Down: Forward/backward (linear.x)
+    Q/E or Alt + turn keys: Strafe left/right (linear.y)
+    A/D or Left/Right: Turn left/right (angular.z)
     Shift: 2x boost
     Ctrl: 0.5x slow
     Space: Emergency stop
