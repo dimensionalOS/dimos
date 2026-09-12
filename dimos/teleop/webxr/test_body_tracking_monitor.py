@@ -77,7 +77,7 @@ def test_body_tracking_monitor_logs_first_resolved_joint_once(
     mocker.patch.object(
         body_tracking_monitor_module,
         "monotonic",
-        side_effect=[monitor._report_started_at + 1.0, monitor._report_started_at + 2.0],
+        side_effect=[10.0, 11.0],
     )
     logger = mocker.patch.object(body_tracking_monitor_module, "logger")
     snapshot = BodyTrackingSnapshot(
@@ -106,10 +106,11 @@ def test_body_tracking_monitor_warns_when_required_heartbeat_has_no_body(
     monitor: BodyTrackingMonitor,
     mocker: pytest_mock.MockerFixture,
 ) -> None:
+    monitor._report_started_at = 10.0
     mocker.patch.object(
         body_tracking_monitor_module,
         "monotonic",
-        return_value=monitor._report_started_at + 5.0,
+        return_value=15.0,
     )
     logger = mocker.patch.object(body_tracking_monitor_module, "logger")
 
@@ -137,7 +138,8 @@ def test_body_tracking_monitor_reports_healthy_tracking(
     monitor: BodyTrackingMonitor,
     mocker: pytest_mock.MockerFixture,
 ) -> None:
-    report_time = monitor._report_started_at + 5.0
+    monitor._report_started_at = 10.0
+    report_time = 15.0
     mocker.patch.object(
         body_tracking_monitor_module,
         "monotonic",
@@ -173,7 +175,31 @@ def test_body_tracking_monitor_reports_healthy_tracking(
     assert monitor._snapshots_since_report == 0
 
 
-def test_body_tracking_monitor_subscribes_during_start(
+def test_body_tracking_monitor_starts_reporting_window_on_first_snapshot(
+    monitor: BodyTrackingMonitor,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    mocker.patch.object(
+        body_tracking_monitor_module,
+        "monotonic",
+        return_value=100.0,
+    )
+    logger = mocker.patch.object(body_tracking_monitor_module, "logger")
+    snapshot = BodyTrackingSnapshot(
+        type="body_tracking_snapshot",
+        capture_time_s=1.0,
+        frame_id="local-floor",
+        joints=None,
+    )
+
+    monitor._on_body_tracking(snapshot)
+
+    logger.warning.assert_not_called()
+    assert monitor._report_started_at == 100.0
+    assert monitor._snapshots_since_report == 1
+
+
+def test_body_tracking_monitor_resets_reporting_window_and_subscribes_during_start(
     monitor: BodyTrackingMonitor,
     mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -182,7 +208,11 @@ def test_body_tracking_monitor_subscribes_during_start(
         "subscribe",
         return_value=lambda: None,
     )
+    monitor._report_started_at = 10.0
+    monitor._snapshots_since_report = 3
 
     monitor.start()
 
     subscribe.assert_called_once_with(monitor._on_body_tracking)
+    assert monitor._report_started_at is None
+    assert monitor._snapshots_since_report == 0

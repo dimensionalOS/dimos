@@ -67,13 +67,15 @@ class BodyTrackingMonitor(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._report_started_at = monotonic()
+        self._report_started_at: float | None = None
         self._snapshots_since_report = 0
         self._resolved_joint_ever_seen = False
 
     @rpc
     def start(self) -> None:
         super().start()
+        self._report_started_at = None
+        self._snapshots_since_report = 0
         self.register_disposable(Disposable(self.body_tracking.subscribe(self._on_body_tracking)))
 
     def _on_body_tracking(self, snapshot: BodyTrackingSnapshot) -> None:
@@ -87,6 +89,10 @@ class BodyTrackingMonitor(Module):
             )
 
         now = monotonic()
+        if self._report_started_at is None:
+            self._report_started_at = now
+            return
+
         elapsed = now - self._report_started_at
         if elapsed < REPORT_INTERVAL_S:
             return
