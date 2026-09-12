@@ -21,7 +21,9 @@ import time
 import uuid
 
 import pytest
+import pytest_mock
 
+from dimos.utils import shm as shm_module
 from dimos.utils.shm import ShmNotReadyError, attach_shm, create_or_attach_shm
 
 SIZE = 1 << 16
@@ -97,6 +99,26 @@ def test_attach_shm_waits_out_the_race(name, slow_ftruncate):
     owner.close()
 
     assert result == [SIZE], f"attacher did not survive the window: {result}"
+
+
+def test_attach_shm_retries_cached_zero_size_handle(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    zero_size = mocker.Mock(size=0)
+    ready = mocker.Mock(size=SIZE)
+    shared_memory = mocker.patch.object(
+        shm_module,
+        "SharedMemory",
+        side_effect=[zero_size, ready],
+    )
+    mocker.patch.object(shm_module, "unregister", side_effect=lambda shm: shm)
+    mocker.patch.object(shm_module.time, "sleep")
+
+    result = shm_module.attach_shm("creation-race", timeout=1.0)
+
+    assert result is ready
+    assert shared_memory.call_count == 2
+    zero_size.close.assert_called_once_with()
 
 
 def test_attach_shm_times_out_instead_of_hanging(name):

@@ -30,11 +30,13 @@ from dimos.robot.manipulators.xarm.blueprints.teleop import (
     coordinator_teleop_xarm6,
     coordinator_teleop_xarm7,
 )
+from dimos.teleop.webxr.body_tracking_monitor import BodyTrackingMonitor
 from dimos.teleop.webxr.extensions import (
     ArmTeleopModule,
     HandTeleopModule,
     VideoArmTeleopModule,
 )
+from dimos.teleop.webxr.module import WebXRTeleopModule
 from dimos.visualization.vis_module import vis_module
 
 # Arm teleop with press-and-hold engage (has rerun viz)
@@ -140,4 +142,11 @@ teleop_webxr_dual = autoconnect(
         (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
         (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
     ]
+)
+
+
+# PICO 4 Ultra WebXR API test: require body tracking and report every usable joint.
+demo_pico_body_tracking = autoconnect(
+    WebXRTeleopModule.blueprint(body_tracking_mode="required"),
+    BodyTrackingMonitor.blueprint(),
 )
