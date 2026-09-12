@@ -528,8 +528,10 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         ):
             configured = getattr(self.config, setting)
             if configured and configured not in usable:
-                # Why, and what "" means downstream: see usable_streams in recording.py.
-                logger.warning("%s: %r is empty in the recording; ignoring it", setting, configured)
+                # Why, and what "" means: see usable_streams in recording.py. Said HERE
+                # because clearing the name makes this the only place it can be said.
+                why = "empty" if configured in store.list_streams() else "not in the recording"
+                logger.warning("%s: %r is %s; ignoring it", setting, configured, why)
                 setattr(self.config, setting, "")
                 configured = ""
             if configured or detected[role] is None:
@@ -543,12 +545,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                         world = tf_root(tree) or world
                     chosen = pick_lidar(store, detected["lidar_candidates"], tree, world) or chosen
             setattr(self.config, setting, chosen)
-            logger.info(
-                "%s: using %r (%s)",
-                setting,
-                chosen,
-                "detected" if not configured else f"no {configured!r} in the recording",
-            )
+            logger.info("%s: using %r (detected)", setting, chosen)
         tree = self._tf_tree()
         if tree is not None and self.config.world_frame not in tree.frames:
             root = tf_root(tree)
