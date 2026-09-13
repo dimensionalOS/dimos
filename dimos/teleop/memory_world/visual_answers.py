@@ -472,17 +472,23 @@ class VisualAnswers:
             # each for a summary -- a hand-rolled namespace satisfied the first and 500'd
             # the second. The fields `/answer` reads off the ANSWER are here too, so an
             # embedding answer describes itself the way a heat map does.
-            self._last_answer = (
-                SimpleNamespace(
-                    clusters=clusters,
-                    text=result.answer,
-                    frame=self.config.world_frame,
-                    n_voxels=0,  # places, not a voxel grid
-                    stats={"places": len(places), "located": located},
-                    seconds=time.monotonic() - started,
-                ),
-                query_id,
-            )
+            # Only if this is still the answer on screen. A search that takes ten seconds
+            # can finish after a newer question has already replaced it, and writing
+            # `_last_answer` unconditionally put the OLD places behind the NEW answer:
+            # `/answer` described a question nobody asked and `/navigate` routed to it.
+            # `_publish_query_images` four lines down has always checked; this did not.
+            if self._query_is_current(query_id):
+                self._last_answer = (
+                    SimpleNamespace(
+                        clusters=clusters,
+                        text=result.answer,
+                        frame=self.config.world_frame,
+                        n_voxels=0,  # places, not a voxel grid
+                        stats={"places": len(places), "located": located},
+                        seconds=time.monotonic() - started,
+                    ),
+                    query_id,
+                )
         self._publish_query_images(query_id, phrase, places)
 
         return SkillResult(

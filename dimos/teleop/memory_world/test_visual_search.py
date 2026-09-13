@@ -689,6 +689,9 @@ def test_the_siglip_fallback_answers_end_to_end() -> None:
         def _add_route_to_result(self, result) -> None:  # type: ignore[no-untyped-def]
             published["routed"] = True
 
+        def _query_is_current(self, query_id):  # type: ignore[no-untyped-def]
+            return True
+
         def _publish_query_result(self, result) -> str:  # type: ignore[no-untyped-def]
             published["result"] = result
             return "qid"
@@ -861,6 +864,9 @@ def _siglip_module(places_from_depth: list, places_from_search: list):
 
         def _add_route_to_result(self, result) -> None:  # type: ignore[no-untyped-def]
             pass
+
+        def _query_is_current(self, query_id):  # type: ignore[no-untyped-def]
+            return True
 
         def _publish_query_result(self, result) -> str:  # type: ignore[no-untyped-def]
             published["result"] = result
@@ -1105,6 +1111,74 @@ def test_a_crop_is_not_a_resize_and_only_a_resize_scales_the_focal_length() -> N
     assert where[1] == pytest.approx((240 - 480) * 2.0 / 900.0), where
 
 
+def test_a_slow_search_does_not_overwrite_the_answer_that_replaced_it() -> None:
+    """An embedding search takes ten seconds or more. It can finish after a newer
+    question has already been asked and published.
+
+    `_publish_query_images` has always checked `_query_is_current` before installing its
+    frames; the `_last_answer` assignment beside it did not. The stale search then put
+    its places behind the new answer: `/answer` described a question nobody had asked,
+    and `/navigate` routed to it. The Hyperspace sibling has this check on the very line
+    that writes `_last_answer`.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world.visual_answers import VisualAnswers
+    from dimos.teleop.memory_world.visual_search import Place
+
+    place = Place(position=(1.0, 2.0, 3.0), similarity=0.42, source_id=3, ts=1.0)
+
+    class Module(VisualAnswers):
+        def __init__(self) -> None:
+            self._store_lock = threading.RLock()
+            self._clients_lock = threading.RLock()
+            self._last_answer = ("the newer answer", "newer")
+            self.current = "newer"  # what is on screen right now
+            self.config = SimpleNamespace(
+                store_path="/nowhere/walk.db",
+                search_top_k=5,
+                place_radius_m=1.0,
+                max_places=3,
+                object_radius_m=0.25,
+                world_frame="odom",
+            )
+
+        def _ensure_visual_index(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(count=lambda: 7, search=lambda *a, **k: [])
+
+        def _locate_objects(self, phrase):  # type: ignore[no-untyped-def]
+            return [place]
+
+        def _markers_near(self, positions):  # type: ignore[no-untyped-def]
+            return []
+
+        def _add_route_to_result(self, result) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def _publish_query_result(self, result) -> str:  # type: ignore[no-untyped-def]
+            return "stale"  # this search's id, and NOT the one on screen
+
+        def _query_is_current(self, query_id):  # type: ignore[no-untyped-def]
+            return query_id == self.current
+
+        def _publish_query_images(self, query_id, phrase, places) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+    module = Module()
+    assert module._find_with_siglip("a basket", 0.0).success  # the search itself is fine
+
+    assert module._last_answer == ("the newer answer", "newer"), (
+        "a search that finished late replaced the answer the viewer is looking at"
+    )
+
+    # And when it IS still the current answer, it does install itself.
+    module.current = "stale"
+    assert module._find_with_siglip("a basket", 0.0).success
+    answer, query_id = module._last_answer
+    assert query_id == "stale" and len(answer.clusters) == 1
+
+
 def test_the_answer_route_can_describe_an_embedding_answer() -> None:
     """`/answer` is what scripts and the tour read the last answer from.
 
@@ -1149,6 +1223,9 @@ def test_the_answer_route_can_describe_an_embedding_answer() -> None:
 
         def _add_route_to_result(self, result) -> None:  # type: ignore[no-untyped-def]
             pass
+
+        def _query_is_current(self, query_id):  # type: ignore[no-untyped-def]
+            return True
 
         def _publish_query_result(self, result) -> str:  # type: ignore[no-untyped-def]
             return "qid"
@@ -1302,6 +1379,9 @@ def test_an_embedding_answer_carries_the_places_the_viewer_renders() -> None:
 
         def _add_route_to_result(self, result) -> None:  # type: ignore[no-untyped-def]
             pass
+
+        def _query_is_current(self, query_id):  # type: ignore[no-untyped-def]
+            return True
 
         def _publish_query_result(self, result) -> str:  # type: ignore[no-untyped-def]
             # What module.py broadcasts, byte for byte -- not the model.

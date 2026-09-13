@@ -1373,6 +1373,57 @@ def test_navigate_walks_to_the_photo_being_looked_at_not_the_middle_of_the_blob(
     assert raised.value.status_code == 404
 
 
+def test_one_unreadable_frame_does_not_move_every_later_photo(
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`view` is the number the query-image header carries -- NavigateRequest says so.
+
+    A frame that cannot be decoded is skipped when the images are published, so the
+    server's list is compacted while the headers keep their original numbers, and the
+    viewer sends the number because that is what it was given. Reading it as a position
+    in the compacted list meant one unreadable frame shifted every photograph after it:
+    with picture 0 unreadable, asking for picture 1 -- which is on screen, which the
+    viewer is looking at -- came back "404 no such view in the last answer".
+    """
+    from fastapi import HTTPException
+
+    from dimos.teleop.memory_world.hyperspace_answers import NavigateRequest
+
+    photo = (2.0, 1.0, 0.4)
+    query_id = "q1"
+    memory_world._last_answer = (
+        SimpleNamespace(clusters=[SimpleNamespace(index=0, centre=(5.0, 5.0, 0.0), radius=1.0)]),
+        query_id,
+    )
+    memory_world._active_query_result = {"query_id": query_id}
+    # Picture 0 failed to decode, so only picture 1 was published -- and it kept its 1.
+    memory_world._active_query_images = [
+        ({"query_id": query_id, "cluster": 0, "index": 1, "position": list(photo)}, b""),
+    ]
+
+    class Planner:
+        def plan(self, start, goal):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(
+                points=[(start[0], start[1], 0.0), (goal[0], goal[1], 0.0)],
+                length_m=1.0,
+                cells=2,
+                planner="test",
+            )
+
+    monkeypatch.setattr(memory_world, "_planner", lambda: Planner())
+    monkeypatch.setattr(memory_world, "_ground_under_viewer", lambda: (0.0, 0.0, 0.0))
+    monkeypatch.setattr(memory_world, "_broadcast", lambda *a, **k: None)
+
+    payload = memory_world._navigate_to(NavigateRequest(cluster=0, query_id=query_id, view=1))
+    assert payload["goal"] == [2.0, 1.0, 0.4], "routed somewhere other than the photo asked for"
+    assert payload["view"] == 1, "the number handed back is not the one the viewer knows"
+
+    # And 0 -- the one that never made it to the viewer -- is still refused.
+    with pytest.raises(HTTPException) as raised:
+        memory_world._navigate_to(NavigateRequest(cluster=0, query_id=query_id, view=0))
+    assert raised.value.status_code == 404
+
+
 def test_a_route_that_goes_nowhere_is_not_a_route(
     memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -764,8 +764,19 @@ class HyperspaceAnswers:
         with self._clients_lock:
             images = list(self._active_query_images)
 
+        # By the header's OWN `index`, not by position in this list. A frame that cannot
+        # be decoded is skipped when the images are published, so the list is compacted
+        # while the headers keep their original numbers -- and the viewer sends the
+        # number, because that is what it was given. One unreadable frame therefore
+        # shifted every later photograph: asking for view 1 of 2, with view 0 unreadable,
+        # got "404 no such view in the last answer" for a picture that was on screen.
+        by_index = {int(header.get("index", slot)): slot for slot, (header, _) in enumerate(images)}
+
         def pose_of(index: int) -> tuple[float, float, float] | None:
-            header = images[index][0]
+            slot = by_index.get(index)
+            if slot is None:
+                return None
+            header = images[slot][0]
             if header.get("query_id") != query_id or header.get("cluster") != cluster.index:
                 return None
             try:
@@ -778,7 +789,7 @@ class HyperspaceAnswers:
 
         asked: tuple[float, float, float] | None = None
         if request.view is not None:
-            if not 0 <= request.view < len(images):
+            if request.view not in by_index:
                 raise HTTPException(status_code=404, detail="no such view in the last answer")
             asked = pose_of(request.view)
             if asked is None:
@@ -801,7 +812,7 @@ class HyperspaceAnswers:
         # 1 m away was in the same list -- which is not what the paragraph above promises
         # and not what someone pressing Navigate wants to walk.
         others = sorted(
-            (i for i in range(len(images)) if i != request.view and pose_of(i) is not None),
+            (i for i in by_index if i != request.view and pose_of(i) is not None),
             key=lambda i: math.dist(start, pose_of(i)),  # type: ignore[arg-type]
         )
         candidates: list[tuple[int | None, tuple[float, float, float]]] = []
