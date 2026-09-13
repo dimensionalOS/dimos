@@ -3,6 +3,25 @@
 // text goes onto the page as real, selectable, unblurred HTML -- see `onAnswerText`.
 
 /** Paint `text` into `canvas`, wrapped to the panel's four lines. */
+const LINE_WIDTH = 930;
+
+/** A token too wide for one line, cut into pieces that each fit. */
+function breakLong(ctx, word) {
+    const pieces = [];
+    let piece = '';
+    for (const ch of word) {
+        if (piece && ctx.measureText(piece + ch).width > LINE_WIDTH) {
+            pieces.push(piece);
+            piece = ch;
+        } else {
+            piece += ch;
+        }
+    }
+    // A single character wider than the whole line: keep it rather than loop forever.
+    if (piece) pieces.push(piece);
+    return pieces;
+}
+
 export function drawAnswer(canvas, text) {
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -18,13 +37,21 @@ export function drawAnswer(canvas, text) {
     // started it and everything after that vanished with nothing to say it had -- an
     // answer of any length looked like a finished sentence three and a bit lines long.
     const MAX_LINES = 4;
-    const words = String(text).split(/\s+/);
+    // One token wider than the panel -- a URL, a hash, an unspaced identifier out of an
+    // analysis answer -- has no space to break at, and the wrap test below only fires
+    // when `line` is already non-empty, so the first word of a line was accepted however
+    // wide it was and drawn straight off the edge of the canvas with nothing to say so.
+    // Break such a token by characters first; every later step then works on words that
+    // fit.
+    const words = String(text)
+        .split(/\s+/)
+        .flatMap((word) => (ctx.measureText(word).width <= LINE_WIDTH ? [word] : breakLong(ctx, word)));
     const lines = [];
     let line = '';
     let dropped = false;
     for (const word of words) {
         const candidate = line ? `${line} ${word}` : word;
-        if (ctx.measureText(candidate).width > 930 && line) {
+        if (ctx.measureText(candidate).width > LINE_WIDTH && line) {
             lines.push(line);
             if (lines.length === MAX_LINES) { dropped = true; break; }
             line = word;
@@ -37,7 +64,7 @@ export function drawAnswer(canvas, text) {
         // Say so. Give the ellipsis room by shedding whole words, and stop at the
         // empty string rather than looping on a single word too long to shrink.
         let last = lines[MAX_LINES - 1];
-        while (last && ctx.measureText(`${last} ...`).width > 930) {
+        while (last && ctx.measureText(`${last} ...`).width > LINE_WIDTH) {
             last = last.replace(/\s*\S+$/, '');
         }
         lines[MAX_LINES - 1] = `${last} ...`;

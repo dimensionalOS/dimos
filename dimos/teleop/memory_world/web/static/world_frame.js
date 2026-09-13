@@ -65,3 +65,23 @@ export function worldPosToRobotXY(worldGroup, worldPos) {
         z: (worldPos.z - worldGroup.position.z) / s,
     });
 }
+
+/** The desktop camera's {yaw, pitch} for looking along a robot-frame `forward`.
+ *
+ *  `camera.rotation` is read in WORLD space, so the direction has to be spun into it
+ *  first -- which is the whole of the difference, and it is exactly the world's current
+ *  turn angle. Three call sites open-coded `atan2(-f[0], f[1])` off the raw robot
+ *  forward; two of them (results.js's `_firstEvidence` and `_yawFromEvidence`, which is
+ *  what Next, Prev and Navigate fly with) were still doing it, and landed the viewer
+ *  facing 30 degrees wrong at a 30 degree spin, 90 at 90, 180 at 180.
+ *
+ *  Pitch needs no spin: robot z IS three y, and a turn about Y does not touch it.
+ */
+export function desktopLookAngles(worldGroup, forward) {
+    const spun = robotToWorldDir(worldGroup, forward);
+    return {
+        // The desktop camera looks down -z at yaw 0; pitch is positive looking up.
+        yaw: Math.atan2(-spun.x, -spun.z),
+        pitch: Math.asin(Math.max(-1, Math.min(1, spun.y))),
+    };
+}

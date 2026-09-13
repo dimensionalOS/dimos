@@ -5,7 +5,7 @@
 // Locomotion moves `_worldGroup`, not the camera (WebXR drives that).
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
-import { robotToWorldDir, robotToWorldOffset, worldPosToRobotXY } from '/static_mw/world_frame.js';
+import { desktopLookAngles, robotToWorldOffset, worldPosToRobotXY } from '/static_mw/world_frame.js';
 import { drawAnswer } from '/static_mw/answer_panel.js';
 import { DESKTOP_PITCH_LIMIT, installTouch } from './touch.js';
 import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms, viewportHeight, viewportHeightPx } from '/static_mw/voxel_sprites.js';
@@ -1425,12 +1425,11 @@ export class WorldScene {
         // taken from the unspun forward points somewhere else entirely once the world
         // has been turned.
         const eyeThree = robotToWorldOffset(this._worldGroup, header.position);
-        const fwdThree = robotToWorldDir(this._worldGroup, [forward.x, forward.y, forward.z]);
         const head = this.getCameraPositionWorld();
         this._worldGroup.position.set(head.x - eyeThree.x, head.y - eyeThree.y, head.z - eyeThree.z);
-        // The desktop camera looks down -z at yaw 0; pitch is positive looking up.
-        this._desktopYaw = Math.atan2(-fwdThree.x, -fwdThree.z);
-        this._desktopPitch = Math.asin(Math.max(-1, Math.min(1, fwdThree.y)));
+        const angles = desktopLookAngles(this._worldGroup, [forward.x, forward.y, forward.z]);
+        this._desktopYaw = angles.yaw;
+        this._desktopPitch = angles.pitch;
         this.camera.rotation.set(this._desktopPitch, this._desktopYaw, 0);
         this._queryImageCursor = index;
         // The corridor follows the eye. Without this, P walks you inside the wall each

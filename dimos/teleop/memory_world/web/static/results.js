@@ -4,6 +4,7 @@
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
 import { sightLineFor } from '/static_mw/evidence.js';
+import { desktopLookAngles } from '/static_mw/world_frame.js';
 
 const ROUTE_COLOR = 0x64ff8f;
 const ROUTE_RADIUS_M = 0.06;
@@ -141,21 +142,15 @@ export class ResultsNav {
         if (!header || !header.position || !header.forward) return null;
         const f = header.forward;
         const [, at, halfWidth] = sightLineFor(header);
-        return {
-            position: header.position,
-            at,
-            radius: halfWidth,
-            yaw: Math.atan2(-f[0], f[1]),               // robot -> three, as below
-            pitch: Math.asin(Math.max(-1, Math.min(1, f[2]))),   // robot z is up
-        };
+        const { yaw, pitch } = desktopLookAngles(this.scene._worldGroup, f);
+        return { position: header.position, at, radius: halfWidth, yaw, pitch };
     }
 
-    /** Look from where the best picture of the cluster was taken (robot -> three yaw). */
+    /** Look from where the best picture of the cluster was taken. */
     _yawFromEvidence(index) {
         const header = (this.scene._queryImages || []).find((h) => h && h.cluster === index);
         if (!header) return null;
-        const f = header.forward;
-        return Math.atan2(-f[0], f[1]);   // three: x = x, z = -y; yaw = atan2(-fx, -fz) = atan2(-fx, fy)
+        return desktopLookAngles(this.scene._worldGroup, header.forward).yaw;
     }
 
     _showEvidence(index) {
