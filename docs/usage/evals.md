@@ -76,34 +76,25 @@ adapter currently supports recordings only. Live tasks need a separately bounded
 vendor SDK/robot connection available to the baseline, without DimOS. A blocked
 robot interface is an unsupported case, not a baseline failure.
 
-Other native harnesses added to this report must use the same no-DimOS boundary.
-Using the DimOS CLI in that baseline violates the experiment's access policy.
-Do not relabel earlier unrestricted Pi pilots as results of this comparison.
+The primary benchmark uses only these two Pi-based adapters. Using the DimOS
+CLI in the baseline violates the experiment's access policy.
 Dimcode's current adapter still needs grader and unrelated-data isolation before
 publication runs. Neither arm may receive task-specific solutions or hidden truth.
 
-## Unrestricted Pi and dimcode integration pilots
+### Shared Pi runtime
 
 Use the same model, reasoning setting, output cap, case selection and timeout
 for each harness. Pi and dimcode use Pi's provider SDKs and built-in model
 registry; model capabilities and prices are not redefined by DimOS. Pin the
-same Pi version in both installations. The initial integration uses Pi 0.85.1
-and dimcode's local gateway protocol (`0.1.0-next.2`).
+same Pi version in both installations. The integration uses Pi 0.85.1 and
+dimcode's local gateway protocol (`0.1.0-next.2` / `0.1.0-next.3`).
+`DimcodeAdapter` extends `PiAdapter`, overriding gateway startup, session
+configuration and event transport. Provider setup, budgets, tracing and
+cleanup remain shared. No second model loop or SDK wrapper is introduced.
 
-```bash skip
-# OPENAI_API_KEY must already be in the environment.
-dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
-  --set provider=openai --set model=gpt-6-astra --set thinking=medium \
-  --set max_steps=12 --set max_output_tokens=4096
-
-dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.dimcode \
-  --set provider=openai --set model=gpt-6-astra --set thinking=medium \
-  --set max_steps=12 --set max_output_tokens=4096
-
-# Repeat BOTH commands with model=gpt-5.6-sol, or with these Fable settings:
-# --set provider=anthropic --set model=claude-fable-5-1
-# Fable requires ANTHROPIC_API_KEY, independently of OpenAI access.
-```
+To compare another model, change both commands together: `model=gpt-5.6-sol`,
+or `provider=anthropic` and `model=claude-fable-5-1`. Fable requires
+`ANTHROPIC_API_KEY`, independently of OpenAI access.
 
 `cli=` selects a specific Pi or dimcode executable. `OPENAI_BASE_URL` and
 `ANTHROPIC_BASE_URL` optionally override the upstream endpoints. API keys stay
@@ -118,16 +109,8 @@ instruction. Each case starts and stops its own dimcode gateway and session.
 An existing personal gateway is never attached. Dimcode's production tools and
 skills cannot be overridden through the eval adapter.
 
-Fresh state is not filesystem or network isolation. These local pilots can
-validate integration and reveal overhead, but publication runs need a sandbox
-that hides graders, unrelated recordings and other runs. Freeze code/data,
-record runtime versions, balance execution order, repeat each case and retain
-failed trials before interpreting a harness comparison.
-
-`QuestionAnswer`, `Blind` and the production MCP agent use LangChain instead.
-The agents extra includes `langchain-openai` and `langchain-anthropic`.
-Astra and GPT-5.6 use Responses; Fable uses adaptive thinking. Direct Anthropic
-LangChain calls currently save normalized traces rather than raw HTTP payloads.
+Freeze code/data, record runtime versions, balance execution order, repeat
+each case and retain failed trials before interpreting the comparison.
 
 ### Reading the metrics
 

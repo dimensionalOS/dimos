@@ -49,7 +49,7 @@ from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
 
-_RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3", "o4")
+_RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
 def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
@@ -64,19 +64,15 @@ def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
     from langchain.chat_models import init_chat_model
     from langchain_openai import ChatOpenAI
 
-    if model_name.removeprefix("anthropic:").startswith("claude-fable-"):
-        return init_chat_model(model=model_name, thinking={"type": "adaptive"}, effort="medium")
-
     client = None if trace_dir is None else tracing_http_client(trace_dir)
-    openai_name = model_name.removeprefix("openai:")
-    if not openai_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES):
+    if ":" in model_name or not model_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES):
         model = init_chat_model(model=model_name)
         if client is not None and isinstance(model, ChatOpenAI):
             return init_chat_model(model=model_name, http_client=client)
         return model
 
     return ChatOpenAI(
-        model=openai_name,
+        model=model_name,
         use_responses_api=True,
         reasoning={"effort": "medium", "summary": "auto"},
         http_client=client,
