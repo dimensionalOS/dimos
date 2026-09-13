@@ -201,6 +201,9 @@ class CpuShmChannel(FrameChannel):
         self._ctrl[2] = inactive
         self._ctrl[0] += 1
 
+    def current_seq(self) -> int:
+        return int(self._ctrl[0])
+
     def read(self, last_seq: int = -1, require_new: bool = True):  # type: ignore[no-untyped-def]
         for _ in range(3):
             seq1 = int(self._ctrl[0])
