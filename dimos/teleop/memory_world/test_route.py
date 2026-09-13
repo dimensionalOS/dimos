@@ -20,7 +20,7 @@ import math
 import numpy as np
 import pytest
 
-from dimos.teleop.memory_world.route import LETHAL, RoutePlanner
+from dimos.teleop.memory_world.route import LETHAL, SNAP_RADIUS_M, RoutePlanner
 
 VOXEL = 0.1
 BODY_Z = 0.4  # the robot's base height above the floor at z = 0
@@ -197,6 +197,54 @@ def test_sparse_path_samples_still_make_one_corridor() -> None:
     assert route.length_m < 12.0, (
         f"route detoured around a gap densify should have filled: {route.length_m}"
     )
+
+
+def test_the_goal_is_snapped_only_into_space_the_start_can_reach() -> None:
+    """`plan` snaps the goal `within=reachable_from(start)`, and that mask had no test.
+
+    The nearest free cell to an object can sit on a floor island, on another level, or --
+    here -- in a room the robot reached only by being carried. The point of the mask is
+    NOT that an unreachable goal is refused: A* would refuse that anyway. It is that a
+    goal is snapped to the nearest cell the start can REACH, rather than to the nearest
+    cell of any kind, so an object standing against a wall is approached from the side
+    the viewer is on instead of being declared unroutable.
+
+    So the goal here sits just past the wall: its nearest free cell is 0.2 m away on the
+    far side, and the nearest reachable one is 0.75 m away on the near side. Both are
+    well inside SNAP_RADIUS_M, which is what makes the mask, and only the mask, decide.
+    My first version of this test put the goal deep in the far room, where A* refused on
+    its own and removing the mask changed nothing -- a test with no power over the line
+    it was written for.
+    """
+    voxels = np.concatenate([_floor(0, 10, 0, 6), _wall(4.9, 5.1, -1.0, 7.0)])  # no doorway
+    left = _path((1, 1), (1, 5), (4, 5), (4, 1))
+    right = _path((6, 1), (6, 5), (9, 5), (9, 1))  # reached by being carried, not driven
+    planner = RoutePlanner.from_voxels(voxels, np.concatenate([left, right]), voxel_size=VOXEL)
+
+    here = (1.0, 1.0)
+    against_the_far_face = (5.35, 3.0)  # a thing on the wall, seen from the other room
+
+    reachable = planner.reachable_from(here)
+    assert reachable is not None
+    # The two rooms really are separate, or this fixture proves nothing.
+    row, col = planner.cell_of((9.0, 1.0))
+    assert planner.passable(row, col) and not reachable[row, col]
+
+    # Unmasked, the nearest free cell is the far one; masked, it is the near one.
+    unmasked = planner.snap(against_the_far_face, SNAP_RADIUS_M)
+    masked = planner.snap(against_the_far_face, SNAP_RADIUS_M, within=reachable)
+    assert unmasked is not None and masked is not None
+    # `snap` answers in world coordinates, so ask the grid which cell that is.
+    assert not reachable[planner.cell_of(unmasked)], (
+        "the unmasked snap already lands somewhere reachable; the fixture proves nothing"
+    )
+    assert reachable[planner.cell_of(masked)]
+    assert masked != unmasked
+
+    # And that is the difference between a route and no route at all.
+    route = planner.plan(here, against_the_far_face)
+    assert route is not None, "the goal was snapped into the room the start cannot reach"
+    assert route.points[-1][0] < 4.9, "the route ended on the far side of the wall"
 
 
 def test_unreachable_snap_returns_none() -> None:
