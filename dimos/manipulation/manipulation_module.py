@@ -208,7 +208,6 @@ class ManipulationModule(Module):
 
         # TF publishing thread
         self._tf_stop_event = threading.Event()
-        self._warned_at: dict[str, float] = {}
         self._tf_thread: threading.Thread | None = None
 
         logger.info("ManipulationModule initialized")
@@ -299,13 +298,6 @@ class ManipulationModule(Module):
             self._tf_thread.start()
             logger.info("TF publishing thread started")
 
-    def _warn_throttled(self, event: str, period_s: float = 5.0, **fields: Any) -> None:
-        """Log a recurring per-tick warning at most once per period."""
-        now = time.monotonic()
-        if now - self._warned_at.get(event, -period_s) >= period_s:
-            self._warned_at[event] = now
-            logger.warning(event, **fields)
-
     def _on_joint_state(self, msg: JointState) -> None:
         """Callback when joint state received from driver.
 
@@ -319,7 +311,7 @@ class ManipulationModule(Module):
             names = self.config.model.joint_names
             missing = [name for name in names if name not in name_to_idx]
             if missing:
-                self._warn_throttled("Skipping incomplete model state", missing_joints=missing)
+                logger.warning("Skipping incomplete model state", missing_joints=missing)
                 return
             indices = [name_to_idx[name] for name in names]
             state = JointState(
@@ -369,7 +361,7 @@ class ManipulationModule(Module):
                 if transforms:
                     self.tf.publish(TFMessage(*transforms))
             except Exception as e:
-                self._warn_throttled("TF publish failed", error=str(e))
+                logger.warning("TF publish failed", error=str(e))
 
             self._tf_stop_event.wait(period)
 
