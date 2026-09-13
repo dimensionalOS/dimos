@@ -182,7 +182,10 @@ class VisualAnswers:
                 logger.warning("index status unavailable: %s", error)
             finally:
                 self._store_lock.release()
-        present = present or self._hyperspace_ready()
+        # `present` is whether a QUESTION can be answered, and only the embedding index
+        # answers questions now. Or-ing in `_hyperspace_ready()` reported a recording as
+        # searchable on the strength of an index nothing reads, which showed the viewer a
+        # live Ask button and hid the one offer that would have made it true.
         return {"present": present, "index": self._index_progress, **self._embed_job.status()}
 
     def _start_embedding(self) -> bool:

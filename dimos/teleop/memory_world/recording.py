@@ -15,7 +15,9 @@
 """Open a recording for the memory world: a mem2 ``.db`` or a ROS 2 ``.mcap``.
 
 A ``.db`` is a :class:`SqliteStore` and everything (the SigLIP index, the
-replay keyframes and diffs) is written back into it. An ``.mcap`` is read-only,
+replay keyframes and diffs) is written back into it. An ``.mcap`` is not opened for
+writing HERE -- the format itself is editable and appendable, and dimos has a command
+for it; it is `McapStore` that reads only --
 so those derived streams go into ``<name>.derived.db`` beside it, and
 :class:`RecordingWithDerivedStreams` presents both as one store: reads look in
 the mcap first, new streams are created in the companion database.
@@ -667,13 +669,23 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
     milliseconds before the first image.
     """
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.tf_tree import canonical_frame
 
     refuse_if_a_rebuild_is_half_done(store, static_stream)
     folded: dict[tuple[str, str], Any] = {}
     for obs in store.streams[static_stream]:
         for t in obs.data.transforms:
             # The FIRST sample of an edge, which is the one TfTree.add keeps for a static.
-            folded.setdefault((str(t.frame_id), str(t.child_frame_id)), t)
+            # Keyed canonically, like the tree: one recording can spell the same edge
+            # `/base -> /cam` on tf_static and `base -> cam` on tf, and keying them raw
+            # made them two different edges. The stale MOVING copy then survived the
+            # "kept" filter below, outvoted the folded static -- it is a later sample of
+            # what the tree sees as the same edge -- and `tf_static`, the only record of
+            # the right value, was deleted. Measured: `odom -> cam` at t=2 read 4.0
+            # before the fold and 11.0 after, with the evidence gone.
+            folded.setdefault(
+                (canonical_frame(str(t.frame_id)), canonical_frame(str(t.child_frame_id))), t
+            )
     if not folded:
         store.delete_stream(static_stream)
         return 0
@@ -691,7 +703,10 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
     rows = []
     for obs in store.streams[tf_stream]:
         kept = [
-            t for t in obs.data.transforms if (str(t.frame_id), str(t.child_frame_id)) not in folded
+            t
+            for t in obs.data.transforms
+            if (canonical_frame(str(t.frame_id)), canonical_frame(str(t.child_frame_id)))
+            not in folded
         ]
         said = [float(t.ts) or float(obs.ts) for t in obs.data.transforms] + [float(obs.ts)]
         rows.append((float(obs.ts), kept, min(said)))

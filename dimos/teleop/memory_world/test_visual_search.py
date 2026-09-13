@@ -1111,6 +1111,46 @@ def test_a_crop_is_not_a_resize_and_only_a_resize_scales_the_focal_length() -> N
     assert where[1] == pytest.approx((240 - 480) * 2.0 / 900.0), where
 
 
+def test_a_hyperspace_index_does_not_make_a_recording_look_searchable() -> None:
+    """`present` is whether a QUESTION can be answered, and only embeddings answer now.
+
+    Or-ing in `_hyperspace_ready()` reported a recording as searchable on the strength
+    of an index nothing reads. The viewer then enabled Ask, hid the "Add embeddings"
+    offer because there was seemingly nothing to add, and every question came back
+    INDEX_NOT_READY -- "the SigLIP index holds no frames". The recording with the most
+    work already done in it was the one that could not be searched, and DEMO.md walked
+    the reader straight into it.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world.visual_answers import VisualAnswers
+
+    class Module(VisualAnswers):
+        def __init__(self, hyperspace: bool, embeddings: bool) -> None:
+            self._store_lock = threading.RLock()
+            self._index_progress = "ready"
+            self._hyperspace = hyperspace
+            self._embeddings = embeddings
+            self._embed_job = SimpleNamespace(status=lambda: {"embedding": "idle", "progress": ""})
+
+        def _hyperspace_ready(self) -> bool:
+            return self._hyperspace
+
+        def _ensure_visual_index(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(
+                precomputed_stream_name=None, count=lambda: 5 if self._embeddings else 0
+            )
+
+    # A Hyperspace index and no embeddings: not searchable, whatever Hyperspace holds.
+    assert Module(hyperspace=True, embeddings=False)._index_status()["present"] is False, (
+        "an index nothing reads was reported as a recording that can answer questions"
+    )
+    # And the two cases that genuinely decide it.
+    assert Module(hyperspace=False, embeddings=True)._index_status()["present"] is True
+    assert Module(hyperspace=False, embeddings=False)._index_status()["present"] is False
+
+
 def test_a_slow_search_does_not_overwrite_the_answer_that_replaced_it() -> None:
     """An embedding search takes ten seconds or more. It can finish after a newer
     question has already been asked and published.

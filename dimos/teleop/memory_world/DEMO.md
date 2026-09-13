@@ -21,16 +21,15 @@ memworld ~/datasets/lite_recorder/grocery.mcap   # or bike.mcap / park.mcap / an
   long one); later starts take seconds. A build that places no scan (tf cannot
   reach the lidar frame, or everything is out of range) is thrown away and the
   timeline says "build failed"; the static map falls back to plain accumulation.
-- Search needs Hyperspace's keyframes and patches (SigLIP2 so400m). A `.db`
-  recording holds them itself, one file and one tf tree; only an mcap, which
-  cannot be written to, gets a `<recording>.hyperspace.db` beside it. Without
-  them the ☰ menu shows **Prepare search**, which runs the ingest in the
-  background (≈ real time on the Mac's GPU), or run it ahead:
+- Questions are answered from the recording's own CLIP/SigLIP frame embeddings.
+  The server builds that index on first start, over the colour stream, into the
+  recording itself; the ☰ menu shows its progress and offers **Add embeddings**
+  when there are none. One file, one tf tree, no companion.
 
-  ```bash
-  PYTHONPATH=$PWD python -m dimos.teleop.memory_world.hyperspace_ingest recording.mcap \
-      --model-name ~/models/siglip2-so400m-patch16-384 --device mps
-  ```
+  A Hyperspace index, if the recording has one, is not what answers a question
+  and does not need to be built for one. (It used to be, which is why the
+  server once SKIPPED the embedding build whenever Hyperspace was present --
+  and then no question could be answered at all.)
 
 - The world frame is taken from the tf root (`odom` on the Pi rig) unless
   `--memoryworldmodule.world-frame` says otherwise. An outdoor ride makes a

@@ -30,7 +30,7 @@ The arithmetic runs on :mod:`hyperspace_fast` (resident arrays, ~100 ms a
 query); Hyperspace's own engine only loads the keyframes and embeds text.
 Nothing here embeds images: ``hyperspace_keyframes`` and ``hyperspace_patches``
 must already be there. A ``.db`` recording holds them itself; only an mcap,
-which cannot be written to, gets a ``<recording>.hyperspace.db`` beside it.
+which `McapStore` opens read-only, gets a ``<recording>.hyperspace.db`` beside it.
 """
 
 from __future__ import annotations
@@ -355,7 +355,7 @@ def memory_db_for(recording: str | Path) -> Path:
     """Where Hyperspace's ingest puts a recording's keyframes and patches.
 
     A memory2 recording holds them itself: one file, and one tf tree that the map, the
-    markers and the search all read. Only an mcap, which cannot be written to, needs a
+    markers and the search all read. Only an mcap, which `McapStore` does not write, needs a
     companion -- and then that companion carries a copy of the recording's tf.
     """
     path = Path(recording)

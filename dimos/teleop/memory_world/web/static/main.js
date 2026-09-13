@@ -727,8 +727,12 @@ function applySearchStatus(status) {
     const preparing = searchStatus.prepare && searchStatus.prepare.state === 'running';
     const failed = searchStatus.prepare && searchStatus.prepare.state === 'failed';
     if (ready) {
-        searchNote.textContent = `Search: Hyperspace · ${searchStatus.keyframes} keyframes`
-            + (searchStatus.segments ? ` · ${searchStatus.segments} segments` : '');
+        // What it IS, not what answers: questions go to the embedding index, and a line
+        // reading "Search: Hyperspace" over a recording whose every question fails is
+        // the sentence that made this take a round to find.
+        searchNote.textContent = `Hyperspace index: ${searchStatus.keyframes} keyframes`
+            + (searchStatus.segments ? ` · ${searchStatus.segments} segments` : '')
+            + ' (not used for questions)';
     } else if (preparing) {
         searchNote.textContent = `Preparing search… ${(searchStatus.prepare.progress || '').slice(0, 80)}`;
     } else if (failed) {
@@ -772,11 +776,16 @@ function applySearchStatus(status) {
  */
 function applyAskAvailability() {
     const connected = !!ws;
-    const ready = !!searchStatus.ready;
-    const canAsk = ready || !!indexStatus.present;
+    // `indexStatus.present` alone. `searchStatus.ready` is the HYPERSPACE index, and
+    // Hyperspace is not an engine a question reaches any more -- so on a recording that
+    // has one, this enabled Ask and the microphone while every question came back
+    // "the SigLIP index holds no frames", and hid the Add-embeddings button that was
+    // the only way out of it.
+    const canAsk = !!indexStatus.present;
     askInput.disabled = !connected || !canAsk;
-    askInput.placeholder = ready ? 'Ask the recording, e.g. where did I see a chair'
-        : (indexStatus.present ? 'Ask (SigLIP frame search)' : 'Search not ready — see the menu');
+    askInput.placeholder = canAsk
+        ? 'Ask the recording, e.g. where did I see a chair'
+        : 'Search not ready — see the menu';
     micBtn.classList.toggle('hidden', !connected || !canAsk);
 }
 
@@ -968,7 +977,9 @@ function applyIndexStatus(status) {
     const connected = !!ws;
     const running = indexStatus.embedding === 'running';
     applyAskAvailability();
-    embedBtn.classList.toggle('hidden', !connected || indexStatus.present || searchStatus.ready);
+    // Not `|| searchStatus.ready`: a Hyperspace index is not embeddings, and hiding the
+    // offer on the strength of one left the recording unsearchable with no way to fix it.
+    embedBtn.classList.toggle('hidden', !connected || indexStatus.present);
     embedBtn.disabled = running;
     if (running) {
         embedBtn.textContent = `Embedding… ${(indexStatus.progress || '').slice(0, 60)}`;

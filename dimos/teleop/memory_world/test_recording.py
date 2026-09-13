@@ -1358,3 +1358,60 @@ def test_the_roi_survives_the_mcap_decode(monkeypatch: pytest.MonkeyPatch) -> No
     assert (decoded.roi_width, decoded.roi_height) == (640, 480)
     # And the consequence the roi is read for: a crop, not a 1280x960 frame to resize.
     assert sensor_intrinsics(decoded) == ((900.0, 900.0, 540.0, 430.0), (640, 480))
+
+
+def test_folding_a_static_edge_spelled_two_ways_does_not_corrupt_the_tf(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """One recording can spell the same edge both ways -- `/base -> /cam` on tf_static and
+    `base -> cam` on tf -- and `TfTree` reads them as one edge while `fold_static_tf` keyed
+    them raw and read them as two.
+
+    The consequence is not a missed fold, it is a corrupted one: the stale MOVING copy
+    survived the filter, then outvoted the folded static (it is a later sample of what
+    the tree sees as the same edge), and `tf_static` -- the only record of the right
+    value -- was deleted. Measured `odom -> cam` at t=2: 4.0 before the fold, 11.0 after,
+    with the evidence gone. There is no recovering from that without the original file.
+    """
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, fold_static_tf
+
+    def edge(parent: str, child: str, x: float, ts: float) -> Transform:
+        return Transform(
+            translation=Vector3(x, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id=parent,
+            child_frame_id=child,
+            ts=ts,
+        )
+
+    store = SqliteStore(path=str(tmp_path / "mixed.db"), must_exist=False)
+    store.start()
+    try:
+        # tf_static says base -> cam is 3.0, for all time, spelled with slashes.
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(edge("/base", "/cam", 3.0, 1.0)), ts=1.0
+        )
+        # tf carries a stale moving copy of the same edge, spelled without.
+        tf = store.stream("tf", TFMessage)
+        for step in range(1, 4):
+            tf.append(
+                TFMessage(
+                    edge("odom", "base", 1.0, float(step)),
+                    edge("base", "cam", 3.0 + step, float(step)),  # the stale copy
+                ),
+                ts=float(step),
+            )
+
+        before = build_tf_tree(store, "tf").lookup("odom", "cam", 2.0)[0, 3]
+        fold_static_tf(store, "tf", "tf_static")
+        after = build_tf_tree(store, "tf").lookup("odom", "cam", 2.0)[0, 3]
+
+        assert after == 4.0, (
+            f"folding changed odom -> cam from {before} to {after}: the stale moving copy"
+            " outvoted the static one, and tf_static has been deleted"
+        )
+    finally:
+        store.stop()

@@ -1384,12 +1384,17 @@ class MemoryWorldModule(
         self._load_hyperspace()
         if self.config.build_replay_on_start and not self._stopping.is_set():
             self._build_replay()
-        if self._hyperspace_ready():
-            # Say so rather than leaving it "not started": the viewer reads that as a
-            # build in flight and polls for it for the whole session.
-            self._index_progress = "not needed; Hyperspace answers this recording"
-        elif not self._stopping.is_set():
-            self._build_visual_index()  # the SigLIP index is the fallback engine
+        # Always, whatever Hyperspace has. This used to skip the build and report "not
+        # needed; Hyperspace answers this recording", which was true when Hyperspace was
+        # an engine a question could reach. It is not one any more -- `find_in_memory`
+        # has used the embedding index alone since "one engine answers" -- so on a
+        # recording that HAS a Hyperspace index the viewer was told search was ready,
+        # the "Add embeddings" button was hidden because there was nothing to add, and
+        # every question came back INDEX_NOT_READY: "the SigLIP index holds no frames".
+        # The recording with the most work already done in it was the one that could not
+        # be searched, and the DEMO walks the reader straight into it.
+        if not self._stopping.is_set():
+            self._build_visual_index()
 
     @rpc
     def stop(self) -> None:

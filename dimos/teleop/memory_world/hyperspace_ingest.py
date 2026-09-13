@@ -178,7 +178,7 @@ def ingest_recording(
                 # tree, in one stream, before anything is embedded against it.
                 memory = store
             else:
-                # An mcap cannot be written to, so its keyframes go in a companion, built
+                # `McapStore` does not write, so its keyframes go in a companion, built
                 # beside the final name and moved into place at the end.
                 building = memory_path.with_name(memory_path.name + ".building")
                 for stale in (
