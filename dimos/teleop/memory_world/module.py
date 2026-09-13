@@ -1395,7 +1395,12 @@ class MemoryWorldModule(
         # The recording with the most work already done in it was the one that could not
         # be searched, and the DEMO walks the reader straight into it.
         if not self._stopping.is_set():
-            self._build_visual_index()
+            try:
+                self._build_visual_index()
+            except (Exception, SystemExit):  # as `_ensure_world_cache` above: a thread
+                # dying on one logs nothing at all, and this is the last step, so there
+                # is nothing after it to notice either.
+                logger.exception("visual index build failed")
 
     @rpc
     def stop(self) -> None:

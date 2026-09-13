@@ -132,7 +132,7 @@ class VisualAnswers:
                 logger.warning("visual index will be rebuilt: %s", mismatch)
                 existing = 0  # build() drops the stale rows once it has vectors to replace them
                 stale = str(mismatch)  # said below, since 'no embeddings' is not why
-            except Exception as error:
+            except (Exception, SystemExit) as error:
                 self._index_progress = f"failed: {error}"
                 logger.exception("visual index unusable")
                 return
@@ -153,7 +153,21 @@ class VisualAnswers:
                     index.load()
                 index.model.embed_text("warmup")  # this index's own model
                 self._index_progress = f"ready ({index.count()} frames)"
-            except Exception as error:  # building, loading or warming: one status line
+            # SystemExit too, which is how this package reports an expected failure and
+            # is not an Exception. `index.build()` reaches `pose_of` -> `_tf_tree` ->
+            # `refuse_if_a_rebuild_is_half_done`, so a recording left with both `tf` and
+            # `tf__rebuilt` -- a killed calibration -- raised straight through. And
+            # `threading.excepthook` IGNORES a SystemExit out of a thread silently, so
+            # the prepare thread died with no log at all, `_index_progress` stayed on
+            # "building (had 0 frames)", and the viewer matched that against
+            # /^(not started|building|loading)/ and polled every three seconds for the
+            # rest of the session with no reason shown anywhere.
+            #
+            # The same fix `_ensure_world_cache`, `_build_replay` and `_load_hyperspace`
+            # all already carry, with comments saying this. This function, doing the same
+            # job for the other index, was not updated -- and making it run on every
+            # recording widened the exposure.
+            except (Exception, SystemExit) as error:  # building, loading or warming
                 self._index_progress = f"failed: {error}"
                 logger.exception("visual index unusable")
                 return

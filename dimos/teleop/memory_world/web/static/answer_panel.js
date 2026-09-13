@@ -68,7 +68,10 @@ export function drawAnswer(canvas, text) {
         // " ...", with 89 characters' worth of room going spare on it.
         let last = lines[MAX_LINES - 1];
         while (last && ctx.measureText(`${last} ...`).width > LINE_WIDTH) {
-            last = last.slice(0, -1);
+            // By CODE POINT: `slice(0, -1)` cuts UTF-16 units, so trimming an answer
+            // ending in an astral character left a lone surrogate, drawn as tofu.
+            // `breakLong` above iterates `for (const ch of word)` for the same reason.
+            last = [...last].slice(0, -1).join('');
         }
         lines[MAX_LINES - 1] = `${last} ...`;
     }

@@ -1532,3 +1532,40 @@ def test_folding_does_not_retime_the_moving_transforms_it_keeps(tmp_path) -> Non
         assert tree.lookup("base", "cam", 0.0) is not None
     finally:
         store.stop()
+
+
+def test_terminate_stops_the_work_and_not_just_the_launcher() -> None:
+    """The real command is `nix run <flake> -- run <recording> ...`, and `nix run`
+    commonly FORKS into the built program rather than exec'ing it.
+
+    So the work siglipify does -- writing into the recording -- happens in a grandchild,
+    and signalling the immediate child alone never reached it. `MemoryWorldModule.stop()`
+    calls `terminate()` and does not join the thread, so `memworld --stop` returned while
+    the embedding subprocess was still writing to the db the next server would open.
+
+    The job also went on reporting "running" throughout, because the read loop blocks on
+    a pipe the grandchild still holds open. Measured before the fix: a stop at 0.5 s had
+    no effect at all until the grandchild finished on its own six seconds later.
+    """
+    import threading
+
+    from dimos.teleop.memory_world.embed import EmbeddingJob
+
+    finished = threading.Event()
+    job = EmbeddingJob(on_finished=lambda j: finished.set())
+
+    # A launcher that forks and waits, exactly like `nix run`: the sleep is the work.
+    assert job.start(["sh", "-c", "( sleep 30; echo never ) & wait $!"], "", adopt=lambda: None)
+    for _ in range(500):  # let the grandchild actually exist before stopping it
+        if job.status()["embedding"] == "running":
+            break
+        time.sleep(0.01)
+    time.sleep(0.3)
+
+    started = time.monotonic()
+    job.terminate()
+    assert finished.wait(10), "terminate() did not stop the job"
+    took = time.monotonic() - started
+
+    assert took < 5.0, f"the stop waited {took:.1f}s for work it was supposed to end"
+    assert job.status()["embedding"] != "running", "the job still reports itself running"

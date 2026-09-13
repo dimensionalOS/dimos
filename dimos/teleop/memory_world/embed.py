@@ -29,6 +29,7 @@ import contextlib
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import tempfile
 import threading
@@ -52,6 +53,22 @@ def siglipify_config(model_name: str, image_stream_name: str, stride: int) -> st
 def siglipify_command(flake: str, store_path: str) -> list[str]:
     """The job appends the config file's path (see EmbeddingJob.start)."""
     return ["nix", "run", flake, "--", "run", store_path, "--config"]
+
+
+def _signal_group(process: subprocess.Popen[bytes], sig: int) -> None:
+    """Signal the whole process group, falling back to the one child.
+
+    The child is spawned with `start_new_session=True`, so its pid IS its group's. A
+    launcher that forks rather than execs -- `nix run` does -- puts the real work in a
+    grandchild, which a signal to the child alone never reaches.
+    """
+    if process.poll() is not None:
+        return
+    with contextlib.suppress(OSError, ProcessLookupError, PermissionError):
+        os.killpg(os.getpgid(process.pid), sig)
+        return
+    with contextlib.suppress(OSError):
+        process.send_signal(sig)
 
 
 class EmbeddingJob:
@@ -111,11 +128,13 @@ class EmbeddingJob:
         return True
 
     def terminate(self) -> None:
+        """Stop the job, and everything it started."""
         with self._lock:
             self._terminated = True
             process = self._process
-        if process is not None:
-            process.terminate()
+        if process is None:
+            return
+        _signal_group(process, signal.SIGTERM)
 
     def _run(
         self, command: list[str], config_text: str | None, adopt: Callable[[], None], run_id: int
@@ -130,7 +149,21 @@ class EmbeddingJob:
                     config_path = handle.name
                 command = [*command, config_path]
             logger.info("%s: %s", self.name, " ".join(command))
-            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            # Its own process group, so `terminate()` can stop the whole tree. The real
+            # command is `nix run <flake> -- run <recording> ...`, and `nix run` commonly
+            # forks into the built program rather than exec'ing it -- so signalling the
+            # immediate child alone left siglipify running, still WRITING INTO THE
+            # RECORDING, after the module reported itself stopped. The read loop below
+            # blocks on the pipe, which the grandchild still holds open, so the job also
+            # went on reporting "running" for as long as the work it no longer controlled
+            # took. Measured: a stop at 0.5 s had no effect at all until the grandchild
+            # finished on its own six seconds later.
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
             with self._lock:
                 self._process = process
                 if self._terminated:  # stop() came while the process was starting
@@ -174,10 +207,16 @@ class EmbeddingJob:
                     with contextlib.suppress(OSError):
                         process.stdout.close()
                 if process.poll() is None:
-                    with contextlib.suppress(OSError):
-                        process.terminate()
+                    _signal_group(process, signal.SIGTERM)
                 with contextlib.suppress(subprocess.TimeoutExpired, OSError):
                     process.wait(timeout=10)
+                # Anything that ignored the TERM. Without this the group outlives the
+                # module, and what it outlives the module doing is writing to the
+                # recording.
+                if process.poll() is None:
+                    _signal_group(process, signal.SIGKILL)
+                    with contextlib.suppress(subprocess.TimeoutExpired, OSError):
+                        process.wait(timeout=5)
             with self._lock:
                 if self._process is process:  # a job started after "done" owns the handle now
                     self._process = None

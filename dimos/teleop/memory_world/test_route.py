@@ -145,6 +145,37 @@ def test_the_robots_own_body_between_two_samples_is_not_a_wall() -> None:
     assert route.length_m < 12.0, f"routed around its own body: {route.length_m}"
 
 
+def test_a_pause_in_the_drive_does_not_wall_off_the_corridor() -> None:
+    """`bridgeable_gap` takes the median leg, and a pause is made of tiny legs.
+
+    Real odometry never reports the same pose twice, so standing still for five seconds
+    fills the list with millimetre legs and drags the median to nothing -- and then
+    nothing is bridged, the robot's own body between the drive samples is read as walls,
+    and the corridor the sibling test below protects disappears anyway. Same voxels, same
+    drive, same endpoints; the only difference is that the robot stopped for a moment.
+
+    Filtering `> 0` caught only the perfectly still case, which is the synthetic one.
+    """
+    walls = np.concatenate([_wall(-1.0, 11.0, 0.40, 0.55), _wall(-1.0, 11.0, -0.55, -0.40)])
+    floor = _floor(-1, 11, -1, 1)
+    body = np.asarray([[x + 0.5, 0.0, BODY_Z] for x in range(10)])
+    voxels = np.concatenate([floor, walls, body])
+
+    driven = [[float(x), 0.0, BODY_Z] for x in range(11)]
+    # A five-second stop halfway, sampled at 10 Hz, with a millimetre of jitter.
+    paused = (
+        driven[:6]
+        + [[5.0 + 0.001 * ((i % 3) - 1), 0.001 * ((i % 2) - 0.5), BODY_Z] for i in range(50)]
+        + driven[6:]
+    )
+
+    for label, path in (("no pause", driven), ("with a pause", paused)):
+        planner = RoutePlanner.from_voxels(voxels, np.asarray(path), voxel_size=VOXEL)
+        route = planner.plan((0.2, 0.0), (9.5, 0.0))
+        assert route is not None, f"{label}: the corridor it drove down was walled off"
+        assert route.length_m < 12.0, f"{label}: routed around its own body ({route.length_m})"
+
+
 def test_one_pose_jump_across_a_wall_does_not_open_a_door_in_it() -> None:
     """A SLAM relocalisation is a teleport, and `densify` draws a straight line through
     it. Those fabricated points were counted as "the robot was here", and the near-path

@@ -91,7 +91,7 @@ def densify(
     return np.concatenate(pieces)
 
 
-def bridgeable_gap(path: NDArray[np.float64]) -> float:
+def bridgeable_gap(path: NDArray[np.float64], still_m: float = 0.0) -> float:
     """How far apart two poses may be and still have the robot between them.
 
     From the recording's own sampling: a drive's legs are all about the typical length,
@@ -108,7 +108,15 @@ def bridgeable_gap(path: NDArray[np.float64]) -> float:
     if len(path) < 2:
         return 0.0
     gaps = np.linalg.norm(np.diff(np.asarray(path)[:, :2], axis=0), axis=1)
-    gaps = gaps[gaps > 0]
+    # Legs shorter than *still_m* are the robot standing still, not driving, and the
+    # median has to be taken over the driving. `> 0` was not enough: real odometry never
+    # reports the same pose twice, so a pause anywhere in the recording fills the list
+    # with millimetre legs and drags the median to nothing. Measured on the corridor
+    # fixture -- same voxels, same drive, same endpoints -- one five-second pause with a
+    # millimetre of jitter took `max_gap` from 1.5 m to 0.004 m and the 9.20 m route to
+    # none at all. Exactly the failure the corridor test exists to pin; only the
+    # perfectly still case, which is the synthetic one, was caught.
+    gaps = gaps[gaps > still_m]
     if not len(gaps):
         return 0.0
     return float(min(MAX_BRIDGE_M, 2.0 * float(np.median(gaps))))
@@ -308,7 +316,7 @@ class RoutePlanner:
         # `bridgeable_gap` tells the two apart from the recording's own sampling. The
         # corridor and the floor height still come from `dense`, which is what they are
         # for and what needs ~3 m of bridging on a real recording.
-        driven_line = densify(path, resolution / 2, max_gap=bridgeable_gap(path))
+        driven_line = densify(path, resolution / 2, max_gap=bridgeable_gap(path, resolution))
         sampled = np.zeros((height, width), dtype=bool)
         sampled_r, sampled_c = cells(driven_line)
         sampled[sampled_r, sampled_c] = True

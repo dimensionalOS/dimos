@@ -1111,6 +1111,59 @@ def test_a_crop_is_not_a_resize_and_only_a_resize_scales_the_focal_length() -> N
     assert where[1] == pytest.approx((240 - 480) * 2.0 / 900.0), where
 
 
+def test_a_refusal_during_the_index_build_is_reported_and_not_swallowed() -> None:
+    """A refusal in this package is a SystemExit, which is not an Exception.
+
+    `index.build()` reaches `pose_of` -> `_tf_tree` -> `refuse_if_a_rebuild_is_half_done`,
+    so a recording left with both `tf` and `tf__rebuilt` -- what a killed calibration
+    leaves -- raised straight through two bare `except Exception` handlers. And
+    `threading.excepthook` IGNORES a SystemExit out of a thread, silently: the prepare
+    thread died with no log at all, `_index_progress` stayed on "building (had 0
+    frames)", and `main.js` matches that against /^(not started|building|loading)/ and
+    polls every three seconds for the rest of the session with no reason shown anywhere.
+
+    `_ensure_world_cache`, `_build_replay` and `_load_hyperspace` all already catch
+    `(Exception, SystemExit)`, two of them with comments saying exactly this. The
+    function next to them, doing the same job for the other index, did not -- and making
+    it run on every recording rather than only un-indexed ones widened the exposure.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world.visual_answers import VisualAnswers
+
+    class Module(VisualAnswers):
+        def __init__(self) -> None:
+            self._store_lock = threading.RLock()
+            self._index_lock = threading.RLock()
+            self._index_progress = "not started"
+            self.config = SimpleNamespace(
+                image_stream_name="color",
+                image_index_stride=1,
+                build_image_index_on_start=True,
+            )
+
+        def _ensure_store(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(list_streams=lambda: ["color"])
+
+        def _ensure_visual_index(self):  # type: ignore[no-untyped-def]
+            def refuse(**kwargs):  # type: ignore[no-untyped-def]
+                raise SystemExit(
+                    "an earlier rebuild of 'tf' died part way and left 'tf__rebuilt' behind"
+                )
+
+            return SimpleNamespace(count=lambda: 3, build=refuse)
+
+    module = Module()
+    module._build_visual_index()  # must not raise
+
+    assert module._index_progress.startswith("failed:"), (
+        f"the refusal left the status at {module._index_progress!r}, which the viewer"
+        " reads as a build still in flight and polls for the rest of the session"
+    )
+    assert "tf__rebuilt" in module._index_progress, "the reason was not kept"
+
+
 def test_a_hyperspace_index_does_not_make_a_recording_look_searchable() -> None:
     """`present` is whether a QUESTION can be answered, and only embeddings answer now.
 
