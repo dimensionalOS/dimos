@@ -12,31 +12,95 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Translate Pi events into ATIF steps paired with recorded model requests."""
+"""Translate Pi events into typed ATIF steps paired with model requests."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError
+from pydantic.alias_generators import to_camel
+from typing_extensions import TypedDict
 
 from dimos.agents.llm_trace import list_llm_trace_pairs
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.types import Metrics, ToolCall
 
 
-def _result_text(result: Any) -> str:
+class TextContent(TypedDict):
+    type: Literal["text"]
+    text: str
+
+
+class ThinkingContent(TypedDict):
+    type: Literal["thinking"]
+    thinking: str
+
+
+class ToolContent(TypedDict):
+    type: Literal["toolCall"]
+    id: str
+    name: str
+    arguments: dict[str, JsonValue]
+
+
+Content = Annotated[TextContent | ThinkingContent | ToolContent, Field(discriminator="type")]
+
+
+class PiCost(BaseModel):
+    total: float | None = None
+
+
+class PiUsage(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, strict=True)
+
+    input: int = 0
+    output: int = 0
+    cache_read: int = 0
+    cache_write: int = 0
+    reasoning: int = 0
+    cost: PiCost = Field(default_factory=PiCost)
+
+
+class AssistantMessage(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel)
+
+    response_id: str | None = None
+    response_model: str = ""
+    model: str = ""
+    stop_reason: str = ""
+    error_message: str = ""
+    content: tuple[Content, ...] = ()
+    usage: PiUsage = Field(default_factory=PiUsage)
+
+
+class TraceResponse(BaseModel):
+    body: JsonValue
+    latency_s: float = 0.0
+
+
+_json_object = TypeAdapter(dict[str, JsonValue])
+
+
+def _result_text(result: JsonValue) -> str:
     content = result.get("content") if isinstance(result, dict) else None
     if isinstance(content, list):
-        return "\n".join(str(c.get("text", "")) for c in content if c.get("type") == "text")
+        return "\n".join(
+            text
+            for c in content
+            if isinstance(c, dict)
+            and c.get("type") == "text"
+            and isinstance(text := c.get("text"), str)
+        )
     return str(result)
 
 
-def _response_id(body: Any) -> str | None:
-    """Read the provider response ID from an OpenAI Responses JSON or SSE body."""
+def _response_id(body: JsonValue) -> str | None:
+    """Read the provider response ID from an OpenAI or Anthropic JSON/SSE body."""
     if isinstance(body, dict):
         response_id = body.get("id")
-        return str(response_id) if response_id else None
+        return response_id if isinstance(response_id, str) else None
     if isinstance(body, str):
         for line in body.splitlines():
             if not line.startswith("data:"):
@@ -44,9 +108,10 @@ def _response_id(body: Any) -> str | None:
             data = line.removeprefix("data:").strip()
             if data == "[DONE]":
                 continue
-            event = json.loads(data)
-            if response_id := (event.get("response") or {}).get("id"):
-                return str(response_id)
+            event = _json_object.validate_json(data)
+            response = event.get("response") or event.get("message")
+            if isinstance(response, dict) and isinstance(response.get("id"), str):
+                return str(response["id"])
     return None
 
 
@@ -56,16 +121,24 @@ class PiToAtif:
     def __init__(self, raw_dir: Path, trajectory: TrajectoryBuilder) -> None:
         self.raw_dir = raw_dir
         self.trajectory = trajectory
-        self.calls = 0  # model calls seen
-        self.wants_tool = False  # the latest one asked for a tool
+        self.calls = 0
+        self.wants_tool = False
         self.error = ""
         self._next_seq = 0
 
-    def append_event(self, event: dict[str, Any]) -> None:
+    def append_event(self, event: dict[str, JsonValue]) -> None:
+        message = event.get("message")
         if event.get("type") == "tool_execution_end" and self.calls:
-            self.trajectory.observe(str(event["toolCallId"]), _result_text(event.get("result")))
-        elif event.get("type") == "message_end" and event["message"].get("role") == "assistant":
-            self._step(event["message"])
+            call_id = event.get("toolCallId")
+            if not isinstance(call_id, str):
+                raise ValueError("Pi tool result has no tool call ID")
+            self.trajectory.observe(call_id, _result_text(event.get("result")))
+        elif (
+            event.get("type") == "message_end"
+            and isinstance(message, dict)
+            and message.get("role") == "assistant"
+        ):
+            self._step(AssistantMessage.model_validate(message))
 
     def _trace_for_response(self, response_id: str) -> tuple[Path, Path, float]:
         """Match by provider ID: newer traces may already exist when stdout is buffered."""
@@ -73,61 +146,52 @@ class PiToAtif:
             if seq < self._next_seq:
                 continue
             try:
-                record = json.loads(response.read_text())
-                recorded_id = _response_id(record["body"])
-            except json.JSONDecodeError:
-                # An abandoned attempt may still be writing. The matching
-                # response is complete before the proxy delivers it to Pi.
+                record = TraceResponse.model_validate_json(response.read_text())
+                recorded_id = _response_id(record.body)
+            except ValidationError:
+                # Abandoned attempts can leave partial traces; the matched response is complete.
                 continue
             if recorded_id == response_id:
                 self._next_seq = seq + 1
-                return request, response, float(record.get("latency_s") or 0.0)
+                return request, response, record.latency_s
         raise RuntimeError(f"No recorded HTTP response for Pi response {response_id!r}")
 
-    def _step(self, message: dict[str, Any]) -> None:
+    def _step(self, message: AssistantMessage) -> None:
         self.calls += 1
         self.wants_tool = False
         self.error = (
-            str(message.get("errorMessage") or message["stopReason"])
-            if message.get("stopReason") in ("error", "aborted")
+            message.error_message or message.stop_reason
+            if message.stop_reason in ("error", "aborted")
             else ""
         )
-        response_id = message.get("responseId")
-        if not response_id:
+        if not message.response_id:
             if self.error:
-                # Pi reported no response ID. Keep the raw failure logs;
-                # a successful retry will clear this error and record its own step.
+                # Retries may recover; keep the failed attempt's raw logs.
                 return
             raise RuntimeError("Pi assistant message has no provider response ID")
-        request, response, latency_s = self._trace_for_response(response_id)
-        usage = message.get("usage") or {}
-        content = message.get("content") or []
+        request, response, latency_s = self._trace_for_response(message.response_id)
+        usage = message.usage
         tool_calls = tuple(
-            ToolCall(
-                tool_call_id=str(c["id"]),
-                function_name=str(c["name"]),
-                arguments=dict(c.get("arguments") or {}),
-            )
-            for c in content
-            if c.get("type") == "toolCall"
+            ToolCall(tool_call_id=c["id"], function_name=c["name"], arguments=c["arguments"])
+            for c in message.content
+            if c["type"] == "toolCall"
         )
-        # Pi's ``input`` excludes cache traffic: what was sent is the three together.
-        cached = int(usage.get("cacheRead", 0))
+        # Pi's input excludes cache traffic: what was sent is the three together.
         self.trajectory.step(
-            message="".join(str(c.get("text", "")) for c in content if c.get("type") == "text"),
+            message="".join(c["text"] for c in message.content if c["type"] == "text"),
             reasoning="\n\n".join(
-                str(c.get("thinking", "")) for c in content if c.get("type") == "thinking"
+                c["thinking"] for c in message.content if c["type"] == "thinking"
             ),
             tool_calls=tool_calls,
             metrics=Metrics(
-                prompt_tokens=int(usage.get("input", 0)) + int(usage.get("cacheWrite", 0)) + cached,
-                completion_tokens=int(usage.get("output", 0)),
-                cached_tokens=cached,
-                cost_usd=float((usage.get("cost") or {}).get("total") or 0.0),
+                prompt_tokens=usage.input + usage.cache_write + usage.cache_read,
+                completion_tokens=usage.output,
+                cached_tokens=usage.cache_read,
+                cost_usd=usage.cost.total,
             ),
-            model_name=str(message.get("responseModel") or message.get("model") or ""),
+            model_name=message.response_model or message.model,
             latency_s=latency_s,
-            reasoning_tokens=int(usage.get("reasoning", 0)),
+            reasoning_tokens=usage.reasoning,
             request=request,
             response=response,
         )

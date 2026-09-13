@@ -40,6 +40,7 @@ from dimos.evals.types import (
     StepExtra,
     ToolCall,
     Trajectory,
+    total_cost,
 )
 
 
@@ -104,7 +105,7 @@ class TrajectoryBuilder:
         )
         self._steps[-1] = replace(last, observation=Observation(results=results))
 
-    def build(self, ended_by: EndedBy) -> Trajectory:
+    def build(self, ended_by: EndedBy, *, error: str = "") -> Trajectory:
         metrics = [s.metrics for s in self._steps if s.metrics]
         return Trajectory(
             agent=AgentInfo(name=self._name, version=version("dimos"), model_name=self.model_name),
@@ -113,8 +114,8 @@ class TrajectoryBuilder:
                 total_prompt_tokens=sum(m.prompt_tokens for m in metrics),
                 total_completion_tokens=sum(m.completion_tokens for m in metrics),
                 total_cached_tokens=sum(m.cached_tokens for m in metrics),
-                total_cost_usd=sum(m.cost_usd or 0.0 for m in metrics),
+                total_cost_usd=total_cost(m.cost_usd for m in metrics),
                 total_steps=len(self._steps),
             ),
-            extra=RunExtra(ended_by=ended_by),
+            extra=RunExtra(ended_by=ended_by, error=error),
         )
