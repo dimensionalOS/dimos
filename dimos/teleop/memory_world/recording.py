@@ -727,9 +727,17 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
             for t in obs.data.transforms
         ]
     )
+    # The row carrying the folded statics is stamped at `first` too, not only its
+    # transforms. `TfTree.from_stream` reads `transform.ts or obs.ts`, so a transform
+    # stamped exactly 0.0 -- which is what `first` is on a recording whose timebase
+    # starts at zero, as a synthetic or simulated one does -- is read as UNSTAMPED and
+    # falls back to the observation's stamp, which is later. The static then did not
+    # hold at the moment it was restated to hold from, and a camera pose in that gap
+    # stopped resolving. `first` is the minimum over every row's own low, so this only
+    # ever moves the row earlier.
     written = [
         (
-            ts,
+            min(ts, first) if index == 0 else ts,
             TFMessage(
                 *kept,
                 *([_restamped(t, first) for t in folded.values()] if index == 0 else []),

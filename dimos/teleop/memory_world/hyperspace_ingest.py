@@ -196,6 +196,13 @@ def ingest_recording(
             model.start()
             opened.append(model)
             started = time.monotonic()
+            # Built here rather than at the call below, so the guard can probe with the
+            # SAME tolerance the ingest will use. A guard that asks a different question
+            # from the code it guards is not a guard.
+            ingest_config = IngestConfig(
+                gate=hs.KeyframeGateConfig(novelty_threshold=novelty),
+                max_depth_m=max_depth_m,
+            )
             if memory is store:
                 # The intrinsics are read here rather than inside _ingest, where the same
                 # check used to live. _ingest runs AFTER the deletes below, so a recording
@@ -221,6 +228,26 @@ def ingest_recording(
                 refuse_if_a_rebuild_is_half_done(store, detected["tf"])
                 if detected.get("tf_static"):
                     refuse_if_a_rebuild_is_half_done(store, detected["tf_static"])
+                # And `_ingest` refuses once more after the deletes, on the colour/depth
+                # alignment -- a `--depth` naming a stream on another clock takes a good
+                # index with it. That refusal is mine, added the round before this one,
+                # in the very function whose comment above says a refusal must not come
+                # after the deletes. Probed here, where it costs nothing to say no.
+                if (
+                    next(
+                        iter(
+                            store.streams[detected["image"]]
+                            .order_by("ts")
+                            .align(
+                                store.streams[detected["depth"]].order_by("ts"),
+                                tolerance=ingest_config.depth_max_dt,
+                            )
+                        ),
+                        None,
+                    )
+                    is None
+                ):
+                    raise SystemExit("no colour frame has a depth frame beside it")
                 # Only now, with everything that can fail before a single embedding already
                 # done: a bad stream name or an unreadable model must not cost the index
                 # that is already there, nor rewrite the recording's tf.
@@ -242,10 +269,7 @@ def ingest_recording(
                     depth_info=depth_info,
                     hz=hz,
                     max_seconds=max_seconds,
-                    config=IngestConfig(
-                        gate=hs.KeyframeGateConfig(novelty_threshold=novelty),
-                        max_depth_m=max_depth_m,
-                    ),
+                    config=ingest_config,
                 )
             finally:
                 # Hyperspace's ingestor opens a stream called "tf" in the memory db, which

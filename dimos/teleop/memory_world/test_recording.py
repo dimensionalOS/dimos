@@ -1415,3 +1415,62 @@ def test_folding_a_static_edge_spelled_two_ways_does_not_corrupt_the_tf(tmp_path
         )
     finally:
         store.stop()
+
+
+def test_a_folded_static_holds_from_zero_on_a_recording_that_starts_at_zero(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """`TfTree.from_stream` reads `transform.ts or obs.ts`, so a transform stamped
+    exactly 0.0 is read as UNSTAMPED and falls back to its observation's stamp.
+
+    On a recording whose timebase starts at zero -- a synthetic or simulated one -- that
+    is precisely the moment `fold_static_tf` restates the static to hold from. The static
+    then did not hold at the moment it was written to hold from, and a camera pose in
+    that gap stopped resolving after a fold that is supposed to change nothing.
+
+    The existing fold tests all start at 1.0, where `or` cannot fire.
+    """
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, fold_static_tf
+
+    def edge(parent: str, child: str, x: float, ts: float) -> Transform:
+        return Transform(
+            translation=Vector3(x, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id=parent,
+            child_frame_id=child,
+            ts=ts,
+        )
+
+    # The rig latches its statics before it starts moving, so the static's stamp is
+    # EARLIER than the first tf observation -- which is what makes the fold restate it at
+    # a moment no tf row is stamped at. With `latched` at 1.0 the restated stamp is 1.0
+    # and reads back as 1.0; with `latched` at 0.0 it reads back as the first tf row's
+    # stamp instead, and the gap the fold exists to preserve is gone.
+    for latched in (1.0, 0.0):
+        store = SqliteStore(path=str(tmp_path / f"t{latched}.db"), must_exist=False)
+        store.start()
+        try:
+            store.stream("tf_static", TFMessage).append(
+                TFMessage(edge("base", "cam", 3.0, latched)), ts=latched
+            )
+            tf = store.stream("tf", TFMessage)
+            for step in range(3):
+                at = latched + 2.0 + step  # the robot starts moving two seconds later
+                tf.append(TFMessage(edge("world", "base", 0.0, at)), ts=at)
+
+            # The FOLDED EDGE itself, not a chain through it: `world -> base` only
+            # exists once the robot moves, so a chain would be None at this moment for a
+            # reason that has nothing to do with the fold.
+            fold_static_tf(store, "tf", "tf_static")
+            after = build_tf_tree(store, "tf").lookup("base", "cam", latched)
+
+            assert after is not None, (
+                f"latched at {latched}: the folded static stopped holding at the moment it"
+                " was restated to hold from"
+            )
+            assert after[0, 3] == 3.0
+        finally:
+            store.stop()

@@ -114,12 +114,21 @@ export class InputAdapter {
         }
 
         // Always emit a locomote (zero stick = stop). Cheap text packet.
-        if (sawLeftController) {
+        //
+        // "Always" has to include the frame the controller VANISHES on -- put down, hand
+        // tracking taking over, tracking lost -- because `scene._walk`/`applyYaw`
+        // integrate the last value they were given, for ever. Gated on having seen the
+        // controller, a stick that was pushed when it disappeared never stopped: measured
+        // 450 degrees of world yaw and 7.50 m walked over five seconds with no controller
+        // present. So one stop is sent on the transition, and then nothing.
+        if (sawLeftController || this._sawLeftWas) {
             this.onGesture({ type: 'locomote', stickX, stickY });
         }
-        if (sawRightController) {
+        if (sawRightController || this._sawRightWas) {
             this.onGesture({ type: 'yaw', rate: yawRate });
         }
+        this._sawLeftWas = sawLeftController;
+        this._sawRightWas = sawRightController;
 
         // Bimanual-pinch scaling.
         this._updateBimanualScale(scene);

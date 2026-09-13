@@ -278,7 +278,9 @@ def _stub_hyperspace(monkeypatch, ingest):  # type: ignore[no-untyped-def]
 
     def ingest_config(**kw: Any) -> Any:
         recorded["ingest"] = kw
-        return SimpleNamespace(**kw)
+        # `depth_max_dt` is the real IngestConfig's own default, and the ingest's guard
+        # probes the colour/depth alignment with it before it deletes anything.
+        return SimpleNamespace(depth_max_dt=0.05, **kw)
 
     patches = SimpleNamespace(KeyframeGateConfig=gate_config)
     monkeypatch.setitem(

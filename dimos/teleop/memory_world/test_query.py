@@ -67,7 +67,11 @@ def test_the_object_radius_a_config_accepts_is_one_an_answer_can_carry() -> None
     import pytest
 
     from dimos.teleop.memory_world.module import MemoryWorldConfig
-    from dimos.teleop.memory_world.query import MAX_HIGHLIGHT_RADIUS_M, HighlightPoint
+    from dimos.teleop.memory_world.query import (
+        MAX_HIGHLIGHT_RADIUS_M,
+        ClusterSummary,
+        HighlightPoint,
+    )
 
     # The largest radius the config accepts is one an answer can actually carry.
     largest = MemoryWorldConfig(object_radius_m=MAX_HIGHLIGHT_RADIUS_M).object_radius_m
@@ -76,6 +80,20 @@ def test_the_object_radius_a_config_accepts_is_one_an_answer_can_carry() -> None
     # And one past it is refused where it can be explained, not at query time.
     with pytest.raises(pydantic.ValidationError):
         MemoryWorldConfig(object_radius_m=MAX_HIGHLIGHT_RADIUS_M + 1.0)
+
+    # The same pairing for how many places an answer may name.
+    from dimos.teleop.memory_world.query import MAX_ANSWER_PLACES, MemoryQueryResult
+
+    most = MemoryWorldConfig(max_places=MAX_ANSWER_PLACES).max_places
+    MemoryQueryResult(
+        answer="x",
+        clusters=[
+            ClusterSummary(index=i, centre=(0.0, 0.0, 0.0), radius=1.0, score=0.5, peak=0.5)
+            for i in range(most)
+        ],
+    )
+    with pytest.raises(pydantic.ValidationError):
+        MemoryWorldConfig(max_places=MAX_ANSWER_PLACES + 1)
 
 
 def test_memory_query_result_validates_spatial_geometry() -> None:

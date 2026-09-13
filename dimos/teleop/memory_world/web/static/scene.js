@@ -1570,20 +1570,22 @@ export class WorldScene {
         const b = this._cloudBounds;
         const cx = (b.x_min + b.x_max) / 2;
         const cy = (b.y_min + b.y_max) / 2;
-        // Robot (cx, cy, 0) -> three (cx, 0, -cy) after frame rotate.
-        // We want the camera to be near robot origin instead of inside a wall:
-        // place worldGroup such that the centroid sits a few metres in front.
+        // Put the map's middle a few metres in front of the viewer, rather than dropping
+        // them inside a wall at the robot's origin.
+        //
+        // Through `robotToWorldOffset`, which was the last open-coded copy of this
+        // transform and was missing the world spin AND the scale. It reads correct only
+        // when both are untouched, and the wait this runs at the end of -- "Building the
+        // map...", minutes on a first run -- is exactly when someone pinches to zoom or
+        // turns with the stick. Measured against three's own matrixWorld for a 12x10 m
+        // map: 1.50 m of error at rest, 4.47 m at scale 0.5, 5.64 m at a 30 degree spin,
+        // 12.62 m at 90 and 16.38 m at 180, for a call whose whole job is "1.50 m ahead".
         const head = this.getCameraPositionWorld();
         const fwd = this.getCameraForwardXZ();
-        const target = new THREE.Vector3(
-            head.x + fwd[0] * 1.5,
-            0,
-            head.z + fwd[1] * 1.5,
-        );
-        // After frame rotate the centroid is at three (cx, 0, -cy). Translate
-        // the world so that point lands at `target`.
-        this._worldGroup.position.x = target.x - cx;
-        this._worldGroup.position.z = target.z - (-cy);
+        const target = new THREE.Vector3(head.x + fwd[0] * 1.5, 0, head.z + fwd[1] * 1.5);
+        const local = robotToWorldOffset(this._worldGroup, [cx, cy, 0]);
+        this._worldGroup.position.x = target.x - local.x;
+        this._worldGroup.position.z = target.z - local.z;
         this._hasSpawned = true;
         this.diag('spawned', { cx, cy });
     }

@@ -65,6 +65,7 @@ from dimos.teleop.memory_world.messages import (
     encode_text,
 )
 from dimos.teleop.memory_world.query import (
+    MAX_ANSWER_PLACES,
     MAX_HIGHLIGHT_RADIUS_M,
     MemoryQueryResult,
     answer_positions,
@@ -246,7 +247,7 @@ class MemoryWorldConfig(ModuleConfig):
     hyperspace_refine: str = "default"
     # Two hits closer together than this are one place, not two answers.
     place_radius_m: float = PydanticField(default=2.5, gt=0.0)
-    max_places: int = PydanticField(default=6, ge=1)
+    max_places: int = PydanticField(default=6, ge=1, le=MAX_ANSWER_PLACES)
     # How many best-scoring frames are kept before clustering into places.
     search_top_k: int = PydanticField(default=200, ge=1)
     # faster-whisper model size for the spoken query.

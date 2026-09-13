@@ -4,6 +4,7 @@
 // a route) the tour asks the server for it, so what is shown is real.
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
+import { desktopLookAngles } from '/static_mw/world_frame.js';
 
 const DEFAULT_QUESTION = 'a chair';
 const REPLAY_SPEED = 6;
@@ -103,7 +104,13 @@ export class Tour {
                     const ahead = this._trailPoint(0.4);
                     this._roof(false);
                     if (at && ahead) {
-                        const yaw = Math.atan2(-(ahead[0] - at[0]), ahead[1] - at[1]);
+                        // Through the shared helper, not `atan2` on the raw robot-frame
+                        // delta: `flight.lookAt` reads `yaw` in WORLD space, so an
+                        // unspun one is out by exactly the world's turn angle. This was
+                        // the last open-coded copy of that expression.
+                        const { yaw } = desktopLookAngles(this.scene._worldGroup, [
+                            ahead[0] - at[0], ahead[1] - at[1], 0,
+                        ]);
                         this.flight.lookAt([at[0], at[1], at[2] + 0.6], { distance: 3.5, yaw, pitch: -0.15 });
                     } else {
                         this._overview(0.7);

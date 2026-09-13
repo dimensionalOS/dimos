@@ -22,11 +22,17 @@ export function installTouch(scene, dom) {
             : 0;
         return { x, y, spread, count: points.length };
     };
-    const begin = (event) => { last = centre(event.touches); };
+    // `targetTouches`, not `touches`: `touches` is every finger on the SCREEN, and the
+    // walk stick is a sibling of this canvas on the same page. A finger parked on the
+    // stick made a one-finger look drag on the canvas count as two, so look went dead,
+    // a phantom stick was written on top of the real one, and the world silently
+    // rescaled on a "pinch" that was one finger and a joystick. `main.js` already uses
+    // targetTouches for the stick, with a comment about exactly this.
+    const begin = (event) => { last = centre(event.targetTouches); };
     dom.addEventListener('touchstart', (event) => { event.preventDefault(); begin(event); }, { passive: false });
     dom.addEventListener('touchmove', (event) => {
         event.preventDefault();
-        const now = centre(event.touches);
+        const now = centre(event.targetTouches);
         if (!last || last.count !== now.count) { last = now; return; }
         if (now.count === 1) {
             scene._desktopYaw -= (now.x - last.x) * TOUCH_LOOK_SENSITIVITY;
@@ -46,7 +52,7 @@ export function installTouch(scene, dom) {
     }, { passive: false });
     const end = (event) => {
         scene._touchStick = { x: 0, y: 0 };
-        last = event.touches.length ? centre(event.touches) : null;
+        last = event.targetTouches.length ? centre(event.targetTouches) : null;
     };
     dom.addEventListener('touchend', end);
     dom.addEventListener('touchcancel', end);

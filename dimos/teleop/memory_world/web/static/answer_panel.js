@@ -61,11 +61,14 @@ export function drawAnswer(canvas, text) {
     }
     if (!dropped && line) lines.push(line);
     if (dropped) {
-        // Say so. Give the ellipsis room by shedding whole words, and stop at the
-        // empty string rather than looping on a single word too long to shrink.
+        // Say so, and make room for it by shedding CHARACTERS, not whole words. Shedding
+        // words emptied the line outright whenever it held one long token -- which
+        // `breakLong` above guarantees for exactly the text that needs an ellipsis most:
+        // 'z' x 400 drew lines of [93, 93, 93, 4] characters, the fourth being literally
+        // " ...", with 89 characters' worth of room going spare on it.
         let last = lines[MAX_LINES - 1];
         while (last && ctx.measureText(`${last} ...`).width > LINE_WIDTH) {
-            last = last.replace(/\s*\S+$/, '');
+            last = last.slice(0, -1);
         }
         lines[MAX_LINES - 1] = `${last} ...`;
     }

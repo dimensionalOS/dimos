@@ -49,6 +49,13 @@ class HighlightRegion(BaseModel):
 # cannot answer" -- a query failure, reported at query time, for a setting.
 MAX_HIGHLIGHT_RADIUS_M = 5.0
 
+# The most places one answer may name. The module's `max_places` is what fills
+# `MemoryQueryResult.clusters`, so the two bounds have to be the same number -- the same
+# pairing, and the same bug, as `MAX_HIGHLIGHT_RADIUS_M` above: a `max_places` the config
+# accepted made every answer raise here, and the user was shown "The SigLIP index cannot
+# answer" for what was a setting.
+MAX_ANSWER_PLACES = 64
+
 
 class HighlightPoint(BaseModel):
     """A world-frame point of interest."""
@@ -93,7 +100,7 @@ class MemoryQueryResult(BaseModel):
     action: Literal["replace"] = "replace"
     # Heat-map answers (Hyperspace): the clusters the viewer steps through with
     # next/prev, best first. The voxels themselves travel as MSG_HEATMAP.
-    clusters: list[ClusterSummary] = Field(default_factory=list, max_length=64)
+    clusters: list[ClusterSummary] = Field(default_factory=list, max_length=MAX_ANSWER_PLACES)
     engine: Literal["hyperspace", "siglip", "agent"] = "agent"
     query_text: str = Field(default="", max_length=400)
 
