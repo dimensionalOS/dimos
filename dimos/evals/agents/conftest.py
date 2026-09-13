@@ -24,7 +24,7 @@ import shutil
 import threading
 from typing import Any
 
-from pydantic import BaseModel, JsonValue
+from pydantic import JsonValue, TypeAdapter
 import pytest
 
 from dimos.evals.agents.dimcode import DimcodeAdapter
@@ -34,40 +34,13 @@ from dimos.evals.agents.pi import PiAdapter
 from dimos.evals.types import RunningEnvironment, ToolCall, Trajectory
 from dimos.memory.store.sqlite import SqliteStore
 
-
-class ProviderRequest(BaseModel):
-    model: str
-    tools: tuple[dict[str, JsonValue], ...] = ()
-    input: tuple[dict[str, JsonValue], ...] = ()
-    messages: tuple[dict[str, JsonValue], ...] = ()
-    max_output_tokens: int | None = None
-    max_completion_tokens: int | None = None
-    max_tokens: int | None = None
-
-    @property
-    def tool_names(self) -> set[str]:
-        return {str(tool["name"]) for tool in self.tools}
-
-    @property
-    def outputs(self) -> str:
-        outputs = [
-            item.get("output") for item in self.input if item.get("type") == "function_call_output"
-        ]
-        for message in self.messages:
-            content = message.get("content")
-            if isinstance(content, list):
-                outputs.extend(
-                    block.get("content")
-                    for block in content
-                    if isinstance(block, dict) and block.get("type") == "tool_result"
-                )
-        return json.dumps(outputs)
+_json_object = TypeAdapter(dict[str, JsonValue])
 
 
 @dataclass
 class ScriptedProvider:
     name: Provider
-    requests: list[ProviderRequest] = field(default_factory=list)
+    requests: list[dict[str, JsonValue]] = field(default_factory=list)
     routes: list[str] = field(default_factory=list)
     calls: list[ToolCall] = field(default_factory=list)
 
@@ -181,9 +154,7 @@ def provider(
         def do_POST(self) -> None:
             scripted.routes.append(self.path)
             scripted.requests.append(
-                ProviderRequest.model_validate_json(
-                    self.rfile.read(int(self.headers["Content-Length"]))
-                )
+                _json_object.validate_json(self.rfile.read(int(self.headers["Content-Length"])))
             )
             payload = scripted.response()
             self.send_response(200)

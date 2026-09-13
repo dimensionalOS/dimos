@@ -14,6 +14,7 @@
 
 """The same provider and tool contract across native Pi and dimcode runtimes."""
 
+import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -33,18 +34,28 @@ def test_allowed_tools_execute_and_excluded_tools_do_not(
     assert result.extra.ended_by == "answer", result.extra
     assert result.final_answer == "OK"
     assert len(provider.requests) == 4
-    assert all(request.model == provider.model for request in provider.requests)
-    assert {urlsplit(route).path for route in provider.routes} == (
-        {"/responses"} if provider.name == "openai" else {"/v1/messages"}
-    )
-    assert all(
-        (request.max_output_tokens if provider.name == "openai" else request.max_tokens) == 1024
-        for request in provider.requests
-    )
-    assert all(request.tool_names == {"bash", "grep"} for request in provider.requests)
+    endpoint, output_cap = {
+        "openai": ("/responses", "max_output_tokens"),
+        "anthropic": ("/v1/messages", "max_tokens"),
+    }[provider.name]
+    assert {urlsplit(route).path for route in provider.routes} == {endpoint}
+    for request in provider.requests:
+        assert request["model"] == provider.model
+        assert request[output_cap] == 1024
+        tools = request["tools"]
+        assert isinstance(tools, list)
+        names = set()
+        for tool in tools:
+            assert isinstance(tool, dict)
+            names.add(str(tool["name"]))
+        assert names == {"bash", "grep"}
     assert (harness.workspace / "facts.txt").read_text() == "selected-observation"
     assert not (harness.workspace / "forbidden.txt").exists()
-    assert "selected-observation" in provider.requests[-1].outputs
+    observation = result.steps[-2].observation
+    assert observation is not None
+    output = observation.results[0].content
+    assert "selected-observation" in output
+    assert json.dumps(output) in json.dumps(provider.requests[-1])
     assert result.final_metrics.total_prompt_tokens == 40
     assert result.final_metrics.total_completion_tokens == 20
     assert result.final_metrics.total_cost_usd is not None
@@ -56,7 +67,7 @@ def test_no_tools_blocks_even_a_provider_requested_call(
     provider.call("write", path=harness.path("forbidden.txt"), content="must not execute")
     result = harness.run(harness.agent(provider, ()))
     assert result.extra.ended_by == "answer", result.extra
-    assert all(request.tool_names == set() for request in provider.requests)
+    assert all(request.get("tools", []) == [] for request in provider.requests)
     assert not (harness.workspace / "forbidden.txt").exists()
 
 
@@ -102,9 +113,13 @@ def test_sandbox_grep_cannot_read_host_files(
     provider.call("grep", pattern="host-only-content", path=str(secret), context=1)
     result = harness.run(harness.agent(provider, ("grep",)))
     assert result.extra.ended_by == "answer", result.extra
-    assert "No such file or directory" in provider.requests[-1].outputs
-    assert "exited with code 2" in provider.requests[-1].outputs
-    assert "host-only-content" not in provider.requests[-1].outputs
+    observation = result.steps[-2].observation
+    assert observation is not None
+    output = observation.results[0].content
+    assert "No such file or directory" in output
+    assert "exited with code 2" in output
+    assert "host-only-content" not in output
+    assert json.dumps(output) in json.dumps(provider.requests[-1])
 
 
 @pytest.mark.parametrize("harness", ["sandbox"], indirect=True)
