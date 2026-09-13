@@ -56,6 +56,9 @@ BODY_ABOVE_M = 1.2
 # Floor this far from the driven path counts as known; further out is not planned over.
 CORRIDOR_M = 1.5
 ROBOT_RADIUS_M = 0.35
+# The most that may ever be treated as "the robot drove between these two poses", however
+# sparsely the recording was sampled. See `bridgeable_gap`.
+MAX_BRIDGE_M = 1.5
 # Cost falls from just under lethal at the robot's radius to nothing here.
 INFLATION_M = 0.6
 # How far a start or goal may be moved to reach a passable cell (the goal is
@@ -68,16 +71,47 @@ ROUTE_HEIGHT_BELOW_PATH_M = 0.2
 ROUTE_HEIGHT_ABOVE_SURFACE_M = 0.1
 
 
-def densify(path: NDArray[np.float64], step: float) -> NDArray[np.float64]:
-    """*path* with points added along each leg so none are further than *step* apart."""
+def densify(
+    path: NDArray[np.float64], step: float, max_gap: float | None = None
+) -> NDArray[np.float64]:
+    """*path* with points added along each leg so none are further than *step* apart.
+
+    With *max_gap*, a leg longer than that is left alone: its two ends stay and nothing
+    is drawn between them. A pose series contains both drives and jumps, and only the
+    drive is somewhere the robot was.
+    """
     if len(path) < 2:
         return path
     pieces = []
     for a, b in pairwise(path):
-        n = max(math.ceil(math.dist(a[:2], b[:2]) / step), 1)
+        span = math.dist(a[:2], b[:2])
+        n = 1 if (max_gap is not None and span > max_gap) else max(math.ceil(span / step), 1)
         pieces.append(a + (b - a) * np.linspace(0, 1, n, endpoint=False)[:, None])
     pieces.append(path[-1:])
     return np.concatenate(pieces)
+
+
+def bridgeable_gap(path: NDArray[np.float64]) -> float:
+    """How far apart two poses may be and still have the robot between them.
+
+    From the recording's own sampling: a drive's legs are all about the typical length,
+    and a relocalisation is an outlier against it. Twice the median, because real
+    spacing varies and a factor that tight would refuse ordinary jitter -- and capped,
+    because a recording sampled sparsely throughout must not license bridging a jump.
+
+    A fixed number cannot do this job: the two cases that have to be told apart are a
+    1.0 m leg on a downsampled recording (a drive, and its body voxels must be erased or
+    a straight corridor plans no route at all) and a 2.0 m leg on a densely sampled one
+    (a jump, and bridging it erases a wall). Any constant between them is wrong for one
+    recording or the other; the ratio to the recording's own median is right for both.
+    """
+    if len(path) < 2:
+        return 0.0
+    gaps = np.linalg.norm(np.diff(np.asarray(path)[:, :2], axis=0), axis=1)
+    gaps = gaps[gaps > 0]
+    if not len(gaps):
+        return 0.0
+    return float(min(MAX_BRIDGE_M, 2.0 * float(np.median(gaps))))
 
 
 @dataclass
@@ -260,17 +294,23 @@ class RoutePlanner:
         # The robot was where it drove, so voxels there are its own body or people
         # walking beside it, not walls: nothing within its radius of the path blocks.
         #
-        # Measured from the SAMPLES, not from `dense`. `densify` bridges a gap of any
-        # length, and the bridge is a straight line between two poses -- so one SLAM
-        # jump across a room made this erase the real wall voxels the line passed
-        # through, and the planner then routed through the hole it had just made. A 2 m
-        # jump took the wall's cells from cost 100 to 88-90 and produced a 7.90 m plan
-        # straight through it. The corridor and the floor height still come from the
-        # dense line, which is what they are for and what needs ~3 m of bridging on a
-        # real recording; only the claim "the robot's own body was here" is restricted
-        # to where the robot actually reported being.
+        # From a line that bridges the DRIVES and not the jumps -- not from `dense`,
+        # which bridges a gap of any length, and not from the bare samples either.
+        #
+        # `dense` was wrong because one SLAM jump across a room made this erase the real
+        # wall voxels the straight line passed through, and the planner then routed
+        # through the hole it had just made: a 2 m jump took the wall from cost 100 to
+        # 88-90 and gave a 7.90 m plan through it. The bare samples were wrong for the
+        # opposite reason: on a recording sampled every metre, the robot's own body
+        # sits between the samples, and refusing to erase it walled off a straight 10 m
+        # corridor completely -- `plan` returned None where a 9.20 m route existed.
+        #
+        # `bridgeable_gap` tells the two apart from the recording's own sampling. The
+        # corridor and the floor height still come from `dense`, which is what they are
+        # for and what needs ~3 m of bridging on a real recording.
+        driven_line = densify(path, resolution / 2, max_gap=bridgeable_gap(path))
         sampled = np.zeros((height, width), dtype=bool)
-        sampled_r, sampled_c = cells(path)
+        sampled_r, sampled_c = cells(driven_line)
         sampled[sampled_r, sampled_c] = True
         off_sampled = ndimage.distance_transform_edt(~sampled) * resolution
         obstacle &= off_sampled > robot_radius_m

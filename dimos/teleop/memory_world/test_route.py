@@ -118,6 +118,33 @@ def test_no_route_when_walled_off() -> None:
     assert planner.plan((1.0, 1.0), (9.0, 1.0)) is None
 
 
+def test_the_robots_own_body_between_two_samples_is_not_a_wall() -> None:
+    """The other half of the sibling below, and the two must not be traded for each other.
+
+    Erasing only at the sample POINTS is wrong whenever the samples are further apart
+    than the robot is wide: on a recording sampled every metre, the robot's own body --
+    and the people walking beside it -- sit between the samples and are then read as
+    walls. A straight 10 m corridor with one such voxel at each sample midpoint planned
+    NO route at all, where a 9.20 m one runs down the middle of it.
+
+    Bridging everything is the sibling's bug; bridging nothing is this one.
+    `bridgeable_gap` tells a drive from a jump by the recording's own sampling.
+    """
+    walls = np.concatenate([_wall(-1.0, 11.0, 0.40, 0.55), _wall(-1.0, 11.0, -0.55, -0.40)])
+    floor = _floor(-1, 11, -1, 1)
+    # Sampled every metre, as a downsampled recording is.
+    driven = np.asarray([[float(x), 0.0, BODY_Z] for x in range(11)])
+    # The robot's own body, seen between the samples and nowhere else.
+    body = np.asarray([[x + 0.5, 0.0, BODY_Z] for x in range(10)])
+
+    planner = RoutePlanner.from_voxels(
+        np.concatenate([floor, walls, body]), driven, voxel_size=VOXEL
+    )
+    route = planner.plan((0.2, 0.0), (9.5, 0.0))
+    assert route is not None, "the robot's own body walled off the corridor it drove down"
+    assert route.length_m < 12.0, f"routed around its own body: {route.length_m}"
+
+
 def test_one_pose_jump_across_a_wall_does_not_open_a_door_in_it() -> None:
     """A SLAM relocalisation is a teleport, and `densify` draws a straight line through
     it. Those fabricated points were counted as "the robot was here", and the near-path
