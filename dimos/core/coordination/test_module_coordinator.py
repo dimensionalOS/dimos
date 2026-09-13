@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from pathlib import Path
 import pickle
 import threading
 from types import MappingProxyType
@@ -785,6 +786,27 @@ def test_check_requirements_failure(mocker) -> None:
 
     with pytest.raises(SystemExit):
         _check_requirements(bp)
+
+
+class ShutdownRecorder(Module):
+    def __init__(self, shutdown_log: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._shutdown_log = Path(shutdown_log)
+
+    @rpc
+    def stop(self) -> None:
+        with self._shutdown_log.open("a") as log:
+            log.write("stopped\n")
+        super().stop()
+
+
+def test_unload_stops_module_once(dynamic_coordinator, tmp_path) -> None:
+    shutdown_log = tmp_path / "shutdown.log"
+    dynamic_coordinator.load_blueprint(ShutdownRecorder.blueprint(shutdown_log=str(shutdown_log)))
+
+    dynamic_coordinator.unload_module(ShutdownRecorder)
+
+    assert shutdown_log.read_text() == "stopped\n"
 
 
 def test_restart_module_basic(dynamic_coordinator) -> None:
