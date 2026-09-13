@@ -19,6 +19,7 @@ import pytest
 from typer.testing import CliRunner
 
 from dimos.cli.commands.imitation import imitation_app
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.imitation.collection.recording import RecordingSchema
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.robot.manipulators.openyam.collection import OPENYAM_TEACH_COLLECTION
@@ -27,7 +28,7 @@ from dimos.robot.manipulators.openyam.collection import OPENYAM_TEACH_COLLECTION
 def test_help_exposes_attached_controls_and_no_workflow_launcher():
     result = CliRunner().invoke(imitation_app, ["--help"])
     assert result.exit_code == 0
-    for command in ("collect", "rollout", "prepare", "inspect", "train"):
+    for command in ("collect", "rollout", "prepare", "inspect", "visualize", "train"):
         assert command in result.output
     assert CliRunner().invoke(imitation_app, ["list"]).exit_code == 2
     assert CliRunner().invoke(imitation_app, ["run"]).exit_code == 2
@@ -157,3 +158,108 @@ def test_train_forwards_arguments_and_exit_code(mocker):
         "--policy.type=act",
         "--dataset.repo_id=local/test",
     ]
+
+
+@pytest.fixture
+def visualization(tmp_path, monkeypatch, mocker):
+    dataset = tmp_path / "dataset with spaces"
+    (dataset / "meta").mkdir(parents=True)
+    (dataset / "meta" / "info.json").write_text("{}")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("dimos.utils.cache._CACHE_LOCK_DIR", tmp_path / "locks")
+    monkeypatch.setattr("dimos.utils.cache._CACHE_GATE_PATH", tmp_path / "gate.lock")
+    run = mocker.patch(
+        "dimos.cli.commands.imitation.subprocess.run", return_value=mocker.Mock(returncode=0)
+    )
+    return dataset, run
+
+
+@pytest.mark.parametrize(("flags", "episode"), [([], "0"), (["--episode", "2"], "2")])
+def test_visualize_launches_local_viewer(visualization, monkeypatch, flags, episode):
+    dataset, run = visualization
+    monkeypatch.setenv("HF_HUB_OFFLINE", "0")
+    monkeypatch.setenv("VIRTUAL_ENV", "/host/venv")
+    result = CliRunner().invoke(imitation_app, ["visualize", dataset.name, *flags])
+    assert result.exit_code == 0, result.output
+    project = DIMOS_PROJECT_ROOT / "dimos" / "imitation" / "policy" / "lerobot" / "python"
+    assert run.call_args.args[0] == [
+        "uv",
+        "run",
+        "--project",
+        str(project),
+        "--frozen",
+        "lerobot-dataset-viz",
+        "--root",
+        str(dataset),
+        "--repo-id",
+        "local/dataset",
+        "--episode-index",
+        episode,
+        "--num-workers",
+        "0",
+        "--mode",
+        "local",
+    ]
+    assert run.call_args.kwargs["env"]["HF_HUB_OFFLINE"] == "1"
+    assert "VIRTUAL_ENV" not in run.call_args.kwargs["env"]
+    assert set(run.call_args.kwargs) == {"env", "check"}
+
+
+@pytest.mark.parametrize(
+    ("kind", "message"),
+    [
+        ("missing", "directory does not exist"),
+        ("file", "directory does not exist"),
+        ("empty", "Not a prepared LeRobot dataset"),
+        ("recording", "imitation prepare"),
+        ("negative", "--episode"),
+    ],
+)
+def test_visualize_rejects_invalid_input(visualization, tmp_path, kind, message):
+    dataset, run = visualization
+    path = tmp_path / kind
+    flags = []
+    if kind == "file":
+        path.touch()
+    elif kind in {"empty", "recording"}:
+        path.mkdir()
+        if kind == "recording":
+            (path / "schema.json").write_text("{}")
+    elif kind == "negative":
+        path = dataset
+        flags = ["--episode", "-1"]
+    result = CliRunner().invoke(imitation_app, ["visualize", str(path), *flags])
+    assert result.exit_code == 2
+    assert message in result.output
+    run.assert_not_called()
+
+
+def test_visualize_propagates_viewer_failure(visualization):
+    dataset, run = visualization
+    run.return_value.returncode = 17
+    result = CliRunner().invoke(imitation_app, ["visualize", str(dataset)])
+    assert result.exit_code == 17
+
+
+def test_visualize_reports_missing_launcher(visualization):
+    dataset, run = visualization
+    run.side_effect = FileNotFoundError("uv")
+    result = CliRunner().invoke(imitation_app, ["visualize", str(dataset)])
+    assert result.exit_code == 1
+    assert "uv" in result.output
+
+
+def test_visualize_can_be_interrupted(visualization):
+    dataset, run = visualization
+    run.side_effect = KeyboardInterrupt
+    result = CliRunner().invoke(imitation_app, ["visualize", str(dataset)])
+    assert result.exit_code == 130
+    assert list((dataset.parent / "locks").iterdir()) == []
+
+
+def test_visualize_help_does_not_launch_viewer(visualization):
+    _, run = visualization
+    result = CliRunner().invoke(imitation_app, ["visualize", "--help"])
+    assert result.exit_code == 0
+    assert "--episode" in result.output
+    run.assert_not_called()

@@ -21,6 +21,7 @@ boundaries. Support the arm before stopping the runtime.
 | Record takes | `dimos imitation collect` | Saved or discarded episodes in a recording directory |
 | Inspect recording | `dimos imitation inspect recordings/session-001` | Readable recording and quality summary |
 | Prepare data | `dimos imitation prepare recordings/session-001 --output datasets/session-001` | LeRobot dataset containing saved episodes |
+| Visualize dataset | `dimos imitation visualize datasets/session-001` | Camera playback, joint states, and actions in Rerun |
 | Train | `dimos imitation train` with LeRobot arguments | Training outputs and checkpoints |
 | Launch rollout | `dimos run openyam-lerobot-rollout --daemon` with module options | Policy stack ready for operator controls |
 | Execute policy | `dimos imitation rollout` | Explicit policy start/stop controls |
@@ -176,6 +177,22 @@ format; use `--json` explicitly for scripts. `--json` takes precedence over
 
 Preparation requires a new output directory. Without `--output`, it writes to
 `~/.local/state/dimos/datasets/<recording-directory-name>` by default.
+
+Before training, view an episode in Rerun:
+
+```bash
+dimos imitation visualize datasets/session-001 --episode 0
+```
+
+The viewer shows camera images, joint states, and actions on a shared timeline.
+Use its playback controls to play, pause, and scrub through the episode. Episode
+indices start at zero; omitting `--episode` selects the first episode.
+
+Visualization requires a local graphical display and a prepared LeRobot dataset,
+not a raw recording. It runs LeRobot's existing viewer in the isolated Python
+environment and streams loading progress to the terminal. Unlike inspection,
+visualization decodes the episode's frames, so loading can take longer. Dataset
+loading is local-only; missing files are not downloaded from Hugging Face.
 
 Start ACT training with the prepared dataset:
 
