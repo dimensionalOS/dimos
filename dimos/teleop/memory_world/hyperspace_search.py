@@ -53,6 +53,7 @@ from dimos.teleop.memory_world.hyperspace_fast import (
     Patches,
     near_scene,
     pack_keys,
+    pack_probe_keys,
     patch_rects,
     project_pixels,
 )
@@ -254,7 +255,9 @@ def cluster_voxels(
             if (x, y, z) != (0, 0, 0)
         ]
     ):
-        neighbour = pack_keys(cells + offset)
+        # The probe form: a cluster's voxel can sit on the edge of the packed range, and
+        # the neighbour one step past it does not exist rather than being an error.
+        neighbour = pack_probe_keys(cells + offset)
         pos = np.minimum(np.searchsorted(cell_keys, neighbour), m - 1)
         found = cell_keys[pos] == neighbour
         src.append(np.flatnonzero(found))

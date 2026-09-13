@@ -144,6 +144,25 @@ def pack_keys(index: NDArray[np.integer]) -> NDArray[np.int64]:
     return (index[:, 0] * _KEY_SPAN + index[:, 1]) * _KEY_SPAN + index[:, 2]
 
 
+def pack_probe_keys(index: NDArray[np.int64]) -> NDArray[np.int64]:
+    """`pack_keys` for a NEIGHBOUR probe: out of range is a miss, not an error.
+
+    A probe walks one voxel out from each index, so a voxel sitting on the very edge of
+    the packed range generates a neighbour past it -- and `pack_keys` refusing that took
+    a VALID boundary voxel down with it. Every voxel that can be IN the scene is in
+    range, so a probe that is not cannot match anything: it gets -1, which no real packed
+    key can equal.
+    """
+    index = np.asarray(index, dtype=np.int64)
+    if not index.size:
+        return np.empty(0, dtype=np.int64)
+    inside = (np.abs(index).max(axis=1) < _KEY_HALF) if index.ndim == 2 else np.array([True])
+    keys = np.full(len(index), -1, dtype=np.int64)
+    if inside.any():
+        keys[inside] = pack_keys(index[inside])
+    return keys
+
+
 def unpack_keys(keys: NDArray[np.int64]) -> NDArray[np.int64]:
     z = keys % _KEY_SPAN
     rest = keys // _KEY_SPAN
@@ -395,7 +414,7 @@ def near_scene(
     for dx in span:
         for dy in span:
             for dz in span:
-                keys = pack_keys(index + np.array([dx, dy, dz]))
+                keys = pack_probe_keys(index + np.array([dx, dy, dz]))
                 pos = np.minimum(np.searchsorted(scene_keys, keys), len(scene_keys) - 1)
                 hit |= scene_keys[pos] == keys
     return hit

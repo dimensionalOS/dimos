@@ -145,6 +145,36 @@ def test_the_robots_own_body_between_two_samples_is_not_a_wall() -> None:
     assert route.length_m < 12.0, f"routed around its own body: {route.length_m}"
 
 
+def test_a_jump_at_either_end_of_the_drive_is_still_a_jump() -> None:
+    """The window has to be padded at the ends, and how it is padded decides the answer.
+
+    Padding with the edge leg ITSELF -- scipy's "nearest" -- makes a jump in the first or
+    last few legs most of its own neighbourhood, so it looks ordinary and gets bridged.
+    Six legs is enough: `[1.2, .05, .05, .05, .05, .05]` bridged the 1.2 m jump, took the
+    wall it crosses from cost 100 to 90, and planned a 4.5 m route straight through it.
+
+    "mirror" pads with the legs on the other side without repeating the edge one, so the
+    first leg is judged against the legs AFTER it -- which is what "the legs around it"
+    has to mean at an end.
+    """
+    from dimos.teleop.memory_world.route import bridgeable
+
+    fast = 0.05
+    for label, gaps in (
+        ("jump first", [1.2] + [fast] * 5),
+        ("jump last", [fast] * 5 + [1.2]),
+        ("jump first, long drive", [1.2] + [fast] * 79),
+        ("jump last, long drive", [fast] * 79 + [1.2]),
+    ):
+        # A straight path whose legs are exactly those lengths.
+        path = np.zeros((len(gaps) + 1, 3))
+        path[1:, 0] = np.cumsum(gaps)
+        mask = bridgeable(path, 0.1)
+        jump = np.asarray(gaps) > 1.0
+        assert not mask[jump].any(), f"{label}: the jump was bridged"
+        assert mask[~jump].all(), f"{label}: a drive leg was not bridged"
+
+
 def test_a_path_that_mostly_stands_still_is_still_a_drive() -> None:
     """`replay._held_through_gaps` REPEATS the previous pose exactly through a tf gap.
 

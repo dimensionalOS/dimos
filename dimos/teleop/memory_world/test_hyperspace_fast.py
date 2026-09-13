@@ -333,3 +333,29 @@ def test_a_voxel_index_past_the_packed_range_is_refused_not_wrapped() -> None:
     for far in ([[5_000_000, 4_000_000, 10]], [[0, 0, -(1 << 21)]]):
         with pytest.raises(ValueError, match="packed range"):
             pack_keys(np.asarray(far, dtype=np.int64))
+
+
+def test_a_voxel_on_the_edge_of_the_packed_range_can_still_be_probed() -> None:
+    """A neighbour probe walks one voxel out from each index, so a voxel on the very edge
+    of the packed range generates a neighbour past it.
+
+    Making `pack_keys` refuse an out-of-range index -- which it must, or a UTM-scale map
+    wraps silently -- therefore took a VALID boundary voxel down with it: `near_scene`
+    and `cluster_voxels` raised where they had worked. Every voxel that can be IN the
+    scene is in range, so a probe that is not cannot match anything.
+    """
+    import numpy as np
+
+    from dimos.teleop.memory_world.hyperspace_fast import near_scene, pack_keys, pack_probe_keys
+    from dimos.teleop.memory_world.hyperspace_search import cluster_voxels
+
+    edge = np.array([[(1 << 20) - 1, 0, 0]], dtype=np.int64)
+    assert near_scene(edge, pack_keys(edge)).tolist() == [True]
+    clusters, labels = cluster_voxels(edge, np.ones(1), 0.1, gap=1, min_voxels=1)
+    assert labels.tolist() == [0] and len(clusters) == 1
+
+    # A probe past the range is a miss, and -1 is a key no real voxel can have.
+    past = np.array([[1 << 20, 0, 0], [3, 4, 5]], dtype=np.int64)
+    keys = pack_probe_keys(past)
+    assert keys[0] == -1
+    assert keys[1] == pack_keys(past[1:])[0]

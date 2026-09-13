@@ -125,7 +125,24 @@ def bridgeable(path: NDArray[np.float64], resolution: float) -> NDArray[np.bool_
         return np.zeros(0, dtype=bool)
     gaps = np.linalg.norm(np.diff(np.asarray(path)[:, :2], axis=0), axis=1)
     window = min(len(gaps), LOCAL_WINDOW_LEGS) | 1  # odd, so the window is centred
-    nearby = ndimage.median_filter(gaps, size=window, mode="nearest")
+    # Two choices here, and both were made by measuring against all twelve known shapes.
+    #
+    # "mirror", not "nearest": at the ends the window has to be padded, and `nearest`
+    # pads with the edge leg ITSELF -- so a jump in the first or last few legs made up
+    # most of its own neighbourhood, looked ordinary, and was bridged. Measured on
+    # `[1.2, .05, .05, .05, .05, .05]`: the jump bridged, the wall it crosses at cost 90,
+    # a 4.5 m route through it. `mirror` pads with the legs on the other side without
+    # repeating the edge one, so the first leg is judged against the legs after it.
+    #
+    # The 75th percentile of the window, not its median: a leg on the BOUNDARY between a
+    # drive and a pause has a neighbourhood that is half each, and a median there picks
+    # whichever half is bigger. With mirror padding that walled off the corridor of the
+    # pause fixture at its very first leg. The question is whether this leg is comparable
+    # to the LARGEST ordinary legs nearby, which is a high quantile, not a middling one.
+    # Measured: with mirror, everything from about p50 to p90 exclusive passes all twelve
+    # shapes, p90 lets an end jump through, and the median fails the pause. 75 is the
+    # middle of what works.
+    nearby = ndimage.percentile_filter(gaps, percentile=75, size=window, mode="mirror")
     allowed = np.minimum(MAX_BRIDGE_M, np.maximum(resolution, 2.0 * nearby))
     return np.asarray(gaps <= allowed)
 
