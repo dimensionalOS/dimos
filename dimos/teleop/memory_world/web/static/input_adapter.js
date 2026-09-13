@@ -218,9 +218,12 @@ export class InputAdapter {
                 dirWorld: [fx, fy, fz],
             });
         } else if (this._teleportArmed) {
-            // Released — commit.
             this._teleportArmed = false;
-            this.onGesture({ type: 'teleport_commit' });
+            // A release is only a commit if we can still see where it is aimed. Tracking
+            // lost ON THE RELEASE FRAME took the other branch's cancel path with it --
+            // that one only runs while the trigger is still held -- and committed the
+            // target aimed before the loss.
+            this.onGesture({ type: rayPose ? 'teleport_commit' : 'teleport_cancel' });
         }
     }
 

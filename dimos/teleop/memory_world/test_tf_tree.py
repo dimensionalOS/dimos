@@ -41,6 +41,35 @@ def test_static_chain_composes_parent_to_child() -> None:
     assert matrix[:3, 3] == pytest.approx((1.0, 1.0, 0.0))
 
 
+def test_a_quaternion_that_is_not_unit_length_still_makes_a_rotation() -> None:
+    """Built from the raw components, a non-unit quaternion makes a matrix that is not a
+    rotation -- and it is wrong rather than imprecise.
+
+    A 90 degree turn published with every component twice too large -- a unit mix-up, a
+    corrupted field, an uninitialised message -- gave `det(R) = 25` and sent (1, 0, 0) to
+    (-3, 4, 0) where the answer is (0, 1, 0). That matrix places the camera, the lidar and
+    the global map, so one bad tf sample moved the whole world with nothing said anywhere.
+    """
+    import numpy as np
+
+    from dimos.teleop.memory_world.tf_tree import pose_matrix
+
+    quarter_turn = (0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5))
+    doubled = tuple(2.0 * v for v in quarter_turn)
+    correct = pose_matrix((0.0, 0.0, 0.0), quarter_turn)
+
+    for name, q in (("doubled", doubled), ("tiny", tuple(1e-6 * v for v in quarter_turn))):
+        matrix = pose_matrix((0.0, 0.0, 0.0), q)
+        assert np.linalg.det(matrix[:3, :3]) == pytest.approx(1.0), f"{name} is not a rotation"
+        assert matrix[:3, :3] == pytest.approx(correct[:3, :3]), f"{name} turned the wrong way"
+
+    # All zeros is an uninitialised message, not a turn: it must be the identity, not a
+    # matrix of zeros that collapses every point it touches onto the origin.
+    zeros = pose_matrix((1.0, 2.0, 3.0), (0.0, 0.0, 0.0, 0.0))
+    assert zeros[:3, :3] == pytest.approx(np.eye(3))
+    assert zeros[:3, 3] == pytest.approx((1.0, 2.0, 3.0))
+
+
 def test_a_frame_answers_to_both_spellings_of_its_name() -> None:
     """ROS 1 writes `/base_link`, ROS 2 writes `base_link`, and one recording can carry
     both -- tf published one way and the sensor the other, or a bag conversion in between.

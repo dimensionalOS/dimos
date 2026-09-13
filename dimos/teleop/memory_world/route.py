@@ -59,9 +59,6 @@ ROBOT_RADIUS_M = 0.35
 # The most that may ever be treated as "the robot drove between these two poses", however
 # sparsely the recording was sampled. See `bridgeable_gap`.
 MAX_BRIDGE_M = 1.5
-# Below this, two consecutive poses are the robot standing still rather than driving.
-# See `bridgeable_gap` for why it is an absolute number and why it is not the cell size.
-STILL_M = 0.01
 # Cost falls from just under lethal at the robot's radius to nothing here.
 INFLATION_M = 0.6
 # How far a start or goal may be moved to reach a passable cell (the goal is
@@ -97,43 +94,40 @@ def densify(
 def bridgeable_gap(path: NDArray[np.float64]) -> float:
     """How far apart two poses may be and still have the robot between them.
 
-    Two thresholds, doing two different jobs, because one cannot do both:
+    The leg length at which the cumulative DISTANCE reaches half the total, doubled and
+    capped. Distance is the right weight because the question is how far the robot moves
+    between samples, and weighting by it makes the statistic immune to both tails without
+    a threshold anywhere:
 
-      STILL_M, absolute    below this the robot was not driving at all. It has to be far
-                           below any real drive leg and far above a stationary reading's
-                           jitter, and a centimetre is both. This is not the cell size:
-                           filtering at the cell ate the 5 cm legs of a finely sampled
-                           drive and left only the jump, which then set the scale and got
-                           bridged straight through a wall.
-      the median, relative what the driving of THIS recording looks like. A jump is an
-                           outlier against it. No absolute number can do this job: a 1.2 m
-                           leg is a jump on a 5 cm drive and an ordinary step on a 1 m one.
+      standing still contributes no distance, however many samples it takes, so a pause
+      or a tf gap -- `replay._held_through_gaps` repeats the pose EXACTLY -- cannot drag
+      it down. A tour parked for 93% of its samples is 93% of the COUNT and under 1% of
+      the distance.
 
-    Filtering first and taking the median second is what makes both hold, and both halves
-    were learnt from a defect:
+      a relocalisation contributes distance but only once, so it cannot pull it up past
+      the bulk of the driving.
 
-      no filter, median      a five-second pause fills the list with millimetre legs and
-                             drags it to 0.003 m, so nothing is bridged and the robot's
-                             own body between the samples reads as walls.
-      no filter, 90th pct    survives a pause -- until the stationary samples pass 90% of
-                             the recording. `replay._held_through_gaps` REPEATS the
-                             previous pose exactly through a tf gap, so a tf stream that
-                             stops partway gets there with no unusual driving at all, and
-                             so does a tour that parks at three places for 45 s.
-      filter at the cell     see STILL_M above.
+    Four statistics were tried before this over three rounds, and each was defeated by a
+    real recording shape the one before it had not met. The shapes are all tests now:
 
-    Measured against all six known shapes: coarse drive, coarse drive with a pause, fine
-    drive with a 1.2 m jump, fine drive with a 2.8 m jump, a tf gap that makes 91% of the
-    legs exact repeats, and a tour parked for 93% of its samples. This is the only rule
-    of the four that bridges every drive leg and no jump on all six.
+      median, all legs           dies on a pause (millimetre legs are most of the count)
+      90th percentile            dies once standing still passes 90% of the count
+      median over legs > 1 cm    dies on a drive sampled every 5 mm: the filter removes
+                                 every driving leg and the JUMP becomes the median
+      median over legs > a cell  the same, one scale up, on a drive sampled every 5 cm
+
+    Every one of those was a count-weighted statistic with a threshold bolted on, and
+    every threshold ate a drive sampled finer than it. Weighting by distance needs none.
     """
     if len(path) < 2:
         return 0.0
     gaps = np.linalg.norm(np.diff(np.asarray(path)[:, :2], axis=0), axis=1)
-    driving = gaps[gaps > STILL_M]
-    if not len(driving):
-        return 0.0  # it never drove; there is nothing to bridge
-    return float(min(MAX_BRIDGE_M, 2.0 * float(np.median(driving))))
+    moving = np.sort(gaps[gaps > 0])
+    if not len(moving):
+        return 0.0  # it never moved; there is nothing to bridge
+    travelled = np.cumsum(moving)
+    halfway = int(np.searchsorted(travelled, 0.5 * travelled[-1]))
+    return float(min(MAX_BRIDGE_M, 2.0 * float(moving[min(halfway, len(moving) - 1)])))
 
 
 @dataclass

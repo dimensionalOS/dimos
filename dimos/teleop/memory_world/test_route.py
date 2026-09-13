@@ -188,13 +188,23 @@ def test_a_finely_sampled_drive_still_does_not_bridge_a_jump() -> None:
     three. The shipped one is the 90th percentile, which needs no filter.
     """
     voxels = np.concatenate([_floor(0, 10, 0, 6), _wall(4.9, 5.1, -1.0, 7.0)])  # no doorway
-    # Driven finely up to the wall, then a 1.2 m jump to the far side and on.
-    jumped = np.concatenate([_path((1, 3), (4.4, 3)), _path((5.6, 3), (9, 3))])
 
-    planner = RoutePlanner.from_voxels(voxels, jumped, voxel_size=VOXEL)
-    assert planner.plan((1.0, 3.0), (9.0, 3.0)) is None, (
-        "a 1.2 m jump was bridged because the drive was sampled finer than the cell"
-    )
+    def driven(step: float) -> np.ndarray:
+        def leg(x0: float, x1: float) -> list[list[float]]:
+            n = max(int(abs(x1 - x0) / step), 2)
+            return [[x0 + (x1 - x0) * t, 3.0, BODY_Z] for t in np.linspace(0, 1, n)]
+
+        return np.asarray(leg(1.0, 4.4) + leg(5.6, 9.0))  # a 1.2 m jump in the middle
+
+    # Every sampling rate, including one FINER than any threshold a filter could use:
+    # 5 mm legs defeated "the median of legs over a centimetre" exactly the way 5 cm legs
+    # defeated "the median of legs over a cell", one scale up. Weighting by distance has
+    # no threshold to be finer than.
+    for step in (0.05, 0.005):
+        planner = RoutePlanner.from_voxels(voxels, driven(step), voxel_size=VOXEL)
+        assert planner.plan((1.0, 3.0), (9.0, 3.0)) is None, (
+            f"sampled every {step} m, a 1.2 m jump was bridged and opened the wall"
+        )
 
 
 def test_a_pause_in_the_drive_does_not_wall_off_the_corridor() -> None:

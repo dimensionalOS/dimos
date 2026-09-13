@@ -47,8 +47,21 @@ def pose_matrix(
     position: tuple[float, float, float] | np.ndarray,
     orientation: tuple[float, float, float, float] | np.ndarray,
 ) -> np.ndarray:
-    """4x4 homogeneous matrix from a position and an (x, y, z, w) quaternion."""
+    """4x4 homogeneous matrix from a position and an (x, y, z, w) quaternion.
+
+    The quaternion is normalised first. Built from the raw components, one that is not
+    unit length makes a matrix that is not a rotation -- silently, and wrongly rather
+    than imprecisely: a 90 degree turn published with every component twice too large
+    (a unit mix-up, a corrupted field) gives `det(R) = 25` and sends the point (1, 0, 0)
+    to (-3, 4, 0) where the answer is (0, 1, 0). That places the camera, the lidar and
+    the global map, so one bad tf sample moves the whole world with nothing said.
+    """
     x, y, z, w = orientation
+    norm = math.sqrt(x * x + y * y + z * z + w * w)
+    if norm > 0.0:
+        x, y, z, w = x / norm, y / norm, z / norm, w / norm
+    else:
+        x, y, z, w = 0.0, 0.0, 0.0, 1.0  # all zeros: an uninitialised message, not a turn
     matrix = np.eye(4)
     matrix[:3, :3] = [
         [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
