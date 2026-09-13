@@ -1417,6 +1417,73 @@ def test_every_evidence_photo_says_which_place_it_belongs_to() -> None:
     )
 
 
+def test_an_unmeasured_view_count_is_not_published_as_one() -> None:
+    """`views` is measured only where depth places the object.
+
+    Without depth, `cluster_places` keeps the best frame of each location and drops the
+    near-identical ones without counting them, so every `Place` carries the dataclass's 1
+    -- a dozen frames of one object, and the results bar read "1 view". The sentence and
+    the skill payload have refused to print that number on this branch since round 77;
+    the `ClusterSummary` the CLIENT renders went on sending it. Zero is what the field's
+    default already means, and `results.js` and `tour.js` leave the clause off there.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world.visual_answers import VisualAnswers
+    from dimos.teleop.memory_world.visual_search import Place
+
+    # One object, twelve frames of it, all within `place_radius_m` of each other.
+    hits = [
+        Place(position=(1.0 + 0.01 * i, 2.0, 3.0), similarity=0.40 - 0.001 * i, source_id=i, ts=1.0)
+        for i in range(12)
+    ]
+    published: dict = {}
+
+    class Module(VisualAnswers):  # type: ignore[misc]
+        config = SimpleNamespace(
+            store_path="x.db",
+            place_radius_m=2.0,
+            object_radius_m=0.5,
+            max_places=8,
+            search_top_k=64,
+            world_frame="odom",
+        )
+        _store_lock = threading.Lock()
+        _clients_lock = threading.Lock()
+        _index_progress = ""
+
+        def _ensure_visual_index(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(count=lambda: len(hits), search=lambda phrase, k: hits)
+
+        def _locate_objects(self, phrase):  # type: ignore[no-untyped-def]
+            return []  # no depth, which is the whole point
+
+        def _markers_near(self, positions):  # type: ignore[no-untyped-def]
+            return []
+
+        def _add_route_to_result(self, result) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def _query_is_current(self, query_id):  # type: ignore[no-untyped-def]
+            return True
+
+        def _publish_query_result(self, result) -> str:  # type: ignore[no-untyped-def]
+            published["payload"] = result.model_dump(mode="json")
+            return "qid"
+
+        def _publish_query_images(self, query_id, phrase, places) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+    outcome = Module()._find_with_siglip("a basket", 0.0)
+    assert outcome.success, outcome.message
+
+    clusters = published["payload"]["clusters"]
+    assert len(clusters) == 1, "twelve frames of one object are one place"
+    assert clusters[0]["n_views"] == 0, "an unmeasured view count was published as a measurement"
+    assert clusters[0]["n_evidence"] == 0
+
+
 def test_an_embedding_answer_carries_the_places_the_viewer_renders() -> None:
     """The client builds its results bar, place stepping and Navigate from `clusters`.
 

@@ -250,7 +250,10 @@ export class Tour {
         const r = this.results;
         if (!r || !r.count) return 'No answer yet.';
         const best = r.clusters[0];
-        return `${r.count} place${r.count === 1 ? '' : 's'} for "${r.queryText}"; the best scores ${best.peak.toFixed(2)} with ${best.n_views ?? best.n_evidence} views.`;
+        // A zero count is "not measured", not "no views": say nothing about views there.
+        const views = best.n_views ?? best.n_evidence;
+        const seen = views > 0 ? ` with ${views} view${views === 1 ? '' : 's'}` : '';
+        return `${r.count} place${r.count === 1 ? '' : 's'} for "${r.queryText}"; the best scores ${best.peak.toFixed(2)}${seen}.`;
     }
 
     _routeLine() {

@@ -443,8 +443,15 @@ class VisualAnswers:
                 radius=radius,
                 score=float(place.similarity),
                 peak=float(place.similarity),
-                n_views=int(place.views),
-                n_evidence=int(place.views),
+                # Zero where the count was never measured, which is what the field's
+                # default means. `views` comes from the depth path's distinct bearings;
+                # without depth it is the dataclass's 1, and a dozen frames of one object
+                # merged by `cluster_places` still said "1 view" in the results bar. The
+                # sentence and the skill payload have refused to print that number on this
+                # branch since round 77 (`_best_phrase`, `_place_metadata`); the summary
+                # the CLIENT renders went on sending it.
+                n_views=int(place.views) if located else 0,
+                n_evidence=int(place.views) if located else 0,
                 label=f"{phrase[:80]} #{index + 1}",
             )
             for index, place in enumerate(places)

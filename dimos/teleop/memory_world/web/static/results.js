@@ -292,10 +292,14 @@ export class ResultsNav {
         const cluster = k < 0 ? this.clusters[0] : this.clusters[k];
         // n_views, not n_evidence: the latter is how many pictures are shown, capped, so
         // it read 8 for every strong place while the answer above it said 66.
+        // Zero means the server never measured it -- the no-depth answer has no distinct
+        // viewing directions to count -- so the clause is left off rather than reading
+        // "0 views".
         const views = cluster.n_views ?? cluster.n_evidence;
+        const seen = views > 0 ? ` · ${views} view${views === 1 ? '' : 's'}` : '';
         ui.label.textContent = k < 0
             ? `${this.queryText} — press ▶ to visit the best`
-            : `${this.queryText} · ${cluster.peak.toFixed(2)} · ${views} view${views === 1 ? '' : 's'}`;
+            : `${this.queryText} · ${cluster.peak.toFixed(2)}${seen}`;
         if (ui.navigateBtn) ui.navigateBtn.textContent = this.route && this.route.cluster === k ? `Route ${this.route.length_m} m` : 'Navigate';
     }
 }
