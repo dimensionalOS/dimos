@@ -37,7 +37,6 @@ import math
 from typing import TYPE_CHECKING
 
 import numpy as np
-from numpy.lib.stride_tricks import sliding_window_view
 from scipy import ndimage
 
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -60,9 +59,10 @@ ROBOT_RADIUS_M = 0.35
 # The most that may ever be treated as "the robot drove between these two poses", however
 # sparsely the recording was sampled. See `bridgeable`.
 MAX_BRIDGE_M = 1.5
-# How many legs either side a leg is judged against. Long enough to average out a
-# stride, short enough that a pause somewhere else in the recording cannot reach it.
-LOCAL_WINDOW_LEGS = 21
+# How many of the moving legs nearest a leg are asked about it, and how many of those
+# must be at least half as long for it to count as driving. See `bridgeable`.
+NEARBY_MOVING_LEGS = 8
+VOUCHES_NEEDED = 3
 # Below this a leg is the robot standing still, so it says nothing about how far the
 # robot travels between samples. It decides only which legs INFORM the comparison in
 # `bridgeable`, never which are bridged.
@@ -100,88 +100,99 @@ def densify(
     return np.concatenate(pieces)
 
 
-def _median_of_other_moving(gaps: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Per leg, the median of every OTHER moving leg in the whole path, else NaN.
+def _vouched_length(gaps: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Per leg, the length `VOUCHES_NEEDED` of the moving legs nearest it agree on.
 
-    What a leg is judged against when its own window stands still from end to end. A
-    recording can hold a real step with no moving leg anywhere near it: eleven repeats
-    per pose, which a tf chain a tenth of the scan rate produces, puts the steps either
-    side of it outside any window, and judged locally every step of a real drive looked
-    like a relocalisation and the drive was refused. What such a step can still be
-    compared with is the rest of the path's driving.
+    The `VOUCHES_NEEDED`-th longest of the `NEARBY_MOVING_LEGS` moving legs nearest it in
+    time, itself excluded, and NaN when there are not that many. Twice it is how far the
+    robot may have driven in one leg.
 
-    "Other" is the window's rule again: one copy of the leg itself is removed, so a lone
-    displacement that is the only thing moving in the whole recording has nothing
-    vouching for it.
+    NEAREST IN TIME, not a window of fixed width, is what lets a recording with more than
+    one speed in it work. A window counts standing still against a leg by leaving no room
+    for what moved: eleven repeats per pose, which a tf chain a tenth of the scan rate
+    produces, puts the steps either side of a real one outside a 21-leg window, and every
+    step of a real drive was refused. Nearest-in-time reaches past the stillness to the
+    driving on either side of it, however long the stop.
+
+    SEVERAL OF THEM, rather than most of the window, is what lets a stretch of faster
+    driving through. A run of ten 0.8 m legs inside 0.3 m driving can never be more than
+    nine of the twenty legs around one of its own members, so a majority rule -- the
+    median -- read every one of them as too long and refused all ten: `plan` returned None
+    on 31.4 m of straight, driven corridor, where the same path with eleven in the run
+    routed. Three other legs of half the length is a stretch of driving; a relocalisation
+    has no such company, and neither does a pair of them.
     """
-    moving = gaps > STILL_M
-    pool = np.sort(gaps[moving])
+    moving_at = np.flatnonzero(gaps > STILL_M)
     answer = np.full(len(gaps), np.nan)
-    if len(pool) == 0:
-        return answer
-    answer[~moving] = np.median(pool)
-    if len(pool) == 1:
-        return answer  # the only moving leg is the one being judged
-    rest = len(pool) - 1
-    rank = np.searchsorted(pool, gaps[moving])  # where its own copy sits, and is dropped
-
-    def without_itself(index: int) -> NDArray[np.float64]:
-        return np.where(index < rank, pool[index], pool[index + 1])
-
-    answer[moving] = (without_itself((rest - 1) // 2) + without_itself(rest // 2)) / 2.0
-    return answer
+    if len(moving_at) < VOUCHES_NEEDED:
+        return answer  # nothing to compare against: one displacement is not a stride
+    leg = np.arange(len(gaps))
+    reach = np.arange(-NEARBY_MOVING_LEGS, NEARBY_MOVING_LEGS + 1)
+    slot = np.searchsorted(moving_at, leg)[:, None] + reach[None, :]
+    inside = (slot >= 0) & (slot < len(moving_at))
+    candidate = moving_at[np.clip(slot, 0, len(moving_at) - 1)]
+    # Out of range, and the leg itself, are put beyond any real distance rather than
+    # dropped, so every row has the same width.
+    away = np.where(
+        inside & (candidate != leg[:, None]), np.abs(candidate - leg[:, None]), len(gaps) + 1
+    )
+    nearest = np.argsort(away, axis=1, kind="stable")[:, :NEARBY_MOVING_LEGS]
+    chosen = np.take_along_axis(candidate, nearest, axis=1)
+    real = np.take_along_axis(away, nearest, axis=1) <= len(gaps)
+    longest_first = -np.sort(-np.where(real, gaps[chosen], np.nan), axis=1)
+    return np.asarray(longest_first[:, VOUCHES_NEEDED - 1])
 
 
 def bridgeable(path: NDArray[np.float64], resolution: float) -> NDArray[np.bool_]:
     """Which legs the robot drove, rather than was relocated across. One flag per leg.
 
-    Per leg, against the OTHER MOVING legs near it in time. Three things there, and every
-    one of them is a defect this function has already had:
+    A leg is a drive if `VOUCHES_NEEDED` of the moving legs NEAREST it in time are at
+    least half as long -- see `_vouched_length`, which is where the "nearest" and the
+    "several" are argued. Four things in that sentence, and every one of them is a defect
+    this function has already had:
 
-      per leg, not a statistic of the whole path.  Five global statistics were tried and
+      PER LEG, not a statistic of the whole path.  Five global statistics were tried and
         each was defeated by a recording shape the one before had not met, because a
         recording is not homogeneous: it has stretches of driving at different speeds,
         stretches of standing still, and the occasional relocalisation.
 
-      the OTHER legs, never itself.  A leg that votes on its own neighbourhood can always
-        justify itself, and near the ends of the path it is padding that hands it the
+      the OTHER legs, NEVER ITSELF.  A leg that votes on its own neighbourhood can always
+        justify itself, and near the ends of the path it was padding that handed it the
         vote: "nearest" repeats the edge leg, "mirror" reflects a leg back into its own
         window two places along, and either way a relocalisation there was bridged and a
-        wall opened. Nothing is padded with data now -- an end leg is judged against the
-        legs it really has beside it.
+        wall opened. Nothing is padded with data now, and nothing is asked about itself.
 
       only the MOVING ones.  Standing still is not driving, and a pose source slower than
         the scan stream makes most of the path stationary without the robot stopping at
         all: `replay._held_through_gaps` repeats the previous pose whenever tf has no
         sample in tolerance, so a 1 Hz tf chain against 10 Hz scans is nine exact repeats
-        per real step. Counting those, every real leg was outnumbered in its own window
-        and the corridor the robot drove walled off. A tour that parks either side of a
-        drive does the same with half a second of stillness.
+        per real step. Counting those, every real leg was outnumbered and the corridor the
+        robot drove walled off. A tour that parks either side of a drive does the same
+        with half a second of stillness.
+
+      the legs NEAREST IT, several of them, rather than most of a fixed window.  Both of
+        those cost a corridor: a window lets stillness crowd out the evidence, and a
+        majority inside one refuses a whole stretch of faster driving that is not most of
+        its own surroundings.
 
     `STILL_M` decides only which legs INFORM the comparison, never which are bridged --
     which is what makes it safe, and is the difference from the version where filtering at
-    that threshold ate a drive sampled finer than it. When no moving leg is near, the rest
-    of the path's driving answers instead: see `_median_of_other_moving`.
+    that threshold ate a drive sampled finer than it. A leg with nothing to vouch for it
+    gets one cell: below that, bridging adds no cells and cannot matter.
 
-    Seventeen recording shapes are the tests in `test_route.py`.
+    Eighteen recording shapes are the tests in `test_route.py`. Measured over 3000
+    generated recordings of drives, parks and relocalisations, this refuses a tenth as
+    many real legs as the window it replaced (74 against 744) and bridges no more
+    relocalisations (688 against 708).
     """
     if len(path) < 2:
         return np.zeros(0, dtype=bool)
     gaps = np.linalg.norm(np.diff(np.asarray(path)[:, :2], axis=0), axis=1)
-    if len(gaps) == 1:
-        return np.asarray(gaps <= max(resolution, 0.0))
-    window = min(len(gaps), LOCAL_WINDOW_LEGS) | 1  # odd, so the window is centred
-    half = window // 2
-    padded = np.pad(gaps, half, constant_values=np.nan)  # never a copy of a real leg
-    around = sliding_window_view(padded, window)[: len(gaps)]
-    others = np.delete(around, half, axis=1)  # never itself
-    moving = np.where(others > STILL_M, others, np.nan)
-    alone = np.isnan(moving).all(axis=1)
-    with np.errstate(all="ignore"):
-        nearby = np.nanmedian(np.where(alone[:, None], 0.0, moving), axis=1)
-    nearby = np.where(alone, _median_of_other_moving(gaps), nearby)
+    vouched = _vouched_length(gaps)
     allowed = np.where(
-        np.isnan(nearby), resolution, np.minimum(MAX_BRIDGE_M, np.maximum(resolution, 2.0 * nearby))
+        np.isnan(vouched),
+        resolution,
+        np.minimum(MAX_BRIDGE_M, np.maximum(resolution, 2.0 * vouched)),
     )
     return np.asarray(gaps <= allowed)
 

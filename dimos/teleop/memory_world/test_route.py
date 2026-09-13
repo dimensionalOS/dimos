@@ -185,17 +185,18 @@ def test_a_drive_outnumbered_by_stillness_is_still_a_drive() -> None:
 
 
 def test_a_jump_at_either_end_of_the_drive_is_still_a_jump() -> None:
-    """The window has to be padded at the ends, and how it is padded decides the answer.
+    """A leg at an end of the path has legs on one side only, and what fills the other
+    side decides the answer.
 
-    Padding with the edge leg ITSELF -- scipy's "nearest" -- makes a jump in the first or
-    last few legs most of its own neighbourhood, so it looks ordinary and gets bridged.
+    Filling it with the edge leg ITSELF -- scipy's "nearest" -- made a jump in the first
+    or last few legs most of its own neighbourhood, so it looked ordinary and was bridged.
     Six legs is enough: `[1.2, .05, .05, .05, .05, .05]` bridged the 1.2 m jump, took the
     wall it crosses from cost 100 to 90, and planned a 4.5 m route straight through it.
 
-    Nothing is padded with data now: an end leg is judged against the legs it actually
-    has on one side, which is what "the legs around it" can honestly mean at an end.
-    Every padding that invents a leg invents it out of the very leg being judged --
-    see the sibling test below, which "mirror" also failed.
+    Nothing is filled in now: an end leg is judged against the legs it actually has, which
+    is what "the legs near it" can honestly mean at an end. Every filling invents a leg
+    out of the very leg being judged -- see the sibling test below, which "mirror", the
+    fix for this one, also failed.
     """
     from dimos.teleop.memory_world.route import bridgeable
 
@@ -240,17 +241,47 @@ def test_a_jump_reflected_into_its_own_window_is_still_a_jump() -> None:
     )
 
 
+def test_a_stretch_of_faster_driving_is_still_driving() -> None:
+    """The eighteenth shape: a recording with two speeds in it, which is the very thing
+    "a recording is not homogeneous" was supposed to handle.
+
+    A run of ten 0.8 m legs inside 0.3 m driving can supply at most nine of the twenty
+    other legs in a 21-leg window, so it could never move the MEDIAN off its slower
+    surroundings: every leg of the run was refused, the corridor was cut at each one, and
+    `plan` returned None on 31 m of straight, driven floor. Eleven in the run -- one more
+    leg, the same driving -- routed. There is no jump anywhere in this path.
+
+    A relocalisation gets no such company: three other moving legs of half the length is
+    a stretch of driving, and a pair of relocalisations is still not three.
+    """
+    walls = np.concatenate([_wall(-1.0, 33.0, 0.40, 0.55), _wall(-1.0, 33.0, -0.55, -0.40)])
+    floor = _floor(-1, 33, -1, 1)
+
+    for run in (4, 10, 11):
+        legs = [0.30] * 40 + [0.80] * run + [0.30] * 40
+        xs = np.concatenate([[0.0], np.cumsum(legs)])
+        driven = np.asarray([[x, 0.0, BODY_Z] for x in xs])
+        body = np.asarray([[x, 0.0, BODY_Z] for x in np.arange(0, xs[-1], 0.25)])
+        planner = RoutePlanner.from_voxels(
+            np.concatenate([floor, walls, body]), driven, voxel_size=VOXEL
+        )
+        route = planner.plan((0.2, 0.0), (float(xs[-1]) - 0.2, 0.0))
+        assert route is not None, f"a run of {run} faster legs walled off the corridor"
+
+
 def test_a_drive_with_no_moving_leg_near_it_is_still_a_drive() -> None:
-    """The seventeenth shape, and the case a purely local rule cannot decide.
+    """The seventeenth shape, and what a window of fixed width cannot do.
 
     `_held_through_gaps` repeats the pose through a tf gap, and at eleven repeats per
     pose -- a 1 Hz tf chain against an 11 Hz scan stream -- the steps either side of a
-    real one fall OUTSIDE the 21-leg window. Every step of the drive was then alone in a
-    window of pure stillness, took the one-cell answer, and the corridor the robot drove
-    planned no route. One and ten repeats, where a neighbour is still in reach, worked.
+    real one fell OUTSIDE the 21-leg window that used to be the neighbourhood. Every step
+    of the drive was then alone in a window of pure stillness, took the one-cell answer,
+    and the corridor the robot drove planned no route. One and ten repeats, where a
+    neighbour was still in reach, worked, which is how the width was shown to be the whole
+    of the difference.
 
-    Alone, a leg is judged against the rest of the path's driving instead: here, ten
-    other one-metre steps.
+    The legs a leg is judged against are the moving ones NEAREST it now, so stillness
+    cannot crowd them out however long the stop: here, the other one-metre steps.
     """
     walls = np.concatenate([_wall(-1.0, 11.0, 0.40, 0.55), _wall(-1.0, 11.0, -0.55, -0.40)])
     body = np.asarray([[x + 0.5, 0.0, BODY_Z] for x in range(10)])
