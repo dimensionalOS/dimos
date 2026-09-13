@@ -47,15 +47,19 @@ available. Invalid metadata or unavailable sources fail preparation rather than
 silently selecting a different index build. Index installs intentionally allow a
 different dimOS version in the child and do not guarantee host/runtime compatibility.
 
-To validate GPU proposals without moving a robot, run from a source checkout:
+Verify GPU proposals through the existing simulated blueprint:
 
 ```bash
-uv run python -m dimos.manipulation.grasping.grasp_gen_x.demo_inference
+dimos --viewer none run xarm-grasp-graspgenx --simulation mujoco --daemon
+dimos shell
 ```
 
-This checks the actual isolated environment, loads the model, proposes grasps for
-a recorded object cloud, and verifies output and process cleanup. Missing CUDA or
-failed model initialization fails the check.
+Follow [Driving it](#driving-it) to scan the simulated scene, retrieve a detected
+object's point cloud, and call `app.GraspGenXModule.propose_grasps(cloud)`. Confirm
+that candidates are nonempty and sorted by score, poses and scores are finite,
+and the result header preserves the input frame and timestamp. Starting the
+blueprint alone loads the model but does not exercise inference. Stop the stack
+with `dimos stop` and confirm that the isolated process exits.
 
 The proposal behavior tests run separately in the runtime project, with the model
 backend mocked. From the repository root:
@@ -66,6 +70,18 @@ UV_PROJECT_ENVIRONMENT="${XDG_CACHE_HOME:-$HOME/.cache}/dimos/graspgenx-tests" \
   uv run --frozen --group tests --with-editable ../../../../.. \
   python -m pytest -c pyproject.toml --confcutdir=.
 ```
+
+Type-check the runtime in its own environment:
+
+```bash
+cd dimos/manipulation/grasping/grasp_gen_x/python
+UV_PROJECT_ENVIRONMENT="${XDG_CACHE_HOME:-$HOME/.cache}/dimos/graspgenx-tests" \
+  uv run --frozen --group lint --with-editable ../../../../.. python -m mypy
+```
+
+Root `uv run mypy` checks the host code and excludes sibling `python/` projects.
+The runtime check uses the installed GraspGenX source for type information,
+including its annotations despite the missing upstream `py.typed` marker.
 
 The host test suite covers the public contract and excludes nested Python projects.
 Run the runtime suite manually on Linux x86_64 with Python 3.12; it needs no GPU

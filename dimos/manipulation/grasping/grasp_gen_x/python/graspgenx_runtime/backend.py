@@ -53,12 +53,12 @@ if not _gen_dir.is_dir() or not _dis_dir.is_dir():
 os.environ["GRASPGENX_CHECKPOINT_DIR"] = str(_snapshot_root)
 os.environ["GRASPGENX_GRIPPER_CFG_DIR"] = str(_snapshot_root)
 
-from graspgenx.grasp_server import (  # type: ignore[import-not-found]
+from graspgenx.grasp_server import (
     SWEEP_VOLUME_ONLY_BACKBONES,
     GraspGenXSampler,
 )
-from graspgenx.utils.checkpoint_io import load_model_cfg  # type: ignore[import-not-found]
-from graspgenx.x_grippers import make_sweep_volume_gripper_info  # type: ignore[import-not-found]
+from graspgenx.utils.checkpoint_io import load_model_cfg
+from graspgenx.x_grippers import make_sweep_volume_gripper_info
 
 _GRIPPER_TYPES = {
     "parallel_2f": 0,
@@ -71,7 +71,7 @@ class GraspGenXRuntime:
     """Loaded GraspGenX sampler and exact tensor conversion boundary."""
 
     def __init__(self, config: GraspGenXConfig) -> None:
-        model_config = load_model_cfg(_gen_dir, _dis_dir, gen_pth=None, dis_pth=None)
+        model_config = load_model_cfg(str(_gen_dir), str(_dis_dir), gen_pth=None, dis_pth=None)
         for component in ("diffusion", "discriminator"):
             backbone = getattr(model_config, component).gripper_backbone
             if backbone not in SWEEP_VOLUME_ONLY_BACKBONES:

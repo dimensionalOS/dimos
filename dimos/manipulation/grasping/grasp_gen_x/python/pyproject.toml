@@ -5,11 +5,26 @@ requires-python = ">=3.12,<3.13"
 dependencies = ["graspgenx", "matplotlib>=3.7.1"]
 
 [dependency-groups]
+lint = ["mypy==1.19.0"]
 tests = ["pytest==8.3.5", "pytest-mock==3.15.0", "pytest-timeout==2.4.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["graspgenx_runtime"]
 addopts = "--confcutdir=. --import-mode=importlib --timeout=60 -ra"
+
+[tool.mypy]
+files = ["graspgenx_runtime"]
+python_version = "3.12"
+strict = true
+explicit_package_bases = true
+exclude = "test_.*[.]py$"
+# Check this project's code, while using imported dependencies for type information.
+follow_imports = "silent"
+
+[[tool.mypy.overrides]]
+module = ["dimos", "dimos.*", "graspgenx", "graspgenx.*"]
+# Both packages ship annotated source without a py.typed marker.
+follow_untyped_imports = true
 
 [tool.uv]
 default-groups = []

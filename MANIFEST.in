@@ -15,7 +15,6 @@ include dimos/manipulation/grasping/grasp_gen_x/python/pyproject.toml
 include dimos/manipulation/grasping/grasp_gen_x/python/uv.lock
 recursive-include dimos/manipulation/grasping/grasp_gen_x/python/graspgenx_runtime *.py
 prune dimos/manipulation/grasping/grasp_gen_x/python/.venv
-recursive-exclude dimos/manipulation/grasping/grasp_gen_x/fixtures *
 
 # --- Exclusions (must come after the includes above so they win) ---
 # Test fixtures must never ship.

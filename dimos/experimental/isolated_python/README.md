@@ -114,3 +114,12 @@ uv run python -m dimos.experimental.isolated_python.example.run
 
 The example demonstrates streams, RPCs, skills, an injected module reference,
 restart behavior, and automatic shutdown.
+
+## Type checking
+
+Root `uv run mypy` excludes sibling `python/` projects, whose dependencies belong
+to their own environments. Give each runtime project its own mypy configuration
+and lint dependency group, then run `uv run --group lint --with-editable <checkout>
+python -m mypy` from that project. Use the same external `UV_PROJECT_ENVIRONMENT`
+as other runtime development commands. Check the host contract from the root
+project; do not suppress missing runtime dependencies in the host environment.

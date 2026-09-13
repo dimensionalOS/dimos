@@ -60,7 +60,6 @@ exclude = [
 # Trims data the recursive globs above would otherwise pull in: test fixtures
 # and the native (C++/nix) build tree, which is built separately.
 "dimos" = [
-    "manipulation/grasping/grasp_gen_x/fixtures/**",
     "manipulation/grasping/grasp_gen_x/python/graspgenx_runtime/test_*.py",
     "agents/fixtures/**",
     "agents/mcp/fixtures/**",
@@ -623,7 +622,8 @@ strict = true
 warn_unused_ignores = false
 untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
+# IsolatedPythonModule owns sibling python/ projects with separate environments.
+exclude = "^dimos/models/Detic(/|$)|(^|/)python/|.*/test_.|.*/tool_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [
