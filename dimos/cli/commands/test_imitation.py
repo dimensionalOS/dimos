@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+import json
+
 import pytest
 from typer.testing import CliRunner
 
@@ -98,14 +100,48 @@ def test_prepare_rejects_existing_output(recording, tmp_path):
     assert "already exists" in result.output
 
 
-def test_inspect_reads_recording_schema(recording, mocker):
+@pytest.mark.parametrize("flags", [["--json"], ["--json", "--verbose"]])
+def test_inspect_reads_recording_schema(recording, mocker, flags):
     inspect = mocker.patch(
-        "dimos.cli.commands.imitation.inspect_recording", return_value={"episodes": 2}
+        "dimos.cli.commands.imitation.inspect_recording",
+        return_value={"episodes": 2, "rate": 30.000210029462686},
     )
-    result = CliRunner().invoke(imitation_app, ["inspect", str(recording)])
+    result = CliRunner().invoke(imitation_app, ["inspect", str(recording), *flags])
     assert result.exit_code == 0, result.output
-    assert '"episodes": 2' in result.output
+    assert json.loads(result.output) == {"episodes": 2, "rate": 30.000210029462686}
     assert inspect.call_args.args == (recording / "recording.mcap",)
+
+
+@pytest.mark.parametrize("flags", [[], ["--verbose"]])
+def test_inspect_defaults_to_human_output(recording, mocker, flags):
+    mocker.patch(
+        "dimos.cli.commands.imitation.inspect_recording",
+        return_value={
+            "format": "recording",
+            "path": str(recording / "recording.mcap"),
+            "streams": {"wrist_image": 1953},
+            "status_stream": None,
+            "episodes": 0,
+            "saved_episodes": 0,
+            "discarded_episodes": 0,
+            "incomplete_episodes": [],
+        },
+    )
+    result = CliRunner().invoke(imitation_app, ["inspect", str(recording), *flags])
+    assert result.exit_code == 0, result.output
+    assert "No episodes" in result.output
+    assert "1,953" in result.output
+    assert "Not assessed" in result.output
+
+
+@pytest.mark.parametrize("flags", [[], ["--json"], ["--verbose"]])
+def test_inspect_preserves_failure_exit_code(recording, mocker, flags):
+    mocker.patch(
+        "dimos.cli.commands.imitation.inspect_recording", side_effect=ValueError("bad payload")
+    )
+    result = CliRunner().invoke(imitation_app, ["inspect", str(recording), *flags])
+    assert result.exit_code == 1
+    assert "Inspection failed: bad payload" in result.output
 
 
 def test_train_forwards_arguments_and_exit_code(mocker):

@@ -19,7 +19,7 @@ boundaries. Support the arm before stopping the runtime.
 | --- | --- | --- |
 | Launch collection | `dimos run openyam-teach-collection --daemon` with module options | Running robot, camera, recorder, and episode controller |
 | Record takes | `dimos imitation collect` | Saved or discarded episodes in a recording directory |
-| Inspect recording | `dimos imitation inspect recordings/session-001` | JSON recording summary |
+| Inspect recording | `dimos imitation inspect recordings/session-001` | Readable recording and quality summary |
 | Prepare data | `dimos imitation prepare recordings/session-001 --output datasets/session-001` | LeRobot dataset containing saved episodes |
 | Train | `dimos imitation train` with LeRobot arguments | Training outputs and checkpoints |
 | Launch rollout | `dimos run openyam-lerobot-rollout --daemon` with module options | Policy stack ready for operator controls |
@@ -156,7 +156,24 @@ dimos imitation prepare recordings/session-001 --output datasets/session-001
 dimos imitation inspect datasets/session-001
 ```
 
-`inspect` prints a JSON summary for either a recording or a prepared dataset.
+`inspect` prints a human-readable summary for either a recording or a prepared
+dataset. Recordings show episode totals, stream message counts, and quality
+metrics with units. Failed and incomplete episodes are always listed. Quality
+checks describe the data, not whether the robot completed the physical task.
+
+Use `--verbose` to see every assessed episode, or `--json` for the complete
+machine-readable result with unrounded values:
+
+```bash
+dimos imitation inspect recordings/session-001 --verbose
+dimos imitation inspect recordings/session-001 --json
+```
+
+Dataset summaries show frame counts, rates, episode lengths, feature shapes and
+types, and statistics availability. Redirecting output keeps the readable
+format; use `--json` explicitly for scripts. `--json` takes precedence over
+`--verbose` when both are supplied.
+
 Preparation requires a new output directory. Without `--output`, it writes to
 `~/.local/state/dimos/datasets/<recording-directory-name>` by default.
 
