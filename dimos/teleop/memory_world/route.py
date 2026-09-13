@@ -59,6 +59,9 @@ ROBOT_RADIUS_M = 0.35
 # The most that may ever be treated as "the robot drove between these two poses", however
 # sparsely the recording was sampled. See `bridgeable_gap`.
 MAX_BRIDGE_M = 1.5
+# Below this, two consecutive poses are the robot standing still rather than driving.
+# See `bridgeable_gap` for why it is an absolute number and why it is not the cell size.
+STILL_M = 0.01
 # Cost falls from just under lethal at the robot's radius to nothing here.
 INFLATION_M = 0.6
 # How far a start or goal may be moved to reach a passable cell (the goal is
@@ -94,34 +97,43 @@ def densify(
 def bridgeable_gap(path: NDArray[np.float64]) -> float:
     """How far apart two poses may be and still have the robot between them.
 
-    From the recording's own sampling. The statistic is the 90th percentile of the leg
-    lengths, doubled and capped -- NOT the median, and not the median over legs above
-    some floor. Both of those were tried and both were wrong, in opposite directions, on
-    real recording shapes:
+    Two thresholds, doing two different jobs, because one cannot do both:
 
-      median, all legs            a five-second pause fills the list with millimetre
-                                  legs (real odometry never repeats a pose exactly) and
-                                  drags it to 0.003 m, so nothing is bridged and the
-                                  robot's own body between the drive samples reads as
-                                  walls -- a straight corridor plans no route at all.
-      median, legs over one cell  on a drive sampled every 5 cm with a 10 cm cell, that
-                                  filter removes EVERY drive leg and leaves only the
-                                  jump, so the jump becomes the median and gets bridged:
-                                  the wall it crosses drops from cost 100 to 90 and the
-                                  route goes straight through it.
+      STILL_M, absolute    below this the robot was not driving at all. It has to be far
+                           below any real drive leg and far above a stationary reading's
+                           jitter, and a centimetre is both. This is not the cell size:
+                           filtering at the cell ate the 5 cm legs of a finely sampled
+                           drive and left only the jump, which then set the scale and got
+                           bridged straight through a wall.
+      the median, relative what the driving of THIS recording looks like. A jump is an
+                           outlier against it. No absolute number can do this job: a 1.2 m
+                           leg is a jump on a 5 cm drive and an ordinary step on a 1 m one.
 
-    The 90th percentile needs no filter, because it is already above the small tail a
-    pause makes and below the large one a relocalisation makes. Measured on all four
-    known shapes -- coarse drive, coarse drive with a pause, fine drive with a 1.2 m
-    jump, fine drive with a 2.8 m jump -- it is the only one of the three that bridges
-    every drive leg and no jump.
+    Filtering first and taking the median second is what makes both hold, and both halves
+    were learnt from a defect:
+
+      no filter, median      a five-second pause fills the list with millimetre legs and
+                             drags it to 0.003 m, so nothing is bridged and the robot's
+                             own body between the samples reads as walls.
+      no filter, 90th pct    survives a pause -- until the stationary samples pass 90% of
+                             the recording. `replay._held_through_gaps` REPEATS the
+                             previous pose exactly through a tf gap, so a tf stream that
+                             stops partway gets there with no unusual driving at all, and
+                             so does a tour that parks at three places for 45 s.
+      filter at the cell     see STILL_M above.
+
+    Measured against all six known shapes: coarse drive, coarse drive with a pause, fine
+    drive with a 1.2 m jump, fine drive with a 2.8 m jump, a tf gap that makes 91% of the
+    legs exact repeats, and a tour parked for 93% of its samples. This is the only rule
+    of the four that bridges every drive leg and no jump on all six.
     """
     if len(path) < 2:
         return 0.0
     gaps = np.linalg.norm(np.diff(np.asarray(path)[:, :2], axis=0), axis=1)
-    if not len(gaps):
-        return 0.0
-    return float(min(MAX_BRIDGE_M, 2.0 * float(np.percentile(gaps, 90))))
+    driving = gaps[gaps > STILL_M]
+    if not len(driving):
+        return 0.0  # it never drove; there is nothing to bridge
+    return float(min(MAX_BRIDGE_M, 2.0 * float(np.median(driving))))
 
 
 @dataclass

@@ -1569,3 +1569,55 @@ def test_terminate_stops_the_work_and_not_just_the_launcher() -> None:
 
     assert took < 5.0, f"the stop waited {took:.1f}s for work it was supposed to end"
     assert job.status()["embedding"] != "running", "the job still reports itself running"
+
+
+def test_a_finished_job_does_not_kill_its_successor() -> None:
+    """The group id has to belong to the run that is cleaning up, not to whichever run
+    the instance field currently names.
+
+    `_run` publishes "done" before it reaches its cleanup, so a second job can start in
+    that window -- and the cleanup read `self._pgid`, which by then was B's. A's finally
+    then signalled B's process group: B died with -15 and never ran its adoption
+    callback, so the embeddings it had just written were never picked up.
+
+    The same ownership mistake `_run_id` was added for, one field along. `process` was
+    already held as a local for exactly this reason.
+    """
+    import threading
+
+    from dimos.teleop.memory_world.embed import EmbeddingJob
+
+    b_running = threading.Event()
+    b_adopted = threading.Event()
+    outcomes: list[str] = []
+
+    job = EmbeddingJob(on_finished=lambda j: outcomes.append(j.state))
+    real_set = job._set
+
+    def hand_over(state: str, progress: str) -> None:
+        real_set(state, progress)
+        if state == "done" and not outcomes:
+            # A has published "done" and has not reached its cleanup: B's window. A is
+            # HELD here until B's subprocess actually exists, so A always walks into its
+            # cleanup with B's group live -- otherwise the field still holds A's own id
+            # and the bug cannot show.
+            a_pgid = job._pgid
+            job._set = real_set  # type: ignore[method-assign]
+            job.start(["sh", "-c", "sleep 1"], "", adopt=lambda: b_adopted.set())
+            for _ in range(500):
+                if job._pgid is not None and job._pgid != a_pgid:
+                    b_running.set()
+                    return
+                time.sleep(0.01)
+            raise AssertionError("B never spawned")
+
+    job._set = hand_over  # type: ignore[method-assign]
+    assert job.start(["true"], "", adopt=lambda: None)
+
+    # B runs `sleep 1` and then adopts. If A's cleanup signalled B's group, B dies with
+    # -15 instead and its adoption never happens.
+    assert b_running.wait(10), "B never spawned"
+    assert b_adopted.wait(10), (
+        f"the successor was killed by the finished job's cleanup; outcomes: {outcomes}"
+    )
+    assert job.status()["embedding"] != "failed", job.status()

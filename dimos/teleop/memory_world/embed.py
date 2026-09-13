@@ -147,14 +147,20 @@ class EmbeddingJob:
         with self._lock:
             self._terminated = True
             pgid = self._pgid
-        if pgid is None:
-            return
+        if pgid is not None:
+            self._stop_group(pgid)
+
+    @staticmethod
+    def _stop_group(pgid: int) -> None:
+        """TERM the group, give it a moment, then KILL what is left.
+
+        The escalation belongs here, not only in `_run`'s finally. The read loop blocks on
+        a pipe every member of the group holds open, so a process that ignores the TERM
+        never lets that thread reach its finally at all: measured, a child with SIGTERM
+        set to SIG_IGN was still alive and the job still reporting "running" twelve
+        seconds after a terminate() that was supposed to end it.
+        """
         _signal_group(pgid, signal.SIGTERM)
-        # The escalation belongs HERE, not only in `_run`'s finally. The read loop blocks
-        # on a pipe every member of the group holds open, so a process that ignores the
-        # TERM never lets that thread reach its finally at all: measured, a child with
-        # SIGTERM set to SIG_IGN was still alive and the job still reporting "running"
-        # twelve seconds after a terminate() that was supposed to end it.
         deadline = time.monotonic() + TERMINATE_GRACE_S
         while time.monotonic() < deadline:
             if not _group_alive(pgid):
@@ -168,6 +174,7 @@ class EmbeddingJob:
         last = ""
         config_path: str | None = None
         process: subprocess.Popen[bytes] | None = None
+        pgid: int | None = None
         try:
             if config_text is not None:
                 with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as handle:
@@ -190,12 +197,23 @@ class EmbeddingJob:
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
             )
+            # This run's own group id, held as a LOCAL as well as published. `process` is
+            # already kept locally for exactly this reason: the instance field belongs to
+            # whichever run is CURRENT, and by the time the cleanup below runs that can be
+            # a later one. Reading it there killed the successor -- B started in the window
+            # after A published "done", and A's finally then signalled B's group: B died
+            # with -15 and never ran the adoption its embeddings needed. The same ownership
+            # mistake the `_run_id` guard was added for, one field along.
+            pgid = process.pid
             with self._lock:
                 self._process = process
-                # Its own group, captured now: see `_signal_group`.
-                self._pgid = process.pid
+                self._pgid = pgid
                 if self._terminated:  # stop() came while the process was starting
-                    process.terminate()
+                    # Group-wide and escalating, like `terminate()`. A stop landing in
+                    # this window used to send a bare TERM to the immediate child and
+                    # nothing else, so one that ignores it stayed alive and the job went
+                    # on reporting "running".
+                    self._stop_group(pgid)
             assert process.stdout is not None
             # Progress bars redraw with a carriage return, so split on both. os.read
             # returns what is there instead of waiting to fill a buffer.
@@ -234,7 +252,7 @@ class EmbeddingJob:
                 if process.stdout is not None:
                     with contextlib.suppress(OSError):
                         process.stdout.close()
-                pgid = self._pgid
+                # `pgid`, the local: THIS run's group, never whichever run is current.
                 if pgid is not None:
                     _signal_group(pgid, signal.SIGTERM)
                 with contextlib.suppress(subprocess.TimeoutExpired, OSError):

@@ -84,7 +84,13 @@ export class InputAdapter {
                 // pair produced `scale_delta` with a factor of 2 -- the same phantom the
                 // vanish handling below prevents, on the disappearance mode that leaves
                 // the input source in place.
+                // `wasPinching` too. It is the only thing that picks the 40 mm RELEASE
+                // threshold over the 25 mm press one, so leaving it set meant the next
+                // hand-tracked frame judged a hand that had not pinched by the looser
+                // rule: two hands held 32 mm open -- a gap the adapter itself calls not
+                // a pinch from cold -- read as pinching and scaled the world by 2.
                 this._hand[hand].pinching = false;
+                this._hand[hand].wasPinching = false;
                 this._hand[hand].pos = null;
                 this._scaleAnchor = null;
             }
@@ -188,7 +194,17 @@ export class InputAdapter {
             : null;
         if (triggerVal > TRIGGER_PRESS) {
             // Held — emit an aim each frame.
-            if (!rayPose) return;
+            if (!rayPose) {
+                // Aiming with no pose: there is nothing to aim AT any more, and the arm
+                // must not survive it. Left armed, releasing the trigger while tracking
+                // was still lost committed the target aimed BEFORE it -- the controller
+                // is still listed, so the vanish guard never fires for this one.
+                if (this._teleportArmed) {
+                    this._teleportArmed = false;
+                    this.onGesture({ type: 'teleport_cancel' });
+                }
+                return;
+            }
             const p = rayPose.transform.position;
             const o = rayPose.transform.orientation;
             // Controller forward is -Z in its local frame; rotate (0,0,-1) by q.
@@ -212,12 +228,23 @@ export class InputAdapter {
         const wrist = joints.get('wrist');
         const thumb = joints.get('thumb-tip');
         const index = joints.get('index-finger-tip');
-        if (!wrist || !thumb || !index) return;
+        // A hand whose joints stop being tracked is not still pinching where it last
+        // was, and the controller branch already says so. Returning early kept both,
+        // so two pinching hands with the right one's joints lost and the left one
+        // moving went on scaling from a stale pair: `scale_delta` with a factor of 2.
+        const lost = () => {
+            const st = this._hand[hand];
+            if (st.pinching) this._scaleAnchor = null;
+            st.pinching = false;
+            st.wasPinching = false;
+            st.pos = null;
+        };
+        if (!wrist || !thumb || !index) return lost();
 
         const wristPose = frame.getJointPose(wrist, xrRefSpace);
         const thumbPose = frame.getJointPose(thumb, xrRefSpace);
         const indexPose = frame.getJointPose(index, xrRefSpace);
-        if (!wristPose || !thumbPose || !indexPose) return;
+        if (!wristPose || !thumbPose || !indexPose) return lost();
 
         const tx = thumbPose.transform.position;
         const ix = indexPose.transform.position;

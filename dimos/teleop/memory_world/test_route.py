@@ -145,6 +145,36 @@ def test_the_robots_own_body_between_two_samples_is_not_a_wall() -> None:
     assert route.length_m < 12.0, f"routed around its own body: {route.length_m}"
 
 
+def test_a_path_that_mostly_stands_still_is_still_a_drive() -> None:
+    """`replay._held_through_gaps` REPEATS the previous pose exactly through a tf gap.
+
+    So the path handed to the planner is not the "real odometry never repeats a pose"
+    the pause fix assumed: a tf stream that stops partway through leaves a tail of
+    zero-length legs, and a tour that parks at three places for 45 s each is 93 per cent
+    stationary with no tf defect at all. A 90th percentile falls into that noise the
+    moment the stationary samples pass 90 per cent -- and then nothing is bridged, the
+    robot's own body reads as walls, and the corridor it drove down plans no route.
+
+    The fourth shape, and the one that took two wrong statistics to find.
+    """
+    walls = np.concatenate([_wall(-1.0, 11.0, 0.40, 0.55), _wall(-1.0, 11.0, -0.55, -0.40)])
+    body = np.asarray([[x + 0.5, 0.0, BODY_Z] for x in range(10)])
+    voxels = np.concatenate([_floor(-1, 11, -1, 1), walls, body])
+    driven = [[float(x), 0.0, BODY_Z] for x in range(11)]
+
+    shapes = {
+        # A tf gap: the pose is held, so the legs are exactly zero.
+        "91% exact repeats": driven + [[10.0, 0.0, BODY_Z]] * 100,
+        # Parked, with a millimetre of jitter, which is what a real stop looks like.
+        "93% parked": driven + [[10.0 + 0.001 * ((i % 3) - 1), 0.0, BODY_Z] for i in range(140)],
+    }
+    for label, path in shapes.items():
+        planner = RoutePlanner.from_voxels(voxels, np.asarray(path), voxel_size=VOXEL)
+        route = planner.plan((0.2, 0.0), (9.5, 0.0))
+        assert route is not None, f"{label}: standing still walled off the corridor it drove"
+        assert route.length_m < 12.0, f"{label}: routed around its own body ({route.length_m})"
+
+
 def test_a_finely_sampled_drive_still_does_not_bridge_a_jump() -> None:
     """The third shape, and the one that broke the second fix for the second.
 

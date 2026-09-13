@@ -159,11 +159,25 @@ class WorldCache:
                 z = found[:, 2]
                 low = self.config.map_z_min if self.config.map_z_min is not None else -np.inf
                 high = self.config.map_z_max if self.config.map_z_max is not None else np.inf
-                keep = (z >= low) & (z <= high)
+                # Finite on EVERY axis, not just inside the height band on z. The height
+                # test alone let a NaN or an infinity through in x or y -- and the
+                # `global_map` source is a raw PointCloud2 written by somebody else's
+                # registration pipeline, which is exactly where a few degenerate points
+                # come from. One of them made `_cloud_header`'s min/max NaN, which every
+                # viewer then received as the world's bounds, and `np.histogram2d` raised
+                # `supplied range of [nan, nan] is not finite` -- after `_cached_cloud`
+                # had already been assigned, so every later build failed identically and
+                # the recording was permanently unviewable. The cloud itself was fine.
+                finite = np.isfinite(found).all(axis=1)
+                keep = finite & (z >= low) & (z <= high)
+                if not finite.all():
+                    logger.warning(
+                        "dropped %d point(s) with a non-finite coordinate", int((~finite).sum())
+                    )
                 logger.info(
                     "cloud z spans %.2f..%.2f; keeping %d of %d voxels",
-                    float(z.min()),
-                    float(z.max()),
+                    float(z[finite].min()) if finite.any() else float("nan"),
+                    float(z[finite].max()) if finite.any() else float("nan"),
                     int(keep.sum()),
                     len(z),
                 )

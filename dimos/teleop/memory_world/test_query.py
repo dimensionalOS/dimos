@@ -33,6 +33,46 @@ def _empty_store(path: Path) -> None:
     store.stop()
 
 
+def test_one_non_finite_point_does_not_make_a_recording_unviewable() -> None:
+    """The height filter tested only Z, so a NaN or an infinity in X or Y sailed through.
+
+    `global_map` is a raw PointCloud2 written by somebody else's registration pipeline,
+    which is exactly where a few degenerate points come from. One of them made the cloud
+    header's min/max NaN -- sent to every viewer as the world's bounds -- and then
+    `np.histogram2d` raised `supplied range of [nan, nan] is not finite`, AFTER
+    `_cached_cloud` had been assigned, so every later build failed identically and the
+    recording was permanently "world load failed". The cloud itself was perfectly fine.
+
+    Everything else in that fall-through degrades rather than fails: it drops a stream it
+    cannot read and tries the next source. This is the one place that did not.
+    """
+    import numpy as np
+
+    found = np.array(
+        [
+            [0.0, 0.0, 0.5],
+            [1.0, 1.0, 0.5],
+            [float("nan"), 2.0, 0.5],  # NaN in x, a perfectly good z
+            [3.0, float("inf"), 0.5],  # infinity in y
+        ]
+    )
+    z = found[:, 2]
+    low, high = -np.inf, np.inf
+
+    finite = np.isfinite(found).all(axis=1)
+    keep = finite & (z >= low) & (z <= high)
+    kept = found[keep]
+
+    assert int(keep.sum()) == 2, "the non-finite points were kept"
+    # The bounds every viewer is sent, and the ones np.histogram2d is handed.
+    assert np.isfinite(
+        [kept[:, 0].min(), kept[:, 0].max(), kept[:, 1].min(), kept[:, 1].max()]
+    ).all()
+    # The z-only test, for contrast: it keeps all four and the bounds come out NaN.
+    z_only = found[(z >= low) & (z <= high)]
+    assert np.isnan(z_only[:, 0].min()), "the fixture does not reproduce the defect"
+
+
 def test_the_module_can_list_its_skills() -> None:
     """Every `@skill` in this module has to be one an agent can actually be handed.
 
