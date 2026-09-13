@@ -15,6 +15,7 @@
 """Attached operator controls and offline dataset preparation."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 
@@ -29,6 +30,7 @@ from dimos.imitation.dataprep.core import OutputConfig
 from dimos.imitation.dataprep.lerobot import run_lerobot_dataprep
 from dimos.imitation.tui import CollectionApp, CollectionSession, RolloutApp, RolloutSession
 from dimos.porcelain.dimos import Dimos
+from dimos.utils.cache import cache_usage_guard
 
 imitation_app = typer.Typer(help="Operate running collection/policy modules and prepare datasets")
 
@@ -114,6 +116,54 @@ def inspect(
         typer.echo(json.dumps(info, indent=2, default=str))
     else:
         print_inspection(info, console=Console(highlight=False), verbose=verbose)
+
+
+@imitation_app.command()
+def visualize(
+    path: Path = typer.Argument(..., help="Local prepared LeRobot dataset directory"),
+    episode: int = typer.Option(0, "--episode", min=0, help="Zero-based episode index"),
+) -> None:
+    """View camera images, joint states, and actions in the local Rerun viewer."""
+    dataset = path.expanduser().resolve()
+    if not dataset.is_dir():
+        raise typer.BadParameter(f"Dataset directory does not exist: {dataset}")
+    if (dataset / "schema.json").is_file():
+        raise typer.BadParameter("This is a recording; run dimos imitation prepare first")
+    if not (dataset / "meta" / "info.json").is_file():
+        raise typer.BadParameter(
+            f"Not a prepared LeRobot dataset: missing {dataset / 'meta/info.json'}"
+        )
+
+    project = DIMOS_PROJECT_ROOT / "dimos" / "imitation" / "policy" / "lerobot" / "python"
+    command = [
+        "uv",
+        "run",
+        "--project",
+        str(project),
+        "--frozen",
+        "lerobot-dataset-viz",
+        "--root",
+        str(dataset),
+        "--repo-id",
+        "local/dataset",
+        "--episode-index",
+        str(episode),
+        "--num-workers",
+        "0",
+        "--mode",
+        "local",
+    ]
+    env = dict(os.environ)
+    env.pop("VIRTUAL_ENV", None)
+    env["HF_HUB_OFFLINE"] = "1"
+    try:
+        with cache_usage_guard():
+            result = subprocess.run(command, env=env, check=False)
+    except OSError as exc:
+        typer.echo(f"Visualization failed to launch uv: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if result.returncode:
+        raise typer.Exit(result.returncode)
 
 
 @imitation_app.command(
