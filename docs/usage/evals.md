@@ -36,11 +36,11 @@ Every runner invocation writes one `~/.local/state/dimos/evals/run-*/` directory
 To generate deterministic image questions from recordings, see
 [Visual Question Answering](/docs/usage/vqa.md).
 
-## Baseline Bash versus dimcode + DimOS
+## Baseline Bash versus dimcode + dimOS
 
 For the complete-stack comparison, use `PiAdapter` with a sandbox against `DimcodeAdapter`
 with the **same model**. The primary pair is Astra with Bash versus Astra in
-dimcode with DimOS. This measures the combined product/robotics-stack effect;
+dimcode with dimOS. This measures the combined product/robotics-stack effect;
 it does not isolate the harness contribution.
 
 ```bash skip
@@ -57,7 +57,7 @@ dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.dimcode \
 `PiAdapter` uses Pi's stock loop, provider support, tracing, limits and cleanup.
 The allowlist exposes only Pi's Bash and grep tools. Linux bubblewrap isolates their filesystem,
 processes, environment and network. The shell can read selected observations in
-`/input` and write `/workspace`; host homes, DimOS source, virtual environments,
+`/input` and write `/workspace`; host homes, dimOS source, virtual environments,
 credentials, MCP, and host services are unavailable. The ordinary system tools
 under `/usr` are read-only, with `/usr/local` hidden. Bash, grep, coreutils and
 system Python remain available. Record the host system package versions when
@@ -68,17 +68,17 @@ as lossless PNG and primitive observations as JSON, with timestamps and hashes.
 Selected PNGs are also attached to its initial model message because the allowed
 tools do not read images. No `agent_encode` summaries, labels, semantic tags or
 original database are exported. Dimcode receives the same selected observations
-through the DimOS store and retains its production tools. Representation and
+through the dimOS store and retains its production tools. Representation and
 image-delivery differences are part of this stack comparison and must be reported.
 
 The sandbox supports Bash and grep (including either alone or neither), and rejects
 other tools, skills, modules and MCP endpoints. Missing or
 unsupported isolation fails preflight; there is no unrestricted fallback. This
 adapter currently supports recordings only. Live tasks need a separately bounded
-vendor SDK/robot connection available to the baseline, without DimOS. A blocked
+vendor SDK/robot connection available to the baseline, without dimOS. A blocked
 robot interface is an unsupported case, not a baseline failure.
 
-The primary benchmark uses only these two Pi-based adapters. Using the DimOS
+The primary benchmark uses only these two Pi-based adapters. Using the dimOS
 CLI in the baseline violates the experiment's access policy.
 Dimcode's current adapter still needs grader and unrelated-data isolation before
 publication runs. Neither arm may receive task-specific solutions or hidden truth.
@@ -87,7 +87,7 @@ publication runs. Neither arm may receive task-specific solutions or hidden trut
 
 Use the same model, reasoning setting, output cap, case selection and timeout
 for each harness. Pi and dimcode use Pi's provider SDKs and built-in model
-registry; model capabilities and prices are not redefined by DimOS. Pin the
+registry; model capabilities and prices are not redefined by dimOS. Pin the
 same Pi version in both installations. The integration uses Pi 0.85.1 and
 dimcode's local gateway protocol (`0.1.0-next.2` / `0.1.0-next.3`).
 `DimcodeAdapter` extends `PiAdapter`, overriding gateway startup, session
@@ -136,7 +136,7 @@ explicit allowlists; single-call agents accept only an empty list or defaults.
 Adapters must enforce selection or reject it, never silently ignore it.
 
 Tool selection is independent of filesystem and network access. `--allow bash`
-still permits any program the shell can reach. For the no-DimOS baseline, also
+still permits any program the shell can reach. For the no-dimOS baseline, also
 use `--set sandbox=true`; this currently supports only Pi with recorded inputs.
 The sandbox is a composed isolation helper, not another agent subclass.
 
