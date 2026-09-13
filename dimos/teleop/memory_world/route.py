@@ -37,6 +37,7 @@ import math
 from typing import TYPE_CHECKING
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 from scipy import ndimage
 
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -62,6 +63,10 @@ MAX_BRIDGE_M = 1.5
 # How many legs either side a leg is judged against. Long enough to average out a
 # stride, short enough that a pause somewhere else in the recording cannot reach it.
 LOCAL_WINDOW_LEGS = 21
+# Below this a leg is the robot standing still, so it says nothing about how far the
+# robot travels between samples. It decides only which legs INFORM the comparison in
+# `bridgeable`, never which are bridged.
+STILL_M = 0.01
 # Cost falls from just under lethal at the robot's radius to nothing here.
 INFLATION_M = 0.6
 # How far a start or goal may be moved to reach a passable cell (the goal is
@@ -98,52 +103,51 @@ def densify(
 def bridgeable(path: NDArray[np.float64], resolution: float) -> NDArray[np.bool_]:
     """Which legs the robot drove, rather than was relocated across. One flag per leg.
 
-    Per leg, against its own NEIGHBOURS in time -- not against any statistic of the whole
-    recording. That is the whole lesson of this function: four global statistics were
-    tried over three rounds and each was defeated by a real recording shape the one before
-    had not met, because a recording is not homogeneous. It has stretches of driving at
-    different speeds, stretches of standing still, and the occasional relocalisation, and
-    no single number describes all of them at once:
+    Per leg, against the OTHER MOVING legs near it in time. Three things there, and every
+    one of them is a defect this function has already had:
 
-      median of all legs        dies on a pause; millimetre legs become most of the count
-      90th percentile           dies once standing still passes 90% of the count
-      median of legs over 1 cm  dies on a drive sampled every 5 mm: the filter removes
-                                every driving leg and the JUMP becomes the median
-      median of legs over a cell    the same, one scale up, at 5 cm
-      distance-weighted median  dies on a LONG stop: 9000 jitter samples of a millimetre
-                                accumulate 9 m, which outweighs a 10 m drive
+      per leg, not a statistic of the whole path.  Five global statistics were tried and
+        each was defeated by a recording shape the one before had not met, because a
+        recording is not homogeneous: it has stretches of driving at different speeds,
+        stretches of standing still, and the occasional relocalisation.
 
-    A jump, though, is always unlike the legs immediately around it, whatever the rest of
-    the recording is doing. So the test is local: a rolling median over a window of legs,
-    and a leg is a drive if it is no more than twice that. Floored at one cell, because
-    below that bridging adds no cells at all and cannot matter; capped at MAX_BRIDGE_M,
-    because nothing should ever be called a drive across more than that.
+      the OTHER legs, never itself.  A leg that votes on its own neighbourhood can always
+        justify itself, and at the ends of the path -- where the window must be padded --
+        it does exactly that: a relocalisation on the first or last leg supplied half its
+        own window and was bridged every time, opening a wall.
 
-    Measured against all eight known shapes, which are the tests in `test_route.py`.
+      only the MOVING ones.  Standing still is not driving, and a pose source slower than
+        the scan stream makes most of the path stationary without the robot stopping at
+        all: `replay._held_through_gaps` repeats the previous pose whenever tf has no
+        sample in tolerance, so a 1 Hz tf chain against 10 Hz scans is nine exact repeats
+        per real step. Counting those, every real leg was outnumbered in its own window
+        and the corridor the robot drove walled off. A tour that parks either side of a
+        drive does the same with half a second of stillness.
+
+    `STILL_M` decides only which legs INFORM the comparison, never which are bridged --
+    which is what makes it safe, and is the difference from the version where filtering at
+    that threshold ate a drive sampled finer than it. When no moving leg is near, the
+    answer is one cell: below that, bridging adds no cells and cannot matter.
+
+    Fifteen recording shapes are the tests in `test_route.py`.
     """
     if len(path) < 2:
         return np.zeros(0, dtype=bool)
     gaps = np.linalg.norm(np.diff(np.asarray(path)[:, :2], axis=0), axis=1)
+    if len(gaps) == 1:
+        return np.asarray(gaps <= max(resolution, 0.0))
     window = min(len(gaps), LOCAL_WINDOW_LEGS) | 1  # odd, so the window is centred
-    # Two choices here, and both were made by measuring against all twelve known shapes.
-    #
-    # "mirror", not "nearest": at the ends the window has to be padded, and `nearest`
-    # pads with the edge leg ITSELF -- so a jump in the first or last few legs made up
-    # most of its own neighbourhood, looked ordinary, and was bridged. Measured on
-    # `[1.2, .05, .05, .05, .05, .05]`: the jump bridged, the wall it crosses at cost 90,
-    # a 4.5 m route through it. `mirror` pads with the legs on the other side without
-    # repeating the edge one, so the first leg is judged against the legs after it.
-    #
-    # The 75th percentile of the window, not its median: a leg on the BOUNDARY between a
-    # drive and a pause has a neighbourhood that is half each, and a median there picks
-    # whichever half is bigger. With mirror padding that walled off the corridor of the
-    # pause fixture at its very first leg. The question is whether this leg is comparable
-    # to the LARGEST ordinary legs nearby, which is a high quantile, not a middling one.
-    # Measured: with mirror, everything from about p50 to p90 exclusive passes all twelve
-    # shapes, p90 lets an end jump through, and the median fails the pause. 75 is the
-    # middle of what works.
-    nearby = ndimage.percentile_filter(gaps, percentile=75, size=window, mode="mirror")
-    allowed = np.minimum(MAX_BRIDGE_M, np.maximum(resolution, 2.0 * nearby))
+    half = window // 2
+    padded = np.pad(gaps, half, mode="reflect")
+    around = sliding_window_view(padded, window)[: len(gaps)]
+    others = np.delete(around, half, axis=1)  # never itself
+    moving = np.where(others > STILL_M, others, np.nan)
+    alone = np.isnan(moving).all(axis=1)
+    with np.errstate(all="ignore"):
+        nearby = np.nanmedian(np.where(alone[:, None], 0.0, moving), axis=1)
+    allowed = np.where(
+        alone, resolution, np.minimum(MAX_BRIDGE_M, np.maximum(resolution, 2.0 * nearby))
+    )
     return np.asarray(gaps <= allowed)
 
 

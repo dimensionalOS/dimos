@@ -54,6 +54,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.go2.dds import cdr, ros
 from dimos.robot.unitree.go2.dds.codec import FnCodec
+from dimos.teleop.memory_world.tf_tree import canonical_frame
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -556,7 +557,14 @@ DERIVED_STREAMS = frozenset({"voxel_diff", "voxel_keyframe"})
 _STREAM_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     #  role: (preferred words, disqualifying words)
     "image": (("color", "rgb", "camera"), ("depth", "infra", "ir_", "_ir", "mask")),
-    "depth": (("depth",), ("color", "rgb", "infra")),
+    # No "color"/"rgb" disqualifier: `pick("depth", ..., depth_like=True)` has already
+    # restricted the candidates to depth-named streams, so those words can only ever
+    # SUBTRACT a legitimate one -- and they did. The standard RealSense topic set with
+    # `align_depth.enable:=true` names its depth stream
+    # `camera_aligned_depth_to_color_image_raw`, which contains "color", so a rig with
+    # aligned depth was detected as having no depth at all and the ingest refused a
+    # recording that plainly has one.
+    "depth": (("depth",), ("infra",)),
     "camera_info": (("color", "rgb"), ("depth", "infra")),
     # An icp-stitched recording carries `<lidar>_corrected` beside the raw scans. The raw
     # scans win: the stitch's loop closure moves the clouds out from under Hyperspace's
@@ -626,11 +634,32 @@ def rebuild_stream(store: Store, name: str, rows: list[tuple[float, Any]], paylo
     store.delete_stream(staged)
 
 
-def _restamped(transform: Any, ts: float) -> Any:
-    """The same joint, said at another moment.
+def _spelt_like(name: str, spelling: dict[str, str], slashed: bool) -> str:
+    """*name* as the moving stream would write it.
+
+    Its own spelling when the moving stream has used that frame, and otherwise its
+    CONVENTION -- a frame the moving stream has never mentioned (a camera hanging off a
+    mount, say) still has to match the rest of the stream it is being written into, or
+    the mixed spellings are exactly the severed chain this exists to prevent.
+    """
+    canonical = canonical_frame(name)
+    if canonical in spelling:
+        return spelling[canonical]
+    return f"/{canonical}" if slashed else canonical
+
+
+def _restamped(
+    transform: Any, ts: float, spelling: dict[str, str] | None = None, slashed: bool = False
+) -> Any:
+    """The same joint, said at another moment, and in the moving stream's spelling.
 
     A static edge carries the one stamp it was latched at. Folding has to restate it at
     the moment it is being put, because TfTree reads the transform's own stamp.
+
+    *spelling* maps a canonical frame name to how the moving stream writes it. A reader
+    outside this package need not canonicalise -- dimos' own `MultiTBuffer` keys the raw
+    pair -- so a folded edge left in `tf_static`'s spelling beside a differently spelled
+    moving stream leaves no chain through the tree at all.
     """
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
     from dimos.msgs.geometry_msgs.Transform import Transform
@@ -640,8 +669,8 @@ def _restamped(transform: Any, ts: float) -> Any:
     return Transform(
         translation=Vector3(float(p.x), float(p.y), float(p.z)),
         rotation=Quaternion(float(q.x), float(q.y), float(q.z), float(q.w)),
-        frame_id=str(transform.frame_id),
-        child_frame_id=str(transform.child_frame_id),
+        frame_id=_spelt_like(str(transform.frame_id), spelling or {}, slashed),
+        child_frame_id=_spelt_like(str(transform.child_frame_id), spelling or {}, slashed),
         ts=ts,
     )
 
@@ -669,7 +698,6 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
     milliseconds before the first image.
     """
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-    from dimos.teleop.memory_world.tf_tree import canonical_frame
 
     refuse_if_a_rebuild_is_half_done(store, static_stream)
     folded: dict[tuple[str, str], Any] = {}
@@ -700,14 +728,25 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
     # The stamps are the messages' own, not the stamps they were recorded at, and a
     # transform stamped 0 is read at its observation's: TfTree.from_stream does both, and
     # measuring it any other way puts the copy after the first frame the camera took.
+    # How the MOVING stream spells each frame. The folded edge is written back in that
+    # spelling when the moving stream has an opinion, because a reader outside this
+    # package need not canonicalise: dimos' own `MultiTBuffer` keys the raw pair, so a
+    # tree left holding `odom -> base` and `/base -> /cam` has no chain through it at all.
+    # Measured on a both-ways recording: `odom -> cam` read None after the fold where the
+    # answer is 4.0. Taking the static's spelling unconditionally would break the
+    # all-slashed recording instead, so it is the moving stream that decides.
+    spelling: dict[str, str] = {}
     rows = []
     for obs in store.streams[tf_stream]:
-        kept = [
-            t
-            for t in obs.data.transforms
-            if (canonical_frame(str(t.frame_id)), canonical_frame(str(t.child_frame_id)))
-            not in folded
-        ]
+        kept = []
+        for t in obs.data.transforms:
+            for name in (str(t.frame_id), str(t.child_frame_id)):
+                spelling.setdefault(canonical_frame(name), name)
+            if (
+                canonical_frame(str(t.frame_id)),
+                canonical_frame(str(t.child_frame_id)),
+            ) not in folded:
+                kept.append(t)
         said = [float(t.ts) or float(obs.ts) for t in obs.data.transforms] + [float(obs.ts)]
         rows.append((float(obs.ts), kept, min(said)))
     if not rows:
@@ -738,7 +777,13 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
     # measured on a two-row stream, `world -> base` read 0 m at t=2 before the fold and
     # 1 m after, with a pose appearing at t=1 where there had been none. One fix, one
     # new corruption, in the same function.
-    statics_row = [(first, TFMessage(*(_restamped(t, first) for t in folded.values())))]
+    slashed = sum(name.startswith("/") for name in spelling.values()) * 2 > len(spelling)
+    statics_row = [
+        (
+            first,
+            TFMessage(*(_restamped(t, first, spelling, slashed) for t in folded.values())),
+        )
+    ]
     written = statics_row + [(ts, TFMessage(*kept)) for ts, kept, _ in rows]
     rebuild_stream(store, tf_stream, written, TFMessage)
     store.delete_stream(static_stream)

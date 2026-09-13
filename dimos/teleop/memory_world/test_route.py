@@ -145,6 +145,45 @@ def test_the_robots_own_body_between_two_samples_is_not_a_wall() -> None:
     assert route.length_m < 12.0, f"routed around its own body: {route.length_m}"
 
 
+def test_a_drive_outnumbered_by_stillness_is_still_a_drive() -> None:
+    """A leg is judged against the legs near it, and stillness must not be one of them.
+
+    Two ways a real recording makes the driving a minority of its own window without the
+    robot slowing down at all:
+
+    The pose source is slower than the scan stream. `replay._held_through_gaps` repeats
+    the previous pose whenever tf has no sample within tolerance, so a 1 Hz tf chain
+    against 10 Hz scans is NINE exact repeats per real step -- and counting them, every
+    real leg was outnumbered and the corridor the robot drove down planned no route.
+
+    Or the robot parks either side of the drive rather than only at the end, which is
+    what a tour of three places looks like. Half a second of stillness each side is
+    enough.
+
+    Counting only the MOVING legs is what fixes both, and it is safe precisely because
+    that threshold decides which legs INFORM the comparison and never which are bridged.
+    """
+    from dimos.teleop.memory_world.route import bridgeable
+
+    still = 0.0015  # a millimetre of jitter, as a real stop looks
+
+    def path_of(gaps: list[float]) -> np.ndarray:
+        out = np.zeros((len(gaps) + 1, 3))
+        out[1:, 0] = np.cumsum(gaps)
+        return out
+
+    shapes = {
+        # Nine held repeats per real step: a 1 Hz tf chain against 10 Hz scans.
+        "1 Hz tf, 10 Hz scans": [g for _ in range(10) for g in ([1.0] + [0.0] * 9)],
+        "parked either side": [still] * 30 + [1.0] * 10 + [still] * 30,
+        "a tour of three stops": ([1.0] * 4 + [still] * 30 + [1.0] * 3 + [still] * 30 + [1.0] * 3),
+    }
+    for label, gaps in shapes.items():
+        mask = bridgeable(path_of(gaps), 0.1)
+        drove = np.isclose(np.asarray(gaps), 1.0)
+        assert mask[drove].all(), f"{label}: a real drive leg was outnumbered by stillness"
+
+
 def test_a_jump_at_either_end_of_the_drive_is_still_a_jump() -> None:
     """The window has to be padded at the ends, and how it is padded decides the answer.
 
