@@ -60,7 +60,8 @@ from dimos.evals.scorers import (
     within,
     yes_no,
 )
-from dimos.evals.suites import dimsim_house, examples, go2_smoke, go2_vqa
+from dimos.evals.suites import dimsim_house, dimsim_pointcloud_mapping, examples, go2_smoke, go2_vqa
+from dimos.evals.suites.dimsim_pointcloud_mapping import N_ROOMS, ROOMS, grade_rooms
 from dimos.evals.types import (
     EvalCase,
     Observation,
@@ -69,6 +70,7 @@ from dimos.evals.types import (
     RunningEnvironment,
     ToolCall,
     Trajectory,
+    recording,
 )
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
@@ -84,17 +86,6 @@ def _pose(x: float, y: float) -> PoseStamped:
         orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         frame_id="world",
     )
-
-
-@pytest.fixture
-def dataset(tmp_path: Path) -> str:
-    """A tiny on-disk memory dataset: 5 odom poses walking 4m in +x over 4s."""
-    path = tmp_path / "tiny.db"
-    with SqliteStore(path=str(path)) as store:
-        stream = store.stream("odom", PoseStamped)
-        for i in range(5):
-            stream.append(_pose(float(i), 0.0), ts=1000.0 + i)
-    return str(path)
 
 
 def _sim(**kwargs: Any) -> Sim:
@@ -285,7 +276,12 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
     adapter.return_value.wait_for_ready.return_value = True
     sim_client = mocker.patch("dimos.evals.environments.sim.DimSimClient")
     setup = mocker.Mock()
-    env = _sim(scene="empty", launch_timeout_s=4.0, setup=setup)
+    env = _sim(
+        scene="empty",
+        launch_timeout_s=4.0,
+        setup=setup,
+        disable=("wavefront-frontier-explorer", "patrolling-module"),
+    )
     mocker.patch.object(env, "_wait_recording", return_value=Path(dataset))
 
     try:
@@ -297,6 +293,10 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
             "unitree-skill-container",
             "mcp-client",
             "speak-skill",
+            "--disable",
+            "wavefront-frontier-explorer",
+            "--disable",
+            "patrolling-module",
         ]
         assert proc.global_args == ["--dimsim-scene", "empty", "--record"]
         adapter.return_value.wait_for_ready.assert_called_once_with(timeout=4.0, interval=2.0)
@@ -646,16 +646,55 @@ def test_runner_missing_artifact_is_an_error(tmp_path: Path) -> None:
     assert result.error == "missing artifacts: ['recording']" and not graded
 
 
+def test_recording_helper_opens_the_artifact(dataset: str) -> None:
+    with recording(
+        Outcome(trajectory=_trajectory("", Path()), artifacts={"recording": Path(dataset)})
+    ) as store:
+        assert store.streams.odom.last().data.position.x == 4.0
+
+
+def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
+    """Half credit for the exact room count, half for the fraction of room
+    points the recorded odometry approached; an unparseable reply loses the
+    count half but the world still scores."""
+    radius = 1.5
+    grade = grade_rooms(radius)
+
+    def written(db_path: Path, points: list[tuple[float, float]]) -> Path:
+        with SqliteStore(path=str(db_path)) as store:
+            stream = store.stream("odom", PoseStamped)
+            for i, (x, y) in enumerate(points):
+                stream.append(_pose(x, y), ts=1000.0 + i)
+        return db_path
+
+    def score(db: Path, answer: str) -> float:
+        outcome = Outcome(trajectory=_trajectory(answer, tmp_path), artifacts={"recording": db})
+        return grade(outcome)
+
+    rooms = list(ROOMS.values())
+    two = written(tmp_path / "two.db", [(x + radius / 2, y) for x, y in rooms[:2]])
+    coverage = 0.5 * 2 / N_ROOMS
+    assert score(two, str(N_ROOMS)) == pytest.approx(0.5 + coverage)
+    assert score(two, f"{N_ROOMS} rooms, I think") == pytest.approx(0.5 + coverage)
+    assert score(two, str(N_ROOMS + 1)) == pytest.approx(coverage), "wrong count"
+    assert score(two, "no idea") == pytest.approx(coverage), "unparseable reply"
+
+    every = written(tmp_path / "every.db", rooms)
+    assert score(every, str(N_ROOMS)) == 1.0
+    assert score(written(tmp_path / "still.db", [(50.0, 50.0)]), str(N_ROOMS)) == 0.5
+
+
 def test_suites_and_agents_importable() -> None:
     """Modules construct without data or network (lambdas stay lazy)."""
 
-    for module in (examples, go2_smoke, go2_vqa, dimsim_house):
+    for module in (examples, go2_smoke, go2_vqa, dimsim_house, dimsim_pointcloud_mapping):
         assert module.SUITE, module.__name__
     agents = list_agents()
     assert {m.rsplit(".", 1)[1] for m in agents} == {
         "question_answer",
         "blind",
         "mcp_client_adapter",
+        "pi",
     }
     for module in agents:
         assert callable(load_agent(module).run), module
