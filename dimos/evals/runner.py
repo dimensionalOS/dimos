@@ -22,6 +22,7 @@ runner never branches on the agent type.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
@@ -38,6 +39,7 @@ from dimos.evals.types import (
     Outcome,
     Suite,
     Trajectory,
+    total_cost,
 )
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.logging_config import setup_logger
@@ -60,19 +62,15 @@ class RunSummary:
     cost_usd: float | None
 
 
-def summarize(results: list[EvalResult]) -> RunSummary:
-    scored = results
+def summarize(results: Sequence[EvalResult]) -> RunSummary:
+    n = len(results)
     return RunSummary(
-        n=len(results),
-        mean_score=sum(r.score for r in scored) / len(scored) if scored else 0.0,
-        pass_rate=sum(r.passed for r in scored) / len(scored) if scored else 0.0,
+        n=n,
+        mean_score=sum(r.score for r in results) / n if n else 0.0,
+        pass_rate=sum(r.passed for r in results) / n if n else 0.0,
         errors=sum(1 for r in results if r.error),
         duration_s=sum(r.duration_s for r in results),
-        cost_usd=(
-            sum(r.cost_usd or 0.0 for r in results)
-            if all(r.cost_usd is not None for r in results)
-            else None
-        ),
+        cost_usd=total_cost(r.cost_usd for r in results),
     )
 
 

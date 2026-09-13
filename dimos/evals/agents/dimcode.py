@@ -17,17 +17,35 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-import json
 from pathlib import Path
 import shutil
 import socket
 import subprocess
 import sys
 import time
-from typing import Any, ClassVar
+from typing import ClassVar
 from uuid import uuid4
 
+from pydantic import JsonValue
+
+from dimos.evals.agents.lib.pi_config import (
+    DimcodeConfig,
+    GatewayCommand,
+    GatewayEvent,
+    GatewayRequest,
+    GatewayResponse,
+    McpEndpoint,
+    NewSession,
+    Prompt,
+    RunPaths,
+    SelectModel,
+    SessionSettings,
+    Shutdown,
+    gateway_packet,
+    gateway_request,
+)
 from dimos.evals.agents.pi import PiAdapter, PiAdapterConfig, read_pi_events
+from dimos.evals.types import RunningEnvironment
 
 
 class DimcodeAdapterConfig(PiAdapterConfig):
@@ -37,7 +55,7 @@ class DimcodeAdapterConfig(PiAdapterConfig):
 class DimcodeAdapter(PiAdapter):
     """One fresh gateway and session per case, using dimcode's own agent loop.
 
-    No personal daemon, config, credentials file or session history is reused.
+    The gateway uses a case-specific config and a new session.
     Shared case context accompanies the user instruction; dimcode retains its
     production system prompt, skills, rendering and MCP extensions.
     """
@@ -58,41 +76,33 @@ class DimcodeAdapter(PiAdapter):
             return self.selected_tools
         return super().available_tools(environment_tools)
 
-    def _write_system_prompt(self, files: dict[str, Path], mcp_url: str, run_dir: Path) -> str:
-        prompt = super()._write_system_prompt(files, mcp_url, run_dir)
-        config = {
-            "workspace": str(run_dir),
-            "python": sys.executable,
-            "dimos": shutil.which("dimos"),
-            "mcp": [{"name": "eval", "url": mcp_url}] if mcp_url else [],
-        }
-        if config["dimos"] is None:
-            del config["dimos"]
-        agent_dir = run_dir / ".pi-agent"
-        (agent_dir / "config.json").write_text(json.dumps(config))
-        (agent_dir / "settings.json").write_text(
-            json.dumps(
-                {
-                    "defaultProvider": self.config.provider,
-                    "defaultModel": self.config.model,
-                    "defaultThinkingLevel": self.config.thinking,
-                }
-            )
+    def _configure(self, env: RunningEnvironment, paths: RunPaths, proxy_url: str) -> None:
+        super()._configure(env, paths, proxy_url)
+        dimos = shutil.which("dimos")
+        config = DimcodeConfig(
+            workspace=paths.workspace,
+            python=Path(sys.executable),
+            dimos=Path(dimos) if dimos else None,
+            mcp=(McpEndpoint(name="eval", url=env.mcp_url),) if env.mcp_url else (),
         )
-        return prompt
+        settings = SessionSettings(
+            default_provider=self.config.provider,
+            default_model=self.config.model,
+            default_thinking_level=self.config.thinking,
+        )
+        (paths.config / "config.json").write_text(config.model_dump_json(exclude_none=True))
+        (paths.config / "settings.json").write_text(settings.model_dump_json(by_alias=True))
 
-    def _build_pi_command(self, inputs: str, system_prompt: str, run_dir: Path) -> list[str]:
-        (run_dir / "dimcode-prompt.txt").write_text(system_prompt + "\n\n" + inputs)
+    def _build_pi_command(self, inputs: str, system_prompt: str, paths: RunPaths) -> list[str]:
+        (paths.workspace / "dimcode-prompt.txt").write_text(system_prompt + "\n\n" + inputs)
         return [self.config.cli, "gateway"]
 
-    def _build_process_env(self, run_dir: Path) -> dict[str, str]:
-        env = super()._build_process_env(run_dir)
-        env["DIMCODE_HOME"] = str(run_dir / ".pi-agent")
-        return env
+    def _build_process_env(self, paths: RunPaths) -> dict[str, str]:
+        return {**super()._build_process_env(paths), "DIMCODE_HOME": str(paths.config)}
 
     def _process_events(
-        self, proc: subprocess.Popen[bytes], run_dir: Path, deadline: float
-    ) -> Generator[dict[str, Any], None, None]:
+        self, proc: subprocess.Popen[bytes], paths: RunPaths, deadline: float
+    ) -> Generator[dict[str, JsonValue], None, None]:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             while True:
                 if time.monotonic() >= deadline:
@@ -105,39 +115,39 @@ class DimcodeAdapter(PiAdapter):
                 except (FileNotFoundError, ConnectionRefusedError):
                     time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
             commands = iter(
-                [
-                    {"type": "new_session", "cwd": str(run_dir)},
-                    {
-                        "type": "set_model",
-                        "provider": self.config.provider,
-                        "modelId": self.config.model,
-                    },
-                    {"type": "prompt", "message": (run_dir / "dimcode-prompt.txt").read_text()},
-                ]
+                (
+                    NewSession(str(paths.workspace)),
+                    SelectModel(self.config.provider, self.config.model),
+                    Prompt((paths.workspace / "dimcode-prompt.txt").read_text()),
+                )
             )
 
-            def send(command: dict[str, Any]) -> str:
+            def send(command: GatewayCommand) -> str:
                 request_id = str(uuid4())
-                sock.sendall((json.dumps({"id": request_id, "command": command}) + "\n").encode())
+                sock.sendall(
+                    gateway_request.dump_json(GatewayRequest(request_id, command), by_alias=True)
+                    + b"\n"
+                )
                 return request_id
 
             request_id = send(next(commands))
             with sock.makefile("rb", buffering=0) as incoming:
-                for packet in read_pi_events(incoming, deadline):
-                    if packet["type"] == "response" and packet.get("id") == request_id:
-                        if packet.get("error"):
-                            raise RuntimeError(packet["error"])
+                for record in read_pi_events(incoming, deadline):
+                    packet = gateway_packet.validate_python(record)
+                    if isinstance(packet, GatewayResponse) and packet.id == request_id:
+                        if packet.error:
+                            raise RuntimeError(packet.error)
                         command = next(commands, None)
                         if command is not None:
-                            if command["type"] == "prompt":
-                                self._check_tools_ready(run_dir)
+                            if isinstance(command, Prompt):
+                                self._check_tools_ready(paths)
                             request_id = send(command)
-                    elif packet["type"] == "event":
-                        event = packet["event"]
+                    elif isinstance(packet, GatewayEvent):
+                        event = packet.event
                         if event["type"] == "turn_error":
-                            raise RuntimeError(event["message"])
+                            raise RuntimeError(str(event.get("message", "dimcode turn failed")))
                         if event["type"] == "idle":
-                            send({"type": "shutdown"})
+                            send(Shutdown())
                             return
                         yield event
             raise RuntimeError("dimcode disconnected before completion")

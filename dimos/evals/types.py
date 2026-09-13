@@ -16,10 +16,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+
+from pydantic import JsonValue
 
 if TYPE_CHECKING:
     from dimos.evals.environments.base import Environment
@@ -33,7 +35,7 @@ if TYPE_CHECKING:
 class ToolCall:
     tool_call_id: str
     function_name: str
-    arguments: dict[str, Any]
+    arguments: dict[str, JsonValue]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -53,6 +55,16 @@ class Metrics:
     completion_tokens: int
     cached_tokens: int = 0  # the part of prompt_tokens read from the provider's cache
     cost_usd: float | None = None  # reported or estimated by the adapter; None if unknown
+
+
+def total_cost(costs: Iterable[float | None]) -> float | None:
+    """Sum reported costs, preserving an unknown total if any cost is missing."""
+    total = 0.0
+    for cost in costs:
+        if cost is None:
+            return None
+        total += cost
+    return total
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -64,6 +64,8 @@ from dimos.evals.suites import dimsim_house, dimsim_pointcloud_mapping, examples
 from dimos.evals.suites.dimsim_pointcloud_mapping import N_ROOMS, ROOMS, grade_rooms
 from dimos.evals.types import (
     EvalCase,
+    EvalResult,
+    Metrics,
     Observation,
     ObservationResult,
     Outcome,
@@ -824,3 +826,27 @@ def test_agents_report_every_available_tool() -> None:
     assert QuestionAnswer().available_tools(environment_tools) == ()
     assert Blind().available_tools(environment_tools) == ()
     assert McpClientAdapter().available_tools(environment_tools) == environment_tools
+
+
+@pytest.mark.parametrize(
+    "costs,expected",
+    [((), 0.0), ((0.0,), 0.0), ((0.25, 0.0, 0.5), 0.75), ((0.25, None), None)],
+)
+def test_summary_and_trajectory_preserve_unknown_cost(
+    costs: tuple[float | None, ...], expected: float | None, tmp_path: Path
+) -> None:
+    trajectory = TrajectoryBuilder("Question", name="test")
+    results = []
+    for index, cost in enumerate(costs):
+        trajectory.step(
+            message="answer",
+            request=tmp_path / "request",
+            response=tmp_path / "response",
+            metrics=Metrics(prompt_tokens=1, completion_tokens=1, cost_usd=cost),
+        )
+        results.append(EvalResult(case_id=str(index), cost_usd=cost))
+    summary = summarize(results)
+    assert summary.cost_usd == expected
+    assert trajectory.build("answer").final_metrics.total_cost_usd == expected
+    assert summary.n == len(costs)
+    assert summary.mean_score == summary.pass_rate == 0.0

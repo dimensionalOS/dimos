@@ -24,6 +24,7 @@ import numpy as np
 from PIL import Image as PILImage
 import pytest
 
+from dimos.evals.agents.lib.pi_config import RunPaths
 from dimos.evals.agents.lib.plain_recording import plain_recording
 from dimos.evals.agents.lib.sandbox import sandbox_command
 from dimos.evals.agents.pi import PiAdapter
@@ -59,19 +60,20 @@ def test_export_preserves_selected_sensor_values_without_framework(tmp_path: Pat
 def test_baseline_does_not_expose_artifacts_or_mcp(tmp_path: Path) -> None:
     agent = PiAdapter(allowed_tools=("bash",), sandbox=True)
     with pytest.raises(ValueError, match="MCP"):
-        agent._prepare_files(
+        agent._prepare_case(
             RunningEnvironment(mcp_url="http://localhost:9990", streams=(), artifacts={}), tmp_path
         )
     with SqliteStore(path=tmp_path / "source.db") as store:
         selected = store.stream("observed", str)
         selected.append("a fact")
-        files = agent._prepare_files(
+        prompt = agent._prepare_case(
             RunningEnvironment(
                 mcp_url="", streams=(selected,), artifacts={"hidden": tmp_path / "source.db"}
             ),
             tmp_path,
         )
-    assert files == {"manifest": Path("/input/manifest.json")}
+    assert "/input/manifest.json" in prompt
+    assert "hidden" not in prompt
     assert agent.available_tools(("move", "render_pointcloud")) == ("bash",)
     assert "hidden" not in (tmp_path / "input" / "manifest.json").read_text()
 
@@ -133,5 +135,7 @@ PY
 
 def test_shell_environment_excludes_dimos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DIMOS_ROBOT_IP", "hidden")
-    env = PiAdapter(allowed_tools=("bash",), sandbox=True)._build_process_env(tmp_path)
+    env = PiAdapter(allowed_tools=("bash",), sandbox=True)._build_process_env(
+        RunPaths.for_run(tmp_path)
+    )
     assert "DIMOS_ROBOT_IP" not in env

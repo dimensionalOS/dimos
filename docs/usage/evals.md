@@ -100,12 +100,16 @@ or `provider=anthropic` and `model=claude-fable-5-1`. Fable requires
 
 `cli=` selects a specific Pi or dimcode executable. `OPENAI_BASE_URL` and
 `ANTHROPIC_BASE_URL` optionally override the upstream endpoints. API keys stay
-in process environment variables; the generated provider config contains
-variable references. Request traces omit authentication headers.
+in process environment variables; a shared Pi extension registers the trace
+proxy URL and key variable through Pi's provider API. It also applies output
+caps and tool selection. No installed registry files are read or rewritten.
+Request traces omit authentication headers.
 
-Both adapters get fresh home/config/state directories and a copy of only the
-selected recording observations. Pi retains its stock system prompt with
-shared case guidance appended. Dimcode retains its production prompt, skills,
+Per-case adapter configuration lives under `dimos.constants.CONFIG_DIR / "evals"`;
+temporary gateway sockets use `CACHE_DIR / "evals"`. Home, XDG config/state/cache
+and Pi's agent-directory settings are inherited. Both adapters start new sessions
+with a copy of the selected recording observations. Pi retains its stock system
+prompt with shared case guidance appended. Dimcode retains its production prompt, skills,
 MCP integration and rendering tool; shared case guidance accompanies the user
 instruction. Each case starts and stops its own dimcode gateway and session.
 An existing personal gateway is never attached. Dimcode retains its production

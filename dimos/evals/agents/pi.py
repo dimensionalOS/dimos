@@ -19,7 +19,6 @@ from __future__ import annotations
 from collections.abc import Generator, Sequence
 from contextlib import closing
 import io
-import json
 import os
 from pathlib import Path
 import selectors
@@ -27,14 +26,21 @@ import shutil
 import subprocess
 import tempfile
 import time
-from typing import IO, TYPE_CHECKING, Any, ClassVar, Literal
+from typing import IO, TYPE_CHECKING, Any, ClassVar
 
-from pydantic import Field
+from pydantic import Field, JsonValue, TypeAdapter
 
 from dimos.core.coordination.process_lifecycle import kill_run_processes
 from dimos.evals.agents.base import Agent, ModelAgentConfig
 from dimos.evals.agents.lib import sandbox
 from dimos.evals.agents.lib.model_trace_proxy import model_trace_proxy
+from dimos.evals.agents.lib.pi_config import (
+    Provider,
+    RunPaths,
+    RuntimeConfig,
+    Thinking,
+    ToolPolicyState,
+)
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.environments.base import Environment
@@ -75,9 +81,12 @@ def recording_file(streams: Sequence[Stream[Any, Any]], path: Path) -> Path:
     return path
 
 
+_json_object = TypeAdapter(dict[str, JsonValue])
+
+
 def read_pi_events(
     stream: IO[bytes] | io.RawIOBase, deadline: float
-) -> Generator[dict[str, Any], None, None]:
+) -> Generator[dict[str, JsonValue], None, None]:
     """Read Pi's JSON events until EOF, raising TimeoutError at the deadline."""
     pending = b""
     with selectors.DefaultSelector() as selector:
@@ -89,7 +98,7 @@ def read_pi_events(
             chunk = os.read(stream.fileno(), io.DEFAULT_BUFFER_SIZE)
             if not chunk:
                 if pending:
-                    yield json.loads(pending)
+                    yield _json_object.validate_json(pending)
                 return
             # Keep partial lines as bytes so split UTF-8 characters remain intact.
             *lines, pending = (pending + chunk).split(b"\n")
@@ -98,13 +107,13 @@ def read_pi_events(
             for line in lines:
                 if time.monotonic() >= deadline:
                     raise TimeoutError
-                yield json.loads(line)
+                yield _json_object.validate_json(line)
 
 
 class PiAdapterConfig(ModelAgentConfig):
     """Settings for the headless Pi adapter."""
 
-    provider: Literal["openai", "anthropic"] = "openai"
+    provider: Provider = "openai"
     max_output_tokens: int | None = Field(default=None, ge=1)
 
     # Shared case guidance appended to Pi's stock system prompt.
@@ -122,7 +131,7 @@ class PiAdapterConfig(ModelAgentConfig):
     sandbox: bool = False
 
     # Reasoning level passed to Pi's --thinking flag.
-    thinking: str = "medium"
+    thinking: Thinking = "medium"
 
     # Maximum model HTTP requests, including retries. Zero skips Pi entirely;
     # None disables this limit. Completed steps are preserved when stopping.
@@ -137,9 +146,6 @@ class PiAdapterConfig(ModelAgentConfig):
     # Skill files or directories loaded with --skill. Relative paths resolve
     # against the caller's working directory before Pi starts in the case directory.
     skills: tuple[str, ...] = ()
-
-    # Environment variables Pi inherits in addition to every DIMOS_* variable.
-    passthrough_env: tuple[str, ...] = ("PATH",)
 
 
 class PiAdapter(Agent):
@@ -204,6 +210,7 @@ class PiAdapter(Agent):
         )
         if self.config.max_steps == 0:
             return events.trajectory.build("max_steps")
+        paths = RunPaths.for_run(run_dir)
         upstream = os.environ.get(
             f"{self.config.provider.upper()}_BASE_URL",
             "https://api.openai.com/v1"
@@ -214,12 +221,11 @@ class PiAdapter(Agent):
         with model_trace_proxy(
             raw_dir, upstream, max_requests=self.config.max_steps, limit_reached=limit_reached
         ) as proxy_url:
-            self._write_model_config(run_dir, proxy_url)
-            files = self._prepare_files(env, run_dir)
-            system_prompt = self._write_system_prompt(files, env.mcp_url, run_dir)
-            command = self._build_pi_command(inputs, system_prompt, run_dir)
             try:
-                ended_by = self._run_pi_process(command, run_dir, events, timeout_s)
+                self._configure(env, paths, proxy_url)
+                system_prompt = self._prepare_case(env, run_dir)
+                command = self._build_pi_command(inputs, system_prompt, paths)
+                ended_by = self._run_pi_process(command, paths, events, timeout_s)
             except Exception as exc:
                 ended_by = "error"
                 events.error = str(exc)
@@ -229,15 +235,13 @@ class PiAdapter(Agent):
             return events.trajectory.build("error", error=events.error)
         return events.trajectory.build(ended_by)
 
-    def _prepare_files(self, env: RunningEnvironment, run_dir: Path) -> dict[str, Path]:
+    def _prepare_case(self, env: RunningEnvironment, run_dir: Path) -> str:
         if self.config.sandbox:
-            return sandbox.prepare_files(env, run_dir)
-        files = dict(env.artifacts)
-        if env.streams:
-            files["recording"] = recording_file(env.streams, run_dir / "recording.db")
-        return files
-
-    def _write_system_prompt(self, files: dict[str, Path], mcp_url: str, run_dir: Path) -> str:
+            files = sandbox.prepare_files(env, run_dir)
+        else:
+            files = dict(env.artifacts)
+            if env.streams:
+                files["recording"] = recording_file(env.streams, run_dir / "recording.db")
         parts = [self.config.system_prompt, self.config.instructions]
         parts.append("Files:\n" + "\n".join(f"- {name}: {path}" for name, path in files.items()))
         if self.config.sandbox:
@@ -250,18 +254,18 @@ class PiAdapter(Agent):
                 "store.streams.<name> is a stream, .last().data its latest message; iterating "
                 "a stream yields observations with .ts and .data. Inspect with dir() and help()."
             )
-        if mcp_url:
+        if env.mcp_url:
             if self.config.builtin_guidance:
                 parts.append(
                     "The robot is live. Call one of its tools from bash as\n"
                     "  dimos mcp call <tool> --json-args '{\"arg\": value}'"
                 )
-            parts.append("Tools:\n" + tool_listing(mcp_url))
+            parts.append("Tools:\n" + tool_listing(env.mcp_url))
         prompt = "\n\n".join(p for p in parts if p)
         (run_dir / "system-prompt.txt").write_text(prompt)
         return prompt
 
-    def _build_pi_command(self, inputs: str, system_prompt: str, run_dir: Path) -> list[str]:
+    def _build_pi_command(self, inputs: str, system_prompt: str, paths: RunPaths) -> list[str]:
         # Absolute before Pi changes to the run dir; --no-skills disables only
         # ambient discovery, explicit --skill paths still load.
         skills = [
@@ -270,22 +274,18 @@ class PiAdapter(Agent):
         tool_args = (
             ["--tools", ",".join(self.selected_tools)] if self.selected_tools else ["--no-tools"]
         )
-        policy = (
-            ["--extension", str(run_dir / ".pi-agent/extensions/allowed_tools.js")]
-            if self.config.allowed_tools is not None
-            else []
-        )
+        policy = ["--extension", str(paths.config / "extensions/runtime.js")]
         images: list[str] = []
         if self.config.sandbox:
             tool_args = [
                 "--no-builtin-tools",
                 "--extension",
-                str(sandbox.extension(run_dir, self.selected_tools)),
+                str(sandbox.extension(paths.workspace, self.selected_tools)),
             ]
-            images = [f"@{path}" for path in sorted((run_dir / "input").glob("*.png"))]
+            images = [f"@{path}" for path in sorted((paths.workspace / "input").glob("*.png"))]
         return [
             self.config.cli, "--mode", "json", "--model", f"{self.config.provider}/{self.config.model}",
-            "--thinking", self.config.thinking, "--session-dir", str(run_dir / "pi-session"),
+            "--thinking", self.config.thinking, "--session-dir", str(paths.workspace / "pi-session"),
             *tool_args, *policy,
             "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
             "--no-context-files", "--no-approve", *skills,
@@ -296,83 +296,66 @@ class PiAdapter(Agent):
     def _key_env(self) -> str:
         return f"{self.config.provider.upper()}_API_KEY"
 
-    def _write_model_config(self, run_dir: Path, proxy_url: str) -> None:
-        """Configure provider routing and tool selection through Pi's native APIs."""
-        agent_dir = run_dir / ".pi-agent"
-        agent_dir.mkdir(parents=True, exist_ok=True)
-        provider: dict[str, Any] = {"baseUrl": proxy_url, "apiKey": f"${self._key_env}"}
-        if self.config.max_output_tokens is not None:
-            provider["modelOverrides"] = {
-                self.config.model: {"maxTokens": self.config.max_output_tokens}
-            }
-        (agent_dir / "models.json").write_text(
-            json.dumps({"providers": {self.config.provider: provider}}, indent=2)
+    def _configure(self, env: RunningEnvironment, paths: RunPaths, proxy_url: str) -> None:
+        config = RuntimeConfig(
+            provider=self.config.provider,
+            base_url=proxy_url,
+            key_env=self._key_env,
+            allowed_tools=self.config.allowed_tools,
+            max_output_tokens=self.config.max_output_tokens,
         )
+        extensions = paths.config / "extensions"
+        extensions.mkdir(parents=True, exist_ok=True)
+        (extensions / "runtime-ready.json").unlink(missing_ok=True)
+        shutil.copyfile(Path(__file__).parent / "lib/runtime.js", extensions / "runtime.js")
+        (extensions / "runtime.json").write_text(config.model_dump_json())
 
-        if self.config.allowed_tools is not None:
-            extensions = run_dir / ".pi-agent" / "extensions"
-            extensions.mkdir()
-            shutil.copyfile(
-                Path(__file__).parent / "lib" / "allowed_tools.js",
-                extensions / "allowed_tools.js",
-            )
-            (extensions / "allowed-tools.json").write_text(json.dumps(self.selected_tools))
-
-    def _check_tools_ready(self, run_dir: Path) -> None:
-        if self.config.allowed_tools is None:
-            return
-        ready = run_dir / ".pi-agent" / "extensions" / "allowed-tools-ready.json"
+    def _check_tools_ready(self, paths: RunPaths) -> None:
+        ready = paths.config / "extensions/runtime-ready.json"
         if not ready.is_file():
-            raise RuntimeError("Tool allowlist extension failed to load")
-        state = json.loads(ready.read_text())
-        if state["unknown"] or state["tools"] != list(self.selected_tools):
+            raise RuntimeError("Pi runtime extension failed to load")
+        state = ToolPolicyState.model_validate_json(ready.read_text())
+        if state.unknown or (
+            self.config.allowed_tools is not None and state.tools != self.selected_tools
+        ):
             raise ValueError(f"Tool allowlist was not applied: {state}")
 
-    def _build_process_env(self, run_dir: Path) -> dict[str, str]:
-        keep = (*self.config.passthrough_env, self._key_env)
-        passed = {
-            k: v
-            for k, v in os.environ.items()
-            if k in keep or (k.startswith("DIMOS_") and not self.config.sandbox)
-        }
-        home = run_dir / "home"
-        home.mkdir(exist_ok=True)
+    def _build_process_env(self, paths: RunPaths) -> dict[str, str]:
         return {
-            **passed,
-            "HOME": str(home),
-            "XDG_CONFIG_HOME": str(home / "config"),
-            "XDG_STATE_HOME": str(home / "state"),
-            "XDG_CACHE_HOME": str(home / "cache"),
-            "PI_CODING_AGENT_DIR": str(run_dir / ".pi-agent"),
-            "PI_SKIP_VERSION_CHECK": "1",
-            "PI_TELEMETRY": "0",
+            **{
+                k: v
+                for k, v in os.environ.items()
+                if not (self.config.sandbox and k.startswith("DIMOS_"))
+            },
+            "DIMOS_EVAL_RUN_ID": str(paths.workspace),
         }
 
     def _process_events(
-        self, proc: subprocess.Popen[bytes], run_dir: Path, deadline: float
-    ) -> Generator[dict[str, Any], None, None]:
+        self, proc: subprocess.Popen[bytes], paths: RunPaths, deadline: float
+    ) -> Generator[dict[str, JsonValue], None, None]:
         assert proc.stdout is not None
         yield from read_pi_events(proc.stdout, deadline)
-        self._check_tools_ready(run_dir)
-        if self.config.sandbox and not (run_dir / "sandbox-ready").is_file():
+        self._check_tools_ready(paths)
+        if self.config.sandbox and not (paths.workspace / "sandbox-ready").is_file():
             raise RuntimeError("Sandbox extension failed to load; see pi-stderr.txt")
 
     def _run_pi_process(
-        self, command: list[str], run_dir: Path, events: PiToAtif, timeout_s: float
+        self, command: list[str], paths: RunPaths, events: PiToAtif, timeout_s: float
     ) -> EndedBy:
         """Run Pi, consume its events, and stop its tools when the run ends."""
         deadline = time.monotonic() + timeout_s
         max_steps = self.config.max_steps
-        stderr_path = run_dir / "pi-stderr.txt"
-        with tempfile.TemporaryDirectory(prefix="dimos-eval-") as runtime:
+        stderr_path = paths.workspace / "pi-stderr.txt"
+        paths.cache.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="run-", dir=paths.cache) as runtime:
             self._runtime_dir = Path(runtime)
-            process_env = self._build_process_env(run_dir)
+            process_env = self._build_process_env(paths)
             process_env["XDG_RUNTIME_DIR"] = runtime
             with (
                 stderr_path.open("w") as stderr,
                 subprocess.Popen(
                     command,
-                    cwd=run_dir,
+                    cwd=paths.workspace,
                     env=process_env,
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
@@ -382,7 +365,7 @@ class PiAdapter(Agent):
             ):
                 assert proc.stdout is not None
                 try:
-                    with closing(self._process_events(proc, run_dir, deadline)) as event_stream:
+                    with closing(self._process_events(proc, paths, deadline)) as event_stream:
                         for event in event_stream:
                             events.append_event(event)
                             if (
@@ -404,10 +387,10 @@ class PiAdapter(Agent):
                         proc.kill()
                         proc.wait()
                     # Background tools may already be orphaned or in separate sessions.
-                    # Their inherited Pi directory identifies this run after Pi exits.
+                    # The inherited run ID identifies them after Pi exits.
                     kill_run_processes(
-                        process_env["PI_CODING_AGENT_DIR"],
-                        env_var="PI_CODING_AGENT_DIR",
+                        str(paths.workspace),
+                        env_var="DIMOS_EVAL_RUN_ID",
                         exclude_pids=(proc.pid,),
                         term_timeout=self.config.shutdown_timeout_s,
                     )

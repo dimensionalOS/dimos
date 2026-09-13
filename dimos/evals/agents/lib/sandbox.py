@@ -16,7 +16,6 @@
 
 import json
 from pathlib import Path
-import shlex
 import shutil
 import subprocess
 import tempfile
@@ -80,11 +79,4 @@ def extension(run_dir: Path, tools: tuple[str, ...]) -> Path:
     (run_dir / "sandbox.json").write_text(json.dumps({"command": prefix, "tools": tools}))
     target = run_dir / "sandbox.js"
     shutil.copyfile(Path(__file__).with_suffix(".js"), target)
-    # Pi's native grep spawns rg; both rg and its filesystem operations must be isolated.
-    binary = run_dir / ".pi-agent" / "bin" / "rg"
-    binary.parent.mkdir(parents=True, exist_ok=True)
-    binary.write_text(
-        "#!/bin/bash\nexec " + shlex.join(prefix) + ' \'exec /usr/bin/rg "$@"\' rg "$@"\n'
-    )
-    binary.chmod(0o755)
     return target

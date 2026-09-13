@@ -12,192 +12,109 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Native Pi/dimcode calls against a local scripted provider, without API spend.
+"""The same provider and tool contract across native Pi and dimcode runtimes."""
 
-Set EVAL_PI_CLI and EVAL_DIMCODE_CLI to installed executables to run these tests.
-"""
-
-from collections.abc import Iterator
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
-import os
 from pathlib import Path
-import shutil
-import threading
-from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 
-from dimos.evals.agents.dimcode import DimcodeAdapter
-from dimos.evals.agents.pi import PiAdapter
-from dimos.evals.types import RunningEnvironment
-from dimos.memory.store.sqlite import SqliteStore
+from dimos.evals.agents.conftest import NativeHarness, ScriptedProvider
+from dimos.evals.agents.lib.pi_config import RunPaths
 
 
-@pytest.fixture
-def provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[list[Any], list[Any]]]:
-    requests: list[Any] = []
-    calls: list[Any] = []
-
-    class Server(BaseHTTPRequestHandler):
-        def log_message(self, format: str, *args: Any) -> None:
-            pass
-
-        def do_POST(self) -> None:
-            requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
-            index = len(requests)
-            item = (
-                dict(
-                    type="function_call",
-                    id=f"fc_{index}",
-                    call_id=f"call_{index}",
-                    name=calls[index - 1][0],
-                    arguments=json.dumps(calls[index - 1][1]),
-                )
-                if index <= len(calls)
-                else dict(
-                    type="message",
-                    id=f"msg_{index}",
-                    role="assistant",
-                    content=[dict(type="output_text", text="OK", annotations=[])],
-                )
-            )
-            response: dict[str, Any] = dict(
-                id=f"resp_{index}",
-                status="completed",
-                output=[item],
-                model="gpt-6-astra",
-                usage=dict(input_tokens=10, output_tokens=5),
-            )
-            events: list[dict[str, Any]] = [
-                dict(type="response.created", response=dict(id=response["id"])),
-                dict(type="response.output_item.added", output_index=0, item=item),
-                dict(type="response.output_item.done", output_index=0, item=item),
-                dict(type="response.completed", response=response),
-            ]
-            payload = "".join(
-                "event: " + e["type"] + "\ndata: " + json.dumps(e) + "\n\n" for e in events
-            ).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Server)
-    thread = threading.Thread(target=server.serve_forever)
-    thread.start()
-    monkeypatch.setenv("OPENAI_API_KEY", "offline-test-key")
-    monkeypatch.setenv("OPENAI_BASE_URL", f"http://127.0.0.1:{server.server_port}/v1")
-    try:
-        yield requests, calls
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
-
-
-def executable(adapter: type[PiAdapter]) -> str:
-    cli = "dimcode" if adapter is DimcodeAdapter else "pi"
-    path = shutil.which(os.environ.get(f"EVAL_{cli.upper()}_CLI", cli))
-    if not path:
-        pytest.skip(f"requires installed {cli}")
-    return path
-
-
-@pytest.mark.parametrize(
-    "adapter,sandbox,allowed",
-    [
-        (PiAdapter, False, ("bash", "grep")),
-        (PiAdapter, False, ()),
-        (PiAdapter, True, ("bash", "grep")),
-        (PiAdapter, True, ("grep",)),
-        (DimcodeAdapter, False, ("bash", "grep")),
-        (DimcodeAdapter, False, ()),
-    ],
-)
-def test_native_tool_allowlist_enforces_execution(
-    adapter: type[PiAdapter],
-    sandbox: bool,
-    allowed: tuple[str, ...],
-    provider: tuple[list[Any], list[Any]],
-    tmp_path: Path,
+def test_allowed_tools_execute_and_excluded_tools_do_not(
+    harness: NativeHarness, provider: ScriptedProvider
 ) -> None:
-    cli = executable(adapter)
-    if sandbox and not Path("/usr/bin/bwrap").exists():
-        pytest.skip("requires bubblewrap")
-    requests, calls = provider
-    forbidden = tmp_path / "forbidden.txt"
-    secret = tmp_path / "host-only.txt"
-    secret.write_text("host-only-content")
-    run_dir = tmp_path / "run"
-    run_dir.mkdir()
-    calls.append(("write", dict(path=str(forbidden), content="must not execute")))
-    if "bash" in allowed:
-        path = "/workspace" if sandbox else str(run_dir)
-        calls.append(("bash", dict(command=f"printf allowed > {path}/worked.txt")))
-    if "grep" in allowed:
-        path = "/input" if sandbox else str(tmp_path)
-        (tmp_path / "facts.txt").write_text("selected-observation")
-        calls.append(("grep", dict(pattern="selected-observation", path=path, context=1)))
-        if sandbox:
-            calls.append(("grep", dict(pattern="host-only-content", path=str(secret), context=1)))
-    agent = adapter(
-        cli=cli, allowed_tools=allowed, sandbox=sandbox, model="gpt-6-astra", max_steps=10
-    )
-    with SqliteStore(path=tmp_path / "source.db") as store:
-        stream = store.stream("facts", str)
-        stream.append("selected-observation", ts=1)
-        result = agent.run(
-            "Inspect the selected observations.",
-            RunningEnvironment(mcp_url="", streams=(stream,), artifacts={}),
-            run_dir,
-            timeout_s=30,
-        )
+    provider.call("write", path=harness.path("forbidden.txt"), content="must not execute")
+    provider.call("bash", command=f"printf selected-observation > {harness.path('facts.txt')}")
+    provider.call("grep", pattern="selected-observation", path=harness.path("facts.txt"), context=1)
+    result = harness.run(harness.agent(provider, ("bash", "grep")))
     assert result.extra.ended_by == "answer", result.extra
     assert result.final_answer == "OK"
-    assert len(requests) == len(calls) + 1
-    assert all({t["name"] for t in r.get("tools", [])} == set(allowed) for r in requests)
-    assert not forbidden.exists(), "disallowed tool executed despite not being advertised"
-    workspace = run_dir / "workspace" if sandbox else run_dir
-    assert (workspace / "worked.txt").exists() == ("bash" in allowed)
-    outputs = [
-        str(item["output"])
-        for item in requests[-1]["input"]
-        if item.get("type") == "function_call_output"
-    ]
-    if "grep" in allowed:
-        assert any("selected-observation" in output for output in outputs)
-        if sandbox:
-            assert "Path not found" in outputs[-1]
-            assert not any("host-only-content" in output for output in outputs)
+    assert len(provider.requests) == 4
+    assert all(request.model == provider.model for request in provider.requests)
+    assert {urlsplit(route).path for route in provider.routes} == (
+        {"/responses"} if provider.name == "openai" else {"/v1/messages"}
+    )
+    assert all(
+        (request.max_output_tokens if provider.name == "openai" else request.max_tokens) == 1024
+        for request in provider.requests
+    )
+    assert all(request.tool_names == {"bash", "grep"} for request in provider.requests)
+    assert (harness.workspace / "facts.txt").read_text() == "selected-observation"
+    assert not (harness.workspace / "forbidden.txt").exists()
+    assert "selected-observation" in provider.requests[-1].outputs
+    assert result.final_metrics.total_prompt_tokens == 40
+    assert result.final_metrics.total_completion_tokens == 20
+    assert result.final_metrics.total_cost_usd is not None
 
 
-@pytest.mark.parametrize("failure", ["unknown", "missing_extension"])
-def test_dimcode_rejects_unapplied_policy_before_model_call(
-    failure: str,
-    provider: tuple[list[Any], list[Any]],
-    tmp_path: Path,
+def test_no_tools_blocks_even_a_provider_requested_call(
+    harness: NativeHarness, provider: ScriptedProvider
+) -> None:
+    provider.call("write", path=harness.path("forbidden.txt"), content="must not execute")
+    result = harness.run(harness.agent(provider, ()))
+    assert result.extra.ended_by == "answer", result.extra
+    assert all(request.tool_names == set() for request in provider.requests)
+    assert not (harness.workspace / "forbidden.txt").exists()
+
+
+@pytest.mark.parametrize("harness", ["dimcode"], indirect=True)
+def test_unknown_tool_fails_before_inference(
+    harness: NativeHarness, provider: ScriptedProvider
+) -> None:
+    result = harness.run(harness.agent(provider, ("unknown_tool",)))
+    assert result.extra.ended_by == "error"
+    assert "unknown_tool" in result.extra.error
+    assert provider.requests == []
+
+
+def test_missing_runtime_extension_fails_before_inference(
+    harness: NativeHarness,
+    provider: ScriptedProvider,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cli = executable(DimcodeAdapter)
-    agent = DimcodeAdapter(
-        cli=cli, allowed_tools=("unknown_tool",) if failure == "unknown" else ("bash",)
-    )
-    if failure == "missing_extension":
-        write = agent._write_model_config
+    agent = harness.agent(provider, ("bash",))
+    build = agent._build_pi_command
+    # A previous run's marker must not let a missing extension bypass startup checks.
+    ready = RunPaths.for_run(harness.root).config / "extensions/runtime-ready.json"
+    ready.parent.mkdir(parents=True)
+    ready.write_text('{"tools":["bash"],"unknown":[]}')
 
-        def without_extension(run_dir: Path, url: str) -> None:
-            write(run_dir, url)
-            (run_dir / ".pi-agent/extensions/allowed_tools.js").unlink()
+    def broken(inputs: str, prompt: str, paths: RunPaths) -> list[str]:
+        command = build(inputs, prompt, paths)
+        (paths.config / "extensions/runtime.js").unlink()
+        return command
 
-        monkeypatch.setattr(agent, "_write_model_config", without_extension)
-    result = agent.run(
-        "Never sent",
-        RunningEnvironment(mcp_url="", streams=(), artifacts={}),
-        tmp_path,
-        timeout_s=30,
-    )
+    monkeypatch.setattr(agent, "_build_pi_command", broken)
+    result = harness.run(agent)
     assert result.extra.ended_by == "error"
-    assert "allowlist" in result.extra.error
-    assert provider[0] == []
+    assert provider.requests == []
+
+
+@pytest.mark.parametrize("harness", ["sandbox"], indirect=True)
+def test_sandbox_grep_cannot_read_host_files(
+    harness: NativeHarness, provider: ScriptedProvider, tmp_path: Path
+) -> None:
+    secret = tmp_path / "host-only.txt"
+    secret.write_text("host-only-content")
+    provider.call("grep", pattern="host-only-content", path=str(secret), context=1)
+    result = harness.run(harness.agent(provider, ("grep",)))
+    assert result.extra.ended_by == "answer", result.extra
+    assert "No such file or directory" in provider.requests[-1].outputs
+    assert "exited with code 2" in provider.requests[-1].outputs
+    assert "host-only-content" not in provider.requests[-1].outputs
+
+
+@pytest.mark.parametrize("harness", ["sandbox"], indirect=True)
+@pytest.mark.parametrize("provider", ["openai"], indirect=True)
+def test_sandbox_grep_treats_shell_metacharacters_as_data(
+    harness: NativeHarness, provider: ScriptedProvider
+) -> None:
+    provider.call(
+        "grep", pattern="$(touch /workspace/forbidden) ' \" ;", literal=True, path="/input"
+    )
+    result = harness.run(harness.agent(provider, ("grep",)))
+    assert result.extra.ended_by == "answer", result.extra
+    assert not (harness.workspace / "forbidden").exists()
