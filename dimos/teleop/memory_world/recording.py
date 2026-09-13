@@ -581,6 +581,14 @@ _STREAM_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 STAGED_SUFFIX = "__rebuilt"
 
 
+def _holds_anything(store: Store, name: str) -> bool:
+    """Whether *name* has a single observation. A stream can be present and empty."""
+    try:
+        return any(True for _ in store.streams[name])
+    except Exception:
+        return False
+
+
 def refuse_if_a_rebuild_is_half_done(store: Store, name: str) -> None:
     """Stop before touching a stream an earlier rebuild died half way through.
 
@@ -860,16 +868,28 @@ def detect_streams(store: Store, image: str | None = None) -> dict[str, Any]:
         # stream named "". A staged copy whose original IS there needs no special case --
         # it holds the same payload, but it is the longer name of the two and the ranking
         # below never prefers it.
-        if name.endswith(STAGED_SUFFIX) and name.removesuffix(STAGED_SUFFIX) not in present:
+        if not name.endswith(STAGED_SUFFIX):
+            continue
+        original = name.removesuffix(STAGED_SUFFIX)
+        # EMPTY counts as not there. `rebuild_stream` drops the original and then writes
+        # it back, so a rebuild dying inside that window leaves the name present and
+        # holding nothing -- and the old test, which asked only whether the name existed,
+        # let it through. The empty original is then dropped from the ranking below as
+        # having no payload type, the staged copy becomes the only candidate of its type,
+        # and the module reads a half-written rebuild as the recording's own tf.
+        if original not in present or not _holds_anything(store, original):
             raise SystemExit(
-                f"{name!r} is in the recording and {name.removesuffix(STAGED_SUFFIX)!r} is"
+                f"{name!r} is in the recording and {original!r} is"
                 " not: a rebuild died between dropping the old stream and writing the new"
                 f" one. Rename {name!r} back and nothing is lost."
             )
 
     by_type: dict[str, list[str]] = {}
     for name in present:
-        if name in DERIVED_STREAMS:
+        # A staged copy is never the recording's own stream, whatever it holds. The
+        # ranking used to be trusted to pass it over on length alone, which is true only
+        # while the original is a candidate too.
+        if name in DERIVED_STREAMS or name.endswith(STAGED_SUFFIX):
             continue
         try:
             payload = store.stream(name).data_type

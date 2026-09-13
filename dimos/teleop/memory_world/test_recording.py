@@ -1272,3 +1272,44 @@ def test_a_realsense_with_aligned_depth_has_a_depth_stream(tmp_path) -> None:  #
         assert detect_streams(store)["depth"] is None
     finally:
         store.stop()
+
+
+def test_an_empty_original_beside_a_staged_copy_is_a_dead_rebuild(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """`rebuild_stream` drops the original and then writes it back, so a rebuild dying
+    INSIDE that window leaves the name present and holding nothing.
+
+    The guard asked only whether the name existed, so it let that through -- and the
+    empty original is then dropped from the ranking as having no payload type, leaving
+    the staged copy the only candidate of its type. The module read a half-written
+    rebuild as the recording's own tf. An empty original counts as not there, and a
+    staged copy is never a candidate for the recording's own stream in the first place.
+    """
+    import pytest
+
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import STAGED_SUFFIX, detect_streams
+
+    store = SqliteStore(path=str(tmp_path / "dead.db"), must_exist=False)
+    store.start()
+    try:
+        staged = store.stream(f"tf{STAGED_SUFFIX}", TFMessage)
+        for step in range(3):
+            staged.append(TFMessage(_edge("odom", "base", float(step))), ts=float(step))
+        store.stream("tf", TFMessage)  # present, and holding nothing
+
+        with pytest.raises(SystemExit, match="a rebuild died"):
+            detect_streams(store)
+    finally:
+        store.stop()
+
+    # A live original beside a staged copy is fine, and the original is what is picked.
+    store = SqliteStore(path=str(tmp_path / "live.db"), must_exist=False)
+    store.start()
+    try:
+        for name in ("tf", f"tf{STAGED_SUFFIX}"):
+            stream = store.stream(name, TFMessage)
+            stream.append(TFMessage(_edge("odom", "base", 1.0)), ts=1.0)
+        assert detect_streams(store)["tf"] == "tf"
+    finally:
+        store.stop()
