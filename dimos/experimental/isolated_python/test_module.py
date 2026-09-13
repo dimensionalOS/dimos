@@ -65,7 +65,16 @@ def test_uv_lock_enables_frozen_commands(tmp_path: Path, monkeypatch: pytest.Mon
     try:
         command = module._launch_command(7)
 
-        assert module._prepare_command() == ["uv", "sync", "--frozen"]
+        assert module._prepare_command() == [
+            "uv",
+            "run",
+            "--frozen",
+            "--with-editable",
+            str(checkout),
+            "python",
+            "-c",
+            "pass",
+        ]
         assert command[:5] == [
             "uv",
             "run",
@@ -118,7 +127,7 @@ def test_pixi_supplies_uv_when_manifest_exists(
     )
     module = Contract()
     try:
-        assert module._prepare_command() == ["pixi", "run", "--executable", "uv", "sync"]
+        assert module._prepare_command()[:5] == ["pixi", "run", "--executable", "uv", "run"]
     finally:
         module.stop()
 
