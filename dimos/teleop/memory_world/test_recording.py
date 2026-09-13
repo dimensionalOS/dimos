@@ -1406,6 +1406,31 @@ def test_a_depth_stream_that_will_not_decode_is_the_last_resort(tmp_path) -> Non
     finally:
         store.stop()
 
+    # And a stream that CHANGES shape is not depth at all. Reading on until something
+    # decodes is not enough on its own: eight mono frames in front of ninety-two RGB ones
+    # read as one channel and beat a real DEPTH16 stream, and `patch_world_position`
+    # raised "too many values to unpack" on the frame it was handed.
+    from dimos.memory.store.memory import MemoryStore
+
+    changing = MemoryStore()
+    changing.start()
+    try:
+        for i in range(100):
+            frame = (
+                Image(np.full((8, 8), 127, np.uint8), format=ImageFormat.GRAY)
+                if i < 8
+                else Image(np.full((8, 8, 3), 127, np.uint8), format=ImageFormat.RGB)
+            )
+            changing.stream("depth_color", Image).append(frame, ts=float(i))
+            changing.stream("camera_depth_image", Image).append(
+                Image(np.full((8, 8), 1000, np.uint16), format=ImageFormat.DEPTH16), ts=float(i)
+            )
+        assert detect_streams(changing)["depth"] == "camera_depth_image", (
+            "a stream that changes shape was picked as depth"
+        )
+    finally:
+        changing.stop()
+
     store = SqliteStore(path=path, must_exist=True)
     store.start()
     try:

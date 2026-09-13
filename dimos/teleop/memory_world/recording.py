@@ -595,23 +595,32 @@ CHANNEL_TRIES = 8
 
 
 def _channels(store: Store, name: str) -> int | None:
-    """How many channels *name*'s first READABLE image has, or None if none of the first
-    `CHANNEL_TRIES` decode.
+    """How many channels *name*'s images have: the count they AGREE on, else None.
 
-    The first sample is not the stream. A writer killed mid-frame leaves one blob that will
-    not decode and the rest intact, and judging the stream on that one put a colourised
-    depth image ahead of real DEPTH16 -- the very stream the ranking exists to keep out,
-    with nineteen good frames of depth thrown away for one bad one.
+    The first sample is not the stream, twice over. A writer killed mid-frame leaves one
+    blob that will not decode and the rest intact, so one failure must not condemn the
+    stream: judging on that alone put a colourised image ahead of real DEPTH16, throwing
+    away nineteen good frames of depth for one bad one.
+
+    And a stream whose shape CHANGES is not depth at all, so reading on until something
+    decodes is not enough either: eight mono frames in front of ninety-two RGB ones read
+    as one channel, beat a real DEPTH16 stream, and `patch_world_position` raised "too
+    many values to unpack" on the frame it was handed. The last sample is asked as well,
+    and a disagreement is "cannot tell", which sorts last.
     """
+    counts: set[int] = set()
     try:
-        for index, obs in enumerate(store.streams[name]):
+        stream = store.streams[name]
+        for index, obs in enumerate(stream):
             if index >= CHANNEL_TRIES:
                 break
             with contextlib.suppress(Exception):
-                return int(obs.data.channels)
+                counts.add(int(obs.data.channels))
+        with contextlib.suppress(Exception):
+            counts.add(int(stream.last().data.channels))
     except Exception:
         return None
-    return None
+    return counts.pop() if len(counts) == 1 else None
 
 
 def refuse_if_a_rebuild_is_half_done(store: Store, name: str) -> None:
@@ -855,6 +864,34 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
                 if frame not in attached:
                     attached.add(frame)
                     growing = True
+    # A frame has ONE parent in a tree, and the fold can hand it a second: a recording that
+    # keeps `cam` and `/cam` as different frames says its camera is in two places, and this
+    # function DELETES `tf_static` when it is done -- so it would settle that by throwing
+    # one of the two answers away. Measured: `odom -> /cam` read 6.0 before the fold and
+    # None after, with the only record of it gone. Refuse instead. Nothing is lost by
+    # stopping, and the operator can see both values while both are still there.
+    #
+    # Only a clash the FOLD creates counts. A child whose moving edges were dropped as
+    # stale copies of the folded edge is not one, and a moving stream that already gives a
+    # frame two parents is its own problem, not this function's.
+    moving_parent = {
+        canonical_frame(str(t.child_frame_id)): canonical_frame(str(t.frame_id))
+        for _, kept, _ in rows
+        for t in kept
+    }
+    clashes = sorted(
+        f"{child!r} hangs off {moving_parent[child]!r} in {tf_stream!r}"
+        f" and off {parent!r} in {static_stream!r}"
+        for parent, child in folded
+        if child in moving_parent and moving_parent[child] != parent
+    )
+    if clashes:
+        raise SystemExit(
+            f"folding {static_stream!r} into {tf_stream!r} would give a frame two parents: "
+            + "; ".join(clashes)
+            + ". The recording says the same frame is in two places, and folding would"
+            " delete the evidence for one of them. Nothing was changed."
+        )
     statics_row = [
         (
             first,

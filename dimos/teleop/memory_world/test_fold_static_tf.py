@@ -667,3 +667,38 @@ def test_the_spelling_travels_along_the_folded_edges(tmp_path) -> None:  # type:
         assert not any(name.startswith("/") for name in frames), sorted(frames)
     finally:
         store.stop()
+
+
+def test_a_fold_that_would_give_a_frame_two_parents_refuses(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A frame has ONE parent in a tree, and respelling can hand it a second.
+
+    A recording that keeps `cam` and `/cam` as different frames says its camera is in two
+    places: `odom -> cam` directly at 10, and `odom -> base -> /mount -> /cam` at 6. The
+    fold respells the static chain into the moving stream's convention, which makes the
+    second `cam`'s parent `mount` -- and then DELETES `tf_static`, so the 6 is gone with
+    no record of it. Measured: `odom -> /cam` read 6.0 before and None after.
+
+    Refusing costs nothing: both values are still in the recording afterwards, and the
+    operator can see which one is wrong.
+    """
+    import pytest
+
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import fold_static_tf
+
+    store = _tf_store(tmp_path)
+    try:
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(_edge("base", "/mount", 2.0), _edge("/mount", "/cam", 3.0)), ts=1.0
+        )
+        store.stream("tf", TFMessage).append(
+            TFMessage(_edge("odom", "base", 1.0), _edge("odom", "cam", 10.0)), ts=1.0
+        )
+
+        with pytest.raises(SystemExit, match="two parents"):
+            fold_static_tf(store, "tf", "tf_static")
+
+        assert "tf_static" in store.list_streams(), "a refused fold deleted the statics"
+        assert sum(1 for _ in store.streams["tf_static"]) == 1
+    finally:
+        store.stop()
