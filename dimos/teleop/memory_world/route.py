@@ -91,35 +91,37 @@ def densify(
     return np.concatenate(pieces)
 
 
-def bridgeable_gap(path: NDArray[np.float64], still_m: float = 0.0) -> float:
+def bridgeable_gap(path: NDArray[np.float64]) -> float:
     """How far apart two poses may be and still have the robot between them.
 
-    From the recording's own sampling: a drive's legs are all about the typical length,
-    and a relocalisation is an outlier against it. Twice the median, because real
-    spacing varies and a factor that tight would refuse ordinary jitter -- and capped,
-    because a recording sampled sparsely throughout must not license bridging a jump.
+    From the recording's own sampling. The statistic is the 90th percentile of the leg
+    lengths, doubled and capped -- NOT the median, and not the median over legs above
+    some floor. Both of those were tried and both were wrong, in opposite directions, on
+    real recording shapes:
 
-    A fixed number cannot do this job: the two cases that have to be told apart are a
-    1.0 m leg on a downsampled recording (a drive, and its body voxels must be erased or
-    a straight corridor plans no route at all) and a 2.0 m leg on a densely sampled one
-    (a jump, and bridging it erases a wall). Any constant between them is wrong for one
-    recording or the other; the ratio to the recording's own median is right for both.
+      median, all legs            a five-second pause fills the list with millimetre
+                                  legs (real odometry never repeats a pose exactly) and
+                                  drags it to 0.003 m, so nothing is bridged and the
+                                  robot's own body between the drive samples reads as
+                                  walls -- a straight corridor plans no route at all.
+      median, legs over one cell  on a drive sampled every 5 cm with a 10 cm cell, that
+                                  filter removes EVERY drive leg and leaves only the
+                                  jump, so the jump becomes the median and gets bridged:
+                                  the wall it crosses drops from cost 100 to 90 and the
+                                  route goes straight through it.
+
+    The 90th percentile needs no filter, because it is already above the small tail a
+    pause makes and below the large one a relocalisation makes. Measured on all four
+    known shapes -- coarse drive, coarse drive with a pause, fine drive with a 1.2 m
+    jump, fine drive with a 2.8 m jump -- it is the only one of the three that bridges
+    every drive leg and no jump.
     """
     if len(path) < 2:
         return 0.0
     gaps = np.linalg.norm(np.diff(np.asarray(path)[:, :2], axis=0), axis=1)
-    # Legs shorter than *still_m* are the robot standing still, not driving, and the
-    # median has to be taken over the driving. `> 0` was not enough: real odometry never
-    # reports the same pose twice, so a pause anywhere in the recording fills the list
-    # with millimetre legs and drags the median to nothing. Measured on the corridor
-    # fixture -- same voxels, same drive, same endpoints -- one five-second pause with a
-    # millimetre of jitter took `max_gap` from 1.5 m to 0.004 m and the 9.20 m route to
-    # none at all. Exactly the failure the corridor test exists to pin; only the
-    # perfectly still case, which is the synthetic one, was caught.
-    gaps = gaps[gaps > still_m]
     if not len(gaps):
         return 0.0
-    return float(min(MAX_BRIDGE_M, 2.0 * float(np.median(gaps))))
+    return float(min(MAX_BRIDGE_M, 2.0 * float(np.percentile(gaps, 90))))
 
 
 @dataclass
@@ -316,7 +318,7 @@ class RoutePlanner:
         # `bridgeable_gap` tells the two apart from the recording's own sampling. The
         # corridor and the floor height still come from `dense`, which is what they are
         # for and what needs ~3 m of bridging on a real recording.
-        driven_line = densify(path, resolution / 2, max_gap=bridgeable_gap(path, resolution))
+        driven_line = densify(path, resolution / 2, max_gap=bridgeable_gap(path))
         sampled = np.zeros((height, width), dtype=bool)
         sampled_r, sampled_c = cells(driven_line)
         sampled[sampled_r, sampled_c] = True

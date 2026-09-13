@@ -77,6 +77,16 @@ export class InputAdapter {
                 this._hand[hand].pos = [p.x, p.y, p.z];
                 this._hand[hand].pinching = gripVal > 0.5;
                 this._hand[hand].wasPinching = this._hand[hand].pinching;
+            } else {
+                // Still listed, but not tracked: its last known position is not where it
+                // is, and scaling off it is scaling off a guess. Both gripping, then the
+                // right controller loses tracking while the left moves, and the stale
+                // pair produced `scale_delta` with a factor of 2 -- the same phantom the
+                // vanish handling below prevents, on the disappearance mode that leaves
+                // the input source in place.
+                this._hand[hand].pinching = false;
+                this._hand[hand].pos = null;
+                this._scaleAnchor = null;
             }
 
             if (hand === 'left') {
@@ -145,13 +155,27 @@ export class InputAdapter {
                 this._scaleAnchor = null;
             }
         }
-        // And push-to-talk is held on the right controller's A button. Losing the
-        // controller mid-utterance left `voice_start` unmatched, so the microphone stayed
-        // recording with nothing able to stop it: `main.js` ends the recording on
-        // `voice_stop` and on nothing else.
-        if (!seen.right && this._rightAWas) {
+        // Push-to-talk is held on the right CONTROLLER's A button, so the test is
+        // `sawRightController`, not `seen.right`. `seen` counts any input source of that
+        // handedness, including the tracked hand that replaces a controller the moment
+        // it is put down -- which is one of the three ways the comment above says a
+        // controller goes away. Gated on `seen`, putting the controller down mid-utterance
+        // left `voice_start` unmatched and the microphone recording with nothing able to
+        // end it: `main.js` stops on `voice_stop` and on nothing else.
+        if (!sawRightController && this._rightAWas) {
             this._rightAWas = false;
             this.onGesture({ type: 'voice_stop' });
+        }
+        // The teleport arc is armed by holding the trigger and committed by releasing it,
+        // so a controller that goes away mid-aim is a release that never comes. Left
+        // armed, the arc and its marker stayed drawn for the whole outage, and the frame
+        // the controller came back the viewer was teleported to a target aimed before it
+        // -- `applyTeleportCommit` moves the world to `_teleportTarget`, which is still
+        // the stale hit point. `main.js` has had a `teleport_cancel` case since it was
+        // written and nothing had ever emitted one.
+        if (!sawRightController && this._teleportArmed) {
+            this._teleportArmed = false;
+            this.onGesture({ type: 'teleport_cancel' });
         }
 
         // Bimanual-pinch scaling.

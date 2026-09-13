@@ -33,6 +33,7 @@ import signal
 import subprocess
 import tempfile
 import threading
+import time
 
 from dimos.utils.logging_config import setup_logger
 
@@ -55,20 +56,33 @@ def siglipify_command(flake: str, store_path: str) -> list[str]:
     return ["nix", "run", flake, "--", "run", store_path, "--config"]
 
 
-def _signal_group(process: subprocess.Popen[bytes], sig: int) -> None:
-    """Signal the whole process group, falling back to the one child.
+# How long the group is given to go on its own before it is killed outright.
+TERMINATE_GRACE_S = 2.0
 
-    The child is spawned with `start_new_session=True`, so its pid IS its group's. A
-    launcher that forks rather than execs -- `nix run` does -- puts the real work in a
-    grandchild, which a signal to the child alone never reaches.
+
+def _signal_group(pgid: int, sig: int) -> None:
+    """Signal a whole process group by its id.
+
+    By ID, not by `Popen`. The child is spawned with `start_new_session=True`, so its pid
+    IS its group's, and the group outlives it: a launcher that forks rather than execs --
+    `nix run` does -- can exit 0 while the work it started runs on. Asking `os.getpgid` on
+    a reaped launcher raises, and guarding that with `process.poll() is not None: return`
+    meant the surviving worker was never signalled at all. The id is taken once, at spawn,
+    and stays valid for as long as any member of the group is alive.
     """
-    if process.poll() is not None:
-        return
     with contextlib.suppress(OSError, ProcessLookupError, PermissionError):
-        os.killpg(os.getpgid(process.pid), sig)
-        return
-    with contextlib.suppress(OSError):
-        process.send_signal(sig)
+        os.killpg(pgid, sig)
+
+
+def _group_alive(pgid: int) -> bool:
+    """Whether any member of the group is still there."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except (OSError, PermissionError):
+        return True  # it exists; we merely may not signal it
+    return True
 
 
 class EmbeddingJob:
@@ -93,6 +107,7 @@ class EmbeddingJob:
         self._run_id = 0
         self.progress = ""
         self._process: subprocess.Popen[str] | None = None
+        self._pgid: int | None = None
         self._terminated = False
         self._on_finished = on_finished
 
@@ -128,13 +143,24 @@ class EmbeddingJob:
         return True
 
     def terminate(self) -> None:
-        """Stop the job, and everything it started."""
+        """Stop the job, and everything it started. Returns once it is actually gone."""
         with self._lock:
             self._terminated = True
-            process = self._process
-        if process is None:
+            pgid = self._pgid
+        if pgid is None:
             return
-        _signal_group(process, signal.SIGTERM)
+        _signal_group(pgid, signal.SIGTERM)
+        # The escalation belongs HERE, not only in `_run`'s finally. The read loop blocks
+        # on a pipe every member of the group holds open, so a process that ignores the
+        # TERM never lets that thread reach its finally at all: measured, a child with
+        # SIGTERM set to SIG_IGN was still alive and the job still reporting "running"
+        # twelve seconds after a terminate() that was supposed to end it.
+        deadline = time.monotonic() + TERMINATE_GRACE_S
+        while time.monotonic() < deadline:
+            if not _group_alive(pgid):
+                return
+            time.sleep(0.05)
+        _signal_group(pgid, signal.SIGKILL)
 
     def _run(
         self, command: list[str], config_text: str | None, adopt: Callable[[], None], run_id: int
@@ -166,6 +192,8 @@ class EmbeddingJob:
             )
             with self._lock:
                 self._process = process
+                # Its own group, captured now: see `_signal_group`.
+                self._pgid = process.pid
                 if self._terminated:  # stop() came while the process was starting
                     process.terminate()
             assert process.stdout is not None
@@ -206,20 +234,22 @@ class EmbeddingJob:
                 if process.stdout is not None:
                     with contextlib.suppress(OSError):
                         process.stdout.close()
-                if process.poll() is None:
-                    _signal_group(process, signal.SIGTERM)
+                pgid = self._pgid
+                if pgid is not None:
+                    _signal_group(pgid, signal.SIGTERM)
                 with contextlib.suppress(subprocess.TimeoutExpired, OSError):
                     process.wait(timeout=10)
                 # Anything that ignored the TERM. Without this the group outlives the
                 # module, and what it outlives the module doing is writing to the
                 # recording.
-                if process.poll() is None:
-                    _signal_group(process, signal.SIGKILL)
+                if pgid is not None and _group_alive(pgid):
+                    _signal_group(pgid, signal.SIGKILL)
                     with contextlib.suppress(subprocess.TimeoutExpired, OSError):
                         process.wait(timeout=5)
             with self._lock:
                 if self._process is process:  # a job started after "done" owns the handle now
                     self._process = None
+                    self._pgid = None
                 # A thread that leaves any other way leaves the state at "running" -- and
                 # `start()` refuses to run anything while it reads that, so the job would
                 # be dead, the viewer would wait for it forever, and no later attempt

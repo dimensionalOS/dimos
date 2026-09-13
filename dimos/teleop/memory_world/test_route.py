@@ -145,6 +145,28 @@ def test_the_robots_own_body_between_two_samples_is_not_a_wall() -> None:
     assert route.length_m < 12.0, f"routed around its own body: {route.length_m}"
 
 
+def test_a_finely_sampled_drive_still_does_not_bridge_a_jump() -> None:
+    """The third shape, and the one that broke the second fix for the second.
+
+    `_path` samples every 5 cm and the cell is 10 cm, so filtering out legs below one
+    cell -- which is how the pause was first handled -- removed EVERY drive leg and left
+    only the jump. The jump then WAS the median, got bridged, and the wall it crosses
+    went from cost 100 to 90 with a 7.90 m route straight through it: the exact defect
+    the wall test below pins, reintroduced by the fix for the corridor test above.
+
+    Three shapes, three tests, and no statistic that fails any of them survives all
+    three. The shipped one is the 90th percentile, which needs no filter.
+    """
+    voxels = np.concatenate([_floor(0, 10, 0, 6), _wall(4.9, 5.1, -1.0, 7.0)])  # no doorway
+    # Driven finely up to the wall, then a 1.2 m jump to the far side and on.
+    jumped = np.concatenate([_path((1, 3), (4.4, 3)), _path((5.6, 3), (9, 3))])
+
+    planner = RoutePlanner.from_voxels(voxels, jumped, voxel_size=VOXEL)
+    assert planner.plan((1.0, 3.0), (9.0, 3.0)) is None, (
+        "a 1.2 m jump was bridged because the drive was sampled finer than the cell"
+    )
+
+
 def test_a_pause_in_the_drive_does_not_wall_off_the_corridor() -> None:
     """`bridgeable_gap` takes the median leg, and a pause is made of tiny legs.
 
