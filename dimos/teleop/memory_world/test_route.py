@@ -128,7 +128,7 @@ def test_the_robots_own_body_between_two_samples_is_not_a_wall() -> None:
     NO route at all, where a 9.20 m one runs down the middle of it.
 
     Bridging everything is the sibling's bug; bridging nothing is this one.
-    `bridgeable_gap` tells a drive from a jump by the recording's own sampling.
+    `bridgeable` tells a drive from a jump by the legs around it.
     """
     walls = np.concatenate([_wall(-1.0, 11.0, 0.40, 0.55), _wall(-1.0, 11.0, -0.55, -0.40)])
     floor = _floor(-1, 11, -1, 1)
@@ -162,11 +162,17 @@ def test_a_path_that_mostly_stands_still_is_still_a_drive() -> None:
     voxels = np.concatenate([_floor(-1, 11, -1, 1), walls, body])
     driven = [[float(x), 0.0, BODY_Z] for x in range(11)]
 
+    jitter = lambda n: [  # noqa: E731 - a millimetre of it, which is what a real stop looks like
+        [10.0 + 0.001 * ((i % 3) - 1), 0.0, BODY_Z] for i in range(n)
+    ]
     shapes = {
         # A tf gap: the pose is held, so the legs are exactly zero.
         "91% exact repeats": driven + [[10.0, 0.0, BODY_Z]] * 100,
-        # Parked, with a millimetre of jitter, which is what a real stop looks like.
-        "93% parked": driven + [[10.0 + 0.001 * ((i % 3) - 1), 0.0, BODY_Z] for i in range(140)],
+        "93% parked": driven + jitter(140),
+        # Fifteen minutes parked at 10 Hz. Nine thousand millimetre legs accumulate 9 m
+        # of "distance", which outweighs the 10 m actually driven -- so weighting the
+        # statistic by distance does not save it either. Only a LOCAL comparison does.
+        "15 minutes parked": driven + jitter(9000),
     }
     for label, path in shapes.items():
         planner = RoutePlanner.from_voxels(voxels, np.asarray(path), voxel_size=VOXEL)
@@ -208,7 +214,7 @@ def test_a_finely_sampled_drive_still_does_not_bridge_a_jump() -> None:
 
 
 def test_a_pause_in_the_drive_does_not_wall_off_the_corridor() -> None:
-    """`bridgeable_gap` takes the median leg, and a pause is made of tiny legs.
+    """A pause is made of tiny legs, and they must not set the scale for the driving.
 
     Real odometry never reports the same pose twice, so standing still for five seconds
     fills the list with millimetre legs and drags the median to nothing -- and then

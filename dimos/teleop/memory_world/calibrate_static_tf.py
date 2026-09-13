@@ -269,7 +269,17 @@ def rigidly_joined(tree: Any, frame: str, other: str) -> bool:
         moved = float(np.ptp(positions, axis=0).max())
         # q and -q are the same rotation, and a republisher is free to flip the sign,
         # so compare by how far apart the rotations are, not by the numbers.
-        aligned = orientations @ orientations[0]
+        #
+        # Normalised first, the way every other reader of an orientation in this package
+        # now is. The dot product below is only a cosine for unit quaternions: two
+        # samples of the SAME identity rotation published as (0, 0, 0, 2) gave 4.0, which
+        # is 3.0 from 1.0, and a rig that is rigidly joined was reported as not joined --
+        # so the calibration refused before it measured anything.
+        norms = np.linalg.norm(orientations, axis=1, keepdims=True)
+        unit = np.divide(orientations, norms, out=np.zeros_like(orientations), where=norms > 0)
+        zero = (norms <= 0).ravel()
+        unit[zero] = (0.0, 0.0, 0.0, 1.0)  # an uninitialised message is the identity
+        aligned = unit @ unit[0]
         turned = float(np.abs(np.abs(aligned) - 1.0).max())
         if max(moved, turned) > 1e-6:  # a republished static edge never moves
             return False

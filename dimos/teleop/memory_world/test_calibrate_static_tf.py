@@ -838,3 +838,35 @@ def test_a_ros1_recording_is_corrected_and_keeps_its_own_spelling(tmp_path) -> N
             )
         finally:
             store.stop()
+
+
+def test_a_rig_is_rigidly_joined_whatever_length_its_quaternions_are() -> None:
+    """The dot product `rigidly_joined` measures with is only a cosine for UNIT
+    quaternions.
+
+    Two samples of the same identity rotation published as (0, 0, 0, 2) -- a unit mix-up,
+    a scaled republish -- gave 4.0 where 1.0 means "has not turned", so a rig that IS
+    rigidly joined was reported as not joined and the calibration refused before it
+    measured anything. Every other reader of an orientation in this package normalises
+    now; this one measured raw.
+    """
+    from dimos.teleop.memory_world.calibrate_static_tf import rigidly_joined
+    from dimos.teleop.memory_world.tf_tree import TfTree
+
+    for label, q in (
+        ("unit", (0.0, 0.0, 0.0, 1.0)),
+        ("doubled", (0.0, 0.0, 0.0, 2.0)),
+        ("all zeros", (0.0, 0.0, 0.0, 0.0)),
+    ):
+        tree = TfTree()
+        for ts in (0.0, 1.0):
+            tree.add("lidar", "camera", ts, (0.0, 0.0, 0.0), q)
+        assert rigidly_joined(tree, "lidar", "camera"), f"{label}: a still edge read as moving"
+
+    # And one that really does turn is still not rigid, whatever its length.
+    turning = TfTree()
+    turning.add("lidar", "camera", 0.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 2.0))
+    turning.add(
+        "lidar", "camera", 1.0, (0.0, 0.0, 0.0), (0.0, 0.0, 2 * np.sqrt(0.5), 2 * np.sqrt(0.5))
+    )
+    assert not rigidly_joined(turning, "lidar", "camera")

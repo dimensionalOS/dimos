@@ -57,8 +57,11 @@ BODY_ABOVE_M = 1.2
 CORRIDOR_M = 1.5
 ROBOT_RADIUS_M = 0.35
 # The most that may ever be treated as "the robot drove between these two poses", however
-# sparsely the recording was sampled. See `bridgeable_gap`.
+# sparsely the recording was sampled. See `bridgeable`.
 MAX_BRIDGE_M = 1.5
+# How many legs either side a leg is judged against. Long enough to average out a
+# stride, short enough that a pause somewhere else in the recording cannot reach it.
+LOCAL_WINDOW_LEGS = 21
 # Cost falls from just under lethal at the robot's radius to nothing here.
 INFLATION_M = 0.6
 # How far a start or goal may be moved to reach a passable cell (the goal is
@@ -72,62 +75,59 @@ ROUTE_HEIGHT_ABOVE_SURFACE_M = 0.1
 
 
 def densify(
-    path: NDArray[np.float64], step: float, max_gap: float | None = None
+    path: NDArray[np.float64], step: float, bridge: NDArray[np.bool_] | None = None
 ) -> NDArray[np.float64]:
     """*path* with points added along each leg so none are further than *step* apart.
 
-    With *max_gap*, a leg longer than that is left alone: its two ends stay and nothing
-    is drawn between them. A pose series contains both drives and jumps, and only the
-    drive is somewhere the robot was.
+    With *bridge*, one flag per leg, a leg it marks False is left alone: its two ends
+    stay and nothing is drawn between them. A pose series contains both drives and jumps,
+    and only the drive is somewhere the robot was.
     """
     if len(path) < 2:
         return path
     pieces = []
-    for a, b in pairwise(path):
+    for index, (a, b) in enumerate(pairwise(path)):
         span = math.dist(a[:2], b[:2])
-        n = 1 if (max_gap is not None and span > max_gap) else max(math.ceil(span / step), 1)
+        skip = bridge is not None and not bool(bridge[index])
+        n = 1 if skip else max(math.ceil(span / step), 1)
         pieces.append(a + (b - a) * np.linspace(0, 1, n, endpoint=False)[:, None])
     pieces.append(path[-1:])
     return np.concatenate(pieces)
 
 
-def bridgeable_gap(path: NDArray[np.float64]) -> float:
-    """How far apart two poses may be and still have the robot between them.
+def bridgeable(path: NDArray[np.float64], resolution: float) -> NDArray[np.bool_]:
+    """Which legs the robot drove, rather than was relocated across. One flag per leg.
 
-    The leg length at which the cumulative DISTANCE reaches half the total, doubled and
-    capped. Distance is the right weight because the question is how far the robot moves
-    between samples, and weighting by it makes the statistic immune to both tails without
-    a threshold anywhere:
+    Per leg, against its own NEIGHBOURS in time -- not against any statistic of the whole
+    recording. That is the whole lesson of this function: four global statistics were
+    tried over three rounds and each was defeated by a real recording shape the one before
+    had not met, because a recording is not homogeneous. It has stretches of driving at
+    different speeds, stretches of standing still, and the occasional relocalisation, and
+    no single number describes all of them at once:
 
-      standing still contributes no distance, however many samples it takes, so a pause
-      or a tf gap -- `replay._held_through_gaps` repeats the pose EXACTLY -- cannot drag
-      it down. A tour parked for 93% of its samples is 93% of the COUNT and under 1% of
-      the distance.
+      median of all legs        dies on a pause; millimetre legs become most of the count
+      90th percentile           dies once standing still passes 90% of the count
+      median of legs over 1 cm  dies on a drive sampled every 5 mm: the filter removes
+                                every driving leg and the JUMP becomes the median
+      median of legs over a cell    the same, one scale up, at 5 cm
+      distance-weighted median  dies on a LONG stop: 9000 jitter samples of a millimetre
+                                accumulate 9 m, which outweighs a 10 m drive
 
-      a relocalisation contributes distance but only once, so it cannot pull it up past
-      the bulk of the driving.
+    A jump, though, is always unlike the legs immediately around it, whatever the rest of
+    the recording is doing. So the test is local: a rolling median over a window of legs,
+    and a leg is a drive if it is no more than twice that. Floored at one cell, because
+    below that bridging adds no cells at all and cannot matter; capped at MAX_BRIDGE_M,
+    because nothing should ever be called a drive across more than that.
 
-    Four statistics were tried before this over three rounds, and each was defeated by a
-    real recording shape the one before it had not met. The shapes are all tests now:
-
-      median, all legs           dies on a pause (millimetre legs are most of the count)
-      90th percentile            dies once standing still passes 90% of the count
-      median over legs > 1 cm    dies on a drive sampled every 5 mm: the filter removes
-                                 every driving leg and the JUMP becomes the median
-      median over legs > a cell  the same, one scale up, on a drive sampled every 5 cm
-
-    Every one of those was a count-weighted statistic with a threshold bolted on, and
-    every threshold ate a drive sampled finer than it. Weighting by distance needs none.
+    Measured against all eight known shapes, which are the tests in `test_route.py`.
     """
     if len(path) < 2:
-        return 0.0
+        return np.zeros(0, dtype=bool)
     gaps = np.linalg.norm(np.diff(np.asarray(path)[:, :2], axis=0), axis=1)
-    moving = np.sort(gaps[gaps > 0])
-    if not len(moving):
-        return 0.0  # it never moved; there is nothing to bridge
-    travelled = np.cumsum(moving)
-    halfway = int(np.searchsorted(travelled, 0.5 * travelled[-1]))
-    return float(min(MAX_BRIDGE_M, 2.0 * float(moving[min(halfway, len(moving) - 1)])))
+    window = min(len(gaps), LOCAL_WINDOW_LEGS) | 1  # odd, so the window is centred
+    nearby = ndimage.median_filter(gaps, size=window, mode="nearest")
+    allowed = np.minimum(MAX_BRIDGE_M, np.maximum(resolution, 2.0 * nearby))
+    return np.asarray(gaps <= allowed)
 
 
 @dataclass
@@ -321,10 +321,10 @@ class RoutePlanner:
         # sits between the samples, and refusing to erase it walled off a straight 10 m
         # corridor completely -- `plan` returned None where a 9.20 m route existed.
         #
-        # `bridgeable_gap` tells the two apart from the recording's own sampling. The
+        # `bridgeable` tells the two apart, per leg, from the legs around it. The
         # corridor and the floor height still come from `dense`, which is what they are
         # for and what needs ~3 m of bridging on a real recording.
-        driven_line = densify(path, resolution / 2, max_gap=bridgeable_gap(path))
+        driven_line = densify(path, resolution / 2, bridge=bridgeable(path, resolution))
         sampled = np.zeros((height, width), dtype=bool)
         sampled_r, sampled_c = cells(driven_line)
         sampled[sampled_r, sampled_c] = True
