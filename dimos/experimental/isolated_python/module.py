@@ -41,6 +41,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+# TODO: sorry but I don't find a good way to ensure pypi installation compatibility, will address later
 def _installed_dimos_requirement() -> str:
     """Reuse a Git installation's commit; leave index installations unpinned."""
     recorded = distribution("dimos").read_text("direct_url.json")
