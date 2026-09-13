@@ -40,6 +40,8 @@ from dimos.stream.audio.stt import node_whisper as whisper_module
 from dimos.web.relay_bridge.audio_codec import AudioChunk
 from dimos.web.relay_bridge.module_test_support import FakeTransport
 
+pytestmark = pytest.mark.skipif_no_ffmpeg
+
 
 def _chunk(sid: str = "u1", seq: int = 0, data: bytes = b"", final: bool = False) -> AudioChunk:
     return AudioChunk(sid=sid, seq=seq, mime="audio/webm", data=data, final=final)
