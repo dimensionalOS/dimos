@@ -30,6 +30,7 @@ info and tf messages are decoded here.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+import contextlib
 from dataclasses import dataclass
 import json
 import math
@@ -589,12 +590,28 @@ def _holds_anything(store: Store, name: str) -> bool:
         return False
 
 
+# How many samples of a stream are tried before giving up on reading its shape.
+CHANNEL_TRIES = 8
+
+
 def _channels(store: Store, name: str) -> int | None:
-    """How many channels *name*'s first image has, or None if this build cannot tell."""
+    """How many channels *name*'s first READABLE image has, or None if none of the first
+    `CHANNEL_TRIES` decode.
+
+    The first sample is not the stream. A writer killed mid-frame leaves one blob that will
+    not decode and the rest intact, and judging the stream on that one put a colourised
+    depth image ahead of real DEPTH16 -- the very stream the ranking exists to keep out,
+    with nineteen good frames of depth thrown away for one bad one.
+    """
     try:
-        return int(next(iter(store.streams[name])).data.channels)
+        for index, obs in enumerate(store.streams[name]):
+            if index >= CHANNEL_TRIES:
+                break
+            with contextlib.suppress(Exception):
+                return int(obs.data.channels)
     except Exception:
         return None
+    return None
 
 
 def refuse_if_a_rebuild_is_half_done(store: Store, name: str) -> None:

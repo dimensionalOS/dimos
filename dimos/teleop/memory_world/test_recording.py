@@ -1365,6 +1365,47 @@ def test_a_depth_stream_that_will_not_decode_is_the_last_resort(tmp_path) -> Non
     connection.commit()
     connection.close()
 
+    # ONE bad frame is not a bad stream. A writer killed mid-frame leaves a blob that will
+    # not decode and the rest intact, and judging the stream on its first sample alone put
+    # the colourised image ahead of nineteen good frames of real depth.
+    deep = str(tmp_path / "one_bad_frame.db")
+    store = SqliteStore(path=deep, must_exist=False)
+    store.start()
+    try:
+        store.stream("camera_color_image_raw", Image).append(
+            Image(np.zeros((8, 8, 3), np.uint8)), ts=0.0
+        )
+        for i in range(20):
+            store.stream("depth_image", Image, codec=Lz4Codec(LcmCodec(Image))).append(
+                Image(np.full((8, 8), 1000, np.uint16), format=ImageFormat.DEPTH16), ts=float(i)
+            )
+            store.stream("depth_color", Image, codec=Lz4Codec(LcmCodec(Image))).append(
+                Image(np.zeros((8, 8, 3), np.uint8), format=ImageFormat.RGB), ts=float(i)
+            )
+    finally:
+        store.stop()
+
+    connection = sqlite3.connect(deep)
+    table = next(
+        row[0]
+        for row in connection.execute(
+            "select name from sqlite_master where type='table' and name like 'depth_image%blob%'"
+        )
+    )
+    rowid = next(connection.execute(f"select rowid from {table} order by rowid limit 1"))[0]
+    connection.execute(f"update {table} set data = ? where rowid = ?", (b"broken lz4", rowid))
+    connection.commit()
+    connection.close()
+
+    store = SqliteStore(path=deep, must_exist=True)
+    store.start()
+    try:
+        assert detect_streams(store)["depth"] == "depth_image", (
+            "one undecodable frame threw away nineteen good ones"
+        )
+    finally:
+        store.stop()
+
     store = SqliteStore(path=path, must_exist=True)
     store.start()
     try:
