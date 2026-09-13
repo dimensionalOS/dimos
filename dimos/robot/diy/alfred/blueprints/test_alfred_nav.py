@@ -37,7 +37,6 @@ from dimos.robot.diy.alfred.alfred_model import (
 from dimos.robot.diy.alfred.blueprints.alfred_nav import alfred_nav
 from dimos.robot.diy.alfred.blueprints.alfred_sim import alfred_sim
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
-from dimos.robot.diy.alfred.mount_tf import AlfredLidarMountTf, alfred_mount_transforms
 from dimos.robot.diy.alfred.pillar_connection import (
     PILLAR_HARDWARE_ID,
     PILLAR_LIFT_JOINT,
@@ -89,29 +88,10 @@ def test_alfred_nav_tasks_cover_lift_and_both_arms() -> None:
 def test_alfred_nav_runs_on_lidar_odometry() -> None:
     """Point-LIO owns odom -> mid360_link; the mount tree must hang off the lidar."""
     assert _atoms(alfred_nav, PointLio)
-    assert _atoms(alfred_nav, AlfredLidarMountTf)
     assert not any(atom.module.__name__ == "DimSlam" for atom in alfred_nav.blueprints)
     (pointlio,) = _atoms(alfred_nav, PointLio)
     assert pointlio.kwargs["frame_id"] == "odom"
     assert pointlio.kwargs["sensor_frame_id"] == "mid360_link"
-
-
-@pytest.mark.skipif(
-    not _lfs_archive_available(), reason="alfred_description LFS archive not pulled"
-)
-def test_alfred_mount_tree_is_rooted_at_the_lidar_and_leaves_moving_parts_out() -> None:
-    transforms = alfred_mount_transforms()
-    edges = {t.child_frame_id: t.frame_id for t in transforms}
-    assert len(edges) == len(transforms), "a frame has two parents"
-    assert edges["base_link"] == "mid360_link"
-    assert "mid360_link" not in edges, "Point-LIO must be the lidar frame's only parent"
-    assert "lift_link" not in edges and not any("openarm" in c for c in edges)
-    assert "camera_front_depth_optical_frame" not in edges, "imager frames belong to the driver"
-    for link in ("camera_front_link", "camera_back_link", "mid360_imu_link"):
-        frame = link
-        while frame in edges:
-            frame = edges[frame]
-        assert frame == "mid360_link", f"{link} does not reach the odometry root"
 
 
 def test_alfred_nav_composes_nav_planner_pillar_and_viewer_teleop() -> None:

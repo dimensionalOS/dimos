@@ -54,7 +54,6 @@ from dimos.robot.diy.alfred.blueprints.pillar import (
 )
 from dimos.robot.diy.alfred.config import ALFRED
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
-from dimos.robot.diy.alfred.mount_tf import AlfredLidarMountTf
 from dimos.robot.diy.alfred.pillar_connection import (
     PILLAR_LIFT_JOINT,
     PillarConnection,
@@ -184,7 +183,6 @@ alfred_nav = (
     autoconnect(
         vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
         AlfredHighLevel.blueprint(),
-        AlfredLidarMountTf.blueprint(),
         PointLio.blueprint(
             lidar_ip=ALFRED.mid360_ip,
             frame_id=ODOM_FRAME,

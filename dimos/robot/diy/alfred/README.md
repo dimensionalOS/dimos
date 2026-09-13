@@ -96,6 +96,7 @@ DIMOS_TRANSPORT=lcm dimos shell     # app.PillarConnection.home() before plannin
 ```
 
 `alfred-nav` keeps the base out of the coordinator: `AlfredHighLevel` is the only FlowBase
-writer and `MovementManager` muxes teleop over navigation. `AlfredLidarMountTf` publishes
-the mount tree rooted at `mid360_link` because Point-LIO owns the lidar's parent edge. The
-planner publishes no tf. Jeff's dimSLAM blueprints (`alfred-mls-nav*`) are untouched.
+writer and `MovementManager` muxes teleop over navigation. Nothing publishes the sensor
+mount tree yet, so `base_link` has no parent on tf: Point-LIO owns `odom -> mid360_link`
+and the edge from there down to `base_link` is still missing. Jeff's dimSLAM blueprints
+(`alfred-mls-nav*`) are untouched.
