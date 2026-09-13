@@ -83,7 +83,7 @@ with suppress(ImportError, ValueError, OSError):
     if soft < target:
         resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 import pytest
 import tqdm
 
@@ -96,7 +96,10 @@ from dimos.utils.testing.waiting import retry_until as _retry_until, wait_until 
 # monitor only re-tunes miniters for smooth interactive rendering, so disable it for tests.
 tqdm.tqdm.monitor_interval = 0
 
-load_dotenv()
+_dotenv = dotenv_values()
+for _key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ALIBABA_API_KEY"):
+    if _dotenv.get(_key):
+        os.environ.setdefault(_key, _dotenv[_key])
 
 
 def _has_ros() -> bool:
