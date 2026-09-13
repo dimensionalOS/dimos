@@ -37,3 +37,28 @@ def test_new_subscriber_ignores_frame_left_in_segment(wait_until: Any) -> None:
     finally:
         reader.stop()
         owner.stop()
+
+
+def test_resubscribe_ignores_frames_published_while_unsubscribed(wait_until: Any) -> None:
+    topic = "/shm_resubscribe"
+    owner = PickleSharedMemory(prefer="cpu")
+    owner.start()
+    reader = PickleSharedMemory(prefer="cpu")
+    reader.start()
+    got: list[bytes] = []
+    try:
+        unsubscribe = reader.subscribe(topic, lambda msg, _topic: got.append(msg))
+        owner.publish(topic, b"first")
+        wait_until(lambda: got == [b"first"], timeout=2.0)
+        unsubscribe()
+
+        owner.publish(topic, b"missed")
+        reader.subscribe(topic, lambda msg, _topic: got.append(msg))
+        time.sleep(0.2)
+        assert got == [b"first"]
+
+        owner.publish(topic, b"second")
+        wait_until(lambda: got == [b"first", b"second"], timeout=2.0)
+    finally:
+        reader.stop()
+        owner.stop()

@@ -203,6 +203,9 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
         st = self._ensure_topic(topic)
         st.subs.append(callback)
         if st.thread is None:
+            if isinstance(st.channel, CpuShmChannel):
+                # Frames already in the segment predate this subscriber.
+                st.last_seq = st.channel.current_seq()
             st.thread = threading.Thread(target=self._fanout_loop, args=(topic, st), daemon=True)
             st.thread.start()
 
@@ -268,9 +271,6 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
                 **self._channel_kwargs,
             )
             st = SharedMemoryPubSubBase._TopicState(ch, cap, None)
-            if isinstance(ch, CpuShmChannel):
-                # A frame left in the segment by an earlier owner is not new.
-                st.last_seq = ch.read(require_new=False)[0]
             self._topics[topic] = st
             return st
 
