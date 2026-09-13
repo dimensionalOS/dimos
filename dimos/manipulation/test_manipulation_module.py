@@ -22,7 +22,7 @@ They require Drake to be installed and will be skipped otherwise.
 from __future__ import annotations
 
 import importlib.util
-from unittest.mock import MagicMock
+from unittest.mock import DEFAULT, MagicMock
 
 import pytest
 
@@ -116,13 +116,18 @@ def joint_state_zeros():
 def module(xarm7_config):
     """Create a started ManipulationModule with ports disabled."""
     coordinator = MagicMock(spec=ControlCoordinator)
-    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
-        TrajectoryExecutionStatus.ACCEPTED
-    )
-    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
-        TrajectoryCancellationStatus.ALREADY_STOPPED
-    )
+    coordinator.get_joint_positions.return_value = {}
+    coordinator.execute_result = TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+
+    def invoke(task: str, method: str, args: dict | None = None):
+        if method == "execute":
+            return coordinator.execute_result
+        if method == "cancel":
+            return TrajectoryCancellationResult(TrajectoryCancellationStatus.ALREADY_STOPPED)
+        return DEFAULT
+
     coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    coordinator.task_invoke.side_effect = invoke
     mod = ManipulationModule(
         model=xarm7_config,
         planning_timeout=10.0,
@@ -246,7 +251,7 @@ class TestManipulationModuleIntegration:
 
         assert module._last_plan is not None
         assert module.execute().status is ExecutionStatus.COMPLETED
-        trajectory = module._control_coordinator.execute_trajectory.call_args.args[0]
+        trajectory = _executed(module._control_coordinator)
 
         assert trajectory.joint_names == module.config.model.joint_names
 
@@ -269,8 +274,8 @@ class TestCoordinatorIntegration:
         assert module._state == ManipulationState.COMPLETED
 
         # Verify coordinator was called
-        module._control_coordinator.execute_trajectory.assert_called_once()
-        trajectory = module._control_coordinator.execute_trajectory.call_args.args[0]
+        trajectory = _executed(module._control_coordinator)
+        assert trajectory is not None
 
         assert len(trajectory.points) > 1
         assert trajectory.joint_names == module.config.model.joint_names
@@ -282,7 +287,7 @@ class TestCoordinatorIntegration:
         plan_result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
         assert plan_result.succeeded, plan_result.message
 
-        module._control_coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
+        module._control_coordinator.execute_result = TrajectoryExecutionResult(
             TrajectoryExecutionStatus.INVALID_TRAJECTORY
         )
 
@@ -316,3 +321,11 @@ class TestCoordinatorIntegration:
         assert module._state == ManipulationState.EXECUTING
         assert module.wait_for_execution().status is ExecutionStatus.COMPLETED
         assert module._state == ManipulationState.COMPLETED
+
+
+def _executed(coordinator):
+    """The trajectory the joint trajectory task was asked to execute, or None."""
+    for invocation in coordinator.task_invoke.call_args_list:
+        if invocation.args[1] == "execute":
+            return invocation.args[2]["trajectory"]
+    return None

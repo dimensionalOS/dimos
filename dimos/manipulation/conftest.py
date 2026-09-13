@@ -45,12 +45,6 @@ class ModuleFactory(Protocol):
 def _mock_control_coordinator() -> MagicMock:
     """Create a coordinator reference with safe default execution results."""
     coordinator = MagicMock(spec=ControlCoordinator)
-    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
-        TrajectoryExecutionStatus.ACCEPTED
-    )
-    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
-        TrajectoryCancellationStatus.ALREADY_STOPPED
-    )
     coordinator.get_joint_positions.return_value = {}
 
     def invoke(task: str, method: str, args: dict | None = None):
