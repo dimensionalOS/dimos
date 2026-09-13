@@ -14,8 +14,12 @@
 
 """Draft answer-only QA for the static DimSim apartment.
 
-    DIMOS_TRANSPORT=lcm dimos evals run dimos.evals.suites.dimsim_apartment_qa \
+    DIMOS_TRANSPORT=lcm VIEWER=none DIMSIM_HEADLESS=true \
+        dimos evals run dimos.evals.suites.dimsim_apartment_qa \
         --agent dimos.evals.agents.pi
+
+For only the room-count question, append ``--tags rooms --limit 1``.
+Use ``--set max_steps=100`` to give Pi room for active exploration.
 
 References derive from the apartment manifest and GLBs at c5b78bd9a23344db91a59aabdd7f7db614998ab8
 and await human validation. Room area uses inside wall faces; distance uses
@@ -38,6 +42,16 @@ from dimos.evals.scorers import exact, first_number, numeric, rank_order, rankin
 from dimos.evals.types import EvalCase, Outcome, Suite
 
 T = TypeVar("T")
+
+INSTRUCTION = (
+    "You are answering questions about a live simulated house. "
+    "You control the robot, and its sensor recording grows as it observes "
+    "the environment. Initial observations do not cover the whole house. "
+    "Move around to gather the evidence needed to answer the question. "
+    "For whole-house counts or absence claims, inspect all relevant rooms. "
+    "Use observations rather than assumptions about a typical house. "
+    "When you have enough evidence, return the answer in the requested format."
+)
 
 
 def _parsed(parser: Callable[[str], T], score: Callable[[T], float]) -> Callable[[Outcome], float]:
@@ -65,7 +79,9 @@ def _environment() -> Sim:
 SUITE: Suite = [
     EvalCase(
         id="dimsim_apartment_refrigerator_location",
-        inputs="Which room contains the refrigerator? A: Bedroom; B: Kitchen; C: Bathroom; D: Living room. Return only A, B, C, or D.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "Which room contains the refrigerator? A: Bedroom; B: Kitchen; C: Bathroom; D: Living room. Return only A, B, C, or D.",
         environment=_environment(),
         grade=lambda o: exact("B", o.trajectory.final_answer.strip().upper()),
         timeout_s=1200.0,
@@ -73,7 +89,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_work_desk_location",
-        inputs="Which room contains the work desk? A: Kitchen; B: Bathroom; C: Living room; D: Bedroom. Return only A, B, C, or D.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "Which room contains the work desk? A: Kitchen; B: Bathroom; C: Living room; D: Bedroom. Return only A, B, C, or D.",
         environment=_environment(),
         grade=lambda o: exact("D", o.trajectory.final_answer.strip().upper()),
         timeout_s=1200.0,
@@ -81,7 +99,7 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_bathtub_exists",
-        inputs="Does the house contain a bathtub? Return only yes or no.",
+        inputs=INSTRUCTION + "\n\n" + "Does the house contain a bathtub? Return only yes or no.",
         environment=_environment(),
         grade=_parsed(yes_no, lambda value: exact("yes", value)),
         timeout_s=1200.0,
@@ -89,7 +107,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_washing_machine_exists",
-        inputs="Does the house contain a washing machine? Return only yes or no.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "Does the house contain a washing machine? Return only yes or no.",
         environment=_environment(),
         grade=_parsed(yes_no, lambda value: exact("no", value)),
         timeout_s=1200.0,
@@ -97,7 +117,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_dining_chair_count",
-        inputs="How many dining chairs are in the house? Return only the count.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "How many dining chairs are in the house? Return only the count.",
         environment=_environment(),
         grade=_parsed(first_number, lambda value: exact(4, value)),
         timeout_s=1200.0,
@@ -105,7 +127,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_bedside_table_count",
-        inputs="How many bedside tables are in the house? Return only the count.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "How many bedside tables are in the house? Return only the count.",
         environment=_environment(),
         grade=_parsed(first_number, lambda value: exact(2, value)),
         timeout_s=1200.0,
@@ -113,7 +137,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_every_desk_has_laptop",
-        inputs="Does every work desk in the house have a laptop on it? Return only yes or no.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "Does every work desk in the house have a laptop on it? Return only yes or no.",
         environment=_environment(),
         grade=_parsed(yes_no, lambda value: exact("yes", value)),
         timeout_s=1200.0,
@@ -121,7 +147,7 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_room_count",
-        inputs="How many rooms are in the house? Return only the count.",
+        inputs=INSTRUCTION + "\n\n" + "How many rooms are in the house? Return only the count.",
         environment=_environment(),
         grade=_parsed(first_number, lambda value: exact(4, value)),
         timeout_s=1200.0,
@@ -129,7 +155,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_largest_room_area",
-        inputs="What is the approximate area of the largest room, in square meters? Return only the number.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "What is the approximate area of the largest room, in square meters? Return only the number.",
         environment=_environment(),
         grade=_parsed(first_number, lambda value: numeric(37.8, value, tolerance=2.5, band=8.0)),
         timeout_s=1200.0,
@@ -137,7 +165,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_refrigerator_height",
-        inputs="What is the approximate height of the refrigerator, in meters? Return only the number.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "What is the approximate height of the refrigerator, in meters? Return only the number.",
         environment=_environment(),
         grade=_parsed(first_number, lambda value: numeric(1.8, value, tolerance=0.1, band=0.4)),
         timeout_s=1200.0,
@@ -145,7 +175,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_dining_table_diagonal",
-        inputs="What is the approximate diagonal length of the rectangular dining table, in meters? Return only the number.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "What is the approximate diagonal length of the rectangular dining table, in meters? Return only the number.",
         environment=_environment(),
         grade=_parsed(first_number, lambda value: numeric(2.46, value, tolerance=0.1, band=0.4)),
         timeout_s=1200.0,
@@ -153,7 +185,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_bed_footprint_area",
-        inputs="What is the approximate footprint area of the bed frame, in square meters? Return only the number.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "What is the approximate footprint area of the bed frame, in square meters? Return only the number.",
         environment=_environment(),
         grade=_parsed(first_number, lambda value: numeric(3.52, value, tolerance=0.25, band=1.0)),
         timeout_s=1200.0,
@@ -161,7 +195,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_house_perimeter",
-        inputs="What is the approximate perimeter of the house, in meters? Return only the number.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "What is the approximate perimeter of the house, in meters? Return only the number.",
         environment=_environment(),
         grade=_parsed(first_number, lambda value: numeric(44.0, value, tolerance=1.0, band=5.0)),
         timeout_s=1200.0,
@@ -169,7 +205,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_yard_door_count",
-        inputs="How many doors connect the house to the yard? Return only the count.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "How many doors connect the house to the yard? Return only the count.",
         environment=_environment(),
         grade=_parsed(first_number, lambda value: exact(2, value)),
         timeout_s=1200.0,
@@ -177,7 +215,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_doorway_radius",
-        inputs="What is the largest robot radius that can fit through all the doorways in 2D, in meters? Return only the number.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "What is the largest robot radius that can fit through all the doorways in 2D, in meters? Return only the number.",
         environment=_environment(),
         grade=_parsed(first_number, lambda value: numeric(0.5, value, tolerance=0.025, band=0.1)),
         timeout_s=1200.0,
@@ -185,7 +225,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_refrigerator_tv_distance",
-        inputs="What is the approximate straight-line distance between the refrigerator and television, in meters? Return only the number.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "What is the approximate straight-line distance between the refrigerator and television, in meters? Return only the number.",
         environment=_environment(),
         grade=_parsed(first_number, lambda value: numeric(8.37, value, tolerance=0.3, band=1.5)),
         timeout_s=1200.0,
@@ -193,7 +235,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_refrigerator_state",
-        inputs="Is the refrigerator open or closed? A: Closed; B: Open. Return only A or B.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "Is the refrigerator open or closed? A: Closed; B: Open. Return only A or B.",
         environment=_environment(),
         grade=lambda o: exact("A", o.trajectory.final_answer.strip().upper()),
         timeout_s=1200.0,
@@ -201,7 +245,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_kitchen_bathroom_crossings",
-        inputs="What is the minimum number of doorway crossings between the kitchen and bathroom without leaving the house? Return only the count.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "What is the minimum number of doorway crossings between the kitchen and bathroom without leaving the house? Return only the count.",
         environment=_environment(),
         grade=_parsed(first_number, lambda value: exact(3, value)),
         timeout_s=1200.0,
@@ -209,7 +255,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_refrigerator_open_passability",
-        inputs="Would opening the refrigerator change whether a robot of radius 0.25 m can pass from the kitchen doorway to the sink? Return only yes or no.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "Would opening the refrigerator change whether a robot of radius 0.25 m can pass from the kitchen doorway to the sink? Return only yes or no.",
         environment=_environment(),
         grade=_parsed(yes_no, lambda value: exact("no", value)),
         timeout_s=1200.0,
@@ -217,7 +265,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_wall_separated_objects",
-        inputs="Which pair of objects is on opposite sides of the same wall? A: Sofa and television; B: Work desk and bed; C: Refrigerator and work desk; D: Bathtub and toilet. Return only A, B, C, or D.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "Which pair of objects is on opposite sides of the same wall? A: Sofa and television; B: Work desk and bed; C: Refrigerator and work desk; D: Bathtub and toilet. Return only A, B, C, or D.",
         environment=_environment(),
         grade=lambda o: exact("C", o.trajectory.final_answer.strip().upper()),
         timeout_s=1200.0,
@@ -225,7 +275,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_closest_to_sofa",
-        inputs="Which object is closest to the sofa by straight-line distance? A: Refrigerator; B: Dining table; C: Work desk. Return only A, B, or C.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "Which object is closest to the sofa by straight-line distance? A: Refrigerator; B: Dining table; C: Work desk. Return only A, B, or C.",
         environment=_environment(),
         grade=lambda o: exact("B", o.trajectory.final_answer.strip().upper()),
         timeout_s=1200.0,
@@ -233,7 +285,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_object_order_by_path",
-        inputs="What is the order of these objects from nearest to farthest from the sofa by collision-free travel distance for a robot of radius 0.25 m? A: Refrigerator; B: Dining table; C: Work desk. Return all three letters once, in order, optionally separated by commas. Do not include an explanation.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "What is the order of these objects from nearest to farthest from the sofa by collision-free travel distance for a robot of radius 0.25 m? A: Refrigerator; B: Dining table; C: Work desk. Return all three letters once, in order, optionally separated by commas. Do not include an explanation.",
         environment=_environment(),
         grade=_parsed(ranking, lambda value: rank_order("BCA", value)),
         timeout_s=1200.0,
@@ -241,7 +295,9 @@ SUITE: Suite = [
     ),
     EvalCase(
         id="dimsim_apartment_bedside_table_coverage",
-        inputs="Is observing only the living room and kitchen sufficient to determine how many bedside tables are in the house? Return only yes or no.",
+        inputs=INSTRUCTION
+        + "\n\n"
+        + "Is observing only the living room and kitchen sufficient to determine how many bedside tables are in the house? Return only yes or no.",
         environment=_environment(),
         grade=_parsed(yes_no, lambda value: exact("no", value)),
         timeout_s=1200.0,
