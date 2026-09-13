@@ -952,6 +952,60 @@ def test_discovered_ephemeral_cert_is_refused_off_loopback(monkeypatch) -> None:
         stop_module(module)
 
 
+def test_relay_ca_reaches_discovery_and_connect(monkeypatch) -> None:
+    ca = "/ca.pem"
+    seen: list[tuple[Any, ...]] = []
+    client = FakeClient()
+
+    async def fake_fetch(base_url: str, **kwargs: Any) -> RelayInfo:
+        seen.append(("fetch", kwargs.get("cafile")))
+        # A relay with a real certificate advertises no hash.
+        return RelayInfo(wt_url="https://127.0.0.1:1", cert_hash=None, v=PROTOCOL_VERSION)
+
+    async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
+        seen.append(("connect", kwargs.get("cafile"), kwargs.get("insecure")))
+        return client
+
+    monkeypatch.setattr(relay_bridge_module, "fetch_relay_info", fake_fetch)
+    monkeypatch.setattr(relay_bridge_module.RelayClient, "connect", fake_connect)
+    module = RelayBridgeModule(
+        relay_url="http://127.0.0.1:7780", relay_ca=ca, open_browser=False, robot_id="unit-bot"
+    )
+    try:
+        module.start()
+        assert seen == [("fetch", ca), ("connect", ca, False)]
+    finally:
+        stop_module(module)
+
+
+def test_local_relay_ignores_relay_ca(monkeypatch) -> None:
+    seen: list[tuple[str | None, bool | None]] = []
+    client = FakeClient()
+
+    async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
+        seen.append((kwargs.get("cafile"), kwargs.get("insecure")))
+        return client
+
+    monkeypatch.setattr(relay_bridge_module, "_probe_local_port", lambda _: None)
+    patch_relay(monkeypatch, fake_connect)
+    monkeypatch.setattr(
+        RelayBridgeModule,
+        "_spawn_relay",
+        lambda self, open_browser, serve_dir: "http://127.0.0.1:7780",
+    )
+    module = RelayBridgeModule(
+        relay_ca="/missing/ca.pem",
+        open_browser=False,
+        web_build=False,
+        robot_id="unit-bot",
+    )
+    try:
+        module.start()
+        assert seen == [(None, True)]
+    finally:
+        stop_module(module)
+
+
 def test_start_gives_up_on_robot_id_conflict_after_deadline(monkeypatch) -> None:
     monkeypatch.setattr(relay_bridge_module, "_RECONNECT_PAUSE_S", 0.01)
     monkeypatch.setattr(relay_bridge_module, "_CONFLICT_RETRY_S", 0.05)

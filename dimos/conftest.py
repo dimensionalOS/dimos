@@ -19,6 +19,7 @@ import hashlib
 import os
 import pathlib
 import platform
+import shutil
 import tempfile
 import threading
 import time
@@ -83,7 +84,7 @@ with suppress(ImportError, ValueError, OSError):
     if soft < target:
         resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 import pytest
 import tqdm
 
@@ -96,7 +97,10 @@ from dimos.utils.testing.waiting import retry_until as _retry_until, wait_until 
 # monitor only re-tunes miniters for smooth interactive rendering, so disable it for tests.
 tqdm.tqdm.monitor_interval = 0
 
-load_dotenv()
+_dotenv = dotenv_values()
+for _key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ALIBABA_API_KEY"):
+    if _dotenv.get(_key):
+        os.environ.setdefault(_key, _dotenv[_key])
 
 
 def _has_ros() -> bool:
@@ -197,6 +201,9 @@ def pytest_configure(config):
         "skipif_no_turbojpeg: skip when native libturbojpeg is missing — "
         "except in CI, where it runs anyway so a missing dep fails loudly",
     )
+    config.addinivalue_line(
+        "markers", "skipif_no_ffmpeg: skip when the ffmpeg binary is missing, except in CI"
+    )
     config.addinivalue_line("markers", "skipif_macos_bug: skip known-buggy tests on macOS")
     config.addinivalue_line("markers", "skipif_macos: skip tests not intended to run on macOS")
     config.addinivalue_line(
@@ -270,6 +277,10 @@ def pytest_collection_modifyitems(config, items):
         "skipif_no_turbojpeg": (
             not _has_turbojpeg() and not os.getenv("CI"),
             "native libturbojpeg unavailable",
+        ),
+        "skipif_no_ffmpeg": (
+            shutil.which("ffmpeg") is None and not os.getenv("CI"),
+            "ffmpeg not installed",
         ),
         "skipif_macos_bug": (_is_macos(), "Some tests are buggy on Mac OS"),
         "skipif_macos": (_is_macos(), "Not intended to run on macOS"),

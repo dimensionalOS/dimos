@@ -36,7 +36,7 @@ from dimos.imitation.collection.episode_monitor import (
     KeyPress,
 )
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
-from dimos.teleop.quest.quest_types import BUTTON_ALIASES, Buttons
+from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 
 
 @pytest.fixture
@@ -75,7 +75,7 @@ def _events(monitor: EpisodeMonitorModule) -> list[EpisodeStatus]:
 
 
 def _press(monitor: EpisodeMonitorModule, alias: str) -> None:
-    """Rising edge: release-then-press the given Quest button alias."""
+    """Rising edge: release-then-press the given WebXR button alias."""
     attr = BUTTON_ALIASES[alias]
     released = Buttons()
     pressed = Buttons()
@@ -184,14 +184,14 @@ def test_shutdown_discards_recording(make_monitor: Callable[..., EpisodeMonitorM
 def test_invalid_button_mapping_fails_at_startup(
     make_monitor: Callable[..., EpisodeMonitorModule],
 ) -> None:
-    with pytest.raises(ValidationError, match="unknown Quest button mappings"):
+    with pytest.raises(ValidationError, match="unknown WebXR button mappings"):
         make_monitor(button_map={"toggle": "not_a_button"})
 
 
 def test_duplicate_button_mapping_fails_at_startup(
     make_monitor: Callable[..., EpisodeMonitorModule],
 ) -> None:
-    with pytest.raises(ValidationError, match="distinct Quest button"):
+    with pytest.raises(ValidationError, match="distinct WebXR button"):
         make_monitor(button_map={"toggle": "B", "discard": "right_secondary"})
 
 

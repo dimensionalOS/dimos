@@ -36,6 +36,11 @@ ZenohMode: TypeAlias = Literal["peer", "client", "router"]
 # process can hold, so it is pinned on the one session that owns that port.
 ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 
+# pytest exports PYTEST_VERSION to the whole process tree. Tests must not pick up
+# a developer's .env (ROBOT_IP, SIMULATION, ...); dimos/conftest.py exports the
+# LLM API keys itself.
+ENV_FILE = None if "PYTEST_VERSION" in os.environ else ".env"
+
 
 def _get_all_numbers(s: str) -> list[float]:
     return [float(x) for x in re.findall(r"-?\d+\.?\d*", s)]
@@ -129,6 +134,10 @@ class GlobalConfig(BaseSettings):
     relay_url: str | None = None
     """HTTP URL of a relay started elsewhere (e.g. http://localhost:7780); the
     bridge discovers its WebTransport endpoint through /api/info."""
+    relay_ca: str | None = None
+    """PEM CA bundle that signed the relay_url relay's certificate (mkcert, a
+    private CA); replaces the default trust stores. Unset for a relay with a
+    public certificate."""
     dimos_cloud_url: str = "https://api.dimensional.org"
     dimos_api_key: str | None = None
     dimos_upload_codec: str = "lz4"
@@ -139,7 +148,7 @@ class GlobalConfig(BaseSettings):
     dimos_staging_dir: Path | None = None
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
         validate_assignment=True,

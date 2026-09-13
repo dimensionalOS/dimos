@@ -16,8 +16,12 @@
 
 import json
 from pathlib import Path
+import sys
 
-import tomllib
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 from dimos.core.native_module import NativeModuleConfig
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera, RealSenseCameraConfig

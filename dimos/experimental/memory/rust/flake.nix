@@ -17,22 +17,25 @@
       "aarch64-darwin"
     ] (system: let
       pkgs = nixpkgs.legacyPackages.${system};
-      workspaceRoot = ../../../..;
-      # resolve the members straight from the workspace
-      workspaceMembers =
-        (builtins.fromTOML (builtins.readFile (workspaceRoot + "/Cargo.toml"))).workspace.members;
       dimos-memory-recorder = pkgs.rustPlatform.buildRustPackage {
         pname = "dimos-memory-recorder";
         version = "0.1.0";
         src = pkgs.lib.fileset.toSource {
-          root = workspaceRoot;
-          fileset = pkgs.lib.fileset.unions (
-            [
-              (workspaceRoot + "/Cargo.lock")
-              (workspaceRoot + "/Cargo.toml")
-            ]
-            ++ map (member: workspaceRoot + "/${member}") workspaceMembers
-          );
+          root = ../../../..;
+          fileset = pkgs.lib.fileset.unions [
+            ../../../../Cargo.lock
+            ../../../../Cargo.toml
+            ../../../../dimos/experimental/memory/rust
+            ../../../../native/rust/dimos-module
+            ../../../../native/rust/dimos-module-macros
+            ../../../../dimos/mapping/ray_tracing/rust
+            ../../../../dimos/mapping/ray_tracing/rust/py
+            ../../../../dimos/navigation/nav_3d/mls_planner/rust
+            ../../../../dimos/navigation/nav_3d/mls_planner/rust/py
+            ../../../../dimos/hardware/sensors/lidar/livox/rust
+            ../../../../dimos/hardware/sensors/lidar/virtual_mid360
+            ../../../../examples/native-modules/rust
+          ];
         };
 
         cargoLock = {
