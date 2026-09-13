@@ -427,6 +427,29 @@ def test_a_filtered_view_of_a_stream_cannot_write_either(memory_world, tmp_path)
     assert "1 row" in (memory_world._active_query_result or {}).get("answer", "")
 
 
+def test_the_read_only_wrapper_still_hands_back_the_payload_type(memory_world) -> None:  # type: ignore[no-untyped-def]
+    """A CLASS is callable, and `stream.data_type` is one.
+
+    Wrapping everything a forwarded attribute returns caught the streams -- and turned the
+    payload type into a function, so `np.array([...], dtype=stream.data_type)`, which the
+    analysis skill's own examples make, raised "Cannot interpret <function
+    _read_only.<locals>.wrapped> as a data type". A type is not a way into the store.
+    """
+    memory_world._ensure_store().stream("readings", float).append(1.5, ts=1.0)
+
+    outcome = memory_world.analyze_memory(
+        code=(
+            "s = store.streams['readings']\n"
+            "a = np.array([o.data for o in s], dtype=s.data_type)\n"
+            "result = {'answer': f'{a.dtype} {a.tolist()}'}\n"
+        ),
+        timeout=30.0,
+    )
+
+    assert outcome.success, outcome.message
+    assert "float64 [1.5]" in (memory_world._active_query_result or {}).get("answer", "")
+
+
 def test_a_grandchild_that_ignores_sigterm_is_killed_anyway(memory_world, tmp_path) -> None:  # type: ignore[no-untyped-def]
     """The second signal is not a question about the direct child.
 

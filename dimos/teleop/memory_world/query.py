@@ -144,6 +144,12 @@ def _read_only(value):
         return value
     if hasattr(value, "append") and hasattr(value, "data_type"):
         return _ReadOnlyStream(value)
+    if isinstance(value, type):
+        # A CLASS is callable, and `stream.data_type` is one: wrapping it in a function
+        # left `np.array([...], dtype=stream.data_type)` raising "Cannot interpret
+        # <function _read_only.<locals>.wrapped> as a data type" -- a read the analysis
+        # skill's own examples make. A type is not a way into the store.
+        return value
     if callable(value):
         def wrapped(*args, **kwargs):
             return _read_only(value(*args, **kwargs))
