@@ -61,8 +61,21 @@ ROBOT_RADIUS_M = 0.35
 MAX_BRIDGE_M = 1.5
 # How many of the moving legs nearest a leg are asked about it, and how many of those
 # must be at least half as long for it to count as driving. See `bridgeable`.
+#
+# Three is measured, not chosen: over 3000 generated recordings of drives, parks and
+# relocalisations, asking only two bridges 15.6% of the relocalisations that are clearly
+# longer than the driving around them against three's 12.6%, and saves 0.05% of long
+# drive legs against 0.11%. Five times as many fake corridors to save a fortieth as many
+# real ones is the wrong way round: a bridged relocalisation can draw a line through a
+# wall, and a refused leg only fails to erase the robot's own body where it stood.
+#
+# The cost of three is a stretch of exactly two or three faster legs, which has no third
+# voucher and is refused. It takes a leg longer than twice the robot's radius for that to
+# matter at all, so it is a multi-scan dropout in the middle of a drive.
 NEARBY_MOVING_LEGS = 8
 VOUCHES_NEEDED = 3
+# ... and the fewest that may ever decide a leg, when the recording holds no more.
+LEAST_VOUCHERS = 2
 # Below this a leg is the robot standing still, so it says nothing about how far the
 # robot travels between samples. It decides only which legs INFORM the comparison in
 # `bridgeable`, never which are bridged.
@@ -124,8 +137,8 @@ def _vouched_length(gaps: NDArray[np.float64]) -> NDArray[np.float64]:
     """
     moving_at = np.flatnonzero(gaps > STILL_M)
     answer = np.full(len(gaps), np.nan)
-    if len(moving_at) < VOUCHES_NEEDED:
-        return answer  # nothing to compare against: one displacement is not a stride
+    if len(moving_at) == 0:
+        return answer  # nothing moved at all, so nothing can vouch for anything
     leg = np.arange(len(gaps))
     reach = np.arange(-NEARBY_MOVING_LEGS, NEARBY_MOVING_LEGS + 1)
     slot = np.searchsorted(moving_at, leg)[:, None] + reach[None, :]
@@ -140,7 +153,22 @@ def _vouched_length(gaps: NDArray[np.float64]) -> NDArray[np.float64]:
     chosen = np.take_along_axis(candidate, nearest, axis=1)
     real = np.take_along_axis(away, nearest, axis=1) <= len(gaps)
     longest_first = -np.sort(-np.where(real, gaps[chosen], np.nan), axis=1)
-    return np.asarray(longest_first[:, VOUCHES_NEEDED - 1])
+    # As many vouchers as `VOUCHES_NEEDED`, or all there are when the recording cannot
+    # supply that many. A leg is never one of its own vouchers, so asking three of a
+    # recording whose whole driving is three legs asks for a fourth that does not exist:
+    # a straight four-pose drive sampled every metre had every leg refused and `plan`
+    # returned None over floor the robot had just driven. Where the evidence is thinner
+    # than the rule wants, ALL of it has to agree, which is the strictest such a recording
+    # can be held to.
+    #
+    # `LEAST_VOUCHERS` is where that stops. One other leg is not corroboration -- two
+    # relocalisations in an otherwise motionless recording would each be the other's only
+    # witness -- and letting a single leg decide costs 765 of 5803 generated
+    # relocalisations against 729 for two, for no drive leg saved.
+    vouchers = real.sum(axis=1)
+    rank = np.minimum(vouchers, VOUCHES_NEEDED) - 1
+    said = np.take_along_axis(longest_first, np.maximum(rank, 0)[:, None], axis=1)[:, 0]
+    return np.asarray(np.where(vouchers >= LEAST_VOUCHERS, said, np.nan))
 
 
 def bridgeable(path: NDArray[np.float64], resolution: float) -> NDArray[np.bool_]:
@@ -180,10 +208,10 @@ def bridgeable(path: NDArray[np.float64], resolution: float) -> NDArray[np.bool_
     that threshold ate a drive sampled finer than it. A leg with nothing to vouch for it
     gets one cell: below that, bridging adds no cells and cannot matter.
 
-    Eighteen recording shapes are the tests in `test_route.py`. Measured over 3000
+    Nineteen recording shapes are the tests in `test_route.py`. Measured over 3000
     generated recordings of drives, parks and relocalisations, this refuses a tenth as
-    many real legs as the window it replaced (74 against 744) and bridges no more
-    relocalisations (688 against 708).
+    many real legs as the window it replaced (74 against 744) and bridges about as many
+    relocalisations (729 against 708).
     """
     if len(path) < 2:
         return np.zeros(0, dtype=bool)

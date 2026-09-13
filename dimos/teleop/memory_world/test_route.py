@@ -241,6 +241,41 @@ def test_a_jump_reflected_into_its_own_window_is_still_a_jump() -> None:
     )
 
 
+def test_a_recording_whose_whole_drive_is_three_legs_still_plans() -> None:
+    """The nineteenth shape: a leg is never one of its own vouchers.
+
+    So asking three vouchers of a recording whose whole driving is three legs asks for a
+    fourth leg that does not exist. A straight four-pose drive sampled every metre had
+    every leg refused, `bridgeable` came back `[0 0 0]`, and `plan` returned None over
+    floor the robot had just driven -- while the same drive with one more pose routed.
+
+    Where the recording cannot supply as many vouchers as the rule wants, ALL of them
+    have to agree instead, which is the strictest it can be held to. It stops at two:
+    ONE other leg is not corroboration, and two displacements in an otherwise motionless
+    recording would otherwise be each other's only witness -- so a two-leg drive is
+    refused on purpose, and is the last shape here that cannot be told from a pair of
+    relocalisations by anything in the path.
+    """
+    from dimos.teleop.memory_world.route import bridgeable
+
+    walls = np.concatenate([_wall(-1.0, 6.0, 0.40, 0.55), _wall(-1.0, 6.0, -0.55, -0.40)])
+    floor = _floor(-1, 6, -1, 1)
+
+    two_legs = np.asarray([[float(x), 0.0, BODY_Z] for x in range(3)])
+    assert not bridgeable(two_legs, VOXEL).any(), "one other leg vouched for a leg"
+
+    for legs in (3, 4):
+        driven = np.asarray([[float(x), 0.0, BODY_Z] for x in range(legs + 1)])
+        assert bridgeable(driven, VOXEL).all(), f"{legs} one-metre legs: a drive was refused"
+
+        body = np.asarray([[x + 0.5, 0.0, BODY_Z] for x in range(legs)])
+        planner = RoutePlanner.from_voxels(
+            np.concatenate([floor, walls, body]), driven, voxel_size=VOXEL
+        )
+        route = planner.plan((0.2, 0.0), (float(legs) - 0.2, 0.0))
+        assert route is not None, f"{legs} one-metre legs: the drive planned no route"
+
+
 def test_a_stretch_of_faster_driving_is_still_driving() -> None:
     """The eighteenth shape: a recording with two speeds in it, which is the very thing
     "a recording is not homogeneous" was supposed to handle.
@@ -253,6 +288,10 @@ def test_a_stretch_of_faster_driving_is_still_driving() -> None:
 
     A relocalisation gets no such company: three other moving legs of half the length is
     a stretch of driving, and a pair of relocalisations is still not three.
+
+    Four is where the run starts having three vouchers, and the runs of two and three
+    below it are refused on purpose -- `VOUCHES_NEEDED` carries the measurement that
+    settled where that line goes.
     """
     walls = np.concatenate([_wall(-1.0, 33.0, 0.40, 0.55), _wall(-1.0, 33.0, -0.55, -0.40)])
     floor = _floor(-1, 33, -1, 1)
