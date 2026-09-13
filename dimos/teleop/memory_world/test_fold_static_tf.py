@@ -576,3 +576,47 @@ def test_the_spelling_comes_from_the_edges_that_survive_the_fold(tmp_path) -> No
         assert chain(store, "tf") == 4.0, "the fold severed a chain that worked"
     finally:
         store.stop()
+
+
+def test_a_folded_edge_that_joins_nothing_keeps_its_own_spelling(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A folded static is respelled to CHAIN with what survives the fold. Where nothing
+    it could chain with survives, respelling it only breaks what did work.
+
+    Two recordings where the moving stream has no opinion about the static's frames:
+    one whose tf carries the same edge and nothing else, so the whole spelling map is
+    empty after the stale copy goes, and one whose tf carries an unrelated edge spelled
+    the other way. An empty majority is not a vote for "unslashed", and a vote taken over
+    frames that have nothing to do with this edge is not a vote about it either: both
+    renamed `/base -> /cam` to `base -> cam`, and `MultiTBuffer` answered 3.0 before the
+    fold and None after.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.protocol.tf.tf import MultiTBuffer
+    from dimos.teleop.memory_world.recording import fold_static_tf
+
+    def look(store, *streams: str) -> float | None:  # type: ignore[no-untyped-def]
+        buffer = MultiTBuffer(buffer_size=1e9)
+        for name in streams:
+            for obs in store.streams[name]:
+                buffer.receive_tfmessage(obs.data)
+        found = buffer.get("/base", "/cam", 1.0, warn=False)
+        return None if found is None else found.translation.x
+
+    for label, moving in (
+        ("its own stale copy and nothing else", [_edge("/base", "/cam", 3.0)]),
+        ("an unrelated edge, spelled the other way", [_edge("map", "other_robot", 7.0)]),
+    ):
+        store = _tf_store(tmp_path)
+        try:
+            store.stream("tf_static", TFMessage).append(
+                TFMessage(_edge("/base", "/cam", 3.0)), ts=1.0
+            )
+            store.stream("tf", TFMessage).append(TFMessage(*moving), ts=1.0)
+            assert look(store, "tf", "tf_static") == 3.0
+
+            fold_static_tf(store, "tf", "tf_static")
+
+            assert look(store, "tf") == 3.0, f"{label}: the fold renamed an edge it left alone"
+        finally:
+            store.stop()
+        (tmp_path / "rec.db").unlink()

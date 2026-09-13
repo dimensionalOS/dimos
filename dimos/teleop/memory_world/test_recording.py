@@ -1319,6 +1319,62 @@ def test_a_colourised_depth_image_is_not_the_depth_stream(tmp_path) -> None:  # 
         store.stop()
 
 
+def test_a_depth_stream_that_will_not_decode_is_the_last_resort(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """ "Cannot tell" is not "no objection".
+
+    The channel count breaks the depth tie, and a candidate whose sample will not decode
+    has no count -- so it was treated as unobjectionable and won on its shorter name. The
+    module cannot read a metre out of it by any route: a `depth` stream with a truncated
+    blob, which is what a killed writer leaves, beat a `camera_depth_image` beside it that
+    reads as real DEPTH16.
+    """
+    import sqlite3
+
+    import numpy as np
+
+    from dimos.memory.codecs.lcm import LcmCodec
+    from dimos.memory.codecs.lz4 import Lz4Codec
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+    from dimos.teleop.memory_world.recording import detect_streams
+
+    path = str(tmp_path / "truncated.db")
+    store = SqliteStore(path=path, must_exist=False)
+    store.start()
+    try:
+        store.stream("camera_color_image_raw", Image).append(
+            Image(np.zeros((8, 8, 3), np.uint8)), ts=1.0
+        )
+        for name in ("depth", "camera_depth_image"):
+            store.stream(name, Image, codec=Lz4Codec(LcmCodec(Image))).append(
+                Image(np.full((8, 8), 1000, np.uint16), format=ImageFormat.DEPTH16), ts=1.0
+            )
+    finally:
+        store.stop()
+
+    connection = sqlite3.connect(path)
+    blobs = [
+        row[0]
+        for row in connection.execute(
+            "select name from sqlite_master where type='table' and name like 'depth%blob%'"
+        )
+    ]
+    assert blobs, "the fixture stored no blob to truncate"
+    for table in blobs:
+        connection.execute(f"update {table} set data = ?", (b"broken lz4",))
+    connection.commit()
+    connection.close()
+
+    store = SqliteStore(path=path, must_exist=True)
+    store.start()
+    try:
+        assert detect_streams(store)["depth"] == "camera_depth_image", (
+            "a stream whose sample will not decode was picked as depth"
+        )
+    finally:
+        store.stop()
+
+
 def test_an_empty_original_beside_a_staged_copy_is_a_dead_rebuild(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """`rebuild_stream` drops the original and then writes it back, so a rebuild dying
     INSIDE that window leaves the name present and holding nothing.

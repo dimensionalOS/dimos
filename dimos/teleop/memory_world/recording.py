@@ -667,7 +667,7 @@ def _spelt_like(name: str, spelling: dict[str, str], slashed: bool) -> str:
 def _restamped(
     transform: Any, ts: float, spelling: dict[str, str] | None = None, slashed: bool = False
 ) -> Any:
-    """The same joint, said at another moment, and in the moving stream's spelling.
+    """The same joint, said at another moment, and spelled to join what it must join.
 
     A static edge carries the one stamp it was latched at. Folding has to restate it at
     the moment it is being put, because TfTree reads the transform's own stamp.
@@ -676,17 +676,27 @@ def _restamped(
     outside this package need not canonicalise -- dimos' own `MultiTBuffer` keys the raw
     pair -- so a folded edge left in `tf_static`'s spelling beside a differently spelled
     moving stream leaves no chain through the tree at all.
+
+    An edge whose frames the moving stream never mentions is left EXACTLY as it was. It
+    has nothing to join: respelling it there only breaks what did work, and the vote that
+    decided the convention was taken over frames that have nothing to do with it. Measured
+    both ways -- a recording whose tf and tf_static both said `/base -> /cam` came out of
+    the fold saying `base -> cam`, and the lookup that answered 3.0 before answered None
+    after, on the only edge in the recording.
     """
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
     p, q = transform.translation, transform.rotation
+    parent, child = str(transform.frame_id), str(transform.child_frame_id)
+    known = spelling or {}
+    joins = canonical_frame(parent) in known or canonical_frame(child) in known
     return Transform(
         translation=Vector3(float(p.x), float(p.y), float(p.z)),
         rotation=Quaternion(float(q.x), float(q.y), float(q.z), float(q.w)),
-        frame_id=_spelt_like(str(transform.frame_id), spelling or {}, slashed),
-        child_frame_id=_spelt_like(str(transform.child_frame_id), spelling or {}, slashed),
+        frame_id=_spelt_like(parent, known, slashed) if joins else parent,
+        child_frame_id=_spelt_like(child, known, slashed) if joins else child,
         ts=ts,
     )
 
@@ -958,9 +968,17 @@ def detect_streams(store: Store, image: str | None = None) -> dict[str, Any]:
             # whatever went in, and a recording whose only depth is stored that way should
             # still be found. Real recordings decode depth as it was written -- the
             # grocery recording's `depth_image` reads (720, 1280) uint16 DEPTH16.
-            candidates = sorted(
-                candidates, key=lambda name: _channels(store, name) not in (None, 1)
-            )
+            #
+            # A candidate whose sample will not decode at all goes LAST, below even the
+            # colour one. Treating "cannot tell" as "no objection" let a stream with a
+            # truncated blob win on its shorter name, and there is no route by which the
+            # module could read a metre out of it -- measured, a corrupt `depth` beat a
+            # `camera_depth_image` that reads as real DEPTH16.
+            def depth_first(name: str) -> int:
+                channels = _channels(store, name)
+                return 0 if channels == 1 else (2 if channels is None else 1)
+
+            candidates = sorted(candidates, key=depth_first)
         return candidates[0] if candidates else None
 
     image = image if image in by_type.get("Image", []) else pick("image", "Image", depth_like=False)
