@@ -18,8 +18,10 @@ import json
 from pathlib import Path
 import subprocess
 
+from rich.console import Console
 import typer
 
+from dimos.cli.imitation_inspect import print_inspection
 from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.build import inspect_dataset, inspect_recording
@@ -91,7 +93,11 @@ def prepare(
 
 
 @imitation_app.command()
-def inspect(artifact: Path) -> None:
+def inspect(
+    artifact: Path,
+    json_output: bool = typer.Option(False, "--json", help="Print the complete result as JSON"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show every assessed episode"),
+) -> None:
     """Inspect a collection directory or a prepared dataset."""
     path = artifact.expanduser().resolve()
     try:
@@ -104,7 +110,10 @@ def inspect(artifact: Path) -> None:
     except Exception as exc:
         typer.echo(f"Inspection failed: {exc}", err=True)
         raise typer.Exit(1) from exc
-    typer.echo(json.dumps(info, indent=2, default=str))
+    if json_output:
+        typer.echo(json.dumps(info, indent=2, default=str))
+    else:
+        print_inspection(info, console=Console(highlight=False), verbose=verbose)
 
 
 @imitation_app.command(
