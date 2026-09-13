@@ -37,6 +37,7 @@ from dimos.robot.diy.alfred.alfred_model import (
 from dimos.robot.diy.alfred.blueprints.alfred_nav import alfred_nav
 from dimos.robot.diy.alfred.blueprints.alfred_sim import alfred_sim
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
+from dimos.robot.diy.alfred.mount_tf import AlfredLidarMountTf, lidar_mount_transform
 from dimos.robot.diy.alfred.pillar_connection import (
     PILLAR_HARDWARE_ID,
     PILLAR_LIFT_JOINT,
@@ -88,10 +89,19 @@ def test_alfred_nav_tasks_cover_lift_and_both_arms() -> None:
 def test_alfred_nav_runs_on_lidar_odometry() -> None:
     """Point-LIO owns odom -> mid360_link; the mount tree must hang off the lidar."""
     assert _atoms(alfred_nav, PointLio)
+    assert _atoms(alfred_nav, AlfredLidarMountTf)
     assert not any(atom.module.__name__ == "DimSlam" for atom in alfred_nav.blueprints)
     (pointlio,) = _atoms(alfred_nav, PointLio)
     assert pointlio.kwargs["frame_id"] == "odom"
     assert pointlio.kwargs["sensor_frame_id"] == "mid360_link"
+
+
+def test_alfred_mount_publishes_one_edge_that_reaches_base_link() -> None:
+    """Point-LIO owns odom -> mid360_link, so base_link must hang off the lidar."""
+    transform = lidar_mount_transform()
+    assert (transform.frame_id, transform.child_frame_id) == ("mid360_link", "base_link")
+    # The pitched lidar mount is the reason a hand-written offset will not do.
+    assert transform.translation.x != 0.0
 
 
 def test_alfred_nav_composes_nav_planner_pillar_and_viewer_teleop() -> None:

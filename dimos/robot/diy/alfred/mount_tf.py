@@ -67,3 +67,29 @@ class AlfredMountTf(StaticTfPublisher):
 
     def transforms(self) -> list[Transform]:
         return mount_transforms()
+
+
+# Point-LIO publishes odom -> mid360_link, so on alfred-nav the lidar is the tf root and
+# base_link hangs off it. That inverted edge is the only mount transform navigation needs.
+ALFRED_ODOM_MOUNT_EDGE = ("base_link", "mid360_link")
+
+
+def lidar_mount_transform() -> Transform:
+    """``mid360_link -> base_link``, read off the same urdf as the rest of the tree.
+
+    The full sensor tree is :class:`AlfredMountTf`'s job. alfred-nav carries no camera
+    or perception module, so publishing the other mounts there would put edges on tf
+    that nothing reads.
+    """
+    parent, child = ALFRED_ODOM_MOUNT_EDGE
+    for transform in mount_transforms():
+        if (transform.frame_id, transform.child_frame_id) == (parent, child):
+            return -transform
+    raise ValueError(f"{ALFRED_URDF.name} has no {parent} -> {child} joint")
+
+
+class AlfredLidarMountTf(StaticTfPublisher):
+    """Publishes the single base_link edge that lidar odometry needs."""
+
+    def transforms(self) -> list[Transform]:
+        return [lidar_mount_transform()]
