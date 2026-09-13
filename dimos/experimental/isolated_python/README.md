@@ -70,10 +70,12 @@ During `build()`, dimOS runs `uv sync` in the sibling project. If `pixi.toml`
 exists, Pixi supplies `uv`. If `uv.lock` exists, dimOS uses `--frozen` and treats
 the lockfile as the source of truth.
 
-Source checkouts use the current code. Git installations reuse the repository and
-resolved commit from `direct_url.json`; direct wheels, archives, and non-editable
-local directories are unsupported. Index installations use unpinned `dimos`,
-with host/runtime compatibility still unresolved.
+Source checkouts use an editable install of the same tree, including local edits.
+Index installations pin `dimos` to the host's installed version. Git installations
+reuse the repository and resolved commit from `direct_url.json`. Preparation and
+launch use the same selection; an unavailable release fails rather than selecting
+another version. Direct wheels, archives, and non-editable local directories remain
+unsupported. Restart running modules after editing a checkout.
 
 The sibling project's `.python-version` and `requires-python` select its Python
 version. Environments are stored under the dimOS cache directory in

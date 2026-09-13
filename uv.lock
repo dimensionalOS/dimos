@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-09-06T08:32:08.145661055Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1759,6 +1759,7 @@ dependencies = [
     { name = "terminaltexteffects" },
     { name = "textual" },
     { name = "textual-serve" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "toolz" },
     { name = "typer" },
     { name = "typing-extensions" },
@@ -2453,6 +2454,7 @@ requires-dist = [
     { name = "textual", specifier = "==3.7.1" },
     { name = "textual-serve", specifier = ">=1.1.1,<2" },
     { name = "timm", marker = "extra == 'perception'", specifier = ">=1.0.15" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "toolz", specifier = ">=1.1.0" },
     { name = "torchreid", marker = "extra == 'misc'", specifier = "==0.2.5" },
     { name = "transformers", extras = ["torch"], marker = "extra == 'perception'", specifier = ">=4.53.0,<4.54" },
