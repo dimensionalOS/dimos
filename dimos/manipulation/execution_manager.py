@@ -375,7 +375,7 @@ class PlanExecutionManager:
             watchdog.join(DEFAULT_THREAD_JOIN_TIMEOUT)
 
     def _get_status(
-        self, task: str = JOINT_TRAJECTORY_TASK_NAME, *, run_id: int | None = None
+        self, task: str, *, run_id: int | None = None
     ) -> TrajectoryStatus | ExecutionResult:
         try:
             status = self._coordinator.task_invoke(task, "get_status", {"t_now": None})
