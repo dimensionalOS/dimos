@@ -620,3 +620,50 @@ def test_a_folded_edge_that_joins_nothing_keeps_its_own_spelling(tmp_path) -> No
         finally:
             store.stop()
         (tmp_path / "rec.db").unlink()
+
+
+def test_the_spelling_travels_along_the_folded_edges(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Which frames the moving stream's spelling REACHES is not which frames it says.
+
+    A mount hangs off a frame the moving stream says, and a camera hangs off the mount:
+    `odom -> base` moving, `base -> /mount` and `/mount -> /cam` static. The first folded
+    edge joins the moving stream and was respelled; the second joined only the FIRST, was
+    treated as joining nothing, and kept its slash -- so the tree came out holding
+    `base -> mount` beside `/mount -> /cam`, and `MultiTBuffer` answered 6.0 for
+    `odom -> cam` before the fold and None after. Two spellings of one frame is no chain
+    at all, which is the thing this whole spelling business exists to prevent.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.protocol.tf.tf import MultiTBuffer
+    from dimos.teleop.memory_world.recording import fold_static_tf
+
+    def chain(leaf: str, store, *streams: str) -> float | None:  # type: ignore[no-untyped-def]
+        buffer = MultiTBuffer(buffer_size=1e9)
+        for name in streams:
+            for obs in store.streams[name]:
+                buffer.receive_tfmessage(obs.data)
+        found = buffer.get("odom", leaf, 1.0, warn=False)
+        return None if found is None else found.translation.x
+
+    store = _tf_store(tmp_path)
+    try:
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(_edge("base", "/mount", 2.0), _edge("/mount", "/cam", 3.0)), ts=1.0
+        )
+        store.stream("tf", TFMessage).append(TFMessage(_edge("odom", "base", 1.0)), ts=1.0)
+        # The camera is `/cam` while tf_static still holds it, and `cam` once the fold has
+        # put it in the moving stream's convention. Either way it must be REACHABLE.
+        assert chain("/cam", store, "tf", "tf_static") == 6.0
+
+        fold_static_tf(store, "tf", "tf_static")
+
+        assert chain("cam", store, "tf") == 6.0, "the fold split the chain at the mount"
+        frames = {
+            name
+            for obs in store.streams["tf"]
+            for t in obs.data.transforms
+            for name in (str(t.frame_id), str(t.child_frame_id))
+        }
+        assert not any(name.startswith("/") for name in frames), sorted(frames)
+    finally:
+        store.stop()

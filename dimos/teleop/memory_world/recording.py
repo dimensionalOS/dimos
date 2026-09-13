@@ -665,7 +665,11 @@ def _spelt_like(name: str, spelling: dict[str, str], slashed: bool) -> str:
 
 
 def _restamped(
-    transform: Any, ts: float, spelling: dict[str, str] | None = None, slashed: bool = False
+    transform: Any,
+    ts: float,
+    spelling: dict[str, str] | None = None,
+    slashed: bool = False,
+    attached: set[str] | None = None,
 ) -> Any:
     """The same joint, said at another moment, and spelled to join what it must join.
 
@@ -683,6 +687,12 @@ def _restamped(
     both ways -- a recording whose tf and tf_static both said `/base -> /cam` came out of
     the fold saying `base -> cam`, and the lookup that answered 3.0 before answered None
     after, on the only edge in the recording.
+
+    *attached* is which frames the moving stream's spelling REACHES, which is not the same
+    as which frames it mentions: it travels along the folded edges too. `base -> /mount`
+    joins `odom -> base`, and `/mount -> /cam` joins that in turn, so respelling the first
+    and leaving the second alone split the chain at `mount` -- 6.0 before the fold, None
+    after. Without it, a frame the moving stream never says is the end of the line.
     """
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
     from dimos.msgs.geometry_msgs.Transform import Transform
@@ -691,7 +701,8 @@ def _restamped(
     p, q = transform.translation, transform.rotation
     parent, child = str(transform.frame_id), str(transform.child_frame_id)
     known = spelling or {}
-    joins = canonical_frame(parent) in known or canonical_frame(child) in known
+    reaches = known.keys() if attached is None else attached
+    joins = canonical_frame(parent) in reaches or canonical_frame(child) in reaches
     return Transform(
         translation=Vector3(float(p.x), float(p.y), float(p.z)),
         rotation=Quaternion(float(q.x), float(q.y), float(q.z), float(q.w)),
@@ -813,10 +824,26 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
     # 1 m after, with a pose appearing at t=1 where there had been none. One fix, one
     # new corruption, in the same function.
     slashed = sum(name.startswith("/") for name in spelling.values()) * 2 > len(spelling)
+    # How far the moving stream's spelling reaches: its own frames, and then everything a
+    # folded edge joins to them, edge by edge until nothing new is reached. A mount hangs
+    # off a frame the moving stream says, and a camera hangs off the mount.
+    attached = set(spelling)
+    growing = True
+    while growing:
+        growing = False
+        for pair in folded:
+            if attached.isdisjoint(pair):
+                continue
+            for frame in pair:
+                if frame not in attached:
+                    attached.add(frame)
+                    growing = True
     statics_row = [
         (
             first,
-            TFMessage(*(_restamped(t, first, spelling, slashed) for t in folded.values())),
+            TFMessage(
+                *(_restamped(t, first, spelling, slashed, attached) for t in folded.values())
+            ),
         )
     ]
     written = statics_row + [(ts, TFMessage(*kept)) for ts, kept, _ in rows]
