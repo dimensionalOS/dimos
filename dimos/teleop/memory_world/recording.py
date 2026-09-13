@@ -727,24 +727,19 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
             for t in obs.data.transforms
         ]
     )
-    # The row carrying the folded statics is stamped at `first` too, not only its
-    # transforms. `TfTree.from_stream` reads `transform.ts or obs.ts`, so a transform
-    # stamped exactly 0.0 -- which is what `first` is on a recording whose timebase
-    # starts at zero, as a synthetic or simulated one does -- is read as UNSTAMPED and
-    # falls back to the observation's stamp, which is later. The static then did not
-    # hold at the moment it was restated to hold from, and a camera pose in that gap
-    # stopped resolving. `first` is the minimum over every row's own low, so this only
-    # ever moves the row earlier.
-    written = [
-        (
-            min(ts, first) if index == 0 else ts,
-            TFMessage(
-                *kept,
-                *([_restamped(t, first) for t in folded.values()] if index == 0 else []),
-            ),
-        )
-        for index, (ts, kept, _) in enumerate(rows)
-    ]
+    # `TfTree.from_stream` reads `transform.ts or obs.ts`, so a transform stamped exactly
+    # 0.0 is read as UNSTAMPED and takes its row's stamp instead -- and 0.0 is what
+    # `first` is on a recording whose clock starts at zero. The folded statics therefore
+    # have to sit in a row that is ITSELF stamped at `first`, or they do not hold at the
+    # moment they were just restated to hold from.
+    #
+    # In their OWN row, not merged into the first existing one with its stamp moved back.
+    # Moving that row retimes every MOVING transform in it that is likewise unstamped:
+    # measured on a two-row stream, `world -> base` read 0 m at t=2 before the fold and
+    # 1 m after, with a pose appearing at t=1 where there had been none. One fix, one
+    # new corruption, in the same function.
+    statics_row = [(first, TFMessage(*(_restamped(t, first) for t in folded.values())))]
+    written = statics_row + [(ts, TFMessage(*kept)) for ts, kept, _ in rows]
     rebuild_stream(store, tf_stream, written, TFMessage)
     store.delete_stream(static_stream)
     return len(folded)

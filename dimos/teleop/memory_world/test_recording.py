@@ -1474,3 +1474,61 @@ def test_a_folded_static_holds_from_zero_on_a_recording_that_starts_at_zero(tmp_
             assert after[0, 3] == 3.0
         finally:
             store.stop()
+
+
+def test_folding_does_not_retime_the_moving_transforms_it_keeps(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A fold rewrites where the STATIC edges sit. It must not move anything else.
+
+    `TfTree.from_stream` reads `transform.ts or obs.ts`, so a moving transform that
+    carries no stamp of its own takes its row's. Putting the folded statics INTO the
+    first existing row and moving that row's stamp back -- which is how the zero-timebase
+    fix was first written -- therefore retimed every unstamped moving transform in it:
+    `world -> base` read 0 m at t=2 before the fold and 1 m after, with a pose appearing
+    at t=1 where there had been none. The statics get their own row instead.
+    """
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, fold_static_tf
+
+    def unstamped(parent: str, child: str, x: float) -> Transform:
+        return Transform(
+            translation=Vector3(x, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id=parent,
+            child_frame_id=child,
+            ts=0.0,  # no stamp of its own: it takes its row's
+        )
+
+    store = SqliteStore(path=str(tmp_path / "retime.db"), must_exist=False)
+    store.start()
+    try:
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(unstamped("base", "cam", 5.0)), ts=0.0
+        )
+        tf = store.stream("tf", TFMessage)
+        tf.append(TFMessage(unstamped("world", "base", 0.0)), ts=2.0)
+        tf.append(TFMessage(unstamped("world", "base", 2.0)), ts=4.0)
+
+        tree = build_tf_tree(store, "tf")
+        before = {t: tree.lookup("world", "base", t) for t in (1.0, 2.0, 3.0)}
+        assert before[1.0] is None, "the fixture does not start where it says it does"
+        assert before[2.0][0, 3] == 0.0
+        assert before[3.0][0, 3] == 1.0
+
+        fold_static_tf(store, "tf", "tf_static")
+
+        tree = build_tf_tree(store, "tf")
+        after = {t: tree.lookup("world", "base", t) for t in (1.0, 2.0, 3.0)}
+        assert after[1.0] is None, "the fold invented a moving pose before the drive began"
+        assert after[2.0][0, 3] == 0.0, (
+            f"the fold moved the moving poses: {after[2.0][0, 3]} at t=2, was 0.0"
+        )
+        assert after[3.0][0, 3] == 1.0
+
+        # And the static it was folding still holds from the moment it was restated at.
+        assert tree.lookup("base", "cam", 0.0) is not None
+    finally:
+        store.stop()

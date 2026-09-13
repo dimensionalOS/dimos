@@ -45,10 +45,12 @@ export class InputAdapter {
         let yawRate = 0;
         let sawLeftController = false;
         let sawRightController = false;
+        const seen = { left: false, right: false };
 
         for (const inputSource of frame.session.inputSources) {
             const hand = inputSource.handedness;
             if (hand !== 'left' && hand !== 'right') continue;
+            seen[hand] = true;
 
             // Hand-tracking branch (for pinch -> scale). Skip when a gamepad
             // is also exposed on this input source — that means the controller
@@ -129,6 +131,28 @@ export class InputAdapter {
         }
         this._sawLeftWas = sawLeftController;
         this._sawRightWas = sawRightController;
+
+        // A hand that is no longer there is not still pinching, and its last position is
+        // not where it is. Left as they were, `_updateBimanualScale` went on scaling from
+        // a stale hand: both gripping, then the right disappears and the left moves, and
+        // it emitted `scale_delta` with a factor of 2 off a pair where one hand no longer
+        // exists. Clearing the pinch is what ends the gesture; the anchor goes with it so
+        // the next real two-hand grip starts fresh.
+        for (const hand of ['left', 'right']) {
+            if (!seen[hand] && this._hand[hand].pinching) {
+                this._hand[hand].pinching = false;
+                this._hand[hand].wasPinching = false;
+                this._scaleAnchor = null;
+            }
+        }
+        // And push-to-talk is held on the right controller's A button. Losing the
+        // controller mid-utterance left `voice_start` unmatched, so the microphone stayed
+        // recording with nothing able to stop it: `main.js` ends the recording on
+        // `voice_stop` and on nothing else.
+        if (!seen.right && this._rightAWas) {
+            this._rightAWas = false;
+            this.onGesture({ type: 'voice_stop' });
+        }
 
         // Bimanual-pinch scaling.
         this._updateBimanualScale(scene);
