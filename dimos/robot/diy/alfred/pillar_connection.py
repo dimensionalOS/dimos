@@ -15,18 +15,38 @@
 """Alfred pillar serial connection.
 
 This module owns every pillar-specific detail: firmware commands, serial
-framing, units, limits, homing state, and command coalescing. The control
+framing, units, limits, homing state, and command pacing. The control
 coordinator reaches it through the generic ``transport_lcm`` whole-body
 adapter using one linear joint, ``pillar/lift``, expressed in metres.
+
+The wire protocol is the ``pillar_driver`` host interface. Every line the
+board emits falls in exactly one bucket, which is what lets the reader be a
+demultiplexer rather than a parser:
+
+    <STATUS,<ms>,<code>>      asynchronous event, can arrive at any moment
+    <<ms>,<joint>,<metres>>   telemetry, only while ``set rate`` is non-zero
+    ok  /  ok <key>=<value>   reply, exactly one per command line
+    err <code>                reply, exactly one per command line
+    anything else             human prose, silenced by ``set echo 0``
+
+Three firmware properties shape the design:
+
+* A command's ``ok`` means *accepted*, not finished. ``home`` answers in about
+  4 ms and completes tens of seconds later, so ``move_done`` and its siblings
+  are the only signals that mean arrived. Nothing here blocks on motion.
+* Motion commands preempt each other and never answer ``busy``. A new target
+  is sent straight away; there is no queue behind an active move.
+* Opening the port resets the board, and ``echo``/``rate`` do not survive a
+  reset. Session setup is re-applied on every ``ready`` event, not just once.
 """
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 import math
-import re
 import threading
 from threading import Thread
 import time
@@ -50,19 +70,32 @@ PILLAR_HARDWARE_ID = "pillar"
 PILLAR_LIFT_JOINT = "pillar/lift"
 PILLAR_DEFAULT_DEVICE_PATH = "/dev/ttyUSB0"
 
-# The active Nano firmware uses the top switch as zero and positive motion as
-# upward, so every normal position lies below zero.
+# The name the firmware answers to in joint frames. dimos uses ``pillar/lift``
+# everywhere above this file; the two names only meet on the wire.
+PILLAR_FIRMWARE_JOINT = "pillar_platform_joint"
+
+# Zero is the top limit switch trip point and up is positive, so the whole
+# working range is negative. These mirror the firmware's own soft limits.
 PILLAR_MIN_POSITION_M = -0.500
 PILLAR_MAX_POSITION_M = -0.002
 PILLAR_HOME_POSITION_M = -0.050
-PILLAR_BAUD_RATE = 115_200
-PILLAR_STEP_RESOLUTION_M = 1.0 / (80.0 * 1000.0)
 
-_POSITION_RE = re.compile(r"(?:^| )pos (?P<mm>-?\d+(?:\.\d+)?) mm \((?P<steps>-?\d+) steps\)$")
-_STATE_RE = re.compile(r"^state (?P<state>IDLE|MOVING|BRAKE-WAIT)(?: |$)")
-_LIMIT_STATUS_RE = re.compile(
-    r"^top limit: D\d+ (?P<level>HIGH|LOW) -> (?P<state>TRIGGERED|clear)(?: |$)"
+PILLAR_BAUD_RATE = 115_200
+PILLAR_STEPS_PER_MM = 320.0  # 1600 steps/rev over a 5 mm ball screw lead
+PILLAR_STEP_RESOLUTION_M = 1.0 / (PILLAR_STEPS_PER_MM * 1000.0)
+# A longer line is discarded whole by the firmware, not truncated.
+PILLAR_MAX_LINE_LENGTH = 63
+
+_STATUS_PREFIX = "<STATUS,"
+
+# Events that end a motion. Only ``move_done`` means the target was reached,
+# which is why every wait for motion is paired with a deadline.
+_MOTION_END_EVENTS = frozenset(
+    {"move_done", "limit_hit", "position_lost", "homing_failed", "homing_aborted"}
 )
+
+# Rejections that mean "already there". Nothing moved and nothing is wrong.
+_BENIGN_ERRORS = frozenset({"zero_move", "at_soft_limit"})
 
 
 class SerialPort(Protocol):
@@ -113,8 +146,6 @@ def _open_serial(
 class PillarPhase(str, Enum):
     UNKNOWN = "unknown"
     IDLE = "idle"
-    COMMAND_PENDING = "command_pending"
-    BRAKE_WAIT = "brake_wait"
     MOVING = "moving"
     HOMING = "homing"
     STOPPING = "stopping"
@@ -123,7 +154,7 @@ class PillarPhase(str, Enum):
 
 @dataclass(frozen=True)
 class PillarFeedback:
-    """Latest open-loop position reported by the Nano firmware."""
+    """Latest open-loop position reported by the firmware's telemetry stream."""
 
     position_m: float
     received_at: float
@@ -141,11 +172,29 @@ class PillarStatus:
     motion_active: bool
     top_limit_triggered: bool | None
     fault: str | None
+    last_event: str | None
     last_line: str | None
 
 
+@dataclass
+class _PendingReply:
+    """One command line awaiting its single ``ok``/``err``."""
+
+    line: str
+    done: threading.Event
+    value: str | None = None
+    error: str | None = None
+
+
+def _is_motion_line(line: str) -> bool:
+    """True for commands that start the rail moving, joint frames included."""
+    if line.startswith("<"):
+        return True
+    return line.split(" ", 1)[0].lower() in {"move", "jog", "steps", "revs"}
+
+
 class PillarSerialDriver:
-    """Line-oriented driver for the active Alfred pillar Nano firmware."""
+    """Line-oriented driver for the ``pillar_driver`` host interface."""
 
     def __init__(
         self,
@@ -154,11 +203,15 @@ class PillarSerialDriver:
         baud_rate: int = PILLAR_BAUD_RATE,
         serial_timeout_s: float = 0.05,
         write_timeout_s: float = 0.5,
-        boot_wait_s: float = 2.0,
-        status_poll_interval_s: float = 0.5,
-        feedback_stale_after_s: float = 2.0,
+        boot_wait_s: float = 2.5,
+        telemetry_rate_hz: float = 50.0,
+        speed_mm_s: float | None = None,
+        accel_mm_s2: float | None = None,
+        min_command_interval_s: float = 0.02,
+        feedback_stale_after_s: float = 1.0,
         shutdown_stop_timeout_s: float = 2.0,
-        command_ack_timeout_s: float = 1.0,
+        reply_timeout_s: float = 1.0,
+        move_timeout_s: float = 30.0,
         home_timeout_s: float = 75.0,
         serial_factory: SerialPortFactory = _open_serial,
         feedback_callback: Callable[[PillarFeedback], None] | None = None,
@@ -169,10 +222,14 @@ class PillarSerialDriver:
         self._serial_timeout_s = serial_timeout_s
         self._write_timeout_s = write_timeout_s
         self._boot_wait_s = boot_wait_s
-        self._status_poll_interval_s = status_poll_interval_s
+        self._telemetry_rate_hz = telemetry_rate_hz
+        self._speed_mm_s = speed_mm_s
+        self._accel_mm_s2 = accel_mm_s2
+        self._min_command_interval_s = min_command_interval_s
         self._feedback_stale_after_s = feedback_stale_after_s
         self._shutdown_stop_timeout_s = shutdown_stop_timeout_s
-        self._command_ack_timeout_s = command_ack_timeout_s
+        self._reply_timeout_s = reply_timeout_s
+        self._move_timeout_s = move_timeout_s
         self._home_timeout_s = home_timeout_s
         self._serial_factory = serial_factory
         self._feedback_callback = feedback_callback
@@ -180,34 +237,40 @@ class PillarSerialDriver:
 
         self._state_lock = threading.RLock()
         self._state_changed = threading.Condition(self._state_lock)
-        self._command_lock = threading.Lock()
         self._write_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._serial: SerialPort | None = None
         self._reader_thread: Thread | None = None
         self._line_buffer = bytearray()
+        self._pending_replies: deque[_PendingReply] = deque()
 
-        self._connected = False
-        self._disconnecting = False
-        self._ready_at = math.inf
-        self._next_status_poll = math.inf
-        self._phase = PillarPhase.UNKNOWN
-        self._reported_phase = PillarPhase.UNKNOWN
-        self._homed = False
-        self._homing_in_progress = False
-        self._stop_requested = False
-        self._command_ack_deadline = math.inf
-        self._home_deadline = math.inf
-        self._position_m: float | None = None
-        self._last_feedback_at: float | None = None
-        self._pending_target_m: float | None = None
-        self._active_target_m: float | None = None
-        self._command_in_flight = False
-        self._motion_active = False
-        self._top_limit_triggered: bool | None = None
-        self._fault: str | None = None
-        self._last_line: str | None = None
-        self._saw_boot_banner = False
+        self._reset_state()
+
+    def _reset_state(self) -> None:
+        """Every field the firmware can invalidate, in one place."""
+        with self._state_lock:
+            self._connected = False
+            self._disconnecting = False
+            self._session_ready = False
+            self._ready_at = math.inf
+            self._phase = PillarPhase.UNKNOWN
+            self._homed = False
+            self._homing = False
+            self._stop_requested = False
+            self._motion_active = False
+            self._home_deadline = math.inf
+            self._motion_deadline = math.inf
+            self._position_m: float | None = None
+            self._last_feedback_at: float | None = None
+            self._pending_target_m: float | None = None
+            self._active_target_m: float | None = None
+            self._next_command_at = 0.0
+            self._top_limit_triggered: bool | None = None
+            self._fault: str | None = None
+            self._last_event: str | None = None
+            self._last_line: str | None = None
+
+    # ------------------------------------------------------------------ life cycle
 
     def connect(self) -> None:
         with self._state_lock:
@@ -222,29 +285,14 @@ class PillarSerialDriver:
         )
         now = self._clock()
         with self._state_lock:
+            self._reset_state()
             self._serial = port
             self._connected = True
-            self._disconnecting = False
+            # Opening the port pulls DTR and resets the board. Anything sent
+            # before the reset finishes is lost, so session setup waits.
             self._ready_at = now + self._boot_wait_s
-            self._next_status_poll = self._ready_at
-            self._phase = PillarPhase.UNKNOWN
-            self._reported_phase = PillarPhase.UNKNOWN
-            self._homed = False
-            self._homing_in_progress = False
-            self._stop_requested = False
-            self._command_ack_deadline = math.inf
-            self._home_deadline = math.inf
-            self._position_m = None
-            self._last_feedback_at = None
-            self._pending_target_m = None
-            self._active_target_m = None
-            self._command_in_flight = False
-            self._motion_active = False
-            self._top_limit_triggered = None
-            self._fault = None
-            self._last_line = None
-            self._saw_boot_banner = False
             self._line_buffer.clear()
+            self._pending_replies.clear()
             self._stop_event.clear()
             self._state_changed.notify_all()
 
@@ -261,39 +309,31 @@ class PillarSerialDriver:
         )
 
     def disconnect(self) -> None:
-        sent_stop = False
-        with self._command_lock:
-            with self._state_lock:
-                if self._disconnecting:
-                    return
-                port = self._serial
-                was_connected = self._connected
-                self._disconnecting = True
-                motion_active = was_connected and self._motion_active
-                self._pending_target_m = None
-                self._active_target_m = None
-                self._command_in_flight = False
-                self._command_ack_deadline = math.inf
-                self._home_deadline = math.inf
-                if motion_active:
-                    self._stop_requested = True
-                    self._phase = PillarPhase.STOPPING
-                    if self._homing_in_progress:
-                        self._homed = False
-                        self._fault = "homing aborted; home is required"
-                self._state_changed.notify_all()
-
+        with self._state_lock:
+            if self._disconnecting:
+                return
+            port = self._serial
+            was_connected = self._connected
+            self._disconnecting = True
+            motion_active = was_connected and self._motion_active
+            self._pending_target_m = None
+            self._active_target_m = None
             if motion_active:
-                try:
-                    sent_stop = self._send_line("x", allow_disconnecting=True)
-                except Exception:
-                    logger.exception("Failed to request pillar stop during disconnect")
+                self._stop_requested = True
+                self._phase = PillarPhase.STOPPING
+            self._state_changed.notify_all()
 
-        if sent_stop and not self._wait_for_motion_end(self._shutdown_stop_timeout_s):
-            logger.error(
-                "Pillar did not acknowledge its ramped stop before disconnect; "
-                "hardware may still be moving"
-            )
+        if motion_active:
+            try:
+                stopped = self._command("stop", allow_disconnecting=True) is not None
+            except Exception:
+                logger.exception("Failed to request pillar stop during disconnect")
+                stopped = False
+            if stopped and not self._wait_for_motion_end(self._shutdown_stop_timeout_s):
+                logger.error(
+                    "Pillar did not settle after its ramped stop before disconnect; "
+                    "hardware may still be moving"
+                )
 
         self._stop_event.set()
         if port is not None:
@@ -309,23 +349,10 @@ class PillarSerialDriver:
                 logger.warning("Pillar serial reader did not stop before timeout")
 
         with self._state_lock:
+            self._abandon_pending_replies()
+            self._reset_state()
             self._serial = None
             self._reader_thread = None
-            self._connected = False
-            self._disconnecting = False
-            self._ready_at = math.inf
-            self._next_status_poll = math.inf
-            self._phase = PillarPhase.UNKNOWN
-            self._reported_phase = PillarPhase.UNKNOWN
-            self._homed = False
-            self._homing_in_progress = False
-            self._stop_requested = False
-            self._command_ack_deadline = math.inf
-            self._home_deadline = math.inf
-            self._pending_target_m = None
-            self._active_target_m = None
-            self._command_in_flight = False
-            self._motion_active = False
             self._state_changed.notify_all()
 
         if was_connected:
@@ -335,12 +362,13 @@ class PillarSerialDriver:
         with self._state_lock:
             return self._connected
 
+    # ------------------------------------------------------------------ queries
+
     def status(self) -> PillarStatus:
-        now = self._clock()
         with self._state_lock:
             return PillarStatus(
                 connected=self._connected,
-                ready=self._connected and now >= self._ready_at,
+                ready=self._connected and self._session_ready,
                 phase=self._phase,
                 homed=self._homed,
                 position_m=self._position_m,
@@ -349,6 +377,7 @@ class PillarSerialDriver:
                 motion_active=self._motion_active,
                 top_limit_triggered=self._top_limit_triggered,
                 fault=self._fault,
+                last_event=self._last_event,
                 last_line=self._last_line,
             )
 
@@ -357,7 +386,6 @@ class PillarSerialDriver:
         with self._state_lock:
             if (
                 not self._connected
-                or not self._homed
                 or self._position_m is None
                 or self._last_feedback_at is None
                 or now - self._last_feedback_at > self._feedback_stale_after_s
@@ -365,74 +393,64 @@ class PillarSerialDriver:
                 return None
             return PillarFeedback(self._position_m, self._last_feedback_at)
 
+    # ------------------------------------------------------------------ commands
+
     def home(self) -> bool:
+        """Start homing. Returns once the firmware has *accepted* the command."""
         now = self._clock()
-        with self._command_lock:
-            with self._state_lock:
-                if not self._connected or self._disconnecting or now < self._ready_at:
-                    logger.warning("Pillar is not ready to home")
-                    return False
-                if (
-                    self._last_feedback_at is None
-                    or now - self._last_feedback_at > self._feedback_stale_after_s
-                    or self._reported_phase is not PillarPhase.IDLE
-                ):
-                    logger.warning("Pillar needs fresh idle feedback before homing")
-                    return False
-                if (
-                    self._motion_active
-                    or self._command_in_flight
-                    or self._homing_in_progress
-                    or self._phase in {PillarPhase.UNKNOWN, PillarPhase.STOPPING}
-                ):
-                    logger.warning(f"Pillar cannot home while state is {self._phase.value}")
-                    return False
-                self._homing_in_progress = True
-                self._homed = False
-                self._phase = PillarPhase.HOMING
-                self._fault = None
-                self._pending_target_m = None
-                self._active_target_m = None
-                self._command_in_flight = False
-                self._command_ack_deadline = math.inf
-                self._motion_active = True
-                self._stop_requested = False
-                self._home_deadline = now + self._home_timeout_s
-                self._state_changed.notify_all()
+        with self._state_lock:
+            if not self._connected or self._disconnecting or not self._session_ready:
+                logger.warning("Pillar is not ready to home")
+                return False
+            if self._homing or self._motion_active:
+                logger.warning(f"Pillar cannot home while state is {self._phase.value}")
+                return False
+            self._homing = True
+            self._homed = False
+            self._motion_active = True
+            self._stop_requested = False
+            self._phase = PillarPhase.HOMING
+            self._fault = None
+            self._pending_target_m = None
+            self._active_target_m = None
+            self._home_deadline = now + self._home_timeout_s
+            self._state_changed.notify_all()
 
-            if self._send_line("home"):
-                logger.info("Pillar homing started")
-                return True
+        reply = self._command("home")
+        if reply is not None and reply.error is None:
+            logger.info("Pillar homing started")
+            return True
 
-            with self._state_lock:
-                self._homing_in_progress = False
-                self._motion_active = False
-                self._home_deadline = math.inf
-                self._phase = PillarPhase.FAULT
-                self._state_changed.notify_all()
-            return False
+        with self._state_lock:
+            self._homing = False
+            self._motion_active = False
+            self._home_deadline = math.inf
+            if self._fault is None:
+                self._phase = PillarPhase.IDLE
+            self._state_changed.notify_all()
+        return False
 
     def stop_motion(self) -> bool:
-        with self._command_lock:
-            with self._state_lock:
-                if not self._connected or self._disconnecting:
-                    return False
-                was_homing = self._homing_in_progress
-                self._pending_target_m = None
-                self._active_target_m = None
-                self._command_in_flight = False
-                self._command_ack_deadline = math.inf
-                if self._motion_active:
-                    self._stop_requested = True
-                    self._phase = PillarPhase.STOPPING
-                if was_homing:
-                    self._homed = False
-                    self._fault = "homing aborted; home is required"
-                self._state_changed.notify_all()
+        """Request the firmware's ramped stop and drop any queued target."""
+        now = self._clock()
+        with self._state_lock:
+            if not self._connected or self._disconnecting:
+                return False
+            self._pending_target_m = None
+            self._active_target_m = None
+            if self._motion_active:
+                self._stop_requested = True
+                self._phase = PillarPhase.STOPPING
+                # `stop` ramps down rather than halting, and only homing has a
+                # dedicated abort event, so bound the settle with the move
+                # deadline as well.
+                self._motion_deadline = now + self._move_timeout_s
+            self._state_changed.notify_all()
 
-            return self._send_line("x")
+        return self._command("stop") is not None
 
     def queue_position(self, position_m: float) -> bool:
+        """Accept an absolute target in metres. Latest target wins."""
         if not math.isfinite(position_m):
             logger.warning(f"Rejected non-finite pillar target: {position_m}")
             return False
@@ -443,57 +461,22 @@ class PillarSerialDriver:
             )
             return False
 
-        now = self._clock()
         with self._state_lock:
             if (
                 not self._connected
                 or self._disconnecting
+                or not self._session_ready
                 or not self._homed
-                or self._homing_in_progress
+                or self._homing
+                or self._fault is not None
+                or self._phase in {PillarPhase.UNKNOWN, PillarPhase.STOPPING}
             ):
                 return False
-            if self._fault is not None or self._phase in {
-                PillarPhase.UNKNOWN,
-                PillarPhase.STOPPING,
-                PillarPhase.FAULT,
-            }:
-                return False
-            if self._active_target_m is not None and math.isclose(
-                position_m,
-                self._active_target_m,
-                abs_tol=PILLAR_STEP_RESOLUTION_M / 2.0,
-            ):
-                # Latest-wins: returning to the active target cancels any
-                # different target that arrived while the firmware was busy.
-                self._pending_target_m = None
-                return True
-            if self._pending_target_m is not None and math.isclose(
-                position_m,
-                self._pending_target_m,
-                abs_tol=PILLAR_STEP_RESOLUTION_M / 2.0,
-            ):
-                return True
-            if self._motion_active or self._command_in_flight:
-                # The Nano cannot retarget an active point-to-point move. Keep
-                # only the newest target and dispatch it after the terminal
-                # position report, which also refreshes feedback.
-                self._pending_target_m = position_m
-                return True
-            if (
-                self._last_feedback_at is None
-                or now - self._last_feedback_at > self._feedback_stale_after_s
-            ):
-                logger.warning("Rejected pillar target because feedback is stale")
-                return False
-            if self._position_m is not None and math.isclose(
-                position_m,
-                self._position_m,
-                abs_tol=PILLAR_STEP_RESOLUTION_M / 2.0,
-            ):
-                self._pending_target_m = None
-                return True
             self._pending_target_m = position_m
+        self._dispatch_pending_target()
         return True
+
+    # ------------------------------------------------------------------ reader loop
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
@@ -520,25 +503,9 @@ class PillarSerialDriver:
 
     def _service(self) -> None:
         now = self._clock()
+        self._begin_session(now)
         self._check_deadlines(now)
-        # A pending goal takes precedence over an idle status poll. The Nano
-        # generates step pulses in its main loop, so its verbose `p` response
-        # must never be requested while motion is active.
         self._dispatch_pending_target()
-        should_poll = False
-        with self._state_lock:
-            if (
-                self._connected
-                and not self._disconnecting
-                and not self._motion_active
-                and not self._command_in_flight
-                and not self._homing_in_progress
-                and now >= self._next_status_poll
-            ):
-                should_poll = True
-                self._next_status_poll = now + self._status_poll_interval_s
-        if should_poll:
-            self._send_line("p")
 
     def _feed_bytes(self, data: bytes) -> None:
         for byte in data:
@@ -556,207 +523,271 @@ class PillarSerialDriver:
         line = raw_line.strip()
         if not line:
             return
-
-        now = self._clock()
-        emit_feedback = False
         with self._state_lock:
             self._last_line = line
 
-            position_match = _POSITION_RE.search(line)
-            if position_match is not None:
-                self._position_m = float(position_match.group("mm")) / 1000.0
-                self._last_feedback_at = now
-                emit_feedback = self._homed
+        if line.startswith(_STATUS_PREFIX) and line.endswith(">"):
+            self._on_event(line)
+        elif line.startswith("<") and line.endswith(">"):
+            self._on_telemetry(line)
+        elif line == "ok":
+            self._resolve_reply(value=None, error=None, raw=line)
+        elif line.startswith("ok "):
+            self._resolve_reply(value=line[3:].strip(), error=None, raw=line)
+        elif line.startswith("err "):
+            self._resolve_reply(value=None, error=line[4:].split()[0], raw=line)
+        else:
+            # Prose. `set echo 0` silences most of it; `help` and `get status`
+            # still emit it by design, and this module asks for neither.
+            logger.debug(f"Pillar prose: {line}")
+        self._dispatch_pending_target()
 
-            state_match = _STATE_RE.match(line)
-            if state_match is not None:
-                reported_phase = {
-                    "IDLE": PillarPhase.IDLE,
-                    "MOVING": PillarPhase.MOVING,
-                    "BRAKE-WAIT": PillarPhase.BRAKE_WAIT,
-                }[state_match.group("state")]
-                self._reported_phase = reported_phase
-                if reported_phase is PillarPhase.IDLE:
-                    if not self._command_in_flight and not self._homing_in_progress:
-                        self._motion_active = False
-                        self._active_target_m = None
-                        self._stop_requested = False
-                else:
-                    self._motion_active = True
-                    if self._command_in_flight:
-                        self._command_in_flight = False
-                        self._command_ack_deadline = math.inf
-                if (
-                    not self._homing_in_progress
-                    and not self._command_in_flight
-                    and self._fault is None
-                ):
-                    self._phase = reported_phase
+    # ------------------------------------------------------------------ line handlers
 
-            limit_match = _LIMIT_STATUS_RE.match(line)
-            if limit_match is not None:
-                self._top_limit_triggered = limit_match.group("state") == "TRIGGERED"
+    def _on_telemetry(self, line: str) -> None:
+        fields = line[1:-1].split(",")
+        if len(fields) != 3:
+            logger.warning(f"Pillar telemetry frame is malformed: {line!r}")
+            return
+        _, name, value = fields
+        if name != PILLAR_FIRMWARE_JOINT:
+            logger.warning(f"Pillar telemetry names an unexpected joint: {name!r}")
+            return
+        try:
+            position_m = float(value)
+        except ValueError:
+            logger.warning(f"Pillar telemetry carries a non-numeric position: {line!r}")
+            return
 
-            if line == "openFT pillar bench test":
-                rebooted_while_running = self._saw_boot_banner or self._homed
-                self._saw_boot_banner = True
+        now = self._clock()
+        with self._state_lock:
+            self._position_m = position_m
+            self._last_feedback_at = now
+            self._state_changed.notify_all()
+        # Published whether or not the rail is homed. On boot the firmware
+        # restores its position from EEPROM, which is a good enough hint to
+        # draw the robot and plan the arms against; it is not good enough to
+        # move against, and `queue_position` is what enforces that. Withholding
+        # it instead would drop `pillar/lift` from the coordinator's merged
+        # state and take both arms down with it.
+        self._emit_feedback()
+
+    def _on_event(self, line: str) -> None:
+        body = line[len(_STATUS_PREFIX) : -1]
+        _, _, code = body.partition(",")
+        code = code.strip()
+        if not code:
+            logger.warning(f"Pillar event is malformed: {line!r}")
+            return
+
+        now = self._clock()
+        with self._state_lock:
+            self._last_event = code
+
+            if code == "ready":
+                rebooted = self._session_ready or self._homed
                 self._homed = False
-                self._homing_in_progress = False
-                self._phase = PillarPhase.UNKNOWN
-                self._reported_phase = PillarPhase.UNKNOWN
+                self._homing = False
+                self._motion_active = False
+                self._stop_requested = False
                 self._pending_target_m = None
                 self._active_target_m = None
-                self._command_in_flight = False
-                self._command_ack_deadline = math.inf
                 self._home_deadline = math.inf
-                self._stop_requested = False
-                self._motion_active = False
-                if rebooted_while_running:
+                self._motion_deadline = math.inf
+                self._phase = PillarPhase.UNKNOWN
+                # `echo` and `rate` do not survive a reset; re-apply them.
+                self._session_ready = False
+                self._ready_at = now
+                if rebooted:
                     self._fault = "pillar controller rebooted; home is required"
                     self._phase = PillarPhase.FAULT
-            elif line.startswith("HOMED, soft limits "):
-                # Firmware sets its reference before the final -50 mm park.
-                # Expose homed only after the definitive completion token.
-                if not self._homing_in_progress:
-                    self._homed = True
-                    emit_feedback = self._position_m is not None
-            elif line.startswith("NOT HOMED "):
-                self._homed = False
-            elif line == "HOMED - at start position":
+            elif code == "homed":
                 self._homed = True
-                self._homing_in_progress = False
-                self._phase = PillarPhase.IDLE
+                self._homing = False
+                self._motion_active = False
+                self._stop_requested = False
+                self._home_deadline = math.inf
+                self._motion_deadline = math.inf
                 self._fault = None
-                self._command_in_flight = False
-                self._command_ack_deadline = math.inf
-                self._home_deadline = math.inf
-                self._stop_requested = False
-                self._motion_active = False
-                emit_feedback = self._position_m is not None
-            elif line.startswith("HOMING FAILED: "):
+                self._phase = PillarPhase.IDLE
+            elif code == "homing_failed":
                 self._homed = False
-                self._homing_in_progress = False
+                self._homing = False
+                self._motion_active = False
+                self._home_deadline = math.inf
+                self._motion_deadline = math.inf
                 self._phase = PillarPhase.FAULT
-                self._fault = line
-                self._command_ack_deadline = math.inf
-                self._home_deadline = math.inf
-                self._stop_requested = False
-                self._motion_active = False
-            elif line == "homing aborted":
+                self._fault = "homing failed; check switch, wiring and direction"
+            elif code == "homing_aborted":
                 self._homed = False
-                self._homing_in_progress = False
+                self._homing = False
+                self._motion_active = False
                 self._home_deadline = math.inf
+                self._motion_deadline = math.inf
                 self._fault = "homing aborted; home is required"
-                if self._stop_requested:
-                    self._phase = PillarPhase.STOPPING
-                    self._motion_active = True
-                else:
-                    self._phase = PillarPhase.FAULT
-                    self._motion_active = False
-            elif line.startswith("move "):
-                self._motion_active = True
-                if not self._homing_in_progress:
-                    self._phase = (
-                        PillarPhase.FAULT if self._fault is not None else PillarPhase.MOVING
-                    )
-                self._command_in_flight = False
-                self._command_ack_deadline = math.inf
-            elif line.startswith("busy - "):
-                if self._homing_in_progress:
-                    self._homing_in_progress = False
-                    self._home_deadline = math.inf
-                    self._homed = False
-                    self._pending_target_m = None
-                    self._active_target_m = None
-                    self._command_in_flight = False
-                    self._command_ack_deadline = math.inf
-                    self._motion_active = True
-                    self._phase = PillarPhase.FAULT
-                    self._fault = "home rejected: firmware busy"
-                else:
-                    self._restore_active_target_locked()
-                    self._motion_active = True
-                if not self._homing_in_progress and self._fault is None:
-                    self._phase = PillarPhase.MOVING
-            elif line.startswith("not homed - "):
-                self._homed = False
-                self._motion_active = False
-                self._restore_active_target_locked()
-                self._phase = PillarPhase.FAULT if self._fault is not None else PillarPhase.IDLE
-            elif line in {"zero move", "already at soft limit"}:
-                self._phase = PillarPhase.FAULT if self._fault is not None else PillarPhase.IDLE
-                self._command_in_flight = False
-                self._command_ack_deadline = math.inf
-                self._active_target_m = None
-                self._stop_requested = False
-                self._motion_active = False
-            elif line.startswith("refusing "):
-                self._command_in_flight = False
-                self._command_ack_deadline = math.inf
-                self._active_target_m = None
-                self._stop_requested = False
-                self._motion_active = False
-                if "top limit TRIGGERED" in line:
-                    self._homed = False
-                    self._phase = PillarPhase.FAULT
-                    self._fault = line
-                elif self._fault is None:
-                    self._phase = PillarPhase.IDLE
-            elif line.startswith("warning: brake is engaged"):
-                self._fault = line
                 self._phase = PillarPhase.FAULT
-            elif line.startswith("top limit -> "):
-                self._top_limit_triggered = line.endswith("TRIGGERED")
-
-            if line.startswith("TOP LIMIT hit - stopped.") and not self._homing_in_progress:
-                self._homed = False
-                self._phase = PillarPhase.FAULT
-                self._fault = "top limit hit outside homing; home is required"
-                self._command_in_flight = False
-                self._command_ack_deadline = math.inf
-                self._home_deadline = math.inf
-                self._active_target_m = None
-                self._stop_requested = False
+            elif code == "move_done":
                 self._motion_active = False
-            elif line.startswith("done. pos "):
-                self._command_in_flight = False
-                self._command_ack_deadline = math.inf
+                self._stop_requested = False
                 self._active_target_m = None
-                if not self._homing_in_progress and not self._stop_requested:
-                    self._motion_active = False
+                self._motion_deadline = math.inf
+                if not self._homing:
                     self._phase = PillarPhase.FAULT if self._fault is not None else PillarPhase.IDLE
-            elif line.startswith("stopped. pos "):
-                was_homing = self._homing_in_progress
-                self._homing_in_progress = False
-                self._command_in_flight = False
-                self._command_ack_deadline = math.inf
-                self._home_deadline = math.inf
-                self._active_target_m = None
-                self._stop_requested = False
+            elif code == "limit_hit":
+                # The rail stopped on the top switch. The position reference is
+                # no longer trustworthy; `position_lost` normally follows.
+                self._top_limit_triggered = True
+                self._homed = False
                 self._motion_active = False
-                if was_homing:
-                    self._homed = False
-                    self._fault = "homing aborted; home is required"
-                self._phase = PillarPhase.FAULT if self._fault is not None else PillarPhase.IDLE
-            elif line in {"cancelled", "idle"}:
-                was_homing = self._homing_in_progress
-                self._homing_in_progress = False
-                self._command_in_flight = False
-                self._command_ack_deadline = math.inf
-                self._home_deadline = math.inf
-                self._active_target_m = None
                 self._stop_requested = False
+                self._active_target_m = None
+                self._pending_target_m = None
+                self._motion_deadline = math.inf
+                self._phase = PillarPhase.FAULT
+                self._fault = "top limit hit; home is required"
+            elif code == "position_lost":
+                self._homed = False
                 self._motion_active = False
-                if was_homing:
-                    self._homed = False
-                    self._fault = "homing aborted; home is required"
-                self._phase = PillarPhase.FAULT if self._fault is not None else PillarPhase.IDLE
+                self._active_target_m = None
+                self._pending_target_m = None
+                self._motion_deadline = math.inf
+                self._phase = PillarPhase.FAULT
+                self._fault = "position reference lost; home is required"
+            elif code == "pos_drift":
+                # Homing disagreed with the stored position by more than the
+                # firmware's tolerance. Homing still completes; a slipping
+                # brake is the reason worth chasing.
+                logger.error("Pillar position drifted while powered down; check the brake")
+            elif code == "limit_triggered":
+                self._top_limit_triggered = True
+            elif code == "limit_clear":
+                self._top_limit_triggered = False
+            else:
+                logger.warning(f"Pillar reported an unknown event: {code!r}")
 
             self._state_changed.notify_all()
 
-        if emit_feedback:
-            self._emit_feedback()
-        self._dispatch_pending_target()
+        if code in {"homing_failed", "homing_aborted", "limit_hit", "position_lost"}:
+            logger.error(f"Alfred pillar fault: {self.status().fault}")
+
+    def _resolve_reply(self, *, value: str | None, error: str | None, raw: str) -> None:
+        with self._state_lock:
+            pending = self._pending_replies.popleft() if self._pending_replies else None
+        if pending is None:
+            logger.warning(f"Pillar sent a reply with no command outstanding: {raw!r}")
+            return
+        pending.value = value
+        pending.error = error
+        if error is not None:
+            self._apply_error(pending.line, error)
+        pending.done.set()
+
+    def _apply_error(self, line: str, code: str) -> None:
+        """Undo the optimistic state a rejected command left behind."""
+        motion = _is_motion_line(line)
+        with self._state_lock:
+            if motion:
+                self._motion_active = False
+                self._active_target_m = None
+                self._motion_deadline = math.inf
+
+            if code in _BENIGN_ERRORS:
+                # Already at the target. Treat it as an arrival, not a fault.
+                if motion and not self._homing and self._fault is None:
+                    self._phase = PillarPhase.IDLE
+                self._state_changed.notify_all()
+                return
+
+            if code == "not_homed":
+                self._homed = False
+                self._fault = "firmware reports not homed; home is required"
+                self._phase = PillarPhase.FAULT
+            elif code == "busy":
+                # Only home/zero/save/set invert can see this; motion preempts.
+                logger.warning(f"Pillar rejected {line!r}: firmware is busy")
+            elif code == "limit_blocked":
+                self._top_limit_triggered = True
+                self._fault = "up move refused: top limit is triggered"
+                self._phase = PillarPhase.FAULT
+            else:
+                # needs_arg, bad_arg, bad_frame, too_far, unknown_* and
+                # line_too_long all mean this module sent something wrong.
+                self._fault = f"firmware rejected {line!r}: {code}"
+                self._phase = PillarPhase.FAULT
+            self._state_changed.notify_all()
+        logger.error(f"Pillar rejected {line!r} with err {code}")
+
+    # ------------------------------------------------------------------ scheduling
+
+    def _begin_session(self, now: float) -> None:
+        with self._state_lock:
+            if (
+                self._session_ready
+                or not self._connected
+                or self._disconnecting
+                or now < self._ready_at
+            ):
+                return
+            self._session_ready = True
+            self._ready_at = math.inf
+            if self._phase is PillarPhase.UNKNOWN and self._fault is None:
+                self._phase = PillarPhase.IDLE
+            rate = self._telemetry_rate_hz
+            speed = self._speed_mm_s
+            accel = self._accel_mm_s2
+            self._state_changed.notify_all()
+
+        # Fire-and-forget: these run on the reader thread, which is the thread
+        # that would have to resolve a blocking wait.
+        self._write_line("set echo 0")
+        self._write_line(f"set rate {rate:g}")
+        if speed is not None:
+            self._write_line(f"set speed {speed:g}")
+        if accel is not None:
+            self._write_line(f"set accel {accel:g}")
+        logger.info("Pillar session established", telemetry_rate_hz=rate)
+
+    def _dispatch_pending_target(self) -> None:
+        now = self._clock()
+        with self._state_lock:
+            target = self._pending_target_m
+            if (
+                target is None
+                or not self._connected
+                or self._disconnecting
+                or self._stop_event.is_set()
+                or not self._session_ready
+                or not self._homed
+                or self._homing
+                or self._fault is not None
+                or self._phase is PillarPhase.STOPPING
+            ):
+                return
+            if now < self._next_command_at:
+                # Pace the link. The target stays pending and the newest one
+                # wins, so reversals ride one ramp instead of several.
+                return
+            if self._active_target_m is not None and math.isclose(
+                target, self._active_target_m, abs_tol=PILLAR_STEP_RESOLUTION_M / 2.0
+            ):
+                self._pending_target_m = None
+                return
+
+            self._pending_target_m = None
+            self._active_target_m = target
+            self._next_command_at = now + self._min_command_interval_s
+            self._motion_active = True
+            self._motion_deadline = now + self._move_timeout_s
+            if self._phase is not PillarPhase.MOVING:
+                self._phase = PillarPhase.MOVING
+            self._state_changed.notify_all()
+
+        if self._write_line(f"<0,{PILLAR_FIRMWARE_JOINT},{target:.6f}>") is None:
+            with self._state_lock:
+                self._active_target_m = None
+                self._motion_active = False
+                self._motion_deadline = math.inf
+                self._state_changed.notify_all()
 
     def _check_deadlines(self, now: float) -> None:
         faults: list[str] = []
@@ -764,27 +795,24 @@ class PillarSerialDriver:
             if not self._connected or self._disconnecting:
                 return
 
-            if self._command_in_flight and now >= self._command_ack_deadline:
-                message = "pillar position command was not acknowledged"
-                self._pending_target_m = None
-                self._active_target_m = None
-                self._command_in_flight = False
-                self._command_ack_deadline = math.inf
-                # Without an acknowledgement, assume the Nano may have accepted
-                # the command until a later status report proves it is idle.
+            if self._homing and now >= self._home_deadline:
+                message = "pillar homing timed out"
+                self._homed = False
+                self._homing = False
+                self._home_deadline = math.inf
+                self._motion_deadline = math.inf
+                # Homing has several internal phases, so silence does not prove
+                # the rail has stopped. Keep motion latched until told otherwise.
                 self._motion_active = True
                 self._phase = PillarPhase.FAULT
                 self._fault = message
                 faults.append(message)
 
-            if self._homing_in_progress and now >= self._home_deadline:
-                message = "pillar homing timed out"
-                self._homed = False
-                self._homing_in_progress = False
-                self._home_deadline = math.inf
-                # Homing has several internal idle/move transitions, so a stale
-                # state line cannot prove that physical motion has ended.
-                self._motion_active = True
+            if self._motion_active and not self._homing and now >= self._motion_deadline:
+                message = "pillar move did not report move_done in time"
+                self._motion_deadline = math.inf
+                self._pending_target_m = None
+                self._active_target_m = None
                 self._phase = PillarPhase.FAULT
                 self._fault = message
                 faults.append(message)
@@ -795,77 +823,79 @@ class PillarSerialDriver:
         for message in faults:
             logger.error(f"Alfred pillar fault: {message}")
 
-    def _restore_active_target_locked(self) -> None:
-        if self._pending_target_m is None and self._active_target_m is not None:
-            self._pending_target_m = self._active_target_m
-        self._active_target_m = None
-        self._command_in_flight = False
-        self._command_ack_deadline = math.inf
-        self._motion_active = False
+    # ------------------------------------------------------------------ transport
 
-    def _dispatch_pending_target(self) -> None:
-        with self._command_lock:
-            with self._state_lock:
-                target = self._pending_target_m
-                if (
-                    target is None
-                    or not self._connected
-                    or self._disconnecting
-                    or self._stop_event.is_set()
-                    or not self._homed
-                    or self._homing_in_progress
-                    or self._fault is not None
-                    or self._phase is not PillarPhase.IDLE
-                    or self._command_in_flight
-                    or self._motion_active
-                ):
-                    return
+    def _write_line(self, line: str, *, allow_disconnecting: bool = False) -> _PendingReply | None:
+        if len(line) > PILLAR_MAX_LINE_LENGTH:
+            self._set_fault(
+                f"refusing to send a {len(line)}-char line; the firmware discards "
+                f"anything over {PILLAR_MAX_LINE_LENGTH}"
+            )
+            return None
 
-                if self._position_m is not None and math.isclose(
-                    target,
-                    self._position_m,
-                    abs_tol=PILLAR_STEP_RESOLUTION_M / 2.0,
-                ):
-                    self._pending_target_m = None
-                    return
-
-                self._pending_target_m = None
-                self._active_target_m = target
-                self._command_in_flight = True
-                self._command_ack_deadline = self._clock() + self._command_ack_timeout_s
-                self._motion_active = True
-                self._phase = PillarPhase.COMMAND_PENDING
-                self._state_changed.notify_all()
-
-            command = f"g {target * 1000.0:.3f}"
-            if not self._send_line(command):
-                with self._state_lock:
-                    self._restore_active_target_locked()
-                    self._state_changed.notify_all()
-
-    def _send_line(self, command: str, *, allow_disconnecting: bool = False) -> bool:
-        payload = f"{command}\n".encode("ascii")
+        payload = f"{line}\n".encode("ascii")
+        pending = _PendingReply(line, threading.Event())
         with self._write_lock:
             with self._state_lock:
                 port = self._serial
-                connected = self._connected
-                disconnecting = self._disconnecting
-            if not connected or port is None or (disconnecting and not allow_disconnecting):
-                return False
+                if (
+                    not self._connected
+                    or port is None
+                    or (self._disconnecting and not allow_disconnecting)
+                ):
+                    return None
+                # Replies come back in order, one per line, so a FIFO is all the
+                # matching this needs.
+                self._pending_replies.append(pending)
             try:
                 written = port.write(payload)
                 port.flush()
             except Exception as exc:
+                self._drop_pending(pending)
                 self._set_fault(f"serial write failed: {exc}", disconnected=True)
-                return False
+                return None
+
         if written != len(payload):
+            self._drop_pending(pending)
             self._set_fault(
                 f"short serial write: {written}/{len(payload)} bytes", disconnected=True
             )
-            return False
-        if command != "p":
-            logger.info("Sent Alfred pillar firmware command", command=command)
-        return True
+            return None
+        logger.debug(f"Sent Alfred pillar firmware command: {line}")
+        return pending
+
+    def _command(
+        self,
+        line: str,
+        *,
+        timeout_s: float | None = None,
+        allow_disconnecting: bool = False,
+    ) -> _PendingReply | None:
+        """Send and wait for the single reply. Never call from the reader thread."""
+        pending = self._write_line(line, allow_disconnecting=allow_disconnecting)
+        if pending is None:
+            return None
+        timeout = self._reply_timeout_s if timeout_s is None else timeout_s
+        if not pending.done.wait(timeout=timeout):
+            self._drop_pending(pending)
+            logger.error(f"Pillar did not reply to {line!r} within {timeout:.3f} s")
+            return None
+        return None if pending.error is not None else pending
+
+    def _drop_pending(self, pending: _PendingReply) -> None:
+        with self._state_lock:
+            try:
+                self._pending_replies.remove(pending)
+            except ValueError:
+                pass
+        pending.done.set()
+
+    def _abandon_pending_replies(self) -> None:
+        with self._state_lock:
+            pending = list(self._pending_replies)
+            self._pending_replies.clear()
+        for item in pending:
+            item.done.set()
 
     def _wait_for_motion_end(self, timeout_s: float) -> bool:
         with self._state_changed:
@@ -879,7 +909,7 @@ class PillarSerialDriver:
         if callback is None:
             return
         with self._state_lock:
-            if not self._homed or self._position_m is None or self._last_feedback_at is None:
+            if self._position_m is None or self._last_feedback_at is None:
                 return
             feedback = PillarFeedback(self._position_m, self._last_feedback_at)
         try:
@@ -894,6 +924,8 @@ class PillarSerialDriver:
             if disconnected:
                 self._connected = False
             self._state_changed.notify_all()
+        if disconnected:
+            self._abandon_pending_replies()
         logger.error(f"Alfred pillar fault: {message}")
 
 
@@ -902,11 +934,17 @@ class PillarConnectionConfig(ModuleConfig):
     baud_rate: int = Field(default=PILLAR_BAUD_RATE, gt=0)
     serial_timeout_s: float = Field(default=0.05, gt=0.0)
     write_timeout_s: float = Field(default=0.5, gt=0.0)
-    boot_wait_s: float = Field(default=2.0, ge=0.0)
-    status_poll_interval_s: float = Field(default=0.5, gt=0.0)
-    feedback_stale_after_s: float = Field(default=2.0, gt=0.0)
+    # Opening the port resets the board; nothing sent before this lands.
+    boot_wait_s: float = Field(default=2.5, ge=0.0)
+    # Telemetry is off at boot by design. 50 Hz costs about 20% of the link.
+    telemetry_rate_hz: float = Field(default=50.0, gt=0.0, le=100.0)
+    speed_mm_s: float | None = Field(default=None, gt=0.0)
+    accel_mm_s2: float | None = Field(default=None, gt=0.0)
+    min_command_interval_s: float = Field(default=0.02, ge=0.0)
+    feedback_stale_after_s: float = Field(default=1.0, gt=0.0)
     shutdown_stop_timeout_s: float = Field(default=2.0, ge=0.0)
-    command_ack_timeout_s: float = Field(default=1.0, gt=0.0)
+    reply_timeout_s: float = Field(default=1.0, gt=0.0)
+    move_timeout_s: float = Field(default=30.0, gt=0.0)
     home_timeout_s: float = Field(default=75.0, gt=0.0)
 
 
@@ -933,10 +971,14 @@ class PillarConnection(Module):
             serial_timeout_s=self.config.serial_timeout_s,
             write_timeout_s=self.config.write_timeout_s,
             boot_wait_s=self.config.boot_wait_s,
-            status_poll_interval_s=self.config.status_poll_interval_s,
+            telemetry_rate_hz=self.config.telemetry_rate_hz,
+            speed_mm_s=self.config.speed_mm_s,
+            accel_mm_s2=self.config.accel_mm_s2,
+            min_command_interval_s=self.config.min_command_interval_s,
             feedback_stale_after_s=self.config.feedback_stale_after_s,
             shutdown_stop_timeout_s=self.config.shutdown_stop_timeout_s,
-            command_ack_timeout_s=self.config.command_ack_timeout_s,
+            reply_timeout_s=self.config.reply_timeout_s,
+            move_timeout_s=self.config.move_timeout_s,
             home_timeout_s=self.config.home_timeout_s,
             feedback_callback=self._publish_feedback,
         )
@@ -967,7 +1009,7 @@ class PillarConnection(Module):
 
     @rpc
     def home(self) -> bool:
-        """Start the firmware's explicit homing sequence."""
+        """Start the firmware's homing sequence. Completion arrives later."""
         driver = self._driver
         return driver.home() if driver is not None else False
 
@@ -999,6 +1041,7 @@ class PillarConnection(Module):
                 motion_active=False,
                 top_limit_triggered=None,
                 fault=None,
+                last_event=None,
                 last_line=None,
             )
         else:
@@ -1014,6 +1057,7 @@ class PillarConnection(Module):
             "motion_active": status.motion_active,
             "top_limit_triggered": status.top_limit_triggered,
             "fault": status.fault,
+            "last_event": status.last_event,
             "last_line": status.last_line,
         }
 

@@ -16,8 +16,10 @@ ls -l /dev/serial/by-id/
 dimos --device-path /dev/serial/by-id/<nano> run alfred-pillar
 ```
 
-The current firmware resets when the serial port opens and does not retain its
-home reference. Home it explicitly from another terminal:
+Opening the serial port resets the board, and the firmware does not retain its
+home reference across a reset. The connection waits out the reset, re-applies
+`set echo 0` and `set rate` on every `ready` event, and refuses to move until
+homed. Home it explicitly from another terminal:
 
 ```python
 # dimos shell
@@ -53,11 +55,14 @@ dimos topic echo /pillar/joints
 ```
 
 The current safe command range is `-0.500` to `-0.002` metres, with zero at
-the top switch and `-0.050` metres as the post-home parking position. The Nano
-accepts one point-to-point goal at a time; the connection coalesces streamed
-commands so the most recent target runs after the active move completes.
+the top switch and `-0.050` metres as the post-home parking position. Motion
+commands preempt each other, so a streamed target takes effect on the next step
+rather than queueing behind the active move. The rail still rides its existing
+ramp down to a standstill before reversing, so a reversal costs `v^2/2a` of
+run-out — 2.7 mm at the default 40 mm/s. Prefer a lower speed or a higher
+acceleration over sending targets more often.
 
-`app.PillarConnection.stop_motion()` maps to the firmware's ramped `x` stop.
+`app.PillarConnection.stop_motion()` maps to the firmware's ramped `stop`.
 It is not an emergency stop. A future firmware e-stop should stop step pulses,
 engage the SSR brake, abort homing, and invalidate the position reference.
 
