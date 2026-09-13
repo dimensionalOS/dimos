@@ -239,7 +239,7 @@ def test_a_refused_part_is_uncertain_when_the_others_cannot_be_confirmed_stopped
 
 
 def test_a_poll_from_a_finished_run_does_not_disturb_the_next_one() -> None:
-    """A watchdog whose poll outlives its run must not cancel or overwrite the next."""
+    """A task poll that outlives its run must not cancel or overwrite the next."""
     robot = _WholeBody()
     manager = robot.manager()
     manager.execute(_plan(("left/j1", *BASE)), blocking=False)

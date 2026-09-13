@@ -80,7 +80,7 @@ class PlanExecutionManager:
         self._cancelled_tasks: set[str] = set()
         self._run_id = 0
         self._run_done = threading.Event()
-        self._watchdog: threading.Thread | None = None
+        self._task_watchdog: threading.Thread | None = None
 
     @property
     def status(self) -> ExecutionStatus:
@@ -152,13 +152,13 @@ class PlanExecutionManager:
                     run_done = self._run_done
                 self._store(accepted, active=True)
                 if len(started) > 1:
-                    self._watchdog = threading.Thread(
-                        target=self._watch,
+                    self._task_watchdog = threading.Thread(
+                        target=self._watch_tasks,
                         args=(run_done, run_id),
-                        name="PlanExecutionWatchdog",
+                        name="PlanTaskWatchdog",
                         daemon=True,
                     )
-                    self._watchdog.start()
+                    self._task_watchdog.start()
 
         if not blocking:
             return accepted
@@ -264,7 +264,7 @@ class PlanExecutionManager:
     def _poll(self, run_id: int | None = None) -> ExecutionResult:
         """Read every running task once and store the combined result.
 
-        ``run_id`` names the run a watchdog polls for. A poll whose run has since
+        ``run_id`` names the run the task watchdog polls for. A poll whose run has since
         finished or been replaced stores nothing and cancels nothing.
         """
         # One poller at a time, or a stale read could overwrite a finished run.
@@ -321,8 +321,13 @@ class PlanExecutionManager:
             return ExecutionResult(ExecutionStatus.COMPLETED, trajectory_status=primary)
         return ExecutionResult(ExecutionStatus.EXECUTING, trajectory_status=primary)
 
-    def _watch(self, run_done: threading.Event, run_id: int) -> None:
-        # Non-blocking runs are otherwise only polled when someone reads status.
+    def _watch_tasks(self, run_done: threading.Event, run_id: int) -> None:
+        """Poll this run's tasks so a failing one still cancels the others.
+
+        Not a liveness watchdog: nothing here supervises the coordinator or the
+        robot. Non-blocking runs are otherwise only polled when someone asks for
+        status, and nobody may ask.
+        """
         while not run_done.wait(self._poll_interval):
             self._poll(run_id)
 
@@ -367,10 +372,10 @@ class PlanExecutionManager:
             return False
 
     def close(self) -> None:
-        """Stop watching the running plan; cancel it first to stop the robot."""
+        """Stop polling this run's tasks; cancel it first to stop the robot."""
         with self._state_lock:
             self._run_done.set()
-            watchdog, self._watchdog = self._watchdog, None
+            watchdog, self._task_watchdog = self._task_watchdog, None
         if watchdog is not None:
             watchdog.join(DEFAULT_THREAD_JOIN_TIMEOUT)
 
