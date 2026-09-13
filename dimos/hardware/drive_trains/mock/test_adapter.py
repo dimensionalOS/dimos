@@ -17,30 +17,18 @@ import math
 from dimos.hardware.drive_trains.mock.adapter import MockTwistBaseAdapter
 
 
-class _Clock:
-    def __init__(self):
-        self.t = 0.0
-
-    def __call__(self):
-        return self.t
-
-
-def _drive(adapter, clock, velocities, seconds, dt=0.01):
-    adapter.write_velocities(velocities)
-    adapter.read_odometry()
+def _drive(adapter, velocities, seconds, dt=0.01):
     for _ in range(round(seconds / dt)):
-        clock.t += dt
-        adapter.read_odometry()
+        adapter.write_velocities(velocities)
 
 
 def test_integrated_odometry_follows_body_velocity_in_the_world_frame():
     """Facing +y, driving forward moves the base along world +y, and yaw wraps past pi."""
-    clock = _Clock()
-    adapter = MockTwistBaseAdapter(dof=3, integrate_odometry=True, clock=clock)
+    adapter = MockTwistBaseAdapter(dof=3, integrate_odometry=True, step_dt=0.01)
     adapter.set_odometry([0.0, 0.0, math.pi / 2])
 
-    _drive(adapter, clock, [1.0, 0.0, 0.0], seconds=2.0)
-    _drive(adapter, clock, [0.0, 0.0, 1.0], seconds=2.0)
+    _drive(adapter, [1.0, 0.0, 0.0], seconds=2.0)
+    _drive(adapter, [0.0, 0.0, 1.0], seconds=2.0)
 
     x, y, yaw = adapter.read_odometry()
     assert abs(x) < 1e-6

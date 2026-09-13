@@ -25,9 +25,7 @@ Usage:
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import math
-import time
 
 from dimos.utils.trigonometry import angle_diff
 
@@ -49,7 +47,7 @@ class MockTwistBaseAdapter:
         self,
         dof: int = 3,
         integrate_odometry: bool = False,
-        clock: Callable[[], float] = time.monotonic,
+        step_dt: float = 0.01,
         **_: object,
     ) -> None:
         self._dof = dof
@@ -58,8 +56,7 @@ class MockTwistBaseAdapter:
         self._enabled = False
         self._connected = False
         self._integrate_odometry = integrate_odometry and dof == 3
-        self._clock = clock
-        self._odometry_t: float | None = None
+        self._step_dt = step_dt
 
     def connect(self) -> bool:
         """Simulate connection."""
@@ -86,28 +83,28 @@ class MockTwistBaseAdapter:
         """Return mock odometry."""
         if self._odometry is None:
             return None
-        if self._integrate_odometry:
-            self._advance_odometry(self._odometry)
         return self._odometry.copy()
 
-    def _advance_odometry(self, odometry: list[float]) -> None:
-        now = self._clock()
-        if self._odometry_t is not None:
-            dt = now - self._odometry_t
-            vx, vy, wz = self._velocities
-            x, y, yaw = odometry
-            self._odometry = [
-                x + (math.cos(yaw) * vx - math.sin(yaw) * vy) * dt,
-                y + (math.sin(yaw) * vx + math.cos(yaw) * vy) * dt,
-                angle_diff(yaw + wz * dt, 0.0),
-            ]
-        self._odometry_t = now
+    def _advance_odometry(self) -> None:
+        """Advance the pose by one ``step_dt`` of the commanded body velocity."""
+        if self._odometry is None:
+            return
+        dt = self._step_dt
+        vx, vy, wz = self._velocities
+        x, y, yaw = self._odometry
+        self._odometry = [
+            x + (math.cos(yaw) * vx - math.sin(yaw) * vy) * dt,
+            y + (math.sin(yaw) * vx + math.cos(yaw) * vy) * dt,
+            angle_diff(yaw + wz * dt, 0.0),
+        ]
 
     def write_velocities(self, velocities: list[float]) -> bool:
         """Set mock velocities."""
         if len(velocities) != self._dof:
             return False
         self._velocities = list(velocities)
+        if self._integrate_odometry:
+            self._advance_odometry()
         return True
 
     def write_stop(self) -> bool:
@@ -127,7 +124,6 @@ class MockTwistBaseAdapter:
     def set_odometry(self, odometry: list[float] | None) -> None:
         """Set odometry directly for testing."""
         self._odometry = list(odometry) if odometry is not None else None
-        self._odometry_t = None
 
     def set_velocities_directly(self, velocities: list[float]) -> None:
         """Set velocities directly for testing (bypasses DOF check)."""
