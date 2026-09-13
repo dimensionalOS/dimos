@@ -23,8 +23,9 @@ import pytest
 from typer.testing import CliRunner
 
 from dimos.cli.dimos import main as app
-from dimos.evals import runner as runner_module, suites
+from dimos.evals import cli, runner as runner_module, suites
 from dimos.evals.agents.base import Agent
+from dimos.evals.agents.pi import PiAdapter
 from dimos.evals.cli import run_provenance
 from dimos.evals.environments.base import Environment
 from dimos.evals.runner import EvalRunner
@@ -151,3 +152,58 @@ def test_provenance_retains_numeric_output_limit() -> None:
     assert provenance["agent"]["kwargs"] == kwargs
     secret = {"max_output_tokens": "not-a-numeric-budget"}
     assert run_provenance({}, "agent", secret)["agent"]["kwargs"] is None
+
+
+@pytest.mark.parametrize("allowed,expected", [("bash, grep", ["bash", "grep"]), ("", [])])
+def test_allow_cli_reaches_agent_and_manifest(
+    allowed: str, expected: list[str], monkeypatch: pytest.MonkeyPatch, cli_out_dir: Path
+) -> None:
+    seen: list[Agent] = []
+
+    class CapturedPi(PiAdapter):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            seen.append(self)
+
+    monkeypatch.setattr(cli, "agent_class", lambda _: CapturedPi)
+    monkeypatch.setattr(examples, "SUITE", [_case("case")])
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "run",
+            SUITE_MODULE,
+            "--agent",
+            "dimos.evals.agents.pi",
+            "--allow",
+            allowed,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert seen[0].config.allowed_tools == tuple(expected)
+    manifest = json.loads(next(cli_out_dir.glob("run-*/manifest.json")).read_text())
+    assert manifest["agent"]["kwargs"]["allowed_tools"] == expected
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--allow", "bash,,grep"],
+        ["--allow", "bash,bash"],
+        ["--allow", "bash", "--set", "allowed_tools=[]"],
+    ],
+)
+def test_allow_cli_rejects_ambiguous_input(args: list[str], cli_out_dir: Path) -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "run",
+            SUITE_MODULE,
+            "--agent",
+            AGENT_MODULE,
+            *args,
+        ],
+    )
+    assert result.exit_code == 2
+    assert not cli_out_dir.exists()

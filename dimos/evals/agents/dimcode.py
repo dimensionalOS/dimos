@@ -23,15 +23,11 @@ import shutil
 import socket
 import subprocess
 import sys
-import tempfile
 import time
-from typing import Any
+from typing import Any, ClassVar
 from uuid import uuid4
 
-from dimos.evals.agents.lib.pi_to_atif import PiToAtif
-from dimos.evals.agents.pi import PiAdapter, PiAdapterConfig
-from dimos.evals.environments.base import Environment
-from dimos.evals.types import EndedBy
+from dimos.evals.agents.pi import PiAdapter, PiAdapterConfig, read_pi_events
 
 
 class DimcodeAdapterConfig(PiAdapterConfig):
@@ -48,15 +44,19 @@ class DimcodeAdapter(PiAdapter):
 
     config: DimcodeAdapterConfig
 
-    def preflight(self, environment: Environment) -> None:
-        super().preflight(environment)
-        if self.config.skills or self.config.tools != PiAdapterConfig().tools:
-            raise ValueError(
-                "dimcode uses its production skills and tools; overrides are unsupported"
-            )
+    default_tools: ClassVar[tuple[str, ...]] = (*PiAdapter.default_tools, "dimcode_render")
+    # MCP extensions register tool names when the gateway creates its session.
+    tool_names: ClassVar[tuple[str, ...] | None] = None
+    robot_via_bash: ClassVar[bool] = False
+
+    def validate_tools(self) -> None:
+        if self.config.sandbox or self.config.skills:
+            raise ValueError("dimcode uses its production environment and skills")
 
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
-        return (*super().available_tools(environment_tools), "dimcode_render")
+        if self.config.allowed_tools is not None:
+            return self.selected_tools
+        return super().available_tools(environment_tools)
 
     def _write_system_prompt(self, files: dict[str, Path], mcp_url: str, run_dir: Path) -> str:
         prompt = super()._write_system_prompt(files, mcp_url, run_dir)
@@ -88,16 +88,7 @@ class DimcodeAdapter(PiAdapter):
     def _build_process_env(self, run_dir: Path) -> dict[str, str]:
         env = super()._build_process_env(run_dir)
         env["DIMCODE_HOME"] = str(run_dir / ".pi-agent")
-        # Unix socket paths have a small platform limit; the eval path can be long.
-        env["XDG_RUNTIME_DIR"] = str(self._runtime_dir)
         return env
-
-    def _run_pi_process(
-        self, command: list[str], run_dir: Path, events: PiToAtif, timeout_s: float
-    ) -> EndedBy:
-        with tempfile.TemporaryDirectory(prefix="dimos-eval-") as runtime:
-            self._runtime_dir = Path(runtime)
-            return super()._run_pi_process(command, run_dir, events, timeout_s)
 
     def _process_events(
         self, proc: subprocess.Popen[bytes], run_dir: Path, deadline: float
@@ -113,77 +104,40 @@ class DimcodeAdapter(PiAdapter):
                     break
                 except (FileNotFoundError, ConnectionRefusedError):
                     time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
-            with sock.makefile("rb") as incoming:
-
-                def receive() -> dict[str, Any]:
-                    sock.settimeout(max(0.001, deadline - time.monotonic()))
-                    line = incoming.readline(16 * 1024 * 1024 + 1)
-                    if not line or not line.endswith(b"\n"):
-                        raise RuntimeError("dimcode disconnected or exceeded the protocol buffer")
-                    return dict(json.loads(line))
-
-                def call(command: dict[str, Any]) -> Generator[dict[str, Any], None, None]:
-                    request_id = str(uuid4())
-                    sock.sendall(
-                        (json.dumps({"id": request_id, "command": command}) + "\n").encode()
-                    )
-                    while True:
-                        packet = receive()
-                        if packet["type"] == "event":
-                            yield packet["event"]
-                        elif packet.get("id") == request_id:
-                            if packet.get("error"):
-                                raise RuntimeError(packet["error"])
-                            return
-
-                yield from call({"type": "new_session", "cwd": str(run_dir)})
-                yield from call(
+            commands = iter(
+                [
+                    {"type": "new_session", "cwd": str(run_dir)},
                     {
                         "type": "set_model",
                         "provider": self.config.provider,
                         "modelId": self.config.model,
-                    }
-                )
-                prompt_id = str(uuid4())
-                sock.sendall(
-                    (
-                        json.dumps(
-                            {
-                                "id": prompt_id,
-                                "command": {
-                                    "type": "prompt",
-                                    "message": (run_dir / "dimcode-prompt.txt").read_text(),
-                                },
-                            }
-                        )
-                        + "\n"
-                    ).encode()
-                )
-                while True:
-                    packet = receive()
-                    if packet["type"] != "event":
-                        if packet.get("id") == prompt_id and packet.get("error"):
+                    },
+                    {"type": "prompt", "message": (run_dir / "dimcode-prompt.txt").read_text()},
+                ]
+            )
+
+            def send(command: dict[str, Any]) -> str:
+                request_id = str(uuid4())
+                sock.sendall((json.dumps({"id": request_id, "command": command}) + "\n").encode())
+                return request_id
+
+            request_id = send(next(commands))
+            with sock.makefile("rb", buffering=0) as incoming:
+                for packet in read_pi_events(incoming, deadline):
+                    if packet["type"] == "response" and packet.get("id") == request_id:
+                        if packet.get("error"):
                             raise RuntimeError(packet["error"])
-                        continue
-                    event = packet["event"]
-                    if event["type"] == "turn_error":
-                        yield {
-                            "type": "message_end",
-                            "message": {
-                                "role": "assistant",
-                                "stopReason": "error",
-                                "errorMessage": event["message"],
-                            },
-                        }
-                    elif event["type"] == "idle":
-                        # Closing the owned gateway also closes its provider sessions.
-                        # Shutdown may close this socket before replying.
-                        sock.sendall(
-                            (
-                                json.dumps({"id": str(uuid4()), "command": {"type": "shutdown"}})
-                                + "\n"
-                            ).encode()
-                        )
-                        return
-                    else:
+                        command = next(commands, None)
+                        if command is not None:
+                            if command["type"] == "prompt":
+                                self._check_tools_ready(run_dir)
+                            request_id = send(command)
+                    elif packet["type"] == "event":
+                        event = packet["event"]
+                        if event["type"] == "turn_error":
+                            raise RuntimeError(event["message"])
+                        if event["type"] == "idle":
+                            send({"type": "shutdown"})
+                            return
                         yield event
+            raise RuntimeError("dimcode disconnected before completion")

@@ -38,13 +38,14 @@ To generate deterministic image questions from recordings, see
 
 ## Baseline Bash versus dimcode + DimOS
 
-For the complete-stack comparison, use `BashOnly` against `DimcodeAdapter`
+For the complete-stack comparison, use `PiAdapter` with a sandbox against `DimcodeAdapter`
 with the **same model**. The primary pair is Astra with Bash versus Astra in
 dimcode with DimOS. This measures the combined product/robotics-stack effect;
 it does not isolate the harness contribution.
 
 ```bash skip
-dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.bash_only \
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
+  --allow bash,grep --set sandbox=true \
   --set model=gpt-6-astra --set thinking=medium \
   --set max_steps=12 --set max_output_tokens=4096
 
@@ -53,8 +54,8 @@ dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.dimcode \
   --set max_steps=12 --set max_output_tokens=4096
 ```
 
-`BashOnly` reuses Pi's stock loop, provider support, tracing, limits and cleanup.
-It exposes one tool, Bash. Linux bubblewrap isolates each command's filesystem,
+`PiAdapter` uses Pi's stock loop, provider support, tracing, limits and cleanup.
+The allowlist exposes only Pi's Bash and grep tools. Linux bubblewrap isolates their filesystem,
 processes, environment and network. The shell can read selected observations in
 `/input` and write `/workspace`; host homes, DimOS source, virtual environments,
 credentials, MCP, and host services are unavailable. The ordinary system tools
@@ -64,13 +65,14 @@ freezing a pilot; this is not a portable pinned container image.
 
 The baseline receives selected point coordinates/colors as CSV, camera frames
 as lossless PNG and primitive observations as JSON, with timestamps and hashes.
-Selected PNGs are also attached to its initial model message because Bash has
-no image-reading tool. No `agent_encode` summaries, labels, semantic tags or
+Selected PNGs are also attached to its initial model message because the allowed
+tools do not read images. No `agent_encode` summaries, labels, semantic tags or
 original database are exported. Dimcode receives the same selected observations
 through the DimOS store and retains its production tools. Representation and
 image-delivery differences are part of this stack comparison and must be reported.
 
-The baseline rejects extra tools, skills, modules and MCP endpoints. Missing or
+The sandbox supports Bash and grep (including either alone or neither), and rejects
+other tools, skills, modules and MCP endpoints. Missing or
 unsupported isolation fails preflight; there is no unrestricted fallback. This
 adapter currently supports recordings only. Live tasks need a separately bounded
 vendor SDK/robot connection available to the baseline, without DimOS. A blocked
@@ -106,11 +108,33 @@ selected recording observations. Pi retains its stock system prompt with
 shared case guidance appended. Dimcode retains its production prompt, skills,
 MCP integration and rendering tool; shared case guidance accompanies the user
 instruction. Each case starts and stops its own dimcode gateway and session.
-An existing personal gateway is never attached. Dimcode's production tools and
-skills cannot be overridden through the eval adapter.
+An existing personal gateway is never attached. Dimcode retains its production
+skills; its tools can be restricted with the shared allowlist.
 
 Freeze code/data, record runtime versions, balance execution order, repeat
 each case and retain failed trials before interpreting the comparison.
+
+### Tool selection
+
+`allowed_tools` belongs to the shared `AgentConfig`. Use `--allow bash,grep`
+on `dimos evals run` or `PiAdapter(allowed_tools=("bash", "grep"))` in Python.
+Omit the option to keep the adapter's native defaults; `--allow ""` disables all
+tools. Exact tool names are required. Unknown names, duplicates and conflicting
+`--allow` / `--set allowed_tools` inputs are errors. The manifest retains the
+requested allowlist, and raw requests retain the actual provider schemas.
+
+Pi and dimcode share a Pi extension that selects active tools and blocks excluded
+calls. Pi also passes the selection to its CLI. The dimcode adapter verifies that
+the extension applied the selection before sending the first prompt. Native MCP
+names are those advertised by dimcode, including its endpoint prefix and suffix.
+The production MCP-client adapter does not yet implement filtering and rejects
+explicit allowlists; single-call agents accept only an empty list or defaults.
+Adapters must enforce selection or reject it, never silently ignore it.
+
+Tool selection is independent of filesystem and network access. `--allow bash`
+still permits any program the shell can reach. For the no-DimOS baseline, also
+use `--set sandbox=true`; this currently supports only Pi with recorded inputs.
+The sandbox is a composed isolation helper, not another agent subclass.
 
 ### Reading the metrics
 

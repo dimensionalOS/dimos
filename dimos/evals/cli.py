@@ -103,6 +103,9 @@ def run(
     set_: list[str] = typer.Option(
         [], "--set", help="Agent field override, e.g. --set model=gpt-5.6-luna --set max_steps=10"
     ),
+    allow: str | None = typer.Option(
+        None, "--allow", help="Allowed tool names, e.g. bash,grep; empty string disables tools"
+    ),
     tags: str = typer.Option("", help="Comma-separated tag filter"),
     limit: int = typer.Option(0, min=0, help="Run at most N cases"),
 ) -> None:
@@ -110,6 +113,13 @@ def run(
 
     cases = importlib.import_module(suite).SUITE
     kwargs = agent_kwargs(set_)
+    if allow is not None:
+        if "allowed_tools" in kwargs:
+            raise typer.BadParameter("Use --allow or --set allowed_tools, not both")
+        names = [name.strip() for name in allow.split(",")] if allow.strip() else []
+        if any(not name for name in names) or len(names) != len(set(names)):
+            raise typer.BadParameter("Tool names must be nonempty and unique", param_hint="--allow")
+        kwargs["allowed_tools"] = names
     runner = EvalRunner()
     results = runner.run(
         cases,

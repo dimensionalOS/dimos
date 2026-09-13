@@ -24,8 +24,9 @@ import numpy as np
 from PIL import Image as PILImage
 import pytest
 
-from dimos.evals.agents.bash_only import BashOnly, sandbox_command
 from dimos.evals.agents.lib.plain_recording import plain_recording
+from dimos.evals.agents.lib.sandbox import sandbox_command
+from dimos.evals.agents.pi import PiAdapter
 from dimos.evals.types import RunningEnvironment
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -56,7 +57,7 @@ def test_export_preserves_selected_sensor_values_without_framework(tmp_path: Pat
 
 
 def test_baseline_does_not_expose_artifacts_or_mcp(tmp_path: Path) -> None:
-    agent = BashOnly()
+    agent = PiAdapter(allowed_tools=("bash",), sandbox=True)
     with pytest.raises(ValueError, match="MCP"):
         agent._prepare_files(
             RunningEnvironment(mcp_url="http://localhost:9990", streams=(), artifacts={}), tmp_path
@@ -78,15 +79,14 @@ def test_baseline_does_not_expose_artifacts_or_mcp(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "config",
     [
-        dict(tools=("bash", "read")),
+        dict(allowed_tools=("bash", "read")),
         dict(skills=("x",)),
         dict(modules=("mcp-server",)),
-        dict(builtin_guidance=True),
     ],
 )
 def test_policy_rejects_extra_capabilities(config: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
-        BashOnly(**config)._check_policy()
+        PiAdapter(sandbox=True, **config)
 
 
 @pytest.mark.skipif(not Path("/usr/bin/bwrap").is_file(), reason="requires Linux bubblewrap")
@@ -133,5 +133,5 @@ PY
 
 def test_shell_environment_excludes_dimos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DIMOS_ROBOT_IP", "hidden")
-    env = BashOnly()._build_process_env(tmp_path)
+    env = PiAdapter(allowed_tools=("bash",), sandbox=True)._build_process_env(tmp_path)
     assert "DIMOS_ROBOT_IP" not in env

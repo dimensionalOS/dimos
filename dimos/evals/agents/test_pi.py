@@ -28,8 +28,10 @@ from pytest_mock import MockerFixture
 
 from dimos.agents.llm_trace import request_path, response_path
 from dimos.evals.agents import pi
+from dimos.evals.agents.blind import Blind
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
+from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
 from dimos.evals.agents.pi import PiAdapter, recording_file
 from dimos.evals.cli import load_agent
 from dimos.evals.types import (
@@ -53,6 +55,17 @@ def test_cli_overrides_reach_pi_adapter() -> None:
     assert agent.config.model == "eval-model"
     assert agent.config.max_steps == 3
     assert agent.config.modules == ("rangefinder-skill",)
+
+
+def test_invalid_tool_policy_rejected_before_startup() -> None:
+    for names in [("unknown",), ("bash", "bash"), ("",)]:
+        with pytest.raises(ValueError):
+            PiAdapter(allowed_tools=names)
+    with pytest.raises(ValueError, match="does not support allowed_tools"):
+        McpClientAdapter(allowed_tools=())
+    with pytest.raises(ValueError, match="has no tools"):
+        Blind(allowed_tools=("bash",))
+    assert Blind(allowed_tools=()).available_tools(()) == ()
 
 
 def test_zero_budget_returns_without_starting_pi(tmp_path: Path) -> None:
