@@ -70,15 +70,10 @@ During `build()`, dimOS runs `uv sync` in the sibling project. If `pixi.toml`
 exists, Pixi supplies `uv`. If `uv.lock` exists, dimOS uses `--frozen` and treats
 the lockfile as the source of truth.
 
-Source checkouts make the current dimOS checkout available to the runtime.
-Installed hosts follow their recorded `direct_url.json` source: Git installations
-reuse the resolved commit, direct wheels and archives reuse the original URL and
-recorded hash, and local directory installations reuse that directory's current
-contents. These sources must remain accessible when uv prepares the environment;
-unpublished Git commits need no matching PyPI release. Unsupported or invalid
-metadata fails preparation, without substituting an index build. Index installations
-have no direct-source metadata and intentionally use unpinned `dimos`; host/runtime
-version compatibility is not guaranteed in that case.
+Source checkouts use the current code. Git installations reuse the repository and
+resolved commit from `direct_url.json`; direct wheels, archives, and non-editable
+local directories are unsupported. Index installations use unpinned `dimos`,
+with host/runtime compatibility still unresolved.
 
 The sibling project's `.python-version` and `requires-python` select its Python
 version. Environments are stored under the dimOS cache directory in
@@ -115,11 +110,18 @@ uv run python -m dimos.experimental.isolated_python.example.run
 The example demonstrates streams, RPCs, skills, an injected module reference,
 restart behavior, and automatic shutdown.
 
-## Type checking
+## Runtime development
 
-Root `uv run mypy` excludes sibling `python/` projects, whose dependencies belong
-to their own environments. Give each runtime project its own mypy configuration
-and lint dependency group, then run `uv run --group lint --with-editable <checkout>
-python -m mypy` from that project. Use the same external `UV_PROJECT_ENVIRONMENT`
-as other runtime development commands. Check the host contract from the root
-project; do not suppress missing runtime dependencies in the host environment.
+Root pytest and mypy checks exclude isolated projects. Run their tests and type
+checks inside their own environment. For GraspGenX, from the repository root:
+
+```bash
+cd dimos/manipulation/grasping/grasp_gen_x/python
+export UV_PROJECT_ENVIRONMENT="${XDG_CACHE_HOME:-$HOME/.cache}/dimos/graspgenx-tests"
+uv run --frozen --group tests --with-editable ../../../../.. python -m pytest
+uv run --frozen --group lint --with-editable ../../../../.. python -m mypy
+```
+
+The tests mock the model backend and need no GPU or checkpoints. Runtime mypy
+reads the annotated dimOS and GraspGenX source despite their missing `py.typed`
+markers. Each runtime owns its lint configuration and dependencies.

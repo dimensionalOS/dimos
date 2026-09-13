@@ -13,8 +13,16 @@
 # limitations under the License.
 
 from io import BytesIO
+import platform
+import sys
 
 import pytest
+
+# The tests extra excludes yourdfpy on Linux ARM because embreex has no wheel.
+if sys.platform == "linux" and platform.machine() == "aarch64":
+    pytest.importorskip(
+        "yourdfpy", reason="yourdfpy is unavailable in the Linux ARM test environment"
+    )
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake

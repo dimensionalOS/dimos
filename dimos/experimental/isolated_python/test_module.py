@@ -102,29 +102,6 @@ def test_uv_lock_enables_frozen_commands(tmp_path: Path, monkeypatch: pytest.Mon
             + "b" * 40
             + "#subdirectory=packages%2Fdimos",
         ),
-        (
-            {
-                "url": "https://example.com/dimos.whl",
-                "archive_info": {"hashes": {"sha256": "c" * 64}},
-            },
-            "dimos @ https://example.com/dimos.whl#sha256=" + "c" * 64,
-        ),
-        (
-            {"url": "file:///tmp/dimos.whl", "archive_info": {}},
-            "dimos @ file:///tmp/dimos.whl",
-        ),
-        (
-            {
-                "url": "https://example.com/source.tar.gz",
-                "archive_info": {"hashes": {"sha256": "d" * 64}},
-                "subdirectory": "dimos",
-            },
-            "dimos @ https://example.com/source.tar.gz#sha256=" + "d" * 64 + "&subdirectory=dimos",
-        ),
-        (
-            {"url": "file:///tmp/dimos%20source", "dir_info": {}},
-            "dimos @ file:///tmp/dimos%20source",
-        ),
     ],
 )
 def test_installed_host_follows_source(tmp_path, monkeypatch, mocker, origin, requirement):
@@ -146,13 +123,16 @@ def test_installed_host_follows_source(tmp_path, monkeypatch, mocker, origin, re
         "null",
         "[]",
         "{}",
-        '{"url": "relative/path", "dir_info": {}}',
+        '{"url": "relative/path", "vcs_info": {"vcs": "git", "commit_id": "abc"}}',
         '{"url": "file:///tmp/dimos", "dir_info": {}, "archive_info": {}}',
         '{"url": "https://example.com/repo", "vcs_info": {"vcs": "hg", "commit_id": "abc"}}',
         '{"url": "https://example.com/repo", "vcs_info": {"vcs": "git"}}',
         '{"url": "https://example.com/dimos", "dir_info": {}}',
-        '{"url": "file:///tmp/dimos.whl", "archive_info": {"hashes": []}}',
-        '{"url": "file:///tmp/dimos.whl", "archive_info": {}, "subdirectory": 42}',
+        '{"url": "file:///tmp/dimos.whl", "archive_info": {}}',
+        '{"url": "https://example.com/dimos.tar.gz", "archive_info": {}}',
+        '{"url": "file:///tmp/dimos", "dir_info": {}}',
+        '{"url": "https://example.com/repo", "vcs_info": {"vcs": "git", "commit_id": ""}}',
+        '{"url": "https://example.com/repo", "vcs_info": {"vcs": "git", "commit_id": "abc"}, "subdirectory": 42}',
     ],
 )
 def test_invalid_installation_source_fails_without_index_fallback(

@@ -28,7 +28,7 @@ import subprocess
 import threading
 import time
 from typing import Any, ClassVar
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.parse import urlencode, urlsplit
 
 from dimos.constants import CACHE_DIR, DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
@@ -42,54 +42,37 @@ logger = setup_logger()
 
 
 def _installed_dimos_requirement() -> str:
-    """Reuse a direct installation's source; leave index installations unpinned."""
+    """Reuse a Git installation's commit; leave index installations unpinned."""
     recorded = distribution("dimos").read_text("direct_url.json")
     if recorded is None:
-        # Installed index hosts intentionally accept the newest compatible DimOS.
+        # TODO: Define compatibility for PyPI-installed hosts.
         return "dimos"
     try:
         origin = json.loads(recorded)
         url = origin["url"]
-        if not isinstance(url, str) or not urlsplit(url).scheme:
-            raise ValueError("expected an absolute source URL")
-        kinds = [key for key in ("vcs_info", "archive_info", "dir_info") if key in origin]
-        if len(kinds) != 1 or not isinstance(origin[kinds[0]], dict):
-            raise ValueError("expected one installation source type")
-        kind = kinds[0]
-        info = origin[kind]
-        parts = urlsplit(url)
-        fragments = [parts.fragment] if parts.fragment else []
-        source = urlunsplit(parts._replace(fragment=""))
-        if kind == "vcs_info":
-            if info["vcs"] != "git":
-                raise ValueError("only Git installation sources are supported")
-            commit = info["commit_id"]
-            if not isinstance(commit, str) or not commit:
-                raise ValueError("missing resolved Git commit")
-            source = f"git+{source}@{commit}"
-        elif kind == "archive_info":
-            hashes = info.get("hashes", {})
-            if not isinstance(hashes, dict) or any(
-                not isinstance(key, str) or not isinstance(value, str) or not value
-                for key, value in hashes.items()
-            ):
-                raise ValueError("invalid archive hashes")
-            if hashes:
-                algorithm = "sha256" if "sha256" in hashes else sorted(hashes)[0]
-                fragments.append(urlencode({algorithm: hashes[algorithm]}))
-        elif parts.scheme != "file":
-            raise ValueError("local directory sources must use a file URL")
+        vcs = origin["vcs_info"]
+        commit = vcs["commit_id"]
+        if (
+            vcs["vcs"] != "git"
+            or not isinstance(url, str)
+            or not urlsplit(url).scheme
+            or not isinstance(commit, str)
+            or not commit
+            or "archive_info" in origin
+            or "dir_info" in origin
+        ):
+            raise ValueError("expected a Git URL and resolved commit")
+        source = f"git+{url}@{commit}"
         if "subdirectory" in origin:
             subdirectory = origin["subdirectory"]
             if not isinstance(subdirectory, str) or not subdirectory:
                 raise ValueError("invalid project subdirectory")
-            fragments.append(urlencode({"subdirectory": subdirectory}))
-        if fragments:
-            source += "#" + "&".join(fragments)
+            source += "#" + urlencode({"subdirectory": subdirectory})
         return f"dimos @ {source}"
     except (ValueError, KeyError, TypeError) as error:
         raise RuntimeError(
-            "Cannot select isolated dimOS source: invalid or unsupported direct_url.json"
+            "Cannot select isolated dimOS source: invalid or unsupported direct_url.json; "
+            "use a source checkout or install dimOS from Git"
         ) from error
 
 

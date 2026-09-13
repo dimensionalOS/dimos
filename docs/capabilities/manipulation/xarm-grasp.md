@@ -20,72 +20,20 @@ Miss `--xarm7-ip` on hardware and the arm has no address to reach; leave
 `xarm-grasp-agent` and `xarm-grasp-graspgenx-agent` add an MCP agent over the
 top; drive those with `dimos agent-send "..."`.
 
-`xarm-grasp-graspgenx` runs GraspGenX in an isolated Python 3.12 environment
-on Linux x86_64 with a CUDA GPU compatible with Torch 2.7.1 / CUDA 12.8.
-Install `uv >=0.9.25` on PATH. The first launch automatically prepares the separately
-locked dependencies;
-no GraspGenX extra is installed in the main dimOS environment. Virtual environments
-live under `~/.cache/dimos/isolated-python` (or `$XDG_CACHE_HOME/dimos/isolated-python`).
-Pinned checkpoints download from Hugging Face during module startup and reuse
-its normal cache under `~/.cache/huggingface`.
+GraspGenX requires Linux x86_64, a CUDA 12.8-compatible GPU, and `uv >=0.9.25`.
+The first launch prepares its isolated Python 3.12 environment and downloads the
+checkpoints. Use a source checkout or Git install; PyPI compatibility is unresolved.
 
-Source checkouts supply their current dimOS code to the runtime. Installed hosts
-select the runtime's dimOS dependency using their installation source:
-
-| Host installation | Runtime dimOS source |
-| --- | --- |
-| Source checkout or editable checkout | Current checkout, installed editable |
-| Package index | Unpinned `dimos` from the configured index |
-| Git URL | Original repository at the host's resolved commit |
-| Direct wheel or source archive | Original artifact URL, preserving its recorded hash |
-| Non-editable local source directory | Recorded directory's current contents |
-
-Direct sources come from the installed distribution's `direct_url.json` metadata.
-Git installs do not require a matching PyPI release. Recorded sources must remain
-accessible when uv prepares the environment; keep locally installed wheel files
-available. Invalid metadata or unavailable sources fail preparation rather than
-silently selecting a different index build. Index installs intentionally allow a
-different dimOS version in the child and do not guarantee host/runtime compatibility.
-
-Verify GPU proposals through the existing simulated blueprint:
+To show the MuJoCo window with Rerun disabled:
 
 ```bash
-dimos --viewer none run xarm-grasp-graspgenx --simulation mujoco --daemon
-dimos shell
+MUJOCO_GL=glfw dimos --viewer none run xarm-grasp-graspgenx \
+  --simulation mujoco --headless false
 ```
 
-Follow [Driving it](#driving-it) to scan the simulated scene, retrieve a detected
-object's point cloud, and call `app.GraspGenXModule.propose_grasps(cloud)`. Confirm
-that candidates are nonempty and sorted by score, poses and scores are finite,
-and the result header preserves the input frame and timestamp. Starting the
-blueprint alone loads the model but does not exercise inference. Stop the stack
-with `dimos stop` and confirm that the isolated process exits.
-
-The proposal behavior tests run separately in the runtime project, with the model
-backend mocked. From the repository root:
-
-```bash
-cd dimos/manipulation/grasping/grasp_gen_x/python
-UV_PROJECT_ENVIRONMENT="${XDG_CACHE_HOME:-$HOME/.cache}/dimos/graspgenx-tests" \
-  uv run --frozen --group tests --with-editable ../../../../.. \
-  python -m pytest -c pyproject.toml --confcutdir=.
-```
-
-Type-check the runtime in its own environment:
-
-```bash
-cd dimos/manipulation/grasping/grasp_gen_x/python
-UV_PROJECT_ENVIRONMENT="${XDG_CACHE_HOME:-$HOME/.cache}/dimos/graspgenx-tests" \
-  uv run --frozen --group lint --with-editable ../../../../.. python -m mypy
-```
-
-Root `uv run mypy` checks the host code and excludes sibling `python/` projects.
-The runtime check uses the installed GraspGenX source for type information,
-including its annotations despite the missing upstream `py.typed` marker.
-
-The host test suite covers the public contract and excludes nested Python projects.
-Run the runtime suite manually on Linux x86_64 with Python 3.12; it needs no GPU
-or checkpoint download.
+In another terminal, use `dimos shell` and follow [Driving it](#driving-it) to scan
+objects and request grasps. See the [isolated-runtime development guide](/dimos/experimental/isolated_python/README.md#runtime-development)
+for test and type-check commands.
 
 What differs between the arm and the sim is decided at import time: the hardware
 adapter, the base pose, the camera (RealSense plus its mount edge, versus the
