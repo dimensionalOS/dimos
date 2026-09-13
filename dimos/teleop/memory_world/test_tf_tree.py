@@ -67,8 +67,16 @@ def test_a_frame_answers_to_both_spellings_of_its_name() -> None:
             matrix = tree.lookup(target, source, 0.0)
             assert matrix is not None, f"{target!r} <- {source!r} was not found"
             assert matrix[:3, 3] == pytest.approx((1.0, 2.0, 3.0))
-        # And `frames` names them the one way, which is what the callers compare against.
+        # `frames` names them the ONE way -- so a caller holding the configured
+        # "/base_link" and testing `in tree.frames` finds nothing in a set that says
+        # "base_link". That is how canonicalising `lookup` alone made the tree answer
+        # for a frame it then denied having: the orbit frame, `_ground_under_viewer`,
+        # `_robot_end_pose` and the costmap's free corridor all quietly moved to the
+        # camera's path instead. Membership goes through `has_frame`.
         assert tree.frames == {"world", "livox_frame"}
+        for name in ("livox_frame", "/livox_frame", "world", "/world"):
+            assert tree.has_frame(name), f"the tree denies having {name!r} but answers for it"
+        assert not tree.has_frame("nothing_like_it")
 
 
 def test_two_routes_of_equal_length_are_not_chosen_by_the_hash_seed() -> None:

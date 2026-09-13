@@ -107,7 +107,7 @@ class ReplayServing:
         """
         tree = self._tf_tree()
         frame = self.config.orbit_frame
-        if tree is not None and frame not in tree.frames:
+        if tree is not None and not tree.has_frame(frame):
             logger.warning("orbit frame %r not in tf; using the camera instead", frame)
             frame = self._camera_frame()
         return frame

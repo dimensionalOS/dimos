@@ -40,7 +40,7 @@ from typing import Any
 
 import numpy as np
 
-from dimos.teleop.memory_world.tf_tree import quaternion_from_matrix
+from dimos.teleop.memory_world.tf_tree import canonical_frame, quaternion_from_matrix
 
 logger = logging.getLogger(__name__)
 
@@ -371,14 +371,26 @@ def write_mount_into_tf(
     x, y, z, w = quaternion_from_matrix(matrix[:3, :3])
     position = tuple(float(v) for v in matrix[:3, 3])
 
+    # Through `canonical_frame`, both sides, because the tf tree that chose `mount` and
+    # `child` canonicalises and the recording's messages do not. A ROS 1 recording
+    # (`/livox_frame`) therefore had `rigidly_joined` say yes and `camera_mount_edge`
+    # name the pair, and then this matched nothing and quit with "'tf' carries no
+    # <mount> -> <child>; nothing to correct" -- after the whole fit had run. The names
+    # WRITTEN BACK are the ones already in the stream, so the recording keeps its own
+    # spelling and nothing else that reads it has to learn a second one.
+    want = (canonical_frame(mount), canonical_frame(child))
+
+    def names_the_edge(t: Any) -> bool:
+        return (canonical_frame(str(t.frame_id)), canonical_frame(str(t.child_frame_id))) == want
+
     def corrected(t: Any) -> Any:
-        if (str(t.frame_id), str(t.child_frame_id)) != (mount, child):
+        if not names_the_edge(t):
             return t
         return Transform(
             translation=Vector3(*position),
             rotation=Quaternion(float(x), float(y), float(z), float(w)),
-            frame_id=mount,
-            child_frame_id=child,
+            frame_id=t.frame_id,
+            child_frame_id=t.child_frame_id,
             ts=t.ts,
         )
 
@@ -391,12 +403,7 @@ def write_mount_into_tf(
 
     refuse_if_a_rebuild_is_half_done(store, tf_stream)
     original = [(float(obs.ts), list(obs.data.transforms)) for obs in store.streams[tf_stream]]
-    touched = sum(
-        1
-        for _, transforms in original
-        for t in transforms
-        if (str(t.frame_id), str(t.child_frame_id)) == (mount, child)
-    )
+    touched = sum(1 for _, transforms in original for t in transforms if names_the_edge(t))
     if not touched:
         raise SystemExit(f"{tf_stream!r} carries no {mount} -> {child}; nothing to correct")
 

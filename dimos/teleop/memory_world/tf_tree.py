@@ -245,7 +245,16 @@ class TfTree:
 
     @property
     def frames(self) -> set[str]:
+        """Every frame, in the one spelling -- see `canonical_frame`. Test membership
+        with `has_frame`, not with `in frames`: a caller holding the configured
+        `/base_link` finds nothing in a set that says `base_link`, which is how
+        canonicalising `lookup` alone made a tree ANSWER for a frame it then denied
+        having."""
         return set(self._neighbours)
+
+    def has_frame(self, name: str) -> bool:
+        """Whether this tree knows *name*, in either spelling."""
+        return canonical_frame(name) in self._neighbours
 
     def __len__(self) -> int:
         return sum(len(edge.stamps) for edge in self._edges.values())

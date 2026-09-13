@@ -750,7 +750,7 @@ def main(argv: list[str] | None = None) -> None:
     tree = build_tf_tree(store, args.tf_stream)
     # Like the module: a world frame tf does not know means the tf root.
     world = (
-        args.world_frame if args.world_frame in tree.frames else tf_root(tree) or args.world_frame
+        args.world_frame if tree.has_frame(args.world_frame) else tf_root(tree) or args.world_frame
     )
     if world != args.world_frame:
         print(

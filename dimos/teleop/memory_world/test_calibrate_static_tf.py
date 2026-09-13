@@ -768,3 +768,73 @@ def test_a_mount_that_lives_only_in_the_static_tf_can_still_be_corrected(tmp_pat
         assert tree.lookup("base", "imu", 2.0)[0, 3] == 4.0  # and the rest came along
     finally:
         store.stop()
+
+
+def test_a_ros1_recording_is_corrected_and_keeps_its_own_spelling(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The tf tree answers in one spelling; the recording's messages keep theirs.
+
+    Canonicalising the tree made `rigidly_joined` say yes and `camera_mount_edge` name
+    the pair for a ROS 1 recording (`/lidar`, `/mount`) -- and then `write_mount_into_tf`
+    matched `(frame_id, child_frame_id)` verbatim against the canonical names, found
+    nothing, and quit with "'tf' carries no mount -> cam; nothing to correct". After the
+    whole fit had run. Before the canonicalisation it at least failed early and honestly.
+
+    The same recording written both ways must end up corrected the same amount, and the
+    names written back must be the ones already in the stream -- nothing else that reads
+    the recording should have to learn a second spelling.
+    """
+    import numpy as np
+
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.calibrate_static_tf import write_mount_into_tf
+    from dimos.teleop.memory_world.recording import build_tf_tree
+
+    def edge(parent: str, child: str, x: float, ts: float) -> Transform:
+        return Transform(
+            translation=Vector3(x, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id=parent,
+            child_frame_id=child,
+            ts=ts,
+        )
+
+    for slash in ("", "/"):
+        store = SqliteStore(path=str(tmp_path / f"rec{len(slash)}.db"), must_exist=False)
+        store.start()
+        try:
+            tf = store.stream("tf", TFMessage)
+            for step in range(5):
+                tf.append(
+                    TFMessage(
+                        edge(f"{slash}odom", f"{slash}lidar", float(step), float(step)),
+                        edge(f"{slash}lidar", f"{slash}mount", 1.0, float(step)),
+                        edge(f"{slash}mount", f"{slash}cam", 9.0, float(step)),
+                    ),
+                    ts=float(step),
+                )
+
+            fixed = np.eye(4)
+            fixed[0, 3] = 2.0
+            # The names the TREE hands a caller are canonical, whichever way tf was
+            # written -- so this is exactly what `camera_mount_edge` would pass in.
+            touched = write_mount_into_tf(store, "tf", "mount", "cam", fixed)
+            assert touched == 5, f"{slash!r}-spelled tf: nothing was corrected"
+
+            tree = build_tf_tree(store, "tf")
+            assert tree.lookup("lidar", "cam", 2.0)[0, 3] == 3.0
+
+            # And the stream still says what it said: no spelling was rewritten.
+            written = {
+                (str(t.frame_id), str(t.child_frame_id))
+                for obs in store.streams["tf"]
+                for t in obs.data.transforms
+            }
+            assert (f"{slash}mount", f"{slash}cam") in written, (
+                f"the correction rewrote the recording's own frame names: {sorted(written)}"
+            )
+        finally:
+            store.stop()

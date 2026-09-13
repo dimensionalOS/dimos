@@ -943,7 +943,7 @@ class HyperspaceAnswers:
                 self._orbit_cache[frame] = index["orbit"]
                 return index["orbit"]
             tree = self._tf_tree()
-            if tree is None or frame not in tree.frames:
+            if tree is None or not tree.has_frame(frame):
                 raise HTTPException(status_code=404, detail=f"no tf frame {frame!r}")
             stamps = np.asarray(
                 index.get("scans") or [], dtype=np.float64

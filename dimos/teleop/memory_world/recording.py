@@ -506,13 +506,13 @@ def name_streams(store: Any, config: Any, tf_tree: Callable[[], Any]) -> None:
             tree = tf_tree()  # tf is named first, so the tree can be read now
             if tree is not None:
                 world = config.world_frame
-                if world not in tree.frames:
+                if not tree.has_frame(world):
                     world = tf_root(tree) or world
                 chosen = pick_lidar(store, detected["lidar_candidates"], tree, world) or chosen
         setattr(config, setting, chosen)
         logger.info("%s: using %r (detected)", setting, chosen)
     tree = tf_tree()
-    if tree is not None and config.world_frame not in tree.frames:
+    if tree is not None and not tree.has_frame(config.world_frame):
         root = tf_root(tree)
         if root:
             logger.info("world_frame: using %r (the tf root)", root)
