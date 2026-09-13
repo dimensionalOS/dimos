@@ -76,7 +76,16 @@ export class InputAdapter {
                 const p = gripPose.transform.position;
                 this._hand[hand].pos = [p.x, p.y, p.z];
                 this._hand[hand].pinching = gripVal > 0.5;
-                this._hand[hand].wasPinching = this._hand[hand].pinching;
+                // `wasPinching` is the JOINT pinch's hysteresis -- the only thing that
+                // picks the 40 mm release threshold over the 25 mm press one -- and a
+                // grip button is not a joint pinch. Written from the grip, it survived
+                // the handoff when a controller is PUT DOWN and hand tracking takes
+                // over: the source stays listed and its pose is never lost, so neither
+                // the vanish loop nor the pose-loss branch clears anything, and the
+                // first tracked frame judged a hand that had not pinched by the looser
+                // rule. Two hands held 32 mm open -- wider than the press threshold, so
+                // not a pinch from cold -- scaled the world by 1.5.
+                this._hand[hand].wasPinching = false;
             } else {
                 // Still listed, but not tracked: its last known position is not where it
                 // is, and scaling off it is scaling off a guess. Both gripping, then the

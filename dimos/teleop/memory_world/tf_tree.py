@@ -110,7 +110,18 @@ def quaternion_from_matrix(rotation: np.ndarray) -> tuple[float, float, float, f
 
 
 def slerp(q0: np.ndarray, q1: np.ndarray, t: float) -> np.ndarray:
-    """Spherical interpolation between two (x, y, z, w) quaternions."""
+    """Spherical interpolation between two (x, y, z, w) quaternions.
+
+    Both are normalised first, and a zero one is read as the identity. Unguarded, the
+    `q2 /= norm` below divided by zero for an all-zero quaternion -- which is what an
+    uninitialised `geometry_msgs/Quaternion` serialises as -- and every INTERPOLATED
+    stamp came out NaN. Those NaNs reached the orbit trail on the wire and the route
+    planner's own path input, where `from_voxels` raised `cannot convert float NaN to
+    integer`; `_orbit_cache` and `_route_planner` then held the failure for the life of
+    the module. The same non-degrading shape the cloud's finiteness guard was added for,
+    on the input beside it.
+    """
+    q0, q1 = _unit(q0), _unit(q1)
     dot = float(np.dot(q0, q1))
     if dot < 0.0:
         q1, dot = -q1, -dot
@@ -135,6 +146,14 @@ def canonical_frame(name: str) -> str:
     rigidly joined. The tree now stores and answers in one spelling.
     """
     return name.lstrip("/")
+
+
+def _unit(q: np.ndarray) -> np.ndarray:
+    """*q* scaled to unit length; the identity when it has none."""
+    norm = float(np.linalg.norm(q))
+    if norm <= 0.0:
+        return np.array([0.0, 0.0, 0.0, 1.0])
+    return np.asarray(q, dtype=np.float64) / norm
 
 
 @dataclass

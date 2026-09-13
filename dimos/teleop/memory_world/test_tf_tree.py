@@ -69,6 +69,22 @@ def test_a_quaternion_that_is_not_unit_length_still_makes_a_rotation() -> None:
     assert zeros[:3, :3] == pytest.approx(np.eye(3))
     assert zeros[:3, 3] == pytest.approx((1.0, 2.0, 3.0))
 
+    # And INTERPOLATING toward one. `slerp` divided by a zero norm, so every stamp
+    # between two samples came out NaN -- which reached the orbit trail on the wire and
+    # the route planner's path input, where `from_voxels` raised "cannot convert float
+    # NaN to integer" and `_route_planner` then held the failure for the life of the
+    # module. Either guard closes it: the normalisation above reads a NaN quaternion's
+    # norm as not greater than zero and hands back the identity, and `slerp` refuses to
+    # divide by a zero norm in the first place. This asserts the property, not either
+    # implementation -- removing BOTH is what fails it.
+    tree = TfTree()
+    for step, ts in ((0.0, 0.0), (2.0, 2.0)):
+        tree.add("world", "base", ts, (step, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0))
+    for ts in (0.0, 0.5, 1.0, 1.5, 2.0):
+        matrix = tree.lookup("world", "base", ts)
+        assert matrix is not None
+        assert np.isfinite(matrix).all(), f"t={ts} interpolated to NaN through a zero rotation"
+
 
 def test_a_frame_answers_to_both_spellings_of_its_name() -> None:
     """ROS 1 writes `/base_link`, ROS 2 writes `base_link`, and one recording can carry
