@@ -27,6 +27,7 @@ subclass): factories return evaluators called with
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import math
 from typing import TypeVar
 
 T = TypeVar("T")
@@ -34,6 +35,26 @@ T = TypeVar("T")
 
 def exact(expected: T, got: T) -> float:
     return float(expected == got)
+
+
+def numeric(expected: float, got: float, *, tolerance: float, band: float) -> float:
+    """Compare numbers: full credit within tolerance, linear to zero at band.
+
+    Parse model text separately, e.g. with ``first_number``. Non-finite
+    observations receive zero; invalid scoring parameters raise ValueError.
+    """
+    if not all(math.isfinite(v) for v in (expected, tolerance, band)) or not 0 <= tolerance < band:
+        raise ValueError("Require finite reference and 0 <= tolerance < band")
+    if not math.isfinite(got):
+        return 0.0
+    error = abs(got - expected)
+    # Allow only a few floating-point ULPs, capped relative to the score band.
+    rounding = min(4 * max(math.ulp(got), math.ulp(expected)), (band - tolerance) * 1e-12)
+    if error <= tolerance or abs(error - tolerance) <= rounding:
+        return 1.0
+    if error >= band or abs(error - band) <= rounding:
+        return 0.0
+    return max(0.0, min(1.0, (band - error) / (band - tolerance)))
 
 
 # -- parsers (model text -> typed answer) -----------------------------------------
