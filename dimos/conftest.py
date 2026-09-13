@@ -19,6 +19,7 @@ import hashlib
 import os
 import pathlib
 import platform
+import shutil
 import tempfile
 import threading
 import time
@@ -204,6 +205,9 @@ def pytest_configure(config):
         "skipif_no_turbojpeg: skip when native libturbojpeg is missing — "
         "except in CI, where it runs anyway so a missing dep fails loudly",
     )
+    config.addinivalue_line(
+        "markers", "skipif_no_ffmpeg: skip when the ffmpeg binary is missing, except in CI"
+    )
     config.addinivalue_line("markers", "skipif_macos_bug: skip known-buggy tests on macOS")
     config.addinivalue_line("markers", "skipif_macos: skip tests not intended to run on macOS")
     config.addinivalue_line(
@@ -277,6 +281,10 @@ def pytest_collection_modifyitems(config, items):
         "skipif_no_turbojpeg": (
             not _has_turbojpeg() and not os.getenv("CI"),
             "native libturbojpeg unavailable",
+        ),
+        "skipif_no_ffmpeg": (
+            shutil.which("ffmpeg") is None and not os.getenv("CI"),
+            "ffmpeg not installed",
         ),
         "skipif_macos_bug": (_is_macos(), "Some tests are buggy on Mac OS"),
         "skipif_macos": (_is_macos(), "Not intended to run on macOS"),

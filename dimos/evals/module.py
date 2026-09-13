@@ -41,13 +41,13 @@ def list_suites() -> list[str]:
 
 
 def list_agents() -> list[str]:
-    """Dotted module paths of the agents under dimos.evals.agents."""
+    """Agent module paths, excluding tests and shared helpers."""
     from dimos.evals import agents
 
     return [
-        name
-        for _, name, ispkg in pkgutil.iter_modules(agents.__path__, prefix=f"{agents.__name__}.")
-        if not ispkg and not name.endswith(".base")
+        f"{agents.__name__}.{name}"
+        for _, name, ispkg in pkgutil.iter_modules(agents.__path__)
+        if not ispkg and name not in {"base", "conftest"} and not name.startswith(("_", "test_"))
     ]
 
 

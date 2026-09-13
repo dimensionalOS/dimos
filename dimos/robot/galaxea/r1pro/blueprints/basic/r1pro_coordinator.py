@@ -34,7 +34,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
-from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -193,14 +192,12 @@ def r1pro_control(
                         hardware_type=HardwareType.WHOLE_BODY,
                         joints=R1PRO_UPPER_BODY_JOINTS,
                         adapter_type="transport_lcm",
-                        adapter_kwargs={"transport_cls": make_transport},
                     ),
                     HardwareComponent(
                         hardware_id="chassis",
                         hardware_type=HardwareType.BASE,
                         joints=_chassis_joints,
                         adapter_type="transport_lcm",
-                        adapter_kwargs={"transport_cls": make_transport},
                     ),
                 ],
                 tasks=resolved_tasks,

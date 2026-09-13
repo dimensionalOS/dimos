@@ -39,6 +39,8 @@ if TYPE_CHECKING:
 
 class SimConfig(BaseConfig):
     blueprint: list[str]
+    # Module registry names to disable in the composed blueprint.
+    disable: tuple[str, ...] = ()
     simulator: str = "dimsim"
     scene: str = "apartment"
     setup: Callable[[DimSimClient], None] | None = None
@@ -75,7 +77,7 @@ class Sim(Environment):
             if not McpAdapter(mcp_url).wait_for_ready(timeout=2.0):
                 raise RuntimeError(f"attach needs a running dimos at {mcp_url}")
             return
-        validate_blueprints((*self.config.blueprint, *agent.config.modules))
+        validate_blueprints((*self.config.blueprint, *agent.config.modules, *self.config.disable))
 
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
         # SQLite memory codecs are only needed for a running simulator.
@@ -87,7 +89,8 @@ class Sim(Environment):
             proc = DimosCliCall()
             proc.simulator = self.config.simulator
             proc.global_args = ["--dimsim-scene", self.config.scene, "--record"]
-            proc.demo_args = ["run", *self.config.blueprint, *modules]
+            disabled = [arg for name in self.config.disable for arg in ("--disable", name)]
+            proc.demo_args = ["run", *self.config.blueprint, *modules, *disabled]
             self._resources.callback(proc.stop)
             proc.start()
             assert proc.process is not None
