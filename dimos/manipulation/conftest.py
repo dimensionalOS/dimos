@@ -17,7 +17,7 @@
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Protocol, cast
-from unittest.mock import MagicMock
+from unittest.mock import DEFAULT, MagicMock
 
 import pytest
 from pytest_mock import MockerFixture
@@ -51,7 +51,18 @@ def _mock_control_coordinator() -> MagicMock:
     coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
         TrajectoryCancellationStatus.ALREADY_STOPPED
     )
+    coordinator.get_joint_positions.return_value = {}
+
+    def invoke(task: str, method: str, args: dict | None = None):
+        """Tasks are dispatched, polled and cancelled through task_invoke."""
+        if method == "execute":
+            return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+        if method == "cancel":
+            return TrajectoryCancellationResult(TrajectoryCancellationStatus.ALREADY_STOPPED)
+        return DEFAULT
+
     coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
+    coordinator.task_invoke.side_effect = invoke
     return coordinator
 
 

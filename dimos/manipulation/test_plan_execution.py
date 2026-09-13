@@ -14,7 +14,7 @@
 
 """Tests for ManipulationModule plan-execution result projection."""
 
-from unittest.mock import MagicMock
+from unittest.mock import DEFAULT, MagicMock
 
 import pytest
 
@@ -79,8 +79,16 @@ def _coordinator(
     cancel_status: TrajectoryCancellationStatus = (TrajectoryCancellationStatus.ALREADY_STOPPED),
 ) -> MagicMock:
     coordinator = MagicMock(spec=ControlCoordinator)
-    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(execute_status)
-    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(cancel_status)
+    coordinator.get_joint_positions.return_value = {}
+
+    def invoke(task: str, method: str, args: dict | None = None):
+        if method == "execute":
+            return TrajectoryExecutionResult(execute_status)
+        if method == "cancel":
+            return TrajectoryCancellationResult(cancel_status)
+        return DEFAULT
+
+    coordinator.task_invoke.side_effect = invoke
     return coordinator
 
 
@@ -95,7 +103,7 @@ def test_execute_consumes_cached_plan_after_dispatch(
     assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
     assert module.execute(blocking=False).status is ExecutionStatus.NO_PLAN
     assert module._last_plan is None
-    coordinator.execute_trajectory.assert_called_once_with(plan.trajectory)
+    assert _executed(coordinator) is plan.trajectory
 
 
 def test_known_coordinator_rejection_restores_previous_state(
@@ -132,7 +140,7 @@ def test_execute_rejects_planar_base_plan_but_keeps_it_for_preview(
     assert "planning and preview only" in result.message
     assert module._last_plan is plan
     assert module._state is ManipulationState.COMPLETED
-    coordinator.execute_trajectory.assert_not_called()
+    coordinator.task_invoke.assert_not_called()
 
 
 def test_execute_sends_planar_base_columns_to_the_base_task(module_factory) -> None:
@@ -150,7 +158,10 @@ def test_execute_sends_planar_base_columns_to_the_base_task(module_factory) -> N
     )
     module.config.model.model = module.config.model.model.with_planar_base(planar_base)
     module.config.model.joint_names = [*planar_base.joint_names, "arm/j0"]
-    module.config.base_trajectory_task = "base_traj"
+    module.config.trajectory_tasks = {
+        "joint_trajectory": ["arm/j0"],
+        "base_traj": list(planar_base.joint_names),
+    }
     module._initialize_execution()
     names = ["arm/j0", *planar_base.joint_names]
     points = [
@@ -166,12 +177,13 @@ def test_execute_sends_planar_base_columns_to_the_base_task(module_factory) -> N
 
     assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
 
-    assert coordinator.execute_trajectory.call_args.args[0].joint_names == ["arm/j0"]
-    task, _, args = next(
-        c.args for c in coordinator.task_invoke.call_args_list if c.args[1] == "execute"
-    )
-    assert task == "base_traj"
-    assert args["trajectory"].joint_names == list(planar_base.joint_names)
+    dispatched = {
+        c.args[0]: c.args[2]["trajectory"]
+        for c in coordinator.task_invoke.call_args_list
+        if c.args[1] == "execute"
+    }
+    assert dispatched["joint_trajectory"].joint_names == ["arm/j0"]
+    assert dispatched["base_traj"].joint_names == list(planar_base.joint_names)
     state = TrajectoryState.COMPLETED
     assert module.wait_for_execution(timeout=1.0).status is ExecutionStatus.COMPLETED
 
@@ -190,12 +202,12 @@ def test_execute_allows_arm_only_plan_from_planar_model(module_factory) -> None:
     result = module.execute(blocking=False)
 
     assert result.status is ExecutionStatus.ACCEPTED
-    coordinator.execute_trajectory.assert_called_once_with(plan.trajectory)
+    assert _executed(coordinator) is plan.trajectory
 
 
 def test_uncertain_execute_projects_to_fault(module_factory) -> None:
     coordinator = _coordinator()
-    coordinator.execute_trajectory.side_effect = TimeoutError("timed out")
+    coordinator.task_invoke.side_effect = TimeoutError("timed out")
     module = _module_with_coordinator(coordinator, module_factory)
     module._last_plan = _plan()
 
@@ -207,7 +219,7 @@ def test_uncertain_execute_projects_to_fault(module_factory) -> None:
 
 def test_uncertain_cancel_projects_to_fault(module_factory) -> None:
     coordinator = _coordinator()
-    coordinator.cancel_trajectory.side_effect = TimeoutError("timed out")
+    coordinator.task_invoke.side_effect = TimeoutError("timed out")
     module = _module_with_coordinator(coordinator, module_factory)
     module._state = ManipulationState.EXECUTING
 
@@ -262,3 +274,16 @@ def test_status_refresh_reports_coordinator_failure(module_factory):
     assert status.state == "FAULT"
     assert "status unavailable" in status.error
     assert module.get_state().execution_status is ExecutionStatus.UNCERTAIN
+
+
+def _executed(coordinator, task: str = "joint_trajectory"):
+    """The trajectory a task was asked to execute, or None."""
+    for call in coordinator.task_invoke.call_args_list:
+        if call.args[0] == task and call.args[1] == "execute":
+            return call.args[2]["trajectory"]
+    return None
+
+
+def _cancelled(coordinator) -> list[str]:
+    """Tasks that were asked to cancel."""
+    return [c.args[0] for c in coordinator.task_invoke.call_args_list if c.args[1] == "cancel"]

@@ -53,7 +53,10 @@ r1pro_planar_preview = autoconnect(
         joint_state_aliases=dict(
             zip(_chassis_hardware.joints, R1PRO_PLANAR_BASE.joint_names, strict=True)
         ),
-        base_trajectory_task="base_trajectory",
+        trajectory_tasks={
+            "joint_trajectory": list(R1PRO_UPPER_BODY_PLANNING_JOINTS),
+            "base_trajectory": list(R1PRO_PLANAR_BASE.joint_names),
+        },
     ),
     coordinator(
         hardware=[_r1pro_hardware, _chassis_hardware],

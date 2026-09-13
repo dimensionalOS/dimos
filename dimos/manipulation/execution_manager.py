@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import math
 import threading
 import time
@@ -25,6 +25,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JOINT_TRAJECTORY_TASK_NAME,
+    TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
@@ -49,9 +50,9 @@ class _PlanRejectedError(Exception):
 class PlanExecutionManager:
     """Own mapping, dispatch, and polling for one trajectory execution.
 
-    With a base task, a plan's planar-base columns go to that task and the rest
-    to the joint trajectory task, both on the coordinator's tick clock. The two
-    run as one: when either fails, the other is cancelled.
+    ``bindings`` says which task drives which joints. A plan is split into one
+    part per owning task, and the parts run as one: all on the coordinator's
+    tick clock, and when any part fails the others are cancelled.
     """
 
     def __init__(
@@ -61,23 +62,21 @@ class PlanExecutionManager:
         coordinator: ControlCoordinator,
         default_timeout: float,
         poll_interval: float = 0.1,
-        base_task: str | None = None,
-        base_joint_names: Sequence[str] = (),
+        bindings: Mapping[str, Sequence[str]] | None = None,
     ) -> None:
         self._joint_names = frozenset(joint_names)
         if not self._joint_names or len(self._joint_names) != len(joint_names):
             raise ValueError("Execution joint names must be non-empty and unique")
+        self._bindings = _resolve_bindings(bindings, joint_names)
         self._coordinator = coordinator
         self._operation_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._poll_lock = threading.Lock()
         self._default_timeout = default_timeout
         self._poll_interval = poll_interval
-        self._base_task = base_task
-        self._base_joint_names = list(base_joint_names)
         self._active = False
         self._latest_result: ExecutionResult | None = None
-        self._legs: tuple[str, ...] = (JOINT_TRAJECTORY_TASK_NAME,)
+        self._legs: tuple[str, ...] = tuple(task for task, _ in self._bindings)
         self._cancelled_legs: set[str] = set()
         self._run_id = 0
         self._run_done = threading.Event()
@@ -104,48 +103,38 @@ class PlanExecutionManager:
                 if self._active:
                     return ExecutionResult(ExecutionStatus.REJECTED, "Another trajectory is active")
             try:
-                trajectory, base_trajectory = self._prepare_trajectory(plan)
+                parts = self._prepare_trajectory(plan)
             except _PlanRejectedError as exc:
                 return ExecutionResult(ExecutionStatus.REJECTED, str(exc))
             with self._state_lock:
                 self._cancelled_legs = set()
 
+            try:
+                current_positions = self._coordinator.get_joint_positions()
+            except Exception as exc:
+                logger.exception("Coordinator get_joint_positions RPC failed")
+                execution_result = ExecutionResult(
+                    ExecutionStatus.UNCERTAIN, f"Coordinator get_joint_positions failed: {exc}"
+                )
+                self._store(execution_result, active=False)
+                return execution_result
+
             result: TrajectoryExecutionResult | None = None
-            if trajectory is not None:
-                try:
-                    result = self._coordinator.execute_trajectory(trajectory)
-                except Exception as exc:
-                    logger.exception("Coordinator execute RPC failed")
-                    execution_result = ExecutionResult(
-                        ExecutionStatus.UNCERTAIN,
-                        f"Coordinator execute RPC failed: {exc}",
-                    )
-                    self._store(execution_result, active=False)
-                    return execution_result
-
-                if result.status is not TrajectoryExecutionStatus.ACCEPTED:
-                    execution_result = ExecutionResult(
-                        ExecutionStatus.REJECTED,
-                        result.message or f"Coordinator rejected trajectory: {result.status.name}",
-                        coordinator_result=result,
-                    )
-                    self._store(execution_result, active=False)
-                    return execution_result
-
-            legs = [JOINT_TRAJECTORY_TASK_NAME] if trajectory is not None else []
-            if base_trajectory is not None and self._base_task is not None:
-                base_result = self._start_base(self._base_task, base_trajectory)
-                if not isinstance(base_result, TrajectoryExecutionResult):
-                    if trajectory is not None and not self._cancel_leg(JOINT_TRAJECTORY_TASK_NAME):
-                        # The arm half is still running, without the base half.
-                        base_result = ExecutionResult(
+            legs: list[str] = []
+            for task, part in parts:
+                outcome = self._start_part(task, part, current_positions)
+                if not isinstance(outcome, TrajectoryExecutionResult):
+                    failed = [leg for leg in legs if not self._cancel_leg(leg)]
+                    if failed:
+                        # Parts already accepted are still running without the rest.
+                        outcome = ExecutionResult(
                             ExecutionStatus.UNCERTAIN,
-                            f"{base_result.message}; could not cancel {JOINT_TRAJECTORY_TASK_NAME}",
+                            f"{outcome.message}; could not cancel {', '.join(failed)}",
                         )
-                    self._store(base_result, active=False)
-                    return base_result
-                result = result or base_result
-                legs.append(self._base_task)
+                    self._store(outcome, active=False)
+                    return outcome
+                result = result or outcome
+                legs.append(task)
 
             accepted = ExecutionResult(
                 ExecutionStatus.ACCEPTED,
@@ -162,7 +151,7 @@ class PlanExecutionManager:
                     self._run_done = threading.Event()
                     run_done = self._run_done
                 self._store(accepted, active=True)
-                if base_trajectory is not None:
+                if len(legs) > 1:
                     self._watchdog = threading.Thread(
                         target=self._watch,
                         args=(run_done, run_id),
@@ -204,7 +193,7 @@ class PlanExecutionManager:
 
     def cancel(self, timeout: float = 1.0) -> ExecutionResult:
         """Cancel the active trajectory and return its authoritative terminal state."""
-        if self._base_task is not None and self._base_task in self._legs:
+        if len(self._legs) > 1:
             with self._operation_lock:
                 failed = [leg for leg in self._legs if not self._cancel_leg(leg)]
             if failed:
@@ -214,17 +203,23 @@ class PlanExecutionManager:
                 self._store(result, active=False)
                 return result
             return self.wait(timeout)
+        task = self._legs[0]
         with self._operation_lock:
             try:
-                cancellation = self._coordinator.cancel_trajectory()
+                outcome = self._coordinator.task_invoke(task, "cancel", {})
             except Exception as exc:
-                logger.exception("Coordinator cancel RPC failed")
+                logger.exception(f"Cancelling {task} failed")
                 result = ExecutionResult(
                     ExecutionStatus.UNCERTAIN,
-                    f"Coordinator cancel RPC failed: {exc}",
+                    f"{task} cancel RPC failed: {exc}",
                 )
                 self._store(result, active=False)
                 return result
+        cancellation = (
+            outcome
+            if isinstance(outcome, TrajectoryCancellationResult)
+            else TrajectoryCancellationResult(TrajectoryCancellationStatus.CANCELLED)
+        )
         if cancellation.status is TrajectoryCancellationStatus.UNCERTAIN:
             result = ExecutionResult(
                 ExecutionStatus.UNCERTAIN,
@@ -235,7 +230,7 @@ class PlanExecutionManager:
 
         with self._state_lock:
             latest = self._latest_result
-        status = self._get_status()
+        status = self._get_status(task)
         if isinstance(status, ExecutionResult):
             return status
         mapped = self._result_from_status(status)
@@ -300,7 +295,10 @@ class PlanExecutionManager:
     def _combine(self, statuses: dict[str, TrajectoryStatus]) -> ExecutionResult:
         if len(statuses) == 1:
             return self._result_from_status(next(iter(statuses.values())))
-        primary = statuses.get(JOINT_TRAJECTORY_TASK_NAME) or next(iter(statuses.values()))
+        primary = next(
+            (statuses[task] for task, _ in self._bindings if task in statuses),
+            next(iter(statuses.values())),
+        )
         for leg, status in statuses.items():
             if status.state not in {TrajectoryState.ABORTED, TrajectoryState.FAULT}:
                 continue
@@ -328,23 +326,26 @@ class PlanExecutionManager:
         while not run_done.wait(self._poll_interval):
             self._poll(run_id)
 
-    def _start_base(
-        self, task: str, trajectory: JointTrajectory
+    def _start_part(
+        self, task: str, trajectory: JointTrajectory, current_positions: Mapping[str, float]
     ) -> TrajectoryExecutionResult | ExecutionResult:
+        """Dispatch one part of a plan to the task that owns its joints."""
         try:
-            result = self._coordinator.task_invoke(task, "execute", {"trajectory": trajectory})
+            result = self._coordinator.task_invoke(
+                task, "execute", {"trajectory": trajectory, "current_positions": current_positions}
+            )
         except Exception as exc:
-            logger.exception("Base execute RPC failed")
+            logger.exception(f"{task} execute RPC failed")
             self._cancel_leg(task)
-            return ExecutionResult(ExecutionStatus.UNCERTAIN, f"Base execute RPC failed: {exc}")
+            return ExecutionResult(ExecutionStatus.UNCERTAIN, f"{task} execute RPC failed: {exc}")
         if not isinstance(result, TrajectoryExecutionResult):
             return ExecutionResult(
-                ExecutionStatus.REJECTED, f"Base task '{task}' is not on the coordinator"
+                ExecutionStatus.REJECTED, f"Task '{task}' is not on the coordinator"
             )
         if result.status is not TrajectoryExecutionStatus.ACCEPTED:
             return ExecutionResult(
                 ExecutionStatus.REJECTED,
-                result.message or f"Base task rejected trajectory: {result.status.name}",
+                result.message or f"{task} rejected trajectory: {result.status.name}",
                 coordinator_result=result,
             )
         return result
@@ -356,10 +357,10 @@ class PlanExecutionManager:
                 return True
             self._cancelled_legs.add(leg)
         try:
-            if leg == JOINT_TRAJECTORY_TASK_NAME:
-                cancellation = self._coordinator.cancel_trajectory()
-                return cancellation.status is not TrajectoryCancellationStatus.UNCERTAIN
-            self._coordinator.task_invoke(leg, "cancel", {})
+            outcome = self._coordinator.task_invoke(leg, "cancel", {})
+            if isinstance(outcome, TrajectoryCancellationResult):
+                return outcome.status is not TrajectoryCancellationStatus.UNCERTAIN
+            # A task that reports no cancellation result had nothing left to stop.
             return True
         except Exception:
             logger.exception(f"Cancelling {leg} failed")
@@ -376,9 +377,8 @@ class PlanExecutionManager:
     def _get_status(
         self, task: str = JOINT_TRAJECTORY_TASK_NAME, *, run_id: int | None = None
     ) -> TrajectoryStatus | ExecutionResult:
-        args: dict[str, None] = {"t_now": None} if task == JOINT_TRAJECTORY_TASK_NAME else {}
         try:
-            status = self._coordinator.task_invoke(task, "get_status", args)
+            status = self._coordinator.task_invoke(task, "get_status", {"t_now": None})
         except Exception as exc:
             logger.exception(f"{task} get_status RPC failed")
             result = ExecutionResult(
@@ -416,10 +416,8 @@ class PlanExecutionManager:
             if not active:
                 self._run_done.set()
 
-    def _prepare_trajectory(
-        self, plan: GeneratedPlan
-    ) -> tuple[JointTrajectory | None, JointTrajectory | None]:
-        """Split a plan into its joint-trajectory part and its planar-base part."""
+    def _prepare_trajectory(self, plan: GeneratedPlan) -> list[tuple[str, JointTrajectory]]:
+        """Split a plan into one part per task that owns some of its joints."""
         if not isinstance(plan, GeneratedPlan):
             raise _PlanRejectedError("Execution requires a generated plan")
         if not plan.is_success():
@@ -432,14 +430,41 @@ class PlanExecutionManager:
         if len(set(names)) != len(names):
             raise _PlanRejectedError("Generated trajectory has duplicate joints")
 
-        base_columns = [names.index(name) for name in self._base_joint_names if name in names]
-        if self._base_task is None or not base_columns:
-            return plan.trajectory, None
-        if len(base_columns) != len(self._base_joint_names):
-            raise _PlanRejectedError("Generated trajectory moves only part of the planar base")
-        joint_columns = [index for index in range(len(names)) if index not in base_columns]
-        joint_part = _columns(plan.trajectory, joint_columns) if joint_columns else None
-        return joint_part, _columns(plan.trajectory, base_columns)
+        owners = {joint: task for task, joints in self._bindings for joint in joints}
+        unowned = sorted({name for name in names if name not in owners})
+        if unowned:
+            raise _PlanRejectedError(f"No trajectory task is bound to {unowned}")
+
+        # Columns follow the binding's joint order: a task that reads them
+        # positionally (x, y, yaw) must not depend on how the planner ordered them.
+        grouped = [
+            (task, [names.index(joint) for joint in joints if joint in names])
+            for task, joints in self._bindings
+        ]
+        parts = [(task, columns) for task, columns in grouped if columns]
+        if len(parts) == 1 and parts[0][1] == list(range(len(names))):
+            # One task drives every column, already in order: forward the plan as-is.
+            return [(parts[0][0], plan.trajectory)]
+        return [(task, _columns(plan.trajectory, columns)) for task, columns in parts]
+
+
+def _resolve_bindings(
+    bindings: Mapping[str, Sequence[str]] | None, joint_names: Sequence[str]
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Which task drives which joints. Without bindings the joint trajectory task drives all."""
+    if not bindings:
+        return ((JOINT_TRAJECTORY_TASK_NAME, tuple(joint_names)),)
+    owners: dict[str, str] = {}
+    resolved: list[tuple[str, tuple[str, ...]]] = []
+    for task, joints in bindings.items():
+        if not joints:
+            raise ValueError(f"Trajectory task '{task}' is bound to no joints")
+        for joint in joints:
+            if joint in owners:
+                raise ValueError(f"Joint '{joint}' is bound to both '{owners[joint]}' and '{task}'")
+            owners[joint] = task
+        resolved.append((task, tuple(joints)))
+    return tuple(resolved)
 
 
 def _columns(trajectory: JointTrajectory, columns: list[int]) -> JointTrajectory:

@@ -53,15 +53,27 @@ def _plan(
 
 
 def _coordinator() -> MagicMock:
+    """A coordinator whose tasks accept everything, answering per invoked method."""
     coordinator = MagicMock(spec=ControlCoordinator)
-    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
-        TrajectoryExecutionStatus.ACCEPTED
-    )
-    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
-        TrajectoryCancellationStatus.ALREADY_STOPPED
-    )
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
+    coordinator.get_joint_positions.return_value = {}
+
+    def invoke(task: str, method: str, args: dict | None = None):
+        if method == "execute":
+            return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+        if method == "cancel":
+            return TrajectoryCancellationResult(TrajectoryCancellationStatus.ALREADY_STOPPED)
+        return TrajectoryStatus(state=TrajectoryState.IDLE)
+
+    coordinator.task_invoke.side_effect = invoke
     return coordinator
+
+
+def _dispatched(coordinator: MagicMock, task: str) -> JointTrajectory:
+    """The trajectory a task was asked to execute."""
+    for call in coordinator.task_invoke.call_args_list:
+        if call.args[0] == task and call.args[1] == "execute":
+            return call.args[2]["trajectory"]
+    raise AssertionError(f"{task} was never asked to execute")
 
 
 def _manager(coordinator: MagicMock | None = None) -> PlanExecutionManager:
@@ -86,7 +98,7 @@ def test_execute_forwards_same_canonical_trajectory_object_unchanged() -> None:
     plan = _plan()
     result = _manager(coordinator).execute(plan, blocking=False)
     assert result.status is ExecutionStatus.ACCEPTED
-    assert coordinator.execute_trajectory.call_args.args[0] is plan.trajectory
+    assert _dispatched(coordinator, JOINT_TRAJECTORY_TASK_NAME) is plan.trajectory
 
 
 @pytest.mark.parametrize(
@@ -101,7 +113,7 @@ def test_execute_rejects_invalid_plan_before_rpc(plan: GeneratedPlan, message: s
     result = _manager(coordinator).execute(plan, blocking=False)
     assert result.status is ExecutionStatus.REJECTED
     assert message in result.message
-    coordinator.execute_trajectory.assert_not_called()
+    coordinator.task_invoke.assert_not_called()
 
 
 def test_execute_preserves_coordinator_rejection() -> None:
@@ -109,7 +121,7 @@ def test_execute_preserves_coordinator_rejection() -> None:
     rejection = TrajectoryExecutionResult(
         TrajectoryExecutionStatus.INVALID_TRAJECTORY, "specific rejection"
     )
-    coordinator.execute_trajectory.return_value = rejection
+    coordinator.task_invoke.side_effect = lambda *_a, **_k: rejection
     result = _manager(coordinator).execute(_plan(), blocking=False)
     assert result.status is ExecutionStatus.REJECTED
     assert result.coordinator_result is rejection
@@ -117,17 +129,15 @@ def test_execute_preserves_coordinator_rejection() -> None:
 
 def test_execute_rpc_failure_is_uncertain() -> None:
     coordinator = _coordinator()
-    coordinator.execute_trajectory.side_effect = TimeoutError("timed out")
+    coordinator.task_invoke.side_effect = TimeoutError("timed out")
     result = _manager(coordinator).execute(_plan(), blocking=False)
     assert result.status is ExecutionStatus.UNCERTAIN
     assert "timed out" in result.message
 
 
-def test_cancel_forwards_to_coordinator() -> None:
-    coordinator = _coordinator()
-    result = _manager(coordinator).cancel()
+def test_cancel_without_a_run_reports_no_execution() -> None:
+    result = _manager(_coordinator()).cancel()
     assert result.status is ExecutionStatus.NO_EXECUTION
-    coordinator.cancel_trajectory.assert_called_once_with()
 
 
 BASE = ("base/x", "base/y", "base/yaw")
@@ -142,24 +152,24 @@ class _WholeBody:
             "base_traj": TrajectoryState.EXECUTING,
         }
         self.errors: dict[str, str] = {}
-        self.base_execute = TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
-        self.base_trajectory: JointTrajectory | None = None
+        self.execute_results: dict[str, TrajectoryExecutionResult] = {}
+        self.dispatched: dict[str, JointTrajectory] = {}
+        self.cancellations: dict[str, TrajectoryCancellationResult] = {}
         self.coordinator = _coordinator()
         self.coordinator.task_invoke.side_effect = self._task_invoke
-        self.coordinator.cancel_trajectory.side_effect = self._cancel_joints
 
-    def _task_invoke(self, task, method, args):
+    def _task_invoke(self, task, method, args=None):
         if method == "execute":
-            self.base_trajectory = args["trajectory"]
-            return self.base_execute
+            self.dispatched[task] = args["trajectory"]
+            return self.execute_results.get(
+                task, TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+            )
         if method == "cancel":
             self.states[task] = TrajectoryState.ABORTED
-            return True
+            return self.cancellations.get(
+                task, TrajectoryCancellationResult(TrajectoryCancellationStatus.CANCELLED)
+            )
         return TrajectoryStatus(state=self.states[task], error=self.errors.get(task, ""))
-
-    def _cancel_joints(self):
-        self.states[JOINT_TRAJECTORY_TASK_NAME] = TrajectoryState.ABORTED
-        return TrajectoryCancellationResult(TrajectoryCancellationStatus.CANCELLED)
 
     def manager(self) -> PlanExecutionManager:
         return PlanExecutionManager(
@@ -167,8 +177,7 @@ class _WholeBody:
             coordinator=self.coordinator,
             default_timeout=1.0,
             poll_interval=0.01,
-            base_task="base_traj",
-            base_joint_names=BASE,
+            bindings={JOINT_TRAJECTORY_TASK_NAME: ["left/j1"], "base_traj": list(BASE)},
         )
 
 
@@ -179,10 +188,9 @@ def test_whole_body_plan_splits_into_joint_and_base_columns() -> None:
 
     assert manager.execute(plan, blocking=False).status is ExecutionStatus.ACCEPTED
 
-    joints = robot.coordinator.execute_trajectory.call_args.args[0]
-    assert joints.joint_names == ["left/j1"]
-    assert robot.base_trajectory.joint_names == list(BASE)
-    assert [p.time_from_start for p in robot.base_trajectory.points] == [0.0, 1.0]
+    assert robot.dispatched[JOINT_TRAJECTORY_TASK_NAME].joint_names == ["left/j1"]
+    assert robot.dispatched["base_traj"].joint_names == list(BASE)
+    assert [p.time_from_start for p in robot.dispatched["base_traj"].points] == [0.0, 1.0]
     robot.states = dict.fromkeys(robot.states, TrajectoryState.COMPLETED)
     assert manager.wait().status is ExecutionStatus.COMPLETED
 
@@ -202,9 +210,9 @@ def test_a_failing_leg_cancels_the_other_without_a_caller_polling(failing: str, 
     assert "preempted by teleop" in manager.wait().message
 
 
-def test_a_refused_base_trajectory_cancels_the_joints() -> None:
+def test_a_refused_part_cancels_the_parts_already_dispatched() -> None:
     robot = _WholeBody()
-    robot.base_execute = TrajectoryExecutionResult(
+    robot.execute_results["base_traj"] = TrajectoryExecutionResult(
         TrajectoryExecutionStatus.INVALID_TRAJECTORY, "too fast"
     )
 
@@ -212,15 +220,15 @@ def test_a_refused_base_trajectory_cancels_the_joints() -> None:
 
     assert result.status is ExecutionStatus.REJECTED
     assert "too fast" in result.message
-    robot.coordinator.cancel_trajectory.assert_called_once_with()
+    assert robot.states[JOINT_TRAJECTORY_TASK_NAME] is TrajectoryState.ABORTED
 
 
-def test_a_refused_base_is_uncertain_when_the_joints_cannot_be_confirmed_stopped() -> None:
+def test_a_refused_part_is_uncertain_when_the_others_cannot_be_confirmed_stopped() -> None:
     robot = _WholeBody()
-    robot.base_execute = TrajectoryExecutionResult(
+    robot.execute_results["base_traj"] = TrajectoryExecutionResult(
         TrajectoryExecutionStatus.INVALID_TRAJECTORY, "too fast"
     )
-    robot.coordinator.cancel_trajectory.side_effect = lambda: TrajectoryCancellationResult(
+    robot.cancellations[JOINT_TRAJECTORY_TASK_NAME] = TrajectoryCancellationResult(
         TrajectoryCancellationStatus.UNCERTAIN
     )
 

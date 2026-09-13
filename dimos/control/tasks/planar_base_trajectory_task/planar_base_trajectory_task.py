@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import math
 import threading
@@ -117,9 +118,16 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
             or self._stop_until is not None
         )
 
-    def execute(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
-        """Accept a trajectory; its start is checked against odometry on the first tick."""
+    def execute(
+        self,
+        trajectory: JointTrajectory,
+        current_positions: Mapping[str, float] | None = None,
+    ) -> TrajectoryExecutionResult:
+        """Accept a trajectory. Its start is checked against ``current_positions`` when the
+        caller has them, and otherwise against odometry on the first tick."""
         problem = _trajectory_problem(trajectory, self._config)
+        if not problem and current_positions is not None:
+            problem = self._start_problem(trajectory, current_positions)
         if problem:
             return TrajectoryExecutionResult(TrajectoryExecutionStatus.INVALID_TRAJECTORY, problem)
         with self._lock:
@@ -146,17 +154,47 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
             self._stop(None, TrajectoryState.ABORTED, "cancelled")
         return True
 
-    def get_status(self) -> TrajectoryStatus:
+    def get_status(self, t_now: float | None = None) -> TrajectoryStatus:
         with self._lock:
             duration = self._trajectory.duration if self._trajectory is not None else 0.0
-            progress = 1.0 if duration <= 0.0 else min(1.0, self._elapsed / duration)
+            elapsed = self._elapsed
+            if (
+                t_now is not None
+                and self._start_t is not None
+                and self._state is TrajectoryState.EXECUTING
+            ):
+                elapsed = t_now - self._start_t
+            progress = 1.0 if duration <= 0.0 else min(1.0, elapsed / duration)
             return TrajectoryStatus(
                 state=self._state,
                 progress=progress,
-                time_elapsed=self._elapsed,
-                time_remaining=max(0.0, duration - self._elapsed),
+                time_elapsed=elapsed,
+                time_remaining=max(0.0, duration - elapsed),
                 error=self._error,
             )
+
+    def _start_problem(
+        self, trajectory: JointTrajectory, current_positions: Mapping[str, float]
+    ) -> str:
+        """Reject a trajectory that does not start where the base currently is."""
+        pose: list[float] = []
+        for name in self._joints:
+            value = current_positions.get(name)
+            if value is None or not math.isfinite(value):
+                return ""
+            pose.append(float(value))
+        start = trajectory.points[0].positions
+        position_error = math.hypot(start[0] - pose[0], start[1] - pose[1])
+        yaw_error = abs(angle_diff(start[2], pose[2]))
+        if (
+            position_error > self._config.start_position_tolerance
+            or yaw_error > self._config.start_orientation_tolerance
+        ):
+            return (
+                f"trajectory starts {position_error:.3f} m / {yaw_error:.3f} rad from the "
+                "base's odometry"
+            )
+        return ""
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         with self._lock:
