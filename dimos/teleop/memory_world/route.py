@@ -100,6 +100,38 @@ def densify(
     return np.concatenate(pieces)
 
 
+def _median_of_other_moving(gaps: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Per leg, the median of every OTHER moving leg in the whole path, else NaN.
+
+    What a leg is judged against when its own window stands still from end to end. A
+    recording can hold a real step with no moving leg anywhere near it: eleven repeats
+    per pose, which a tf chain a tenth of the scan rate produces, puts the steps either
+    side of it outside any window, and judged locally every step of a real drive looked
+    like a relocalisation and the drive was refused. What such a step can still be
+    compared with is the rest of the path's driving.
+
+    "Other" is the window's rule again: one copy of the leg itself is removed, so a lone
+    displacement that is the only thing moving in the whole recording has nothing
+    vouching for it.
+    """
+    moving = gaps > STILL_M
+    pool = np.sort(gaps[moving])
+    answer = np.full(len(gaps), np.nan)
+    if len(pool) == 0:
+        return answer
+    answer[~moving] = np.median(pool)
+    if len(pool) == 1:
+        return answer  # the only moving leg is the one being judged
+    rest = len(pool) - 1
+    rank = np.searchsorted(pool, gaps[moving])  # where its own copy sits, and is dropped
+
+    def without_itself(index: int) -> NDArray[np.float64]:
+        return np.where(index < rank, pool[index], pool[index + 1])
+
+    answer[moving] = (without_itself((rest - 1) // 2) + without_itself(rest // 2)) / 2.0
+    return answer
+
+
 def bridgeable(path: NDArray[np.float64], resolution: float) -> NDArray[np.bool_]:
     """Which legs the robot drove, rather than was relocated across. One flag per leg.
 
@@ -112,9 +144,11 @@ def bridgeable(path: NDArray[np.float64], resolution: float) -> NDArray[np.bool_
         stretches of standing still, and the occasional relocalisation.
 
       the OTHER legs, never itself.  A leg that votes on its own neighbourhood can always
-        justify itself, and at the ends of the path -- where the window must be padded --
-        it does exactly that: a relocalisation on the first or last leg supplied half its
-        own window and was bridged every time, opening a wall.
+        justify itself, and near the ends of the path it is padding that hands it the
+        vote: "nearest" repeats the edge leg, "mirror" reflects a leg back into its own
+        window two places along, and either way a relocalisation there was bridged and a
+        wall opened. Nothing is padded with data now -- an end leg is judged against the
+        legs it really has beside it.
 
       only the MOVING ones.  Standing still is not driving, and a pose source slower than
         the scan stream makes most of the path stationary without the robot stopping at
@@ -126,10 +160,10 @@ def bridgeable(path: NDArray[np.float64], resolution: float) -> NDArray[np.bool_
 
     `STILL_M` decides only which legs INFORM the comparison, never which are bridged --
     which is what makes it safe, and is the difference from the version where filtering at
-    that threshold ate a drive sampled finer than it. When no moving leg is near, the
-    answer is one cell: below that, bridging adds no cells and cannot matter.
+    that threshold ate a drive sampled finer than it. When no moving leg is near, the rest
+    of the path's driving answers instead: see `_median_of_other_moving`.
 
-    Fifteen recording shapes are the tests in `test_route.py`.
+    Seventeen recording shapes are the tests in `test_route.py`.
     """
     if len(path) < 2:
         return np.zeros(0, dtype=bool)
@@ -138,15 +172,16 @@ def bridgeable(path: NDArray[np.float64], resolution: float) -> NDArray[np.bool_
         return np.asarray(gaps <= max(resolution, 0.0))
     window = min(len(gaps), LOCAL_WINDOW_LEGS) | 1  # odd, so the window is centred
     half = window // 2
-    padded = np.pad(gaps, half, mode="reflect")
+    padded = np.pad(gaps, half, constant_values=np.nan)  # never a copy of a real leg
     around = sliding_window_view(padded, window)[: len(gaps)]
     others = np.delete(around, half, axis=1)  # never itself
     moving = np.where(others > STILL_M, others, np.nan)
     alone = np.isnan(moving).all(axis=1)
     with np.errstate(all="ignore"):
         nearby = np.nanmedian(np.where(alone[:, None], 0.0, moving), axis=1)
+    nearby = np.where(alone, _median_of_other_moving(gaps), nearby)
     allowed = np.where(
-        alone, resolution, np.minimum(MAX_BRIDGE_M, np.maximum(resolution, 2.0 * nearby))
+        np.isnan(nearby), resolution, np.minimum(MAX_BRIDGE_M, np.maximum(resolution, 2.0 * nearby))
     )
     return np.asarray(gaps <= allowed)
 

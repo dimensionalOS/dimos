@@ -192,9 +192,10 @@ def test_a_jump_at_either_end_of_the_drive_is_still_a_jump() -> None:
     Six legs is enough: `[1.2, .05, .05, .05, .05, .05]` bridged the 1.2 m jump, took the
     wall it crosses from cost 100 to 90, and planned a 4.5 m route straight through it.
 
-    "mirror" pads with the legs on the other side without repeating the edge one, so the
-    first leg is judged against the legs AFTER it -- which is what "the legs around it"
-    has to mean at an end.
+    Nothing is padded with data now: an end leg is judged against the legs it actually
+    has on one side, which is what "the legs around it" can honestly mean at an end.
+    Every padding that invents a leg invents it out of the very leg being judged --
+    see the sibling test below, which "mirror" also failed.
     """
     from dimos.teleop.memory_world.route import bridgeable
 
@@ -212,6 +213,55 @@ def test_a_jump_at_either_end_of_the_drive_is_still_a_jump() -> None:
         jump = np.asarray(gaps) > 1.0
         assert not mask[jump].any(), f"{label}: the jump was bridged"
         assert mask[~jump].all(), f"{label}: a drive leg was not bridged"
+
+
+def test_a_jump_reflected_into_its_own_window_is_still_a_jump() -> None:
+    """The sixteenth shape. "mirror" padding does not repeat the EDGE leg -- and still
+    hands a leg near an end a copy of itself, two places away, which is just as good a
+    vote. Parked, one 1.2 m relocalisation, parked: the jump is the only moving leg in
+    the recording, its own reflection was the only thing near it that moved, so it
+    vouched for itself, the wall it crosses dropped from 100 to 90, and a 1.2 m route
+    ran through it.
+
+    An end leg now sees only what is really beside it, and when that is nothing, the
+    rest of the path -- where nothing else moves either, so the jump stands alone.
+    """
+    from dimos.teleop.memory_world.route import bridgeable
+
+    voxels = np.concatenate([_floor(0, 10, 0, 6), _wall(4.9, 5.1, -1.0, 7.0)])  # no doorway
+    parked = [[4.4, 3.0, BODY_Z]] * 2 + [[5.6, 3.0, BODY_Z]] * 20
+
+    mask = bridgeable(np.asarray(parked), VOXEL)
+    assert not mask[1], "the jump was bridged by its own reflection"
+
+    planner = RoutePlanner.from_voxels(voxels, np.asarray(parked), voxel_size=VOXEL)
+    assert planner.costs[planner.cell_of((5.0, 3.0))] == LETHAL, (
+        "the wall the jump's own reflection opened a door in"
+    )
+
+
+def test_a_drive_with_no_moving_leg_near_it_is_still_a_drive() -> None:
+    """The seventeenth shape, and the case a purely local rule cannot decide.
+
+    `_held_through_gaps` repeats the pose through a tf gap, and at eleven repeats per
+    pose -- a 1 Hz tf chain against an 11 Hz scan stream -- the steps either side of a
+    real one fall OUTSIDE the 21-leg window. Every step of the drive was then alone in a
+    window of pure stillness, took the one-cell answer, and the corridor the robot drove
+    planned no route. One and ten repeats, where a neighbour is still in reach, worked.
+
+    Alone, a leg is judged against the rest of the path's driving instead: here, ten
+    other one-metre steps.
+    """
+    walls = np.concatenate([_wall(-1.0, 11.0, 0.40, 0.55), _wall(-1.0, 11.0, -0.55, -0.40)])
+    body = np.asarray([[x + 0.5, 0.0, BODY_Z] for x in range(10)])
+    voxels = np.concatenate([_floor(-1, 11, -1, 1), walls, body])
+
+    for repeats in (1, 10, 11, 40):
+        held = [[float(x), 0.0, BODY_Z] for x in range(11) for _ in range(repeats)]
+        planner = RoutePlanner.from_voxels(voxels, np.asarray(held), voxel_size=VOXEL)
+        route = planner.plan((0.2, 0.0), (9.5, 0.0))
+        assert route is not None, f"{repeats} repeats per pose: the drive was refused"
+        assert route.length_m < 12.0, f"{repeats} repeats: routed around its own body"
 
 
 def test_a_path_that_mostly_stands_still_is_still_a_drive() -> None:
