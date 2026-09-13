@@ -781,8 +781,15 @@ def build_tf_tree(store: Store, tf_stream: str) -> TfTree:
 def tf_root(tree: Any) -> str | None:
     """The frame nothing hangs under (``odom`` or ``world``, typically): where the map lives.
     None when the tree is empty or has several roots."""
-    parents = {parent for parent, _ in tree._edges}
-    children = {child for _, child in tree._edges}
+    # A self-edge names its frame as both a parent and a child, and one is enough to
+    # subtract the real root out of the set. A duplicate or misconfigured broadcaster
+    # republishing a frame onto itself is a real ROS shape, and it made this return None
+    # for a tree that has exactly one root -- so `world_frame` kept its default, the tree
+    # did not have that frame, and every lookup afterwards returned None. A recording
+    # whose tf is otherwise perfectly usable placed nothing at all.
+    edges = [(parent, child) for parent, child in tree._edges if parent != child]
+    parents = {parent for parent, _ in edges}
+    children = {child for _, child in edges}
     roots = sorted(parents - children)
     return roots[0] if len(roots) == 1 else None
 

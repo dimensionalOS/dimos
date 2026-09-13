@@ -295,3 +295,52 @@ def test_navigate_works_against_an_embedding_answer(
 
     assert payload["length_m"] == 9.0, "did not route to the second place the embeddings found"
     assert payload["goal"] == [9.0, 0.0, 0.5]
+
+
+def test_an_analysis_answer_does_not_draw_a_route_to_where_you_are_standing(
+    memory_world, monkeypatch
+) -> None:
+    """`_navigate_to` refuses a route whose two ends are the same point, with a comment
+    recording it measured live -- three copies of one pose returned as a successful 200.
+
+    `_add_route_to_result` calls the same planner and only counted the points. It runs
+    automatically on every analysis answer carrying a focus point, so a zero-length line
+    was drawn on the map saying "here is the way there" about somewhere the viewer was
+    already standing.
+    """
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world.query import MemoryQueryResult
+
+    here = (1.25, 2.25, 0.0)
+    memory_world._viewer_position = here
+
+    costmap = SimpleNamespace(resolution=0.1)
+    streams = SimpleNamespace(
+        global_costmap=SimpleNamespace(last=lambda: SimpleNamespace(data=costmap))
+    )
+    monkeypatch.setattr(
+        memory_world,
+        "_ensure_store",
+        lambda: SimpleNamespace(list_streams=lambda: ["global_costmap"], streams=streams),
+    )
+
+    def one_place(costmap, goal, start):  # the shape `_navigate_to`'s comment describes
+        pose = SimpleNamespace(x=here[0], y=here[1], z=0.0)
+        return SimpleNamespace(poses=[pose, pose, pose])
+
+    monkeypatch.setattr("dimos.teleop.memory_world.hyperspace_answers.min_cost_astar", one_place)
+
+    result = MemoryQueryResult(answer="x", focus_point=here)
+    memory_world._add_route_to_result(result)
+    assert result.route is None, f"drew a route that goes nowhere: {result.route}"
+
+    # A real route still arrives.
+    def a_real_route(costmap, goal, start):
+        return SimpleNamespace(
+            poses=[SimpleNamespace(x=1.25, y=2.25, z=0.0), SimpleNamespace(x=4.25, y=2.25, z=0.0)]
+        )
+
+    monkeypatch.setattr("dimos.teleop.memory_world.hyperspace_answers.min_cost_astar", a_real_route)
+    memory_world._add_route_to_result(result)
+    assert result.route is not None and len(result.route.points) == 2

@@ -1621,3 +1621,34 @@ def test_a_finished_job_does_not_kill_its_successor() -> None:
         f"the successor was killed by the finished job's cleanup; outcomes: {outcomes}"
     )
     assert job.status()["embedding"] != "failed", job.status()
+
+
+def test_a_frame_published_onto_itself_does_not_hide_the_root() -> None:
+    """`tf_root` is `parents - children`, and a self-edge puts its frame in BOTH sets.
+
+    One such edge -- a duplicate or misconfigured broadcaster republishing a frame onto
+    itself, which is a real ROS shape -- subtracts the true root out of the set, so
+    `tf_root` returns None for a tree that has exactly one. `name_streams` then leaves
+    `world_frame` at its default, the tree does not have that frame, and every lookup
+    afterwards returns None: a recording whose tf is otherwise perfectly usable places
+    nothing at all.
+    """
+    from dimos.teleop.memory_world.recording import tf_root
+    from dimos.teleop.memory_world.tf_tree import TfTree
+
+    clean = TfTree()
+    clean.add("map", "odom", 0.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+    clean.add("odom", "base_link", 0.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+    assert tf_root(clean) == "map"
+
+    with_self_edge = TfTree()
+    with_self_edge.add("map", "map", 0.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+    with_self_edge.add("map", "odom", 0.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+    with_self_edge.add("odom", "base_link", 0.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+    assert tf_root(with_self_edge) == "map", "a frame published onto itself hid the root"
+
+    # Genuinely several roots is still None, which is what the None means.
+    forest = TfTree()
+    forest.add("a", "b", 0.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+    forest.add("c", "d", 0.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+    assert tf_root(forest) is None

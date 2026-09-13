@@ -311,3 +311,25 @@ def test_two_channels_number_one_photograph_the_same_without_sharing_a_table() -
     assert len(set(three.tolist())) == 3
     # Positive in int64, so nothing downstream that sorts or bincounts them trips.
     assert (three > 0).all()
+
+
+def test_a_voxel_index_past_the_packed_range_is_refused_not_wrapped() -> None:
+    """Each axis gets a fixed 21-bit field, and an index past it folded round silently.
+
+    A UTM-referenced map at 0.1 m voxels sent (5000000, 4000000, 10) to
+    (805698, -194304, 10) -- wrong, sign-flipped, and with nothing said, so every answer
+    came back placed somewhere else entirely. `replay.pack_keys` has refused exactly this
+    since it was written; this one, doing the same job for the other index, counted on
+    never being asked.
+    """
+    import numpy as np
+    import pytest
+
+    from dimos.teleop.memory_world.hyperspace_fast import pack_keys, unpack_keys
+
+    inside = np.array([[1000, -2000, 3], [0, 0, 0]], dtype=np.int64)
+    assert unpack_keys(pack_keys(inside)).tolist() == inside.tolist()
+
+    for far in ([[5_000_000, 4_000_000, 10]], [[0, 0, -(1 << 21)]]):
+        with pytest.raises(ValueError, match="packed range"):
+            pack_keys(np.asarray(far, dtype=np.int64))

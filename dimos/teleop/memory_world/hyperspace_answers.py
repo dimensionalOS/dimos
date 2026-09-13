@@ -913,7 +913,13 @@ class HyperspaceAnswers:
             # through. The round-41 fix only reached the other caller.
             half = costmap.resolution / 2
             points = [(pose.x + half, pose.y + half, pose.z + 0.08) for pose in route.poses]
-            if len(points) >= 2:
+            # Two points that are the same point are not a route. `_navigate_to` refuses
+            # exactly this, with a comment recording it measured live -- three copies of
+            # one pose returned as a successful 200 -- and this caller, which runs
+            # automatically on every analysis answer carrying a focus point, only counted
+            # them. A zero-length line drawn on the map says "here is the way there"
+            # about somewhere the viewer is already standing.
+            if len(points) >= 2 and math.dist(points[0], points[-1]) > 1e-9:
                 result.route = HighlightPath(
                     points=points,
                     label="Route to answer",

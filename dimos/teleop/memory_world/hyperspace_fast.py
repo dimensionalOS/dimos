@@ -131,7 +131,16 @@ class Pooled:
 
 
 def pack_keys(index: NDArray[np.integer]) -> NDArray[np.int64]:
-    index = np.asarray(index, dtype=np.int64) + _KEY_HALF
+    index = np.asarray(index, dtype=np.int64)
+    # Refused rather than wrapped. Each axis gets a fixed 21-bit field, and an index past
+    # it silently folded round: a UTM-referenced map at 0.1 m voxels sent (5000000,
+    # 4000000, 10) to (805698, -194304, 10) -- wrong, sign-flipped, and with nothing said,
+    # so every answer came back placed somewhere else entirely. `replay.pack_keys` has
+    # guarded exactly this since it was written; this one, doing the same job for the
+    # other index, did not.
+    if index.size and int(np.abs(index).max()) >= _KEY_HALF:
+        raise ValueError(f"voxel index outside the packed range of +-{_KEY_HALF}")
+    index = index + _KEY_HALF
     return (index[:, 0] * _KEY_SPAN + index[:, 1]) * _KEY_SPAN + index[:, 2]
 
 
