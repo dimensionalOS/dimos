@@ -22,7 +22,7 @@ from pathlib import Path
 from huggingface_hub import snapshot_download
 import numpy as np
 
-from dimos.manipulation.grasping.grasp_gen_x import (
+from dimos.manipulation.grasping.grasp_gen_x.module import (
     GRASPGENX_MODEL_REPO,
     GRASPGENX_MODEL_REVISION,
     GRASPGENX_MODEL_VERSION,
@@ -71,7 +71,7 @@ class GraspGenXRuntime:
     """Loaded GraspGenX sampler and exact tensor conversion boundary."""
 
     def __init__(self, config: GraspGenXConfig) -> None:
-        model_config = load_model_cfg(_gen_dir, _dis_dir, gen_pth=None, dis_pth=None)
+        model_config = load_model_cfg(str(_gen_dir), str(_dis_dir), gen_pth=None, dis_pth=None)
         for component in ("diffusion", "discriminator"):
             backbone = getattr(model_config, component).gripper_backbone
             if backbone not in SWEEP_VOLUME_ONLY_BACKBONES:

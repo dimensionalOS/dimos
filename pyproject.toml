@@ -28,6 +28,7 @@ include = ["dimos*"]
 # .py modules out of the wheel too).
 exclude = [
     "dimos.experimental.isolated_python.example.python*",
+    "dimos.manipulation.grasping.grasp_gen_x.python*",
     "dimos.web.websocket_vis.node_modules*",
     "dimos.web.command-center-extension*",
     "dimos.web.dimos_interface.src*",
@@ -50,12 +51,16 @@ exclude = [
     "**/*.svg",
     "**/*.tcss",
     "**/*.pyi",
+    "manipulation/grasping/grasp_gen_x/python/pyproject.toml",
+    "manipulation/grasping/grasp_gen_x/python/uv.lock",
+    "manipulation/grasping/grasp_gen_x/python/graspgenx_runtime/*.py",
 ]
 
 [tool.setuptools.exclude-package-data]
 # Trims data the recursive globs above would otherwise pull in: test fixtures
 # and the native (C++/nix) build tree, which is built separately.
 "dimos" = [
+    "manipulation/grasping/grasp_gen_x/python/graspgenx_runtime/test_*.py",
     "agents/fixtures/**",
     "agents/mcp/fixtures/**",
     "mapping/google_maps/fixtures/**",
@@ -118,6 +123,7 @@ dependencies = [
     "pydantic",
     "python-dotenv",
     "packaging>=24.0",
+    "tomli>=2.0; python_version < '3.11'",
     "filelock>=3.20,<4",
     "annotation-protocol>=1.4.0",
     "lazy_loader",
@@ -373,14 +379,6 @@ scene = [
     "usd-core>=23.11",
 ]
 
-graspgenx = [
-    "graspgenx",
-    "huggingface-hub>=0.30,<1",
-    "matplotlib>=3.7.1",
-    "torch>=2.1,<2.7",
-    "torchvision>=0.16,<0.22",
-]
-
 all = [
     "dimos[apriltag,cuda,drone,manipulation,misc,scene,unitree,webrtc]",
 ]
@@ -545,22 +543,12 @@ override-dependencies = [
     # uv picks importlib-metadata>=9 and cascades the otel stack down to 1.11.1,
     # whose stale _pb2.py files crash with protobuf>=6.
     "importlib-metadata<8.8.0",
-    # GraspGenX pins older versions that conflict with the current DimOS stack.
-    # These versions were validated with the pinned GraspGenX source revision.
-    "yourdfpy>=0.0.60",
-    "trimesh>=4.12",
-    "numpy>=2",
-    "timm>=1.0.17",
-    "huggingface-hub>=0.30,<1",
-    "diffusers>=0.29",
-    "pyopengl>=3.1.5",
     # Force the torch 2.7 line even if a transitive dep asks for newer.
     "torch>=2.1,<2.8",
     "torchvision>=0.16,<0.23",
 ]
 
 [tool.uv.sources]
-graspgenx = { git = "https://github.com/NVlabs/GraspGenX.git", rev = "b9429097728cb1c430dd78b92edf17ba318aad03" }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.
 torch = [
@@ -635,7 +623,8 @@ strict = true
 warn_unused_ignores = false
 untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/tool_.|.*/conftest.py*"
+# IsolatedPythonModule owns sibling python/ projects with separate environments.
+exclude = "^dimos/models/Detic(/|$)|(^|/)python/|.*/test_.|.*/tool_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [
@@ -654,8 +643,6 @@ module = [
     "etils",
     "faster_whisper",
     "geometry_msgs.*",
-    "graspgenx",
-    "graspgenx.*",
     "h5py",
     "h5py.*",
     "mcap",
@@ -757,6 +744,7 @@ max_size_kb = 75
 ignore = [
     "uv.lock",
     "dimos/experimental/isolated_python/example/python/uv.lock",
+    "dimos/manipulation/grasping/grasp_gen_x/python/uv.lock",
     "*/package-lock.json",
     "Cargo.lock",
     "*/Cargo.lock",
