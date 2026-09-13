@@ -589,6 +589,14 @@ def _holds_anything(store: Store, name: str) -> bool:
         return False
 
 
+def _channels(store: Store, name: str) -> int | None:
+    """How many channels *name*'s first image has, or None if this build cannot tell."""
+    try:
+        return int(next(iter(store.streams[name])).data.channels)
+    except Exception:
+        return None
+
+
 def refuse_if_a_rebuild_is_half_done(store: Store, name: str) -> None:
     """Stop before touching a stream an earlier rebuild died half way through.
 
@@ -736,8 +744,16 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
     # The stamps are the messages' own, not the stamps they were recorded at, and a
     # transform stamped 0 is read at its observation's: TfTree.from_stream does both, and
     # measuring it any other way puts the copy after the first frame the camera took.
-    # How the MOVING stream spells each frame. The folded edge is written back in that
-    # spelling when the moving stream has an opinion, because a reader outside this
+    # How the MOVING stream spells each frame, counting only the transforms that SURVIVE
+    # the fold. A stale copy of the folded edge is usually the one spelled the other way
+    # -- that is why the recording has two spellings at all -- and taking its word for it
+    # named the folded edge after something about to be deleted: measured, a recording
+    # whose tf carried `/base -> /cam` beside `odom -> base` answered `odom -> cam` 4.0
+    # before the fold and None after, the fold having written the static as `/base ->
+    # /cam` to chain with an edge that was no longer there.
+    #
+    # The folded edge is written back in that spelling when the moving stream has an
+    # opinion, and in the static's own when it has none, because a reader outside this
     # package need not canonicalise: dimos' own `MultiTBuffer` keys the raw pair, so a
     # tree left holding `odom -> base` and `/base -> /cam` has no chain through it at all.
     # Measured on a both-ways recording: `odom -> cam` read None after the fold where the
@@ -748,13 +764,14 @@ def fold_static_tf(store: Store, tf_stream: str, static_stream: str) -> int:
     for obs in store.streams[tf_stream]:
         kept = []
         for t in obs.data.transforms:
-            for name in (str(t.frame_id), str(t.child_frame_id)):
-                spelling.setdefault(canonical_frame(name), name)
             if (
                 canonical_frame(str(t.frame_id)),
                 canonical_frame(str(t.child_frame_id)),
-            ) not in folded:
-                kept.append(t)
+            ) in folded:
+                continue  # a stale copy, on its way out: its spelling leaves with it
+            for name in (str(t.frame_id), str(t.child_frame_id)):
+                spelling.setdefault(canonical_frame(name), name)
+            kept.append(t)
         said = [float(t.ts) or float(obs.ts) for t in obs.data.transforms] + [float(obs.ts)]
         rows.append((float(obs.ts), kept, min(said)))
     if not rows:
@@ -852,8 +869,9 @@ def detect_streams(store: Store, image: str | None = None) -> dict[str, Any]:
 
     *image* is the colour stream the caller chose, when it did: its camera_info
     is paired to that one (``<image>_camera_info``, else ``<image minus _image>_camera_info``).
-    Depth is picked by name alone, so a rig with two depth
-    cameras needs the caller to name its depth stream (``depth_stream_name``).
+    Depth is picked by name, preferring the streams whose images are single-channel, so a
+    rig with two depth cameras needs the caller to name its depth stream
+    (``depth_stream_name``).
 
     Recordings disagree about names — this rig calls its camera
     ``realsense_color_image`` where a Go2 recording says ``color_image`` — so
@@ -926,6 +944,23 @@ def detect_streams(store: Store, image: str | None = None) -> dict[str, Any]:
         candidates = rank(role, type_name)
         if depth_like is not None:
             candidates = [name for name in candidates if ("depth" in name.lower()) == depth_like]
+        if depth_like:
+            # Named like depth is not the same as BEING depth. A colourised depth image --
+            # what a `colorizer` node publishes for a person to look at -- is called
+            # `depth_color` and is three channels of RGB, and being the shorter name it
+            # outranked the real `camera_aligned_depth_to_color_image_raw` beside it;
+            # `patch_world_position` then raised "too many values to unpack" on it, since
+            # a metre is stored in one channel.
+            #
+            # It BREAKS THE TIE rather than disqualifying, because a stream says how many
+            # channels it has only as clearly as its codec lets it: a db whose images were
+            # written with the default jpeg codec hands back three channels of RGB
+            # whatever went in, and a recording whose only depth is stored that way should
+            # still be found. Real recordings decode depth as it was written -- the
+            # grocery recording's `depth_image` reads (720, 1280) uint16 DEPTH16.
+            candidates = sorted(
+                candidates, key=lambda name: _channels(store, name) not in (None, 1)
+            )
         return candidates[0] if candidates else None
 
     image = image if image in by_type.get("Image", []) else pick("image", "Image", depth_like=False)

@@ -534,3 +534,45 @@ def test_a_folded_static_is_written_in_the_moving_streams_spelling(tmp_path) -> 
             assert (f"{moving_slash}base", f"{moving_slash}cam") in pairs
         finally:
             store.stop()
+
+
+def test_the_spelling_comes_from_the_edges_that_survive_the_fold(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The stale copy is USUALLY the one spelled the other way -- that is why the
+    recording has two spellings at all -- and it is the copy the fold deletes.
+
+    Taking its word for how to spell the folded edge named that edge after something that
+    was about to disappear. Measured with dimos' own `MultiTBuffer`, which is what reads
+    these recordings: a tf carrying `/base -> /cam` (the stale copy) beside `odom ->
+    base`, with `base -> cam` on tf_static, answered `odom -> cam` 4.0 before the fold
+    and None after, the static having been written `/base -> /cam` to chain with an edge
+    that was no longer in the stream.
+
+    So the spelling is learnt only from the transforms that are KEPT.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.protocol.tf.tf import MultiTBuffer
+    from dimos.teleop.memory_world.recording import fold_static_tf
+
+    def chain(store, *streams: str) -> float | None:  # type: ignore[no-untyped-def]
+        buffer = MultiTBuffer(buffer_size=1e9)
+        for name in streams:
+            for obs in store.streams[name]:
+                buffer.receive_tfmessage(obs.data)
+        found = buffer.get("odom", "cam", 1.0, warn=False)
+        return None if found is None else found.translation.x
+
+    store = _tf_store(tmp_path)
+    try:
+        store.stream("tf_static", TFMessage).append(TFMessage(_edge("base", "cam", 3.0)), ts=1.0)
+        store.stream("tf", TFMessage).append(
+            # The stale copy first, so it is the one `setdefault` would have believed.
+            TFMessage(_edge("/base", "/cam", 9.0), _edge("odom", "base", 1.0)),
+            ts=1.0,
+        )
+        assert chain(store, "tf", "tf_static") == 4.0
+
+        fold_static_tf(store, "tf", "tf_static")
+
+        assert chain(store, "tf") == 4.0, "the fold severed a chain that worked"
+    finally:
+        store.stop()

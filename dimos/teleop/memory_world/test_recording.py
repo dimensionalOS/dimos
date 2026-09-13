@@ -1274,6 +1274,51 @@ def test_a_realsense_with_aligned_depth_has_a_depth_stream(tmp_path) -> None:  #
         store.stop()
 
 
+def test_a_colourised_depth_image_is_not_the_depth_stream(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Named like depth is not the same as being depth.
+
+    A `colorizer` node publishes depth as RGB for a person to look at, under a name like
+    `depth_color` -- which is shorter than `camera_aligned_depth_to_color_image_raw`, and
+    length is how the ranking breaks a tie between two equally well named candidates. The
+    RGB one won, and `patch_world_position` raises "too many values to unpack" on it,
+    because a metre is stored in ONE channel.
+
+    The count breaks the tie rather than disqualifying: a stream says how many channels it
+    has only as clearly as its codec lets it, and a db whose images went through the
+    default jpeg codec hands back three channels of RGB whatever went in. Depth in a real
+    recording is stored losslessly -- the grocery recording's `depth_image` is
+    `lz4+lcm`, and reads back (720, 1280) uint16 DEPTH16 -- which is what this fixture
+    does.
+    """
+    import numpy as np
+
+    from dimos.memory.codecs.lcm import LcmCodec
+    from dimos.memory.codecs.lz4 import Lz4Codec
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+    from dimos.teleop.memory_world.recording import detect_streams
+
+    store = SqliteStore(path=str(tmp_path / "colorized.db"), must_exist=False)
+    store.start()
+    try:
+        store.stream("camera_color_image_raw", Image).append(
+            Image(np.zeros((8, 8, 3), np.uint8)), ts=1.0
+        )
+        store.stream(
+            "camera_aligned_depth_to_color_image_raw", Image, codec=Lz4Codec(LcmCodec(Image))
+        ).append(Image(np.full((8, 8), 1000, np.uint16), format=ImageFormat.DEPTH16), ts=1.0)
+        store.stream("depth_color", Image, codec=Lz4Codec(LcmCodec(Image))).append(
+            Image(np.zeros((8, 8, 3), np.uint8), format=ImageFormat.RGB), ts=1.0
+        )
+
+        found = detect_streams(store)
+        assert found["depth"] == "camera_aligned_depth_to_color_image_raw", (
+            f"a three-channel image was picked as depth: {found['depth']}"
+        )
+    finally:
+        store.stop()
+
+
 def test_an_empty_original_beside_a_staged_copy_is_a_dead_rebuild(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """`rebuild_stream` drops the original and then writes it back, so a rebuild dying
     INSIDE that window leaves the name present and holding nothing.
