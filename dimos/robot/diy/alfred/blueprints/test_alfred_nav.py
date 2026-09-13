@@ -154,7 +154,7 @@ def test_home_pose_is_inside_every_joint_limit() -> None:
 
 def test_alfred_sim_still_composes() -> None:
     hardware_ids = {hw.hardware_id for hw in _coordinator_kwargs(alfred_sim)["hardware"]}
-    assert {PILLAR_HARDWARE_ID, OPENARM_HARDWARE_ID, "casters"} <= hardware_ids
+    assert {PILLAR_HARDWARE_ID, OPENARM_HARDWARE_ID} <= hardware_ids
 
 
 @pytest.mark.skipif(

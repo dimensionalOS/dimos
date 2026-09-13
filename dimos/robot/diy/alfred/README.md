@@ -70,7 +70,7 @@ engage the SSR brake, abort homing, and invalidate the position reference.
 
 The robot description (FlowBase, pillar lift, bimanual OpenArm v2.0, Mid-360, D455, D435)
 is the LFS archive `alfred_description`: `alfred_v1.urdf` (casters welded) and
-`alfred_v2.urdf` (eight steer/drive caster joints), built from the Onshape CAD by the
+`alfred_v2.urdf` (eight steer/drive caster joints, drawn but not driven), built from the Onshape CAD by the
 bundled `build_alfred_urdf.py`; its README has the frame table. `alfred_model.py` wraps it
 with the coordinator joint names. `pillar/lift` is zero at the top limit switch, positive
 up, range -0.500 .. -0.002 m, the same convention as the firmware.
@@ -78,7 +78,7 @@ up, range -0.500 .. -0.002 m, the same convention as the firmware.
 ```bash
 uv sync --extra misc --extra alfred --extra manipulation
 
-# Simulation: viser planner on alfred_v2 with mock lift, arms and casters.
+# Simulation: viser planner on alfred_v2 with mock lift and arms.
 dimos run alfred-sim
 
 # Robot. Point-LIO reads the host address on the lidar link; arms are real only with both

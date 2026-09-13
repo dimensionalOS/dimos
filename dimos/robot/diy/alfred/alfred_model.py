@@ -18,8 +18,9 @@ The URDFs come from the LFS archive alfred_description (built from the Onshape C
 bundled build_alfred_urdf.py). base_link is the FlowBase odometry origin on the floor,
 +X forward. Canonical joint names are the coordinator names: pillar/lift is zero at the top
 limit switch with positive up, so its range is -0.500..-0.002 m, matching the pillar
-firmware; openarm_{side}_joint{1..7} are the same on the arms; casters/* (alfred_v2 only)
-are display joints driven by CasterKinematics.
+firmware; openarm_{side}_joint{1..7} are the same on the arms. alfred_v2's eight caster
+joints are not coordinator joints: the urdf carries the links so they can be animated for
+display some other way, but nothing here drives them.
 """
 
 from __future__ import annotations
@@ -29,7 +30,6 @@ from pathlib import Path
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.diy.alfred.caster_kinematics import caster_coordinator_joints, caster_urdf_joints
 from dimos.robot.diy.alfred.pillar_connection import (
     PILLAR_HOME_POSITION_M,
     PILLAR_LIFT_JOINT,
@@ -50,14 +50,14 @@ ALFRED_PACKAGE_PATHS: dict[str, Path] = {
     "openarm_description": OPENARM_DESCRIPTION_ROOT,
 }
 ALFRED_V1_URDF = ALFRED_DESCRIPTION_ROOT / "urdf" / "alfred_v1.urdf"  # forks/wheels welded
-ALFRED_V2_URDF = ALFRED_DESCRIPTION_ROOT / "urdf" / "alfred_v2.urdf"  # + 8 caster joints
+# alfred_v2 adds eight steer/drive caster joints. They are display-only and nothing
+# commands them, so ``wheels`` selects the urdf and never changes the joint set.
+ALFRED_V2_URDF = ALFRED_DESCRIPTION_ROOT / "urdf" / "alfred_v2.urdf"
 
 ALFRED_LIFT_URDF_JOINT = "lift_joint"
 ALFRED_LIFT_LOWER_M = PILLAR_MIN_POSITION_M  # -0.500, bottom stop
 ALFRED_LIFT_UPPER_M = PILLAR_MAX_POSITION_M  # -0.002, just under the top switch
 ALFRED_LIFT_LINK = "lift_link"
-
-_CASTER_RENAMES = dict(zip(caster_urdf_joints(), caster_coordinator_joints(), strict=True))
 
 # Joint velocity limits come from the URDF; acceleration is not in URDF, so one default.
 ALFRED_JOINT_ACCELERATION_LIMIT = 1.0
@@ -69,7 +69,7 @@ ALFRED_V1_MODEL = (
 ALFRED_V2_MODEL = (
     RobotModel.from_file(ALFRED_V2_URDF, package_paths=ALFRED_PACKAGE_PATHS)
     .with_default_joint_acceleration_limit(ALFRED_JOINT_ACCELERATION_LIMIT)
-    .with_renamed_joints({ALFRED_LIFT_URDF_JOINT: PILLAR_LIFT_JOINT, **_CASTER_RENAMES})
+    .with_renamed_joints({ALFRED_LIFT_URDF_JOINT: PILLAR_LIFT_JOINT})
 )
 
 ALFRED_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
@@ -94,10 +94,9 @@ def alfred_arm_joints() -> list[str]:
     return [*openarm_urdf_joints("left"), *openarm_urdf_joints("right")]
 
 
-def alfred_joint_names(wheels: bool = False) -> list[str]:
-    """Canonical (coordinator) joint names: lift, both arms, then the casters with ``wheels``."""
-    joints = [PILLAR_LIFT_JOINT, *alfred_arm_joints()]
-    return [*joints, *caster_coordinator_joints()] if wheels else joints
+def alfred_joint_names() -> list[str]:
+    """Canonical (coordinator) joint names: the lift, then both arms."""
+    return [PILLAR_LIFT_JOINT, *alfred_arm_joints()]
 
 
 def alfred_planning_groups() -> list[PlanningGroupDefinition]:
@@ -131,7 +130,9 @@ def alfred_model_config(
     tf_extra_links defaults to none: the ManipulationModule publishes them under a fixed
     world frame, a second tf root next to a navigation tree.
     """
-    joint_names = alfred_joint_names(wheels)
+    joint_names = alfred_joint_names()
+    # pillar/lift is zero at the top limit switch, above everything it can reach, so an
+    # all-zero home is outside its range. Park it where `home` leaves the rail instead.
     home_joints = [0.0] * len(joint_names)
     home_joints[joint_names.index(PILLAR_LIFT_JOINT)] = PILLAR_HOME_POSITION_M
     return RobotModelConfig(
