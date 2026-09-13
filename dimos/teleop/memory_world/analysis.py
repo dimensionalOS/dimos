@@ -49,12 +49,26 @@ logger = setup_logger()
 
 
 def _end_group(child: subprocess.Popen[str]) -> None:
-    """TERM the analysis and everything it started, then KILL what is left."""
+    """TERM the analysis and everything it started, then KILL what is left.
+
+    Whether to send the second signal cannot be a question about the DIRECT CHILD, because
+    the signal does not go to the direct child: it goes to the group, and the reason the
+    group exists is that analysis code is free to spawn. Returning as soon as the child
+    was gone left a grandchild that ignores SIGTERM running for ever -- measured, a loop
+    appending to a file every 0.2 s was still writing after this returned, with
+    `analyze_memory` reporting EXECUTION_TIMEOUT.
+
+    The group id is read once, up front: the wait below reaps the child, and `getpgid` of
+    a reaped pid raises. A `killpg` on a group that is already empty raises too, and is
+    suppressed -- sending it costs nothing, and not sending it cost everything.
+    """
+    try:
+        group = os.getpgid(child.pid)
+    except (OSError, ProcessLookupError, PermissionError):
+        return
     for sig in (signal.SIGTERM, signal.SIGKILL):
-        if child.poll() is not None:
-            return
         with contextlib.suppress(OSError, ProcessLookupError, PermissionError):
-            os.killpg(os.getpgid(child.pid), sig)
+            os.killpg(group, sig)
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline and child.poll() is None:
             time.sleep(0.05)

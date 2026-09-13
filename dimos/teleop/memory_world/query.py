@@ -133,14 +133,36 @@ _NO_WRITES = (
     "analyze_memory reads the recording and cannot write to it."
 )
 
+def _read_only(value):
+    # A stream hands back MORE STREAMS: `limit`, `after`, `near`, `order_by` and a dozen
+    # others each return another view of the same table, with the same `append` on it.
+    # Forwarding them handed the analysis a writable object through a read-only wrapper --
+    # measured, `store.streams["x"].limit(1).append(9.0, ts=2.0)` put a row in the
+    # recording. So a stream that comes back out of one is wrapped again, and so is
+    # anything a method of one returns.
+    if isinstance(value, _ReadOnlyStream):
+        return value
+    if hasattr(value, "append") and hasattr(value, "data_type"):
+        return _ReadOnlyStream(value)
+    if callable(value):
+        def wrapped(*args, **kwargs):
+            return _read_only(value(*args, **kwargs))
+
+        return wrapped
+    return value
+
 class _ReadOnlyStream:
     # Analysis READS the recording. `open_recording` hands back a read-write store --
     # there is no read-only mode -- so a snippet that appended a stream left it in the
     # operator's recording for good, and `analyze_memory` reported success: measured, an
-    # injected stream survived and the .db grew by 24 KB. The read surface is spelt out
-    # rather than the writes being blacklisted, because a blacklist misses the one that
-    # matters -- the first attempt at this wrapped only objects that already had an
+    # injected stream survived and the .db grew by 24 KB. The store's read surface is
+    # spelt out rather than its writes blacklisted, because a blacklist misses the one
+    # that matters -- the first attempt at this wrapped only objects that already had an
     # `append`, so `store.stream(name, type)` handed back the real thing and wrote.
+    #
+    # A stream's surface is far too wide to spell out that way, so here the writes are
+    # named and everything else comes back through `_read_only`, which wraps whatever a
+    # forwarded method returns rather than trusting it.
     #
     # This stops the mistake, which is the whole of the risk: the code is whoever asked
     # the question's own, and one determined to write could import sqlite3 itself.
@@ -150,7 +172,7 @@ class _ReadOnlyStream:
     def __getattr__(self, name):
         if name in ("append", "extend", "truncate", "delete"):
             raise PermissionError(_NO_WRITES)
-        return getattr(self._inner, name)
+        return _read_only(getattr(self._inner, name))
 
     def __iter__(self):
         return iter(self._inner)
@@ -159,7 +181,7 @@ class _ReadOnlyStream:
         return len(self._inner)
 
     def __getitem__(self, key):
-        return self._inner[key]
+        return _read_only(self._inner[key])
 
 class _ReadOnlyStreams:
     def __init__(self, inner):

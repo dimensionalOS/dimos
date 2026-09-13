@@ -377,6 +377,102 @@ def test_analysis_cannot_write_to_the_recording(memory_world, tmp_path) -> None:
     assert read.success, read.message
 
 
+def test_a_filtered_view_of_a_stream_cannot_write_either(memory_world, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A stream hands back MORE STREAMS.
+
+    `limit`, `after`, `near`, `order_by` and a dozen others each return another view of
+    the same table, with the same `append` on it -- so forwarding them handed the analysis
+    a writable object through the read-only wrapper, and
+    `store.streams[name].limit(1).append(...)` put a row in the operator's recording.
+    """
+    import os
+
+    # The recording needs something in it to filter. The module's own store writes it:
+    # the rule under test is about what ANALYSIS may do, not the module.
+    memory_world._ensure_store().stream("measurements", dict).append({"x": 1}, ts=1.0)
+
+    before = os.path.getsize(memory_world.config.store_path)
+    outcome = memory_world.analyze_memory(
+        code=(
+            "store.streams['measurements'].limit(1).append({'x': 99}, ts=2.0)\n"
+            "result = {'answer': 'wrote'}\n"
+        ),
+        timeout=30.0,
+    )
+    after = os.path.getsize(memory_world.config.store_path)
+
+    assert not outcome.success, "analysis wrote through a filtered view and was told it worked"
+    assert "cannot write" in (outcome.message or ""), outcome.message
+    assert after == before, f"the recording grew by {after - before} bytes"
+
+    # `save(target)` is the same hole by another name: it appends every observation into
+    # the TARGET's backend, and the target is reached through the wrapper too.
+    memory_world._ensure_store().stream("copy_here", dict).append({"x": 0}, ts=0.0)
+    copied = memory_world.analyze_memory(
+        code=(
+            "n = store.streams['measurements'].save(store.streams['copy_here']).drain()\n"
+            "result = {'answer': 'copied %d' % n}\n"
+        ),
+        timeout=30.0,
+    )
+    assert not copied.success, "analysis copied rows into the recording through save()"
+    assert "cannot write" in (copied.message or ""), copied.message
+
+    # Filtering still READS, which is what those methods are for.
+    read = memory_world.analyze_memory(
+        code="result = {'answer': f\"{len(list(store.streams['measurements'].limit(1)))} row\"}\n",
+        timeout=30.0,
+    )
+    assert read.success, read.message
+    assert "1 row" in (memory_world._active_query_result or {}).get("answer", "")
+
+
+def test_a_grandchild_that_ignores_sigterm_is_killed_anyway(memory_world, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The second signal is not a question about the direct child.
+
+    `_end_group` returned as soon as the child it launched was gone, so the SIGKILL pass
+    never ran -- and the group is exactly where the things that ignore SIGTERM are.
+    Measured: the child died on the TERM, its grandchild went on appending to a file every
+    0.2 s for as long as the machine was up, and `analyze_memory` reported
+    EXECUTION_TIMEOUT.
+    """
+    import sys
+    import time
+
+    beat = tmp_path / "stubborn.txt"
+    stubborn = tmp_path / "stubborn.py"
+    stubborn.write_text(
+        "import signal, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        f"handle = open({str(beat)!r}, 'a')\n"
+        "while True:\n"
+        "    handle.write('x')\n"
+        "    handle.flush()\n"
+        "    time.sleep(0.2)\n"
+    )
+
+    outcome = memory_world.analyze_memory(
+        code=(
+            "import subprocess, sys, time\n"
+            f"subprocess.Popen([sys.executable, {str(stubborn)!r}])\n"
+            "time.sleep(30)\n"
+            "result = {'answer': 'never'}\n"
+        ),
+        timeout=2.0,
+    )
+    assert not outcome.success and outcome.error_code == "EXECUTION_TIMEOUT", outcome.message
+
+    time.sleep(0.5)
+    grew = beat.stat().st_size if beat.exists() else 0
+    assert grew > 0, "the fixture's grandchild never ran, so it proves nothing"
+    time.sleep(1.0)
+    still = beat.stat().st_size if beat.exists() else 0
+    assert still == grew, (
+        f"a grandchild that ignores SIGTERM outlived the timeout ({grew} -> {still} bytes)"
+    )
+    assert sys.executable  # the interpreter the grandchild ran under, for the record
+
+
 def test_a_timed_out_analysis_takes_what_it_started_with_it(memory_world, tmp_path) -> None:  # type: ignore[no-untyped-def]
     """`subprocess.run(timeout=...)` signals only the child it launched, and analysis
     code is free to spawn.
