@@ -5,7 +5,7 @@
 - **Case**: a discrete scenario being tested. This specifies the prompt sent to the agent, the environment, and scoring functions for the final world state and agent response.
 - **Environment**: this is either a dataset, a live simulation, or an image file being passed to the agent.
 - **Suite**: a collection of cases.
-- **Agent**: this is a wrapper that might contain an entire agent loop, a single request to an llm provider, and it may contain tools. Agents include our mcp client as well as a simple single-turn question/answer with no tools.
+- **Agent**: this is a wrapper that might contain an entire agent loop, a single request to an llm provider, and it may contain tools. Agents include our mcp client, pi, as well as a simple single-turn question/answer with no tools.
 
 ## Quick start (CLI)
 
@@ -15,6 +15,9 @@ dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.question_
 
 # same cases with observations withheld (the guessing ablation)
 dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.blind
+
+# same cases, the Pi coding agent over the recording as a file (needs pi on PATH)
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi
 
 # list suites
 dimos evals list
