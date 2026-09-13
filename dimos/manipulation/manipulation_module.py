@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from enum import Enum
 import math
@@ -26,7 +27,7 @@ import traceback
 from typing import Any, Literal, TypeAlias
 
 import numpy as np
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.coordinator import ControlCoordinator
@@ -167,6 +168,43 @@ class ManipulationModuleConfig(ModuleConfig):
     default_speed_scale: float = Field(default=1.0, gt=0.0, le=1.0)
     linear_speed_scale: float = Field(default=0.5, gt=0.0, le=1.0)
     execution_timeout: float = Field(default=60.0, gt=0.0)
+    # Coordinator joint name -> model joint name, so a twist base's odometry
+    # joints (chassis/vx, ...) can feed the model's planar base joints.
+    joint_state_aliases: dict[str, str] = Field(default_factory=dict)
+    # Trajectory task -> the joints it drives. Empty means the joint trajectory
+    # task drives every model joint; joints no task is bound to are preview-only.
+    trajectory_tasks: dict[str, list[str]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_trajectory_tasks(self) -> ManipulationModuleConfig:
+        model_joints = set(self.model.joint_names)
+        owners: dict[str, str] = {}
+        for task, joints in self.trajectory_tasks.items():
+            if unknown := sorted(set(joints) - model_joints):
+                raise ValueError(
+                    f"trajectory_tasks['{task}'] joints are not model joints: {unknown}"
+                )
+            for joint in joints:
+                if joint in owners:
+                    raise ValueError(
+                        f"Joint '{joint}' is bound to both '{owners[joint]}' and '{task}'"
+                    )
+                owners[joint] = task
+        return self
+
+    @model_validator(mode="after")
+    def _validate_joint_state_aliases(self) -> ManipulationModuleConfig:
+        model_joints = set(self.model.joint_names)
+        if unknown := sorted(set(self.joint_state_aliases.values()) - model_joints):
+            raise ValueError(f"joint_state_aliases targets are not model joints: {unknown}")
+        if shadowed := sorted(set(self.joint_state_aliases) & model_joints):
+            raise ValueError(f"joint_state_aliases sources are model joints: {shadowed}")
+        # Two sources for one model joint: whichever lands later in a JointState
+        # message would win, so the same message could mean two different poses.
+        targets = Counter(self.joint_state_aliases.values())
+        if collided := sorted(name for name, count in targets.items() if count > 1):
+            raise ValueError(f"joint_state_aliases targets are not unique: {collided}")
+        return self
 
 
 class ManipulationModule(Module):
@@ -309,7 +347,8 @@ class ManipulationModule(Module):
             if self._world_monitor is None:
                 return
 
-            name_to_idx = {name: i for i, name in enumerate(msg.name)}
+            aliases = self.config.joint_state_aliases
+            name_to_idx = {aliases.get(name, name): i for i, name in enumerate(msg.name)}
             names = self.config.model.joint_names
             missing = [name for name in names if name not in name_to_idx]
             if missing:
@@ -1053,6 +1092,7 @@ class ManipulationModule(Module):
             joint_names=self.config.model.joint_names,
             coordinator=self._control_coordinator,
             default_timeout=self.config.execution_timeout,
+            bindings=self.config.trajectory_tasks,
         )
 
     @rpc
@@ -1069,13 +1109,14 @@ class ManipulationModule(Module):
                 return ExecutionResult(ExecutionStatus.NO_PLAN, "No pending plan")
             if plan_id is not None and target_plan.plan_id != plan_id:
                 return ExecutionResult(ExecutionStatus.REJECTED, "Pending plan was replaced")
-            planar_base = self.config.model.model.planar_base
-            if planar_base is not None and set(planar_base.joint_names) & set(
-                target_plan.trajectory.joint_names
-            ):
+            bound = {
+                joint for joints in self.config.trajectory_tasks.values() for joint in joints
+            } or set(self.config.model.joint_names)
+            unowned = sorted(set(target_plan.trajectory.joint_names) - bound)
+            if unowned:
                 message = (
-                    "Planar-base trajectories support planning and preview only; "
-                    "a feedback base controller is required for execution"
+                    f"No trajectory task is bound to {unowned}; those joints support planning "
+                    "and preview only"
                 )
                 self._error_message = message
                 return ExecutionResult(ExecutionStatus.REJECTED, message)
@@ -1370,6 +1411,7 @@ class ManipulationModule(Module):
                     "Shutdown could not confirm coordinator trajectory safety: %s",
                     cancellation.message,
                 )
+            execution_manager.close()
 
         # Stop TF thread
         if self._tf_thread is not None:
