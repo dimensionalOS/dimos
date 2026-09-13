@@ -14,7 +14,7 @@
 
 import pytest
 
-from dimos.evals.scorers import numeric
+from dimos.evals.scorers import numeric, rank_order
 from dimos.evals.suites.dimsim_apartment_qa import SUITE
 from dimos.evals.types import AgentInfo, FinalMetrics, Outcome, RunExtra, Step, Trajectory
 
@@ -103,28 +103,73 @@ def test_measurement_answers(answer: str, score: float) -> None:
 @pytest.mark.parametrize(
     "answer,score",
     [
-        ("2.2, 1.1", 1),
-        ("1.1, 2.2", 1),
-        ("3.0, 1.1", 0.5),
-        ("2.2", 0),
-        ("true, 1.1", 0),
-        ("2.2, -1.1", 0),
-        ("2.2, 1.1, 0.5", 0),
-        ("2.2, nan", 0),
-        ("inf, 1.1", 0),
+        ("2.46", 1),
+        ("2.36", 1),
+        ("2.56", 1),
+        ("2.71", 0.5),
+        ("2.86", 0),
+        ("unknown", 0),
     ],
 )
-def test_table_dimension_scoring(answer: str, score: float) -> None:
-    case = next(c for c in SUITE if c.id.endswith("dining_table_dimensions"))
+def test_table_diagonal_scoring(answer: str, score: float) -> None:
+    case = next(c for c in SUITE if c.id.endswith("dining_table_diagonal"))
     assert case.grade(_outcome(answer)) == pytest.approx(score)
 
 
+@pytest.mark.parametrize(
+    "suffix,answer,score",
+    [
+        ("doorway_radius", "0.5", 1),
+        ("doorway_radius", "0.475", 1),
+        ("doorway_radius", "0.4", 0),
+        ("refrigerator_open_passability", "no", 1),
+        ("refrigerator_open_passability", "yes", 0),
+    ],
+)
+def test_new_references(suffix: str, answer: str, score: float) -> None:
+    case = next(c for c in SUITE if c.id.endswith(suffix))
+    assert case.grade(_outcome(answer)) == score
+
+
+@pytest.mark.parametrize(
+    "answer,score",
+    [
+        ("BCA", 1),
+        (" b, c, a ", 1),
+        ("B C A", 1),
+        ("BAC", 2 / 3),
+        ("CBA", 2 / 3),
+        ("CAB", 1 / 3),
+        ("ABC", 1 / 3),
+        ("ACB", 0),
+        ("B", 0),
+        ("BBA", 0),
+        ("BCD", 0),
+        ("BCAA", 0),
+        ('["B", "C", "A"]', 0),
+        ("BCA because the table is closest", 0),
+    ],
+)
+def test_path_ranking(answer: str, score: float) -> None:
+    case = next(c for c in SUITE if c.id.endswith("object_order_by_path"))
+    assert case.grade(_outcome(answer)) == pytest.approx(score)
+
+
+def test_ranking_scorer_generalizes_to_more_labels() -> None:
+    assert rank_order(
+        ("desk", "sofa", "bed", "fridge"), ("sofa", "desk", "bed", "fridge")
+    ) == pytest.approx(5 / 6)
+    with pytest.raises(ValueError):
+        rank_order("AAB", "ABC")
+
+
 def test_suite_contract() -> None:
-    assert len(SUITE) == 21
-    assert len({c.id for c in SUITE}) == 21
-    assert len({id(c.environment) for c in SUITE}) == 21
+    assert len(SUITE) == 23
+    assert len({c.id for c in SUITE}) == 23
+    assert len({id(c.environment) for c in SUITE}) == 23
+    assert not any(c.id.endswith("wall_cabinet_count") for c in SUITE)
     for case in SUITE:
-        assert {"dimsim", "apartment", "qa"} <= case.tags
+        assert case.tags
         assert case.timeout_s == 1200
         assert case.threshold == 1
         assert case.grade(_outcome("invalid answer")) == 0

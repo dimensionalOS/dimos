@@ -23,16 +23,18 @@ horizontal asset-center proxies. Tolerances are draft, not measurement precision
 Each case starts a fresh simulation with the authored spawn and static states.
 The runner/agent adapter owns tool access; prompts do not prescribe a navigation API.
 
-Pending references (not scored): maximum passable radius, refrigerator-open
-passability change, and closest object by collision-free travel distance.
+Doorway radius uses the agreed 2D width-only convention (minimum width / 2).
+Refrigerator-open passability is user-validated. Closest-by-route uses offline
+projected geometry: radius 0.25 m, body slab scene Y=0.12..0.9 m, and reachable
+regions within 0.75 m of each object's horizontal bounding box. The dining table
+wins at both 0.05 m and 0.025 m grid resolution; distances are approximate.
 """
 
 from collections.abc import Callable
-import math
 from typing import TypeVar
 
 from dimos.evals.environments.sim import Sim
-from dimos.evals.scorers import exact, first_number, numeric, yes_no
+from dimos.evals.scorers import exact, first_number, numeric, rank_order, ranking, yes_no
 from dimos.evals.types import EvalCase, Outcome, Suite
 
 T = TypeVar("T")
@@ -60,21 +62,6 @@ def _environment() -> Sim:
     )
 
 
-def _table_dimensions(o: Outcome) -> float:
-    """Accept swapped dimensions, but require both finite positive measurements."""
-    try:
-        length, width = sorted(
-            (float(v.strip()) for v in o.trajectory.final_answer.split(",")), reverse=True
-        )
-        if not all(math.isfinite(v) and v > 0 for v in (length, width)):
-            return 0.0
-    except ValueError:
-        return 0.0
-    return 0.5 * numeric(2.2, length, tolerance=0.1, band=0.4) + 0.5 * numeric(
-        1.1, width, tolerance=0.05, band=0.25
-    )
-
-
 SUITE: Suite = [
     EvalCase(
         id="dimsim_apartment_refrigerator_location",
@@ -82,7 +69,7 @@ SUITE: Suite = [
         environment=_environment(),
         grade=lambda o: exact("B", o.trajectory.final_answer.strip().upper()),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "object-location", "single-choice"}),
+        tags=frozenset({"object-location", "single-choice"}),
     ),
     EvalCase(
         id="dimsim_apartment_work_desk_location",
@@ -90,7 +77,7 @@ SUITE: Suite = [
         environment=_environment(),
         grade=lambda o: exact("D", o.trajectory.final_answer.strip().upper()),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "object-location", "single-choice"}),
+        tags=frozenset({"object-location", "single-choice"}),
     ),
     EvalCase(
         id="dimsim_apartment_bathtub_exists",
@@ -98,7 +85,7 @@ SUITE: Suite = [
         environment=_environment(),
         grade=_parsed(yes_no, lambda value: exact("yes", value)),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "existence", "boolean"}),
+        tags=frozenset({"existence", "boolean"}),
     ),
     EvalCase(
         id="dimsim_apartment_washing_machine_exists",
@@ -106,7 +93,7 @@ SUITE: Suite = [
         environment=_environment(),
         grade=_parsed(yes_no, lambda value: exact("no", value)),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "existence", "boolean", "draft-reference"}),
+        tags=frozenset({"existence", "boolean", "draft-reference"}),
     ),
     EvalCase(
         id="dimsim_apartment_dining_chair_count",
@@ -114,7 +101,7 @@ SUITE: Suite = [
         environment=_environment(),
         grade=_parsed(first_number, lambda value: exact(4, value)),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "object-count", "count"}),
+        tags=frozenset({"object-count", "count"}),
     ),
     EvalCase(
         id="dimsim_apartment_bedside_table_count",
@@ -122,15 +109,7 @@ SUITE: Suite = [
         environment=_environment(),
         grade=_parsed(first_number, lambda value: exact(2, value)),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "object-count", "count"}),
-    ),
-    EvalCase(
-        id="dimsim_apartment_wall_cabinet_count",
-        inputs="How many wall-mounted kitchen cabinets are in the house? Return only the count.",
-        environment=_environment(),
-        grade=_parsed(first_number, lambda value: exact(3, value)),
-        timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "object-count", "count"}),
+        tags=frozenset({"object-count", "count"}),
     ),
     EvalCase(
         id="dimsim_apartment_every_desk_has_laptop",
@@ -138,9 +117,7 @@ SUITE: Suite = [
         environment=_environment(),
         grade=_parsed(yes_no, lambda value: exact("yes", value)),
         timeout_s=1200.0,
-        tags=frozenset(
-            {"dimsim", "apartment", "qa", "spatial-relation", "boolean", "draft-reference"}
-        ),
+        tags=frozenset({"spatial-relation", "boolean", "draft-reference"}),
     ),
     EvalCase(
         id="dimsim_apartment_room_count",
@@ -148,7 +125,7 @@ SUITE: Suite = [
         environment=_environment(),
         grade=_parsed(first_number, lambda value: exact(4, value)),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "rooms", "count"}),
+        tags=frozenset({"rooms", "count"}),
     ),
     EvalCase(
         id="dimsim_apartment_largest_room_area",
@@ -156,9 +133,7 @@ SUITE: Suite = [
         environment=_environment(),
         grade=_parsed(first_number, lambda value: numeric(37.8, value, tolerance=2.5, band=8.0)),
         timeout_s=1200.0,
-        tags=frozenset(
-            {"dimsim", "apartment", "qa", "rooms", "area", "numeric", "draft-reference"}
-        ),
+        tags=frozenset({"rooms", "area", "numeric", "draft-reference"}),
     ),
     EvalCase(
         id="dimsim_apartment_refrigerator_height",
@@ -166,15 +141,15 @@ SUITE: Suite = [
         environment=_environment(),
         grade=_parsed(first_number, lambda value: numeric(1.8, value, tolerance=0.1, band=0.4)),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "dimensions", "numeric"}),
+        tags=frozenset({"dimensions", "numeric"}),
     ),
     EvalCase(
-        id="dimsim_apartment_dining_table_dimensions",
-        inputs="What are the approximate length and width of the dining table, in meters? Return only two positive numbers separated by a comma: length, width.",
+        id="dimsim_apartment_dining_table_diagonal",
+        inputs="What is the approximate diagonal length of the rectangular dining table, in meters? Return only the number.",
         environment=_environment(),
-        grade=_table_dimensions,
+        grade=_parsed(first_number, lambda value: numeric(2.46, value, tolerance=0.1, band=0.4)),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "dimensions", "numeric"}),
+        tags=frozenset({"dimensions", "numeric"}),
     ),
     EvalCase(
         id="dimsim_apartment_bed_footprint_area",
@@ -182,7 +157,7 @@ SUITE: Suite = [
         environment=_environment(),
         grade=_parsed(first_number, lambda value: numeric(3.52, value, tolerance=0.25, band=1.0)),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "dimensions", "area", "numeric"}),
+        tags=frozenset({"dimensions", "area", "numeric"}),
     ),
     EvalCase(
         id="dimsim_apartment_house_perimeter",
@@ -190,7 +165,7 @@ SUITE: Suite = [
         environment=_environment(),
         grade=_parsed(first_number, lambda value: numeric(44.0, value, tolerance=1.0, band=5.0)),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "geometry", "perimeter", "numeric"}),
+        tags=frozenset({"geometry", "perimeter", "numeric"}),
     ),
     EvalCase(
         id="dimsim_apartment_yard_door_count",
@@ -198,7 +173,15 @@ SUITE: Suite = [
         environment=_environment(),
         grade=_parsed(first_number, lambda value: exact(2, value)),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "doors", "count", "draft-reference"}),
+        tags=frozenset({"doors", "count", "draft-reference"}),
+    ),
+    EvalCase(
+        id="dimsim_apartment_doorway_radius",
+        inputs="What is the largest robot radius that can fit through all the doorways in 2D, in meters? Return only the number.",
+        environment=_environment(),
+        grade=_parsed(first_number, lambda value: numeric(0.5, value, tolerance=0.025, band=0.1)),
+        timeout_s=1200.0,
+        tags=frozenset({"clearance", "numeric"}),
     ),
     EvalCase(
         id="dimsim_apartment_refrigerator_tv_distance",
@@ -206,7 +189,7 @@ SUITE: Suite = [
         environment=_environment(),
         grade=_parsed(first_number, lambda value: numeric(8.37, value, tolerance=0.3, band=1.5)),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "distance", "numeric", "draft-reference"}),
+        tags=frozenset({"distance", "numeric", "draft-reference"}),
     ),
     EvalCase(
         id="dimsim_apartment_refrigerator_state",
@@ -214,7 +197,7 @@ SUITE: Suite = [
         environment=_environment(),
         grade=lambda o: exact("A", o.trajectory.final_answer.strip().upper()),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "object-state", "single-choice"}),
+        tags=frozenset({"object-state", "single-choice"}),
     ),
     EvalCase(
         id="dimsim_apartment_kitchen_bathroom_crossings",
@@ -222,7 +205,15 @@ SUITE: Suite = [
         environment=_environment(),
         grade=_parsed(first_number, lambda value: exact(3, value)),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "connectivity", "count", "draft-reference"}),
+        tags=frozenset({"connectivity", "count", "draft-reference"}),
+    ),
+    EvalCase(
+        id="dimsim_apartment_refrigerator_open_passability",
+        inputs="Would opening the refrigerator change whether a robot of radius 0.25 m can pass from the kitchen doorway to the sink? Return only yes or no.",
+        environment=_environment(),
+        grade=_parsed(yes_no, lambda value: exact("no", value)),
+        timeout_s=1200.0,
+        tags=frozenset({"counterfactual", "clearance", "boolean"}),
     ),
     EvalCase(
         id="dimsim_apartment_wall_separated_objects",
@@ -230,9 +221,7 @@ SUITE: Suite = [
         environment=_environment(),
         grade=lambda o: exact("C", o.trajectory.final_answer.strip().upper()),
         timeout_s=1200.0,
-        tags=frozenset(
-            {"dimsim", "apartment", "qa", "spatial-relation", "single-choice", "draft-reference"}
-        ),
+        tags=frozenset({"spatial-relation", "single-choice", "draft-reference"}),
     ),
     EvalCase(
         id="dimsim_apartment_closest_to_sofa",
@@ -240,9 +229,15 @@ SUITE: Suite = [
         environment=_environment(),
         grade=lambda o: exact("B", o.trajectory.final_answer.strip().upper()),
         timeout_s=1200.0,
-        tags=frozenset(
-            {"dimsim", "apartment", "qa", "spatial-ordering", "single-choice", "draft-reference"}
-        ),
+        tags=frozenset({"spatial-ordering", "single-choice", "draft-reference"}),
+    ),
+    EvalCase(
+        id="dimsim_apartment_object_order_by_path",
+        inputs="What is the order of these objects from nearest to farthest from the sofa by collision-free travel distance for a robot of radius 0.25 m? A: Refrigerator; B: Dining table; C: Work desk. Return all three letters once, in order, optionally separated by commas. Do not include an explanation.",
+        environment=_environment(),
+        grade=_parsed(ranking, lambda value: rank_order("BCA", value)),
+        timeout_s=1200.0,
+        tags=frozenset({"spatial-ordering", "ranking", "draft-reference"}),
     ),
     EvalCase(
         id="dimsim_apartment_bedside_table_coverage",
@@ -250,6 +245,6 @@ SUITE: Suite = [
         environment=_environment(),
         grade=_parsed(yes_no, lambda value: exact("no", value)),
         timeout_s=1200.0,
-        tags=frozenset({"dimsim", "apartment", "qa", "coverage", "boolean", "draft-reference"}),
+        tags=frozenset({"coverage", "boolean", "draft-reference"}),
     ),
 ]
