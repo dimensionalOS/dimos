@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
 from pydantic import ValidationError
 import pytest
 
@@ -48,3 +50,11 @@ def test_encoding_threads_require_rust() -> None:
 
     config = GlobalConfig.model_validate({"record_engine": "rust", "record_encoding_threads": 8})
     assert config.record_encoding_threads == 8
+
+
+def test_dotenv_is_ignored_under_pytest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / ".env").write_text("ROBOT_IP=192.0.2.17\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ROBOT_IP", raising=False)
+
+    assert GlobalConfig().robot_ip is None
