@@ -27,6 +27,8 @@ subclass): factories return evaluators called with
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import json
+import math
 from typing import TypeVar
 
 T = TypeVar("T")
@@ -34,6 +36,79 @@ T = TypeVar("T")
 
 def exact(expected: T, got: T) -> float:
     return float(expected == got)
+
+
+def boolean(expected: bool, got: str, *, key: str) -> float:
+    """Exact match for a named JSON boolean; malformed replies receive zero."""
+    try:
+        answer = json.loads(got)
+    except (json.JSONDecodeError, TypeError):
+        return 0.0
+    if not isinstance(answer, dict):
+        return 0.0
+    return float(answer.get(key) is expected)
+
+
+def numeric(expected: float, got: str, *, key: str, tolerance: float, band: float) -> float:
+    """Grade a JSON number: full credit within tolerance, linear to zero at band."""
+    if not 0 <= tolerance < band:
+        raise ValueError("Require 0 <= tolerance < band")
+    try:
+        answer = json.loads(got)
+        value = answer.get(key) if isinstance(answer, dict) else None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return 0.0
+        value = float(value)
+    except (json.JSONDecodeError, TypeError, OverflowError):
+        return 0.0
+    if not math.isfinite(value):
+        return 0.0
+    error = abs(value - expected)
+    return max(0.0, min(1.0, (band - error) / (band - tolerance)))
+
+
+def point(
+    expected: tuple[float, float], got: str, *, key: str, tolerance: float, band: float
+) -> float:
+    """Grade a JSON XY point by Euclidean distance with full-credit tolerance."""
+    if not 0 <= tolerance < band:
+        raise ValueError("Require 0 <= tolerance < band")
+    try:
+        answer = json.loads(got)
+        value = answer.get(key) if isinstance(answer, dict) else None
+        if not isinstance(value, list) or len(value) != 2:
+            return 0.0
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in value):
+            return 0.0
+        coordinates = [float(v) for v in value]
+    except (json.JSONDecodeError, TypeError, OverflowError):
+        return 0.0
+    if not all(math.isfinite(v) for v in coordinates):
+        return 0.0
+    error = math.dist(expected, coordinates)
+    return max(0.0, min(1.0, (band - error) / (band - tolerance)))
+
+
+def multi_select(expected: Sequence[str], got: str, *, options: Sequence[str]) -> float:
+    """Score an {"options": [...]} reply, deducting one correct choice's credit per wrong choice.
+
+    Deduplicate selections, reject malformed/unknown labels, and clamp to [0, 1].
+    """
+    try:
+        answer = json.loads(got)
+    except (json.JSONDecodeError, TypeError):
+        return 0.0
+    if not isinstance(answer, dict) or set(answer) != {"options"}:
+        return 0.0
+    selected = answer["options"]
+    if not isinstance(selected, list) or any(
+        not isinstance(item, str) or item not in options for item in selected
+    ):
+        return 0.0
+    choices, correct = set(selected), set(expected)
+    if not correct:
+        return float(not choices)
+    return max(0.0, (len(choices & correct) - len(choices - correct)) / len(correct))
 
 
 # -- parsers (model text -> typed answer) -----------------------------------------
