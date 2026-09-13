@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Pull every LFS archive the tests reference, so no test downloads inside its own timeout.
+# Pull every LFS archive the code references, so no test downloads inside its own timeout.
 set -euo pipefail
 include=()
 for f in data/.lfs/*.tar.gz; do
   n=$(basename "$f" .tar.gz)
-  if grep -rqF -e "\"$n\"" -e "'$n'" --include='test_*.py' --include='conftest.py' dimos; then
+  if grep -rqF -e "\"$n\"" -e "'$n'" --include='*.py' dimos; then
     include+=("$f")
   fi
 done

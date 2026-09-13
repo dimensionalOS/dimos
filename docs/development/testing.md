@@ -4,7 +4,7 @@
 
 Before the first run:
 
-- `bin/fetch-test-data` pulls the LFS archives tests use. Tests otherwise pull lazily, and a slow link trips the 600 s per-test timeout.
+- `bin/fetch-test-data` pulls the LFS archives the code references. Tests otherwise pull lazily, and a slow link trips the 600 s per-test timeout.
 - `uv run playwright install chromium firefox` for the browser tests.
 - On a laptop pass `--numprocesses=8` for the default suite and `--numprocesses=4` for `bin/pytest-all`. `auto` starts one worker per core and exhausts memory.
 
