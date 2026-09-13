@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -133,6 +134,9 @@ def test_rigid_transform_relational_validation() -> None:
 
 
 def test_host_collection_excludes_the_nested_runtime_suite() -> None:
+    # This is a new pytest controller, not an outer xdist worker. Give it its
+    # own run ID so its watchdog cannot sweep the parent session's workers.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("PYTEST_XDIST_")}
     result = subprocess.run(
         [
             sys.executable,
@@ -146,6 +150,7 @@ def test_host_collection_excludes_the_nested_runtime_suite() -> None:
         capture_output=True,
         text=True,
         timeout=60,
+        env=env,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
