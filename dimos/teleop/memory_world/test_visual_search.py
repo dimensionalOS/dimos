@@ -674,6 +674,7 @@ def test_the_siglip_fallback_answers_end_to_end() -> None:
                 place_radius_m=1.0,
                 max_places=3,
                 object_radius_m=0.25,
+                world_frame="odom",
             )
 
         def _ensure_visual_index(self):  # type: ignore[no-untyped-def]
@@ -846,6 +847,7 @@ def _siglip_module(places_from_depth: list, places_from_search: list):
                 place_radius_m=1.0,
                 max_places=3,
                 object_radius_m=0.25,
+                world_frame="odom",
             )
 
         def _ensure_visual_index(self):  # type: ignore[no-untyped-def]
@@ -1103,6 +1105,82 @@ def test_a_crop_is_not_a_resize_and_only_a_resize_scales_the_focal_length() -> N
     assert where[1] == pytest.approx((240 - 480) * 2.0 / 900.0), where
 
 
+def test_the_answer_route_can_describe_an_embedding_answer() -> None:
+    """`/answer` is what scripts and the tour read the last answer from.
+
+    It was written against the heat map's shape -- `answer.text`, `.frame`, `.n_voxels`,
+    `.stats`, `.seconds`, and `c.summary()` on each cluster -- and the embedding engine
+    put a hand-rolled namespace in `_last_answer` carrying only what `/navigate` needed.
+    Every call then raised `AttributeError: 'types.SimpleNamespace' object has no
+    attribute 'text'` and returned 500, and since the embedding engine answers every
+    question, that was every call. Verified against the running demo before the fix.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    from dimos.teleop.memory_world.hyperspace_answers import _cluster_summary
+    from dimos.teleop.memory_world.visual_answers import VisualAnswers
+    from dimos.teleop.memory_world.visual_search import Place
+
+    place = Place(position=(1.0, 2.0, 3.0), similarity=0.42, source_id=3, ts=1.0, views=2)
+
+    class Module(VisualAnswers):
+        def __init__(self) -> None:
+            self._store_lock = threading.RLock()
+            self._clients_lock = threading.RLock()
+            self._last_answer = (None, None)
+            self.config = SimpleNamespace(
+                store_path="/nowhere/walk.db",
+                search_top_k=5,
+                place_radius_m=1.0,
+                max_places=3,
+                object_radius_m=0.25,
+                world_frame="odom",
+            )
+
+        def _ensure_visual_index(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(count=lambda: 7, search=lambda *a, **k: [])
+
+        def _locate_objects(self, phrase):  # type: ignore[no-untyped-def]
+            return [place]
+
+        def _markers_near(self, positions):  # type: ignore[no-untyped-def]
+            return []
+
+        def _add_route_to_result(self, result) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def _publish_query_result(self, result) -> str:  # type: ignore[no-untyped-def]
+            return "qid"
+
+        def _publish_query_images(self, query_id, phrase, places) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+    module = Module()
+    assert module._find_with_siglip("a basket", 0.0).success
+    answer, _ = module._last_answer
+    assert answer is not None
+
+    # Exactly what the route reads, in the order it reads it.
+    payload = {
+        "text": answer.text,
+        "frame": answer.frame,
+        "voxels": int(answer.n_voxels),
+        "clusters": [_cluster_summary(c) for c in answer.clusters],
+        "stats": {k: v for k, v in answer.stats.items() if not isinstance(v, dict | list)},
+        "seconds": round(float(answer.seconds), 3),
+    }
+    assert "a basket" in payload["text"]
+    assert payload["frame"] == "odom"
+    assert len(payload["clusters"]) == 1
+    # The same keys a heat map's cluster has, so a script needs no per-engine branch.
+    assert {"index", "centre", "radius", "score", "peak", "n_views"} <= set(payload["clusters"][0])
+    # And `/navigate` still finds what IT reads on the very same objects.
+    assert answer.clusters[0].index == 0
+    assert tuple(answer.clusters[0].centre) == (1.0, 2.0, 3.0)
+    assert answer.clusters[0].radius > 0
+
+
 def test_every_evidence_photo_says_which_place_it_belongs_to() -> None:
     """`/navigate`'s `pose_of` refuses any image whose `cluster` is not the place being
     routed to, and the embedding answer's headers carried no `cluster` at all.
@@ -1210,6 +1288,7 @@ def test_an_embedding_answer_carries_the_places_the_viewer_renders() -> None:
                 place_radius_m=1.0,
                 max_places=3,
                 object_radius_m=0.25,
+                world_frame="odom",
             )
 
         def _ensure_visual_index(self):  # type: ignore[no-untyped-def]

@@ -109,6 +109,18 @@ class NavigateRequest(BaseModel):
     view: int | None = None
 
 
+def _cluster_summary(cluster: Any) -> dict[str, Any]:
+    """One cluster as json, whichever engine made it.
+
+    Hyperspace's `Cluster` is a dataclass with `summary()`; the embedding engine
+    publishes `ClusterSummary`, a pydantic model with the same keys.
+    """
+    summary = getattr(cluster, "summary", None)
+    if callable(summary):
+        return dict(summary())
+    return dict(cluster.model_dump(mode="json"))
+
+
 class HyperspaceAnswers:
     """Heat-map answers for the memory world. Expects the host module's
     ``config``, ``_ensure_store``, ``_broadcast``, ``_publish_query_result``,
@@ -986,11 +998,17 @@ class HyperspaceAnswers:
             answer, _ = self._last_answer
             if answer is None:
                 return {"text": None, "clusters": []}
+            # Through getattr, because there are two kinds of answer here and only one of
+            # them is a heat map. The embedding answer has places and no voxel grid, and
+            # reading `answer.text` off it raised AttributeError -> 500 on every call --
+            # which, now that the embedding engine answers every question, was every call.
+            # A route this one is for scripts and the tour must degrade, not fail.
+            stats = getattr(answer, "stats", None) or {}
             return {
-                "text": answer.text,
-                "frame": answer.frame,
-                "voxels": answer.n_voxels,
-                "clusters": [c.summary() for c in answer.clusters],
-                "stats": {k: v for k, v in answer.stats.items() if not isinstance(v, dict | list)},
-                "seconds": round(answer.seconds, 3),
+                "text": getattr(answer, "text", None),
+                "frame": getattr(answer, "frame", None),
+                "voxels": int(getattr(answer, "n_voxels", 0)),
+                "clusters": [_cluster_summary(c) for c in answer.clusters],
+                "stats": {k: v for k, v in stats.items() if not isinstance(v, dict | list)},
+                "seconds": round(float(getattr(answer, "seconds", 0.0)), 3),
             }

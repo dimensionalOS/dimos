@@ -467,12 +467,19 @@ class VisualAnswers:
         # fields per place, an index and a centre, so the places give it those directly
         # rather than the route growing a second way to be asked.
         with self._clients_lock:
+            # The SAME ClusterSummary objects the answer published, not a look-alike.
+            # `/navigate` reads index, centre and radius off these, and `/answer` asks
+            # each for a summary -- a hand-rolled namespace satisfied the first and 500'd
+            # the second. The fields `/answer` reads off the ANSWER are here too, so an
+            # embedding answer describes itself the way a heat map does.
             self._last_answer = (
                 SimpleNamespace(
-                    clusters=[
-                        SimpleNamespace(index=i, centre=tuple(place.position), radius=radius)
-                        for i, place in enumerate(places)
-                    ]
+                    clusters=clusters,
+                    text=result.answer,
+                    frame=self.config.world_frame,
+                    n_voxels=0,  # places, not a voxel grid
+                    stats={"places": len(places), "located": located},
+                    seconds=time.monotonic() - started,
                 ),
                 query_id,
             )
