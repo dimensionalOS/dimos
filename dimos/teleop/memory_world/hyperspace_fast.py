@@ -156,7 +156,13 @@ def pack_probe_keys(index: NDArray[np.int64]) -> NDArray[np.int64]:
     index = np.asarray(index, dtype=np.int64)
     if not index.size:
         return np.empty(0, dtype=np.int64)
-    inside = (np.abs(index).max(axis=1) < _KEY_HALF) if index.ndim == 2 else np.array([True])
+    if index.ndim != 2 or index.shape[1] != 3:
+        # The `ndim == 2` test that used to stand here implied a single coordinate was
+        # allowed, and it was not: a `(3,)` array made a length-1 mask for a length-3
+        # result and raised "boolean index did not match indexed array". Both callers pass
+        # (N, 3), and `pack_keys` takes nothing else, so say so rather than half-pretend.
+        raise ValueError(f"expected an (N, 3) array of voxel indices, got {index.shape}")
+    inside = np.abs(index).max(axis=1) < _KEY_HALF
     keys = np.full(len(index), -1, dtype=np.int64)
     if inside.any():
         keys[inside] = pack_keys(index[inside])

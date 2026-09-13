@@ -359,3 +359,11 @@ def test_a_voxel_on_the_edge_of_the_packed_range_can_still_be_probed() -> None:
     keys = pack_probe_keys(past)
     assert keys[0] == -1
     assert keys[1] == pack_keys(past[1:])[0]
+
+    # A SINGLE coordinate is not an input. The shape test here used to imply it was, and
+    # then made a length-1 mask for a length-3 result: `pack_probe_keys(array([5, 6, 7]))`
+    # raised "boolean index did not match indexed array along axis 0". Both callers pass
+    # (N, 3) and `pack_keys` takes nothing else, so it says so.
+    with pytest.raises(ValueError, match=r"\(N, 3\)"):
+        pack_probe_keys(np.array([5, 6, 7], dtype=np.int64))
+    assert pack_probe_keys(np.empty(0, dtype=np.int64)).tolist() == []
