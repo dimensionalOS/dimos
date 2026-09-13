@@ -29,10 +29,23 @@ live under `~/.cache/dimos/isolated-python` (or `$XDG_CACHE_HOME/dimos/isolated-
 Pinned checkpoints download from Hugging Face during module startup and reuse
 its normal cache under `~/.cache/huggingface`.
 
-Source checkouts supply their current dimOS code to the runtime. Wheel installations
-resolve the exact installed dimOS version from the configured package source; that
-version must be available there. For a locally built wheel, make it available through
-uv's `--find-links` configuration (`UV_FIND_LINKS`) before launching.
+Source checkouts supply their current dimOS code to the runtime. Installed hosts
+select the runtime's dimOS dependency using their installation source:
+
+| Host installation | Runtime dimOS source |
+| --- | --- |
+| Source checkout or editable checkout | Current checkout, installed editable |
+| Package index | Unpinned `dimos` from the configured index |
+| Git URL | Original repository at the host's resolved commit |
+| Direct wheel or source archive | Original artifact URL, preserving its recorded hash |
+| Non-editable local source directory | Recorded directory's current contents |
+
+Direct sources come from the installed distribution's `direct_url.json` metadata.
+Git installs do not require a matching PyPI release. Recorded sources must remain
+accessible when uv prepares the environment; keep locally installed wheel files
+available. Invalid metadata or unavailable sources fail preparation rather than
+silently selecting a different index build. Index installs intentionally allow a
+different dimOS version in the child and do not guarantee host/runtime compatibility.
 
 To validate GPU proposals without moving a robot, run from a source checkout:
 

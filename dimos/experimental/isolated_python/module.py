@@ -17,8 +17,9 @@
 from __future__ import annotations
 
 from hashlib import sha256
-from importlib.metadata import version
+from importlib.metadata import distribution
 import inspect
+import json
 import os
 from pathlib import Path
 import pickle
@@ -27,6 +28,7 @@ import subprocess
 import threading
 import time
 from typing import Any, ClassVar
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from dimos.constants import CACHE_DIR, DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
@@ -39,6 +41,58 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+def _installed_dimos_requirement() -> str:
+    """Reuse a direct installation's source; leave index installations unpinned."""
+    recorded = distribution("dimos").read_text("direct_url.json")
+    if recorded is None:
+        # Installed index hosts intentionally accept the newest compatible DimOS.
+        return "dimos"
+    try:
+        origin = json.loads(recorded)
+        url = origin["url"]
+        if not isinstance(url, str) or not urlsplit(url).scheme:
+            raise ValueError("expected an absolute source URL")
+        kinds = [key for key in ("vcs_info", "archive_info", "dir_info") if key in origin]
+        if len(kinds) != 1 or not isinstance(origin[kinds[0]], dict):
+            raise ValueError("expected one installation source type")
+        kind = kinds[0]
+        info = origin[kind]
+        parts = urlsplit(url)
+        fragments = [parts.fragment] if parts.fragment else []
+        source = urlunsplit(parts._replace(fragment=""))
+        if kind == "vcs_info":
+            if info["vcs"] != "git":
+                raise ValueError("only Git installation sources are supported")
+            commit = info["commit_id"]
+            if not isinstance(commit, str) or not commit:
+                raise ValueError("missing resolved Git commit")
+            source = f"git+{source}@{commit}"
+        elif kind == "archive_info":
+            hashes = info.get("hashes", {})
+            if not isinstance(hashes, dict) or any(
+                not isinstance(key, str) or not isinstance(value, str) or not value
+                for key, value in hashes.items()
+            ):
+                raise ValueError("invalid archive hashes")
+            if hashes:
+                algorithm = "sha256" if "sha256" in hashes else sorted(hashes)[0]
+                fragments.append(urlencode({algorithm: hashes[algorithm]}))
+        elif parts.scheme != "file":
+            raise ValueError("local directory sources must use a file URL")
+        if "subdirectory" in origin:
+            subdirectory = origin["subdirectory"]
+            if not isinstance(subdirectory, str) or not subdirectory:
+                raise ValueError("invalid project subdirectory")
+            fragments.append(urlencode({"subdirectory": subdirectory}))
+        if fragments:
+            source += "#" + "&".join(fragments)
+        return f"dimos @ {source}"
+    except (ValueError, KeyError, TypeError) as error:
+        raise RuntimeError(
+            "Cannot select isolated dimOS source: invalid or unsupported direct_url.json"
+        ) from error
+
+
 def isolated_python_run_command(project: Path, *command: str) -> list[str]:
     """Run a command with the host DimOS available in an isolated project."""
     args = ["uv", "run"]
@@ -47,7 +101,7 @@ def isolated_python_run_command(project: Path, *command: str) -> list[str]:
     if (DIMOS_PROJECT_ROOT / "pyproject.toml").is_file():
         args.extend(("--with-editable", str(DIMOS_PROJECT_ROOT)))
     else:
-        args.extend(("--with", f"dimos=={version('dimos')}"))
+        args.extend(("--with", _installed_dimos_requirement()))
     args.extend(command)
     if (project / "pixi.toml").is_file():
         return ["pixi", "run", "--executable", *args]

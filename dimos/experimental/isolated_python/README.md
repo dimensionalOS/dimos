@@ -71,10 +71,17 @@ exists, Pixi supplies `uv`. If `uv.lock` exists, dimOS uses `--frozen` and treat
 the lockfile as the source of truth.
 
 Source checkouts make the current dimOS checkout available to the runtime.
-Installed hosts resolve `dimos==<installed version>`; that exact version must be
-available from the configured package source. Local wheel installations can supply
-the candidate wheel through `UV_FIND_LINKS`. The sibling project's `.python-version`
-and `requires-python` select its Python version. Environments are stored under the DimOS cache directory in
+Installed hosts follow their recorded `direct_url.json` source: Git installations
+reuse the resolved commit, direct wheels and archives reuse the original URL and
+recorded hash, and local directory installations reuse that directory's current
+contents. These sources must remain accessible when uv prepares the environment;
+unpublished Git commits need no matching PyPI release. Unsupported or invalid
+metadata fails preparation, without substituting an index build. Index installations
+have no direct-source metadata and intentionally use unpinned `dimos`; host/runtime
+version compatibility is not guaranteed in that case.
+
+The sibling project's `.python-version` and `requires-python` select its Python
+version. Environments are stored under the dimOS cache directory in
 `isolated-python/<project-path-hash>/.venv`, so projects do not share environments.
 Preparation also warms the DimOS overlay before starting the readiness deadline.
 

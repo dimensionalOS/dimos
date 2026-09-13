@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from pathlib import Path
 import subprocess
 
@@ -80,31 +81,89 @@ def test_uv_lock_enables_frozen_commands(tmp_path: Path, monkeypatch: pytest.Mon
         module.stop()
 
 
-def test_installed_host_uses_matching_dimos_version(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "contract.py"
-    source.touch()
-    project = tmp_path / "python"
-    project.mkdir()
-    (project / "pyproject.toml").touch()
-    installed_root = tmp_path / "site-packages"
-    installed_root.mkdir()
-    monkeypatch.setattr("dimos.experimental.isolated_python.module.version", lambda _: "9.8.7")
-    monkeypatch.setattr(
-        "dimos.experimental.isolated_python.module.inspect.getfile", lambda _: str(source)
-    )
-    monkeypatch.setattr(
-        "dimos.experimental.isolated_python.module.DIMOS_PROJECT_ROOT", installed_root
-    )
-    module = Contract()
-    try:
-        command = module._launch_command(7)
+@pytest.mark.parametrize(
+    ("origin", "requirement"),
+    [
+        (None, "dimos"),
+        (
+            {
+                "url": "https://github.com/dimensionalOS/dimos.git",
+                "vcs_info": {"vcs": "git", "requested_revision": "main", "commit_id": "a" * 40},
+            },
+            "dimos @ git+https://github.com/dimensionalOS/dimos.git@" + "a" * 40,
+        ),
+        (
+            {
+                "url": "ssh://git@example.com/repo.git",
+                "vcs_info": {"vcs": "git", "commit_id": "b" * 40},
+                "subdirectory": "packages/dimos",
+            },
+            "dimos @ git+ssh://git@example.com/repo.git@"
+            + "b" * 40
+            + "#subdirectory=packages%2Fdimos",
+        ),
+        (
+            {
+                "url": "https://example.com/dimos.whl",
+                "archive_info": {"hashes": {"sha256": "c" * 64}},
+            },
+            "dimos @ https://example.com/dimos.whl#sha256=" + "c" * 64,
+        ),
+        (
+            {"url": "file:///tmp/dimos.whl", "archive_info": {}},
+            "dimos @ file:///tmp/dimos.whl",
+        ),
+        (
+            {
+                "url": "https://example.com/source.tar.gz",
+                "archive_info": {"hashes": {"sha256": "d" * 64}},
+                "subdirectory": "dimos",
+            },
+            "dimos @ https://example.com/source.tar.gz#sha256=" + "d" * 64 + "&subdirectory=dimos",
+        ),
+        (
+            {"url": "file:///tmp/dimos%20source", "dir_info": {}},
+            "dimos @ file:///tmp/dimos%20source",
+        ),
+    ],
+)
+def test_installed_host_follows_source(tmp_path, monkeypatch, mocker, origin, requirement):
+    monkeypatch.setattr("dimos.experimental.isolated_python.module.DIMOS_PROJECT_ROOT", tmp_path)
+    metadata = mocker.patch("dimos.experimental.isolated_python.module.distribution")
+    metadata.return_value.read_text.return_value = None if origin is None else json.dumps(origin)
 
-        assert command[:4] == ["uv", "run", "--with", "dimos==9.8.7"]
-        assert "--python" not in command
-    finally:
-        module.stop()
+    command = isolated_python_run_command(tmp_path, "python", "-c", "pass")
+
+    assert command == ["uv", "run", "--with", requirement, "python", "-c", "pass"]
+    metadata.assert_called_once_with("dimos")
+    metadata.return_value.read_text.assert_called_once_with("direct_url.json")
+
+
+@pytest.mark.parametrize(
+    "recorded",
+    [
+        "not json",
+        "null",
+        "[]",
+        "{}",
+        '{"url": "relative/path", "dir_info": {}}',
+        '{"url": "file:///tmp/dimos", "dir_info": {}, "archive_info": {}}',
+        '{"url": "https://example.com/repo", "vcs_info": {"vcs": "hg", "commit_id": "abc"}}',
+        '{"url": "https://example.com/repo", "vcs_info": {"vcs": "git"}}',
+        '{"url": "https://example.com/dimos", "dir_info": {}}',
+        '{"url": "file:///tmp/dimos.whl", "archive_info": {"hashes": []}}',
+        '{"url": "file:///tmp/dimos.whl", "archive_info": {}, "subdirectory": 42}',
+    ],
+)
+def test_invalid_installation_source_fails_without_index_fallback(
+    tmp_path, monkeypatch, mocker, recorded
+):
+    monkeypatch.setattr("dimos.experimental.isolated_python.module.DIMOS_PROJECT_ROOT", tmp_path)
+    metadata = mocker.patch("dimos.experimental.isolated_python.module.distribution")
+    metadata.return_value.read_text.return_value = recorded
+
+    with pytest.raises(RuntimeError, match="invalid or unsupported direct_url.json"):
+        isolated_python_run_command(tmp_path, "python", "-c", "pass")
 
 
 def test_pixi_supplies_uv_when_manifest_exists(
