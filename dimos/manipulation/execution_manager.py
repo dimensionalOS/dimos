@@ -76,8 +76,8 @@ class PlanExecutionManager:
         self._poll_interval = poll_interval
         self._active = False
         self._latest_result: ExecutionResult | None = None
-        self._legs: tuple[str, ...] = tuple(task for task, _ in self._bindings)
-        self._cancelled_legs: set[str] = set()
+        self._running_tasks: tuple[str, ...] = tuple(task for task, _ in self._bindings)
+        self._cancelled_tasks: set[str] = set()
         self._run_id = 0
         self._run_done = threading.Event()
         self._watchdog: threading.Thread | None = None
@@ -107,7 +107,7 @@ class PlanExecutionManager:
             except _PlanRejectedError as exc:
                 return ExecutionResult(ExecutionStatus.REJECTED, str(exc))
             with self._state_lock:
-                self._cancelled_legs = set()
+                self._cancelled_tasks = set()
 
             try:
                 current_positions = self._coordinator.get_joint_positions()
@@ -120,11 +120,11 @@ class PlanExecutionManager:
                 return execution_result
 
             result: TrajectoryExecutionResult | None = None
-            legs: list[str] = []
+            started: list[str] = []
             for task, part in parts:
                 outcome = self._start_part(task, part, current_positions)
                 if not isinstance(outcome, TrajectoryExecutionResult):
-                    failed = [leg for leg in legs if not self._cancel_leg(leg)]
+                    failed = [task for task in started if not self._cancel_task(task)]
                     if failed:
                         # Parts already accepted are still running without the rest.
                         outcome = ExecutionResult(
@@ -134,7 +134,7 @@ class PlanExecutionManager:
                     self._store(outcome, active=False)
                     return outcome
                 result = result or outcome
-                legs.append(task)
+                started.append(task)
 
             accepted = ExecutionResult(
                 ExecutionStatus.ACCEPTED,
@@ -147,11 +147,11 @@ class PlanExecutionManager:
                 with self._state_lock:
                     self._run_id += 1
                     run_id = self._run_id
-                    self._legs = tuple(legs)
+                    self._running_tasks = tuple(started)
                     self._run_done = threading.Event()
                     run_done = self._run_done
                 self._store(accepted, active=True)
-                if len(legs) > 1:
+                if len(started) > 1:
                     self._watchdog = threading.Thread(
                         target=self._watch,
                         args=(run_done, run_id),
@@ -193,9 +193,9 @@ class PlanExecutionManager:
 
     def cancel(self, timeout: float = 1.0) -> ExecutionResult:
         """Cancel the active trajectory and return its authoritative terminal state."""
-        if len(self._legs) > 1:
+        if len(self._running_tasks) > 1:
             with self._operation_lock:
-                failed = [leg for leg in self._legs if not self._cancel_leg(leg)]
+                failed = [task for task in self._running_tasks if not self._cancel_task(task)]
             if failed:
                 result = ExecutionResult(
                     ExecutionStatus.UNCERTAIN, f"Could not cancel {', '.join(failed)}"
@@ -203,7 +203,7 @@ class PlanExecutionManager:
                 self._store(result, active=False)
                 return result
             return self.wait(timeout)
-        task = self._legs[0]
+        task = self._running_tasks[0]
         with self._operation_lock:
             try:
                 outcome = self._coordinator.task_invoke(task, "cancel", {})
@@ -262,7 +262,7 @@ class PlanExecutionManager:
         return result
 
     def _poll(self, run_id: int | None = None) -> ExecutionResult:
-        """Read every leg of the run once and store the combined result.
+        """Read every running task once and store the combined result.
 
         ``run_id`` names the run a watchdog polls for. A poll whose run has since
         finished or been replaced stores nothing and cancels nothing.
@@ -275,16 +275,16 @@ class PlanExecutionManager:
                 if not self._active and self._latest_result is not None:
                     return self._latest_result
                 run_id = self._run_id
-                legs = self._legs
+                running = self._running_tasks
             statuses: dict[str, TrajectoryStatus] = {}
-            for leg in legs:
-                status = self._get_status(leg, run_id=run_id)
+            for task in running:
+                status = self._get_status(task, run_id=run_id)
                 if isinstance(status, ExecutionResult):
-                    for other in legs:
-                        if other != leg:
-                            self._cancel_leg(other)
+                    for other in running:
+                        if other != task:
+                            self._cancel_task(other)
                     return status
-                statuses[leg] = status
+                statuses[task] = status
             with self._state_lock:
                 if run_id != self._run_id or not self._active:
                     return self._latest_result or ExecutionResult(ExecutionStatus.IDLE)
@@ -299,24 +299,24 @@ class PlanExecutionManager:
             (statuses[task] for task, _ in self._bindings if task in statuses),
             next(iter(statuses.values())),
         )
-        for leg, status in statuses.items():
+        for task, status in statuses.items():
             if status.state not in {TrajectoryState.ABORTED, TrajectoryState.FAULT}:
                 continue
             failed = [
                 other
                 for other, other_status in statuses.items()
-                if other != leg
+                if other != task
                 and other_status.state is TrajectoryState.EXECUTING
-                and not self._cancel_leg(other)
+                and not self._cancel_task(other)
             ]
             if failed:
                 return ExecutionResult(
                     ExecutionStatus.UNCERTAIN,
-                    f"{leg}: {status.error}; could not cancel {', '.join(failed)}",
+                    f"{task}: {status.error}; could not cancel {', '.join(failed)}",
                     trajectory_status=primary,
                 )
             mapped = self._result_from_status(status).status
-            return ExecutionResult(mapped, f"{leg}: {status.error}", trajectory_status=primary)
+            return ExecutionResult(mapped, f"{task}: {status.error}", trajectory_status=primary)
         if all(status.state is TrajectoryState.COMPLETED for status in statuses.values()):
             return ExecutionResult(ExecutionStatus.COMPLETED, trajectory_status=primary)
         return ExecutionResult(ExecutionStatus.EXECUTING, trajectory_status=primary)
@@ -336,7 +336,7 @@ class PlanExecutionManager:
             )
         except Exception as exc:
             logger.exception(f"{task} execute RPC failed")
-            self._cancel_leg(task)
+            self._cancel_task(task)
             return ExecutionResult(ExecutionStatus.UNCERTAIN, f"{task} execute RPC failed: {exc}")
         if not isinstance(result, TrajectoryExecutionResult):
             return ExecutionResult(
@@ -350,20 +350,20 @@ class PlanExecutionManager:
             )
         return result
 
-    def _cancel_leg(self, leg: str) -> bool:
-        """Cancel one leg once; False when the outcome is unknown."""
+    def _cancel_task(self, task: str) -> bool:
+        """Cancel one task once; False when the outcome is unknown."""
         with self._state_lock:
-            if leg in self._cancelled_legs:
+            if task in self._cancelled_tasks:
                 return True
-            self._cancelled_legs.add(leg)
+            self._cancelled_tasks.add(task)
         try:
-            outcome = self._coordinator.task_invoke(leg, "cancel", {})
+            outcome = self._coordinator.task_invoke(task, "cancel", {})
             if isinstance(outcome, TrajectoryCancellationResult):
                 return outcome.status is not TrajectoryCancellationStatus.UNCERTAIN
             # A task that reports no cancellation result had nothing left to stop.
             return True
         except Exception:
-            logger.exception(f"Cancelling {leg} failed")
+            logger.exception(f"Cancelling {task} failed")
             return False
 
     def close(self) -> None:
