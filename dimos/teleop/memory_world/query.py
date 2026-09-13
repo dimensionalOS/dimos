@@ -128,6 +128,82 @@ from dimos.teleop.memory_world.recording import open_recording
 
 store = open_recording(sys.argv[1])
 store.start()
+
+_NO_WRITES = (
+    "analyze_memory reads the recording and cannot write to it."
+)
+
+class _ReadOnlyStream:
+    # Analysis READS the recording. `open_recording` hands back a read-write store --
+    # there is no read-only mode -- so a snippet that appended a stream left it in the
+    # operator's recording for good, and `analyze_memory` reported success: measured, an
+    # injected stream survived and the .db grew by 24 KB. The read surface is spelt out
+    # rather than the writes being blacklisted, because a blacklist misses the one that
+    # matters -- the first attempt at this wrapped only objects that already had an
+    # `append`, so `store.stream(name, type)` handed back the real thing and wrote.
+    #
+    # This stops the mistake, which is the whole of the risk: the code is whoever asked
+    # the question's own, and one determined to write could import sqlite3 itself.
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        if name in ("append", "extend", "truncate", "delete"):
+            raise PermissionError(_NO_WRITES)
+        return getattr(self._inner, name)
+
+    def __iter__(self):
+        return iter(self._inner)
+
+    def __len__(self):
+        return len(self._inner)
+
+    def __getitem__(self, key):
+        return self._inner[key]
+
+class _ReadOnlyStreams:
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getitem__(self, key):
+        return _ReadOnlyStream(self._inner[key])
+
+    def __getattr__(self, name):
+        return _ReadOnlyStream(getattr(self._inner, name))
+
+    def __iter__(self):
+        return iter(self._inner)
+
+    def __contains__(self, key):
+        return key in self._inner
+
+class _ReadOnlyStore:
+    def __init__(self, inner):
+        self._inner = inner
+        self.streams = _ReadOnlyStreams(inner.streams)
+
+    def list_streams(self, *args, **kwargs):
+        return self._inner.list_streams(*args, **kwargs)
+
+    def summary(self, *args, **kwargs):
+        return self._inner.summary(*args, **kwargs)
+
+    def start(self, *args, **kwargs):
+        return self._inner.start(*args, **kwargs)
+
+    def stop(self, *args, **kwargs):
+        # The bootstrap's own finally calls this. Everything else a read needs is named
+        # above; anything not named is absent rather than forwarded, which is the point.
+        return self._inner.stop(*args, **kwargs)
+
+    def stream(self, *args, **kwargs):
+        # The create-or-open entry point, and the one an accidental write goes through.
+        raise PermissionError(_NO_WRITES)
+
+    def delete_stream(self, *args, **kwargs):
+        raise PermissionError(_NO_WRITES)
+
+store = _ReadOnlyStore(store)
 viewer_position = json.loads(sys.argv[2])
 
 def sample_pose_path(stream_name="odom", max_points=200):

@@ -344,3 +344,67 @@ def test_an_analysis_answer_does_not_draw_a_route_to_where_you_are_standing(
     monkeypatch.setattr("dimos.teleop.memory_world.hyperspace_answers.min_cost_astar", a_real_route)
     memory_world._add_route_to_result(result)
     assert result.route is not None and len(result.route.points) == 2
+
+
+def test_analysis_cannot_write_to_the_recording(memory_world, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Analysis READS the recording. `open_recording` hands back a read-write store --
+    there is no read-only mode -- so a snippet that appended a stream left it in the
+    operator's recording for good, and `analyze_memory` reported success.
+
+    Measured before the guard: an injected stream survived and the `.db` grew by 24 KB.
+    """
+    import os
+
+    before = os.path.getsize(memory_world.config.store_path)
+    outcome = memory_world.analyze_memory(
+        code=(
+            "store.stream('injected_by_analysis', dict).append({'x': 1}, ts=1.0)\n"
+            "result = {'answer': 'wrote'}\n"
+        ),
+        timeout=30.0,
+    )
+    after = os.path.getsize(memory_world.config.store_path)
+
+    assert not outcome.success, "analysis wrote to the recording and was told it worked"
+    assert "cannot write" in (outcome.message or ""), outcome.message
+    assert after == before, f"the recording grew by {after - before} bytes"
+    assert "injected_by_analysis" not in memory_world._ensure_store().list_streams()
+
+    # Reading still works, which is the whole point of the skill.
+    read = memory_world.analyze_memory(
+        code="result = {'answer': f'{len(store.list_streams())} streams'}\n", timeout=30.0
+    )
+    assert read.success, read.message
+
+
+def test_a_timed_out_analysis_takes_what_it_started_with_it(memory_world, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """`subprocess.run(timeout=...)` signals only the child it launched, and analysis
+    code is free to spawn.
+
+    Measured before: a snippet that started a background loop and then slept past the
+    timeout was reported as EXECUTION_TIMEOUT while that loop went on writing, unmanaged,
+    with nothing left holding a handle to it.
+    """
+    import time
+
+    beat = tmp_path / "beat.txt"
+    outcome = memory_world.analyze_memory(
+        code=(
+            "import subprocess, time\n"
+            f"subprocess.Popen(['bash','-c','for i in $(seq 1 200); do echo x >> {beat};"
+            " sleep 0.05; done'])\n"
+            "time.sleep(30)\n"
+            "result = {'answer': 'never'}\n"
+        ),
+        timeout=1.5,
+    )
+    assert not outcome.success and outcome.error_code == "EXECUTION_TIMEOUT"
+
+    time.sleep(0.4)
+    grew = beat.stat().st_size if beat.exists() else 0
+    time.sleep(1.0)
+    still = beat.stat().st_size if beat.exists() else 0
+    assert still == grew, (
+        f"the analysis was reported as stopped but what it started kept running"
+        f" ({grew} -> {still} bytes)"
+    )

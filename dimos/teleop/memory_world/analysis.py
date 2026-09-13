@@ -25,7 +25,10 @@ in test_analyze_memory.py.
 from __future__ import annotations
 
 from collections.abc import Callable
+import contextlib
 import json
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -43,6 +46,18 @@ from dimos.teleop.memory_world.query import (
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+
+def _end_group(child: subprocess.Popen[str]) -> None:
+    """TERM the analysis and everything it started, then KILL what is left."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if child.poll() is not None:
+            return
+        with contextlib.suppress(OSError, ProcessLookupError, PermissionError):
+            os.killpg(os.getpgid(child.pid), sig)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and child.poll() is None:
+            time.sleep(0.05)
 
 
 class MemoryAnalysis:
@@ -86,25 +101,41 @@ class MemoryAnalysis:
         started = time.monotonic()
         with self._clients_lock:
             viewer_position = self._viewer_position
+        # Its own session, so a timeout can end everything the analysis started. Analysis
+        # code is free to spawn, and `subprocess.run(timeout=...)` signals only the child
+        # it launched: measured, a snippet that spawned a background loop and then slept
+        # past the timeout was reported as EXECUTION_TIMEOUT while that loop went on
+        # writing, unmanaged, with nothing left holding a handle to it. `embed.py` learnt
+        # the same lesson about `nix run`.
+        child = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                MEMORY_ANALYSIS_BOOTSTRAP,
+                self.config.store_path,
+                json.dumps(viewer_position),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
         try:
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    "-c",
-                    MEMORY_ANALYSIS_BOOTSTRAP,
-                    self.config.store_path,
-                    json.dumps(viewer_position),
-                ],
-                input=code,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=timeout,
+            out, err = child.communicate(input=code, timeout=timeout)
+            completed = subprocess.CompletedProcess(
+                child.args, child.returncode, stdout=out, stderr=err
             )
         except subprocess.TimeoutExpired:
+            _end_group(child)
+            with contextlib.suppress(Exception):
+                child.communicate(timeout=5)
             return SkillResult.fail(
                 "EXECUTION_TIMEOUT", f"Memory analysis timed out after {timeout:g} seconds"
             )
+        except BaseException:
+            _end_group(child)
+            raise
 
         # The bootstrap prints the sentinel at the START of its own line, so that is how
         # it is looked for. `rfind` over the whole of stdout searched INSIDE the printed
