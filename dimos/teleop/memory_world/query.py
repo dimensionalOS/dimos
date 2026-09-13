@@ -189,6 +189,18 @@ class _ReadOnlyStream:
     def __getitem__(self, key):
         return _read_only(self._inner[key])
 
+    # Special methods are looked up on the TYPE, so `__getattr__` never sees them: without
+    # these, `with store.streams['x'].limit(1) as s:` raised "'_ReadOnlyStream' object does
+    # not support the context manager protocol" on a stream that supports it perfectly
+    # well. `__enter__` hands back the WRAPPER, not the inner stream, or the block body
+    # would be holding the writable one.
+    def __enter__(self):
+        self._inner.__enter__()
+        return self
+
+    def __exit__(self, *exception):
+        return self._inner.__exit__(*exception)
+
 class _ReadOnlyStreams:
     def __init__(self, inner):
         self._inner = inner

@@ -418,6 +418,21 @@ def test_a_filtered_view_of_a_stream_cannot_write_either(memory_world, tmp_path)
     assert not copied.success, "analysis copied rows into the recording through save()"
     assert "cannot write" in (copied.message or ""), copied.message
 
+    # A `with` block is a read too. Special methods are looked up on the TYPE, so the
+    # wrapper has to forward them itself: without that,
+    # `with store.streams['x'].limit(1) as s:` raised "does not support the context
+    # manager protocol" on a stream that supports it perfectly well.
+    held = memory_world.analyze_memory(
+        code=(
+            "with store.streams['measurements'].limit(1) as s:\n"
+            "    rows = [o.data for o in s]\n"
+            "result = {'answer': f'{len(rows)} row in a with block'}\n"
+        ),
+        timeout=30.0,
+    )
+    assert held.success, held.message
+    assert "1 row in a with block" in (memory_world._active_query_result or {}).get("answer", "")
+
     # Filtering still READS, which is what those methods are for.
     read = memory_world.analyze_memory(
         code="result = {'answer': f\"{len(list(store.streams['measurements'].limit(1)))} row\"}\n",
