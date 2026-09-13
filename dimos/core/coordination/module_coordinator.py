@@ -51,7 +51,7 @@ from dimos.utils.safe_thread_map import safe_thread_map
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
     from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
-    from dimos.core.rpc_client import ModuleProxy, ModuleProxyProtocol, RPCClient
+    from dimos.core.rpc_client import ModuleProxy, ModuleProxyProtocol
 
 logger = setup_logger()
 
@@ -486,10 +486,17 @@ class ModuleCoordinator(Resource):
 
         proxy = self._deployed_modules[name]
 
+        try:
+            proxy.stop()
+        except Exception:
+            logger.error(
+                "Error stopping module during unload",
+                module=name,
+                exc_info=True,
+            )
+
         python_wm = cast("WorkerManagerPython", self._managers["python"])
         try:
-            # The worker pipe waits for stop() to finish. An RPC stop is
-            # fire-and-forget and would race this call and the replacement.
             python_wm.undeploy(proxy)
         except Exception:
             logger.error(
@@ -497,8 +504,6 @@ class ModuleCoordinator(Resource):
                 module=name,
                 exc_info=True,
             )
-        finally:
-            cast("RPCClient", proxy).stop_rpc_client()
 
         del self._deployed_modules[name]
         del self._instance_classes[name]
