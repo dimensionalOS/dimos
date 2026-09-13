@@ -225,6 +225,12 @@ export class ResultsNav {
             this.setRoute(body);
             return body;
         } catch (e) {
+            // The success path above checks this after its await; so must the failure
+            // path, which is the rule `replay.js`'s `_pumpFrame` writes down. A
+            // `/navigate` still in flight when the viewer disconnects keeps running, and
+            // its rejection wrote "Route failed: ..." into the status line -- the one
+            // DOM node `setStatus('Disconnected')` and every LATER session also use.
+            if (this._disposed) return null;
             this._status(`Route failed: ${e.message || e}`);
             return null;
         }
