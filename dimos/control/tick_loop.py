@@ -217,6 +217,8 @@ class TickLoop:
 
         with self._hardware_lock:
             for hw in self._hardware.values():
+                if not hw.ready_for_control():
+                    continue
                 try:
                     state = hw.read_state()
                     for joint_name, joint_state in state.items():
@@ -249,6 +251,8 @@ class TickLoop:
         with self._hardware_lock:
             for hw_id, hw in self._hardware.items():
                 if not isinstance(hw, ConnectedWholeBody):
+                    continue
+                if not hw.ready_for_control():
                     continue
                 read_imu = getattr(hw.adapter, "read_imu", None)
                 if not callable(read_imu):
@@ -409,6 +413,8 @@ class TickLoop:
         with self._hardware_lock:
             for hw_id, (positions, mode) in hw_commands.items():
                 if hw_id in hardware:
+                    if not hardware[hw_id].ready_for_control():
+                        continue
                     try:
                         accepted = hardware[hw_id].write_command(positions, mode)
                         if not accepted:

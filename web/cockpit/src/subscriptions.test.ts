@@ -20,6 +20,8 @@ function spec(over: Partial<ChannelSpec> = {}): ChannelSpec {
     delivery: "reliable",
     maxHz: 20,
     params: {},
+    publish: "none",
+    requiredScope: null,
     ...over,
   };
 }

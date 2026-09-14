@@ -31,6 +31,7 @@ def test_patrol_and_follow(
     human_input: Callable[[str], None],
     start_person_track: StartPersonTrack,
     explore_office: Callable[[], None],
+    wait_for_system_ready: Callable[..., None],
 ) -> None:
     start_blueprint(
         "--mujoco-start-pos",
@@ -43,8 +44,7 @@ def test_patrol_and_follow(
         "unitree-go2-agentic",
     )
 
-    lcm_spy.save_topic("/rpc/McpClient/on_system_modules/res")
-    lcm_spy.wait_for_saved_topic("/rpc/McpClient/on_system_modules/res", timeout=120.0)
+    wait_for_system_ready(timeout=120.0)
 
     time.sleep(5)
 

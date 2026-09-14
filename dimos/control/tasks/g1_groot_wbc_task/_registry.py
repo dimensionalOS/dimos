@@ -21,5 +21,12 @@ TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
 }
 
 TASK_EXPOSES: dict[str, list[str]] = {
-    "g1_groot_wbc": ["arm", "disarm", "set_dry_run", "reset_runtime_state", "start"],
+    "g1_groot_wbc": [
+        "arm",
+        "disarm",
+        "set_dry_run",
+        "state_snapshot",
+        "reset_runtime_state",
+        "start",
+    ],
 }

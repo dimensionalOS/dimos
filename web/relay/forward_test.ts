@@ -1,14 +1,21 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { encodeDataFrame, type FrameHeader } from "@dimos/shared";
 import {
+  CONTROL_CHANNEL,
+  encodeDataFrame,
+  type FrameHeader,
+  MAX_CONTROL_PAYLOAD_BYTES,
+} from "@dimos/shared";
+import {
+  ControlPayloadTooLargeError,
   type FrameSend,
   type FrameWriter,
   LatestChannel,
   parseRobotFrameHeader,
   Rate,
-  readDataFrameBytes,
+  readRobotFrame,
   readWebTransportPreamble,
   ReliableChannel,
+  TokenBucket,
   type ViewerSink,
 } from "./forward.ts";
 
@@ -521,6 +528,31 @@ Deno.test("rate: bucketed trailing window with idle decay and wraparound", () =>
   assertEquals(rate.snapshot(t0 + 30_000), { fps: 0.2, bps: 100 });
 });
 
+Deno.test("token bucket: burst to capacity, continuous refill, no wobble drain", () => {
+  const bucket = new TokenBucket(2); // capacity max(1, ceil(2)) = 2
+  const t0 = 1_000_000;
+  assertEquals(bucket.take(t0), true);
+  assertEquals(bucket.take(t0), true);
+  assertEquals(bucket.take(t0), false); // burst spent
+  // 2/s: half a second buys exactly one token.
+  assertEquals(bucket.take(t0 + 499), false);
+  assertEquals(bucket.take(t0 + 500), true);
+  // A backwards clock must not drain tokens (the failed take at t0+500ms+1
+  // refilled nothing; going back 400ms keeps the balance).
+  assertEquals(bucket.take(t0 + 100), false);
+  // Idle refill clamps at capacity: a long pause buys 2 tokens, not 20.
+  assertEquals(bucket.take(t0 + 60_000), true);
+  assertEquals(bucket.take(t0 + 60_000), true);
+  assertEquals(bucket.take(t0 + 60_000), false);
+
+  // Fractional rates keep at least one token of capacity.
+  const slow = new TokenBucket(0.5);
+  assertEquals(slow.capacity, 1);
+  assertEquals(slow.take(t0), true);
+  assertEquals(slow.take(t0 + 1999), false);
+  assertEquals(slow.take(t0 + 2000), true);
+});
+
 Deno.test("parseRobotFrameHeader accepts valid frames and rejects junk", () => {
   const good = dataFrame("odom", 4, "reliable");
   assertEquals(parseRobotFrameHeader(good), { ch: "odom", seq: 4, ts: 4.5, delivery: "reliable" });
@@ -552,7 +584,69 @@ Deno.test("preamble: consumed so the data frame parses from the remainder", asyn
   // enqueue a copy: the byte stream detaches the chunk's buffer on read
   const rs = byteStream(new Uint8Array([0x40, 0x41, 0x00]), frame.slice());
   assertEquals(await readWebTransportPreamble(rs), 0);
-  assertEquals(await readDataFrameBytes(rs), frame);
+  const { header, bytes } = await readRobotFrame(rs);
+  assertEquals(bytes, frame);
+  assertEquals(header, { ch: "cam", seq: 3, ts: 3.5, delivery: "latest" });
+});
+
+Deno.test("readRobotFrame: a malformed header yields null, frame bytes intact", async () => {
+  const bad = encodeDataFrame(
+    { ch: "cam", seq: 1, ts: 1.5, delivery: "bogus" } as unknown as FrameHeader,
+    new Uint8Array([7]),
+  );
+  const { header, bytes, reserved } = await readRobotFrame(byteStream(bad.slice()));
+  assertEquals(header, null);
+  assertEquals(bytes, bad);
+  assertEquals(reserved, false);
+});
+
+Deno.test("readRobotFrame: reserved classification survives an invalid header", async () => {
+  // The raw ch decides reserved-ness, so a malformed @-frame still routes to
+  // the control rejection path instead of passing as ordinary data.
+  const bad = encodeDataFrame(
+    { ch: CONTROL_CHANNEL, seq: 1, ts: 1.5, delivery: "bogus" } as unknown as FrameHeader,
+    new Uint8Array([7]),
+  );
+  const { header, reserved } = await readRobotFrame(byteStream(bad.slice()));
+  assertEquals(header, null);
+  assertEquals(reserved, true);
+});
+
+Deno.test("readRobotFrame: @-frame payload cap is exact at 64 KiB", async () => {
+  const helloHeader: FrameHeader = { ch: CONTROL_CHANNEL, seq: 1, ts: 1.5, delivery: "reliable" };
+  const atCap = encodeDataFrame(helloHeader, new Uint8Array(MAX_CONTROL_PAYLOAD_BYTES));
+  const { header, bytes } = await readRobotFrame(byteStream(atCap.slice()));
+  assertEquals(header?.ch, CONTROL_CHANNEL);
+  assertEquals(bytes.byteLength, atCap.byteLength);
+
+  const overCap = encodeDataFrame(helloHeader, new Uint8Array(MAX_CONTROL_PAYLOAD_BYTES + 1));
+  await assertRejects(
+    () => readRobotFrame(byteStream(overCap.slice())),
+    ControlPayloadTooLargeError,
+  );
+});
+
+Deno.test("readRobotFrame: the cap keys off the raw ch, not the validated header", async () => {
+  // A hostile @-frame with an otherwise-invalid header (bogus delivery) must
+  // still be capped before its payload is buffered.
+  const sneaky = encodeDataFrame(
+    { ch: "@evil", seq: 1, ts: 1.5, delivery: "bogus" } as unknown as FrameHeader,
+    new Uint8Array(MAX_CONTROL_PAYLOAD_BYTES + 1),
+  );
+  await assertRejects(
+    () => readRobotFrame(byteStream(sneaky.slice())),
+    ControlPayloadTooLargeError,
+  );
+});
+
+Deno.test("readRobotFrame: ordinary channels are not control-capped", async () => {
+  const big = encodeDataFrame(
+    { ch: "cam", seq: 1, ts: 1.5, delivery: "latest" },
+    new Uint8Array(MAX_CONTROL_PAYLOAD_BYTES + 1),
+  );
+  const { header, bytes } = await readRobotFrame(byteStream(big.slice()));
+  assertEquals(header?.ch, "cam");
+  assertEquals(bytes.byteLength, big.byteLength);
 });
 
 Deno.test("preamble: multi-byte varint session id", async () => {

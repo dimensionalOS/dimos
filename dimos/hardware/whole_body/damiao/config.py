@@ -29,6 +29,6 @@ _NonEmptyString = Annotated[str, Field(min_length=1, strict=True)]
 class DamiaoRuntimeConfig:
     """Deployment values that may vary without changing robot topology."""
 
-    bus_addresses: dict[_NonEmptyString, _NonEmptyString] = Field(default_factory=dict)
+    bus_devices: dict[_NonEmptyString, _NonEmptyString] = Field(default_factory=dict)
     gravity_comp: bool = Field(default=True, strict=True)
     tick_deadline_us: int = Field(default=1_000, ge=1, strict=True)

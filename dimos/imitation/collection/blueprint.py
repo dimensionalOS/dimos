@@ -23,21 +23,21 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from dimos.constants import STATE_DIR
+from dimos.constants import RECORDINGS_DIR
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
-from dimos.teleop.quest.blueprints import (
-    teleop_quest_piper,
-    teleop_quest_xarm7,
+from dimos.teleop.webxr.blueprints import (
+    teleop_webxr_piper,
+    teleop_webxr_xarm7,
 )
 
 
 def _session_db(robot: str) -> str:
-    """Timestamped session DB path under the state dir, namespaced by robot."""
-    return str(STATE_DIR / "recordings" / f"session_{robot}_{datetime.now():%Y%m%d_%H%M%S}.db")
+    """Timestamped session DB path under RECORDINGS_DIR, namespaced by robot."""
+    return str(RECORDINGS_DIR / f"session_{robot}_{datetime.now():%Y%m%d_%H%M%S}.db")
 
 
 def _camera_if_real() -> tuple[Blueprint, ...]:
@@ -54,25 +54,25 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
 # resolves to a stable /<name> topic shared by producer and recorder. The
 # recorder captures whatever joints are present, so the coordinator's aggregate
 # stream is its intended input (see dimos/control/README.md).
-learning_collect_quest_xarm7 = autoconnect(
+learning_collect_webxr_xarm7 = autoconnect(
     CollectionRecorder.blueprint(
         db_path=_session_db("xarm7"),
         poseless_streams=["color_image", "coordinator_joint_state", "status"],
         record_tf=False,
     ),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
-    teleop_quest_xarm7,
+    teleop_webxr_xarm7,
     *_camera_if_real(),
 )
 
 
-learning_collect_quest_piper = autoconnect(
+learning_collect_webxr_piper = autoconnect(
     CollectionRecorder.blueprint(
         db_path=_session_db("piper"),
         poseless_streams=["color_image", "coordinator_joint_state", "status"],
         record_tf=False,
     ),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
-    teleop_quest_piper,
+    teleop_webxr_piper,
     *_camera_if_real(),
 )

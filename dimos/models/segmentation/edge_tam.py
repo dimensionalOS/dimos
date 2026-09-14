@@ -113,12 +113,18 @@ def _build_model() -> "SAM2VideoPredictor":
     return predictor
 
 
-class EdgeTAMImageSegmenterCompatible(Protocol):
-    """Box-prompted image segmentation interface implemented by EdgeTAM."""
+class BoxPromptImageSegmenter(Protocol):
+    """Lifecycle interface for segmenters that refine box detections."""
 
     def segment(
         self, detections: ImageDetections2D[Detection2DBBox]
     ) -> ImageDetections2D[Detection2DSeg]: ...
+
+    def stop(self) -> None: ...
+
+
+class EdgeTAMImageSegmenterCompatible(BoxPromptImageSegmenter, Protocol):
+    """Backward-compatible name for EdgeTAM consumers."""
 
 
 class EdgeTAMImageSegmenter:
@@ -218,6 +224,9 @@ class EdgeTAMImageSegmenter:
             for det, mask in zip(detections, masks, strict=False)
         ]
         return ImageDetections2D(image, segmented)
+
+    def stop(self) -> None:
+        """Stop the segmenter; its image predictor owns no external lifecycle."""
 
 
 class EdgeTAMProcessor(Detector):

@@ -5,6 +5,7 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { fileURLToPath } from "node:url";
 import {
+  CONTROL_CHANNEL,
   ControlFrameReader,
   DataFrameStreamReader,
   decodeDatagram,
@@ -12,11 +13,14 @@ import {
   encodeDataFrame,
   encodeDatagram,
   type FrameHeader,
+  MAX_CONTROL_PAYLOAD_BYTES,
   type Msg,
   PROTOCOL_VERSION,
   type RobotInfo,
   type RobotManifest,
 } from "@dimos/shared";
+import { parseAuthFile } from "./auth.ts";
+import { makeEphemeralCert } from "./cert.ts";
 import { startRelay } from "./server.ts";
 
 const ROBOT: RobotInfo = { id: "deno-bot", name: "Deno Bot", model: "test" };
@@ -24,6 +28,14 @@ const ROBOT: RobotInfo = { id: "deno-bot", name: "Deno Bot", model: "test" };
 const CHANNELS = [
   { ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 15.5 },
   { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 },
+  {
+    ch: "human_input",
+    dir: "tx",
+    encoding: "text.json.v1",
+    delivery: "reliable",
+    maxHz: 50.5,
+    publish: "shared",
+  },
 ];
 const MANIFEST: RobotManifest = {
   version: 1,
@@ -32,7 +44,8 @@ const MANIFEST: RobotManifest = {
   layout: "color_image",
 };
 
-function certOpts(hashB64: string): WebTransportOptions {
+function certOpts(hashB64: string | undefined): WebTransportOptions {
+  if (hashB64 === undefined) throw new Error("the relay advertises no certificate hash");
   return {
     serverCertificateHashes: [{
       algorithm: "sha-256",
@@ -132,11 +145,77 @@ function frameQueue(
   };
 }
 
+/** Robot control carrier messages: @control frames arriving back-to-back on
+ * the one relay-opened uni stream (payloads reuse the datagram encoding). */
+function robotControl(wt: WebTransport): () => Promise<Msg> {
+  const nextFrame = frameQueue(wt);
+  return async () => {
+    const { header, payload } = await nextFrame();
+    assertEquals(header.ch, CONTROL_CHANNEL);
+    const msg = decodeDatagram(payload);
+    assert(msg !== null, "undecodable @control payload");
+    return msg;
+  };
+}
+
+/** Like robotControl, but splits the carrier into @control messages and
+ * forwarded publish (tx data) frames. Serial use only: nextMsg/nextPub share
+ * one frame cursor. */
+function robotCarrier(wt: WebTransport): {
+  nextMsg: () => Promise<Msg>;
+  nextPub: () => Promise<{ header: FrameHeader; payload: Uint8Array }>;
+} {
+  const nextFrame = frameQueue(wt);
+  const msgs: Msg[] = [];
+  const pubs: { header: FrameHeader; payload: Uint8Array }[] = [];
+  const pump = async (want: "msg" | "pub") => {
+    while ((want === "msg" ? msgs : pubs).length === 0) {
+      const { header, payload } = await nextFrame();
+      if (header.ch === CONTROL_CHANNEL) {
+        const msg = decodeDatagram(payload);
+        assert(msg !== null, "undecodable @control payload");
+        msgs.push(msg);
+      } else {
+        pubs.push({ header, payload });
+      }
+    }
+  };
+  return {
+    nextMsg: async () => {
+      await pump("msg");
+      return msgs.shift()!;
+    },
+    nextPub: async () => {
+      await pump("pub");
+      return pubs.shift()!;
+    },
+  };
+}
+
 async function sendRobotFrame(robot: WebTransport, header: FrameHeader, payload: Uint8Array) {
   const stream = await robot.createBidirectionalStream();
   const writer = stream.writable.getWriter();
   await writer.write(encodeDataFrame(header, payload));
   await writer.close(); // FIN is delayed by Deno (bug 2); the relay reads by byte count
+}
+
+/** v5 robot hello: an @control frame (datagram-encoded payload) on a fresh
+ * one-shot bidi stream; replies stay datagrams. */
+async function sendRobotHello(robot: WebTransport, msg: Msg) {
+  await sendRobotFrame(
+    robot,
+    { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "reliable" },
+    encodeDatagram(msg),
+  );
+}
+
+/** Next message of type `t`, skipping interleaved messages of other types. */
+async function nextOfType(next: () => Promise<Msg>, t: Msg["t"], what: string): Promise<Msg> {
+  let msg: Msg;
+  do {
+    msg = await within(next(), what);
+  } while (msg.t !== t);
+  return msg;
 }
 
 // Test that one suspended viewer must cost only itself. Its stale streams are
@@ -208,19 +287,16 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
     clients.push(robot);
     await within(robot.ready, "robot connect");
     const robotDatagrams = datagramQueue(robot.datagrams.readable);
-    const robotDgWriter = robot.datagrams.writable.getWriter();
-    await robotDgWriter.write(
-      encodeDatagram({
-        t: "hello",
-        v: PROTOCOL_VERSION,
-        role: "robot",
-        robot: ROBOT,
-        manifest: {
-          version: 1,
-          channels: [{ ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 100 }],
-        },
-      }),
-    );
+    await sendRobotHello(robot, {
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: ROBOT,
+      manifest: {
+        version: 1,
+        channels: [{ ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 100 }],
+      },
+    });
     await within(robotDatagrams(), "robot hello reply");
 
     const attachViewer = async (name: string): Promise<WebTransport> => {
@@ -337,7 +413,7 @@ Deno.test({
   await t.step("/api/info matches the handle; no cockpit dist -> 404 with a hint", async () => {
     const info = await (await fetch(`${httpBase}/api/info`)).json();
     assertEquals(info, {
-      wtUrl: `${relay.wtUrl}/viewer`,
+      wtUrl: relay.wtUrl,
       certHash: relay.certHash,
       v: PROTOCOL_VERSION,
     });
@@ -387,32 +463,44 @@ Deno.test({
   const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
   await within(robot.ready, "robot connect");
   const robotDatagrams = datagramQueue(robot.datagrams.readable);
-  const robotDgWriter = robot.datagrams.writable.getWriter();
+  const carrier = robotCarrier(robot);
+  const robotCtrl = carrier.nextMsg;
 
-  await t.step("robot hello (identity + manifest) -> welcome + baseline subs", async () => {
-    await robotDgWriter.write(
-      encodeDatagram({
+  await t.step(
+    "robot hello (@control stream frame) -> welcome + carrier baseline subs",
+    async () => {
+      await sendRobotHello(robot, {
         t: "hello",
         v: PROTOCOL_VERSION,
         role: "robot",
         robot: ROBOT,
         manifest: MANIFEST,
-      }),
-    );
-    // Registration and welcome are separate datagrams, so their relative
-    // arrival is not a protocol guarantee.
-    const replies = [
-      await within(robotDatagrams(), "robot hello reply"),
-      await within(robotDatagrams(), "robot hello reply"),
-    ];
-    assertEquals(replies.find((msg) => msg.t === "welcome"), {
+      });
+      assertEquals(await within(robotDatagrams(), "robot welcome"), {
+        t: "welcome",
+        v: PROTOCOL_VERSION,
+      });
+      // Registration always forces a baseline snapshot (the empty set included)
+      // as the first frame of the relay-opened robot control carrier.
+      assertEquals(await within(robotCtrl(), "carrier baseline subs"), {
+        t: "subs",
+        chs: [],
+        n: 1,
+      });
+    },
+  );
+
+  await t.step("a repeated identical hello re-sends welcome (lost-welcome healing)", async () => {
+    await sendRobotHello(robot, {
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: ROBOT,
+      manifest: MANIFEST,
+    });
+    assertEquals(await nextOfType(robotDatagrams, "welcome", "second welcome"), {
       t: "welcome",
       v: PROTOCOL_VERSION,
-    });
-    assertEquals(replies.find((msg) => msg.t === "subs"), {
-      t: "subs",
-      chs: [],
-      n: 1,
     });
   });
 
@@ -435,10 +523,29 @@ Deno.test({
     // One snapshot per sub message; skip ahead to the full set.
     let subs: Msg;
     do {
-      subs = await within(robotDatagrams(), "subs snapshot");
+      subs = await within(robotCtrl(), "subs snapshot");
     } while (subs.t === "subs" && subs.chs.length < 2);
     assert(subs.t === "subs");
     assertEquals(subs.chs, ["color_image", "odom"]);
+  });
+
+  await t.step("rapid sub/unsub churn converges to the exact final set", async () => {
+    // Every message below flips the active set, so each produces exactly one
+    // snapshot; the ordered carrier must deliver all 12 with the final set
+    // last (nothing lost, nothing reordered).
+    for (let i = 0; i < 5; i++) {
+      await controlWriter.write(encodeControlFrame({ t: "unsub", ch: "odom" }));
+      await controlWriter.write(encodeControlFrame({ t: "sub", ch: "odom" }));
+    }
+    await controlWriter.write(encodeControlFrame({ t: "unsub", ch: "color_image" }));
+    await controlWriter.write(encodeControlFrame({ t: "sub", ch: "color_image" }));
+    let subs: Msg | null = null;
+    for (let i = 0; i < 12; i++) subs = await within(robotCtrl(), `churn snapshot ${i}`);
+    assert(subs !== null && subs.t === "subs");
+    assertEquals(subs.chs, ["color_image", "odom"]);
+    // The relay's own view agrees (lastChs feeds perRobot.subs).
+    const stats = await (await fetch(`${httpBase}/api/stats`)).json();
+    assertEquals(stats.perRobot[ROBOT.id].subs, ["color_image", "odom"]);
   });
 
   await t.step("robot frames fan out to the viewer on uni streams", async () => {
@@ -518,6 +625,80 @@ Deno.test({
     assertEquals(got.header.seq, 5);
   });
 
+  await t.step(
+    "publish: pub -> stamped carrier tx frame -> bridge ack -> exactly one pub_ack",
+    async () => {
+      await controlWriter.write(
+        encodeControlFrame({
+          t: "pub",
+          id: "v-1",
+          ch: "human_input",
+          data: { text: "salut β" },
+          clientTs: 42.5,
+        }),
+      );
+      const { header, payload } = await within(carrier.nextPub(), "carrier tx frame");
+      assertEquals(header.ch, "human_input");
+      assertEquals(header.delivery, "reliable");
+      const meta = header.meta as Record<string, unknown>;
+      // Relay-authored token + synthetic local principal, never the viewer id.
+      assertEquals(meta.id, "p1");
+      assertEquals(meta.principal, "local");
+      assertEquals(meta.clientTs, 42.5);
+      assert(typeof meta.relayTs === "number");
+      assertEquals(JSON.parse(new TextDecoder().decode(payload)), { text: "salut β" });
+
+      // The bridge acks on a robot-opened one-shot @control stream after
+      // publishing; the relay routes it back with the viewer's own id.
+      await sendRobotFrame(
+        robot,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 43.5, delivery: "reliable" },
+        encodeDatagram({
+          t: "pub_ack",
+          id: "p1",
+          ch: "human_input",
+          relayTs: 42.5,
+          bridgeTs: 43.5,
+        }),
+      );
+      assertEquals(await nextOfType(nextControl, "pub_ack", "viewer pub_ack"), {
+        t: "pub_ack",
+        id: "v-1",
+        ch: "human_input",
+        relayTs: 42.5,
+        bridgeTs: 43.5,
+      });
+
+      // A duplicate ack is dropped: the ordered control stream shows nothing
+      // between here and the next pong.
+      await sendRobotFrame(
+        robot,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 44.5, delivery: "reliable" },
+        encodeDatagram({
+          t: "pub_ack",
+          id: "p1",
+          ch: "human_input",
+          relayTs: 42.5,
+          bridgeTs: 44.5,
+        }),
+      );
+      await controlWriter.write(encodeControlFrame({ t: "ping", n: 77, ts: 77.5 }));
+      assertEquals(await within(nextControl(), "pong after duplicate ack"), {
+        t: "pong",
+        n: 77,
+        ts: 77.5,
+      });
+    },
+  );
+
+  await t.step("publish: a rejected pub settles with a correlated error", async () => {
+    await controlWriter.write(encodeControlFrame({ t: "pub", id: "v-2", ch: "odom", data: 1.5 }));
+    const err = await nextOfType(nextControl, "error", "correlated error");
+    assert(err.t === "error");
+    assertEquals(err.code, "not_publishable");
+    assertEquals(err.requestId, "v-2");
+  });
+
   await t.step("/api/stats reflects sessions and traffic", async () => {
     // The idle viewer's close is asynchronous on the relay side; poll it out.
     let stats = await (await fetch(`${httpBase}/api/stats`)).json();
@@ -546,53 +727,135 @@ Deno.test({
     assertEquals(typeof stats.perRobot[ROBOT.id].channels.odom.bps, "number");
   });
 
-  await t.step("robot hello without robot{} -> missing_robot_id + close", async () => {
-    const bare = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
-    await within(bare.ready, "bare robot connect");
-    const bareDatagrams = datagramQueue(bare.datagrams.readable);
-    const bareWriter = bare.datagrams.writable.getWriter();
-    await bareWriter.write(encodeDatagram({ t: "hello", v: PROTOCOL_VERSION, role: "robot" }));
-    const err = await within(bareDatagrams(), "missing_robot_id error");
+  /** Expect one robot hello attempt to be rejected with `code` + close. */
+  async function expectRobotReject(
+    name: string,
+    code: string,
+    send: (wt: WebTransport) => Promise<void>,
+  ) {
+    const wt = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await within(wt.ready, `${name} connect`);
+    const datagrams = datagramQueue(wt.datagrams.readable);
+    await send(wt);
+    const err = await within(datagrams(), `${name} error`);
     assertEquals(err.t, "error");
-    assertEquals((err as { code: string }).code, "missing_robot_id");
-    await within(bare.closed.catch(() => {}), "bare robot session close");
+    assertEquals((err as { code: string }).code, code);
+    await within(wt.closed.catch(() => {}), `${name} close`);
+  }
+
+  await t.step("robot hello without robot{} -> missing_robot_id + close", async () => {
+    await expectRobotReject(
+      "bare",
+      "missing_robot_id",
+      (wt) => sendRobotHello(wt, { t: "hello", v: PROTOCOL_VERSION, role: "robot" }),
+    );
   });
 
   await t.step("robot hello with an invalid manifest -> invalid_manifest + close", async () => {
-    const dup = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
-    await within(dup.ready, "dup-manifest robot connect");
-    const dupDatagrams = datagramQueue(dup.datagrams.readable);
-    const dupWriter = dup.datagrams.writable.getWriter();
-    await dupWriter.write(encodeDatagram({
-      t: "hello",
-      v: PROTOCOL_VERSION,
-      role: "robot",
-      robot: { id: "dup-bot", name: "Dup Bot", model: "test" },
-      manifest: { version: 1, channels: [CHANNELS[0], CHANNELS[0]] },
-    }));
-    const err = await within(dupDatagrams(), "invalid_manifest error");
-    assertEquals(err.t, "error");
-    assertEquals((err as { code: string }).code, "invalid_manifest");
-    await within(dup.closed.catch(() => {}), "dup-manifest robot close");
+    await expectRobotReject("dup-manifest", "invalid_manifest", (wt) =>
+      sendRobotHello(wt, {
+        t: "hello",
+        v: PROTOCOL_VERSION,
+        role: "robot",
+        robot: { id: "dup-bot", name: "Dup Bot", model: "test" },
+        manifest: { version: 1, channels: [CHANNELS[0], CHANNELS[0]] },
+      }));
   });
 
-  await t.step("robot hello with the previous protocol version -> error + close", async () => {
-    // A v1 bridge would misread the v2 persistent reliable stream as one
-    // frame; the handshake must fail loudly instead.
-    const old = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
-    await within(old.ready, "old-version robot connect");
-    const oldDatagrams = datagramQueue(old.datagrams.readable);
-    const oldWriter = old.datagrams.writable.getWriter();
-    await oldWriter.write(encodeDatagram({
-      t: "hello",
-      v: 1,
-      role: "robot",
-      robot: { id: "old-bot", name: "Old Bot", model: "test" },
-    }));
-    const err = await within(oldDatagrams(), "old-version error");
-    assertEquals(err.t, "error");
-    assertEquals((err as { code: string }).code, "version_mismatch");
-    await within(old.closed.catch(() => {}), "old-version robot close");
+  await t.step("manifest with a reserved @-channel -> invalid_manifest + close", async () => {
+    await expectRobotReject("reserved-ch", "invalid_manifest", (wt) =>
+      sendRobotHello(wt, {
+        t: "hello",
+        v: PROTOCOL_VERSION,
+        role: "robot",
+        robot: { id: "reserved-bot", name: "Reserved Bot", model: "test" },
+        manifest: {
+          version: 1,
+          channels: [{ ch: "@sneaky", encoding: "jpeg.v1", delivery: "latest", maxHz: 15.5 }],
+        },
+      }));
+  });
+
+  await t.step("stream hello with the previous protocol version -> error + close", async () => {
+    // A v4 bridge would still hello over datagrams (covered below); this
+    // pins the version gate on the new @control path itself.
+    await expectRobotReject("old-version", "version_mismatch", (wt) =>
+      sendRobotHello(wt, {
+        t: "hello",
+        v: 1,
+        role: "robot",
+        robot: { id: "old-bot", name: "Old Bot", model: "test" },
+      }));
+  });
+
+  await t.step("robot datagram hello (any version) -> version_mismatch + close", async () => {
+    // v5 moved the robot hello onto @control stream frames; a datagram hello
+    // is how a v4-or-older bridge announces itself and must fail loudly.
+    for (const v of [1, PROTOCOL_VERSION]) {
+      await expectRobotReject(`datagram-hello-v${v}`, "version_mismatch", async (wt) => {
+        const writer = wt.datagrams.writable.getWriter();
+        await writer.write(encodeDatagram({
+          t: "hello",
+          v,
+          role: "robot",
+          robot: { id: "dg-bot", name: "Datagram Bot", model: "test" },
+        }));
+        writer.releaseLock();
+      });
+    }
+  });
+
+  await t.step("@control with an invalid header field -> invalid_control + close", async () => {
+    // The reserved-channel classification keys off the raw ch, so a control
+    // frame with a malformed header (even one carrying a valid hello
+    // payload) fails closed instead of passing as ordinary pre-hello data.
+    await expectRobotReject("bad-header-control", "invalid_control", (wt) =>
+      sendRobotFrame(
+        wt,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "bogus" } as unknown as FrameHeader,
+        encodeDatagram({
+          t: "hello",
+          v: PROTOCOL_VERSION,
+          role: "robot",
+          robot: { id: "bad-header-bot", name: "Bad Header Bot", model: "test" },
+        }),
+      ));
+  });
+
+  await t.step("garbage @control payload before hello -> invalid_control + close", async () => {
+    await expectRobotReject("garbage-control", "invalid_control", (wt) =>
+      sendRobotFrame(
+        wt,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "reliable" },
+        new TextEncoder().encode("{not json"),
+      ));
+  });
+
+  await t.step("unknown reserved channel before hello -> invalid_control + close", async () => {
+    await expectRobotReject("future-control", "invalid_control", (wt) =>
+      sendRobotFrame(
+        wt,
+        { ch: "@future", seq: 0, ts: 0.5, delivery: "reliable" },
+        encodeDatagram({ t: "ping", n: 1, ts: 1.5 }),
+      ));
+  });
+
+  await t.step("pub_ack before registration -> invalid_control + close", async () => {
+    await expectRobotReject("preregistration-ack", "invalid_control", (wt) =>
+      sendRobotFrame(
+        wt,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "reliable" },
+        encodeDatagram({ t: "pub_ack", id: "p1", ch: "chat", relayTs: 1.5, bridgeTs: 2.5 }),
+      ));
+  });
+
+  await t.step("oversized @control payload -> control_too_large + close", async () => {
+    await expectRobotReject("oversized-control", "control_too_large", (wt) =>
+      sendRobotFrame(
+        wt,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "reliable" },
+        new Uint8Array(MAX_CONTROL_PAYLOAD_BYTES + 1),
+      ));
   });
 
   await t.step("hello with a wrong version -> error + close", async () => {
@@ -656,6 +919,120 @@ Deno.test({
     await controlWriter.write(junk);
     await controlWriter.write(encodeControlFrame({ t: "ping", n: 7, ts: 77.5 }));
     assertEquals(await within(nextControl(), "pong after junk"), { t: "pong", n: 7, ts: 77.5 });
+  });
+
+  // The steps below register extra short-lived robots, whose robots pushes
+  // land in the main viewer's control queue; they run last so the queue- and
+  // stats-sensitive steps above stay deterministic.
+
+  await t.step("hello mutating identity or manifest -> hello_mismatch + close", async () => {
+    const wt = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await within(wt.ready, "mut connect");
+    const datagrams = datagramQueue(wt.datagrams.readable);
+    const hello: Msg = {
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: { id: "mut-bot", name: "Mut Bot", model: "test" },
+      manifest: MANIFEST,
+    };
+    await sendRobotHello(wt, hello);
+    await nextOfType(datagrams, "welcome", "mut welcome");
+    await sendRobotHello(wt, {
+      ...hello,
+      robot: { id: "mut-bot", name: "Renamed Bot", model: "test" },
+    });
+    const err = await nextOfType(datagrams, "error", "mut error");
+    assertEquals((err as { code: string }).code, "hello_mismatch");
+    await within(wt.closed.catch(() => {}), "mut close");
+  });
+
+  await t.step("data frames before hello are dropped and counted", async () => {
+    const wt = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await within(wt.ready, "late connect");
+    const datagrams = datagramQueue(wt.datagrams.readable);
+    const before = (await (await fetch(`${httpBase}/api/stats`)).json()).framesFromUnregistered ??
+      0;
+    await sendRobotFrame(
+      wt,
+      { ch: "odom", seq: 1, ts: 1.5, delivery: "reliable" },
+      new Uint8Array([1]),
+    );
+    let after = before;
+    for (let i = 0; i < 80 && after <= before; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      after = (await (await fetch(`${httpBase}/api/stats`)).json()).framesFromUnregistered;
+    }
+    assert(after > before, "pre-hello data frame was not counted");
+    // The session survived the stray frame: a hello still registers.
+    await sendRobotHello(wt, {
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: { id: "late-bot", name: "Late Bot", model: "test" },
+    });
+    await nextOfType(datagrams, "welcome", "late welcome");
+    wt.close();
+  });
+
+  await t.step("a manifest far beyond the old datagram budget registers", async () => {
+    const wt = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await within(wt.ready, "fat connect");
+    const datagrams = datagramQueue(wt.datagrams.readable);
+    const fatCtrl = robotControl(wt);
+    // Ids long enough that the full 40-channel subs snapshot also exceeds
+    // the old datagram budget, not just the hello.
+    const fatChs = Array.from({ length: 40 }, (_, i) => `ch_${i}_${"pad".repeat(8)}`);
+    const fatManifest: RobotManifest = {
+      version: 1,
+      channels: fatChs.map((ch, i) => ({
+        ch,
+        encoding: "pose.json.v1",
+        delivery: "reliable",
+        maxHz: 10.5,
+        params: { note: `padding for channel ${i} so the hello dwarfs a datagram` },
+      })),
+    };
+    const hello: Msg = {
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: { id: "fat-bot", name: "Fat Bot", model: "test" },
+      manifest: fatManifest,
+    };
+    assert(encodeDatagram(hello).byteLength > 1200, "fat hello must exceed the datagram budget");
+    await sendRobotHello(wt, hello);
+    await nextOfType(datagrams, "welcome", "fat welcome");
+
+    // A watching viewer receives the fat manifest verbatim.
+    const fatViewer = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
+    await within(fatViewer.ready, "fat viewer connect");
+    const stream = await fatViewer.createBidirectionalStream();
+    const writer = stream.writable.getWriter();
+    const next = controlQueue(stream.readable);
+    await writer.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
+    await writer.write(encodeControlFrame({ t: "watch", robotId: "fat-bot" }));
+    let msg: Msg;
+    do {
+      msg = await within(next(), "fat manifest reply");
+    } while (msg.t !== "manifest");
+    assertEquals(msg.manifest, fatManifest);
+
+    // Subscribing to every channel produces a snapshot far beyond the old
+    // datagram budget; the carrier must deliver it whole and exact.
+    for (const ch of fatChs) await writer.write(encodeControlFrame({ t: "sub", ch }));
+    let subs: Msg;
+    do {
+      subs = await within(fatCtrl(), "fat subs snapshot");
+    } while (subs.t === "subs" && subs.chs.length < fatChs.length);
+    assert(subs.t === "subs");
+    assertEquals(subs.chs, [...fatChs].sort());
+    assert(
+      encodeDatagram(subs).byteLength > 1200,
+      "fat snapshot must exceed the old datagram budget",
+    );
+    fatViewer.close();
+    wt.close();
   });
 
   viewer.close();
@@ -850,5 +1227,222 @@ Deno.test("startRelay rejects a bad served dir with a labeled error", async () =
     () => startRelay({ sdkDir: "/no/such/dir" }),
     Error,
     "sdkDir does not exist: /no/such/dir",
+  );
+});
+
+Deno.test("startRelay refuses a certificate without its key (and vice versa)", async () => {
+  const cert = await makeEphemeralCert();
+  await assertRejects(
+    () => startRelay({ port: 0, cert: cert.certPem }),
+    Error,
+    "--cert and --key must be given together",
+  );
+  await assertRejects(
+    () => startRelay({ port: 0, key: cert.keyPem }),
+    Error,
+    "--cert and --key must be given together",
+  );
+});
+
+Deno.test({
+  name: "a relay with --cert/--key serves HTTPS and QUIC on one port and advertises no hash",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  // The ephemeral generator stands in for a CA-issued certificate: the relay
+  // serves whatever PEM it is given, and the client trusts it as a root.
+  const cert = await makeEphemeralCert();
+  const relay = await startRelay({ port: 0, cert: cert.certPem, key: cert.keyPem });
+  // h2 on purpose: over TLS Deno.serve negotiates HTTP/2, where the request
+  // host comes from :authority rather than a Host header.
+  const client = Deno.createHttpClient({ caCerts: [cert.certPem], http1: false, http2: true });
+  try {
+    assertEquals(relay.certHash, undefined);
+    assertEquals(relay.quicPort, relay.httpPort);
+    const res = await fetch(`https://127.0.0.1:${relay.httpPort}/api/info`, { client });
+    const info = await res.json();
+    assertEquals(info, { wtUrl: `https://127.0.0.1:${relay.httpPort}`, v: PROTOCOL_VERSION });
+
+    // The QUIC listener serves the given certificate: pin its locally
+    // computed hash (the relay never advertised one) and complete a hello.
+    const viewer = new WebTransport(`${info.wtUrl}/viewer`, certOpts(cert.certHashB64));
+    await within(viewer.ready, "viewer connect");
+    const control = await within(viewer.createBidirectionalStream(), "control stream");
+    const writer = control.writable.getWriter();
+    const nextControl = controlQueue(control.readable);
+    await writer.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
+    assertEquals(await within(nextControl(), "welcome"), { t: "welcome", v: PROTOCOL_VERSION });
+    viewer.close();
+  } finally {
+    client.close();
+    await relay.shutdown();
+  }
+});
+
+// Auth (T12d): --auth-file gates both hellos and /api/stats.
+const ROBOT_KEY = "robot-key-0123456789abcdef";
+const VIEWER_TOKEN = "viewer-token-0123456789abcdef";
+const AUTH = parseAuthFile(JSON.stringify({
+  robots: { [ROBOT.id]: ROBOT_KEY, "other-bot": "other-key-0123456789abcdef" },
+  viewers: { paul: VIEWER_TOKEN },
+}));
+
+Deno.test({
+  name: "a relay with --auth-file checks robot keys, viewer tokens, and the stats bearer",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async (t) => {
+  const relay = await startRelay({ port: 0, auth: AUTH });
+  const httpBase = `http://127.0.0.1:${relay.httpPort}`;
+  try {
+    const robotHello = (token?: string): Msg => ({
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: ROBOT,
+      ...(token !== undefined ? { token } : {}),
+    });
+    const expectRobotReject = async (name: string, hello: Msg, message: string) => {
+      const wt = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+      await within(wt.ready, `${name} connect`);
+      const datagrams = datagramQueue(wt.datagrams.readable);
+      await sendRobotHello(wt, hello);
+      assertEquals(await within(datagrams(), `${name} error`), {
+        t: "error",
+        code: "auth_failed",
+        message,
+      });
+      await within(wt.closed.catch(() => {}), `${name} close`);
+    };
+
+    await t.step("robot hello: missing, wrong, and another id's key -> auth_failed", async () => {
+      await expectRobotReject("keyless", robotHello(), "missing robot key");
+      await expectRobotReject(
+        "wrong",
+        robotHello("wrong-key-0123456789abcdef"),
+        "invalid robot key",
+      );
+      await expectRobotReject(
+        "other",
+        robotHello("other-key-0123456789abcdef"),
+        "invalid robot key",
+      );
+    });
+
+    const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await t.step("robot hello with its own key -> welcome", async () => {
+      await within(robot.ready, "robot connect");
+      const datagrams = datagramQueue(robot.datagrams.readable);
+      await sendRobotHello(robot, robotHello(ROBOT_KEY));
+      assertEquals(await within(datagrams(), "welcome"), { t: "welcome", v: PROTOCOL_VERSION });
+    });
+
+    const viewerHello = async (
+      name: string,
+      token?: string,
+    ): Promise<{ wt: WebTransport; reply: Msg }> => {
+      const wt = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
+      await within(wt.ready, `${name} connect`);
+      const stream = await wt.createBidirectionalStream();
+      const writer = stream.writable.getWriter();
+      const next = controlQueue(stream.readable);
+      await writer.write(encodeControlFrame({
+        t: "hello",
+        v: PROTOCOL_VERSION,
+        role: "viewer",
+        ...(token !== undefined ? { token } : {}),
+      }));
+      return { wt, reply: await within(next(), `${name} reply`) };
+    };
+
+    await t.step("viewer hello: missing and wrong token -> auth_failed + close", async () => {
+      const missing = await viewerHello("tokenless");
+      assertEquals(missing.reply, {
+        t: "error",
+        code: "auth_failed",
+        message: "missing viewer token",
+      });
+      await within(missing.wt.closed.catch(() => {}), "tokenless close");
+      const wrong = await viewerHello("wrong", "wrong-token-0123456789abcdef");
+      assertEquals(wrong.reply, {
+        t: "error",
+        code: "auth_failed",
+        message: "invalid viewer token",
+      });
+      await within(wrong.wt.closed.catch(() => {}), "wrong close");
+    });
+
+    await t.step(
+      "viewer hello with a token -> welcome; /api/stats wants it as a bearer",
+      async () => {
+        const ok = await viewerHello("paul", VIEWER_TOKEN);
+        assertEquals(ok.reply, { t: "welcome", v: PROTOCOL_VERSION });
+
+        const denied = await fetch(`${httpBase}/api/stats`);
+        assertEquals(denied.status, 401);
+        assertEquals(denied.headers.get("www-authenticate"), "Bearer");
+        await denied.body?.cancel();
+        const robotKey = await fetch(`${httpBase}/api/stats`, {
+          headers: { authorization: `Bearer ${ROBOT_KEY}` },
+        });
+        assertEquals(robotKey.status, 401);
+        await robotKey.body?.cancel();
+        const res = await fetch(`${httpBase}/api/stats`, {
+          headers: { authorization: `Bearer ${VIEWER_TOKEN}` },
+        });
+        assertEquals(res.status, 200);
+        assertEquals(res.headers.get("access-control-allow-origin"), null);
+        const body = await res.text();
+        const stats = JSON.parse(body);
+        // Names, never tokens: the greeted viewer carries its auth-file name.
+        const named = (stats.perViewer as { name: string | null }[]).map((v) => v.name);
+        assertEquals(named.filter((name) => name !== null), ["paul"]);
+        assertEquals(body.includes(VIEWER_TOKEN) || body.includes(ROBOT_KEY), false);
+        // Discovery stays public: the token is the access boundary, not CORS.
+        const info = await fetch(`${httpBase}/api/info`);
+        assertEquals(info.status, 200);
+        assertEquals(info.headers.get("access-control-allow-origin"), "*");
+        await info.body?.cancel();
+        ok.wt.close();
+      },
+    );
+    robot.close();
+  } finally {
+    await relay.shutdown();
+  }
+});
+
+Deno.test({
+  name: "cert, key, and auth together bind a non-loopback host; any one missing does not",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const cert = await makeEphemeralCert();
+  await assertRejects(
+    () => startRelay({ host: "0.0.0.0", cert: cert.certPem, key: cert.keyPem }),
+    Error,
+    "host 0.0.0.0 is not loopback",
+  );
+  await assertRejects(
+    () => startRelay({ host: "0.0.0.0", auth: AUTH }),
+    Error,
+    "host 0.0.0.0 is not loopback",
+  );
+  const relay = await startRelay({
+    host: "0.0.0.0",
+    port: 0,
+    cert: cert.certPem,
+    key: cert.keyPem,
+    auth: AUTH,
+  });
+  await relay.shutdown();
+});
+
+Deno.test("--serve-dir is refused on a non-loopback host, unsafe override or not", async () => {
+  const serveDir = fileURLToPath(new URL("./testdata/fake_user_dir", import.meta.url));
+  await assertRejects(
+    () => startRelay({ host: "0.0.0.0", unsafeNonLoopback: true, serveDir }),
+    Error,
+    "--serve-dir is refused on non-loopback host 0.0.0.0",
   );
 });

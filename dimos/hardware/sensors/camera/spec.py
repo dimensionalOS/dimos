@@ -17,7 +17,6 @@ from abc import ABC, abstractmethod
 from reactivex.observable import Observable
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.service.spec import BaseConfig, Configurable
@@ -48,9 +47,6 @@ class CameraHardware(ABC, Configurable):
 class DepthCameraConfig(CameraConfig):
     """Protocol for depth camera configuration."""
 
-    camera_name: str
-    base_frame_id: str
-    base_transform: Transform | None
     align_depth_to_color: bool
     enable_depth: bool
     enable_pointcloud: bool

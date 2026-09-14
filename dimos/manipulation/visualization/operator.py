@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 import math
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.planners.config import CartesianPathConfig
@@ -122,7 +122,7 @@ class ManipulationOperator:
         complete = self._complete_states(groups, request.target)
         if complete is None:
             return self._invalid(request.group_ids, "Incomplete model target state")
-        return self._evaluate_global_target(groups, JointState(request.target), complete)
+        return self._evaluate_complete_target(groups, JointState(request.target), complete)
 
     def evaluate_pose_target(self, request: PoseTargetRequest) -> TargetEvaluationResult:
         """Validate and evaluate explicit world-frame pose targets."""
@@ -146,7 +146,7 @@ class ManipulationOperator:
         groups = self._groups_for_ids(group_ids)
         if groups is None:
             return self._invalid(group_ids, "Unknown planning group")
-        return self._evaluate_global_target(groups, ik.joint_state)
+        return self._evaluate_complete_target(groups, ik.joint_state)
 
     def plan_to_joints(self, request: JointTargetRequest) -> GeneratedPlan | None:
         groups, validation = self._validate_joint_request(request)
@@ -165,7 +165,7 @@ class ManipulationOperator:
             for group, offset in self._group_offsets(groups)
         }
         return self._module.generate_plan_to_joint_targets(
-            cast("Mapping[PlanningGroupID | PlanningGroup, JointState]", targets),
+            targets,
             speed_scale=self._motion_speed,
         )
 
@@ -175,7 +175,7 @@ class ManipulationOperator:
             return None
         poses = {group_id: stamped for group_id, stamped in request.pose_targets.items()}
         return self._module.generate_plan_to_pose_targets(
-            cast("Mapping[PlanningGroupID | PlanningGroup, PoseStamped]", poses),
+            poses,
             request.auxiliary_group_ids,
             speed_scale=self._motion_speed,
         )
@@ -197,17 +197,14 @@ class ManipulationOperator:
             for group_id, target in request.pose_targets.items()
         }
         return self._module.generate_cartesian_plan(
-            cast(
-                "Mapping[PlanningGroupID | PlanningGroup, Sequence[PoseStamped]]",
-                targets,
-            ),
+            targets,
             request.config,
             request.auxiliary_group_ids,
             speed_scale=self._motion_speed,
         )
 
     def preview(self, plan: GeneratedPlan, duration: float | None = None) -> bool:
-        return self._module.preview_plan(plan=plan, duration=duration)
+        return self._module.preview_plan(plan=plan, duration=duration).succeeded
 
     def execute(self, plan: GeneratedPlan) -> bool:
         return self._module._execute_generated_plan(plan)
@@ -216,7 +213,7 @@ class ManipulationOperator:
         return self._module.cancel().status.name != "UNCERTAIN"
 
     def clear_plan(self) -> bool:
-        return self._module.clear_planned_path()
+        return self._module.clear_planned_path().succeeded
 
     def _validate_joint_request(
         self, request: JointTargetRequest
@@ -320,7 +317,7 @@ class ManipulationOperator:
             positions.append(value)
         return JointState({"name": list(config.joint_names), "position": positions})
 
-    def _evaluate_global_target(
+    def _evaluate_complete_target(
         self,
         groups: Sequence[PlanningGroup],
         target: JointState,

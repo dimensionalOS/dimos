@@ -72,7 +72,7 @@ def _static_robot_body(rr: Any) -> list[Any]:
 def _convert_camera_info(camera_info: CameraInfo) -> Any:
     return camera_info.to_rerun(
         image_topic="/world/color_image",
-        optical_frame="camera_color_optical_frame",
+        optical_frame="d435_color_optical_frame",
     )
 
 
@@ -80,7 +80,7 @@ def _convert_depth_camera_info(camera_info: CameraInfo) -> Any:
     # Depth is aligned to color, so it shares the color optical frame.
     return camera_info.to_rerun(
         image_topic="/world/realsense_depth_image",
-        optical_frame="camera_color_optical_frame",
+        optical_frame="d435_color_optical_frame",
     )
 
 
@@ -113,10 +113,7 @@ unitree_g1_record = autoconnect(
             (PointLio, "odometry", "pointlio_odometry"),
         ]
     ),
-    # The camera anchors its optical tf subtree to the d435_link frame.
-    RealSenseCamera.blueprint(
-        base_frame_id="d435_link",
-    ).remappings(
+    RealSenseCamera.blueprint(frame_id="d435_link").remappings(
         [
             (RealSenseCamera, "depth_image", "realsense_depth_image"),
             (RealSenseCamera, "camera_info", "realsense_camera_info"),

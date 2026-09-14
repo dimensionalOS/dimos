@@ -79,7 +79,7 @@ _coordinator_xarm7_hw = xarm7_hardware("arm")
 coordinator_xarm7 = autoconnect(
     coordinator(
         hardware=[_coordinator_xarm7_hw],
-        tasks=[trajectory_task(_coordinator_xarm7_hw), _gripper_task()],
+        tasks=[trajectory_task(_coordinator_xarm7_hw)],
     ),
     *mujoco_if_sim(XARM7_SIM_PATH, len(_coordinator_xarm7_hw.joints)),
 )
@@ -103,12 +103,5 @@ _xarm6_right = xarm6_hardware(
 
 coordinator_dual_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm7_left, _xarm6_right],
-    tasks=[
-        TaskConfig(
-            name="traj_arm",
-            type="trajectory",
-            joint_names=[*_xarm7_left.joints, *_xarm6_right.joints],
-            priority=10,
-        ),
-    ],
+    tasks=[trajectory_task(_xarm7_left, _xarm6_right)],
 )

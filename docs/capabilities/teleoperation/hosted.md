@@ -3,7 +3,7 @@
 **dimTELE** is hosted teleoperation for dimOS robots: operate them remotely
 from any browser or Quest headset over WebRTC.
 The robot dials out to a hosted broker
-([teleop.dimensionalos.com](https://teleop.dimensionalos.com)), so you don't
+([api.dimensional.org](https://api.dimensional.org)), so you don't
 need to open any inbound ports on the
 robot's network. It works behind a home router, on Wi-Fi, wired LAN, or
 cellular.
@@ -46,23 +46,24 @@ Below are the latencies recorded:
 ## Quick Start
 
 ```bash
-TRANSPORTS__BROKER__API_KEY=dtk_live_... \
+TRANSPORTS__BROKER__API_KEY=dimos_sk_... \
 dimos run teleop-hosted-go2-transport
 ```
 
 The robot registers with the broker. Open
-[teleop.dimensionalos.com](https://teleop.dimensionalos.com), log in, and your
+the [console Teleop tab](https://console.dimensional.org/console/teleop), sign in, and your
 robot appears under **Available Robots**. Click **Connect** and you're driving.
 
-The API key alone is enough. The broker derives the robot identity from it.
+The API key alone is enough; one key drives the CLI, uploads, and teleop. The
+robot identifies itself by `TRANSPORTS__BROKER__ROBOT_ID` (blueprint default).
 `TRANSPORTS__BROKER__ROBOT_ID` / `TRANSPORTS__BROKER__ROBOT_NAME` are optional
 overrides. All broker settings can also be passed on the CLI, e.g.
-`--transports.broker.api-key=dtk_live_...`.
+`--transports.broker.api-key=dimos_sk_...`.
 
 ## Get an API key
 
-1. Visit [teleop.dimensionalos.com](https://teleop.dimensionalos.com) and sign up.
-2. On the dashboard, **API Keys → + New Key**.
+1. Sign in to the [Dimensional console](https://console.dimensional.org/console/keys).
+2. Under **API keys**, click **Create key**.
 3. Copy the key (shown once) and pass it as `TRANSPORTS__BROKER__API_KEY`.
 
 ## Available blueprints
@@ -88,7 +89,7 @@ Once the robot is running and you've clicked **Connect**, here's how to operate 
 
 ### 1. Connect
 
-Open [teleop.dimensionalos.com](https://teleop.dimensionalos.com), find your
+Open the [console Teleop tab](https://console.dimensional.org/console/teleop), find your
 robot under **Available Robots**, and click **Connect**. Video appears once the
 WebRTC session negotiates; the metrics HUD starts populating once telemetry
 arrives. If the robot doesn't show up, confirm the blueprint is still running

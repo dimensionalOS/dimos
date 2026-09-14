@@ -13,10 +13,11 @@
 # limitations under the License.
 
 import os
+from pathlib import Path
 import re
 from typing import Literal, TypeAlias
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.constants import DEFAULT_BUILD_NATIVE
@@ -34,6 +35,14 @@ ZenohMode: TypeAlias = Literal["peer", "client", "router"]
 # How every session in every process joins it. A router binds a port only one
 # process can hold, so it is pinned on the one session that owns that port.
 ZenohProcessMode: TypeAlias = Literal["peer", "client"]
+
+# pytest exports PYTEST_VERSION to the whole process tree. Tests must not pick up
+# a developer's .env (ROBOT_IP, SIMULATION, ...); dimos/conftest.py exports the
+# LLM API keys itself.
+ENV_FILE = None if "PYTEST_VERSION" in os.environ else ".env"
+
+# Never expose these in config dumps or persist their CLI values in run metadata.
+SECRET_CONFIG_FIELDS = frozenset({"dimos_api_key", "relay_key", "unitree_aes_128_key"})
 
 
 def _get_all_numbers(s: str) -> list[float]:
@@ -53,8 +62,10 @@ class GlobalConfig(BaseSettings):
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
-    record: Literal["", "sqlite"] = ""
+    record: Literal["", "sqlite", "mcap"] = ""
+    record_engine: Literal["python", "rust"] = Field(default="python", validate_default=True)
     record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
+    record_encoding_threads: int | None = Field(default=None, ge=1)
     new_memory: bool = False
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"
@@ -103,6 +114,10 @@ class GlobalConfig(BaseSettings):
     robot_rotation_diameter: float = 0.6
     nerf_speed: float = 1.0
     mcp_port: int = 9990
+    # Seconds an MCP client waits for a tool to answer. A skill that thinks
+    # for longer than this is cut off at the client, not the server, so the
+    # caller owns the number.
+    mcp_timeout: int = 30
     # `DIMOS_TRANSPORT` (or `.env`) is the single switch read by every process
     # (dimos, humancli, agentspy, dtop). The `transport` alias keeps the bare
     # env name and the `--transport` CLI flag (which sets the field by name) working.
@@ -120,15 +135,47 @@ class GlobalConfig(BaseSettings):
     dimsim_headless: bool = True
     local_relay: bool = False
     relay_url: str | None = None
+    """HTTP URL of a relay started elsewhere (e.g. http://localhost:7780); the
+    bridge discovers its WebTransport endpoint through /api/info."""
+    relay_ca: str | None = None
+    """PEM CA bundle that signed the relay_url relay's certificate (mkcert, a
+    private CA); replaces the default trust stores. Unset for a relay with a
+    public certificate."""
+    relay_key: str | None = None
+    """Key that identifies this robot to a relay started with --auth-file
+    (bound to its robot id there). Prefer RELAY_KEY in the environment or
+    .env over the --relay-key flag, which shows in the process list."""
     dimos_cloud_url: str = "https://api.dimensional.org"
     dimos_api_key: str | None = None
+    dimos_upload_codec: str = "lz4"
+    dimos_upload_retries: int = 2
+    dimos_upload_chunk_mb: int | None = None
+    dimos_upload_quiet_s: float = 30.0
+    dimos_http_timeout: float = 60.0
+    dimos_staging_dir: Path | None = None
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
         validate_assignment=True,
     )
+
+    @field_validator("record_engine")
+    @classmethod
+    def _validate_record_engine(cls, value: str, info: ValidationInfo) -> str:
+        if info.data.get("record") == "mcap" and value != "rust":
+            raise ValueError("MCAP recording requires --record-engine rust")
+        return value
+
+    @field_validator("record_encoding_threads")
+    @classmethod
+    def _validate_record_encoding_threads(
+        cls, value: int | None, info: ValidationInfo
+    ) -> int | None:
+        if value is not None and info.data.get("record_engine") != "rust":
+            raise ValueError("--record-encoding-threads is valid only with --record-engine rust")
+        return value
 
     def update(self, **kwargs: object) -> None:
         """Update config fields in place."""

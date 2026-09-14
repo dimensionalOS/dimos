@@ -169,7 +169,7 @@ def _closure_nix_configs(classes: list[_ClassDef]) -> set[tuple[str, str]]:
             f"{cls.file}: {cls.name}.build_command must default to a plain string literal "
             "so bin/build-native-modules can read it without importing dimos"
         )
-        if command is not None and "nix" in command:
+        if _SCRIPT.is_nix_build(command):
             nix_configs.add((cls.file, cls.name))
     return nix_configs
 
@@ -203,6 +203,38 @@ def test_ast_extraction_matches_runtime() -> None:
         base_dir = Path(inspect.getfile(config_class)).resolve().parent
         runtime_dir = Path(os.path.normpath(base_dir if cwd is None else base_dir / cwd))
         assert runtime_dir == (DIMOS_PROJECT_ROOT / module.build_dir).resolve()
+
+
+def test_no_module_hashes_the_repo_root() -> None:
+    """A collected input of "." puts the whole-repo tree SHA in the marker key,
+    so it changes on every commit and the marker never matches. A
+    fileset.toSource `root` anchor (usually the repo root) must be skipped, not
+    hashed — regression guard for the rust_recorder fileset flake."""
+    for module in _SCRIPT.discover():
+        assert "." not in _SCRIPT._collect_input_paths(module), (
+            f"{module.qualname}: input set includes the repo root — a fileset root anchor "
+            "is being hashed, which busts the publish marker on every commit"
+        )
+
+
+def test_recorder_fileset_covers_every_workspace_member() -> None:
+    """Cargo resolves the workspace from the root manifest, so the recorder's
+    fileset src must carry every [workspace] member — as static path literals,
+    because the publish gate can only hash literals. Deriving the list from
+    Cargo.toml at eval time (fromTOML) is invisible to the flake parser, which
+    then hashes the fileset root instead: the repo-root tree SHA busts the
+    publish marker on every commit."""
+    flake = DIMOS_PROJECT_ROOT / "dimos" / "experimental" / "memory" / "rust" / "flake.nix"
+    block = re.search(r"members\s*=\s*\[([^]]*)\]", (DIMOS_PROJECT_ROOT / "Cargo.toml").read_text())
+    assert block is not None, "no [workspace] members array in Cargo.toml"
+    members = re.findall(r'"([^"]+)"', block.group(1))
+    assert members, "no [workspace] members parsed from Cargo.toml"
+    literals, _path_inputs = _SCRIPT._flake_refs(flake)
+    for member in members:
+        assert any(member == lit or member.startswith(lit + "/") for lit in literals), (
+            f"workspace member {member!r} has no covering path literal in {flake} — "
+            "list it in the fileset.unions so the publish gate hashes it"
+        )
 
 
 @pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs git HEAD for object hashes")
@@ -270,7 +302,8 @@ def test_flake_refs_resolve_and_are_covered() -> None:
             flake = DIMOS_PROJECT_ROOT / rel / "flake.nix"
             if not flake.is_file():
                 continue  # plain source tree (e.g. native/cpp), nothing to sweep
-            for match in _RAW_REF.finditer(flake.read_text()):
+            raw = flake.read_text()
+            for match in _RAW_REF.finditer(raw):
                 if match.group("scheme") == "git+file:":
                     url = match.group("path").split("?", 1)[0]
                     lock = json.loads((flake.parent / "flake.lock").read_text())
@@ -286,6 +319,8 @@ def test_flake_refs_resolve_and_are_covered() -> None:
                         " derivation on every commit behind the publish gate's back"
                     )
                     continue
+                if "fileset.toSource" in raw and re.search(r"\broot\s*=\s*$", raw[: match.start()]):
+                    continue  # fileset anchor, deliberately not an input (see _flake_refs)
                 token = match.group("path").split("?", 1)[0]
                 target = os.path.relpath(os.path.normpath(flake.parent / token), DIMOS_PROJECT_ROOT)
                 if not (DIMOS_PROJECT_ROOT / target).exists():

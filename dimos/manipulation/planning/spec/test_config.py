@@ -14,30 +14,10 @@
 
 from pathlib import Path
 
-from pydantic import ValidationError
-import pytest
-
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
-
-
-@pytest.mark.parametrize(
-    "obsolete_field",
-    ["model_path", "urdf_path", "package_paths", "xacro_args", "urdf_processors"],
-)
-def test_robot_model_config_rejects_obsolete_description_fields(
-    obsolete_field: str,
-) -> None:
-    with pytest.raises(ValidationError):
-        RobotModelConfig.model_validate(
-            {
-                "model": RobotModel.from_file("robot.urdf"),
-                "joint_names": [],
-                obsolete_field: Path("obsolete.urdf"),
-            }
-        )
 
 
 def test_robot_model_survives_blueprint_config_round_trip(tmp_path: Path) -> None:

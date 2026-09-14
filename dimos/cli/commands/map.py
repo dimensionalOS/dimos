@@ -21,6 +21,7 @@ from dimos.mapping.cli.pose_fill import main as _map_pose_fill_main
 from dimos.mapping.cli.rename import main as _map_rename_main
 from dimos.mapping.cli.replay import main as _map_replay_main
 from dimos.mapping.cli.replay_marker import main as _map_replay_marker_main
+from dimos.mapping.cli.view import main as _map_view_main
 
 map_app = typer.Typer(help="Voxel-map tools over recorded sqlite datasets")
 map_app.command("global")(_map_main)
@@ -28,3 +29,4 @@ map_app.command("rename")(_map_rename_main)
 map_app.command("pose-fill")(_map_pose_fill_main)
 map_app.command("replay")(_map_replay_main)
 map_app.command("replay-marker")(_map_replay_marker_main)
+map_app.command("view")(_map_view_main)

@@ -24,6 +24,7 @@ from typing import Protocol
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionResult
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryStatus
 from dimos.spec.utils import Spec
@@ -63,6 +64,12 @@ class ExecutionStatus(Enum):
     NO_PLAN = auto()
     NO_EXECUTION = auto()
     UNCERTAIN = auto()
+
+
+# Execution outcomes where the arm's stop was never confirmed. A caller that
+# treats these as a successful stop can command its next motion into a moving
+# arm, so they leave the module in FAULT rather than IDLE.
+UNCONFIRMED_STOP = frozenset({ExecutionStatus.UNCERTAIN, ExecutionStatus.FAULT})
 
 
 class CommandStatus(Enum):
@@ -213,7 +220,7 @@ class MoveResult:
 
 
 class ManipulationSpec(Spec, Protocol):
-    """Primitive cross-module manipulation interface."""
+    """Typed motion RPCs for deployed manipulation Modules and Python clients."""
 
     def list_planning_groups(self) -> tuple[PlanningGroupInfo, ...]: ...
 
@@ -231,7 +238,17 @@ class ManipulationSpec(Spec, Protocol):
         speed_scale: float | None = None,
     ) -> PlanResult: ...
 
-    def execute(self, blocking: bool = True, timeout: float | None = None) -> ExecutionResult: ...
+    def preview_plan(
+        self, plan: GeneratedPlan | None = None, duration: float | None = None
+    ) -> CommandResult: ...
+
+    def clear_planned_path(self) -> CommandResult: ...
+
+    def get_visualization_url(self) -> str | None: ...
+
+    def execute(
+        self, blocking: bool = True, timeout: float | None = None, *, plan_id: str | None = None
+    ) -> ExecutionResult: ...
 
     def wait_for_execution(self, timeout: float | None = None) -> ExecutionResult: ...
 
@@ -246,6 +263,10 @@ class ManipulationSpec(Spec, Protocol):
         blocking: bool = True,
         timeout: float | None = None,
     ) -> MoveResult: ...
+
+    def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None: ...
+
+    def reset(self) -> CommandResult: ...
 
     def set_gripper_position(
         self,

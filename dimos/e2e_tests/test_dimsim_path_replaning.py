@@ -17,7 +17,12 @@ import pytest
 
 @pytest.mark.self_hosted_large
 def test_path_replanning(
-    lcm_spy, start_blueprint, dim_sim, direct_cmd_vel_explorer, spawn_wall_on_pose
+    lcm_spy,
+    start_blueprint,
+    wait_for_system_ready,
+    dim_sim,
+    direct_cmd_vel_explorer,
+    spawn_wall_on_pose,
 ) -> None:
     start_blueprint(
         "--dimsim-scene=empty",
@@ -25,8 +30,7 @@ def test_path_replanning(
         "unitree-go2-agentic",
         simulator="dimsim",
     )
-    lcm_spy.save_topic("/rpc/McpClient/on_system_modules/res")
-    lcm_spy.wait_for_saved_topic("/rpc/McpClient/on_system_modules/res", timeout=1200.0)
+    wait_for_system_ready(timeout=1200.0)
 
     # robot spawns at (3, 2)
 

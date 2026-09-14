@@ -5,17 +5,17 @@
 // registry.ts; this file owns the listeners and process-level wiring.
 import { PROTOCOL_VERSION } from "@dimos/shared";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { Auth } from "./auth.ts";
 import { makeEphemeralCert } from "./cert.ts";
 import { LATEST_STALE_MS } from "./forward.ts";
 import { Registry } from "./registry.ts";
 import { RobotSession, ViewerSession } from "./session.ts";
 
-// Subs snapshots ride lossy datagrams; this resend interval is the loss- and
-// reorder-healing mechanism (bridges ignore stale `n`).
-const SNAPSHOT_RESEND_MS = 2_000;
-
 export interface RelayOptions {
-  /** TCP port for the HTTP side. Default 7780; 0 picks an ephemeral port. */
+  /**
+   * TCP port for the HTTP side (and, with cert/key, the QUIC port too).
+   * Default 7780; 0 picks an ephemeral port.
+   */
   port?: number;
   /** Bind host for both listeners. The default is the only secure-context-friendly choice. */
   host?: string;
@@ -29,12 +29,27 @@ export interface RelayOptions {
   /** User static root served at / instead of the cockpit (--serve-dir). */
   serveDir?: string;
   /**
-   * Explicit acknowledgment for binding a non-loopback host. This local
-   * relay trusts every origin that can reach it (wildcard CORS on the
-   * discovery endpoints, an unauthenticated WebTransport session, optional
-   * user-file serving), so startRelay refuses other hosts without this -
-   * only sensible behind the operator's own TLS and access control. A
-   * remote-capable relay is a separate, fail-closed mode (W10), not this.
+   * PEM certificate (chain) and private key (--cert/--key), both or neither.
+   * With them the relay terminates real TLS itself: HTTPS on `port`, QUIC on
+   * the same port, and no certificate hash advertised (clients verify the
+   * certificate normally). Without them: an ephemeral self-signed certificate
+   * pinned by hash, QUIC on an ephemeral port.
+   */
+  cert?: string;
+  key?: string;
+  /**
+   * Parsed --auth-file (auth.ts): robot keys bound to robot ids and viewer
+   * tokens. Robots and viewers must present them in hello, /api/stats needs
+   * a bearer viewer token, and together with cert/key it lifts the
+   * loopback-only rule below.
+   */
+  auth?: Auth;
+  /**
+   * Explicit acknowledgment for binding a non-loopback host without cert,
+   * key, and auth. Such a relay trusts every origin that can reach it
+   * (wildcard CORS on the discovery endpoints, an unauthenticated
+   * WebTransport session), so startRelay refuses other hosts without this -
+   * only sensible behind the operator's own TLS and access control.
    */
   unsafeNonLoopback?: boolean;
 }
@@ -44,8 +59,19 @@ export interface RelayHandle {
   quicPort: number;
   /** Base WebTransport URL (no path); clients append /robot or /viewer. */
   wtUrl: string;
-  certHash: string;
+  /** base64 SHA-256 of the ephemeral certificate; absent with cert/key. */
+  certHash?: string;
   shutdown(): Promise<void>;
+}
+
+export const CERT_KEY_PAIR_ERROR = "--cert and --key must be given together";
+
+/** What the listeners serve: the ephemeral certificate or the operator's. */
+interface ServedCert {
+  certPem: string;
+  keyPem: string;
+  /** Hash pinned through /api/info; absent for a real certificate. */
+  certHashB64?: string;
 }
 
 const MIME: Record<string, string> = {
@@ -65,13 +91,16 @@ const MIME: Record<string, string> = {
   ".gif": "image/gif",
   ".webp": "image/webp",
   ".wasm": "application/wasm",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
 };
 
-// Deliberate LOCAL-relay policy: this relay binds loopback (enforced in
-// startRelay unless unsafeNonLoopback overrides it) and trusts local browser
-// applications, so any local origin (e.g. a Vite dev server) may read the
-// discovery endpoints and import served JavaScript modules. A remotely
-// reachable relay (W10) is fail-closed and must NOT inherit this wildcard.
+// Deliberate policy: any origin may read the discovery endpoint and import
+// served JavaScript modules (public data, public code), so a local page
+// (e.g. a Vite dev server) can bootstrap against a loopback relay and a
+// hosted relay's SDK works cross-origin. The viewer token is the access
+// boundary, not CORS; the one exception is /api/stats, which needs a bearer
+// token and carries no CORS header once auth is on.
 const LOCAL_CORS = { "access-control-allow-origin": "*" };
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -146,12 +175,22 @@ export function installUnhandledRejectionGuard(): void {
 export async function startRelay(options: RelayOptions = {}): Promise<RelayHandle> {
   installUnhandledRejectionGuard();
   const host = options.host ?? "127.0.0.1";
-  if (!LOOPBACK_HOSTS.has(host) && options.unsafeNonLoopback !== true) {
+  const loopback = LOOPBACK_HOSTS.has(host);
+  const secured = options.cert !== undefined && options.key !== undefined &&
+    options.auth !== undefined;
+  if (!loopback && !secured && options.unsafeNonLoopback !== true) {
     throw new Error(
-      `host ${host} is not loopback: the local relay serves wildcard CORS, an ` +
-        "unauthenticated WebTransport session, and optional --serve-dir files to every " +
-        "origin that can reach it. Bind 127.0.0.1, or pass --unsafe-non-loopback " +
-        "(RelayOptions.unsafeNonLoopback) only behind your own TLS and access control",
+      `host ${host} is not loopback: without --cert, --key and --auth-file together the ` +
+        "relay serves wildcard CORS and an unauthenticated WebTransport session to every " +
+        "origin that can reach it. Bind 127.0.0.1, pass the three flags, or pass " +
+        "--unsafe-non-loopback (RelayOptions.unsafeNonLoopback) only behind your own TLS " +
+        "and access control",
+    );
+  }
+  if (!loopback && options.serveDir !== undefined) {
+    throw new Error(
+      `--serve-dir is refused on non-loopback host ${host}: a public relay serves only ` +
+        "the built cockpit",
     );
   }
 
@@ -164,11 +203,46 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   // precedence over it in handleHttp.
   const staticRoot = serveRoot ?? cockpitRoot;
 
-  const cert = await makeEphemeralCert();
+  // A real certificate (--cert/--key) is served as-is and its hash is not
+  // advertised: clients verify it like any other. Without one, an ephemeral
+  // self-signed certificate is pinned by hash through /api/info.
+  let cert: ServedCert;
+  if (options.cert !== undefined && options.key !== undefined) {
+    cert = { certPem: options.cert, keyPem: options.key };
+  } else if (options.cert === undefined && options.key === undefined) {
+    cert = await makeEphemeralCert();
+  } else {
+    throw new Error(CERT_KEY_PAIR_ERROR);
+  }
+  const tls = cert.certHashB64 === undefined;
 
-  // QUIC always binds an ephemeral port; clients discover it via the ready
-  // line or /api/info, so --port stays a single HTTP-facing knob.
-  const endpoint = new Deno.QuicEndpoint({ hostname: host, port: 0 });
+  // HTTP binds first so --port 0 works in both modes. With a real
+  // certificate QUIC shares its port (one "443 TCP + 443 UDP" rule pair, and
+  // /api/info derives the WebTransport URL from the request host); otherwise
+  // QUIC binds an ephemeral port that clients discover via the ready line or
+  // /api/info, so --port stays a single HTTP-facing knob. Nothing awaits
+  // between this bind and the consts handleHttp closes over.
+  const httpServer = Deno.serve(
+    {
+      hostname: host,
+      port: options.port ?? 7780,
+      onListen: () => {},
+      cert: options.cert,
+      key: options.key,
+    },
+    handleHttp,
+  );
+  const httpPort = (httpServer.addr as Deno.NetAddr).port;
+  let endpoint: Deno.QuicEndpoint;
+  try {
+    endpoint = new Deno.QuicEndpoint({ hostname: host, port: tls ? httpPort : 0 });
+  } catch (e) {
+    await httpServer.shutdown();
+    throw new Error(
+      `QUIC cannot bind UDP port ${httpPort} (with --cert/--key it shares --port): ` +
+        ((e as Error)?.message ?? e),
+    );
+  }
   const listener = endpoint.listen({
     cert: cert.certPem,
     key: cert.keyPem,
@@ -183,6 +257,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   const wtUrl = `https://${urlHost}:${quicPort}`;
 
   const registry = new Registry();
+  const auth = options.auth ?? null;
   const sessions = new Set<WebTransport>();
   let nextViewerId = 1;
 
@@ -191,13 +266,11 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     wt.closed.catch(() => {}).finally(() => sessions.delete(wt));
   }
 
-  const resendTimer = setInterval(() => registry.resendSnapshots(), SNAPSHOT_RESEND_MS);
-  // A pending resend must not keep the Deno process alive after shutdown().
-  Deno.unrefTimer(resendTimer);
   // Offers reap stale latest streams opportunistically, but an idle input
   // stops offering; this interval bounds an idle stream's lifetime to just
   // under 2x the stale window.
   const reapTimer = setInterval(() => registry.reapAll(Date.now()), LATEST_STALE_MS);
+  // A pending reap must not keep the Deno process alive after shutdown().
   Deno.unrefTimer(reapTimer);
 
   (async () => {
@@ -208,9 +281,10 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
         await wt.ready;
         track(wt);
         const path = new URL(wt.url).pathname;
-        if (path === "/robot") new RobotSession(wt, conn, registry).start();
-        else if (path === "/viewer") new ViewerSession(wt, nextViewerId++, registry).start();
-        else {
+        if (path === "/robot") new RobotSession(wt, conn, registry, auth).start();
+        else if (path === "/viewer") {
+          new ViewerSession(wt, nextViewerId++, registry, auth).start();
+        } else {
           console.log(`[relay] rejecting unknown WebTransport endpoint ${path}`);
           wt.close({ closeCode: 1, reason: "unknown WebTransport endpoint" });
         }
@@ -223,14 +297,24 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   async function handleHttp(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/api/info") {
-      return Response.json({
-        wtUrl: `${wtUrl}/viewer`,
-        certHash: cert.certHashB64,
-        v: PROTOCOL_VERSION,
-      }, { headers: LOCAL_CORS });
+      // The base, like the ready line: clients append /robot or /viewer.
+      // With a real certificate it is the origin the client dialed (right by
+      // construction: QUIC shares the port) and there is no hash to pin.
+      const info = tls
+        ? { wtUrl: url.origin, v: PROTOCOL_VERSION }
+        : { wtUrl, certHash: cert.certHashB64, v: PROTOCOL_VERSION };
+      return Response.json(info, { headers: LOCAL_CORS });
     }
     if (url.pathname === "/api/stats") {
-      return Response.json(registry.stats(), { headers: LOCAL_CORS });
+      if (auth === null) return Response.json(registry.stats(), { headers: LOCAL_CORS });
+      // Operator tooling only: a bearer viewer token, and no CORS header.
+      if (!auth.bearerOk(req.headers.get("authorization"))) {
+        return new Response("unauthorized", {
+          status: 401,
+          headers: { "www-authenticate": "Bearer" },
+        });
+      }
+      return Response.json(registry.stats());
     }
     if (url.pathname === "/sdk.js") {
       // Never falls through to a static root: a missing bundle must yield the
@@ -268,19 +352,12 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     return res;
   }
 
-  const httpServer = Deno.serve(
-    { hostname: host, port: options.port ?? 7780, onListen: () => {} },
-    handleHttp,
-  );
-  const httpPort = (httpServer.addr as Deno.NetAddr).port;
-
   return {
     httpPort,
     quicPort,
     wtUrl,
     certHash: cert.certHashB64,
     async shutdown(): Promise<void> {
-      clearInterval(resendTimer);
       clearInterval(reapTimer);
       for (const wt of sessions) {
         try {

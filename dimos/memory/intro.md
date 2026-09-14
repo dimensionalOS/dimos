@@ -8,6 +8,12 @@ from dimos.memory.store.sqlite import SqliteStore
 store = SqliteStore(path="/tmp/memory_readme.db")
 ```
 
+## Experimental native recording
+
+The Rust-backed SQLite and MCAP recorder is being evaluated under
+[`dimos.experimental.memory`](../experimental/memory/README.md). Its import path
+and configuration may change before promotion to the stable Memory API.
+
 
 ```python session=memory ansi=false
 logs = store.stream("logs", str)

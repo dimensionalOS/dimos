@@ -23,7 +23,14 @@ import textwrap
 import threading
 from typing import TYPE_CHECKING, Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolCall, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolCall,
+    ToolMessage,
+)
 from rich.highlighter import JSONHighlighter
 from rich.panel import Panel
 from rich.text import Text
@@ -75,9 +82,9 @@ def _format_elapsed(delta: timedelta) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
-def _split_tool_message(content: Any) -> tuple[str, str] | None:
+def _split_tool_message(content: str) -> tuple[str, str] | None:
     """Parse a `[tool:NAME] <text>` tool-stream message into (name, text)."""
-    if not isinstance(content, str) or not content.startswith(TOOL_MSG_PREFIX):
+    if not content.startswith(TOOL_MSG_PREFIX):
         return None
     end = content.find("]")
     if end == -1:
@@ -343,85 +350,86 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
     def _subscribe_to_agent(self) -> None:
         """Subscribe to agent messages in a separate thread."""
 
-        def receive_msg(msg) -> None:  # type: ignore[no-untyped-def]
+        def receive_msg(msg: BaseMessage) -> None:
             if not self._running:
                 return
-            assert self._tool_panels is not None
-            assert self._thinking is not None
-
-            timestamp = datetime.now().strftime("%H:%M:%S")
-
-            if isinstance(msg, SystemMessage):
+            try:
+                self._show_agent_message(msg)
+            except Exception as e:
+                # Otherwise the error hits stderr, hidden by the TUI, and the message vanishes.
                 self.call_from_thread(
                     self._add_message,
-                    timestamp,
+                    datetime.now().strftime("%H:%M:%S"),
                     "system",
-                    truncate_display_string(msg.content, 1000),
-                    theme.YELLOW,
+                    f"could not render {type(msg).__name__}: {e!r}",
+                    theme.ERROR,
                 )
-            elif isinstance(msg, AIMessage):
-                content = msg.content or ""
-                tool_calls = getattr(msg, "tool_calls", None) or msg.additional_kwargs.get(
-                    "tool_calls", []
-                )
-
-                # A reply to a tool-stream update goes inside that tool's box so
-                # it reads as an annotation of the stream, not the agent talking
-                # to itself. Replies to a typed message stay inline.
-                if content and self._reply_target is not None and isinstance(content, str):
-                    self.call_from_thread(
-                        self._tool_panels.update, self._reply_target, content, "agent", timestamp
-                    )
-                elif content:
-                    self.call_from_thread(
-                        self._add_message, timestamp, "agent", content, theme.AGENT
-                    )
-
-                # Tool calls are real actions; always show them inline, and
-                # remember each one so its result can be grouped under it.
-                if tool_calls:
-                    for tc in tool_calls:
-                        tool_info = self._format_tool_call(tc)
-                        self.call_from_thread(
-                            self._write_tool_call, timestamp, tool_info, tc.get("id")
-                        )
-
-                # If neither content nor tool calls, show a placeholder (but not
-                # for the silent step that can follow a tool-stream update).
-                if not content and not tool_calls and self._reply_target is None:
-                    self.call_from_thread(
-                        self._add_message, timestamp, "agent", "<no response>", theme.DIM
-                    )
-            elif isinstance(msg, ToolMessage):
-                self.call_from_thread(
-                    self._write_tool_result,
-                    timestamp,
-                    msg.content,
-                    getattr(msg, "tool_call_id", None),
-                )
-            elif isinstance(msg, HumanMessage):
-                # Tool-stream updates arrive here as `[tool:NAME] <text>`. Route
-                # the update into the tool's box and remember the tool so the
-                # following agent reply lands in the same box. A real typed
-                # message clears the target and renders inline.
-                parsed = _split_tool_message(msg.content)
-                if parsed is not None:
-                    name, text = parsed
-                    self._reply_target = name
-                    if text:
-                        self.call_from_thread(
-                            self._tool_panels.update, name, text, "tool", timestamp
-                        )
-                    return
-                self._reply_target = None
-                self.call_from_thread(
-                    self._add_message, timestamp, "human", msg.content, theme.HUMAN
-                )
-                # Keep the spinner up while this turn is processed (also re-shows
-                # it in the rare case a stale idle signal hid it post-submit).
-                self.call_from_thread(self._thinking.show)
 
         self._agent_transport.subscribe(receive_msg)
+
+    def _show_agent_message(self, msg: BaseMessage) -> None:
+        """Render one `/agent` message. Runs on the subscription thread."""
+        assert self._tool_panels is not None
+        assert self._thinking is not None
+
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        content = msg.text
+
+        if isinstance(msg, SystemMessage):
+            self.call_from_thread(
+                self._add_message,
+                timestamp,
+                "system",
+                truncate_display_string(content, 1000),
+                theme.YELLOW,
+            )
+        elif isinstance(msg, AIMessage):
+            tool_calls = getattr(msg, "tool_calls", None) or msg.additional_kwargs.get(
+                "tool_calls", []
+            )
+
+            # Replies to a tool-stream update go in that tool's box. Replies to
+            # typed messages stay inline.
+            if content and self._reply_target is not None:
+                self.call_from_thread(
+                    self._tool_panels.update, self._reply_target, content, "agent", timestamp
+                )
+            elif content:
+                self.call_from_thread(self._add_message, timestamp, "agent", content, theme.AGENT)
+
+            # Tool calls always render inline, anchored so the result lands under them.
+            if tool_calls:
+                for tc in tool_calls:
+                    tool_info = self._format_tool_call(tc)
+                    self.call_from_thread(self._write_tool_call, timestamp, tool_info, tc.get("id"))
+
+            # No placeholder for the silent step that can follow a tool-stream update.
+            if not content and not tool_calls and self._reply_target is None:
+                self.call_from_thread(
+                    self._add_message, timestamp, "agent", "<no response>", theme.DIM
+                )
+        elif isinstance(msg, ToolMessage):
+            self.call_from_thread(
+                self._write_tool_result,
+                timestamp,
+                content,
+                getattr(msg, "tool_call_id", None),
+            )
+        elif isinstance(msg, HumanMessage):
+            # "[tool:NAME] <text>" updates go in the tool's box and make it the
+            # reply target. A typed message clears the target.
+            parsed = _split_tool_message(content)
+            if parsed is not None:
+                name, text = parsed
+                self._reply_target = name
+                if text:
+                    self.call_from_thread(self._tool_panels.update, name, text, "tool", timestamp)
+                return
+            self._reply_target = None
+            self.call_from_thread(self._add_message, timestamp, "human", content, theme.HUMAN)
+            # Keep the spinner up while this turn is processed (also re-shows
+            # it in the rare case a stale idle signal hid it post-submit).
+            self.call_from_thread(self._thinking.show)
 
     def _subscribe_to_idle(self) -> None:
         def receive_idle(is_idle: bool) -> None:

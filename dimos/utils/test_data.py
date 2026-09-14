@@ -305,6 +305,16 @@ def test_lfs_path_safe_attributes() -> None:
     assert callable(ensure_fn)
 
 
+def test_lfs_path_hashes_as_resolved_path(mocker: MockerFixture, tmp_path: Path) -> None:
+    resolved = tmp_path / "model.urdf"
+    get_data = mocker.patch.object(data, "get_data", return_value=resolved)
+
+    lfs_path = LfsPath("model/model.urdf")
+
+    assert hash(lfs_path) == hash(resolved)
+    get_data.assert_called_once_with("model/model.urdf")
+
+
 def test_lfs_path_no_download_on_creation() -> None:
     """Test that LfsPath construction doesn't trigger download.
 

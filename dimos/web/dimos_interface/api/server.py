@@ -26,30 +26,23 @@
 
 # Fast Api & Uvicorn
 import asyncio
-
-# For audio processing
-import io
 from pathlib import Path
 from queue import Empty, Queue
 import subprocess
 from threading import Lock
-import time
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
-import ffmpeg  # type: ignore[import-untyped]
-import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import SingleAssignmentDisposable
-import soundfile as sf  # type: ignore[import-untyped]
 from sse_starlette.sse import EventSourceResponse
 import uvicorn
 
 from dimos.core.global_config import global_config
-from dimos.stream.audio.base import AudioEvent
+from dimos.stream.audio.decode import decode_audio_bytes
 from dimos.web.edge_io import EdgeIO
 
 # TODO: Resolve threading, start/stop stream functionality.
@@ -211,33 +204,6 @@ class FastAPIServer(EdgeIO):
         finally:
             self.text_clients.remove(client_id)
 
-    @staticmethod
-    def _decode_audio(raw: bytes) -> tuple[np.ndarray, int]:
-        """Convert the webm/opus blob sent by the browser into mono 16-kHz PCM."""
-        try:
-            # Use ffmpeg to convert to 16-kHz mono 16-bit PCM WAV in memory
-            out, _ = (
-                ffmpeg.input("pipe:0")
-                .output(
-                    "pipe:1",
-                    format="wav",
-                    acodec="pcm_s16le",
-                    ac=1,
-                    ar="16000",
-                    loglevel="quiet",
-                )
-                .run(input=raw, capture_stdout=True, capture_stderr=True)
-            )
-            # Load with soundfile (returns float32 by default)
-            audio, sr = sf.read(io.BytesIO(out), dtype="float32")
-            # Ensure 1-D array (mono)
-            if audio.ndim > 1:
-                audio = audio[:, 0]
-            return np.array(audio), sr
-        except Exception as exc:
-            print(f"ffmpeg decoding failed: {exc}")
-            return None, None  # type: ignore[return-value]
-
     def setup_routes(self) -> None:
         """Set up FastAPI routes."""
 
@@ -293,23 +259,16 @@ class FastAPIServer(EdgeIO):
 
             try:
                 data = await file.read()
-                audio_np, sr = self._decode_audio(data)
-                if audio_np is None:
+                event = decode_audio_bytes(data)
+                if event is None:
                     return JSONResponse(
                         status_code=400,
                         content={"success": False, "message": "Unable to decode audio"},
                     )
 
-                event = AudioEvent(
-                    data=audio_np,
-                    sample_rate=sr,
-                    timestamp=time.time(),
-                    channels=1 if audio_np.ndim == 1 else audio_np.shape[1],
-                )
-
                 # Push to reactive stream
                 self.audio_subject.on_next(event)
-                print(f"Received audio - {event.data.shape[0] / sr:.2f} s, {sr} Hz")
+                print(f"Received audio - {event.data.shape[0] / event.sample_rate:.2f} s")
                 return {"success": True}
             except Exception as e:
                 print(f"Failed to process uploaded audio: {e}")

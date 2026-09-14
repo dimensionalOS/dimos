@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.core.global_config import global_config
 from dimos.core.stream import Transport
@@ -120,3 +121,27 @@ def test_recording_fails_loudly_when_no_stream_matches(
         ):
             pass
     assert not any(tmp_path.rglob("memory.db"))
+
+
+def test_recording_delegates_to_rust_session(
+    monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    from dimos.experimental.memory import rust_cli_recorder
+
+    transport = _Transport()
+    transports: dict[tuple[str, type], Transport[Any]] = {("odom", PoseStamped): transport}
+    session = mocker.Mock()
+    make_plan = mocker.patch.object(rust_cli_recorder, "make_plan", return_value="plan")
+    create_session = mocker.patch.object(
+        rust_cli_recorder, "RustRecordingSession", return_value=session
+    )
+    monkeypatch.setattr(global_config, "record", "sqlite")
+    monkeypatch.setattr(global_config, "record_engine", "rust")
+    monkeypatch.setattr(global_config, "record_topics", "*")
+
+    with tap.recording(transports):
+        session.start.assert_called_once_with()
+
+    make_plan.assert_called_once_with(transports)
+    create_session.assert_called_once_with("plan")
+    session.stop.assert_called_once_with()

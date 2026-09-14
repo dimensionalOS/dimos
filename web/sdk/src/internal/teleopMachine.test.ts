@@ -192,6 +192,8 @@ describe("teleopConfigFromChannel", () => {
     delivery: "latest",
     maxHz: 10,
     params: { maxLinear: 0.5, maxAngular: 0.9, boost: 3 },
+    publish: "none",
+    requiredScope: null,
   };
 
   it("reads params and maxHz from the channel spec", () => {

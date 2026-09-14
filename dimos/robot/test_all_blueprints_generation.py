@@ -143,7 +143,8 @@ def _is_production_module_file(file_path: Path, root: Path) -> bool:
 
     Excludes test helpers, deprecated code, and framework base classes in core/.
     """
-    rel = str(file_path.relative_to(root))
+    relative_path = file_path.relative_to(root)
+    rel = str(relative_path)
     stem = file_path.stem
     return not (
         stem.startswith("test_")
@@ -154,8 +155,25 @@ def _is_production_module_file(file_path: Path, root: Path) -> bool:
         or stem.startswith("mock_")
         or "deprecated" in rel
         or "/testing/" in rel
+        or "example" in relative_path.parts
+        or relative_path == Path("experimental/isolated_python/module.py")
         or rel.startswith("core/")
     )
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "experimental/isolated_python/example/contract.py",
+        "experimental/isolated_python/example/support.py",
+        "experimental/isolated_python/module.py",
+    ],
+)
+def test_isolated_python_framework_is_not_a_production_module(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    assert _is_production_module_file(tmp_path / relative_path, tmp_path) is False
 
 
 def _scan_for_blueprints(root: Path) -> tuple[dict[str, str], dict[str, str]]:

@@ -576,15 +576,30 @@ where
 
     log_wiring(&exe_name(), &topics, &config);
 
-    // ctrl_c is the only shutdown source for a lone module.
     let (tx, rx) = watch::channel(false);
     tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
+        if shutdown_signal().await.is_ok() {
             let _ = tx.send(true);
         }
     });
 
     run_module_core::<M, T>(Arc::new(transport), topics, config, rx).await
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() -> io::Result<()> {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    let mut terminate = signal(SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> io::Result<()> {
+    tokio::signal::ctrl_c().await
 }
 
 #[cfg(test)]

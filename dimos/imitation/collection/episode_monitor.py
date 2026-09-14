@@ -34,7 +34,7 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.teleop.quest.quest_types import BUTTON_ALIASES, Buttons
+from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -82,12 +82,12 @@ class EpisodeMonitorModuleConfig(ModuleConfig):
         }
         if invalid:
             raise ValueError(
-                f"unknown Quest button mappings: {sorted(invalid)}; "
+                f"unknown WebXR button mappings: {sorted(invalid)}; "
                 f"valid aliases: {sorted(BUTTON_ALIASES)}"
             )
         resolved = [BUTTON_ALIASES.get(button, button) for button in value.values()]
         if len(resolved) != len(set(resolved)):
-            raise ValueError("each episode command must use a distinct Quest button")
+            raise ValueError("each episode command must use a distinct WebXR button")
         return value
 
 

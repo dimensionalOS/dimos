@@ -20,3 +20,21 @@ export class WatchRejectedError extends Error {
     this.reason = reason;
   }
 }
+
+/** "rejected": the publish definitively did not happen. "unknown": it may
+ * have (connection loss, timeout - the bridge can publish right before its
+ * ack is lost); never assume either way, and never auto-resend. */
+export type PublishOutcome = "rejected" | "unknown";
+
+export class PublishError extends Error {
+  constructor(
+    readonly outcome: PublishOutcome,
+    /** Stable machine-readable reason: a local validation code, a relay
+     * rejection code, or a bridge nack code. */
+    readonly code: string,
+    message: string,
+  ) {
+    super(`${code}: ${message}`);
+    this.name = "PublishError";
+  }
+}

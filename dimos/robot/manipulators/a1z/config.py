@@ -113,7 +113,7 @@ def make_a1z_model_config(
     model = RobotModel.from_file(
         A1Z_G1Z_MODEL_PATH if has_gripper else A1Z_FLANGE_MODEL_PATH,
         package_paths=A1Z_PACKAGE_PATHS,
-    )
+    ).with_default_joint_acceleration_limit(2.0)
     if has_gripper:
         model = model.with_fixed_frame(
             "gripper_eef_link",
