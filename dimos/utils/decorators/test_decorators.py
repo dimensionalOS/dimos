@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 import time
 
 import pytest
@@ -26,11 +27,37 @@ from dimos.utils.decorators.decorators import (
 )
 
 
+class FakeClock:
+    """Clock advanced only by the test, so the limit window never races a real one."""
+
+    def __init__(self) -> None:
+        # Well past zero, so the decorator's initial last_call_time of 0.0 reads as
+        # long ago and the first call passes through, exactly as with a real clock.
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def wait_for(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
+    """Block until predicate holds, so a slow machine waits longer instead of failing."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.005)
+    assert predicate(), "timed out waiting for the accumulated call to fire"
+
+
 def test_limit() -> None:
     """Test limit decorator with keyword arguments."""
     calls = []
+    clock = FakeClock()
 
-    @limit(20)  # 20 Hz
+    @limit(20, clock=clock)  # 20 Hz
     def process(msg: str, keyword: int = 0) -> str:
         calls.append((msg, keyword))
         return f"{msg}:{keyword}"
@@ -47,9 +74,12 @@ def test_limit() -> None:
     result3 = process("third", keyword=3)
     assert result3 is None
 
-    # Wait for interval, expect to be called after it passes
-    time.sleep(0.6)
+    # The pending timer fires on its own and flushes the newest accumulated call.
+    wait_for(lambda: len(calls) == 2)
+    assert calls == [("first", 1), ("third", 3)]
 
+    # Past the interval, calls pass straight through again.
+    clock.advance(0.6)
     result4 = process("fourth")
     assert result4 == "fourth:0"
 
@@ -59,10 +89,11 @@ def test_limit() -> None:
 def test_latest_rolling_average() -> None:
     """Test RollingAverageAccumulator with limit decorator."""
     calls = []
+    clock = FakeClock()
 
     accumulator = RollingAverageAccumulator()
 
-    @limit(20, accumulator=accumulator)  # 20 Hz
+    @limit(20, accumulator=accumulator, clock=clock)  # 20 Hz
     def process(value: float, label: str = "") -> str:
         calls.append((value, label))
         return f"{value}:{label}"
@@ -79,10 +110,8 @@ def test_latest_rolling_average() -> None:
     result3 = process(30.0, label="third")
     assert result3 is None
 
-    # Wait for interval
-    time.sleep(0.6)
-
     # Should see the average of accumulated values
+    wait_for(lambda: len(calls) == 2)
     assert calls == [(10.0, "first"), (25.0, "third")]  # (20+30)/2 = 25
 
 
