@@ -20,6 +20,27 @@ import pytest
 from dimos.core.global_config import GlobalConfig
 
 
+@pytest.mark.parametrize("under_pytest", [False, True])
+@pytest.mark.parametrize("robot_ips", [None, "", "   ", " , , "])
+def test_processed_robot_ips_rejects_empty_configuration(
+    monkeypatch: pytest.MonkeyPatch, robot_ips: str | None, under_pytest: bool
+) -> None:
+    if under_pytest:
+        monkeypatch.setenv("PYTEST_CURRENT_TEST", "test_processed_robot_ips (call)")
+    else:
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    config = GlobalConfig(robot_ips=robot_ips)
+
+    with pytest.raises(ValueError, match="ROBOT_IPS.*--robot-ips"):
+        _ = config.processed_robot_ips
+
+
+def test_processed_robot_ips_strips_whitespace_and_ignores_empty_entries() -> None:
+    config = GlobalConfig(robot_ips=" 192.0.2.10, ,192.0.2.11, ")
+
+    assert config.processed_robot_ips == ("192.0.2.10", "192.0.2.11")
+
+
 class TestGlobalConfigSecurityDefaults:
     """Network services must bind to localhost by default (not 0.0.0.0)."""
 

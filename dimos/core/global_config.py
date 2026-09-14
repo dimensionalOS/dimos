@@ -199,9 +199,10 @@ class GlobalConfig(BaseSettings):
     @property
     def processed_robot_ips(self) -> tuple[str, ...]:
         ips = [x.strip() for x in (self.robot_ips or "").split(",") if x.strip()]
-        is_running_tests = "PYTEST_CURRENT_TEST" in os.environ
-        if not ips and not is_running_tests:
-            raise ValueError("No robot IPs specified. Must have at least one IP.")
+        if not ips:
+            raise ValueError(
+                "No robot IPs specified. Set ROBOT_IPS or --robot-ips to at least one IP."
+            )
         return tuple(ips)
 
 
