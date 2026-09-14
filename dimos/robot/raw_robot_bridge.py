@@ -35,6 +35,7 @@ import numpy as np
 from PIL import Image as PILImage
 import zenoh
 
+from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -157,14 +158,13 @@ class RawRobotBridge(Module):
     camera_info: In[CameraInfo]
     cmd_vel: Out[Twist]
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._topics: RawTopics | None = None
-        self._deadman = Deadman(max_s=self.config.max_cmd_s)
-        self._stop = threading.Event()
+    _topics: RawTopics | None = None
 
+    @rpc
     def start(self) -> None:
         super().start()
+        self._deadman = Deadman(max_s=self.config.max_cmd_s)
+        self._stop = threading.Event()
         self._topics = RawTopics(self.config.endpoint, self.config.prefix, listen=True)
         q = self.config.jpeg_quality
         self.color_image.subscribe(lambda img: self._put("camera/jpeg", jpeg_bytes(img, q), img.ts))
@@ -179,11 +179,13 @@ class RawRobotBridge(Module):
         self._cmd_sub = self._topics.subscribe("cmd_vel/json", self._on_command)
         threading.Thread(target=self._drive, daemon=True, name="raw-robot-drive").start()
 
+    @rpc
     def stop(self) -> None:
-        self._stop.set()
-        self.cmd_vel.publish(Twist())
         if self._topics is not None:
+            self._stop.set()
+            self.cmd_vel.publish(Twist())
             self._topics.close()
+            self._topics = None
         super().stop()
 
     def _put(self, key: str, payload: bytes | str, ts: float | None = None) -> None:
