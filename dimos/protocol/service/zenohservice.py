@@ -244,6 +244,7 @@ def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
 class ZenohSessionPool:
     def __init__(self) -> None:
         self._sessions: dict[str, zenoh.Session] = {}
+        self._unlinked: set[str] = set()
         self._lock = threading.Lock()
         self._opened_in_pid: int | None = None
 
@@ -290,6 +291,15 @@ class ZenohSessionPool:
                 except zenoh.ZError as e:
                     logger.warning("Zenoh session close failed", session_key=key, error=str(e))
             self._sessions.clear()
+            self._unlinked.clear()
+
+    def gave_up_linking(self, config: ZenohConfig) -> bool:
+        with self._lock:
+            return config.session_key in self._unlinked
+
+    def give_up_linking(self, config: ZenohConfig) -> None:
+        with self._lock:
+            self._unlinked.add(config.session_key)
 
 
 # Process-default pool used by production code. Constructing it opens no sessions.
@@ -354,6 +364,9 @@ class ZenohService(Service):
         pending = {ep: endpoint_addresses(ep) for ep in self.config.connect}
         if not pending or self.config.connect_timeout <= 0:
             return
+        # A pooled session is shared; once its wait timed out, later services skip it.
+        if self._session_pool.gave_up_linking(self.config):
+            return
         # A client session holds one link. Zenoh dials the endpoints as
         # alternatives and keeps the first that connects.
         needed = 1 if self.config.mode == "client" else len(pending)
@@ -367,6 +380,7 @@ class ZenohService(Service):
             if total - len(pending) >= needed:
                 return
             if time.monotonic() >= deadline:
+                self._session_pool.give_up_linking(self.config)
                 logger.warning(
                     f"Zenoh endpoints not linked after {self.config.connect_timeout}s: "
                     f"{sorted(pending)} - continuing, published messages may be dropped"
