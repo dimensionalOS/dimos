@@ -2,6 +2,18 @@
 
 ## Detections
 
+## Re-identification
+
+A tracker associates across adjacent frames, so it breaks on every occlusion, turn
+away, or detector miss, and each break invents an object. `EmbeddingIDSystem`
+(`dimos/perception/detection/reid/`) assigns long-term ids from appearance and is what
+`ReidModule` runs.
+
+[Tracklet re-identification](tracklet_reid.md) adds position and time as vetoes ahead
+of appearance — two chairs of one model are identical to a similarity model, and only
+where and when they were separates them. That page records what was measured, what the
+numbers rule out, and which of them are withdrawn.
+
 ## Experimental WorldBelief
 
 The experimental xArm6 WorldBelief stack records RGB-D observations and processes
