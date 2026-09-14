@@ -26,7 +26,11 @@ import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+from dimos.simulation.engines.mujoco_sim_module import (
+    MujocoSimModule,
+    MujocoSimModuleConfig,
+    _resolve_gt_bodies,
+)
 
 
 class _FakeData:
@@ -562,5 +566,109 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         _run_publish_loop(module, frame_ts)
         elapsed = time.monotonic() - start
         assert elapsed >= (len(frame_ts) - 1) / fps
+    finally:
+        module.stop()
+
+
+def _make_post_step_module(config: MujocoSimModuleConfig) -> MujocoSimModule:
+    """Module with just enough state for _publish_shm_and_lcm()."""
+    module = MujocoSimModule()
+    module.config = config
+    module._root_base_qpos_adr = None
+    module._imu_quat_slice = None
+    module._imu_base_qpos_slice = None
+    module._imu_gyro_slice = None
+    module._imu_accel_slice = None
+
+    class _FakeShm:
+        def signal_ready(self, *, num_joints: int, arm_joints: int) -> None:
+            pass
+
+        def signal_stop(self) -> None:
+            pass
+
+        def cleanup(self) -> None:
+            pass
+
+    module._shm = _FakeShm()
+    return module
+
+
+def test_gt_poses_not_published_when_disabled() -> None:
+    module = _make_post_step_module(MujocoSimModuleConfig(dof=2))
+    try:
+        assert module.config.publish_ground_truth is False
+        published: list[Any] = []
+        module.gt_object_poses.subscribe(published.append)
+
+        module._publish_shm_and_lcm(_FakeEngine)
+
+        assert published == []
+        assert module._gt_bodies == []
+    finally:
+        module.stop()
+
+
+def test_gt_poses_published_and_throttled_when_enabled() -> None:
+    module = _make_post_step_module(
+        MujocoSimModuleConfig(dof=2, publish_ground_truth=True, ground_truth_hz=20.0)
+    )
+    try:
+        module._gt_bodies = [("box_0", 0)]
+        published: list[Any] = []
+        module.gt_object_poses.subscribe(published.append)
+
+        module._publish_shm_and_lcm(_FakeEngine)
+
+        assert len(published) == 1
+        pose = published[0]
+        assert pose.frame_id == "box_0"
+        assert pose.position.to_numpy() == pytest.approx([0.0, 0.0, 0.75])
+        assert (
+            pose.orientation.x,
+            pose.orientation.y,
+            pose.orientation.z,
+            pose.orientation.w,
+        ) == pytest.approx((0.0, 0.0, 0.0, 1.0))
+
+        # Second step inside the 50ms throttle window is dropped.
+        module._publish_shm_and_lcm(_FakeEngine)
+        assert len(published) == 1
+
+        # Once the interval elapses, the next step publishes again.
+        module._gt_last_publish_monotonic -= 1.0
+        module._publish_shm_and_lcm(_FakeEngine)
+        assert len(published) == 2
+    finally:
+        module.stop()
+
+
+@pytest.mark.mujoco
+def test_resolve_gt_bodies_excludes_robot_root(tmp_path: Path) -> None:
+    scene_xml = tmp_path / "scene.xml"
+    robot_xml = tmp_path / "robot.xml"
+    _write_scene_xml(scene_xml)
+    _write_robot_xml(robot_xml)
+
+    chair_001 = _scene_entity("chair_001")
+    chair_001["initial_pose"]["x"] = -1.0  # type: ignore[index]
+
+    module = MujocoSimModule(
+        scene_xml=scene_xml,
+        robot_mjcf=robot_xml,
+        scene_entities=[_scene_entity("chair_000"), chair_001],
+    )
+    try:
+        model = module._compose_model()
+
+        bodies = _resolve_gt_bodies(model, root_qpos_adr=0)
+
+        assert [name for name, _ in bodies] == ["entity:chair_000", "entity:chair_001"]
+        for _, qpos_adr in bodies:
+            assert qpos_adr > 0
+        assert _resolve_gt_bodies(model, root_qpos_adr=None) == [
+            ("base", 0),
+            *bodies,
+        ]
     finally:
         module.stop()
