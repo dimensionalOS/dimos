@@ -28,8 +28,8 @@ from dimos.protocol.service.zenohservice import (
     LOOPBACK_INTERFACE,
     LOOPBACK_LISTEN,
     ZenohConfig,
-    ZenohService,
     ZenohSessionPool,
+    _await_connect,
     endpoint_addresses,
 )
 
@@ -162,9 +162,9 @@ def _await_elapsed(
     session: zenoh.Session, connect: list[str], connect_timeout: float, mode: ZenohMode = "peer"
 ) -> float:
     """Seconds _await_connect blocks against a session with the given links."""
-    service = ZenohService(mode=mode, connect=connect, connect_timeout=connect_timeout)
+    config = ZenohConfig(mode=mode, connect=connect, connect_timeout=connect_timeout)
     started = time.monotonic()
-    service._await_connect(session)
+    _await_connect(session, config)
     return time.monotonic() - started
 
 

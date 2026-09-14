@@ -23,7 +23,7 @@ import zenoh
 
 from dimos.core.global_config import GlobalConfig
 from dimos.protocol.service import zenohservice
-from dimos.protocol.service.zenohservice import ZenohConfig, ZenohService, ZenohSessionPool
+from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 
 
 def _opened_with(monkeypatch, config: ZenohConfig) -> zenoh.Config:
@@ -85,13 +85,10 @@ def test_a_session_waits_for_its_links_only_once(zenoh_defaults, monkeypatch):
     monkeypatch.setattr(zenohservice.zenoh, "open", lambda zconfig: unlinked)
     pool = ZenohSessionPool()
 
-    def start_seconds() -> float:
-        service = ZenohService(
-            session_pool=pool, connect=["tcp/192.0.2.10:7447"], connect_timeout=0.2
-        )
+    def acquire_seconds() -> float:
         started = time.monotonic()
-        service.start()
+        pool.acquire(ZenohConfig(connect=["tcp/192.0.2.10:7447"], connect_timeout=0.2))
         return time.monotonic() - started
 
-    assert start_seconds() >= 0.2
-    assert start_seconds() < 0.1
+    assert acquire_seconds() >= 0.2
+    assert acquire_seconds() < 0.1
