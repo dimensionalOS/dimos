@@ -91,8 +91,8 @@ def test_blueprint_atom_kwargs_match_module_config(
     blueprint_name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Fail when blueprint kwargs cannot be consumed by their target module."""
-    if blueprint_name in {"unitree-go2-multi", "unitree-go2-multi-teleop"}:
-        monkeypatch.setattr(global_config, "robot_ips", "192.0.2.10,192.0.2.11")
+    # The multi-robot blueprints read ROBOT_IPS at import time.
+    monkeypatch.setattr(global_config, "robot_ips", "192.0.2.10,192.0.2.11")
     blueprint = _get_blueprint_or_skip(blueprint_name)
 
     violations: list[str] = []

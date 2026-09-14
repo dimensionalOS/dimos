@@ -20,19 +20,12 @@ import pytest
 from dimos.core.global_config import GlobalConfig
 
 
-@pytest.mark.parametrize("under_pytest", [False, True])
 @pytest.mark.parametrize("robot_ips", [None, "", "   ", " , , "])
-def test_processed_robot_ips_rejects_empty_configuration(
-    monkeypatch: pytest.MonkeyPatch, robot_ips: str | None, under_pytest: bool
-) -> None:
-    if under_pytest:
-        monkeypatch.setenv("PYTEST_CURRENT_TEST", "test_processed_robot_ips (call)")
-    else:
-        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+def test_processed_robot_ips_rejects_empty_configuration(robot_ips: str | None) -> None:
     config = GlobalConfig(robot_ips=robot_ips)
 
     with pytest.raises(ValueError, match="ROBOT_IPS.*--robot-ips"):
-        _ = config.processed_robot_ips
+        config.processed_robot_ips  # noqa: B018
 
 
 def test_processed_robot_ips_strips_whitespace_and_ignores_empty_entries() -> None:
