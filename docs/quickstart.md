@@ -91,6 +91,13 @@ export ROBOT_IP=<YOUR_ROBOT_IP>
 dimos run unitree-go2
 ```
 
+Go2 firmware 1.1.15 and later (G1 1.5.1 and later) encrypts the LAN handshake with a per-device key. Fetch it once from the Unitree account the robot is bound to and pass it on the command line:
+
+```bash
+unitree-fetch-aes-key --email <unitree account email> --sn <robot serial>
+dimos --unitree-aes-128-key <32 hex chars> run unitree-go2
+```
+
 !!! warning
 
     Before driving real hardware, read the [Unitree Go2 platform guide](/docs/platforms/quadruped/go2/index.md). It covers network setup, latency, time sync, and the safety habits that keep you and the robot out of trouble. Do not skip it.
