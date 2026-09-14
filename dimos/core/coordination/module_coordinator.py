@@ -792,6 +792,11 @@ def _resolve_blueprint_config(
     )
 
 
+def _related(types: set[type]) -> bool:
+    """One type derives from all the others, e.g. TwistStamped on a Twist port."""
+    return any(all(issubclass(t, other) for other in types) for t in types)
+
+
 def _verify_no_name_conflicts(blueprint: Blueprint) -> None:
     name_to_types: dict[Any, set[type]] = defaultdict(set)
     name_to_modules: dict[Any, list[tuple[type, type]]] = defaultdict(list)
@@ -804,7 +809,7 @@ def _verify_no_name_conflicts(blueprint: Blueprint) -> None:
 
     conflicts: dict[Any, dict[type, list[type]]] = {}
     for conn_name, types in name_to_types.items():
-        if len(types) > 1:
+        if len(types) > 1 and not _related(types):
             modules_by_type: dict[type, list[type]] = defaultdict(list)
             for module, conn_type in name_to_modules[conn_name]:
                 modules_by_type[conn_type].append(module)
