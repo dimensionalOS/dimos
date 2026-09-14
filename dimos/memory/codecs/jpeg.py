@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+
+DEPTH_FORMATS = (ImageFormat.DEPTH, ImageFormat.DEPTH16)
 
 
 class JpegCodec:
@@ -22,6 +24,12 @@ class JpegCodec:
 
     Uses ``Image.lcm_jpeg_encode/decode`` which preserves ``ts``, ``frame_id``,
     and all LCM header fields. Pixel data is lossy-compressed via TurboJPEG.
+
+    Depth frames are stored uncompressed instead. JPEG is 8-bit colour: a float32
+    metre map cannot be encoded at all, and a uint16 one would be rescaled to 8
+    bits and then lossy-compressed, quietly destroying the metric values a cloud
+    is unprojected from. The LCM envelope carries its own encoding, so both kinds
+    decode through the same path.
     """
 
     def __init__(self, quality: int = 50) -> None:
@@ -33,7 +41,9 @@ class JpegCodec:
         return Image
 
     def encode(self, value: Image) -> bytes:
+        if value.format in DEPTH_FORMATS:
+            return value.lcm_encode()
         return value.lcm_jpeg_encode(quality=self._quality)
 
     def decode(self, data: bytes) -> Image:
-        return Image.lcm_jpeg_decode(data)
+        return Image.lcm_decode(data)

@@ -199,6 +199,31 @@ class TestCodecRoundtrip:
         assert len(set(encodings)) > 1, "All values encoded to identical bytes"
 
 
+class TestJpegCodecDepth:
+    """Depth shares the Image type with colour, so one codec has to carry both."""
+
+    @pytest.mark.parametrize(
+        ("dtype", "fmt"),
+        [("float32", ImageFormat.DEPTH), ("uint16", ImageFormat.DEPTH16)],
+    )
+    def test_depth_survives_the_roundtrip_exactly(self, dtype: str, fmt: ImageFormat) -> None:
+        """Lossy depth is not degraded depth, it is wrong geometry.
+
+        A JPEG'd metre map unprojects to a cloud in the wrong place, and the
+        float32 case does not even encode — it raises out of the recorder.
+        """
+        import numpy as np
+
+        metres = np.linspace(0.5, 6.0, 48 * 64).reshape(48, 64).astype(dtype)
+        depth = Image(data=metres, format=fmt, frame_id="head_optical", ts=1.0)
+
+        decoded = JpegCodec().decode(JpegCodec().encode(depth))
+
+        assert decoded.format == fmt
+        assert decoded.frame_id == "head_optical"
+        np.testing.assert_array_equal(decoded.data, metres)
+
+
 class TestCodecFor:
     """codec_for() auto-selects the right codec."""
 
