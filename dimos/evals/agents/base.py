@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING, Any
 
 from pydantic import field_validator
@@ -32,6 +33,16 @@ if TYPE_CHECKING:
 class AgentConfig(BaseConfig):
     modules: tuple[str, ...] = ()
     allowed_tools: tuple[str, ...] | None = None
+    # Tool calls whose arguments mention any of these (case-insensitive, whole token) are denied.
+    excluded_keywords: tuple[str, ...] = ()
+
+    @field_validator("excluded_keywords")
+    @classmethod
+    def validate_excluded_keywords(cls, words: tuple[str, ...]) -> tuple[str, ...]:
+        cleaned = tuple(w.strip().lower() for w in words)
+        if any(not w or not re.fullmatch(r"[a-z0-9_.-]+", w) for w in cleaned):
+            raise ValueError("excluded_keywords must be nonempty words (letters, digits, _ . -)")
+        return cleaned
 
     @field_validator("allowed_tools")
     @classmethod

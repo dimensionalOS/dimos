@@ -14,11 +14,19 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 
-/** @type {{provider: string, base_url: string, key_env: string, allowed_tools: string[] | null, max_output_tokens: number | null}} */
+/** @type {{provider: string, base_url: string, key_env: string, allowed_tools: string[] | null, max_output_tokens: number | null, excluded_keywords: string[], ignored_paths: string[]}} */
 const config = JSON.parse(
   readFileSync(new URL("./runtime.json", import.meta.url), "utf8"),
 );
 const ready = new URL("./runtime-ready.json", import.meta.url);
+/** @param {string} s */
+const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Whole-token match: "dimos", "import dimos", "dimos_lcm", "/dimos/" hit; "dimosaurus" does not.
+const excluded = config.excluded_keywords.map((word) => ({
+  word,
+  re: new RegExp(`(^|[^a-z0-9])${escape(word)}([^a-z0-9]|$)`),
+}));
+let blocked = 0;
 
 /** @param {import("@earendil-works/pi-coding-agent").ExtensionAPI} pi */
 export default function (pi) {
@@ -26,15 +34,19 @@ export default function (pi) {
     baseUrl: config.base_url,
     apiKey: "$" + config.key_env,
   });
+  /** @type {string[]} */
+  let unknown = [];
+  const writeState = () =>
+    writeFileSync(
+      ready,
+      JSON.stringify({ tools: pi.getActiveTools(), unknown, blocked }),
+    );
   const apply = () => {
     const allowed = config.allowed_tools;
     const names = new Set(pi.getAllTools().map((tool) => tool.name));
-    const unknown = allowed?.filter((name) => !names.has(name)) ?? [];
+    unknown = allowed?.filter((name) => !names.has(name)) ?? [];
     if (allowed !== null) pi.setActiveTools(unknown.length ? [] : allowed);
-    writeFileSync(
-      ready,
-      JSON.stringify({ tools: pi.getActiveTools(), unknown }),
-    );
+    writeState();
   };
   pi.on("session_start", apply);
   pi.on("before_agent_start", apply);
@@ -44,6 +56,18 @@ export default function (pi) {
       !config.allowed_tools.includes(event.toolName)
     )
       return { block: true, reason: "Tool excluded by eval allowed_tools" };
+    if (!excluded.length) return;
+    let text = JSON.stringify(event.input ?? {}).toLowerCase();
+    for (const path of config.ignored_paths)
+      text = text.split(path.toLowerCase()).join("");
+    const hit = excluded.find(({ re }) => re.test(text));
+    if (!hit) return;
+    blocked += 1;
+    writeState();
+    return {
+      block: true,
+      reason: `Tool call denied: its arguments mention the excluded keyword "${hit.word}". Using it is against the rules of this task; solve the task with any other tool, library or source.`,
+    };
   });
   pi.on("before_provider_request", (event) => {
     const cap = config.max_output_tokens;
