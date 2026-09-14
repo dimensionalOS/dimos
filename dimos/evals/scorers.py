@@ -51,7 +51,7 @@ def first_number(text: str) -> float:
 
 def yes_no(text: str) -> str:
     """Normalize a reply to "yes"/"no"."""
-    t = text.strip().lower()
+    t = text.strip().lower().lstrip("*_`#\"' ")  # tolerate markdown emphasis
     if t.startswith(("yes", "no")):
         return "yes" if t.startswith("yes") else "no"
     raise ValueError(f"not a yes/no reply: {text[:80]!r}")

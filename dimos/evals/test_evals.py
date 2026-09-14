@@ -902,3 +902,13 @@ def test_forbidden_call_flags_only_executed_whole_word_hits(
     trajectory = _trajectory_with(command, result)
     assert forbidden_call(trajectory, ("dimos", "dimensionalos"), *ignored) == expected
     assert forbidden_call(trajectory, ()) == ""
+
+
+@pytest.mark.parametrize(
+    "reply,expected",
+    [("**Yes.**\n\nAll frames show a person", "yes"), ("_no_", "no"), ("Yes", "yes")],
+)
+def test_yes_no_tolerates_markdown_emphasis(reply: str, expected: str) -> None:
+    from dimos.evals.scorers import yes_no
+
+    assert yes_no(reply) == expected
