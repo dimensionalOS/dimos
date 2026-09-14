@@ -56,6 +56,7 @@ class RpcCall:
 
         self.__name__ = name
         self.__qualname__ = f"{self.__class__.__name__}.{name}"
+        self.__signature__: inspect.Signature | None = None
         if original_method is not None:
             functools.update_wrapper(self, original_method)
             signature = inspect.signature(original_method)
@@ -82,26 +83,39 @@ class RpcCall:
             logger.warning("RPC client not initialized")
             return None
 
+        arguments = (list(args), kwargs)
+        if self._rpc.named_params and self.__signature__ is not None:
+            if any(
+                p.kind not in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+                for p in self.__signature__.parameters.values()
+            ):
+                raise TypeError(
+                    "Named RPC calls do not support positional-only or variadic parameters"
+                )
+            bound = self.__signature__.bind(*args, **kwargs)
+            bound.apply_defaults()
+            arguments = ([], dict(bound.arguments))
+
         # For stop, use call_nowait to avoid deadlock
         # (the remote side stops its RPC service before responding)
         if self._name == "stop":
-            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", (args, kwargs))  # type: ignore[arg-type]
+            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", arguments)
             if self._stop_rpc_client:
                 self._stop_rpc_client()
             return None
 
         result, unsub_fn = self._rpc.call_sync(
             f"{self._remote_name}/{self._name}",
-            (args, kwargs),  # type: ignore[arg-type]
+            arguments,
         )
         self._unsub_fns.append(unsub_fn)
         return result
 
     def __getstate__(self):  # type: ignore[no-untyped-def]
-        return (self._name, self._remote_name)
+        return (self._name, self._remote_name, self.__signature__)
 
     def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        self._name, self._remote_name = state
+        self._name, self._remote_name, self.__signature__ = state
         self._unsub_fns = []
         self._rpc = None
         self._stop_rpc_client = None
@@ -166,13 +180,21 @@ class RPCClient:
             self.rpc = None  # type: ignore[assignment]
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        # Return the class and the arguments needed to reconstruct the object.
-        # remote_name must be included or proxies pickled into workers would
-        # fall back to class-name RPC topics.
+        if self.rpc is None:
+            raise RuntimeError("Cannot serialize a stopped RPC client")
         return (
-            self.__class__,
-            (self.actor_instance, self.actor_class, self.remote_name),
+            self._restore,
+            (self.actor_instance, self.actor_class, self.remote_name, self.rpc),
         )
+
+    @classmethod
+    def _restore(
+        cls, actor: Actor | None, module: type[ModuleBase], name: str, rpc: RPCSpec
+    ) -> RPCClient:
+        rpc.start()
+        client = cls(actor, module, name, rpc=rpc)
+        client._owns_rpc = True
+        return client
 
     def __dir__(self) -> list[str]:
         return sorted(set(super().__dir__()) | set(self.rpcs))

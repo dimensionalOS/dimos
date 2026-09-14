@@ -112,14 +112,13 @@ class RPCServer(Protocol):
             if not name:
                 name = module.__class__.__name__
 
-            def override_f(*args, fname=fname, **kwargs):  # type: ignore[no-untyped-def]
-                return getattr(module, fname)(*args, **kwargs)
-
             topic = name + "/" + fname
-            self.serve_rpc(override_f, topic)
+            self.serve_rpc(getattr(module, fname), topic)
 
 
 class RPCSpec(RPCServer, RPCClient):
+    named_params = False
+
     def start(self) -> None:
         if hasattr(super(), "start"):
             super().start()  # type: ignore[misc]

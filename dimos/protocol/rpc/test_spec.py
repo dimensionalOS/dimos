@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 
+from dimos.protocol.rpc.jsonrpc import JsonRPC
 from dimos.protocol.rpc.pubsubrpc import LCMRPC, ShmRPC
 from dimos.protocol.rpc.rpc_utils import RemoteError
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, RPCSpec
@@ -106,6 +107,25 @@ def zenoh_rpc_context():
 
 
 testdata.append((zenoh_rpc_context, "zenoh"))
+
+
+@contextmanager
+def json_rpc_context():
+    pool = ZenohSessionPool()
+    server = JsonRPC(rpc_timeouts={}, default_rpc_timeout=DEFAULT_RPC_TIMEOUT, session_pool=pool)
+    client = JsonRPC(rpc_timeouts={}, default_rpc_timeout=DEFAULT_RPC_TIMEOUT, session_pool=pool)
+    server.start()
+    client.start()
+
+    try:
+        yield server, client
+    finally:
+        server.stop()
+        client.stop()
+        pool.close_all()
+
+
+testdata.append((json_rpc_context, "json"))
 
 
 def test_call_sync_unsubscribes_timed_out_callback(mocker) -> None:
@@ -359,10 +379,12 @@ def test_nonexistent_service(rpc_context, impl_name: str) -> None:
     """Test calling a service that doesn't exist."""
     with rpc_context() as (_server, client):
         # Don't serve any function, just try to call
-        with pytest.raises(TimeoutError) as exc_info:
+        expected_error = ConnectionError if impl_name == "json" else TimeoutError
+        with pytest.raises(expected_error) as exc_info:
             client.call_sync("nonexistent", ([1, 2], {}), rpc_timeout=0.1)
         assert "nonexistent" in str(exc_info.value)
-        assert "timed out" in str(exc_info.value)
+        expected_message = "no reply" if impl_name == "json" else "timed out"
+        assert expected_message in str(exc_info.value)
 
 
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
