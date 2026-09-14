@@ -21,7 +21,6 @@ from unittest.mock import MagicMock, create_autospec, patch
 
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
-from langchain_openai import ChatOpenAI
 import pytest
 import requests
 
@@ -238,10 +237,12 @@ def test_on_system_modules_uses_responses_api_model(
     configured_mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Production agents use the Responses API required for Luna tool calls."""
+    from langchain_openai import ChatOpenAI
+
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     configured_mcp_client.config.model = "gpt-5.6-luna"
 
-    with patch("dimos.agents.mcp.mcp_client.create_agent") as create_agent:
+    with patch("langchain.agents.create_agent") as create_agent:
         configured_mcp_client.on_system_modules([])
 
     model = create_agent.call_args.kwargs["model"]
@@ -260,8 +261,8 @@ def test_on_system_modules_resolves_non_reasoning_models(
     resolved_model = MagicMock()
 
     with (
-        patch("dimos.agents.mcp.mcp_client.create_agent"),
-        patch("dimos.agents.mcp.mcp_client.init_chat_model", return_value=resolved_model) as init,
+        patch("langchain.agents.create_agent"),
+        patch("langchain.chat_models.init_chat_model", return_value=resolved_model) as init,
     ):
         configured_mcp_client.on_system_modules([])
 
@@ -278,7 +279,7 @@ def test_set_trace_dir_rebuilds_the_model_with_capture(
     resolved = MagicMock()
 
     with (
-        patch("dimos.agents.mcp.mcp_client.create_agent") as create_agent,
+        patch("langchain.agents.create_agent") as create_agent,
         patch("dimos.agents.mcp.mcp_client.init_model", return_value=resolved) as init,
     ):
         configured_mcp_client.set_trace_dir("/eval/case/raw")  # no agent yet: stored only

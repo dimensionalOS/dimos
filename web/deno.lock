@@ -3,6 +3,7 @@
   "specifiers": {
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/cli@1": "1.0.28",
+    "jsr:@std/crypto@1": "1.1.0",
     "jsr:@std/fmt@^1.0.9": "1.0.9",
     "jsr:@std/internal@^1.0.12": "1.0.12",
     "npm:@fontsource-variable/inter@^5.3.0": "5.3.0",
@@ -36,6 +37,9 @@
         "jsr:@std/fmt",
         "jsr:@std/internal"
       ]
+    },
+    "@std/crypto@1.1.0": {
+      "integrity": "b8d6d0a6377a32b213af2661ed7bf1062d94feac0c57def5526a8e74a95c3ec8"
     },
     "@std/fmt@1.0.9": {
       "integrity": "2487343e8899fb2be5d0e3d35013e54477ada198854e52dd05ed0422eddcabe0"
@@ -1158,7 +1162,8 @@
   "workspace": {
     "dependencies": [
       "jsr:@std/assert@1",
-      "jsr:@std/cli@1"
+      "jsr:@std/cli@1",
+      "jsr:@std/crypto@1"
     ],
     "members": {
       "cockpit": {

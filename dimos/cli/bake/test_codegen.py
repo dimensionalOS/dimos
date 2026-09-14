@@ -16,9 +16,14 @@
 
 import json
 from pathlib import Path
+import sys
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 import pytest
-import tomllib
 
 from dimos.cli.bake.codegen import (
     check_host_name,

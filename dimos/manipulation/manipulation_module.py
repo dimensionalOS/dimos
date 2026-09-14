@@ -35,6 +35,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.manipulation.execution_manager import PlanExecutionManager
 from dimos.manipulation.manipulation_spec import (
+    UNCONFIRMED_STOP,
     CommandResult,
     CommandStatus,
     ExecutionResult,
@@ -93,6 +94,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -446,6 +448,39 @@ class ManipulationModule(Module):
             result = ExecutionResult(ExecutionStatus.ABORTED, "Planning cancelled")
         self._apply_execution_result(result)
         return result
+
+    @rpc
+    def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None:
+        """Display the ranked proposals. The grasp module owns no visualizer."""
+        if self._world_monitor is not None:
+            self._world_monitor.show_grasp_proposals(candidates)
+
+    @rpc
+    def reset(self) -> CommandResult:
+        """Stop any motion and return to IDLE so new commands are accepted.
+
+        Execution can leave the module in FAULT, and planning only runs from
+        IDLE or COMPLETED, so without this a faulted module accepts nothing
+        further. cancel() does the work of stopping -- the trajectory, the
+        planning epoch, the pending plan and its preview; reset adds only the
+        return to IDLE with the error cleared, from whatever state the failure
+        left behind.
+
+        The exception is a stop the coordinator could not confirm. Clearing that
+        FAULT would discard the one signal saying the arm may still be moving,
+        and hand back a module that accepts a new motion into it.
+        """
+        result = self.cancel()
+        if result.status in UNCONFIRMED_STOP:
+            return CommandResult(CommandStatus.FAILED, result.message)
+        cancelled = result.status is not ExecutionStatus.NO_EXECUTION
+        with self._lock:
+            self._state = ManipulationState.IDLE
+            self._error_message = ""
+        return CommandResult(
+            CommandStatus.SUCCEEDED,
+            "Cancelled the active motion and reset to IDLE" if cancelled else "Reset to IDLE",
+        )
 
     def get_current_joints(self) -> list[float] | None:
         """Get the complete canonical model joint positions."""

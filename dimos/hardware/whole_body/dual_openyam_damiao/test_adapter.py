@@ -18,6 +18,7 @@ import can_motor_control
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.hardware.whole_body.damiao import adapter as adapter_module
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.dual_openyam_damiao.adapter import (
     DualOpenYamDamiaoAdapter,
@@ -29,7 +30,12 @@ pytestmark = pytest.mark.self_hosted
 
 @pytest.fixture
 def adapter(mocker: MockerFixture) -> Iterator[DualOpenYamDamiaoAdapter]:
-    mocker.patch.object(can_motor_control, "SocketCanBus", can_motor_control.MockCanBus)
+    # Darwin wheels of can_motor_control omit SocketCanBus (SocketCAN is
+    # Linux-only), so create the attribute and force the Linux bus path.
+    mocker.patch.object(
+        can_motor_control, "SocketCanBus", can_motor_control.MockCanBus, create=True
+    )
+    mocker.patch.object(adapter_module.sys, "platform", "linux")
     result = DualOpenYamDamiaoAdapter(
         runtime_config=DamiaoRuntimeConfig(
             bus_devices={"left": "can8", "right": "can9"},

@@ -38,7 +38,11 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModuleConfig,
     ManipulationState,
 )
-from dimos.manipulation.manipulation_spec import ExecutionStatus, PlanStatus
+from dimos.manipulation.manipulation_spec import (
+    ExecutionResult,
+    ExecutionStatus,
+    PlanStatus,
+)
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
@@ -462,6 +466,57 @@ class TestStateMachine:
         assert result.status is ExecutionStatus.NO_EXECUTION
         assert module._state == ManipulationState.IDLE
         assert module._error_message == ""
+
+    def test_reset_recovers_from_fault(self, module_factory):
+        """Planning only runs from IDLE or COMPLETED, so FAULT must be escapable."""
+        module = module_factory()
+        module._state = ManipulationState.FAULT
+        module._error_message = "Execution failed"
+
+        result = module.reset()
+
+        assert result.succeeded
+        assert module._state == ManipulationState.IDLE
+        assert module._error_message == ""
+
+    def test_reset_leaves_fault_standing_when_the_stop_is_unconfirmed(
+        self, module_factory, mocker: MockerFixture
+    ) -> None:
+        """Clearing this FAULT hands back a module that accepts motion into a moving arm."""
+        module = module_factory()
+        module._state = ManipulationState.FAULT
+        module._error_message = "cancel outcome uncertain"
+        mocker.patch.object(
+            module,
+            "cancel",
+            return_value=ExecutionResult(ExecutionStatus.UNCERTAIN, "cancel outcome uncertain"),
+        )
+
+        result = module.reset()
+
+        assert not result.succeeded
+        assert module._state == ManipulationState.FAULT
+        assert module._error_message == "cancel outcome uncertain"
+
+    def test_reset_cancels_an_active_trajectory(self, module_factory):
+        """Refusing and asking the caller to cancel first is a dead end."""
+        module = module_factory()
+        config = _one_joint_config()
+        _install_generated_plan(module, config, [0.0], [0.1])
+        module._control_coordinator = _control_coordinator(
+            cancel_status=TrajectoryCancellationStatus.CANCELLED
+        )
+        module._control_coordinator.task_invoke.return_value = TrajectoryStatus(
+            state=TrajectoryState.ABORTED
+        )
+        module._initialize_execution()
+        module.execute(blocking=False)
+
+        result = module.reset()
+
+        module._control_coordinator.cancel_trajectory.assert_called_once_with()
+        assert "Cancelled" in result.message
+        assert module._state == ManipulationState.IDLE
 
     def test_fail_sets_fault_state(self, module_factory):
         """_fail helper sets FAULT state and message."""

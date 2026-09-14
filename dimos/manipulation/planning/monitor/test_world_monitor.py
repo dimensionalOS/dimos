@@ -202,6 +202,9 @@ class FakeViz:
     def clear_vis_obstacles(self) -> None:
         self.calls.append(("clear_vis_obstacles",))
 
+    def show_grasp_proposals(self, candidates):
+        self.calls.append(("show_grasp_proposals", candidates))
+
 
 def _robot_config() -> RobotModelConfig:
     model_path = Path("/tmp/dimos_world_monitor_test_arm.urdf")

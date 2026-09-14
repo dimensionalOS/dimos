@@ -208,6 +208,11 @@ class PathFollowerTask(BaseControlTask):
         )
 
     def is_active(self) -> bool:
+        # A latched path counts: the tick loop only calls compute() on active
+        # tasks, and compute() is what arms it.
+        return self._running() or self._pending_path is not None
+
+    def _running(self) -> bool:
         return self._state in ("initial_rotation", "path_following", "final_rotation")
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
@@ -228,7 +233,7 @@ class PathFollowerTask(BaseControlTask):
                         orientation=Quaternion.from_euler(Vector3(0.0, 0.0, float(pyaw))),
                     ),
                 )
-        if not self.is_active():
+        if not self._running():
             return None
         if self._path is None or self._distancer is None:
             return None
@@ -329,6 +334,7 @@ class PathFollowerTask(BaseControlTask):
         if joints & self._joint_names and self.is_active():
             logger.warning(f"PathFollowerTask '{self._name}' preempted by {by_task}")
             self._state = "aborted"
+            self._pending_path = None
 
     # State-machine bodies (mirrors LocalPlanner._compute_*)
 
@@ -448,7 +454,7 @@ class PathFollowerTask(BaseControlTask):
         sibling task's configure signature (e.g. the trajectory tracker's
         eso/deadtime knobs) work unchanged.
         """
-        if self.is_active():
+        if self._running():
             logger.warning(f"PathFollowerTask '{self._name}': cannot configure while active")
             return False
         if speed is not None:
@@ -575,7 +581,7 @@ class PathFollowerTask(BaseControlTask):
         while actively driving — a mid-run jump would discontinuously move the
         cap; the next path picks up the new speed cleanly.
         """
-        if self.is_active():
+        if self._running():
             logger.warning(f"PathFollowerTask '{self._name}': ignoring set_speed while active")
             return
         speed = float(speed)
@@ -602,10 +608,11 @@ class PathFollowerTask(BaseControlTask):
         if not self.is_active():
             return False
         self._state = "aborted"
+        self._pending_path = None
         return True
 
     def reset(self) -> bool:
-        if self.is_active():
+        if self._running():
             return False
         self._state = "idle"
         self._path = None

@@ -55,12 +55,6 @@ G1_TELEOP_ARM_MODEL = (
     .with_fixed_joints(*(_urdf_joint_name(name) for name in G1_WAIST_JOINTS))
 )
 
-G1_READY_JOINTS = {
-    "left_arm": (-0.4, 0.2, 0.0, 1.2, 0.0, 0.0, 0.0),
-    "right_arm": (-0.4, -0.2, 0.0, 1.2, 0.0, 0.0, 0.0),
-}
-G1_READY_SPEED_SCALE = 0.25
-
 
 def g1_manipulation_model_config() -> RobotModelConfig:
     """Build the full-body G1 collision model for arm manipulation.

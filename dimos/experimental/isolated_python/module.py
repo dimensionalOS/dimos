@@ -122,17 +122,11 @@ class IsolatedPythonModule(NativeModule):
             )
         return project
 
-    def _uv_command(self, *args: str) -> list[str]:
-        command = ["uv", *args]
-        if (self.runtime_project / "pixi.toml").is_file():
-            return ["pixi", "run", "--executable", *command]
-        return command
-
     def _prepare_command(self) -> list[str]:
-        args = ["sync"]
-        if (self.runtime_project / "uv.lock").is_file():
-            args.append("--frozen")
-        return self._uv_command(*args)
+        # `uv run` syncs the sibling project and builds the cached overlay that
+        # holds the host DimOS with its dependencies. Doing it here keeps the
+        # first install, which can take minutes, out of the startup timeout.
+        return isolated_python_run_command(self.runtime_project, "python", "-c", "pass")
 
     def _launch_command(self, handshake_fd: int) -> list[str]:
         return isolated_python_run_command(
@@ -157,7 +151,11 @@ class IsolatedPythonModule(NativeModule):
 
     def _runtime_env(self) -> dict[str, str]:
         env = dict(os.environ)
+        # The isolated project picks its own interpreter and venv; host pins
+        # (e.g. setup-uv exporting UV_PYTHON on CI matrix legs) must not leak in.
         env.pop("VIRTUAL_ENV", None)
+        env.pop("UV_PYTHON", None)
+        env.pop("UV_PROJECT_ENVIRONMENT", None)
         env.update(self.config.extra_env)
         return env
 
