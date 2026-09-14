@@ -15,6 +15,7 @@
 
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -23,6 +24,12 @@ TRUNCATE_PATTERNS = [
     "Generated with",
     "Co-Authored-By",
 ]
+
+AI_COAUTHOR = re.compile(
+    r"^[ \t]*Co-authored-by[ \t]*:[^\r\n]*"
+    r"(?:\bClaude\b|\bCodex\b|<[^<>\r\n]*@(?:anthropic\.com|openai\.com)>)",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def filter_text(text: str) -> tuple[str, str | None]:
@@ -52,13 +59,16 @@ def check_commits() -> int:
 
     Locally on `git commit` no range is supplied, so we no-op rather than
     blocking commits on the state of HEAD — the commit-msg hook is in
-    charge there. In CI, code-cleanup.yml passes `--from-ref/--to-ref` to
-    pre-commit, which exports PRE_COMMIT_FROM_REF / PRE_COMMIT_TO_REF.
+    charge there. CI supplies PRE_COMMIT_FROM_REF / PRE_COMMIT_TO_REF
+    explicitly to check the incoming commits for AI co-authors.
     """
     from_ref = os.environ.get("PRE_COMMIT_FROM_REF")
     to_ref = os.environ.get("PRE_COMMIT_TO_REF")
-    if not (from_ref and to_ref):
+    if not from_ref and not to_ref:
         return 0
+    if not (from_ref and to_ref):
+        print("Both PRE_COMMIT_FROM_REF and PRE_COMMIT_TO_REF are required.", file=sys.stderr)
+        return 1
 
     try:
         rev_list = subprocess.run(
@@ -89,20 +99,19 @@ def check_commits() -> int:
                 file=sys.stderr,
             )
             return 1
-        _, matched = filter_text(msg)
+        matched = AI_COAUTHOR.search(msg)
         if matched is not None:
-            failures.append((sha, matched))
+            failures.append((sha, matched.group().strip()))
 
     if failures:
         for sha, pattern in failures:
             print(
-                f"{sha[:12]}: contains forbidden pattern: {pattern!r}",
+                f"{sha[:12]}: AI co-author: {pattern!r}",
                 file=sys.stderr,
             )
         print(
-            "\nInstall the commit-msg hook "
-            "(`pre-commit install -t commit-msg`) or amend the offending "
-            "commits to strip the trailer.",
+            "\nAmend the offending commits to remove AI co-author trailers, "
+            "then push the updated branch.",
             file=sys.stderr,
         )
         return 1
