@@ -703,11 +703,13 @@ window.connect = async function() {
             throw new Error('WebXR configuration is unavailable. Reload the page and try again.');
         }
 
-        // Setup WebSocket
-        await setupWebSocket();
-
-        // Start WebXR
+        // Immersive sessions must be requested while this click still carries
+        // transient user activation. In particular, required body tracking can
+        // trigger a consent check, so do not await network setup first.
         await startWebXRSession(webXRClientConfig);
+
+        // Connect the data channel after the browser grants the XR session.
+        await setupWebSocket();
 
         // Update UI
         connectBtn.classList.add('hidden');
@@ -715,6 +717,9 @@ window.connect = async function() {
 
     } catch (error) {
         const message = error?.message || String(error);
+        const failedSession = xrSession;
+        xrSession = null;
+        if (failedSession) await failedSession.end().catch(console.error);
         const failedWebSocket = ws;
         ws = null;
         if (failedWebSocket) failedWebSocket.close();
