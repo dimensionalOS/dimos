@@ -252,6 +252,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Reject Git sources in root pyproject.toml
+        run: |
+          python3 - <<'PY'
+          import sys
+          import tomllib
+
+          with open("pyproject.toml", "rb") as file:
+              config = tomllib.load(file)
+          sources = config.get("tool", {}).get("uv", {}).get("sources", {})
+          rejected = []
+          for name, source in sources.items():
+              entries = source if isinstance(source, list) else [source]
+              if any("git" in entry for entry in entries):
+                  rejected.append(name)
+          if rejected:
+              sys.exit(
+                  "::error file=pyproject.toml::Git sources are not allowed in root "
+                  "pyproject.toml. Use published packages instead: " + ", ".join(rejected)
+              )
+          PY
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
         with:
