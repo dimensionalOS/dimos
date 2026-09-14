@@ -97,6 +97,11 @@ def test_relay_run_cmd_dir_flags() -> None:
     assert cmd[cmd.index("--cert") + 1] == str(cert)
     assert cmd[cmd.index("--key") + 1] == str(key)
 
+    # The auth file too: the relay reads it itself.
+    cmd = relay_run_cmd("deno", Path("/web"), auth_file=Path("/etc/relay/auth.json"))
+    assert "--allow-read=/web,/etc/relay/auth.json" in cmd
+    assert cmd[cmd.index("--auth-file") + 1] == "/etc/relay/auth.json"
+
 
 def test_relay_run_cmd_resolves_symlinked_dirs(tmp_path: Path) -> None:
     # The relay realpath-checks served files, so --allow-read must be granted
