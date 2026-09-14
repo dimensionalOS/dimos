@@ -37,7 +37,7 @@ from dimos.core.coordination.blueprint_config.schema import (
     normalize_option_name,
 )
 from dimos.core.coordination.blueprint_config.values import deep_set, plain_mapping
-from dimos.core.global_config import GlobalConfig
+from dimos.core.global_config import ENV_FILE, GlobalConfig
 
 
 def global_schema_defaults() -> dict[str, Any]:
@@ -51,7 +51,11 @@ def configuration_environment(
 ) -> Mapping[str, str]:
     if environ is not None:
         return environ
-    from_dotenv = {key: value for key, value in dotenv_values(".env").items() if value is not None}
+    if ENV_FILE is None:
+        return os.environ
+    from_dotenv = {
+        key: value for key, value in dotenv_values(ENV_FILE).items() if value is not None
+    }
     return {**from_dotenv, **os.environ}
 
 

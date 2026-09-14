@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ChannelStore, type Session, StatusStore } from "@dimos/sdk";
@@ -440,5 +440,59 @@ describe("App session states", () => {
   it("shows the terminal failure reason", () => {
     act(() => status.update({ transport: { phase: "failed", reason: "protocol mismatch" } }));
     expect(container.textContent).toContain("Connection failed: protocol mismatch");
+  });
+
+  describe("relay auth", () => {
+    let reload: MockInstance<() => void>;
+
+    beforeEach(() => {
+      // happy-dom's reload navigates for real; the App only needs the call.
+      reload = vi.spyOn(location, "reload").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      reload.mockRestore();
+      localStorage.clear();
+    });
+
+    const authFailed = (reason: string) => {
+      act(() => status.update({ transport: { phase: "failed", reason, code: "auth_failed" } }));
+    };
+    const logOut = () => container.querySelector<HTMLElement>('[data-testid="log-out"]');
+
+    it("shows the token form for auth_failed with the relay's message", () => {
+      authFailed("missing viewer token");
+      expect(container.querySelector('[data-testid="token-message"]')?.textContent).toBe(
+        "missing viewer token",
+      );
+      expect(container.textContent).not.toContain("Connection failed");
+      expect(logOut()).toBeNull();
+    });
+
+    it("submitting the form stores the token and reloads", () => {
+      authFailed("invalid viewer token");
+      const input = container.querySelector<HTMLInputElement>('[data-testid="token-input"]')!;
+      act(() => {
+        // React tracks controlled inputs through the value setter; go around it.
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+          input,
+          "tok-en",
+        );
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      act(() => {
+        input.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      });
+      expect(localStorage.getItem("dimos.cockpit.token")).toBe("tok-en");
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it("offers 'log out' only with a stored token; it forgets the token and reloads", () => {
+      localStorage.setItem("dimos.cockpit.token", "tok-en");
+      act(() => root.render(<App session={session} />));
+      act(() => logOut()!.click());
+      expect(localStorage.getItem("dimos.cockpit.token")).toBeNull();
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
   });
 });
