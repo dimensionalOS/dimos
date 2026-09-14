@@ -29,16 +29,12 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
-import json
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from dimos.memory.tf import StreamTF
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud import lattice_quantum
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
@@ -327,9 +323,9 @@ def _images(store: Any, names: list[str]) -> tuple[dict[str, str], list[tuple[st
 
 
 def _cameras(
-    store: Any, roles: dict[str, Any], names: list[str], types: dict[str, type]
+    store: Any, roles: dict[str, str], names: list[str], types: dict[str, type]
 ) -> dict[str, CameraInfo]:
-    """Intrinsics per optical frame: an inline manifest dict, or every
+    """Intrinsics per optical frame: the ``camera_info`` role's stream, or every
     CameraInfo stream keyed by the frame it calibrates.
 
     Several infos in one frame (a colour/depth pair) resolve by name order, so
@@ -338,21 +334,9 @@ def _cameras(
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as CameraInfoMsg
 
     role = roles.get("camera_info")
-    if isinstance(role, dict):
-        info = CameraInfoMsg(
-            height=role["height"],
-            width=role["width"],
-            distortion_model=role.get("distortion_model", ""),
-            D=role.get("D"),
-            K=role["K"],
-            R=role.get("R"),
-            P=role.get("P"),
-            frame_id=role["frame_id"],
-        )
-        return {info.frame_id: info}
     found = (
         [role]
-        if isinstance(role, str)
+        if role is not None
         else sorted(n for n in names if types[n] is CameraInfoMsg and store.stream(n).count())
     )
     cameras: dict[str, CameraInfo] = {}
@@ -405,17 +389,20 @@ class Rig:
     def from_store(
         cls,
         store: Any,
-        manifest: dict[str, Any] | None = None,
         overrides: dict[str, str] | None = None,
+        camera_info: CameraInfo | None = None,
+        mount: Transform | None = None,
     ) -> Rig:
         """Recognize the store's shape without depending on stream names.
 
-        Per role: ``overrides``, then ``manifest`` (passed in, or the
-        ``<db>.rig.json`` sidecar), then discovery. Cameras key on the optical
+        Per role: ``overrides``, then discovery. Cameras key on the optical
         frame they calibrate and their colour and depth streams are the Image
         streams stamped in that frame, so resolution is frame-driven rather than a
         cascade of name tie-breaks. Ambiguity the frames cannot settle, and
-        missing calibration, raise with the candidates.
+        missing calibration, raise with the candidates. ``camera_info``
+        replaces a CameraInfo stream when the store has none. ``mount`` is the
+        static base-to-optical transform, required when the store has no tf and
+        its poses are base poses.
         """
         from dimos.msgs.sensor_msgs.Image import Image as ImageMsg
         from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as PointCloudMsg
@@ -424,20 +411,18 @@ class Rig:
         names = store.list_streams()
         types = {name: store.stream(name).data_type for name in names}
 
-        if manifest is None:
-            path = getattr(store.config, "path", None)
-            sidecar = Path(f"{path}.rig.json") if path else None
-            if sidecar is not None and sidecar.exists():
-                manifest = json.loads(sidecar.read_text())
-                logger.info(f"rig: manifest {sidecar}")
-        roles: dict[str, Any] = {**(manifest or {}), **(overrides or {})}
-        claimed = {v for v in roles.values() if isinstance(v, str)}
+        roles = overrides or {}
+        claimed = set(roles.values())
 
         tf_names = [n for n in names if types[n] is TFMessage]
         tf_name = tf_names[0] if len(tf_names) == 1 else ("tf" if "tf" in tf_names else None)
         tf = StreamTF.from_store(store, tf_name) if tf_name is not None else None
 
-        cameras = _cameras(store, roles, names, types)
+        cameras = (
+            {camera_info.frame_id: camera_info}
+            if camera_info is not None
+            else _cameras(store, roles, names, types)
+        )
         image_names = [n for n in names if types[n] is ImageMsg and n not in claimed]
         by_frame_color, depth_streams = _images(store, image_names)
 
@@ -450,7 +435,7 @@ class Rig:
             ranked += [n for n in image_names if store.stream(n).count() == 0]
             color_name = next(iter(ranked), None)
         if color_name is None:
-            raise ValueError(f"no color image stream among {names}; pass a manifest or --color")
+            raise ValueError(f"no color image stream among {names}; name one in overrides")
         claimed.add(color_name)
 
         color = store.stream(color_name)
@@ -491,7 +476,7 @@ class Rig:
         else:
             raise ValueError(
                 f"color stream {color_name!r} is stamped {color_frame!r}, which is none of the "
-                f"cameras {sorted(cameras)}; name the right camera_info in the manifest"
+                f"cameras {sorted(cameras)}; name the right camera_info stream in overrides"
             )
         cameras = {optical: cameras[optical], **cameras}  # the colour camera answers first
 
@@ -504,14 +489,7 @@ class Rig:
             except LookupError:
                 pass  # live store, nothing recorded yet
 
-        mounts: dict[str, Transform] = {}
-        if isinstance(mount := roles.get("base_to_optical"), dict):
-            mounts[optical] = Transform(
-                translation=Vector3(*mount["translation"]),
-                rotation=Quaternion(*mount["rotation"]),
-                frame_id=mount.get("frame_id", "base_link"),
-                child_frame_id=optical,
-            )
+        mounts = {optical: mount} if mount is not None else {}
 
         poses = None
         if tf is None:
@@ -530,13 +508,13 @@ class Rig:
         if depth is not None or cloud is not None:
             if cameras[optical] is None:
                 raise ValueError(
-                    "store has 3D geometry but no camera calibration; add a CameraInfo stream "
-                    "role or an inline camera_info to the <db>.rig.json manifest"
+                    "store has 3D geometry but no camera calibration; name a CameraInfo "
+                    "stream in overrides or pass camera_info"
                 )
             if tf is None and (poses is None or not mounts):
                 raise ValueError(
                     "store has no tf; a pose-stamped rig needs a poses stream and a "
-                    "base_to_optical mount in the <db>.rig.json manifest"
+                    "base-to-optical mount"
                 )
 
         rig = cls(

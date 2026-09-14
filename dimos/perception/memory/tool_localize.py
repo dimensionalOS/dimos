@@ -32,7 +32,6 @@ margin flagged.
 """
 
 import argparse
-import json
 from pathlib import Path
 import sys
 from typing import Any
@@ -43,9 +42,13 @@ from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.memory.localize import LocalizeTrace
 from dimos.perception.memory.rig import Rig
 from dimos.perception.memory.types import Localization
+from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, GO2Connection
 from dimos.utils.data import get_data
 
 REFUSAL_MARGIN = 0.15
+# go2 recordings made without a camera_info stream; the front camera
+# calibration and its static mount from the go2 connection stand in for it.
+UNCALIBRATED_GO2_RECORDINGS = ("go2_short.db",)
 
 
 def render(
@@ -274,7 +277,6 @@ def main() -> int:
         help="one or more object queries, optionally followed by an out.rrd to write",
     )
     parser.add_argument("--dataset", type=Path, help="memory recording database")
-    parser.add_argument("--manifest", type=Path, help="rig manifest json (default: <db>.rig.json)")
     parser.add_argument("--color", help="stream name override for the color role")
     parser.add_argument("--depth", help="stream name override for the depth role")
     parser.add_argument("--cloud", help="stream name override for the pointcloud role")
@@ -304,7 +306,6 @@ def main() -> int:
         "xarm6_worldbelief_realsense_d435i_stationery_calibrated/"
         "xarm6_worldbelief_20260729_203624_161992.db"
     )
-    manifest = json.loads(args.manifest.read_text()) if args.manifest else None
     overrides = {
         role: name
         for role, name in [
@@ -316,7 +317,13 @@ def main() -> int:
         if name
     }
     store = SqliteStore(path=dataset)
-    rig = Rig.from_store(store, manifest=manifest, overrides=overrides)
+    uncalibrated = dataset.name in UNCALIBRATED_GO2_RECORDINGS
+    rig = Rig.from_store(
+        store,
+        overrides=overrides,
+        camera_info=GO2Connection.camera_info_static if uncalibrated else None,
+        mount=BASE_TO_OPTICAL if uncalibrated else None,
+    )
     lo, hi = rig.color.get_time_range()
     after = lo + args.start
     before = lo + args.start + args.duration if args.duration is not None else hi

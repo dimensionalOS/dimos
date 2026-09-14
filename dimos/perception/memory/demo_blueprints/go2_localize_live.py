@@ -25,8 +25,7 @@ every timestamp each lap, so the store's clock only moves forward while the
 scene repeats. The message stamp, the observation stamp and every tf
 transform shift by the same lap offset, so pose interpolation, cloud
 accumulation and the index window all see one continuous take. It writes the
-tf chain and the camera intrinsics too, which is what lets
-:class:`LocalizeModule` resolve its rig from the live store with no manifest.
+tf chain and the camera intrinsics too, the way a robot connection would.
 
 The canonical recording is opened read-only and never written.
 """
@@ -170,7 +169,10 @@ class LoopFeeder(MemoryModule):
         # another worker backfills once and then never sees another append.
         self._embedder = self.register_disposable(DanDetector())
         self._embedder.start()
-        self._embedder.embed_live(live, rig=_live_rig(Rig.from_store(source), live))
+        recorded = Rig.from_store(
+            source, camera_info=GO2Connection.camera_info_static, mount=BASE_TO_OPTICAL
+        )
+        self._embedder.embed_live(live, rig=_live_rig(recorded, live))
         logger.info(
             f"loop feeder: {self.config.dataset} ({span - LAP_GAP_S:.1f}s) -> {self.config.db_path}"
         )
@@ -308,7 +310,9 @@ class LocalizeModule(MemoryModule):
 
         self._stage = "loading SigLIP, OWLv2 and EdgeTAM weights"
         logger.info(f"localize: {self._stage}")
-        recorded = Rig.from_store(source)
+        recorded = Rig.from_store(
+            source, camera_info=GO2Connection.camera_info_static, mount=BASE_TO_OPTICAL
+        )
         self.detector = self.register_disposable(DanDetector())
         self.detector.start()
 
