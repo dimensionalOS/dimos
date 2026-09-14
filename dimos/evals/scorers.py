@@ -27,6 +27,7 @@ subclass): factories return evaluators called with
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import math
 from typing import TypeVar
 
 T = TypeVar("T")
@@ -36,7 +37,50 @@ def exact(expected: T, got: T) -> float:
     return float(expected == got)
 
 
+def rank_order(expected: Sequence[str], got: Sequence[str]) -> float:
+    """Fraction of correctly ordered pairs in a complete, unique-label ranking."""
+    if len(expected) < 2 or len(set(expected)) != len(expected):
+        raise ValueError("Expected ranking must contain at least two unique labels")
+    if len(got) != len(expected) or set(got) != set(expected):
+        return 0.0
+    positions = {label: i for i, label in enumerate(got)}
+    correct = sum(
+        positions[left] < positions[right]
+        for i, left in enumerate(expected)
+        for right in expected[i + 1 :]
+    )
+    return correct / (len(expected) * (len(expected) - 1) / 2)
+
+
+def numeric(expected: float, got: float, *, tolerance: float, band: float) -> float:
+    """Compare numbers: full credit within tolerance, linear to zero at band.
+
+    Parse model text separately, e.g. with ``first_number``. Non-finite
+    observations receive zero; invalid scoring parameters raise ValueError.
+    """
+    if not all(math.isfinite(v) for v in (expected, tolerance, band)) or not 0 <= tolerance < band:
+        raise ValueError("Require finite reference and 0 <= tolerance < band")
+    if not math.isfinite(got):
+        return 0.0
+    error = abs(got - expected)
+    # Allow only a few floating-point ULPs, capped relative to the score band.
+    rounding = min(4 * max(math.ulp(got), math.ulp(expected)), (band - tolerance) * 1e-12)
+    if error <= tolerance or abs(error - tolerance) <= rounding:
+        return 1.0
+    if error >= band or abs(error - band) <= rounding:
+        return 0.0
+    return max(0.0, min(1.0, (band - error) / (band - tolerance)))
+
+
 # -- parsers (model text -> typed answer) -----------------------------------------
+
+
+def ranking(text: str) -> tuple[str, ...]:
+    """Parse single-letter labels, contiguous or separated by commas/whitespace.
+
+    Vocabulary, completeness, and uniqueness are checked by ``rank_order``.
+    """
+    return tuple(c for c in text.strip().upper() if c != "," and not c.isspace())
 
 
 def first_number(text: str) -> float:
