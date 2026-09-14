@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, field_validator
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
@@ -55,10 +54,15 @@ from dimos.spec import perception
 
 
 class Mid360Config(NativeModuleConfig):
-    cwd: str | None = "rust"
+    # Built from the repo root, but only this module's crate: the crates it
+    # shares with the other modules are separate store paths already in the
+    # cache. The out-link is per-module so builds do not clobber each other.
+    cwd: str | None = "../../../../.."
+    executable: str = "result-mid360_native/bin/mid360_native"
+    build_command: str | None = (
+        "nix build -L .#rust_native_module_dimos-livox --out-link result-mid360_native"
+    )
     # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mid360_native")
-    build_command: str | None = "cargo build --release"
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
     host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_HOST_IP"))

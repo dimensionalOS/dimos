@@ -39,15 +39,21 @@ repos:
     rev: v4.6.0
     hooks:
       - id: check-case-conflict
+      # These three rewrite bytes, so they are kept off files that must stay
+      # byte-identical to something outside this repo: patches (upstream
+      # diffs), and Cargo.nix, which bin/regen-cargo-nix reproduces verbatim
+      # and the cargo-nix-current CI job diffs. crate2nix ends it with a blank
+      # line; reformatting it here would fail that job on every run, because
+      # CI does not run these hooks.
       - id: trailing-whitespace
         language: python
         types: [text]
-        exclude: \.patch$  # patch files contain intentional trailing whitespace
+        exclude: &verbatim-files (\.patch$|^Cargo\.nix$)
       - id: end-of-file-fixer
-        exclude: \.patch$  # keep patch files byte-identical to upstream diffs
+        exclude: *verbatim-files
       - id: mixed-line-ending
         args: [--fix=lf]
-        exclude: \.patch$  # keep patch files byte-identical to upstream diffs
+        exclude: *verbatim-files
       - id: check-json
         exclude: ^misc/DimSim/public/sims/  # LFS-tracked
       - id: check-toml
@@ -137,7 +143,7 @@ repos:
       - id: cargo-fmt
         name: cargo fmt
         entry: |
-          bash -c '
+          nix develop path:nix/rust -c bash -c '
             set -euo pipefail
             git ls-files "*Cargo.toml" | while read -r m; do
               cargo locate-project --manifest-path "$m" --workspace --message-format plain
@@ -152,14 +158,18 @@ repos:
       - id: cargo-clippy
         name: cargo clippy
         entry: |
-          bash -c '
+          nix develop path:nix/rust -c bash -c '
             set -euo pipefail
             git ls-files "*Cargo.toml" | while read -r m; do
               cargo locate-project --manifest-path "$m" --workspace --message-format plain
             done | sort -u | while read -r root; do
-              # A crate with its own flake carries system deps the root shell lacks.
-              if [ -f "$(dirname "$root")/flake.nix" ]; then
-                nix develop "path:$(dirname "$root")" -c cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
+              dir=$(dirname "$root")
+              # A module crate with its own flake carries system deps the toolchain
+              # shell lacks. The repo-root flake is skipped on purpose: a flake ref
+              # copies its whole source tree into the store, and that tree is the
+              # entire repository.
+              if [ "$dir" != "$(git rev-parse --show-toplevel)" ] && [ -f "$dir/flake.nix" ]; then
+                nix develop "path:$dir" -c cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
               else
                 cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
               fi

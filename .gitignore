@@ -36,6 +36,11 @@ build/
 result
 result-*
 
+# crate2nix's prefetch cache. Deliberately not committed: its keys are scoped
+# to a git dependency's *branch* with no rev, so a committed copy goes stale
+# the moment that branch moves. Cargo.nix already carries the hashes.
+crate-hashes.json
+
 # Editor and OS files
 .vscode/
 .DS_Store
