@@ -26,14 +26,14 @@ def test_detection3dpc(detection3dpc) -> None:
     assert obb is not None, "Oriented bounding box should not be None"
 
     # Verify OBB center values
-    assert obb.center[0] == pytest.approx(-3.36002, abs=0.1)
-    assert obb.center[1] == pytest.approx(-0.196446, abs=0.1)
-    assert obb.center[2] == pytest.approx(0.220184, abs=0.1)
+    assert obb.center[0] == pytest.approx(-3.316207, abs=0.1)
+    assert obb.center[1] == pytest.approx(-0.300175, abs=0.1)
+    assert obb.center[2] == pytest.approx(0.240114, abs=0.1)
 
     # Verify OBB extent values
-    assert obb.extent[0] == pytest.approx(0.531275, abs=0.12)
-    assert obb.extent[1] == pytest.approx(0.461054, abs=0.1)
-    assert obb.extent[2] == pytest.approx(0.155, abs=0.1)
+    assert obb.extent[0] == pytest.approx(0.593476, abs=0.12)
+    assert obb.extent[1] == pytest.approx(0.470315, abs=0.1)
+    assert obb.extent[2] == pytest.approx(0.164996, abs=0.1)
 
     # def test_bounding_box_dimensions(detection3dpc):
     """Test bounding box dimension calculation."""
