@@ -14,16 +14,21 @@
 
 """Dual OpenYAM coordinator and planning blueprints."""
 
+import math
+
 from dimos.control.coordinator import ControlCoordinatorConfig, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.dual_openyam.config import (
-    DUAL_OPENYAM_ARM_JOINTS,
     dual_openyam_hardware,
     dual_openyam_model_config,
 )
+from dimos.robot.manipulators.dual_openyam.joints import (
+    DUAL_OPENYAM_ARM_JOINTS,
+)
+from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL
 
 
 def dual_openyam_trajectory_task(*, priority: int = 20) -> TaskConfig:
@@ -55,6 +60,28 @@ class DualOpenYamCoordinator(TeleopControlCoordinator):
                 right_can_port=self.config.right_can_port,
             )
         ]
+        # Resolve assets at startup, using the same bounds as the planning model.
+        component = self.config.hardware[0]
+        assert component.limits is not None
+        lower = list(component.limits.position_lower)
+        upper = list(component.limits.position_upper)
+        model = DUAL_OPENYAM_MODEL.load()
+        for name in DUAL_OPENYAM_ARM_JOINTS:
+            joint = model.get_joint(name)
+            if (
+                joint is None
+                or joint.lower is None
+                or joint.upper is None
+                or not math.isfinite(joint.lower)
+                or not math.isfinite(joint.upper)
+                or joint.lower >= joint.upper
+            ):
+                raise ValueError(f"Dual OpenYAM model has invalid position limits for {name!r}")
+            index = component.joints.index(name)
+            lower[index] = joint.lower
+            upper[index] = joint.upper
+        component.limits.position_lower = lower
+        component.limits.position_upper = upper
         super()._setup_from_config()
 
 

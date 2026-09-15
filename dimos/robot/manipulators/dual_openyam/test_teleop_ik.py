@@ -24,8 +24,10 @@ from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
     _dual_openyam_webxr_task,
 )
 from dimos.robot.manipulators.dual_openyam.config import (
-    DUAL_OPENYAM_ARM_JOINTS,
     DUAL_OPENYAM_HOME_JOINTS,
+)
+from dimos.robot.manipulators.dual_openyam.joints import (
+    DUAL_OPENYAM_ARM_JOINTS,
 )
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,

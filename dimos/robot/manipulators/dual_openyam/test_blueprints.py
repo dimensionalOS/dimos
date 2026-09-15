@@ -32,7 +32,7 @@ from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
     DUAL_OPENYAM_WEBXR_TASK_NAME,
     teleop_webxr_dual_openyam,
 )
-from dimos.robot.manipulators.dual_openyam.config import (
+from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_ARM_JOINTS,
 )
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (

@@ -21,10 +21,10 @@ stub, and runner environments implement the same lifecycle as real environments.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import json
 from pathlib import Path
-import threading
 from types import SimpleNamespace
 from typing import Any
 
@@ -773,17 +773,19 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
         if goes_idle:
             idle.publish(True)
 
-    unsubscribe = human.subscribe(
-        lambda msg: threading.Thread(target=fake_mcp_client, args=(msg,)).start()
-    )
     try:
-        env = RunningEnvironment(mcp_url="http://localhost:1/mcp", streams=(), artifacts={})
-        agent = McpClientAdapter()
-        trajectory = agent.run(
-            "go to the bed", env, tmp_path / "case", timeout_s=10.0 if goes_idle else 0.5
-        )
+        # Finish publishing before undeclaring the transports' Zenoh publishers.
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            unsubscribe = human.subscribe(lambda msg: workers.submit(fake_mcp_client, msg))
+            try:
+                env = RunningEnvironment(mcp_url="http://localhost:1/mcp", streams=(), artifacts={})
+                agent = McpClientAdapter()
+                trajectory = agent.run(
+                    "go to the bed", env, tmp_path / "case", timeout_s=10.0 if goes_idle else 0.5
+                )
+            finally:
+                unsubscribe()
     finally:
-        unsubscribe()
         for t in (human, agent_t, idle):
             t.stop()
 
