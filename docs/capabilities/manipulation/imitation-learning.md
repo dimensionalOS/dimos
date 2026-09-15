@@ -53,9 +53,10 @@ all options, including camera hardware settings. JSON config and environment
 overrides use the same matching rules as other dimOS blueprints.
 
 WebXR collection supports optional spoken start/save/cancel feedback. It is off
-by default. After installing the offline speech dependencies and quantized model,
+by default. After installing the optional speech dependencies,
 add `--tts.enabled=true` to the stack's `dimos run` command. The attached `imitation collect`
-command stays the same. See [offline WebXR speech](/docs/usage/webxr-audio.md).
+command stays the same. Missing default model assets download automatically
+before modules start. See [offline WebXR speech](/docs/usage/webxr-audio.md).
 
 The panel shows the task, recording state, elapsed time, and saved/discarded
 episode counts. Reset the scene before each take, then guide the arm through

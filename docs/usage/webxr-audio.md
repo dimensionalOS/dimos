@@ -4,34 +4,32 @@ Spoken recording feedback is **off by default**. Enable it with `--tts.enabled=t
 starting a WebXR collection blueprint. The computer synthesizes speech locally
 using Kokoro INT8; the browser plays WAV audio through Web Audio.
 
-## One-time setup
+## First launch
 
-Install the dependencies and download verified model assets in one command:
+Install the optional inference dependencies:
 
 ```bash
-uv run --extra manipulation --extra tts python -m dimos.stream.audio.tts.setup
+uv sync --extra manipulation --extra tts
 ```
 
-This installs Kokoro and CPU ONNX Runtime, then downloads the **114 MB INT8
-model** and **28 MB voice data** from the pinned
-[Kokoro ONNX release](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1).
-The assets are stored in `${XDG_CACHE_HOME:-$HOME/.cache}/dimos/tts`.
-Each file is checked against its pinned SHA-256 hash before installation.
-Rerunning setup reuses valid files and downloads missing or corrupt files again.
-Failed downloads do not replace existing files or leave partial model files.
+Launch collection with `--tts.enabled=true`. Before modules start, TTS
+automatically downloads the **114 MB INT8 model** and **28 MB voice data** from
+the pinned [Kokoro ONNX release](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1).
+No separate model setup command is needed. Download progress appears in the logs.
 
-Use `uv run --extra manipulation --extra tts` for subsequent launches, or
-`uv run --no-sync` to use the environment already installed by setup.
-`--tts.enabled=true` controls runtime behavior and does not install dependencies.
+Assets are cached in `${XDG_CACHE_HOME:-$HOME/.cache}/dimos/tts` and checked
+against pinned SHA-256 hashes. Valid files are reused without network requests;
+missing or corrupt default assets are downloaded again. Failed downloads never
+replace an existing file with partial content. Rerun collection to retry a failure.
 
-The `all` extra deliberately does not include `tts`. With TTS disabled, collection
-requires neither Kokoro dependencies nor model files. The named `tts` module
-starts idle and loads its inference engine only when `enabled=true`.
+Use `uv run --no-sync` after installation, or include
+`--extra manipulation --extra tts` in `uv run`. The module flag controls behavior,
+not package installation. The `all` extra does not include `tts`.
 
-After setup, synthesis needs no internet access. Collection startup never
-downloads assets; if a file is missing, its error includes the setup command.
-Custom model and voice paths remain available through the TTS module's ordinary
-configuration flags. Setup installs only the default assets in the cache above.
+Disabled TTS loads no inference dependencies and performs no asset checks or
+downloads. With valid cached assets, enabled TTS works offline. Custom model and
+voice paths use your existing files as supplied; missing custom files produce a
+path error rather than downloading the default model into that location.
 
 ## Enable prompts
 
@@ -85,7 +83,7 @@ If playback or a speech request fails, the page and collection HUD show
 Use a fresh test recording directory and retain the robot and camera options
 from your working collection launch.
 
-1. Complete the one-time setup above. Launch your collection blueprint with
+1. Install the optional dependencies above. Launch your collection blueprint with
    `uv run --extra tts dimos run BLUEPRINT --tts.enabled=true` and its usual options.
 2. Open the server's `/teleop` page in the headset browser. Wait about 15 seconds
    for the initial three phrases to preload, then select **Connect** and enter

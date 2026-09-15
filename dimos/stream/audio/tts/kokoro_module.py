@@ -28,11 +28,21 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.stream.audio.tts.assets import (
     MODEL_FILENAME,
-    SETUP_COMMAND,
     TTS_CACHE_DIR,
     VOICES_FILENAME,
+    ensure_asset,
 )
 from dimos.stream.audio.tts.spec import SpeechRequest
+
+
+def _load_dependencies() -> tuple[Any, Any]:
+    # Called only for an enabled module during build/start.
+    try:
+        kokoro = importlib.import_module("kokoro_onnx")
+        ort = importlib.import_module("onnxruntime")
+    except ImportError as exc:
+        raise ImportError("Install offline speech dependencies with uv sync --extra tts") from exc
+    return kokoro, ort
 
 
 class KokoroTTSConfig(ModuleConfig):
@@ -43,7 +53,7 @@ class KokoroTTSConfig(ModuleConfig):
 
 
 class KokoroTTSModule(Module):
-    """Generate WAV speech without network access or local speaker playback."""
+    """Generate WAV speech locally after preparing cached model assets."""
 
     config: KokoroTTSConfig
     dedicated_worker: ClassVar[bool] = True
@@ -55,6 +65,22 @@ class KokoroTTSModule(Module):
         self._cache: OrderedDict[str, bytes] = OrderedDict()
 
     @rpc
+    def build(self) -> None:
+        if not self.config.enabled:
+            return
+        _load_dependencies()
+        paths = (
+            (self.config.model_path, MODEL_FILENAME),
+            (self.config.voices_path, VOICES_FILENAME),
+        )
+        for path, filename in paths:
+            if path != TTS_CACHE_DIR / filename and not path.is_file():
+                raise FileNotFoundError(f"Missing custom TTS asset: {path}")
+        for path, filename in paths:
+            if path == TTS_CACHE_DIR / filename:
+                ensure_asset(path, filename)
+
+    @rpc
     def start(self) -> None:
         if not self.config.enabled:
             super().start()
@@ -62,17 +88,9 @@ class KokoroTTSModule(Module):
         for path in (self.config.model_path, self.config.voices_path):
             if not path.is_file():
                 raise FileNotFoundError(
-                    f"Missing TTS asset: {path}. Run: {SETUP_COMMAND}. "
-                    "Collection never downloads models."
+                    f"Missing TTS asset: {path}. Call build() before start() to prepare assets."
                 )
-        # Load optional inference dependencies only when this module is started.
-        try:
-            kokoro = importlib.import_module("kokoro_onnx")
-            ort = importlib.import_module("onnxruntime")
-        except ImportError as exc:
-            raise ImportError(
-                "Install offline speech dependencies with uv sync --extra tts"
-            ) from exc
+        kokoro, ort = _load_dependencies()
         options = ort.SessionOptions()
         options.intra_op_num_threads = 1
         options.inter_op_num_threads = 1
