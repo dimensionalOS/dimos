@@ -129,7 +129,7 @@ def make_r1pro_model_config() -> RobotModelConfig:
 
 
 def make_r1pro_planar_model_config() -> RobotModelConfig:
-    """Build the preview-only planar-base, torso, and bimanual model."""
+    """Build the planar-base, torso, and bimanual model."""
     return RobotModelConfig(
         model=R1PRO_PLANAR_MODEL,
         joint_names=list(R1PRO_PLANNING_JOINTS),
