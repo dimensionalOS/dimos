@@ -92,7 +92,10 @@ def test_dual_collection_configures_both_cameras_and_buses_through_run(tmp_path)
     assert parsed.module_configs["right_wrist"]["hardware"]["camera_index"] == "/dev/video4"
 
 
-def test_collection_exposes_inherited_viser_without_changing_teleop(tmp_path):
+def test_collection_exposes_inherited_viser_without_changing_teleop(tmp_path, mocker):
+    download = mocker.patch(
+        "dimos.utils.data.get_data", side_effect=AssertionError("Config must not download models")
+    )
     args = ["--recorder.recording", str(tmp_path / "dual"), "--episodes.task", "fold towel"]
     parser = BlueprintConfigParser(dual_openyam_quest_collection)
     collection = parser.parse(args, environ={}).module_kwargs("manipulationmodule")
@@ -105,17 +108,22 @@ def test_collection_exposes_inherited_viser_without_changing_teleop(tmp_path):
     assert collection["visualization"]["host"] == "0.0.0.0"
     assert teleop["visualization"]["host"] == "127.0.0.1"
     assert collection["visualization"] == {**teleop["visualization"], "host": "0.0.0.0"}
-    assert collection["model"] == teleop["model"]
     assert collection["kinematics"] == teleop["kinematics"]
-    assert (
-        sum(
-            atom.module is ManipulationModule
-            for atom in dual_openyam_quest_collection.active_blueprints
-        )
-        == 1
-    )
+    [collection_module] = [
+        atom
+        for atom in dual_openyam_quest_collection.active_blueprints
+        if atom.module is ManipulationModule
+    ]
+    [teleop_module] = [
+        atom
+        for atom in teleop_webxr_dual_openyam.active_blueprints
+        if atom.module is ManipulationModule
+    ]
+    # Check inheritance without resolving the copied lazy model paths.
+    assert collection_module.kwargs["model"] is teleop_module.kwargs["model"]
 
     restricted = parser.parse(
         [*args, "--manipulationmodule.visualization.host", "127.0.0.1"], environ={}
     ).module_kwargs("manipulationmodule")
     assert restricted["visualization"] == teleop["visualization"]
+    download.assert_not_called()
