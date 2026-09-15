@@ -2041,6 +2041,7 @@ spot = [
 ]
 tts = [
     { name = "kokoro-onnx" },
+    { name = "onnxruntime" },
 ]
 unitree = [
     { name = "aioquic" },
@@ -2409,6 +2410,7 @@ requires-dist = [
     { name = "ollama", marker = "extra == 'agents'", specifier = ">=0.6.0" },
     { name = "omegaconf", marker = "extra == 'perception'", specifier = ">=2.3.0" },
     { name = "onnxruntime", marker = "extra == 'cpu'" },
+    { name = "onnxruntime", marker = "extra == 'tts'", specifier = ">=1.20.1" },
     { name = "onnxruntime-gpu", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=1.17.1" },
     { name = "open-clip-torch", marker = "extra == 'misc'", specifier = "==3.2.0" },
     { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=0.18.0" },
