@@ -177,14 +177,17 @@ import importlib.abc
 import sys
 class BlockOptionalImports(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.split('.')[0] in {'kokoro', 'torch', 'huggingface_hub', 'spacy', 'en_core_web_sm'}:
+        if fullname.split('.')[0] in {'kokoro', 'torch', 'huggingface_hub', 'spacy', 'en_core_web_sm', 'sounddevice'}:
             raise AssertionError(f'Unexpected optional dependency: {fullname}')
 sys.meta_path.insert(0, BlockOptionalImports())
 from dimos.stream.audio.tts.kokoro import KokoroTTS, KokoroTTSConfig
+from dimos.imitation.collection.prompts import CollectionSpeech
+from dimos.stream.audio.wav_player import WavPlayer
 from dimos.utils import cache
 speech = KokoroTTS(KokoroTTSConfig())
 speech.prepare()
 speech.close()
+CollectionSpeech(KokoroTTSConfig()).prepare()
 """,
         ],
         capture_output=True,

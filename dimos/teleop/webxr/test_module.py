@@ -28,7 +28,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
-from dimos.teleop.webxr.collection_prompts import RECORDING_PROMPTS
 from dimos.teleop.webxr.controller_types import (
     Buttons,
     Hand,
@@ -273,41 +272,35 @@ def test_page_reports_nested_speech_setting(module, web_client, enabled):
     assert web_client.post("/teleop/speech", json={"text": "Hello"}).status_code == 404
 
 
-def test_build_prepares_all_prompts_before_events(module, mocker):
+def test_build_prepares_speech_and_pushes_selected_audio(module, mocker):
     module.config.tts.enabled = True
-    helper = mocker.patch("dimos.teleop.webxr.module.KokoroTTS", autospec=True).return_value
-    helper.synthesize.return_value = b"wav"
+    helper = mocker.patch("dimos.teleop.webxr.module.CollectionSpeech", autospec=True).return_value
+    helper.update.side_effect = [b"wav", None]
     module.build()
     helper.prepare.assert_called_once()
-    assert helper.synthesize.call_args_list == [mocker.call(p) for p in RECORDING_PROMPTS.values()]
     broadcast = mocker.patch.object(module, "_broadcast_text")
     event = _episode_status()
     module._on_episode_status(event)
-    payload = json.loads(broadcast.call_args.args[1])
-    assert payload == {"type": "speech", "audio": "d2F2"}
-    assert helper.synthesize.call_count == 3
+    helper.update.assert_called_once_with(event)
+    assert json.loads(broadcast.call_args.args[1]) == {"type": "speech", "audio": "d2F2"}
     module._on_episode_status(event)
     assert broadcast.call_args.args[1] is None
-    module.stop()
-    helper.close.assert_called_once()
 
 
 def test_disabled_build_does_not_construct_speech(module, mocker):
-    helper = mocker.patch("dimos.teleop.webxr.module.KokoroTTS", autospec=True)
+    helper = mocker.patch("dimos.teleop.webxr.module.CollectionSpeech", autospec=True)
     module.build()
     helper.assert_not_called()
-    assert module._speech_messages == {}
+    assert module._speech is None
 
 
-def test_failed_preparation_closes_helper(module, mocker):
+def test_failed_preparation_clears_helper(module, mocker):
     module.config.tts.enabled = True
-    helper = mocker.patch("dimos.teleop.webxr.module.KokoroTTS", autospec=True).return_value
+    helper = mocker.patch("dimos.teleop.webxr.module.CollectionSpeech", autospec=True).return_value
     helper.prepare.side_effect = RuntimeError("download failed")
     with pytest.raises(RuntimeError, match="download failed"):
         module.build()
-    helper.close.assert_called_once()
     assert module._speech is None
-    assert module._speech_messages == {}
 
 
 def test_status_and_speech_batches_do_not_interleave(module, mocker):

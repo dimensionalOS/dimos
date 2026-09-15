@@ -1,4 +1,4 @@
-# Offline speech in WebXR collection
+# Offline speech for collection
 
 Spoken recording feedback is **off by default**. Enable it with `--tts.enabled=true` when
 starting a WebXR collection blueprint. The computer synthesizes speech locally
@@ -90,6 +90,34 @@ the WebSocket connection stops playback. Nothing is replayed on reconnect.
 If browser playback fails, the page and collection HUD show
 **Audio unavailable**. Collection and controller input continue to work.
 
+## Desktop and teach collection
+
+To hear feedback on the computer running the terminal controls, install the same
+`tts` extra and attach with:
+
+```bash
+uv run --no-sync dimos imitation collect --tts
+```
+
+This works with any collection stack exposing episode controls, including
+`openyam-teach-collection`. Start that blueprint with your usual robot and
+recording options; it needs no WebXR module or TTS flag. The attached CLI prepares
+all three prompts before opening its controls and plays them through the default
+desktop audio output. It does not change the running blueprint's configuration.
+
+Desktop and headset speech are independently optional. Without `--tts`, the CLI
+opens no audio device. With it, Space starts/saves and D discards using the same
+confirmed-state feedback as WebXR. Attachment is silent, including attachment
+mid-recording. Repeated status polls do not repeat prompts; newer speech
+interrupts older speech. Detaching or losing the connection stops playback.
+Playback errors show **Audio unavailable** while collection controls remain usable.
+
+For a manual desktop check, start a teach collection stack, attach with `--tts`,
+then press Space, Space, Space, D. Expect start, save, start, and cancel prompts.
+Remain idle and recording for several polling intervals to check that speech
+does not repeat. Detach during playback, reattach, and verify silence until a new
+transition. Repeat without `--tts` to verify silent controls.
+
 ## Manual headset test
 
 Use a fresh test recording directory and retain the robot and camera options
@@ -129,14 +157,14 @@ XR. The Chromium smoke test does not replace this check on each browser family.
 
 ## Data flow and extending prompts
 
-`KokoroTTS` is an ordinary library helper owned by WebXR. Its nested configuration
-controls whether speech is enabled and which voice is used, and `synthesize(text: str) -> bytes` returns mono PCM16
-WAV. It accepts nonblank text up to 500 characters and caches 128 phrases.
+`KokoroTTS` is a general synthesis helper: `synthesize(text: str) -> bytes` returns
+mono PCM16 WAV. It accepts nonblank text up to 500 characters and caches 128 phrases.
 
-Python's `CollectionPrompts` selects feedback from confirmed episode status.
-Add wording to `RECORDING_PROMPTS` and the corresponding Python event selection;
-WebXR prepares every phrase in that mapping during build. Its status callback
-only looks up cached audio and schedules delivery.
+Collection owns the wording, transition selection, and `CollectionSpeech` helper
+in `dimos/imitation/collection/prompts.py`. Both WebXR and the attached desktop CLI
+use it. Preparation synthesizes every phrase and releases the inference engine;
+status callbacks only select a cached WAV. Add wording to `RECORDING_PROMPTS` and
+its event selection there to extend both interfaces.
 
 The existing WebSocket sends the status message followed by an optional JSON
 speech message: `{"type":"speech","audio":"<base64 WAV>"}`. Binary frames remain
@@ -147,7 +175,7 @@ speech. New events interrupt playback, and disconnects invalidate pending decodi
 ## Validation
 
 ```bash
-uv run --no-sync pytest dimos/stream/audio/tts/test_kokoro.py dimos/utils/test_assets.py dimos/teleop/webxr/test_module.py dimos/teleop/webxr/test_collection_prompts.py
+uv run --no-sync pytest dimos/stream/audio/tts/test_kokoro.py dimos/stream/audio/test_wav_player.py dimos/utils/test_assets.py dimos/teleop/webxr/test_module.py dimos/imitation/collection/test_prompts.py dimos/imitation/test_tui.py
 node dimos/teleop/webxr/web/test_speech.mjs
 ```
 

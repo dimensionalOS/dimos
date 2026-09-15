@@ -2211,6 +2211,7 @@ spot = [
 tts = [
     { name = "huggingface-hub" },
     { name = "kokoro" },
+    { name = "sounddevice" },
 ]
 unitree = [
     { name = "aioquic" },
@@ -2622,6 +2623,7 @@ requires-dist = [
     { name = "sentencepiece", marker = "extra == 'perception'", specifier = ">=0.2.0" },
     { name = "sortedcontainers", specifier = "==2.4.0" },
     { name = "sounddevice", marker = "extra == 'agents'" },
+    { name = "sounddevice", marker = "extra == 'tts'", specifier = ">=0.5.5" },
     { name = "soundfile", marker = "extra == 'web'" },
     { name = "sqlite-vec", specifier = ">=0.1.7" },
     { name = "sse-starlette", marker = "extra == 'web'", specifier = ">=2.2.1" },
