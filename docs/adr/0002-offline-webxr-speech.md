@@ -7,7 +7,7 @@ Keeping synthesis on the computer provides the same voice across headset
 browsers and keeps model downloads and inference off the headset. A local HTTP
 endpoint returns WAV audio; collection status and video keep their existing
 WebSocket path. TTS is disabled by default and requires explicit dependency
-and asset installation before starting a stack with `--tts`.
+and asset installation before starting a stack with `--tts.enabled=true`.
 
 References: [WebXR Device API](https://www.w3.org/TR/webxr/),
 [Web Audio API](https://www.w3.org/TR/webaudio-1.0/),

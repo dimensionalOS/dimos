@@ -26,6 +26,10 @@ class SpeechRequest(BaseModel):
 
 
 class SpeechSynthesisSpec(Spec, Protocol):
+    def is_enabled(self) -> bool:
+        """Whether speech is enabled in the provider module configuration."""
+        ...
+
     def synthesize(self, text: str) -> bytes:
         """Return speech as a mono PCM16 WAV file."""
         ...

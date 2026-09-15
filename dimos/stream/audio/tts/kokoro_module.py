@@ -25,14 +25,13 @@ import wave
 import numpy as np
 
 from dimos.constants import CACHE_DIR
-from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.core import rpc
-from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.stream.audio.tts.spec import SpeechRequest
 
 
 class KokoroTTSConfig(ModuleConfig):
+    enabled: bool = False
     model_path: Path = CACHE_DIR / "tts" / "kokoro-v1.0.int8.onnx"
     voices_path: Path = CACHE_DIR / "tts" / "voices-v1.0.bin"
     voice: str = "af_sarah"
@@ -52,6 +51,9 @@ class KokoroTTSModule(Module):
 
     @rpc
     def start(self) -> None:
+        if not self.config.enabled:
+            super().start()
+            return
         for path in (self.config.model_path, self.config.voices_path):
             if not path.is_file():
                 raise FileNotFoundError(
@@ -76,6 +78,11 @@ class KokoroTTSModule(Module):
             self._engine = kokoro.Kokoro.from_session(session, str(self.config.voices_path))
             self._cache.clear()
         super().start()
+
+    @rpc
+    def is_enabled(self) -> bool:
+        """Whether this speech module is configured to load its engine."""
+        return self.config.enabled
 
     @rpc
     def synthesize(self, text: str) -> bytes:
@@ -109,8 +116,3 @@ class KokoroTTSModule(Module):
             self._engine = None
             self._cache.clear()
         super().stop()
-
-
-def optional_tts() -> tuple[Blueprint, ...]:
-    """Include speech only when enabled before collection blueprint resolution."""
-    return (KokoroTTSModule.blueprint(),) if global_config.tts else ()

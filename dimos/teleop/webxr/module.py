@@ -170,11 +170,12 @@ class WebXRTeleopModule(Module):
         assert self._web_server is not None
 
         @self._web_server.app.get("/teleop", response_class=HTMLResponse)
-        async def teleop_index() -> HTMLResponse:
+        def teleop_index() -> HTMLResponse:
             index_path = STATIC_DIR / "index.html"
             return HTMLResponse(
                 content=index_path.read_text().replace(
-                    "__SPEECH_ENABLED__", str(self._speech is not None).lower()
+                    "__SPEECH_ENABLED__",
+                    str(self._speech is not None and self._speech.is_enabled()).lower(),
                 )
             )
 
@@ -182,7 +183,7 @@ class WebXRTeleopModule(Module):
         def speech(request: SpeechRequest) -> Response:
             # FastAPI runs this synchronous route in its thread pool; synthesis
             # and module RPC must not block video, status, or controller input.
-            if self._speech is None:
+            if self._speech is None or not self._speech.is_enabled():
                 raise HTTPException(status_code=503, detail="Speech synthesis is unavailable")
             try:
                 audio = self._speech.synthesize(request.text)

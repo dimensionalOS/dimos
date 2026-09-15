@@ -1,6 +1,6 @@
 # Offline speech in WebXR collection
 
-Spoken recording feedback is **off by default**. Enable it with `--tts` when
+Spoken recording feedback is **off by default**. Enable it with `--tts.enabled=true` when
 starting a WebXR collection blueprint. The computer synthesizes speech locally
 using Kokoro INT8; the browser plays WAV audio through Web Audio.
 
@@ -13,7 +13,8 @@ uv sync --extra tts --inexact
 ```
 
 The `all` extra deliberately does not include `tts`. With TTS disabled, collection
-requires neither Kokoro dependencies nor model files and creates no TTS worker.
+requires neither Kokoro dependencies nor model files. The named `tts` module
+starts idle and loads its inference engine only when `enabled=true`.
 
 Download these two assets from the pinned
 [Kokoro ONNX model release](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1).
@@ -44,10 +45,10 @@ can also be supplied through the TTS module's ordinary configuration flags.
 
 ## Enable prompts
 
-Add `--tts` to your existing collection launch, retaining its robot, task,
+Add `--tts.enabled=true` to your existing collection launch, retaining its robot, task,
 camera, and recording options. For example, the launch documented in
 [Imitation Learning for Manipulation](/docs/capabilities/manipulation/imitation-learning.md)
-becomes `uv run --extra tts dimos run dual-openyam-quest-collection --tts ...`.
+becomes `uv run --extra tts dimos run dual-openyam-quest-collection --tts.enabled=true ...`.
 
 Then attach the terminal controls as usual:
 
@@ -55,9 +56,10 @@ Then attach the terminal controls as usual:
 uv run dimos imitation collect
 ```
 
-`--tts` belongs to **stack startup**, not the attached terminal command. Restart
-the stack to change it. `--no-tts` explicitly disables it; `DIMOS_TTS=true` enables
-the same global setting through the environment.
+`--tts.enabled=true` belongs to **stack startup**, not the attached terminal command. Restart
+the stack to change it. `--tts.enabled=false` explicitly disables it. This is the `enabled` field on
+`KokoroTTSConfig`, scoped to the module instance named `tts`; there is no global
+TTS flag or `DIMOS_TTS` setting.
 
 Supported collection blueprints:
 
@@ -94,7 +96,7 @@ Use a fresh test recording directory and retain the robot and camera options
 from your working collection launch.
 
 1. Complete the one-time setup above. Launch your collection blueprint with
-   `uv run --extra tts dimos run BLUEPRINT --tts` and its usual options.
+   `uv run --extra tts dimos run BLUEPRINT --tts.enabled=true` and its usual options.
 2. Open the server's `/teleop` page in the headset browser. Wait about 15 seconds
    for the initial three phrases to preload, then select **Connect** and enter
    XR. Connecting should be silent. Ensure the headset volume is audible.
@@ -114,7 +116,7 @@ from your working collection launch.
 5. Leave XR while speech is playing. Playback should stop. Re-enter XR, and
    disconnect/reconnect the headset network: no old event should be spoken.
    Start another episode to confirm feedback resumes.
-6. Stop the stack and relaunch with `--no-tts`, omitting `--extra tts`. Reload
+6. Stop the stack and relaunch with `--tts.enabled=false`, omitting `--extra tts`. Reload
    the headset page. Recording and the HUD should work silently, with no
    **Audio unavailable** warning. This mode must also start in an environment
    without Kokoro installed or its model assets present.
