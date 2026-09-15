@@ -15,6 +15,22 @@ deno run -A --unstable-net cli.ts dev --scene apartment
 
 Both end up with a Vite-built `dist/` and a bridge on port 8090. Same scenes, same browser. The difference is just who's driving the agent.
 
+The simulator's wire protocol is LCM, on a private multicast endpoint per
+DimSim connection. The endpoint is passed only to the simulator subprocess;
+your public `LCM_DEFAULT_URL` is unchanged. Camera, LiDAR, and odometry flow
+through `GO2Connection`'s normal module outputs, so either `--transport zenoh`
+or `--transport lcm` works with topic remappings and camera/LiDAR enable flags.
+Commands flow from the module into the private simulator endpoint in both modes.
+
+`GO2Connection` owns camera calibration and TF, including the simulator's
+`lidar_link` mount. Robot-local camera and TF frames honor `frame_id_prefix`;
+the already-world-registered LiDAR remains in `world`. DimSim requires
+`odom_frame_id=world` to keep that scan and odometry consistent. Wire isolation
+does not configure separate HTTP ports or public module namespaces for parallel
+runs; those still need distinct configuration. Tools consuming public DimOS
+topics keep working; raw simulator-LCM tools must use the private endpoint
+printed by the simulator bridge.
+
 If you install the CLI globally, replace the `deno run` boilerplate with `dimsim`:
 
 ```bash
