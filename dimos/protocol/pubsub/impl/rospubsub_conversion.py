@@ -58,6 +58,29 @@ _ROS_TO_LCM_FIELD_MAP: dict[str, str] = {
     "nanosec": "nsec",  # ROS2 Time.nanosec -> LCM Time.nsec
 }
 
+
+def _lcm_field_for(ros_field_name: str, lcm_msg: Any) -> str | None:
+    """The field on *lcm_msg* holding *ros_field_name*, or None if there is none.
+
+    ROS 1 spelled CameraInfo's matrices ``D K R P``; ROS 2 lowercased them to
+    ``d k r p`` while the LCM definitions kept the capitals. The copy loops used
+    to ask ``hasattr(lcm_msg, "k")``, get False, and `continue` — so every
+    CameraInfo crossing the ROS bridge arrived with a zeroed K and an empty D,
+    silently. A camera whose intrinsics are all zero is not obviously broken
+    until something tries to unproject through it.
+
+    The fallback is case-only and applies just when the exact name is absent, so
+    it cannot pull a genuinely different field into place.
+    """
+    mapped = _ROS_TO_LCM_FIELD_MAP.get(ros_field_name, ros_field_name)
+    if hasattr(lcm_msg, mapped):
+        return mapped
+    upper = mapped.upper()
+    if upper != mapped and hasattr(lcm_msg, upper):
+        return upper
+    return None
+
+
 # Reverse mapping (LCM name -> ROS name)
 _LCM_TO_ROS_FIELD_MAP: dict[str, str] = {v: k for k, v in _ROS_TO_LCM_FIELD_MAP.items()}
 
@@ -145,9 +168,8 @@ def _copy_ros_to_lcm_recursive(ros_msg: Any, lcm_msg: Any) -> None:
     field_types = ros_msg.get_fields_and_field_types()
     for ros_field_name in field_types:
         # Map ROS field name to LCM field name
-        lcm_field_name = _ROS_TO_LCM_FIELD_MAP.get(ros_field_name, ros_field_name)
-
-        if not hasattr(lcm_msg, lcm_field_name):
+        lcm_field_name = _lcm_field_for(ros_field_name, lcm_msg)
+        if lcm_field_name is None:
             continue
 
         ros_value = getattr(ros_msg, ros_field_name)
@@ -178,6 +200,19 @@ def _copy_ros_to_lcm_recursive(ros_msg: Any, lcm_msg: Any) -> None:
         # Handle bytes/data fields
         elif isinstance(ros_value, (bytes, bytearray)):
             setattr(lcm_msg, lcm_field_name, bytes(ros_value))
+        # A numeric array of multi-byte elements is numbers, not a byte blob.
+        # ROS 2 hands CameraInfo's k/r/p over as float64 ndarrays, and those have
+        # tobytes() exactly like the uint8 image buffers below do. Taking
+        # tobytes() there writes the raw IEEE bytes into a field the LCM type
+        # means to hold nine numbers, so the intrinsics arrive as byte values --
+        # K came off an R1 Pro as [65.0, 141.0, 141.0, 86.0, ...] and D with 64
+        # entries, which is 8 doubles' worth of bytes. Nothing raises; the
+        # camera just quietly has nonsense intrinsics.
+        #
+        # itemsize is the discriminator: image data is array.array("B") or a
+        # uint8 ndarray, itemsize 1, and still wants tobytes().
+        elif hasattr(ros_value, "tolist") and getattr(ros_value, "itemsize", 1) > 1:
+            setattr(lcm_msg, lcm_field_name, ros_value.tolist())
         # Handle array.array (ROS uses this for data fields)
         elif hasattr(ros_value, "tobytes"):
             setattr(lcm_msg, lcm_field_name, ros_value.tobytes())
@@ -208,9 +243,8 @@ def _copy_lcm_to_ros_recursive(lcm_msg: Any, ros_msg: Any) -> None:
     field_types = ros_msg.get_fields_and_field_types()
     for ros_field_name in field_types:
         # Map ROS field name to LCM field name
-        lcm_field_name = _ROS_TO_LCM_FIELD_MAP.get(ros_field_name, ros_field_name)
-
-        if not hasattr(lcm_msg, lcm_field_name):
+        lcm_field_name = _lcm_field_for(ros_field_name, lcm_msg)
+        if lcm_field_name is None:
             continue
 
         lcm_value = getattr(lcm_msg, lcm_field_name)
