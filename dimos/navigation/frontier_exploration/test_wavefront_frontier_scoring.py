@@ -31,12 +31,25 @@ def open_costmap() -> OccupancyGrid:
     return OccupancyGrid(grid=grid, resolution=RESOLUTION, frame_id="world")
 
 
+class ScoringOnlyExplorer(WavefrontFrontierExplorer):
+    """A selector reduced to the three fields the scoring methods read.
+
+    ``_compute_comprehensive_frontier_score`` and its helpers only touch
+    ``config``, ``explored_goals`` and ``exploration_direction``. Running
+    ``Module.__init__`` for that would open an RPC transport and an event loop
+    in a pure scoring test, so this test double sets the three fields itself
+    and never starts the module.
+    """
+
+    def __init__(self, direction: Vector3, **config_kwargs) -> None:  # noqa: D107
+        self.config = WavefrontConfig(**config_kwargs)
+        self.explored_goals = []
+        self.exploration_direction = direction
+
+
 def score_candidates(**config_kwargs) -> dict[str, float]:
     """Score the three candidates with a selector heading in +x."""
-    explorer = WavefrontFrontierExplorer.__new__(WavefrontFrontierExplorer)
-    explorer.config = WavefrontConfig(**config_kwargs)
-    explorer.explored_goals = []
-    explorer.exploration_direction = Vector3(1.0, 0.0, 0.0)
+    explorer = ScoringOnlyExplorer(Vector3(1.0, 0.0, 0.0), **config_kwargs)
 
     costmap = open_costmap()
     return {
@@ -76,10 +89,7 @@ def test_momentum_weight_scales_the_direction_gap():
 def test_zeroed_direction_neutralizes_momentum_after_a_timeout():
     """The timeout branch zeroes exploration_direction, so the ranking right
     after a timeout must carry no directional preference at all."""
-    explorer = WavefrontFrontierExplorer.__new__(WavefrontFrontierExplorer)
-    explorer.config = WavefrontConfig()
-    explorer.explored_goals = []
-    explorer.exploration_direction = Vector3(0.0, 0.0, 0.0)
+    explorer = ScoringOnlyExplorer(Vector3(0.0, 0.0, 0.0))
 
     costmap = open_costmap()
     ahead = explorer._compute_comprehensive_frontier_score(AHEAD, FRONTIER_SIZE, ROBOT, costmap)
