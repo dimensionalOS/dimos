@@ -63,6 +63,39 @@ def pubsub(make_pubsub):
 
 
 class TestZenohPubSubBase:
+    def test_capacity_one_keeps_newest_target_while_callback_is_busy(self, pubsub, retry_until):
+        received = []
+        blocked = threading.Event()
+        release = threading.Event()
+        latest_delivered = threading.Event()
+        latest_published = threading.Event()
+        topic = Topic("dimos/test/sonic_latest", queue_capacity=1)
+
+        def consume(msg, _topic):
+            received.append(msg)
+            if msg == b"blocking":
+                blocked.set()
+                release.wait(timeout=2.0)
+            if msg == b"latest":
+                latest_delivered.set()
+
+        def observe(msg, _topic):
+            if msg == b"latest":
+                latest_published.set()
+
+        pubsub.subscribe(topic, consume)
+        pubsub.subscribe(Topic(topic.topic), observe)
+        try:
+            retry_until(blocked, lambda: pubsub.publish(topic, b"blocking"))
+            for value in range(20):
+                pubsub.publish(topic, str(value).encode())
+            retry_until(latest_published, lambda: pubsub.publish(topic, b"latest"))
+        finally:
+            release.set()
+
+        assert latest_delivered.wait(timeout=2.0)
+        assert received == [b"blocking", b"latest"]
+
     def test_publish_and_subscribe(self, pubsub, retry_until) -> None:
         received = []
         event = threading.Event()
