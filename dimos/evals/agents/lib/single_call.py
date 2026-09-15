@@ -48,6 +48,10 @@ class SingleCallAgent(Agent):
 
     config: SingleCallAgentConfig
 
+    def validate_tools(self) -> None:
+        if self.config.allowed_tools:
+            raise ValueError(f"{type(self).__name__} has no tools")
+
     @abstractmethod
     def _observation_blocks(self, env: RunningEnvironment) -> Blocks:
         """The observations this agent includes before the instruction."""

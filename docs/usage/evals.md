@@ -36,6 +36,133 @@ Every runner invocation writes one `~/.local/state/dimos/evals/run-*/` directory
 To generate deterministic image questions from recordings, see
 [Visual Question Answering](/docs/usage/vqa.md).
 
+## Baseline Bash versus dimcode + DimOS
+
+For the complete-stack comparison, use `PiAdapter` with a sandbox against `DimcodeAdapter`
+with the **same model**. The primary pair is Astra with Bash versus Astra in
+dimcode with DimOS. This measures the combined product/robotics-stack effect;
+it does not isolate the harness contribution.
+
+```bash skip
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
+  --allow bash,grep --set sandbox=true \
+  --set model=gpt-6-astra --set thinking=medium \
+  --set max_steps=12 --set max_output_tokens=4096
+
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.dimcode \
+  --set model=gpt-6-astra --set thinking=medium \
+  --set max_steps=12 --set max_output_tokens=4096
+```
+
+`PiAdapter` uses Pi's stock loop, provider support, tracing, limits and cleanup.
+The allowlist exposes only Pi's Bash and grep tools. Linux bubblewrap isolates their filesystem,
+processes, environment and network. The shell can read selected observations in
+`/input` and write `/workspace`; host homes, DimOS source, virtual environments,
+credentials, MCP, and host services are unavailable. The ordinary system tools
+under `/usr` are read-only, with `/usr/local` hidden. Bash, grep, coreutils and
+system Python remain available. Record the host system package versions when
+freezing a pilot; this is not a portable pinned container image.
+
+The baseline receives selected point coordinates/colors as CSV, camera frames
+as lossless PNG and primitive observations as JSON, with timestamps and hashes.
+Selected PNGs are also attached to its initial model message because the allowed
+tools do not read images. No `agent_encode` summaries, labels, semantic tags or
+original database are exported. Dimcode receives the same selected observations
+through the DimOS store and retains its production tools. Representation and
+image-delivery differences are part of this stack comparison and must be reported.
+
+The sandbox supports Bash and grep (including either alone or neither), and rejects
+other tools, skills, modules and MCP endpoints. Missing or
+unsupported isolation fails preflight; there is no unrestricted fallback. This
+adapter currently supports recordings only. Live tasks need a separately bounded
+vendor SDK/robot connection available to the baseline, without DimOS. A blocked
+robot interface is an unsupported case, not a baseline failure.
+
+The primary benchmark uses only these two Pi-based adapters. Using the DimOS
+CLI in the baseline violates the experiment's access policy.
+Dimcode's current adapter still needs grader and unrelated-data isolation before
+publication runs. Neither arm may receive task-specific solutions or hidden truth.
+
+### Shared Pi runtime
+
+Use the same model, reasoning setting, output cap, case selection and timeout
+for each harness. Pi and dimcode use Pi's provider SDKs and built-in model
+registry; model capabilities and prices are not redefined by DimOS. Pin the
+same Pi version in both installations. The integration uses Pi 0.85.1 and
+dimcode's local gateway protocol (`0.1.0-next.2` / `0.1.0-next.3`).
+`DimcodeAdapter` extends `PiAdapter`, overriding gateway startup, session
+configuration and event transport. Provider setup, budgets, tracing and
+cleanup remain shared. No second model loop or SDK wrapper is introduced.
+
+To compare another model, change both commands together: `model=gpt-5.6-sol`,
+or `provider=anthropic` and `model=claude-fable-5-1`. Fable requires
+`ANTHROPIC_API_KEY`, independently of OpenAI access.
+
+`cli=` selects a specific Pi or dimcode executable. `OPENAI_BASE_URL` and
+`ANTHROPIC_BASE_URL` optionally override the upstream endpoints. API keys stay
+in process environment variables; a shared Pi extension registers the trace
+proxy URL and key variable through Pi's provider API. It also applies output
+caps and tool selection. No installed registry files are read or rewritten.
+Request traces omit authentication headers.
+
+Per-case adapter configuration lives under `dimos.constants.CONFIG_DIR / "evals"`;
+temporary gateway sockets use `CACHE_DIR / "evals"`. Home, XDG config/state/cache
+and Pi's agent-directory settings are inherited. Both adapters start new sessions
+with a copy of the selected recording observations. Pi retains its stock system
+prompt with shared case guidance appended. Dimcode retains its production prompt, skills,
+MCP integration and rendering tool; shared case guidance accompanies the user
+instruction. Each case starts and stops its own dimcode gateway and session.
+An existing personal gateway is never attached. Dimcode retains its production
+skills; its tools can be restricted with the shared allowlist.
+
+Freeze code/data, record runtime versions, balance execution order, repeat
+each case and retain failed trials before interpreting the comparison.
+
+### Tool selection
+
+`allowed_tools` belongs to the shared `AgentConfig`. Use `--allow bash,grep`
+on `dimos evals run` or `PiAdapter(allowed_tools=("bash", "grep"))` in Python.
+Omit the option to keep the adapter's native defaults; `--allow ""` disables all
+tools. Exact tool names are required. Unknown names, duplicates and conflicting
+`--allow` / `--set allowed_tools` inputs are errors. The manifest retains the
+requested allowlist, and raw requests retain the actual provider schemas.
+
+Pi and dimcode share a Pi extension that selects active tools and blocks excluded
+calls. Pi also passes the selection to its CLI. The dimcode adapter verifies that
+the extension applied the selection before sending the first prompt. Native MCP
+names are those advertised by dimcode, including its endpoint prefix and suffix.
+The production MCP-client adapter does not yet implement filtering and rejects
+explicit allowlists; single-call agents accept only an empty list or defaults.
+Adapters must enforce selection or reject it, never silently ignore it.
+
+Tool selection is independent of filesystem and network access. `--allow bash`
+still permits any program the shell can reach. For the no-DimOS baseline, also
+use `--set sandbox=true`; this currently supports only Pi with recorded inputs.
+The sandbox is a composed isolation helper, not another agent subclass.
+
+### Reading the metrics
+
+- `model_turns`: assistant model responses represented in the trajectory.
+  `steps` also includes the initial user instruction.
+- `request_attempts`: recorded HTTP requests, including retries. A failed
+  attempt can have no assistant response, so this can exceed `model_turns`.
+- `tool_calls`: calls requested by those model responses.
+- `agent_duration_s`: adapter execution, including recording export, provider
+  setup and agent cleanup. `duration_s` additionally includes environment
+  startup, settling, teardown and grading.
+- Prompt tokens include cache reads and writes; completion tokens include
+  reasoning when reported by the provider. `cached_tokens` means cache reads.
+- Pi/dimcode `cost_usd` is Pi's registry-based estimate, not a billing receipt.
+  Unknown costs remain null (or omitted in ATIF), never a fabricated zero.
+  Totals cover recorded assistant responses; interrupted requests may have
+  unreported usage. Keep raw attempts when auditing spend.
+
+Errors stay in the summary denominator. An agent error preserves completed
+steps, returns `ended_by=error`, and cannot pass. The runner saves a returned
+trajectory before environment teardown so teardown failures retain evidence.
+Raw requests preserve the actual tools/schemas used on each call; the ATIF
+agent metadata includes the latest recorded definition for each tool name.
+
 ## Your first eval, end to end
 
 Build a tiny SQLite recording using the same Store/Stream API as the robot's
@@ -137,8 +264,9 @@ compare two tool sets on one task, run the suite twice with different
 subsequent motion settling. `McpClientAdapter` returns what it has when its
 wait expires, marked `timeout`; `QuestionAnswer` and `Blind` rely on the
 model provider's timeout. Environment startup has a separate
-`launch_timeout_s`. There are no token or cost caps; usage is recorded when
-the agent supplies it.
+`launch_timeout_s`. Pi and dimcode bound model HTTP requests with `max_steps`
+(including retries), and optionally cap output per request with `max_output_tokens`.
+There is no aggregate token or dollar cap; usage is recorded when the agent supplies it.
 
 **Observation encoding.** Each agent class hard-codes how the recording
 reaches the model. `QuestionAnswer` calls `agent_encode()`; no other agent

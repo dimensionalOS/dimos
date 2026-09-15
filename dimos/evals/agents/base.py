@@ -18,7 +18,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from pydantic import field_validator
 
 from dimos.evals.types import RunningEnvironment, Trajectory
 from dimos.protocol.service.spec import BaseConfig, Configurable
@@ -29,6 +31,16 @@ if TYPE_CHECKING:
 
 class AgentConfig(BaseConfig):
     modules: tuple[str, ...] = ()
+    allowed_tools: tuple[str, ...] | None = None
+
+    @field_validator("allowed_tools")
+    @classmethod
+    def validate_allowed_tools(cls, names: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        if names is not None and (
+            any(not name or name.strip() != name for name in names) or len(names) != len(set(names))
+        ):
+            raise ValueError("allowed_tools must contain unique, nonempty tool names")
+        return names
 
 
 class ModelAgentConfig(AgentConfig):
@@ -43,6 +55,19 @@ class Agent(Configurable, ABC):
     """
 
     config: AgentConfig
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.validate_tools()
+
+    def validate_tools(self) -> None:
+        """Adapters must enforce explicit allowlists, or reject them.
+
+        None preserves native defaults; an empty tuple disables every tool.
+        Tool selection does not restrict what an allowed shell can execute.
+        """
+        if self.config.allowed_tools is not None:
+            raise ValueError(f"{type(self).__name__} does not support allowed_tools")
 
     def preflight(self, environment: Environment) -> None:
         """Raise if this agent cannot use the environment, before it starts."""
