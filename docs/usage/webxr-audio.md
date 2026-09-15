@@ -12,6 +12,10 @@ Install the optional dependency while preserving your existing extras:
 uv sync --extra tts --inexact
 ```
 
+The `tts` extra includes both Kokoro and the CPU ONNX Runtime. Use
+`uv run --extra tts` when launching with speech enabled; the module flag
+`--tts.enabled=true` controls runtime behavior and does not install dependencies.
+
 The `all` extra deliberately does not include `tts`. With TTS disabled, collection
 requires neither Kokoro dependencies nor model files. The named `tts` module
 starts idle and loads its inference engine only when `enabled=true`.
