@@ -14,10 +14,8 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
-import threading
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -29,8 +27,8 @@ import pytest_mock
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.stream.audio.tts.spec import SpeechSynthesisSpec
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
+from dimos.teleop.webxr.collection_prompts import RECORDING_PROMPTS
 from dimos.teleop.webxr.controller_types import (
     Buttons,
     Hand,
@@ -268,71 +266,68 @@ def web_client(module):
     module._web_server = None
 
 
-def test_speech_endpoint_returns_audio_without_changing_collection(module, web_client, mocker):
-    module._speech = mocker.MagicMock(spec=SpeechSynthesisSpec)
-    module._speech.is_enabled.return_value = True
-    module._speech.synthesize.return_value = b"RIFF-audio"
-    response = web_client.post("/teleop/speech", json={"text": " Episode saved "})
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "audio/wav"
-    assert response.content == b"RIFF-audio"
-    module._speech.synthesize.assert_called_once_with("Episode saved")
-    assert module._latest_episode_status is None
-    assert 'data-speech-enabled="true"' in web_client.get("/teleop").text
+@pytest.mark.parametrize("enabled", [False, True])
+def test_page_reports_nested_speech_setting(module, web_client, enabled):
+    module.config.tts.enabled = enabled
+    assert f'data-speech-enabled="{str(enabled).lower()}"' in web_client.get("/teleop").text
+    assert web_client.post("/teleop/speech", json={"text": "Hello"}).status_code == 404
 
 
-@pytest.mark.parametrize("text", ["", " \n", "a" * 501])
-def test_speech_endpoint_rejects_invalid_text(module, web_client, mocker, text):
-    module._speech = mocker.MagicMock(spec=SpeechSynthesisSpec)
-    module._speech.is_enabled.return_value = True
-    response = web_client.post("/teleop/speech", json={"text": text})
-    assert response.status_code == 422
-    module._speech.synthesize.assert_not_called()
+def test_build_prepares_all_prompts_before_events(module, mocker):
+    module.config.tts.enabled = True
+    helper = mocker.patch("dimos.teleop.webxr.module.KokoroTTS", autospec=True).return_value
+    helper.synthesize.return_value = b"wav"
+    module.build()
+    helper.prepare.assert_called_once()
+    assert helper.synthesize.call_args_list == [mocker.call(p) for p in RECORDING_PROMPTS.values()]
+    broadcast = mocker.patch.object(module, "_broadcast_text")
+    event = _episode_status()
+    module._on_episode_status(event)
+    payload = json.loads(broadcast.call_args.args[1])
+    assert payload == {"type": "speech", "audio": "d2F2"}
+    assert helper.synthesize.call_count == 3
+    module._on_episode_status(event)
+    assert broadcast.call_args.args[1] is None
+    module.stop()
+    helper.close.assert_called_once()
 
 
-def test_speech_endpoint_reports_absent_module(web_client):
-    assert web_client.post("/teleop/speech", json={"text": "Hello"}).status_code == 503
-    assert 'data-speech-enabled="false"' in web_client.get("/teleop").text
+def test_disabled_build_does_not_construct_speech(module, mocker):
+    helper = mocker.patch("dimos.teleop.webxr.module.KokoroTTS", autospec=True)
+    module.build()
+    helper.assert_not_called()
+    assert module._speech_messages == {}
 
 
-def test_disabled_speech_provider_keeps_page_silent(module, web_client, mocker):
-    module._speech = mocker.MagicMock(spec=SpeechSynthesisSpec)
-    module._speech.is_enabled.return_value = False
-    assert 'data-speech-enabled="false"' in web_client.get("/teleop").text
-    assert web_client.post("/teleop/speech", json={"text": "Hello"}).status_code == 503
-    module._speech.synthesize.assert_not_called()
+def test_failed_preparation_closes_helper(module, mocker):
+    module.config.tts.enabled = True
+    helper = mocker.patch("dimos.teleop.webxr.module.KokoroTTS", autospec=True).return_value
+    helper.prepare.side_effect = RuntimeError("download failed")
+    with pytest.raises(RuntimeError, match="download failed"):
+        module.build()
+    helper.close.assert_called_once()
+    assert module._speech is None
+    assert module._speech_messages == {}
 
 
-def test_speech_failure_does_not_break_web_interface(module, web_client, mocker):
-    module._speech = mocker.MagicMock(spec=SpeechSynthesisSpec)
-    module._speech.is_enabled.return_value = True
-    module._speech.synthesize.side_effect = RuntimeError("offline engine failed")
-    assert web_client.post("/teleop/speech", json={"text": "Hello"}).status_code == 503
-    assert web_client.get("/teleop").status_code == 200
+def test_status_and_speech_batches_do_not_interleave(module, mocker):
+    ws = mocker.MagicMock()
+    sent = []
 
+    async def send(text):
+        sent.append(text)
+        await asyncio.sleep(0)
 
-def test_slow_synthesis_does_not_block_web_event_loop(module, web_client, mocker):
-    started = threading.Event()
-    release = threading.Event()
+    ws.send_text = mocker.AsyncMock(side_effect=send)
 
-    def synthesize(text):
-        started.set()
-        assert release.wait(timeout=10)
-        return b"RIFF-audio"
+    async def deliver():
+        await asyncio.gather(
+            module._send_status(ws, "status1", "speech1"),
+            module._send_status(ws, "status2", "speech2"),
+        )
 
-    module._speech = mocker.MagicMock(spec=SpeechSynthesisSpec)
-    module._speech.is_enabled.return_value = True
-    module._speech.synthesize.side_effect = synthesize
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        speech = executor.submit(web_client.post, "/teleop/speech", json={"text": "Hello"})
-        try:
-            assert started.wait(timeout=5)
-            page = executor.submit(web_client.get, "/teleop")
-            assert page.result(timeout=5).status_code == 200
-            assert not speech.done()
-        finally:
-            release.set()
-        assert speech.result(timeout=5).status_code == 200
+    asyncio.run_coroutine_threadsafe(deliver(), module._loop).result(timeout=5)
+    assert sent == ["status1", "speech1", "status2", "speech2"]
 
 
 def test_connected_client_without_episode_status_does_not_show_collection_hud(

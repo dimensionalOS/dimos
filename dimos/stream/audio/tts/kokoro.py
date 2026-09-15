@@ -19,24 +19,22 @@ import importlib
 import io
 from pathlib import Path
 import threading
-from typing import Any, ClassVar
+from typing import Annotated, Any
 import wave
 
 import numpy as np
+from pydantic import BaseModel, StringConstraints
 
-from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
 from dimos.stream.audio.tts.assets import (
     MODEL_FILENAME,
     TTS_CACHE_DIR,
     VOICES_FILENAME,
     ensure_asset,
 )
-from dimos.stream.audio.tts.spec import SpeechRequest
 
 
 def _load_dependencies() -> tuple[Any, Any]:
-    # Called only for an enabled module during build/start.
+    # Optional inference imports stay behind enabled helper preparation.
     try:
         kokoro = importlib.import_module("kokoro_onnx")
         ort = importlib.import_module("onnxruntime")
@@ -45,30 +43,30 @@ def _load_dependencies() -> tuple[Any, Any]:
     return kokoro, ort
 
 
-class KokoroTTSConfig(ModuleConfig):
+class SpeechText(BaseModel):
+    text: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+
+
+class KokoroTTSConfig(BaseModel):
     enabled: bool = False
     model_path: Path = TTS_CACHE_DIR / MODEL_FILENAME
     voices_path: Path = TTS_CACHE_DIR / VOICES_FILENAME
     voice: str = "af_sarah"
 
 
-class KokoroTTSModule(Module):
+class KokoroTTS:
     """Generate WAV speech locally after preparing cached model assets."""
 
-    config: KokoroTTSConfig
-    dedicated_worker: ClassVar[bool] = True
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    def __init__(self, config: KokoroTTSConfig) -> None:
+        self.config = config
         self._engine: Any = None
         self._synthesis_lock = threading.Lock()
         self._cache: OrderedDict[str, bytes] = OrderedDict()
 
-    @rpc
-    def build(self) -> None:
+    def prepare(self) -> None:
         if not self.config.enabled:
             return
-        _load_dependencies()
+        kokoro, ort = _load_dependencies()
         paths = (
             (self.config.model_path, MODEL_FILENAME),
             (self.config.voices_path, VOICES_FILENAME),
@@ -80,17 +78,6 @@ class KokoroTTSModule(Module):
             if path == TTS_CACHE_DIR / filename:
                 ensure_asset(path, filename)
 
-    @rpc
-    def start(self) -> None:
-        if not self.config.enabled:
-            super().start()
-            return
-        for path in (self.config.model_path, self.config.voices_path):
-            if not path.is_file():
-                raise FileNotFoundError(
-                    f"Missing TTS asset: {path}. Call build() before start() to prepare assets."
-                )
-        kokoro, ort = _load_dependencies()
         options = ort.SessionOptions()
         options.intra_op_num_threads = 1
         options.inter_op_num_threads = 1
@@ -100,17 +87,10 @@ class KokoroTTSModule(Module):
         with self._synthesis_lock:
             self._engine = kokoro.Kokoro.from_session(session, str(self.config.voices_path))
             self._cache.clear()
-        super().start()
 
-    @rpc
-    def is_enabled(self) -> bool:
-        """Whether this speech module is configured to load its engine."""
-        return self.config.enabled
-
-    @rpc
     def synthesize(self, text: str) -> bytes:
         """Synthesize up to 500 characters of English as mono PCM16 WAV."""
-        text = SpeechRequest(text=text).text
+        text = SpeechText(text=text).text
         with self._synthesis_lock:
             if self._engine is None:
                 raise RuntimeError("Speech synthesis is not running")
@@ -133,9 +113,7 @@ class KokoroTTSModule(Module):
                 self._cache.popitem(last=False)
             return audio
 
-    @rpc
-    def stop(self) -> None:
+    def close(self) -> None:
         with self._synthesis_lock:
             self._engine = None
             self._cache.clear()
-        super().stop()

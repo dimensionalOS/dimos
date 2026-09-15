@@ -33,7 +33,6 @@ from dimos.imitation.collection.recorder import collection_recorder
 from dimos.imitation.dataprep.core import SyncConfig
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.stream.audio.tts.kokoro_module import KokoroTTSModule
 from dimos.teleop.webxr.blueprints import (
     teleop_webxr_piper,
     teleop_webxr_xarm7,
@@ -92,7 +91,6 @@ def _collection_components(robot: str, teleop: Blueprint) -> tuple[Blueprint, ..
     return (
         collection_recorder(profile=profile, recording=directory, format="sqlite"),
         EpisodeMonitorModule.blueprint(),
-        KokoroTTSModule.blueprint(instance_name="tts"),
         producers,
     )
 

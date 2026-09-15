@@ -39,9 +39,9 @@ Open `https://<host-ip>:8443/teleop` in a WebXR-capable headset browser. Accept
 the certificate, then tap Connect.
 
 WebXR collection blueprints can provide optional offline spoken recording
-feedback. It is disabled by default; install the `tts` extra and quantized model
-assets, then add `--tts.enabled=true` to the collection stack's `dimos run` command. See
-[offline WebXR speech](../../../docs/usage/webxr-audio.md) for setup and behavior.
+feedback. It is disabled by default; install the `tts` extra, then add
+`--tts.enabled=true` to the collection stack's `dimos run` command. WebXR downloads missing model assets and prepares the three phrases
+before collection starts. See [offline WebXR speech](../../../docs/usage/webxr-audio.md) for setup and behavior.
 
 For hand teleop, remove the controllers. Pinch the thumb and index finger on
 the selected hand to engage it, move the wrist to control the arm, then pinch
