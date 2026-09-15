@@ -6,46 +6,32 @@ using Kokoro INT8; the browser plays WAV audio through Web Audio.
 
 ## One-time setup
 
-Install the optional dependency while preserving your existing extras:
+Install the dependencies and download verified model assets in one command:
 
 ```bash
-uv sync --extra tts --inexact
+uv run --extra manipulation --extra tts python -m dimos.stream.audio.tts.setup
 ```
 
-The `tts` extra includes both Kokoro and the CPU ONNX Runtime. Use
-`uv run --extra tts` when launching with speech enabled; the module flag
+This installs Kokoro and CPU ONNX Runtime, then downloads the **114 MB INT8
+model** and **28 MB voice data** from the pinned
+[Kokoro ONNX release](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1).
+The assets are stored in `${XDG_CACHE_HOME:-$HOME/.cache}/dimos/tts`.
+Each file is checked against its pinned SHA-256 hash before installation.
+Rerunning setup reuses valid files and downloads missing or corrupt files again.
+Failed downloads do not replace existing files or leave partial model files.
+
+Use `uv run --extra manipulation --extra tts` for subsequent launches, or
+`uv run --no-sync` to use the environment already installed by setup.
 `--tts.enabled=true` controls runtime behavior and does not install dependencies.
 
 The `all` extra deliberately does not include `tts`. With TTS disabled, collection
 requires neither Kokoro dependencies nor model files. The named `tts` module
 starts idle and loads its inference engine only when `enabled=true`.
 
-Download these two assets from the pinned
-[Kokoro ONNX model release](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1).
-The INT8 model is 114 MB and the voice data is 28 MB, about 142 MB total excluding
-Python dependencies. The full-precision 325 MB model is not used.
-
-```bash
-tts_cache="${XDG_CACHE_HOME:-$HOME/.cache}/dimos/tts"
-mkdir -p "$tts_cache"
-curl --fail --location \
-  https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/kokoro-v1.0.int8.onnx \
-  --output "$tts_cache/kokoro-v1.0.int8.onnx"
-curl --fail --location \
-  https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.0.bin \
-  --output "$tts_cache/voices-v1.0.bin"
-(
-  cd "$tts_cache"
-  sha256sum --check <<'CHECKSUMS'
-ae315a79b623f244700e4afb9246c46a26066782e049ba174bf3ba433970ee9c  kokoro-v1.0.int8.onnx
-bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d  voices-v1.0.bin
-CHECKSUMS
-)
-```
-
-After setup, synthesis needs no internet access. Module startup reports missing
-assets or dependencies instead of downloading anything. Model and voice paths
-can also be supplied through the TTS module's ordinary configuration flags.
+After setup, synthesis needs no internet access. Collection startup never
+downloads assets; if a file is missing, its error includes the setup command.
+Custom model and voice paths remain available through the TTS module's ordinary
+configuration flags. Setup installs only the default assets in the cache above.
 
 ## Enable prompts
 
