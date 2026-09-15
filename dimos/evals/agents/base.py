@@ -21,7 +21,7 @@ from pathlib import Path
 import re
 from typing import TYPE_CHECKING, Any
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 
 from dimos.evals.types import RunningEnvironment, Trajectory
 from dimos.protocol.service.spec import BaseConfig, Configurable
@@ -35,6 +35,8 @@ class AgentConfig(BaseConfig):
     allowed_tools: tuple[str, ...] | None = None
     # Tool calls whose arguments mention any of these (case-insensitive, whole token) are denied.
     excluded_keywords: tuple[str, ...] = ()
+    # Cap on one bash call's runtime, seconds; the model's own timeout is clamped to it.
+    max_tool_seconds: float | None = Field(default=300.0, gt=0)
 
     @field_validator("excluded_keywords")
     @classmethod

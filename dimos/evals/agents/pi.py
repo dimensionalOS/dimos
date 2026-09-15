@@ -351,6 +351,7 @@ class PiAdapter(Agent):
             max_output_tokens=self.config.max_output_tokens,
             excluded_keywords=self.config.excluded_keywords,
             ignored_paths=(str(paths.workspace), str(paths.config)),
+            max_tool_seconds=self.config.max_tool_seconds,
         )
         extensions = paths.config / "extensions"
         extensions.mkdir(parents=True, exist_ok=True)

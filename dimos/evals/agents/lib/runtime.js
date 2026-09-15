@@ -14,7 +14,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 
-/** @type {{provider: string, base_url: string, key_env: string, allowed_tools: string[] | null, max_output_tokens: number | null, excluded_keywords: string[], ignored_paths: string[]}} */
+/** @type {{provider: string, base_url: string, key_env: string, allowed_tools: string[] | null, max_output_tokens: number | null, excluded_keywords: string[], ignored_paths: string[], max_tool_seconds: number | null}} */
 const config = JSON.parse(
   readFileSync(new URL("./runtime.json", import.meta.url), "utf8"),
 );
@@ -56,6 +56,14 @@ export default function (pi) {
       !config.allowed_tools.includes(event.toolName)
     )
       return { block: true, reason: "Tool excluded by eval allowed_tools" };
+    const cap = config.max_tool_seconds;
+    if (cap !== null && event.toolName === "bash" && event.input) {
+      const requested = Number(event.input.timeout);
+      event.input.timeout =
+        Number.isFinite(requested) && requested > 0
+          ? Math.min(requested, cap)
+          : cap;
+    }
     if (!excluded.length) return;
     let text = JSON.stringify(event.input ?? {}).toLowerCase();
     for (const path of config.ignored_paths)

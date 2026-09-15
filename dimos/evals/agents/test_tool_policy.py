@@ -168,3 +168,17 @@ def test_no_dimos_strips_dimos_from_the_environment(
     prompt = (harness.root / "system-prompt.txt").read_text()
     assert "dimensionalOS" in prompt and "observations" in prompt
     assert not (harness.root / "recording.db").exists()
+
+
+@pytest.mark.parametrize("provider", ["openai"], indirect=True)
+def test_max_tool_seconds_clamps_bash(harness: NativeHarness, provider: ScriptedProvider) -> None:
+    provider.call("bash", command="sleep 30; echo finished", timeout=600)
+    result = harness.run(harness.agent(provider, None, max_tool_seconds=1))
+    assert result.extra.ended_by == "answer", result.extra
+    output = next(
+        obs.results[0].content
+        for step in result.steps
+        if step.tool_calls and (obs := step.observation)
+    )
+    assert "finished" not in output
+    assert "timed out" in output.lower() or "timeout" in output.lower()
