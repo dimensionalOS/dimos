@@ -108,6 +108,50 @@ def test_login_denied_exits(monkeypatch: pytest.MonkeyPatch, filestore: Path) ->
     assert not filestore.exists()
 
 
+def test_login_skips_when_already_logged_in(
+    monkeypatch: pytest.MonkeyPatch, filestore: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    filestore.write_text("dimos_sk_live\n")
+    monkeypatch.setattr(cloud, "_key_owner", lambda key: {"email": "e@x"})
+    monkeypatch.setattr(cloud, "_post", lambda *a, **k: pytest.fail("device flow started"))
+    cloud.login()
+    assert "Already logged in" in capsys.readouterr().out
+
+
+def test_login_runs_flow_when_stored_key_is_stale(
+    monkeypatch: pytest.MonkeyPatch, filestore: Path
+) -> None:
+    filestore.write_text("dimos_sk_dead\n")
+    monkeypatch.setattr(cloud, "_key_owner", lambda key: None)
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    monkeypatch.setattr(
+        cloud,
+        "_post",
+        _responses(
+            {
+                "device_code": "dc",
+                "user_code": "AAAA-BBBB",
+                "verification_uri": "u",
+                "interval": 5,
+                "expires_in": 900,
+            },
+            {"status": "ok", "api_key": "dimos_sk_new", "key_id": "dimos_sk_new", "email": "e@x"},
+        ),
+    )
+    cloud.login()
+    assert cloud.api_key() == "dimos_sk_new"
+
+
+def test_logo_switches_wordmark_to_terminal_width(monkeypatch: pytest.MonkeyPatch) -> None:
+    from rich.console import Console
+
+    monkeypatch.setattr(cloud, "_console", Console(width=120))
+    wide = max(map(len, cloud._logo().plain.splitlines()))
+    monkeypatch.setattr(cloud, "_console", Console(width=60))
+    narrow = max(map(len, cloud._logo().plain.splitlines()))
+    assert wide > 60 >= narrow  # DIMENSIONAL when it fits, DIMOS when it doesn't
+
+
 def test_global_config_key_overrides_stored(
     monkeypatch: pytest.MonkeyPatch, filestore: Path
 ) -> None:
