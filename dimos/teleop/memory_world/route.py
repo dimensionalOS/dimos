@@ -1,0 +1,566 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""A route through the recorded map to an answer.
+
+Two planners. :class:`MlsRoutePlanner` is the one to use: dimos's multi-level
+surface planner (``dimos.navigation.nav_3d.mls_planner``, Rust) builds
+standable surfaces and a node graph from the ray-traced voxels and plans in
+3D with terrain traversability. :class:`RoutePlanner` is the fallback when
+that binding is not installed: a 2D costmap along the robot's driven path
+with dimos's ``min_cost_astar``.
+
+The 2D fallback squashes the ray-traced voxel map into a costmap along the
+robot's own path: the cells it drove through, and a corridor around them, are
+known free floor; voxels between a little below and the body height above the
+nearest point of that path are obstacles; anything the robot never came near
+is off limits. Obstacles are inflated by the robot's radius and A* plans over
+the result.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from itertools import pairwise
+import math
+from typing import TYPE_CHECKING
+
+import numpy as np
+from scipy import ndimage
+
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+LETHAL = 100
+# Relative to the height of the nearest point of the robot's path: voxels from
+# this far below it ...
+BODY_BELOW_M = 0.1
+# ... to this far above it are things the robot would hit.
+BODY_ABOVE_M = 1.2
+# Floor this far from the driven path counts as known; further out is not planned over.
+CORRIDOR_M = 1.5
+ROBOT_RADIUS_M = 0.35
+# The most that may ever be treated as "the robot drove between these two poses", however
+# sparsely the recording was sampled. See `bridgeable`.
+MAX_BRIDGE_M = 1.5
+# How many of the moving legs nearest a leg are asked about it, and how many of those
+# must be at least half as long for it to count as driving. See `bridgeable`.
+#
+# Three is measured, not chosen: over 3000 generated recordings of drives, parks and
+# relocalisations, asking only two bridges 15.6% of the relocalisations that are clearly
+# longer than the driving around them against three's 12.6%, and saves 0.05% of long
+# drive legs against 0.11%. Five times as many fake corridors to save a fortieth as many
+# real ones is the wrong way round: a bridged relocalisation can draw a line through a
+# wall, and a refused leg only fails to erase the robot's own body where it stood.
+#
+# The cost of three is a stretch of exactly two or three faster legs, which has no third
+# voucher and is refused. It takes a leg longer than twice the robot's radius for that to
+# matter at all, so it is a multi-scan dropout in the middle of a drive.
+NEARBY_MOVING_LEGS = 8
+VOUCHES_NEEDED = 3
+# ... and the fewest that may ever decide a leg, when the recording holds no more.
+LEAST_VOUCHERS = 2
+# Below this a leg is the robot standing still, so it says nothing about how far the
+# robot travels between samples. It decides only which legs INFORM the comparison in
+# `bridgeable`, never which are bridged.
+STILL_M = 0.01
+# Cost falls from just under lethal at the robot's radius to nothing here.
+INFLATION_M = 0.6
+# How far a start or goal may be moved to reach a passable cell (the goal is
+# usually inside the object that was asked about).
+SNAP_RADIUS_M = 4.0
+# The costmap is dense: on a city-scale map the cells grow so the grid stays
+# about this many cells across (a 4 km ride plans on ~1 m cells).
+MAX_GRID_CELLS = 4000
+ROUTE_HEIGHT_BELOW_PATH_M = 0.2
+ROUTE_HEIGHT_ABOVE_SURFACE_M = 0.1
+
+
+def densify(
+    path: NDArray[np.float64], step: float, bridge: NDArray[np.bool_] | None = None
+) -> NDArray[np.float64]:
+    """*path* with points added along each leg so none are further than *step* apart.
+
+    With *bridge*, one flag per leg, a leg it marks False is left alone: its two ends
+    stay and nothing is drawn between them. A pose series contains both drives and jumps,
+    and only the drive is somewhere the robot was.
+    """
+    if len(path) < 2:
+        return path
+    pieces = []
+    for index, (a, b) in enumerate(pairwise(path)):
+        span = math.dist(a[:2], b[:2])
+        skip = bridge is not None and not bool(bridge[index])
+        n = 1 if skip else max(math.ceil(span / step), 1)
+        pieces.append(a + (b - a) * np.linspace(0, 1, n, endpoint=False)[:, None])
+    pieces.append(path[-1:])
+    return np.concatenate(pieces)
+
+
+def _vouched_length(gaps: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Per leg, the length `VOUCHES_NEEDED` of the moving legs nearest it agree on.
+
+    The `VOUCHES_NEEDED`-th longest of the `NEARBY_MOVING_LEGS` moving legs nearest it in
+    time, itself excluded, and NaN when there are not that many. Twice it is how far the
+    robot may have driven in one leg.
+
+    NEAREST IN TIME, not a window of fixed width, is what lets a recording with more than
+    one speed in it work. A window counts standing still against a leg by leaving no room
+    for what moved: eleven repeats per pose, which a tf chain a tenth of the scan rate
+    produces, puts the steps either side of a real one outside a 21-leg window, and every
+    step of a real drive was refused. Nearest-in-time reaches past the stillness to the
+    driving on either side of it, however long the stop.
+
+    SEVERAL OF THEM, rather than most of the window, is what lets a stretch of faster
+    driving through. A run of ten 0.8 m legs inside 0.3 m driving can never be more than
+    nine of the twenty legs around one of its own members, so a majority rule -- the
+    median -- read every one of them as too long and refused all ten: `plan` returned None
+    on 31.4 m of straight, driven corridor, where the same path with eleven in the run
+    routed. Three other legs of half the length is a stretch of driving; a relocalisation
+    has no such company, and neither does a pair of them.
+    """
+    moving_at = np.flatnonzero(gaps > STILL_M)
+    answer = np.full(len(gaps), np.nan)
+    if len(moving_at) == 0:
+        return answer  # nothing moved at all, so nothing can vouch for anything
+    leg = np.arange(len(gaps))
+    reach = np.arange(-NEARBY_MOVING_LEGS, NEARBY_MOVING_LEGS + 1)
+    slot = np.searchsorted(moving_at, leg)[:, None] + reach[None, :]
+    inside = (slot >= 0) & (slot < len(moving_at))
+    candidate = moving_at[np.clip(slot, 0, len(moving_at) - 1)]
+    # Out of range, and the leg itself, are put beyond any real distance rather than
+    # dropped, so every row has the same width.
+    away = np.where(
+        inside & (candidate != leg[:, None]), np.abs(candidate - leg[:, None]), len(gaps) + 1
+    )
+    nearest = np.argsort(away, axis=1, kind="stable")[:, :NEARBY_MOVING_LEGS]
+    chosen = np.take_along_axis(candidate, nearest, axis=1)
+    real = np.take_along_axis(away, nearest, axis=1) <= len(gaps)
+    longest_first = -np.sort(-np.where(real, gaps[chosen], np.nan), axis=1)
+    # As many vouchers as `VOUCHES_NEEDED`, or all there are when the recording cannot
+    # supply that many. A leg is never one of its own vouchers, so asking three of a
+    # recording whose whole driving is three legs asks for a fourth that does not exist:
+    # a straight four-pose drive sampled every metre had every leg refused and `plan`
+    # returned None over floor the robot had just driven. Where the evidence is thinner
+    # than the rule wants, ALL of it has to agree, which is the strictest such a recording
+    # can be held to.
+    #
+    # `LEAST_VOUCHERS` is where that stops. One other leg is not corroboration -- two
+    # relocalisations in an otherwise motionless recording would each be the other's only
+    # witness -- and letting a single leg decide costs 765 of 5803 generated
+    # relocalisations against 729 for two, for no drive leg saved.
+    vouchers = real.sum(axis=1)
+    rank = np.minimum(vouchers, VOUCHES_NEEDED) - 1
+    said = np.take_along_axis(longest_first, np.maximum(rank, 0)[:, None], axis=1)[:, 0]
+    return np.asarray(np.where(vouchers >= LEAST_VOUCHERS, said, np.nan))
+
+
+def bridgeable(path: NDArray[np.float64], resolution: float) -> NDArray[np.bool_]:
+    """Which legs the robot drove, rather than was relocated across. One flag per leg.
+
+    A leg is a drive if `VOUCHES_NEEDED` of the moving legs NEAREST it in time are at
+    least half as long -- see `_vouched_length`, which is where the "nearest" and the
+    "several" are argued. Four things in that sentence, and every one of them is a defect
+    this function has already had:
+
+      PER LEG, not a statistic of the whole path.  Five global statistics were tried and
+        each was defeated by a recording shape the one before had not met, because a
+        recording is not homogeneous: it has stretches of driving at different speeds,
+        stretches of standing still, and the occasional relocalisation.
+
+      the OTHER legs, NEVER ITSELF.  A leg that votes on its own neighbourhood can always
+        justify itself, and near the ends of the path it was padding that handed it the
+        vote: "nearest" repeats the edge leg, "mirror" reflects a leg back into its own
+        window two places along, and either way a relocalisation there was bridged and a
+        wall opened. Nothing is padded with data now, and nothing is asked about itself.
+
+      only the MOVING ones.  Standing still is not driving, and a pose source slower than
+        the scan stream makes most of the path stationary without the robot stopping at
+        all: `replay._held_through_gaps` repeats the previous pose whenever tf has no
+        sample in tolerance, so a 1 Hz tf chain against 10 Hz scans is nine exact repeats
+        per real step. Counting those, every real leg was outnumbered and the corridor the
+        robot drove walled off. A tour that parks either side of a drive does the same
+        with half a second of stillness.
+
+      the legs NEAREST IT, several of them, rather than most of a fixed window.  Both of
+        those cost a corridor: a window lets stillness crowd out the evidence, and a
+        majority inside one refuses a whole stretch of faster driving that is not most of
+        its own surroundings.
+
+    `STILL_M` decides only which legs INFORM the comparison, never which are bridged --
+    which is what makes it safe, and is the difference from the version where filtering at
+    that threshold ate a drive sampled finer than it. A leg with nothing to vouch for it
+    gets one cell: below that, bridging adds no cells and cannot matter.
+
+    Nineteen recording shapes are the tests in `test_route.py`. Measured over 3000
+    generated recordings of drives, parks and relocalisations, this refuses a tenth as
+    many real legs as the window it replaced (74 against 744) and bridges about as many
+    relocalisations (729 against 708).
+    """
+    if len(path) < 2:
+        return np.zeros(0, dtype=bool)
+    gaps = np.linalg.norm(np.diff(np.asarray(path)[:, :2], axis=0), axis=1)
+    vouched = _vouched_length(gaps)
+    allowed = np.where(
+        np.isnan(vouched),
+        resolution,
+        np.minimum(MAX_BRIDGE_M, np.maximum(resolution, 2.0 * vouched)),
+    )
+    return np.asarray(gaps <= allowed)
+
+
+@dataclass
+class Route:
+    points: list[tuple[float, float, float]]
+    length_m: float
+    cells: int
+    planner: str = "costmap"
+
+
+# How far a start or goal may be moved onto a graph node, and how many nearby
+# nodes are tried as the goal (the four nearest as the start) before giving up.
+MLS_SNAP_RADIUS_M = 4.0
+MLS_SNAP_CANDIDATES = 24
+# Above this many map voxels the MLS graph build is skipped (a city ride) and
+# the costmap fallback plans instead.
+MLS_MAX_VOXELS = 4_000_000
+
+
+def mls_available() -> bool:
+    try:
+        import dimos_mls_planner  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+class MlsRoutePlanner:
+    """dimos's 3D multi-level-surface planner over the ray-traced voxel map.
+
+    ``update_global_map`` (seconds on a building) runs once at construction;
+    ``plan`` tries the graph nodes near the start and the goal, nearest first by
+    planar distance plus twice the height gap, within :data:`MLS_SNAP_RADIUS_M`
+    (an answer is usually inside the object that was asked about), and returns
+    the 3D waypoints of the first pair that connects.
+    """
+
+    def __init__(
+        self,
+        voxels: NDArray[np.floating],
+        *,
+        voxel_size: float,
+        robot_height_m: float = 1.2,
+        node_spacing_m: float = 0.5,
+    ) -> None:
+        from dimos_mls_planner import (
+            MLSPlanner,
+        )  # the Rust binding dimos.navigation.nav_3d.mls_planner re-exports
+
+        points = np.ascontiguousarray(np.asarray(voxels, dtype=np.float32).reshape(-1, 3))
+        if len(points) == 0:
+            raise ValueError("no voxels to plan over")
+        self.voxel_size = float(voxel_size)
+        self.planner = MLSPlanner(
+            voxel_size=max(self.voxel_size, 0.1),
+            robot_height=robot_height_m,
+            node_spacing_m=node_spacing_m,
+        )
+        self.planner.update_global_map(points)
+        self.surface_cells = len(self.planner.surface_map())  # (M, 3) centres; for the log
+        # Plans start and end on graph nodes; the planner snaps a point to its nearest
+        # node in 3D, which under a shelf is the shelf top. So candidates are nodes.
+        self.nodes = np.asarray(self.planner.nodes(), dtype=np.float64).reshape(-1, 3)
+
+    def candidates(self, xyz: tuple[float, float, float]) -> list[tuple[float, float, float]]:
+        """Standable cells near *xyz*, nearest first by horizontal distance, cells at or
+        below the point's height first: an answer's z is the object's, and the object
+        stands on a floor, not on the shelf top the planner also calls a surface."""
+        if len(self.nodes) == 0:
+            return []
+        d = np.linalg.norm(self.nodes[:, :2] - np.asarray(xyz[:2], dtype=np.float64), axis=1)
+        near = np.flatnonzero(d <= MLS_SNAP_RADIUS_M)
+        if len(near) == 0:
+            return []
+        above = self.nodes[near, 2] > xyz[2] + 0.3
+        # Ranked by planar distance plus twice the height gap, so the surface the point
+        # sits on beats one under it; nodes above the point come last.
+        closeness = d[near] + 2.0 * np.abs(self.nodes[near, 2] - xyz[2])
+        order = near[np.lexsort((closeness, above))][:MLS_SNAP_CANDIDATES]
+        return [tuple(float(v) for v in self.nodes[i]) for i in order]  # type: ignore[misc]
+
+    def plan(
+        self, start: tuple[float, float, float], goal: tuple[float, float, float]
+    ) -> Route | None:
+        """The first reachable pairing of nearby start and goal cells (a cell on another
+        level, or an island the map never connected, is skipped)."""
+        starts = self.candidates(start)[:4]
+        goals = self.candidates(goal)
+        path = None
+        for a in starts:
+            for b in goals:
+                path = self.planner.plan(a, b)
+                if path is not None and len(path) >= 2:
+                    break
+            if path is not None and len(path) >= 2:
+                break
+        if path is None or len(path) < 2:
+            return None
+        points = [
+            (float(x), float(y), float(z) + ROUTE_HEIGHT_ABOVE_SURFACE_M)
+            for x, y, z in np.asarray(path)
+        ]
+        length = float(sum(math.dist(p, q) for p, q in pairwise(points)))
+        return Route(points=points, length_m=length, cells=len(points), planner="mls")
+
+
+class RoutePlanner:
+    """Plans over a 2D costmap made from the voxel map once; ``plan`` is then quick."""
+
+    def __init__(
+        self,
+        costs: NDArray[np.int8],
+        floor: NDArray[np.float64],
+        origin_xy: tuple[float, float],
+        resolution: float,
+        frame_id: str = "world",
+    ) -> None:
+        self.costs = costs
+        self.floor = floor  # height to draw a route at, per cell
+        self.origin_xy = origin_xy
+        self.resolution = resolution
+        self._components: NDArray[np.int32] | None = None
+        self.grid = OccupancyGrid(
+            grid=costs,
+            resolution=resolution,
+            origin=Pose(position=Vector3(origin_xy[0], origin_xy[1], 0.0)),
+            frame_id=frame_id,
+        )
+
+    @classmethod
+    def from_voxels(
+        cls,
+        voxels: NDArray[np.floating],
+        path: NDArray[np.floating],
+        *,
+        voxel_size: float,
+        robot_radius_m: float = ROBOT_RADIUS_M,
+        inflation_m: float = INFLATION_M,
+        corridor_m: float = CORRIDOR_M,
+        frame_id: str = "world",
+    ) -> RoutePlanner:
+        """*path* is where the robot's base was, (M, 3) in the map frame."""
+        voxels = np.asarray(voxels, dtype=np.float64).reshape(-1, 3)
+        path = np.asarray(path, dtype=np.float64).reshape(-1, 3)
+        if len(voxels) == 0 or len(path) == 0:
+            raise ValueError("no voxels or no path to plan over")
+        lo = np.minimum(voxels[:, :2].min(axis=0), path[:, :2].min(axis=0))
+        hi = np.maximum(voxels[:, :2].max(axis=0), path[:, :2].max(axis=0))
+        resolution = max(float(voxel_size), float((hi - lo).max()) / MAX_GRID_CELLS)
+        margin = corridor_m + inflation_m + resolution
+        lo = lo - margin
+        hi = hi + margin
+        width = math.ceil((hi[0] - lo[0]) / resolution) + 1
+        height = math.ceil((hi[1] - lo[1]) / resolution) + 1
+
+        def cells(points: NDArray[np.float64]) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
+            c = np.clip(((points[:, 0] - lo[0]) / resolution).astype(int), 0, width - 1)
+            r = np.clip(((points[:, 1] - lo[1]) / resolution).astype(int), 0, height - 1)
+            return r, c
+
+        # The path's height everywhere: each cell takes the nearest driven cell's z.
+        # Consecutive samples can be several cells apart, so the legs between
+        # them are filled in; otherwise the corridor would be a chain of islands.
+        dense = densify(path, resolution / 2)
+        driven = np.zeros((height, width), dtype=bool)
+        path_z = np.full((height, width), np.nan)
+        pr, pc = cells(dense)
+        driven[pr, pc] = True
+        path_z[pr, pc] = dense[:, 2]
+        off_path, nearest = ndimage.distance_transform_edt(~driven, return_indices=True)
+        off_path *= resolution  # metres from the driven path
+        floor = path_z[nearest[0], nearest[1]]
+        known = off_path <= corridor_m
+
+        row, col = cells(voxels)
+        z = voxels[:, 2] - floor[row, col]
+        body = (z > -BODY_BELOW_M) & (z <= BODY_ABOVE_M)
+        obstacle = np.zeros((height, width), dtype=bool)
+        obstacle[row[body], col[body]] = True
+        # The robot was where it drove, so voxels there are its own body or people
+        # walking beside it, not walls: nothing within its radius of the path blocks.
+        #
+        # From a line that bridges the DRIVES and not the jumps -- not from `dense`,
+        # which bridges a gap of any length, and not from the bare samples either.
+        #
+        # `dense` was wrong because one SLAM jump across a room made this erase the real
+        # wall voxels the straight line passed through, and the planner then routed
+        # through the hole it had just made: a 2 m jump took the wall from cost 100 to
+        # 88-90 and gave a 7.90 m plan through it. The bare samples were wrong for the
+        # opposite reason: on a recording sampled every metre, the robot's own body
+        # sits between the samples, and refusing to erase it walled off a straight 10 m
+        # corridor completely -- `plan` returned None where a 9.20 m route existed.
+        #
+        # `bridgeable` tells the two apart, per leg, from the legs around it. The
+        # corridor and the floor height still come from `dense`, which is what they are
+        # for and what needs ~3 m of bridging on a real recording.
+        driven_line = densify(path, resolution / 2, bridge=bridgeable(path, resolution))
+        sampled = np.zeros((height, width), dtype=bool)
+        sampled_r, sampled_c = cells(driven_line)
+        sampled[sampled_r, sampled_c] = True
+        off_sampled = ndimage.distance_transform_edt(~sampled) * resolution
+        obstacle &= off_sampled > robot_radius_m
+        # Cells the robot's footprint would overlap are lethal; a cost ramp
+        # beyond that keeps the route off the walls when there is room.
+        distance = ndimage.distance_transform_edt(~obstacle) * resolution
+        costs = np.full((height, width), LETHAL, dtype=np.int8)
+        costs[known] = 0
+        ramp = (distance > robot_radius_m) & (distance < robot_radius_m + inflation_m)
+        costs[ramp & known] = np.round(
+            (LETHAL - 2) * (1 - (distance[ramp & known] - robot_radius_m) / inflation_m)
+        ).astype(np.int8)
+        costs[distance <= robot_radius_m] = LETHAL
+        return cls(
+            costs,
+            floor - ROUTE_HEIGHT_BELOW_PATH_M,
+            (float(lo[0]), float(lo[1])),
+            resolution,
+            frame_id,
+        )
+
+    # ---- planning ----------------------------------------------------------
+
+    def cell_of(self, xy: tuple[float, float]) -> tuple[int, int]:
+        # floor, not int(): int() truncates toward zero, so a point up to one cell BELOW
+        # the origin landed on cell 0 instead of -1 and passed the bounds check that
+        # every caller makes on the result. world_of's `+ 0.5` is floor's inverse.
+        return self._cell(xy[1], self.origin_xy[1]), self._cell(xy[0], self.origin_xy[0])
+
+    def _cell(self, value: float, origin: float) -> int:
+        """One axis, for a FINITE coordinate however far away it is.
+
+        `(1e308 - origin) / 0.1` is `inf`, and `math.floor(inf)` raises `OverflowError:
+        cannot convert float infinity to integer` -- not an `HTTPException`, so
+        `POST /navigate` with `start = [1e308, 0, 0]` answered 500 where a start at
+        +-10 m outside the same map answers a clean 422. A point that far out is simply
+        outside, which is what every caller's bounds check is there to decide, so say
+        "outside" rather than raising at them.
+        """
+        offset = (value - origin) / self.resolution
+        if not math.isfinite(offset):
+            return -1  # before the first row or column, which no bounds check accepts
+        return math.floor(offset)
+
+    def world_of(self, row: int, col: int) -> tuple[float, float]:
+        return (
+            self.origin_xy[0] + (col + 0.5) * self.resolution,
+            self.origin_xy[1] + (row + 0.5) * self.resolution,
+        )
+
+    def floor_at(self, xy: tuple[float, float]) -> float:
+        """Height to draw a route at over *xy*."""
+        row, col = self.cell_of(xy)
+        h, w = self.floor.shape
+        return float(self.floor[min(max(row, 0), h - 1), min(max(col, 0), w - 1)])
+
+    def passable(self, row: int, col: int) -> bool:
+        h, w = self.costs.shape
+        return 0 <= row < h and 0 <= col < w and 0 <= self.costs[row, col] < LETHAL
+
+    def snap(
+        self,
+        xy: tuple[float, float],
+        radius_m: float = SNAP_RADIUS_M,
+        within: NDArray[np.bool_] | None = None,
+    ) -> tuple[float, float] | None:
+        """*xy* itself when passable (and in *within*), else the nearest such cell within *radius_m*."""
+        row, col = self.cell_of(xy)
+        h, w = self.costs.shape
+        if self.passable(row, col) and (within is None or within[row, col]):
+            return xy
+        # Nothing within *radius_m* of a point that far outside the map, and saying so
+        # HERE keeps the arithmetic below on numbers it can hold: `(centres_x - 1e308)`
+        # squared overflows to `inf`, which numpy warns about and `argmin` then ranks
+        # arbitrarily. `hypot` of the gap to the map's own box, which cannot overflow.
+        outside_x = max(
+            self.origin_xy[0] - xy[0], xy[0] - (self.origin_xy[0] + w * self.resolution), 0.0
+        )
+        outside_y = max(
+            self.origin_xy[1] - xy[1], xy[1] - (self.origin_xy[1] + h * self.resolution), 0.0
+        )
+        if math.hypot(outside_x, outside_y) > radius_m:
+            return None
+        reach = math.ceil(radius_m / self.resolution)
+        r0, r1 = max(row - reach, 0), min(row + reach + 1, h)
+        c0, c1 = max(col - reach, 0), min(col + reach + 1, w)
+        window = self.costs[r0:r1, c0:c1]
+        ok = (window >= 0) & (window < LETHAL)
+        if within is not None:
+            ok &= within[r0:r1, c0:c1]
+        if not ok.any():
+            return None
+        rows, cols = np.nonzero(ok)
+        # Distance from the POINT that was asked about, not from the cell it fell in.
+        # Ranking by cell index makes every cell in a ring equidistant, so argmin took
+        # whichever came first in row-major order: asked for (0.1, 0.9) on a 1 m grid,
+        # this returned the centre 1.46 m away while one 0.72 m away sat in the ring too.
+        # It also made `radius_m` a bound on cell hops rather than on metres, so the cell
+        # handed back could be further than the caller allowed.
+        centres_x = self.origin_xy[0] + (cols + c0 + 0.5) * self.resolution
+        centres_y = self.origin_xy[1] + (rows + r0 + 0.5) * self.resolution
+        d2 = (centres_x - xy[0]) ** 2 + (centres_y - xy[1]) ** 2
+        best = int(np.argmin(d2))
+        if math.sqrt(float(d2[best])) > radius_m:
+            return None
+        return self.world_of(int(rows[best] + r0), int(cols[best] + c0))
+
+    def reachable_from(self, xy: tuple[float, float]) -> NDArray[np.bool_] | None:
+        """Passable cells connected to the one under *xy* (8-connected)."""
+        row, col = self.cell_of(xy)
+        if not self.passable(row, col):
+            return None
+        if self._components is None:
+            passable = (self.costs >= 0) & (self.costs < LETHAL)
+            self._components = ndimage.label(passable, structure=np.ones((3, 3), bool))[0]
+        return self._components == self._components[row, col]
+
+    def plan(self, start_xy: tuple[float, float], goal_xy: tuple[float, float]) -> Route | None:
+        # Coarse cells (a city map) need a proportionally wider snap.
+        snap_m = max(SNAP_RADIUS_M, 4 * self.resolution)
+        start = self.snap(start_xy, snap_m)
+        if start is None:
+            return None
+        # The goal is snapped to free space the start can actually reach: the
+        # nearest free cell to an object may sit on a floor island or another level.
+        reachable = self.reachable_from(start)
+        goal = self.snap(goal_xy, snap_m, within=reachable)
+        if goal is None:
+            return None
+        path = min_cost_astar(self.grid, goal=goal, start=start)  # no unknown cells here
+        if path is None or len(path.poses) < 2:
+            return None
+        # OccupancyGrid.grid_to_world is `origin + cell * resolution`, which is the cell's
+        # CORNER, while snap() and world_of() work in centres. Taken as-is the drawn route
+        # sits half a cell down and left of the cells it was planned through: 4 cm at
+        # voxel_size 0.08, but half a metre on a city map, where the cells reach a metre
+        # and half of one is more than ROBOT_RADIUS_M.
+        half = self.resolution / 2
+        centres = [(float(p.x) + half, float(p.y) + half) for p in path.poses]
+        points = [(x, y, self.floor_at((x, y))) for x, y in centres]
+        length = float(sum(math.dist(a[:2], b[:2]) for a, b in pairwise(points)))
+        return Route(points=points, length_m=length, cells=len(points))

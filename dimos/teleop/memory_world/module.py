@@ -1,0 +1,1485 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Memory World module: spawns the user inside a recorded point cloud.
+
+On connect it pushes the voxel map (positions + RGB), the camera poses as
+markers with thumbnails, and the odom trail; then it answers questions and
+serves the replay. Locomotion is client-side.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections import OrderedDict
+import contextlib
+import gzip
+import io
+import json
+import math
+from pathlib import Path
+import threading
+import time
+from typing import Any, Literal
+import uuid
+
+import cv2
+from fastapi import HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import HTMLResponse, Response
+import numpy as np
+from pydantic import Field as PydanticField
+
+from dimos.agents.annotation import skill
+from dimos.agents.skill_result import SkillResult
+from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.memory.store.base import Store
+from dimos.memory.transform import throttle
+from dimos.teleop.memory_world.answers import NavigateRequest, WorldAnswers
+from dimos.teleop.memory_world.clients import ClientConn, RevalidatedStaticFiles
+from dimos.teleop.memory_world.embed import EmbeddingJob
+from dimos.teleop.memory_world.messages import (
+    MSG_IMAGE_POSES,
+    MSG_IMAGE_THUMBNAIL,
+    MSG_ODOM_TRAIL,
+    MSG_POINT_CLOUD,
+    MSG_QUERY_IMAGE,
+    MSG_TOP_DOWN_MAP,
+    decode_text,
+    encode_binary,
+    encode_text,
+)
+from dimos.teleop.memory_world.query import (
+    MAX_ANSWER_PLACES,
+    MAX_HIGHLIGHT_RADIUS_M,
+    MemoryQueryResult,
+)
+from dimos.teleop.memory_world.recording import (
+    build_tf_tree,
+    name_streams,
+    open_recording,
+)
+from dimos.teleop.memory_world.replay import (
+    DIFF_STREAM,
+    KEYFRAME_STREAM,
+    SensorScan,
+    VoxelReplay,
+    accumulate_scans,
+    build_replay_streams,
+    sensor_scan,
+)
+from dimos.teleop.memory_world.replay_serving import HEIGHT_COLOR_STOPS, ReplayServing
+from dimos.teleop.memory_world.tf_tree import TfTree, body_camera_pose, pose_matrix
+from dimos.teleop.memory_world.visual_answers import VisualAnswers
+from dimos.teleop.memory_world.visual_search import (
+    SIGLIP2_MODEL_NAME,
+    VisualMemoryIndex,
+    search_phrase,
+    sensor_intrinsics,
+)
+from dimos.teleop.memory_world.world_cache import WorldCache
+from dimos.utils.data import get_data
+from dimos.utils.logging_config import setup_logger
+from dimos.web.robot_web_interface import RobotWebInterface
+
+logger = setup_logger()
+
+
+def _is_finite_number(value: Any) -> bool:
+    """True for a real number the viewer can be at, False for anything else.
+
+    Two different exceptions have escaped this guard and killed the websocket loop:
+    `np.isfinite` raises TypeError on a python int wider than int64, and `math.isfinite`
+    raises OverflowError converting one to a float. Swapping the first for the second
+    fixed the first input and not the second. A guard whose whole job is to reject bad
+    input must not raise on any of it.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (OverflowError, ValueError, TypeError):
+        return False
+
+
+STATIC_DIR = Path(__file__).parent / "web" / "static"
+
+
+class MemoryWorldConfig(ModuleConfig):
+    """Config for the Memory World."""
+
+    store_path: str = "data/go2_bigoffice.db"
+    server_port: int = 8443
+    # Voxel size of the map (metres), also the rendered point size. 8 cm is
+    # the ray-tracing module's own: its support gate keeps walls and floors
+    # and drops the fuzz at this size, where 5 cm loses most of both.
+    voxel_size: float = 0.08
+    # Cap on the static cloud sent to a viewer. A building is about a million
+    # voxels; the viewer's quality governor thins what it cannot draw.
+    max_points: int = 1_500_000
+    # Which lidar stream, and how many scans (<= 0 uses every frame). The cloud is
+    # deduped by voxel_size, so more scans only costs build time. Empty picks the
+    # stream whose poses agree with tf (recording.pick_lidar).
+    lidar_stream_name: str = ""
+    n_voxel_scans: int = 150
+    # A ray-traced global map written into the recording ahead of time. Preferred over
+    # both the replay's final keyframe and a plain accumulation when the stream is there,
+    # because it is the whole map cleared by every scan's rays rather than what one
+    # moment's keyframe held or what piling raw returns together happens to produce.
+    # "" turns the preference off.
+    global_map_stream_name: str = "global_map"
+    # True: the scans are already in the world frame (SLAM output), so their poses
+    # must not be applied twice. None detects it: a scan frame equal to world_frame or
+    # a stitched *corrected* one counts as aligned, map/odom/world count as aligned
+    # when tf cannot place them, and anything else is placed through tf.
+    lidar_world_frame: bool | None = None
+    # Heights kept from the cloud, in the recording's own frame. None keeps
+    # everything: a recording can be multi-storey and its origin can be the sensor,
+    # so there is no floor to assume. A [-0.2, 2.4] slab once threw away 96% of a
+    # stairwell.
+    map_z_min: float | None = None
+    map_z_max: float | None = None
+    # Height colour ramp, over the cloud's own range so a multi-storey
+    # recording gets a different colour per level. Percentiles, so one stray
+    # return below the building does not flatten the rest into one shade.
+    height_ramp_low_percentile: float = PydanticField(default=5.0, ge=0.0, le=100.0)
+    height_ramp_high_percentile: float = PydanticField(default=95.0, ge=0.0, le=100.0)
+    # color_image stream is sampled for "Street View" capture-pose markers.
+    # Empty detects it from the recording's message types.
+    image_stream_name: str = ""
+    n_image_markers: int = 200
+    # Thumbnail params for the per-pose images that get textured onto quads in
+    # 3D world space. Smaller = less bandwidth, lower res in headset.
+    thumbnail_max_size: int = 192
+    thumbnail_jpeg_quality: int = 70
+    # The frames behind an answer are shown full-size in the world, so they
+    # get more pixels than the capture-pose thumbnails.
+    query_image_max_size: int = 640
+    query_image_distance_m: float = PydanticField(default=1.0, gt=0.0)
+    # ---- poses: the tf tree, and nothing else --------------------------------
+    # Every pose the world needs is a tf lookup at the observation's stamp. A
+    # recording with no tf falls back to the body pose stamped on each image.
+    tf_stream_name: str = ""  # empty detects it
+    # The frame everything is placed in; empty or absent from tf, the tf root is
+    # used. Scans stamped with this frame are taken as already aligned.
+    world_frame: str = "world"
+    # The image stream's own frame_id by default.
+    camera_optical_frame: str | None = None
+    # A lookup fails when the nearest tf sample is further away than this.
+    tf_tolerance_s: float = PydanticField(default=0.1, gt=0.0)
+    # The camera's path is drawn as a polyline sampled from tf.
+    n_trail_samples: int = 400
+    # The frame the viewer's orbit mode circles, sent per replay scan. Falls
+    # back to the camera frame when tf does not know it.
+    orbit_frame: str = "base_link"
+    # Top-down density map (GTA-style minimap + ground projection). Computed
+    # from the same point cloud — Z-slab histogram into a square image.
+    map_image_size: int = 512
+    # The top-down map is a footprint, so it takes the middle of whatever
+    # height range the cloud spans — percentiles, not metres, so it works on
+    # one storey or several.
+    map_z_low_percentile: float = PydanticField(default=10.0, ge=0.0, le=100.0)
+    map_z_high_percentile: float = PydanticField(default=90.0, ge=0.0, le=100.0)
+    client_route: str = "/memory_world"
+    # Bind on all interfaces by default — the headset connects over Wi-Fi.
+    listen_host: str = "0.0.0.0"
+    background_mode: Literal["black", "passthrough"] = "black"
+    # ---- spoken "where did I see X" search --------------------------------
+    # SigLIP 2 per-patch index over the image stream, built once per recording in
+    # the background, into the recording (~1.7 MB per indexed frame at fp16).
+    siglip_model_name: str = SIGLIP2_MODEL_NAME
+    # Where the embedding model runs. "cpu" because MPS inside a dimos worker aborts
+    # the whole process with
+    # `MPSKernelDAG.mm:1382: failed assertion ... Unable to reach MTLCompilerService`,
+    # seven seconds after the model loads, with no Python traceback and nothing the
+    # module can catch. The same model in a plain process on MPS is fine, which is what
+    # makes it look like a machine problem instead of this one. Left at the embedder's
+    # own default (auto -> mps on a Mac), every memworld run died on startup.
+    #
+    # The cost is a slower FIRST index build; the text tower a query runs is under a
+    # second either way. `python -m dimos.teleop.memory_world.visual_search --device mps`
+    # builds the index outside a worker when that matters.
+    siglip_device: str = "cpu"
+    # Empty means "named after the image stream and siglip_model_name", so two
+    # models, or two cameras, never share one.
+    image_index_stream_name: str = ""
+    # Every Nth frame. The recording is ~15fps, so 3 keeps sub-metre coverage
+    # at a third of the embedding cost.
+    image_index_stride: int = PydanticField(default=3, ge=1)
+    # Embed the frames here, with the model in-process, when the recording has
+    # no vectors. Off by default: the viewer offers "Add embeddings" (siglipify)
+    # instead, and an index that already exists is loaded either way.
+    build_image_index_on_start: bool = False
+    # The viewer's "Add embeddings" button runs siglipify from this flake over
+    # the recording, which writes the vectors back into it (see embed.py).
+    siglipify_flake: str = "github:jeff-hykin/siglipify"
+    # Two hits closer together than this are one place, not two answers. Bounded like
+    # `MAX_HIGHLIGHT_RADIUS_M` because it is now what fills `ClusterSummary.radius`: an
+    # unbounded value the config accepted would raise a ValidationError at QUERY time and
+    # be shown to the user as "The SigLIP index cannot answer", which is the same bug
+    # `object_radius_m` was pinned for before it was deleted.
+    place_radius_m: float = PydanticField(default=2.5, gt=0.0, le=MAX_HIGHLIGHT_RADIUS_M)
+    max_places: int = PydanticField(default=6, ge=1, le=MAX_ANSWER_PLACES)
+    # How many best-scoring frames are kept before clustering into places.
+    search_top_k: int = PydanticField(default=200, ge=1)
+    # Below this cosine, the best-matching frame is reported as no match at all. A
+    # ranking always returns its top row, so without a floor "were there any people"
+    # is answered yes on every recording ever made. Measured, not guessed: see
+    # "The match floor" in README.md.
+    min_similarity: float = PydanticField(default=0.098, ge=-1.0, le=1.0)
+    # faster-whisper model size for the spoken query.
+    whisper_model: str = "base.en"
+    # The colour camera's calibration, used for the field of view the query
+    # photographs are framed with. A missing, empty or uncalibrated (zero focal
+    # length) camera_info leaves the default field of view.
+    camera_info_stream_name: str | None = None
+    # ---- timeline replay ------------------------------------------------------
+    # Keyframe and per-scan diff streams written once (replay.py); the viewer scrubs
+    # a segment at a time. A longer interval means fewer, larger segments.
+    replay_keyframe_interval_s: float = PydanticField(default=5.0, gt=0.0)
+    build_replay_on_start: bool = True
+    # Rays longer than this are not cast. The replay is ray-traced (each scan
+    # clears the voxels its rays pass through), and its final keyframe is the
+    # static map, so this bounds both.
+    replay_max_range_m: float = PydanticField(default=30.0, gt=0.0)
+    # Ask the LLM agent rather than the `find_in_memory` skill; why, and what happens when
+    # no agent answers, is in `answers.py`'s `_ask_the_agent`. Only `memory-world-agent`
+    # has an agent to ask, so it is off here and that blueprint turns it on.
+    ask_via_agent: bool = False
+    agent_input_topic: str = "/human_input"
+    agent_reply_topic: str = "/agent"
+    agent_idle_topic: str = "/agent_idle"
+    agent_timeout_s: float = PydanticField(default=120.0, gt=0.0)
+    # The camera frame shown while scrubbing, fetched one at a time.
+    replay_frame_max_size: int = 480
+    replay_frame_jpeg_quality: int = 60
+    # A capture-pose marker the viewer has walked up to is re-fetched at this size, so a
+    # photo you are standing in front of is not the 192 px thumbnail that reads fine from
+    # across the room. It is the CEILING the /replay/frame route clamps its `size` to, not
+    # an upscale: a smaller source frame is served at its own size.
+    marker_sharp_max_size: int = 1280
+    marker_sharp_jpeg_quality: int = 85
+    # Sharp frames are far larger than the scrub frames, so they get their OWN small LRU
+    # rather than sharing the 600-entry one -- a walk past two dozen markers would
+    # otherwise evict the whole scrub cache, and 600 sharp frames is most of a gigabyte.
+    # Several times the client's sharp budget on purpose: at a budget of 15 a cache of 15
+    # holds exactly what is on screen, so stepping back to a photo just left re-encodes it.
+    # ~145 KB a frame here, so 96 is ~14 MB.
+    marker_sharp_cache_size: int = PydanticField(default=96, gt=0)
+
+
+class MemoryWorldModule(WorldAnswers, ReplayServing, VisualAnswers, WorldCache, Module):
+    """VR memory-world module.
+
+    See :mod:`dimos.teleop.memory_world` for the architectural overview.
+    """
+
+    config: MemoryWorldConfig
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._world_clients: set[ClientConn] = set()
+        self._clients_lock = threading.Lock()
+
+        self._store: Store | None = None
+        # Cached payloads so reconnects are cheap.
+        self._cached_cloud: tuple[dict[str, Any], bytes] | None = None
+        self._map_xyz: np.ndarray | None = None
+        self._init_answers()
+        self._cached_image_poses: tuple[dict[str, Any], bytes] | None = None
+        # Per-pose JPEG thumbnails parallel to image_poses indices.
+        self._cached_thumbnails: list[bytes] | None = None
+        self._cached_odom: tuple[dict[str, Any], bytes] | None = None
+        self._cached_top_down: tuple[dict[str, Any], bytes] | None = None
+        self._viewer_position: tuple[float, float, float] | None = None
+        self._visual_index: VisualMemoryIndex | None = None
+        self._lidar_world_aligned_cache: bool | None = None
+        self._index_lock = threading.RLock()
+        self._embed_job = EmbeddingJob(
+            on_finished=lambda job: self._broadcast(
+                encode_text("index_status", **self._index_status())
+            )
+        )
+        # The world caches are built lazily by whichever client connects first;
+        # without this, two clients arriving together each voxelise the whole
+        # recording.
+        self._world_cache_lock = threading.Lock()
+        self._index_progress = "not started"
+        self._whisper: Any = None
+        self._tf_tree_cache: TfTree | None = None
+        self._tf_missing = False
+        self._replay: VoxelReplay | None = None
+        self._replay_lock = threading.Lock()
+        # The store's sqlite connection is not safe to read from two threads at
+        # once: a scrubbing viewer fetches segments and frames while an answer's
+        # evidence frames are being decoded.
+        self._store_lock = threading.RLock()  # re-entered by the world cache build
+        self._stopping = threading.Event()
+        self._replay_progress = "not started"
+        self._replay_error: str | None = None  # a failed build is not retried until a reopen
+        self._replay_index: dict[str, Any] | None = None
+        self._replay_frames: OrderedDict[float, tuple[bytes, dict[str, Any]]] = OrderedDict()
+        # Keyed by (ts, max_size, quality): the same frame is served at two sizes, and a
+        # cache keyed on the stamp alone would hand a close-up viewer the scrub thumbnail.
+        self._sharp_frames: OrderedDict[tuple[float, int, int], tuple[bytes, dict[str, Any]]] = (
+            OrderedDict()
+        )
+        self._camera_hfov_deg: float | None = None
+        self._camera_frame_cache: str | None = None
+        self._active_query_result: dict[str, Any] | None = None
+        self._active_query_images: list[tuple[dict[str, Any], bytes]] = []
+        self._query_revision = 0
+        self._web_server: RobotWebInterface | None = None
+        self._web_server_thread: threading.Thread | None = None
+        self._prepare_thread: threading.Thread | None = None
+        self._replay_thread: threading.Thread | None = None  # a build a route started
+        self._workers_lock = threading.Lock()  # publishes that handle; held for a moment
+
+        super().__init__(**kwargs)
+        self.config.store_path = str(self._resolve_store_path(self.config.store_path))
+        # "/custom/" would register "/custom//replay/index" while the viewer, which builds
+        # its base with pathname.replace(/\/$/, ""), asks for "/custom/replay/index": the
+        # page loads and every API call 404s. The viewer's rule, applied on this side too.
+        route = self.config.client_route.rstrip("/")
+        if route and not route.startswith("/"):
+            route = "/" + route
+        self.config.client_route = route  # "" at the root, exactly what the viewer computes
+
+    @staticmethod
+    def _resolve_store_path(name_or_path: str) -> Path:
+        """Resolve explicit paths directly and bare names through the data registry."""
+        path = Path(name_or_path).expanduser()
+        if not path.is_absolute() and path.parts[:1] != ("data",):
+            return get_data(name_or_path).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"memory store not found at {path}")
+        return path.resolve()
+
+    # ---- routes ------------------------------------------------------------
+
+    @staticmethod
+    def _put_route_first(app: Any, path: str) -> None:
+        """Move the most recently registered route for *path* to the front."""
+        routes = app.router.routes
+        for index in range(len(routes) - 1, -1, -1):
+            if getattr(routes[index], "path", None) == path:
+                routes.insert(0, routes.pop(index))
+                return
+
+    def _setup_routes(self) -> None:
+        assert self._web_server is not None
+        app = self._web_server.app
+
+        self._setup_answer_routes(app)
+
+        # `or "/"`: the base is "" at the root so that "/ws" and "/replay/index" come out
+        # right, but the PAGE itself still has to be registered at "/".
+        page_route = self.config.client_route or "/"
+
+        @app.get(page_route, response_class=HTMLResponse)  # type: ignore[misc]
+        async def memory_world_index() -> HTMLResponse:
+            index_path = STATIC_DIR / "index.html"
+            # The newest static file stamps the script URLs, so a reload never
+            # pairs a fresh main.js with a scene.js the browser cached earlier.
+            asset_version = max(path.stat().st_mtime_ns for path in STATIC_DIR.iterdir())
+            content = (
+                index_path.read_text()
+                .replace("__BACKGROUND_MODE__", self.config.background_mode)
+                .replace("__ASSET_VERSION__", str(asset_version))
+            )
+            return HTMLResponse(content=content)
+
+        # At the root this has to OUTRANK the generic interface index that
+        # RobotWebInterface already registered at "/": Starlette answers with the first
+        # full match, so the viewer's own page was registered and reachable by nothing --
+        # and memworld's probe got 200 from the OTHER application and printed success.
+        self._put_route_first(app, page_route)
+
+        if STATIC_DIR.is_dir():
+            app.mount(
+                "/static_mw",
+                RevalidatedStaticFiles(directory=str(STATIC_DIR)),
+                name="memory_world_static",
+            )
+
+        @app.websocket(f"{self.config.client_route}/ws")  # type: ignore[misc]
+        async def ws_world(ws: WebSocket) -> None:
+            await self._handle_ws(ws)
+
+        # Replay segments are int16 grids and uint32 slots: they halve under gzip.
+        app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+        @app.get(f"{self.config.client_route}/replay/index")  # type: ignore[misc]
+        async def memory_world_replay_index() -> dict[str, Any]:
+            """Scan and keyframe stamps: everything the viewer needs to seek."""
+            try:
+                return await asyncio.to_thread(self._replay_index_json)
+            except Exception as error:
+                raise HTTPException(
+                    status_code=503, detail=f"replay {self._replay_progress}"
+                ) from error
+
+        @app.get(f"{self.config.client_route}/replay/segment/{{number}}")  # type: ignore[misc]
+        async def memory_world_replay_segment(number: int, request: Request) -> Response:
+            """One keyframe plus the diffs up to the next; see VoxelReplay.segment."""
+
+            try:
+                replay, _ = await asyncio.to_thread(self._replay_if_ready)
+            except Exception as error:
+                raise HTTPException(
+                    status_code=503, detail=f"replay {self._replay_progress}"
+                ) from error
+            if not 0 <= number < len(replay.index.keyframe_scan):
+                raise HTTPException(status_code=404, detail="no such segment")
+
+            def read() -> bytes:
+                if self._replay is not replay:  # reopened meanwhile; the viewer retries
+                    raise HTTPException(status_code=503, detail="the recording was reopened")
+                return replay.encoded_segment(number)
+
+            gzipped = await asyncio.to_thread(self._replay_read, read)
+            headers = {"Cache-Control": "max-age=3600"}
+            if "gzip" in request.headers.get("accept-encoding", ""):
+                headers["Content-Encoding"] = "gzip"
+                content = gzipped
+            else:
+                content = gzip.decompress(gzipped)
+            return Response(content=content, media_type="application/octet-stream", headers=headers)
+
+        @app.get(f"{self.config.client_route}/replay/frame")  # type: ignore[misc]
+        async def memory_world_replay_frame(t: float, size: int = 0) -> Response:
+            """The camera frame nearest *t* as JPEG; its pose rides in a header.
+
+            *size* asks for the sharp re-encode a viewer standing in front of a
+            capture-pose marker wants. It is CLAMPED to `marker_sharp_max_size`, so a
+            client cannot make the server re-encode a 1280x720 frame at 8000 px -- the
+            work is done on the request thread and the cost is the operator's, not the
+            caller's. 0, the default, means the ordinary scrub size.
+            """
+            requested = None
+            if size > 0:
+                requested = min(int(size), int(self.config.marker_sharp_max_size))
+            # Guarded like its two siblings above. Without this a recording with no image
+            # stream -- `image_stream_name` left as "" -- raises KeyError('') out of the
+            # handler and FastAPI turns it into a bare 500, where the same route answers
+            # a plain 404 when it merely has no frame near *t*.
+            try:
+                found = await asyncio.to_thread(self._replay_read, self._replay_frame, t, requested)
+            except HTTPException:
+                raise
+            except Exception as error:
+                raise HTTPException(
+                    status_code=503, detail=f"replay {self._replay_progress}"
+                ) from error
+            if found is None:
+                raise HTTPException(status_code=404, detail="no frame near that time")
+            jpeg, meta = found
+            return Response(
+                content=jpeg,
+                media_type="image/jpeg",
+                headers={"X-Camera-Pose": json.dumps(meta), "Cache-Control": "max-age=3600"},
+            )
+
+        @app.get(f"{self.config.client_route}/embeddings")  # type: ignore[misc]
+        async def memory_world_embeddings() -> dict[str, Any]:
+            """Whether the recording can be searched, and how adding embeddings is going."""
+            return await asyncio.to_thread(self._index_status)
+
+        @app.post(f"{self.config.client_route}/embeddings")  # type: ignore[misc]
+        async def memory_world_add_embeddings() -> dict[str, Any]:
+            """Run siglipify over the recording, in the background; poll GET for progress."""
+            if not await asyncio.to_thread(self._start_embedding):
+                raise HTTPException(status_code=409, detail="embeddings are already being added")
+            return await asyncio.to_thread(self._index_status)
+
+        @app.post(f"{self.config.client_route}/voice")  # type: ignore[misc]
+        async def memory_world_voice(audio: UploadFile) -> dict[str, Any]:
+            """Transcribe a spoken query and highlight the answer in VR.
+
+            The Quest browser exposes no Web Speech API, so the headset records
+            with MediaRecorder and posts the blob here instead.
+            """
+            raw = await audio.read()
+            if not raw:
+                raise HTTPException(status_code=400, detail="empty recording")
+            transcript = await asyncio.to_thread(self._transcribe, raw)
+            if not transcript:
+                return {"transcript": "", "answer": "Nothing was said"}
+            self._broadcast(encode_text("voice_transcript", text=transcript))
+            outcome = await asyncio.to_thread(self.find_in_memory, transcript)
+            return {
+                "transcript": transcript,
+                "success": outcome.success,
+                "answer": outcome.message,
+                "metadata": outcome.metadata,
+            }
+
+    # ---- websocket handling ------------------------------------------------
+
+    async def _handle_ws(self, ws: WebSocket) -> None:
+        await ws.accept()
+        loop = asyncio.get_running_loop()
+        conn = ClientConn(ws=ws, loop=loop)
+        with self._clients_lock:
+            self._world_clients.add(conn)
+        logger.info("memory-world client connected (now %d)", len(self._world_clients))
+
+        sender = asyncio.create_task(self._sender_loop(conn))
+        threading.Thread(
+            target=self._send_initial_payload,
+            args=(conn,),
+            daemon=True,
+            name="MemoryWorldInitialLoad",
+        ).start()
+
+        try:
+            while True:
+                raw = await ws.receive_text()
+                msg = decode_text(raw)
+                if msg:
+                    self._on_client_message(conn, msg)
+        except WebSocketDisconnect:
+            logger.info("memory-world client disconnected")
+        except Exception:
+            logger.exception("memory-world ws error")
+        finally:
+            sender.cancel()
+            with self._clients_lock:
+                self._world_clients.discard(conn)
+
+    async def _sender_loop(self, conn: ClientConn) -> None:
+        try:
+            while True:
+                msg = await conn.queue.get()
+                if isinstance(msg, bytes):
+                    await conn.ws.send_bytes(msg)
+                else:
+                    await conn.ws.send_text(msg)
+        except asyncio.CancelledError:
+            return
+        except Exception as error:
+            # The socket is usually already gone; the ws handler's finally
+            # cleans up. Say so rather than vanishing without a trace.
+            logger.debug("memory-world sender stopped: %s", error)
+
+    # ---- initial payload ---------------------------------------------------
+
+    def _ensure_store(self) -> Store:
+        with self._store_lock:
+            if self._store is None:
+                # Published before it is named, because naming reads the tf tree and
+                # that calls straight back in here -- publishing afterwards opened the
+                # recording again for every such read, to a RecursionError. Withdrawn
+                # again if naming refuses the recording, so that a refusal is not left
+                # behind as a module serving with every role empty.
+                self._store = open_recording(self.config.store_path)
+                logger.info("opened memory store at %s", self.config.store_path)
+                try:
+                    self._name_streams(self._store)
+                except BaseException:
+                    store, self._store = self._store, None
+                    with contextlib.suppress(Exception):
+                        store.stop()
+                    raise
+            return self._store
+
+    def _name_streams(self, store: Store) -> None:
+        """Name the streams and the world frame. See `name_streams` in recording.py."""
+        name_streams(store, self.config, self._tf_tree)
+
+    def _ensure_world_cache(
+        self,
+    ) -> tuple[
+        tuple[dict[str, Any], bytes],
+        tuple[dict[str, Any], bytes] | None,
+        tuple[dict[str, Any], bytes],
+        list[bytes] | None,
+        tuple[dict[str, Any], bytes],
+    ]:
+        """Build the cloud, top-down map, markers and trail once, whoever asks first.
+
+        Returns (cloud, top-down map, image poses, thumbnails, trail) as one
+        snapshot taken under the lock: a reopen clears the fields meanwhile.
+        """
+        with self._world_cache_lock:
+            if self._cached_cloud is None:
+                self._cached_cloud = self._build_cloud()
+            if self._cached_top_down is None:
+                self._cached_top_down = self._build_top_down_map(self._cached_cloud)
+            if self._cached_image_poses is None:
+                with self._store_lock:  # walks the image stream
+                    self._cached_image_poses, self._cached_thumbnails = self._build_image_poses()
+            if self._cached_odom is None:
+                with self._store_lock:
+                    self._cached_odom = self._build_trail()
+            return (
+                self._cached_cloud,
+                self._cached_top_down,
+                self._cached_image_poses,
+                self._cached_thumbnails,
+                self._cached_odom,
+            )
+
+    def _send_initial_payload(self, conn: ClientConn) -> None:
+        try:
+            if self._cached_cloud is None:  # unlocked hint: this viewer waits for the build
+                conn.send_threadsafe(
+                    encode_text("status", message="Building the map from the recording…")
+                )
+            cloud, top_down, poses, thumbnails, odom = self._ensure_world_cache()
+            cloud_header, cloud_payload = cloud
+            conn.send_threadsafe(encode_text("world_summary", **cloud_header))
+            conn.send_threadsafe(encode_binary(MSG_POINT_CLOUD, cloud_header, cloud_payload))
+
+            # Send top-down map next — both the ground plane and the HUD
+            # minimap need it, so render asap on the client.
+            if top_down is not None:
+                map_header, map_payload = top_down
+                conn.send_threadsafe(encode_binary(MSG_TOP_DOWN_MAP, map_header, map_payload))
+
+            poses_header, poses_payload = poses
+            conn.send_threadsafe(encode_binary(MSG_IMAGE_POSES, poses_header, poses_payload))
+
+            # One MSG_IMAGE_THUMBNAIL frame per pose. Indices match poses_header.
+            if thumbnails:
+                for i, jpeg in enumerate(thumbnails):
+                    if not jpeg:
+                        continue
+                    conn.send_threadsafe(encode_binary(MSG_IMAGE_THUMBNAIL, {"index": i}, jpeg))
+
+            odom_header, odom_payload = odom
+            conn.send_threadsafe(encode_binary(MSG_ODOM_TRAIL, odom_header, odom_payload))
+
+            conn.send_threadsafe(encode_text("ready"))
+            conn.send_threadsafe(encode_text("index_status", **self._index_status()))
+            with self._clients_lock:  # under the lock: no newer answer slips in
+                if self._active_query_result is not None:
+                    conn.send_threadsafe(encode_text("query_result", **self._active_query_result))
+                    for header, jpeg in self._active_query_images:
+                        conn.send_threadsafe(encode_binary(MSG_QUERY_IMAGE, header, jpeg))
+        except (Exception, SystemExit):  # a refusal is a SystemExit, not an Exception
+            logger.exception("failed to build/send world payload")
+            conn.send_threadsafe(encode_text("error", message="world load failed"))
+
+    def _build_cloud(self) -> tuple[dict[str, Any], bytes]:
+        """Build a voxel cloud from the recording's lidar stream."""
+        built = self._build_voxel_cloud_from_lidar()
+        if built is None:
+            raise RuntimeError("voxel-from-lidar produced no cloud")
+        return built
+
+    def _height_colors(self, positions: np.ndarray) -> np.ndarray:
+        """Map Z (robot up) onto the purple-to-green height ramp.
+
+        The ramp spans the cloud's own height range, from the
+        ``height_ramp_low_percentile`` to the ``height_ramp_high_percentile``
+        of z, so a stairwell or a two-storey building reads as different
+        colours per level. Percentiles rather than min/max, so one stray
+        return far below the building does not flatten everything else into a
+        single shade. Returns N x 3 uint8 RGB.
+        """
+        zc = positions[:, 2]
+        lo = float(np.percentile(zc, self.config.height_ramp_low_percentile)) if zc.size else 0.0
+        hi = float(np.percentile(zc, self.config.height_ramp_high_percentile)) if zc.size else 1.0
+        hi = max(hi, lo + 1e-3)
+        t = np.clip((zc - lo) / (hi - lo), 0.0, 1.0)
+        stops = np.linspace(0.0, 1.0, len(HEIGHT_COLOR_STOPS))
+        rgb = np.stack([np.interp(t, stops, HEIGHT_COLOR_STOPS[:, c]) for c in range(3)], axis=1)
+        return np.ascontiguousarray(np.rint(rgb).astype(np.uint8))
+
+    def _cloud_header(self, positions: np.ndarray) -> dict[str, Any]:
+        """Common header: count, colour flag, voxel size, and bounds."""
+        return {
+            "n": int(positions.shape[0]),
+            "has_colors": True,
+            "voxel_size": float(self.config.voxel_size),
+            "bounds": {
+                "x_min": float(positions[:, 0].min()),
+                "x_max": float(positions[:, 0].max()),
+                "y_min": float(positions[:, 1].min()),
+                "y_max": float(positions[:, 1].max()),
+                "z_min": float(positions[:, 2].min()),
+                "z_max": float(positions[:, 2].max()),
+            },
+        }
+
+    @staticmethod
+    def _encode_jpeg(img: Any, max_size: int, quality: int) -> bytes:
+        img, _ = img.resize_to_fit(max_size, max_size)
+        bgr = img.to_bgr().to_opencv()
+        ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+        return buf.tobytes() if ok else b""
+
+    def _build_trail(self) -> tuple[dict[str, Any], bytes]:
+        """The camera's path as a small polyline, sampled from tf."""
+        try:
+            n = max(2, int(self.config.n_trail_samples))
+            positions: list[tuple[float, float, float]] = []
+            tree = self._tf_tree()
+            if tree is not None:
+                span = tree.span(self.config.world_frame, self._camera_frame())
+                if span is not None:
+                    for ts in np.linspace(span[0], span[1], n):
+                        matrix = self._frame_pose_at(self._camera_frame(), float(ts))
+                        if matrix is not None:
+                            positions.append(tuple(float(v) for v in matrix[:3, 3]))  # type: ignore[arg-type]
+            else:
+                store = self._ensure_store()
+                stream = store.streams[self.config.image_stream_name]
+                span_s = max(float(stream.last().ts) - float(stream.first().ts), 1e-3)
+                for obs in stream.transform(throttle(span_s / n)):  # type: ignore[var-annotated]
+                    matrix = self._camera_pose_of(obs)
+                    if matrix is not None:
+                        positions.append(tuple(float(v) for v in matrix[:3, 3]))  # type: ignore[arg-type]
+                    if len(positions) >= n:
+                        break
+
+            pos_arr = np.asarray(positions, dtype=np.float32)
+            header = {"n": int(pos_arr.shape[0])}
+            logger.info("built camera trail with %d points", header["n"])
+            return header, pos_arr.tobytes()
+        except Exception:
+            logger.exception("failed to build the camera trail")
+            return {"n": 0}, b""
+
+    def _broadcast(self, message: bytes | str) -> None:
+        with self._clients_lock:
+            clients = tuple(self._world_clients)
+        for client in clients:
+            client.send_threadsafe(message)
+
+    def _publish_query_result(self, result: MemoryQueryResult) -> str:
+        """Send a result to every connected viewer and remember it for reconnects.
+
+        The ids on the wire are MARKER ids. The viewer holds thumbnails for the markers
+        it was sent and nothing else, so an answer naming a frame that is not one of them
+        has no picture to show; `visual_answers` snaps them to the nearest markers before
+        it gets here.
+        """
+        with self._clients_lock:
+            query_id = uuid.uuid4().hex
+            self._query_revision += 1
+            payload = result.model_dump(mode="json")
+            payload.update(query_id=query_id, revision=self._query_revision)
+            self._active_query_result = payload
+            self._active_query_images = []
+            # The places the previous answer put on screen are gone with it;
+            # `visual_answers` sets this again once the new ones are published.
+            self._last_answer = (None, None)
+            # Queued under the lock: two answers then reach every viewer in revision order.
+            message = encode_text("query_result", **payload)
+            for client in tuple(self._world_clients):
+                client.send_threadsafe(message)
+        return query_id
+
+    # ---- spoken visual search ---------------------------------------------
+
+    def _ensure_visual_index(self) -> VisualMemoryIndex:
+        with self._store_lock, self._index_lock:  # a lazy init that opens the store; store first
+            return self._visual_index_unlocked()
+
+    def _visual_index_unlocked(self) -> VisualMemoryIndex:
+        if self._visual_index is None:
+            self._visual_index = VisualMemoryIndex(
+                self._ensure_store(),
+                pose_of=self._camera_pose_of,
+                image_stream_name=self.config.image_stream_name,
+                index_stream_name=self.config.image_index_stream_name,
+                model_name=self.config.siglip_model_name,
+                device=self.config.siglip_device,
+                world_frame=self.config.world_frame,
+            )
+        return self._visual_index
+
+    def _reopen_recording(self) -> None:
+        """Open the recording afresh: siglipify rewrote the mcap, and the store holds the old file."""
+        # Lock order everywhere: planner, world cache, replay, store, index.
+        with (
+            self._planner_lock,
+            self._world_cache_lock,
+            self._replay_lock,
+            self._store_lock,
+            self._index_lock,
+        ):
+            # Inside the locks: an adoption that waited on `_planner_lock` through stop()
+            # would otherwise open a fresh store into a closed module, and stop() neither
+            # joins that thread nor closes what it installs.
+            if self._stopping.is_set() or getattr(self, "_module_closed", False):
+                logger.info("stopped while a reopen was waiting; leaving the store closed")
+                return
+            # Replay bookkeeping first: the open below is slow, and a viewer polling
+            # /replay/index meanwhile must not read a stale "build failed".
+            self._replay = None
+            self._replay_error = None
+            self._replay_progress = "not started"
+            old = self._store
+            self._store = open_recording(self.config.store_path)
+            self._replay_index = None
+            self._replay_frames.clear()
+            self._sharp_frames.clear()
+            self._drop_visual_index()
+            self._tf_tree_cache = None  # before naming: the names are picked against the tree
+            self._tf_missing = False
+            try:
+                self._name_streams(self._store)
+            except BaseException:  # SystemExit too: a refusal is one
+                # The same withdrawal `_ensure_store` does. Without it a refusal leaves
+                # the unnamed store installed with every role empty, the working one
+                # never stopped, and the module serving from neither.
+                fresh, self._store = self._store, old
+                with contextlib.suppress(Exception):
+                    fresh.stop()
+                raise
+            self._lidar_world_aligned_cache = None
+            self._camera_hfov_deg = None
+            self._camera_frame_cache = None
+            self._cached_cloud = self._cached_image_poses = self._cached_thumbnails = None
+            self._cached_odom = self._cached_top_down = self._map_xyz = None
+            self._route_planner = None
+            self._orbit_cache.clear()
+            if old is not None:
+                old.stop()
+        logger.info("reopened %s", self.config.store_path)
+
+    @skill
+    def find_in_memory(
+        self,
+        query: str,
+        from_fraction: float = 0.0,
+        to_fraction: float = 1.0,
+    ) -> SkillResult:
+        """Find where something was seen in the recording and highlight it in the world:
+        "where did I see a car", answered by a vector-database lookup over the recording's
+        CLIP/SigLIP image embeddings. Each result is a place the thing was seen FROM,
+        with the photograph that matched.
+
+        Args:
+            query: What to look for, e.g. "a car" or "a whiteboard". Pass the thing, not
+                the whole sentence.
+            from_fraction: Where in the recording to start looking. 0.0 is the very
+                beginning, 1.0 the very end. Use 0.0 and 0.5 for "the first half".
+            to_fraction: Where to stop looking, on the same 0.0-1.0 scale.
+        """
+        started = time.monotonic()
+        phrase = search_phrase(query)
+        if not phrase:
+            return SkillResult.fail("INVALID_QUERY", "The query text is empty")
+        # Clamped and ordered rather than refused: an LLM that says (0.5, 0.0) means the
+        # second half, and failing the whole question over the argument order teaches it
+        # nothing it can act on.
+        low, high = sorted((float(from_fraction), float(to_fraction)))
+        low, high = max(0.0, min(1.0, low)), max(0.0, min(1.0, high))
+        if high <= low:
+            return SkillResult.fail(
+                "INVALID_QUERY",
+                f"{from_fraction} to {to_fraction} is not a stretch of the recording",
+            )
+        span = None if (low, high) == (0.0, 1.0) else (low, high)
+
+        try:
+            return self._find_with_siglip(phrase, started, span=span)
+        except Exception as error:  # an index built for another model, camera or frame
+            logger.exception("visual index query failed")
+            return SkillResult.fail("QUERY_FAILED", f"The SigLIP index cannot answer: {error}")
+
+    @skill
+    def navigate_to_place(self, place: int = 1, start: str = "recording start") -> SkillResult:
+        """Draw a walking route to one of the places the last `find_in_memory` answer
+        found, and show it in the world.
+
+        Args:
+            place: Which place to walk to. 1 is the first one the answer listed.
+            start: Where to walk FROM. "recording start" is where the robot was when the
+                recording began -- what someone means by "the starting point". "viewer"
+                is where the person asking is standing right now.
+        """
+        # "Where the person is" wins over "start", because one sentence can hold both:
+        # "start from where I am standing now" contains the word `start` and means the
+        # opposite of the recording's beginning.
+        said = start.lower()
+        here = any(word in said for word in ("view", "stand", "here", "current", "now", " me"))
+        begins = any(word in said for word in ("record", "start", "begin", "first"))
+        wanted = "recording_start" if begins and not here else "viewer"
+        try:
+            payload = self._navigate_to(
+                NavigateRequest(cluster=max(0, int(place) - 1), start_at=wanted)
+            )
+        except HTTPException as refused:
+            return SkillResult.fail("NO_ROUTE", str(refused.detail))
+        except Exception as error:
+            logger.exception("navigation failed")
+            return SkillResult.fail("NO_ROUTE", f"Could not plan a route: {error}")
+        return SkillResult(
+            success=True,
+            message=(
+                f"Drew a {payload['length_m']} m route to place #{payload['cluster'] + 1}, "
+                f"starting from "
+                + (
+                    "where the robot was at the start of the recording"
+                    if wanted == "recording_start"
+                    else "where you are standing"
+                )
+            ),
+            metadata=payload,
+        )
+
+    # ---- poses: the tf tree ------------------------------------------------
+    def _tf_tree(self) -> TfTree | None:
+        """The recording's tf tree, loaded once; None when the recording has none."""
+        with self._store_lock:
+            return self._load_tf_tree()
+
+    def _load_tf_tree(self) -> TfTree | None:
+        if self._tf_tree_cache is None and not self._tf_missing:
+            store = self._ensure_store()
+            if self.config.tf_stream_name not in store.list_streams():
+                self._tf_missing = True
+                logger.warning(
+                    "no %r stream; falling back to the poses stamped on images",
+                    self.config.tf_stream_name,
+                )
+                return None
+            tree = build_tf_tree(store, self.config.tf_stream_name)
+            logger.info("tf tree: %d transforms over %d frames", len(tree), len(tree.frames))
+            self._tf_tree_cache = tree
+        return self._tf_tree_cache
+
+    def _camera_frame(self) -> str:
+        # Truthiness, not `is not None`: `camera_optical_frame=""` names no frame, and the
+        # indexer subprocess already reads it that way (`in_process_command` leaves
+        # `--camera-frame` off when it is falsey). Reading it the other way here put the
+        # module and its own index on different frames -- measured, the module placed
+        # nothing and the subprocess placed every frame.
+        if self.config.camera_optical_frame:
+            return self.config.camera_optical_frame
+        if self._camera_frame_cache is None:  # read once, even when it is empty
+            # The WRITE is inside the lock too, not just the read. `_reopen_recording`
+            # sets this back to None while holding the same lock; a reopen landing in the
+            # window between the two had its invalidation overwritten with the previous
+            # recording's answer, which nothing then recomputes.
+            with self._store_lock:  # the payload read too: a reopen closes the old store
+                try:
+                    first = self._ensure_store().streams[self.config.image_stream_name].first()
+                    frame = str(getattr(first.data, "frame_id", "") or "")
+                except LookupError:  # no image stream, or an empty one
+                    frame = ""
+                self._camera_frame_cache = frame.lstrip("/")
+        return self._camera_frame_cache
+
+    def _lidar_world_aligned(self) -> bool:
+        """Whether the lidar scans are stored already registered in the world frame."""
+        if self._lidar_world_aligned_cache is None:
+            # Read AND write under the lock a reopen invalidates under -- see
+            # `_camera_frame`. The lock is re-entrant, so `_tf_tree()` taking it again
+            # below is free.
+            with self._store_lock:
+                aligned = self.config.lidar_world_frame
+                if aligned is None:
+                    first = self._ensure_store().streams[self.config.lidar_stream_name].first()
+                    frame_id = str(getattr(first.data, "frame_id", "")).lower().lstrip("/")
+                    world = str(self.config.world_frame or "").lower().lstrip("/")
+                    # Any other fixed frame goes through tf: map <- odom is not the identity.
+                    aligned = frame_id == world or "corrected" in frame_id
+                    if not aligned and frame_id in {"map", "odom", "world"}:
+                        tree = self._tf_tree()
+                        known = (
+                            set() if tree is None else {f.lower().lstrip("/") for f in tree.frames}
+                        )
+                        aligned = frame_id not in known  # tf cannot place it: it is the world
+                    logger.info(
+                        "lidar frame %r detected as %s",
+                        frame_id,
+                        "world-aligned" if aligned else "sensor-relative",
+                    )
+                self._lidar_world_aligned_cache = bool(aligned)
+        return self._lidar_world_aligned_cache
+
+    def _accumulated_cloud(self) -> np.ndarray | None:
+        """Every ``n_voxel_scans``-th scan voxelised into one cloud, no clearing."""
+        world_aligned = self._lidar_world_aligned()
+
+        def to_world(obs: Any) -> Any:
+            # A scan already in the map frame must not get its pose applied again.
+            return obs if world_aligned else self._scan_to_world(obs)
+
+        stream = self._ensure_store().streams[self.config.lidar_stream_name]
+        return accumulate_scans(stream, to_world, self.config.voxel_size, self.config.n_voxel_scans)
+
+    def _scan_frame(self, obs: Any) -> SensorScan | None:
+        """A lidar scan in its sensor frame with the sensor's pose, for ray casting.
+
+        The pose is a tf lookup at the scan's stamp. A world-aligned stream uses
+        the pose stamped on the scan, else the camera, the nearest frame tf knows.
+        """
+        world_aligned = self._lidar_world_aligned()
+        scan_frame = str(getattr(obs.data, "frame_id", "") or "").lstrip("/")
+        stamped = getattr(obs, "pose_tuple", None)
+        if world_aligned and stamped is not None:  # stitched scans carry the sensor pose
+            return sensor_scan(
+                obs.data.points_f32(),
+                pose_matrix(tuple(stamped[:3]), tuple(stamped[3:7])),
+                in_world=True,
+            )
+        pose_frame = self._camera_frame() if world_aligned else scan_frame
+        matrix = self._frame_pose_at(pose_frame, float(obs.ts))
+        if matrix is None:
+            pose = getattr(obs, "pose_tuple", None)
+            if pose is None or self._tf_tree() is not None:
+                return None
+            matrix = pose_matrix(tuple(pose[:3]), tuple(pose[3:7]))
+        return sensor_scan(obs.data.points_f32(), np.asarray(matrix), in_world=world_aligned)
+
+    def _scan_to_world(self, obs: Any) -> Any:
+        """A sensor-frame lidar scan moved into the world frame, or None.
+
+        The pose is a tf lookup at the scan's stamp; only a recording without
+        any tf stream falls back to the pose stamped on the observation.
+        """
+        from dimos.msgs.geometry_msgs.Transform import Transform
+
+        scan_frame = str(getattr(obs.data, "frame_id", "") or "").lstrip("/")
+        matrix = self._frame_pose_at(scan_frame, float(obs.ts))
+        if matrix is None:
+            pose = getattr(obs, "pose_tuple", None)
+            if pose is None or self._tf_tree() is not None:
+                return None
+            matrix = pose_matrix(tuple(pose[:3]), tuple(pose[3:7]))
+        return obs.data.transform(Transform.from_matrix(matrix))
+
+    def _camera_hfov(self) -> float:
+        with self._store_lock:  # a lazy init that reads the store
+            return self._read_camera_hfov()
+
+    def _read_camera_hfov(self) -> float:
+        """Horizontal field of view of the image stream: from camera_info when it has a
+        focal length, else 70 degrees."""
+        if self._camera_hfov_deg is None:
+            self._camera_hfov_deg = 70.0
+            if self.config.camera_info_stream_name is not None:
+                try:
+                    store = self._ensure_store()
+                    info = store.streams[self.config.camera_info_stream_name].first().data
+                    if not info.K[0]:
+                        raise LookupError("camera_info has no focal length")
+                    # Through `sensor_intrinsics`, which is where this package already
+                    # knows that K is solved for the FULL calibrated frame and the
+                    # published image is `roi / binning`. Taken raw, a rig publishing a
+                    # 640x480 crop of a 1280x720 calibration reported 90 degrees where
+                    # 53.13 is right, and the viewer sizes every evidence photo as
+                    # 2*d*tan(hfov/2) -- 2 m wide at 1 m where 1 m was the answer. The
+                    # same number rides /replay/index, the X-Camera-Pose header and every
+                    # query-image header. (Binning alone cancels; only a crop shows it.)
+                    (focal_x, _, _, _), (width, _) = sensor_intrinsics(info)
+                    self._camera_hfov_deg = float(
+                        np.degrees(2.0 * np.arctan2(width / 2.0, focal_x))
+                    )
+                except LookupError:  # declared, never published: the default stands
+                    logger.warning(
+                        "no %r message; using a %.0f degree field of view",
+                        self.config.camera_info_stream_name,
+                        self._camera_hfov_deg,
+                    )
+        return self._camera_hfov_deg
+
+    # ---- timeline replay -----------------------------------------------------
+
+    def _ensure_replay(self) -> VoxelReplay:
+        """The recording's replay streams, built on first use if missing. Needs the image
+        stream too: the index lists its frame stamps. A build that places no scan is
+        deleted again and raises; the failure is remembered until a reopen.
+
+        Lock order everywhere: planner, world cache, replay, store, index. The build
+        takes the store lock as well as the replay lock, for its whole length. It used
+        to run under the replay lock alone, on the reasoning that the lidar and derived
+        streams "have their own connections" -- they do not, it is handed the shared
+        `Store` -- and that nothing serves replay data until it is done, which is true
+        and beside the point: evidence frames, `/replay/frame` and the world-cache reads
+        all use that same store and all take the store lock, so the build ran against
+        them. Measured 6 of 10 concurrent trials corrupted, against 0 of 10 under the
+        lock, with short reads and a `ValueError: not enough values to unpack` out of the
+        builder. The cost is that a first build on a new recording serialises questions
+        behind it; the fix that would not is a second connection for the builder.
+        """
+        with self._replay_lock:
+            return self._replay_locked()
+
+    def _replay_if_ready(self) -> tuple[VoxelReplay, dict[str, Any]]:
+        """The replay and its index json for the serving routes: while a build holds
+        the lock they answer 503 instead of holding a request thread for the whole
+        build. Both come from the one acquisition: a reopen in between would clear them."""
+        if not self._replay_lock.acquire(blocking=False):
+            raise RuntimeError(f"replay {self._replay_progress}")
+        try:
+            if self._replay is None and self._replay_error is None:
+                # The flag is the operator saying this recording must not GROW the voxel
+                # replay streams, not merely "skip it at startup". It only ever gated the
+                # startup build, so the first viewer to ask for a timeline started one
+                # anyway -- which rebuilt streams that had been deliberately deleted, and
+                # did it while another writer was on the same file. Said as a settled
+                # answer rather than progress, so the viewer stops asking.
+                if not self.config.build_replay_on_start:
+                    # Said through `_replay_progress`, because that is what the routes put
+                    # on the wire: they answer `f"replay {self._replay_progress}"` and
+                    # DISCARD this exception's message. Raising it alone left the browser
+                    # reading "replay not started" -- so the viewer's "turned off" branch
+                    # was unreachable and it went on polling for ever for a build that is
+                    # refused by design.
+                    self._replay_progress = "build is turned off for this recording"
+                    raise RuntimeError(f"replay {self._replay_progress}")
+                # Never build on a request thread: start it (once) and let the viewer poll.
+                with self._workers_lock:  # paired with stop(): nothing starts once it stops
+                    if self._stopping.is_set():
+                        raise RuntimeError("replay not built: stopping")
+                    if self._replay_thread is None or not self._replay_thread.is_alive():
+                        # Said HERE, not deeper in the build. `_replay_locked` only
+                        # reaches its own "building" when the streams are MISSING; on a
+                        # recording that already has them -- every run after the first --
+                        # it goes straight from "not started" to "ready", while this
+                        # thread is alive and every poll meanwhile fails the non-blocking
+                        # lock and answers 503 "replay not started". The viewer now reads
+                        # "not started" as settled, so the server was telling it "there
+                        # will never be a timeline" during the build it had just started.
+                        self._replay_progress = "building"
+                        thread = threading.Thread(
+                            target=self._build_replay, daemon=True, name="MemoryWorldReplay"
+                        )
+                        thread.start()  # started before it is published: join needs that
+                        self._replay_thread = thread
+                raise RuntimeError(f"replay {self._replay_progress}")
+            replay = self._replay_locked()
+            assert self._replay_index is not None  # set together with _replay
+            return replay, self._replay_index
+        finally:
+            self._replay_lock.release()
+
+    def _replay_locked(self) -> VoxelReplay:
+        if self._replay is not None:
+            return self._replay
+        if self._replay_error is not None:
+            raise RuntimeError(self._replay_error)
+        try:
+            with self._store_lock:
+                store = self._ensure_store()
+                if self.config.image_stream_name not in store.list_streams():
+                    named = repr(self.config.image_stream_name or "colour")
+                    raise RuntimeError(f"no {named} image stream; the replay needs camera frames")
+                available = VoxelReplay.available(
+                    store,
+                    voxel_size=self.config.voxel_size,
+                    lidar_stream_name=self.config.lidar_stream_name,
+                    max_range=self.config.replay_max_range_m,
+                    world_frame=self.config.world_frame,
+                    keyframe_interval_s=self.config.replay_keyframe_interval_s,
+                )
+            if not available:
+                self._replay_progress = "building"
+                logger.info("building the voxel replay streams into %s", self.config.store_path)
+                # Under the store lock, like every other use of this store: it is the
+                # shared one, the build reads and writes it for minutes, and the readers
+                # it was racing take this lock. See the docstring for the measurement.
+                with self._store_lock:
+                    stats = build_replay_streams(
+                        store,
+                        lidar_stream_name=self.config.lidar_stream_name,
+                        to_scan=self._scan_frame,
+                        voxel_size=self.config.voxel_size,
+                        max_range=self.config.replay_max_range_m,
+                        keyframe_interval_s=self.config.replay_keyframe_interval_s,
+                        cancelled=self._stopping.is_set,
+                        world_frame=self.config.world_frame,
+                    )
+                    if self._stopping.is_set():  # cut short: no last keyframe on the streams
+                        raise RuntimeError("cancelled")
+                    if stats.added == 0:  # nothing placed: the streams would pass as finished
+                        for name in (DIFF_STREAM, KEYFRAME_STREAM):
+                            store.delete_stream(name)
+                        raise RuntimeError("no voxel came out of the scans (tf, frame or range)")
+                logger.info(
+                    "voxel replay built: %d scans, %d keyframes, +%d/-%d edits in %.1f s",
+                    stats.scans,
+                    stats.keyframes,
+                    stats.added,
+                    stats.removed,
+                    stats.seconds,
+                )
+            with self._store_lock:
+                # The replay shows the same heights as the static map.
+                replay = VoxelReplay(
+                    store,
+                    z_min=self.config.map_z_min if self.config.map_z_min is not None else -np.inf,
+                    z_max=self.config.map_z_max if self.config.map_z_max is not None else np.inf,
+                )
+                if len(replay.index.scan_ts) < 2:  # nothing to seek: the viewer would poll forever
+                    raise RuntimeError("fewer than two scans")
+                # Listing every camera stamp is a pass over the image stream (on
+                # an mcap that decompresses every chunk), so it is done here, once.
+                self._replay_index = self._build_replay_index_json(replay)
+        except (Exception, SystemExit) as error:
+            # The viewer reads this prefix: it stops polling on a failed build. A refusal
+            # is a SystemExit, and missing it here left `_replay_progress` on its starting
+            # value, so the poll never saw the prefix and /replay/index rebuilt for ever.
+            self._replay_progress = f"build failed: {error}"
+            # Remembered: otherwise every viewer connect and every /replay/index retry
+            # would rebuild from scratch. A cancelled build is retried by the next start.
+            if not self._stopping.is_set():
+                self._replay_error = self._replay_progress
+            raise
+        self._replay = replay
+        self._replay_progress = "ready"
+        return replay
+
+    def _replay_read(self, fn: Any, *args: Any) -> Any:
+        """Run one store-reading replay call at a time."""
+        with self._store_lock:
+            return fn(*args)
+
+    def _build_replay(self) -> None:
+        if self._stopping.is_set():  # stop() may have set it after the caller's check
+            return
+        try:
+            self._ensure_replay()
+        except (Exception, SystemExit):  # a refusal is a SystemExit
+            logger.exception("voxel replay build failed")  # _replay_locked keeps the reason
+
+    def _frame_pose_at(self, frame: str, ts: float) -> np.ndarray | None:
+        """world_T_frame at *ts* from tf, or None."""
+        tree = self._tf_tree()
+        if tree is None:
+            return None
+        matrix: np.ndarray | None = tree.lookup(
+            self.config.world_frame, frame, ts, self.config.tf_tolerance_s
+        )
+        return matrix
+
+    def _camera_pose_of(self, obs: Any) -> np.ndarray | None:
+        """world_T_optical for an image observation.
+
+        From tf at the image's stamp; without a
+        tf stream, from the body pose stamped on the image, turned into the
+        optical convention.
+        """
+        if self._tf_tree() is None:
+            return body_camera_pose(obs)
+        return self._frame_pose_at(self._camera_frame(), float(obs.ts))
+
+    @property
+    def whisper(self) -> Any:
+        if self._whisper is None:
+            from faster_whisper import WhisperModel
+
+            self._whisper = WhisperModel(
+                self.config.whisper_model, device="auto", compute_type="int8"
+            )
+            logger.info("loaded faster-whisper %s", self.config.whisper_model)
+        return self._whisper
+
+    def _transcribe(self, audio: bytes) -> str:
+        """Transcribe a browser audio recording with faster-whisper.
+
+        Decoding goes through faster-whisper's own resampler rather than a
+        temp-file handoff, so whatever container MediaRecorder chose (webm/opus
+        on Chromium and the Quest browser, mp4/aac on Safari) is handled the
+        same way.
+        """
+        from faster_whisper import decode_audio
+
+        samples = decode_audio(io.BytesIO(audio), sampling_rate=16_000)
+        segments, _ = self.whisper.transcribe(samples, language="en")
+        return " ".join(segment.text for segment in segments).strip()
+
+    def _on_client_message(self, conn: ClientConn, msg: dict[str, Any]) -> None:
+        kind = msg.get("type")
+        if kind == "ping":
+            conn.send_threadsafe(encode_text("pong"))
+        elif kind == "diag":
+            logger.info(
+                "[client/diag] %s %s",
+                msg.get("event", "?"),
+                {k: v for k, v in msg.items() if k not in ("type", "event")},
+            )
+        elif kind == "viewer_pose":
+            position = msg.get("position")
+            if (
+                isinstance(position, list)
+                and len(position) == 3
+                and all(_is_finite_number(value) for value in position)
+            ):
+                with self._clients_lock:
+                    self._viewer_position = (
+                        float(position[0]),
+                        float(position[1]),
+                        float(position[2]),
+                    )
+        elif kind in (
+            "locomote",
+            "yaw",
+            "teleport_aim",
+            "teleport_commit",
+            "teleport_cancel",
+            "scale_delta",
+            "reset_view",
+            "toggle_images",
+            "toggle_cloud",
+            "voice_start",
+            "voice_stop",
+        ):
+            # Gestures the client handles itself, echoed here only as telemetry.
+            # Debug-level so they don't spam the console (scale_delta fires every frame).
+            #
+            # Every kind `main.js`'s `dispatchGesture` forwards belongs in this tuple, or
+            # the warning below fires on ordinary traffic: push-to-talk sends
+            # `voice_start`/`voice_stop` on every mic press, and each one was logged as an
+            # unknown message -- which teaches an operator to ignore the warning that
+            # exists to catch a genuinely unrecognised one. The test beside this reads the
+            # list out of `main.js` so the two cannot drift apart again.
+            logger.debug("[client] %s", kind)
+        else:
+            logger.warning("[client] unknown msg kind=%r full=%r", kind, msg)
+
+    # ---- lifecycle ---------------------------------------------------------
+
+    @rpc
+    def start(self) -> None:
+        # A second start would build a second server over the handle of the first, log
+        # that it started, and only then fail to bind -- inside the thread, where the
+        # Errno 48 reaches nobody. `stop()` would then shut the handle that never bound
+        # and leave the REAL listener serving a module whose store it has just closed,
+        # and `memworld`'s probe takes any answer on the port as success, so the next
+        # launch prints its URLs over the previous recording's world. Seen in the live
+        # log tonight: two "server started" lines from one pid with an Errno 48 between.
+        if self._web_server is not None:
+            logger.warning("already serving on port %d; start() ignored", self.config.server_port)
+            return
+        # A stopped module is finished, not idle: our stop() calls super().stop(), which
+        # latches core's `_module_closed`. Refuse plainly rather than half-reviving one.
+        # Clearing `_web_server` in stop() (right, because "already serving" is a lie once
+        # the server is down) made this reachable for the first time, and what came up was
+        # a module that bound the port and could do nothing: `_stopping` stays set, so
+        # _prepare returns before loading search, _build_replay refuses, and every replay
+        # and orbit request answers 503 "stopping". Binding a port for a module that can
+        # never answer is the orphaned-listener hazard the guard above exists to prevent,
+        # because memworld's probe takes any answer on the port as success.
+        if getattr(self, "_module_closed", False):
+            logger.warning("this module was stopped; start a new one instead of restarting")
+            return
+        # Belt and braces for a start() that follows a stop() which died before closing.
+        self._stopping.clear()
+        super().start()
+        self._web_server = RobotWebInterface(
+            host=self.config.listen_host,
+            port=self.config.server_port,
+        )
+        self._setup_routes()
+        self._web_server_thread = threading.Thread(
+            target=self._web_server.run,
+            kwargs={"ssl": True, "ssl_certs_dir": DIMOS_PROJECT_ROOT / "assets" / "teleop_certs"},
+            daemon=True,
+            name="MemoryWorldWebServer",
+        )
+        self._web_server_thread.start()
+        # Give the bind a moment to fail before saying it worked: uvicorn's Errno 48
+        # arrives a couple of milliseconds after run(), and a thread that has already
+        # exited is the only evidence of it this side of the log. Said, not raised -- a
+        # server that simply returns is not necessarily a failure (a stub in a test does
+        # exactly that), and the orphaned-listener bug is fixed by the guard above.
+        self._web_server_thread.join(0.25)
+        if not self._web_server_thread.is_alive():
+            logger.warning(
+                "the web server thread exited at once; port %d may already be in use",
+                self.config.server_port,
+            )
+        logger.info(
+            "memory-world server started on https://%s:%d",
+            self.config.listen_host,
+            self.config.server_port,
+        )
+        self._prepare_thread = threading.Thread(
+            target=self._prepare, daemon=True, name="MemoryWorldPrepare"
+        )
+        self._prepare_thread.start()
+
+    def _prepare(self) -> None:
+        """Build what every client needs, in order of urgency, on one thread: each
+        step is a pass over the recording and run together they starve each other."""
+        try:
+            self._ensure_world_cache()
+        except (Exception, SystemExit):  # a refusal is a SystemExit; a thread dying on
+            # one logs nothing at all, so the viewer sat on "Building the map..." for ever.
+            logger.exception("world cache build failed")
+        if self._stopping.is_set():
+            return
+        if self.config.build_replay_on_start and not self._stopping.is_set():
+            self._build_replay()
+        if not self._stopping.is_set():
+            try:
+                self._build_visual_index()
+            except (Exception, SystemExit):  # as `_ensure_world_cache` above: a thread
+                # dying on one logs nothing at all, and this is the last step, so there
+                # is nothing after it to notice either.
+                logger.exception("visual index build failed")
+
+    @rpc
+    def stop(self) -> None:
+        try:
+            if self._web_server is not None:
+                self._web_server.shutdown()
+            if self._web_server_thread is not None:
+                self._web_server_thread.join(timeout=3)
+                self._web_server_thread = None
+            # Cleared with the thread. start() refuses to run while this is set, on the
+            # grounds that the module is "already serving" -- which is exactly false once
+            # stop() has shut it down, so leaving it set made a stopped module one that
+            # could never serve again, and said "already serving on port N" to explain it.
+            self._web_server = None
+            with self._workers_lock:  # paired with _replay_if_ready: no worker starts after this
+                self._stopping.set()  # prepare stops between steps; a replay build per scan
+                threads = (self._prepare_thread, self._replay_thread)
+            self._embed_job.terminate()
+            for thread in threads:
+                if thread is not None:
+                    thread.join(timeout=60)
+        finally:
+            busy = [t for t in (self._prepare_thread, self._replay_thread) if t and t.is_alive()]
+            if busy:
+                logger.warning(
+                    "%s is still running; its stores are left to the process exit", busy[0].name
+                )
+            else:
+                # ALL of the teardown is under the store lock, store then index, the
+                # order every reader uses. The evidence, query and adopt threads are not
+                # joined here and each holds it while reading: dismantle the index under
+                # one and it reads a dismantled index; close the store under one and every
+                # `memworld --stop` after a question prints a page of ProgrammingError.
+                # The deadline is because an evidence read decodes many frames and --stop
+                # must not wait; past it NOTHING is torn down and the process exit does it
+                # all, as the busy branch above already decides for its threads. Tearing
+                # half of it down is the one outcome worse than either.
+                if self._store_lock.acquire(timeout=5):
+                    try:
+                        with self._index_lock:
+                            if self._visual_index is not None:
+                                self._visual_index.stop()
+                                self._visual_index = None
+                            store, self._store = self._store, None
+                            if store is not None:
+                                try:
+                                    store.stop()
+                                except Exception:
+                                    logger.exception("error closing memory store")
+                    finally:
+                        self._store_lock.release()
+                else:
+                    logger.warning("a read is still in flight; the store is left to exit")
+            super().stop()

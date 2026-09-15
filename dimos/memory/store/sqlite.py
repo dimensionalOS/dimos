@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 from typing import Annotated, Any
 
 from pydantic import BeforeValidator
@@ -60,6 +61,9 @@ class SqliteStore(Store):
                 os.makedirs(parent, exist_ok=True)
         self._registry_conn = self._open_connection()
         self._registry = RegistryStore(conn=self._registry_conn)
+        # One connection serves the registry for every thread; sqlite rejects
+        # two statements in flight on it ("bad parameter or other API misuse").
+        self._registry_lock = threading.RLock()
 
     def _open_connection(self) -> sqlite3.Connection:
         """Open a new WAL-mode connection with sqlite-vec loaded."""
@@ -149,6 +153,12 @@ class SqliteStore(Store):
     def _create_backend(
         self, name: str, payload_type: type[Any] | None = None, **config: Any
     ) -> Backend[Any]:
+        with self._registry_lock:
+            return self._create_backend_locked(name, payload_type, **config)
+
+    def _create_backend_locked(
+        self, name: str, payload_type: type[Any] | None = None, **config: Any
+    ) -> Backend[Any]:
         validate_identifier(name)
 
         stored = self._registry.get(name)
@@ -207,16 +217,18 @@ class SqliteStore(Store):
         return backend
 
     def list_streams(self) -> list[str]:
-        db_names = set(self._registry.list_streams())
+        with self._registry_lock:
+            db_names = set(self._registry.list_streams())
         return sorted(db_names | set(self._streams.keys()))
 
     def delete_stream(self, name: str) -> None:
         super().delete_stream(name)
-        self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}"')
-        self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_blob"')
-        self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_vec"')
-        self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_rtree"')
-        self._registry.delete(name)
+        with self._registry_lock:
+            self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}"')
+            self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_blob"')
+            self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_vec"')
+            self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_rtree"')
+            self._registry.delete(name)
 
     def stop(self) -> None:
         super().stop()

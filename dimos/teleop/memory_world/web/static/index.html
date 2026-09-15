@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DimOS Memory World (VR)</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #06090f;
+            --panel: #0d141e;
+            --accent: #7af0a8;
+            --accent-soft: rgba(122, 240, 168, 0.12);
+            --text: #d8e6f4;
+            --muted: #5a6478;
+            --grid: rgba(122, 240, 168, 0.05);
+        }
+        body {
+            font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+            background: var(--bg);
+            background-image:
+                linear-gradient(var(--grid) 1px, transparent 1px),
+                linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+            background-size: 32px 32px;
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            letter-spacing: 0.03em;
+        }
+        #ui {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            text-align: center;
+        }
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 28px;
+            color: var(--text);
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+        h1::before { content: '// '; color: var(--accent); }
+        h1 small {
+            display: block;
+            font-size: 13px;
+            color: var(--muted);
+            font-weight: 400;
+            margin-top: 8px;
+            letter-spacing: 0.18em;
+        }
+        #status {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--accent);
+            padding: 14px 22px;
+            background: var(--panel);
+            border: 1px solid var(--accent-soft);
+            border-left: 3px solid var(--accent);
+            margin-bottom: 24px;
+            min-width: 360px;
+            text-transform: uppercase;
+            letter-spacing: 0.16em;
+        }
+        button {
+            font-family: inherit;
+            padding: 14px 42px;
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--bg);
+            background: var(--accent);
+            border: none;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.22em;
+            transition: filter 0.15s, transform 0.05s;
+            clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+        }
+        button:hover { filter: brightness(1.15); }
+        button:active { transform: translateY(1px); }
+        button:disabled { background: #2a3140; color: var(--muted); cursor: not-allowed; }
+        /* Secondary, not invisible: these sit over the 3D world once connected, and a
+           transparent one is text and a hairline floating on the scene. */
+        button.secondary {
+            background: rgba(13, 20, 30, 0.92);
+            color: var(--accent);
+            border: 1px solid var(--muted);
+            margin-top: 14px;
+        }
+        button.secondary:hover { background: var(--panel); border-color: var(--accent); }
+        #micBtn.recording {
+            background: #ff5f6d;
+            border-color: #ff5f6d;
+            color: var(--bg);
+        }
+        .hidden { display: none !important; }
+        #perf {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 110;
+            display: none;
+            font-size: 11px;
+            line-height: 1.6;
+            color: var(--accent);
+            background: rgba(6, 9, 15, 0.78);
+            border: 1px solid var(--accent-soft);
+            padding: 8px 12px;
+            white-space: pre;
+            text-align: right;
+            pointer-events: none;
+        }
+        #log {
+            position: absolute;
+            bottom: 16px;
+            left: 16px;
+            right: 16px;
+            max-height: 120px;
+            overflow-y: auto;
+            font-family: inherit;
+            font-size: 10px;
+            color: var(--muted);
+            opacity: 0.85;
+            border-left: 2px solid var(--accent-soft);
+            padding-left: 8px;
+        }
+        #hints, #desktopHints {
+            margin-top: 18px;
+            font-size: 11px;
+            color: var(--muted);
+            letter-spacing: 0.14em;
+            line-height: 1.7;
+            max-width: 460px;
+            text-align: left;
+        }
+        #hints b, #desktopHints b { color: var(--accent); font-weight: 600; }
+        /* Desktop view: the overlay must stop covering the canvas, both visually
+           and for hit-testing — the canvas needs the click that grabs pointer lock. */
+        body.desktop-view #ui {
+            inset: 12px auto auto 12px;
+            align-items: flex-start;
+            justify-content: flex-start;
+            text-align: left;
+            pointer-events: none;
+        }
+        body.desktop-view #ui > * { pointer-events: auto; }
+        body.desktop-view h1 { font-size: 15px; margin: 0 0 6px; }
+        body.desktop-view h1 small { display: none; }
+        body.desktop-view #hints { display: none; }
+        /* Once the world is up the menu gets out of the way: the title, status
+           and hints fade out and come back on hover or with H. The buttons
+           (Hold to ask, Disconnect) stay, or nobody can find the question
+           button. The answer lives on the 3D panel. */
+        body.desktop-view #ui > :not(button), body.desktop-view #perf {
+            opacity: 0;
+            transition: opacity 0.25s;
+        }
+        body.desktop-view #ui:hover > :not(button), body.desktop-view.hud-visible #ui > :not(button),
+        body.desktop-view.hud-visible #perf { opacity: 1; }
+        body.desktop-view #desktopHints { display: block; margin-top: 10px; }
+        #desktopHints { display: none; }
+        /* Touch controls: a thumb stick to walk and a row of one-tap actions.
+           Only shown where there is no keyboard to speak of. */
+        #stick {
+            position: absolute;
+            left: 24px;
+            bottom: 28px;
+            width: 128px;
+            height: 128px;
+            border-radius: 50%;
+            border: 2px solid var(--accent-soft);
+            background: rgba(6, 9, 15, 0.55);
+            display: none;
+            z-index: 120;
+            touch-action: none;
+        }
+        #stickKnob {
+            position: absolute;
+            left: 40px;
+            top: 40px;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: var(--accent);
+            opacity: 0.85;
+        }
+        #touchBar {
+            position: absolute;
+            right: 16px;
+            bottom: 28px;
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 120;
+        }
+        #touchBar button {
+            padding: 12px 18px;
+            font-size: 12px;
+            letter-spacing: 0.12em;
+            background: rgba(6, 9, 15, 0.7);
+            color: var(--accent);
+            border: 1px solid var(--accent-soft);
+            clip-path: none;
+        }
+        /* No hover on a phone, so the buttons (mic, disconnect) must stay reachable. */
+        @media (hover: none), (max-width: 640px) {
+            body.desktop-view #ui > :not(button) { opacity: 1; }
+            body.desktop-view #hints, body.desktop-view #desktopHints { display: none; }
+            body.desktop-view h1 { display: none; }
+        }
+        /* body.touch is set from navigator.maxTouchPoints, which unlike the
+           hover media query is true on every phone and tablet. */
+        body.desktop-view.touch #stick { display: block; }
+        body.desktop-view.touch #touchBar { display: flex; }
+        /* Timeline: scrub the recording. Sits above the touch controls on a phone. */
+        #timeline {
+            position: absolute;
+            left: 50%;
+            bottom: 14px;
+            transform: translateX(-50%);
+            width: min(760px, calc(100% - 24px));
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            background: rgba(6, 9, 15, 0.72);
+            border: 1px solid var(--accent-soft);
+            z-index: 120;
+            touch-action: none;
+        }
+        body:not(.desktop-view) #timeline { display: none; }
+        body.desktop-view.touch #timeline { bottom: 248px; }   /* clear of the one-tap column */
+        #timeline button {
+            padding: 8px 14px;
+            font-size: 14px;
+            letter-spacing: 0;
+            background: rgba(6, 9, 15, 0.7);
+            color: var(--accent);
+            border: 1px solid var(--accent-soft);
+            clip-path: none;
+        }
+        #timeline:not(.replaying) #exitReplayBtn { visibility: hidden; }
+        /* The segment under the thumb is still downloading: the thumb pulses and the
+           label says so, so a slow link reads as "loading", not "broken". */
+        #timeline.loading #timeLabel { color: #ffb347; }
+        #timeline.loading #scrub::-webkit-slider-thumb { animation: thumbPulse 0.8s ease-in-out infinite; background: #ffb347; }
+        #timeline.loading #scrub::-moz-range-thumb { animation: thumbPulse 0.8s ease-in-out infinite; background: #ffb347; }
+        @keyframes thumbPulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.35); opacity: 0.55; } }
+        #timeLabel { font-size: 12px; color: var(--accent); white-space: nowrap; min-width: 84px; text-align: right; }
+        #scrub {
+            flex: 1;
+            height: 32px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+            touch-action: none;
+        }
+        #scrub::-webkit-slider-runnable-track { height: 6px; background: #2a3140; border-radius: 3px; }
+        #scrub::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 28px; height: 28px; margin-top: -11px;
+            border-radius: 50%; background: var(--accent); border: 2px solid var(--bg);
+        }
+        #scrub::-moz-range-track { height: 6px; background: #2a3140; border-radius: 3px; }
+        #scrub::-moz-range-thumb { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); }
+        /* Ask bar: type a question (top centre once the world is up). */
+        #askBar {
+            position: absolute;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            gap: 6px;
+            z-index: 130;
+            width: min(520px, calc(100% - 200px));
+        }
+        body.desktop-view #askBar { display: flex; }
+        #askBar input {
+            flex: 1;
+            font: inherit;
+            font-size: 14px;
+            padding: 10px 14px;
+            color: var(--text);
+            background: rgba(6, 9, 15, 0.82);
+            border: 1px solid var(--accent-soft);
+            border-left: 3px solid var(--accent);
+            outline: none;
+        }
+        #askBar input:focus { border-color: var(--accent); }
+        #askBar button, #results button, #menu button, #tour button {
+            padding: 9px 14px;
+            font-size: 12px;
+            letter-spacing: 0.1em;
+            background: rgba(6, 9, 15, 0.97);
+            color: var(--accent);
+            border: 1px solid var(--accent-soft);
+            clip-path: none;
+        }
+        /* The Ask button sits over the world: it needs to read as a button. */
+        #askBar button { background: var(--accent); color: #04070c; font-weight: 700;
+            border-color: var(--accent); box-shadow: 0 0 12px rgba(0, 0, 0, 0.6); }
+        #askBar button:disabled { background: rgba(6, 9, 15, 0.97); color: var(--muted);
+            border-color: var(--accent-soft); box-shadow: none; }
+        /* Menu: top right, under the perf readout. */
+        #menuBtn {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 140;
+            display: none;
+            padding: 8px 12px;
+            font-size: 18px;
+            line-height: 1;
+            background: rgba(6, 9, 15, 0.82);
+            color: var(--accent);
+            border: 1px solid var(--accent-soft);
+            clip-path: none;
+        }
+        body.desktop-view #menuBtn { display: block; }
+        body.desktop-view #perf { top: 52px; }
+        #menu {
+            position: absolute;
+            top: 52px;
+            right: 12px;
+            z-index: 140;
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            width: 300px;
+            padding: 14px;
+            background: rgba(6, 9, 15, 0.92);
+            border: 1px solid var(--accent-soft);
+            font-size: 12px;
+            letter-spacing: 0.06em;
+        }
+        #menu.open { display: flex; }
+        #menu h2 { font-size: 11px; color: var(--muted); letter-spacing: 0.2em; text-transform: uppercase; margin: 6px 0 2px; }
+        #menu button { text-align: left; width: 100%; }
+        #menu button.primary { color: var(--bg); background: var(--accent); font-weight: 700; }
+        #menu label { display: flex; align-items: center; gap: 8px; color: var(--text); cursor: pointer; }
+        #menu select {
+            font: inherit;
+            font-size: 12px;
+            color: var(--text);
+            background: rgba(6, 9, 15, 0.9);
+            border: 1px solid var(--accent-soft);
+            padding: 6px;
+            width: 100%;
+        }
+        #menu .row { display: flex; gap: 6px; }
+        #menu .row button { flex: 1; text-align: center; }
+        #menu .note { color: var(--muted); font-size: 11px; line-height: 1.5; }
+        /* Results bar: step through the answer's places. */
+        #results {
+            position: absolute;
+            left: 50%;
+            bottom: 74px;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: rgba(6, 9, 15, 0.82);
+            border: 1px solid var(--accent-soft);
+            border-left: 3px solid #ff5c3a;
+            z-index: 125;
+            max-width: min(900px, calc(100% - 24px));
+        }
+        /* The answer, as real text. It used to be drawn into a canvas and hung in the
+           scene as a head-locked quad: unselectable, unscalable, blurry at an angle, and
+           silently cut off after four wrapped lines. HTML has none of those problems.
+           It cannot render inside an immersive XR session, though, so the 3D panel is
+           still what a headset sees -- this is hidden there and that one is shown. */
+        #answerText {
+            position: absolute;
+            left: 50%;
+            top: 84px;
+            transform: translateX(-50%);
+            padding: 10px 16px;
+            background: rgba(5, 10, 16, 0.92);
+            border: 1px solid var(--accent-soft);
+            border-left: 3px solid #7af0a8;
+            color: var(--text);
+            font-size: 15px;
+            line-height: 1.45;
+            z-index: 125;
+            max-width: min(720px, calc(100% - 24px));
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+        #answerText[hidden] { display: none; }
+        /* A phone screen is mostly UI otherwise. Everything hidden here is reachable from
+           the ☰ menu, which is why it can go: Disconnect and the orbit-frame button are in
+           it verbatim, and Show map is the "Minimap + answer panel" checkbox. The status
+           line is running commentary that the answer panel and the results bar already
+           say better, so it stays only until the world is up, and for errors. Answer and
+           Camera keep their buttons: nothing in the menu does what they do, and a phone
+           has no keyboard to press J or P with. */
+        body.touch.connected #status,
+        body.touch #disconnectBtn,
+        body.touch #orbitBtn,
+        body.touch #hudBtn,
+        body.touch #orbitTouchBtn { display: none; }
+        body.touch.connected #status.error { display: block; }
+        /* On a narrow screen the header stack (title, status, connect row) is tall enough
+           to reach the answer's fixed top, and the two overlapped -- measured at 390px,
+           the answer ran 84..193 straight through the status line at 70..112. Below that
+           width it sits just above the results bar instead, which is what it describes
+           anyway. The two offsets track #results' own two positions. */
+        @media (max-width: 820px) {
+            #answerText {
+                top: auto;
+                bottom: 126px;
+                max-width: calc(100% - 24px);
+            }
+            body.desktop-view.touch #answerText { bottom: 360px; }
+        }
+        #results[hidden] { display: none; }
+        body:not(.desktop-view) #results { display: none; }
+        body.desktop-view.touch #results { bottom: 308px; }    /* and clear of the timeline */
+        #resultsCounter { font-size: 14px; font-weight: 700; color: #ff9a6a; white-space: nowrap; }
+        #resultsLabel { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        #results button { padding: 8px 12px; }
+        /* Tour: a museum card in the corner while the camera flies between stations. */
+        #tour {
+            position: absolute;
+            left: 20px;
+            bottom: 20px;
+            z-index: 150;
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+            width: min(520px, calc(100% - 40px));
+            padding: 20px 22px;
+            background: rgba(6, 9, 15, 0.9);
+            border: 1px solid var(--accent-soft);
+            border-left: 4px solid var(--accent);
+        }
+        #tour.open { display: flex; }
+        #tourKicker { font-size: 11px; color: var(--muted); letter-spacing: 0.24em; text-transform: uppercase; }
+        #tourTitle { font-size: 22px; font-weight: 700; color: var(--text); letter-spacing: 0.04em; }
+        #tourBody { font-size: 13px; line-height: 1.6; color: var(--text); letter-spacing: 0.02em; }
+        #tourBody b { color: var(--accent); }
+        #tourBody ul { margin: 6px 0 0 18px; }
+        #tourNav { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+        #tourNav .spacer { flex: 1; }
+        #tourDots { display: flex; gap: 5px; }
+        #tourDots i { width: 7px; height: 7px; border-radius: 50%; background: #2a3140; display: block; }
+        #tourDots i.on { background: var(--accent); }
+        body.touring #ui, body.touring #results, body.touring #askBar, body.touring #timeline { opacity: 0; pointer-events: none; }
+        /* The last station tells the user to type a question or hold the mic. */
+        body.touring.touring-hands-on #ui, body.touring.touring-hands-on #askBar { opacity: 1; pointer-events: auto; }
+        /* A phone shows every layer at once, because none of them can fade in on hover.
+           They were all sized for a desktop, so they landed on top of one another: the
+           status bar was wider than the screen and sat under the ask bar, and the button
+           column ran down over the answer. Everything here is about fitting, not styling. */
+        @media (max-width: 640px) {
+            /* The ask bar owns the top strip; everything in #ui starts below it. */
+            body.desktop-view #ui { padding-top: 58px; }
+            body.desktop-view #askBar { width: calc(100% - 68px); left: 12px; transform: none; }
+            body.desktop-view #status {
+                min-width: 0;
+                max-width: calc(100% - 24px);
+                font-size: 11px;
+                padding: 7px 10px;
+                margin-bottom: 8px;
+                letter-spacing: 0.06em;
+                text-transform: none;   /* it is a sentence, and uppercase wraps to two lines */
+            }
+            /* The three desktop buttons become a row of chips instead of a column of
+               slabs, so they stop covering the answer panel behind them. */
+            body.desktop-view #ui > button {
+                padding: 8px 12px;
+                font-size: 11px;
+                letter-spacing: 0.08em;
+                margin-top: 6px;
+                clip-path: none;
+            }
+            #menu { width: calc(100% - 24px); right: 12px; }
+            /* The two rows were wider than the screen, so the clock sat on the buttons.
+               They stay ONE line and scroll sideways if they must: letting them wrap
+               makes their height depend on the answer, and then no fixed offset above
+               them is right for long. */
+            #timeline, #results {
+                gap: 6px;
+                padding: 6px 8px;
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                scrollbar-width: none;
+            }
+            /* The buttons keep their size; the wordy bits give way. Freezing everything
+               pushed Next and Orbit off the right edge instead. */
+            #timeline > *, #results > * { flex: 0 0 auto; }
+            #resultsLabel, #scrub, #timeLabel {
+                flex: 1 1 auto;
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            #resultsLabel { flex-basis: 0; }   /* the first to give, and it can vanish */
+            #timeLabel { flex: 0 1 auto; font-size: 12px; }
+            #timeline button { padding: 6px 10px; font-size: 12px; }
+            #results button { padding: 7px 10px; }
+            /* Both rows are as wide as the screen allows, so their contents wrap inside
+               rather than pushing the last button off the right edge. */
+            #results, #timeline { width: calc(100% - 24px); box-sizing: border-box; }
+            /* The thumb stick and the one-tap column own the bottom of a phone, so the
+               two rows sit ABOVE both and keep the full width. Squeezing them in beside
+               the column left too little for their own buttons: Next and Navigate went
+               off the end, which is worse than the rows sitting higher up. */
+            body.desktop-view.touch #timeline,
+            body.desktop-view.touch #results {
+                left: 12px;
+                transform: none;
+                width: calc(100% - 24px);
+            }
+            /* Orbit is already one tap away in the column below, and dropping it here is
+               what leaves room for Close at the other end of the row. */
+            body.desktop-view.touch #resultsOrbit { display: none; }
+        }
+    </style>
+</head>
+<body data-background-mode="__BACKGROUND_MODE__">
+    <div id="ui">
+        <h1>DimOS Memory World
+            <small>QUEST 3 // WEBXR // FIRST-PERSON</small>
+        </h1>
+        <div id="status">[ READY TO CONNECT ]</div>
+        <button id="connectBtn" onclick="window.app.connect()">Connect</button>
+        <button id="disconnectBtn" class="secondary hidden" onclick="window.app.disconnect()">Disconnect</button>
+        <button id="micBtn" class="secondary hidden">Hold to ask</button>
+        <button id="orbitBtn" class="secondary hidden">Orbit frame</button>
+        <div id="hints">
+            <b>LEFT STICK</b>  walk / strafe<br>
+            <b>RIGHT STICK X</b>  smooth yaw turn<br>
+            <b>RIGHT TRIGGER</b>  teleport (point + pull)<br>
+            <b>BOTH GRIPS</b>  hold + move controllers apart / together to scale<br>
+            <b>BOTH HANDS PINCH</b>  same gesture in hand-tracking mode<br>
+            <b>LEFT X</b>  toggle image thumbnails<br>
+            <b>LEFT Y</b>  reset view<br>
+            <b>RIGHT B</b>  toggle voxels<br>
+            <b>RIGHT A</b>  hold to ask "where did I see …"
+        </div>
+        <div id="desktopHints" class="hints">
+            <b>DRAG</b>  look around &nbsp; (phone: one finger looks, the stick walks, pinch to scale)<br>
+            <b>DOUBLE-CLICK</b>  free-look / capture mouse (ESC releases)<br>
+            <b>W A S D</b>  walk / strafe &nbsp; <b>Q / E</b>  down / up &nbsp; <b>SHIFT</b> sprint<br>
+            <b>I</b>  toggle image thumbnails &nbsp; <b>V</b>  toggle voxels<br>
+            <b>R</b>  reset view &nbsp; <b>J</b>  jump to the answer &nbsp; <b>P</b>  see it from the camera<br>
+            <b>M</b>  show / hide the minimap &nbsp; <b>H</b>  keep this menu<br>
+            <b>O</b>  orbit the robot (drag circles it, wheel moves in and out; follows the timeline)<br>
+            <b>TIMELINE</b>  drag to scrub the recording, ▶ plays it back, ✕ returns to the full map<br>
+            <b>HOLD TO ASK</b>  speak a question, or type one in the bar at the top<br>
+            <b>← →</b>  step through the answer's places &nbsp; <b>N</b>  route to it &nbsp; <b>T</b>  the tour
+        </div>
+    </div>
+    <div id="perf"></div>
+    <form id="askBar" autocomplete="off">
+        <input id="askInput" type="text" placeholder="Ask the recording, e.g. where did I see a chair" aria-label="Question">
+        <button id="askBtn" type="submit">Ask</button>
+    </form>
+    <button id="menuBtn" title="Menu" aria-label="Menu">☰</button>
+    <div id="menu">
+        <button id="tourBtn" class="primary">Dimos Spatial Reasoning</button>
+        <div class="note" id="searchNote">Frame index: checking…</div>
+        <h2>Answer</h2>
+        <div class="row">
+            <button id="menuPrevBtn">◀ Prev</button>
+            <button id="menuNextBtn">Next ▶</button>
+        </div>
+        <div class="row">
+            <button id="menuOrbitResultBtn">Orbit result</button>
+            <button id="menuNavigateBtn">Navigate</button>
+        </div>
+        <h2>Orbit frame</h2>
+        <select id="orbitFrameSel" aria-label="Frame to orbit"></select>
+        <button id="menuOrbitBtn">Orbit frame</button>
+        <h2>Layers</h2>
+        <label><input type="checkbox" id="layerVoxels" checked> Voxel map</label>
+        <label><input type="checkbox" id="layerCubes"> Draw voxels as cubes (not spheres)</label>
+        <label><input type="checkbox" id="layerPhotos" checked> Photos</label>
+        <label><input type="checkbox" id="layerHud" checked> Minimap + answer panel</label>
+        <h2>Advanced</h2>
+        <button id="menuDisconnectBtn">Disconnect</button>
+        <button id="embedBtn" class="hidden">Add SigLIP embeddings (siglipify)</button>
+        <div class="note">Keys: ← → places · N navigate · O orbit · T tour · H menu · I photos · V voxels · M minimap</div>
+    </div>
+    <div id="answerText" hidden></div>
+    <div id="results" hidden>
+        <button id="resultsPrev" title="Previous place">◀</button>
+        <span id="resultsCounter">0 / 0</span>
+        <span id="resultsLabel"></span>
+        <button id="resultsNext" title="Next place">▶</button>
+        <button id="resultsOrbit" title="Orbit this place">Orbit</button>
+        <button id="resultsNavigate" title="Plan a route to this place">Navigate</button>
+        <button id="resultsClose" title="Clear the answer">✕</button>
+    </div>
+    <div id="tour">
+        <div id="tourKicker">Dimos Spatial Reasoning</div>
+        <div id="tourTitle"></div>
+        <div id="tourBody"></div>
+        <div id="tourNav">
+            <button id="tourPrev">◀</button>
+            <button id="tourNext">Next ▶</button>
+            <div id="tourDots"></div>
+            <span class="spacer"></span>
+            <button id="tourExit">Exit tour</button>
+        </div>
+    </div>
+    <div id="stick"><div id="stickKnob"></div></div>
+    <div id="touchBar">
+        <button id="hudBtn">Show map</button>
+        <button id="answerBtn">Answer</button>
+        <button id="cameraBtn">Camera</button>
+        <button id="orbitTouchBtn">Orbit</button>
+    </div>
+    <div id="timeline" hidden>
+        <button id="playBtn" title="Play / pause">▶</button>
+        <input id="scrub" type="range" min="0" max="1" step="1" value="0" aria-label="Timeline">
+        <span id="timeLabel">0:00 / 0:00</span>
+        <button id="exitReplayBtn" title="Back to the full map">✕</button>
+    </div>
+    <pre id="log"></pre>
+    <script type="module" src="/static_mw/main.js?v=__ASSET_VERSION__"></script>
+</body>
+</html>
