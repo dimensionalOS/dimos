@@ -67,6 +67,10 @@ class HeartbeatMsg(TypedDict):
 ViewerMsg = Union[ClickMsg, TwistMsg, StopMsg, HeartbeatMsg]
 
 
+# Hosts that only a client on this machine can reach.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
 def _handshake_noise_filter(record: logging.LogRecord) -> bool:
     """Drop noisy "opening handshake failed" records from port scanners etc."""
     msg = record.getMessage()
@@ -162,6 +166,19 @@ class RerunWebSocketServer(Module):
             logger=ws_logger,
         ) as server:
             self._bound_port = next(iter(server.sockets)).getsockname()[1]
+            if self.host in _LOOPBACK_HOSTS:
+                # The scene reaches a remote viewer over the rerun data port,
+                # which binds separately - so the viewer renders normally and
+                # looks connected while every click and keypress it sends is
+                # refused at the TCP level, off-process, with nothing logged
+                # anywhere. Silent input is far more expensive to debug than a
+                # startup warning is to read.
+                logger.warning(
+                    f"RerunWebSocketServer is bound to {self.host}:{self._bound_port}, so only "
+                    f"a viewer running on this machine can send input. A remote viewer will "
+                    f"still render the scene, but its clicks and teleop will be dropped before "
+                    f"they reach this process. Pass --rerun-host 0.0.0.0 to accept them."
+                )
             self._server_ready.set()
             await self._stop_event.wait()
 

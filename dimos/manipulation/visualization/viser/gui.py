@@ -646,12 +646,28 @@ class ViserPanelGui:
                         else:
                             assert coordinate.lower is not None and coordinate.upper is not None
                             lower, upper = coordinate.lower, coordinate.upper
+                        # A real encoder can sit outside its URDF limit - an
+                        # unhomed pillar reports 0.0 against a lift range that
+                        # is entirely negative, and a joint resting on a bound
+                        # dithers across it. viser asserts min <= value <= max,
+                        # and the throw kills this callback's thread, leaving
+                        # the panel half-built with no hint of which joint did
+                        # it. The slider edits a target, so clamping its start
+                        # is harmless; losing the panel is not.
+                        shown = min(max(float(value), float(lower)), float(upper))
+                        if shown != float(value):
+                            logger.warning(
+                                f"{group_id}/{joint_name} reads {float(value):.4f}, outside its "
+                                f"limit [{float(lower):.4f}, {float(upper):.4f}] - slider clamped "
+                                f"to {shown:.4f}. The joint is where it says, not where the "
+                                f"slider shows; home it before planning against it."
+                            )
                         handle = gui.add_slider(
                             f"{group_id}/{joint_name}",
                             min=float(lower),
                             max=float(upper),
                             step=0.001,
-                            initial_value=float(value),
+                            initial_value=shown,
                         )
 
                     def on_slider_update(

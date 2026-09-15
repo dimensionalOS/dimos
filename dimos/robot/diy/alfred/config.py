@@ -41,9 +41,15 @@ class AlfredConfig:
 
 ALFRED = AlfredConfig(
     name="alfred",
-    # The vertical span the MLS planner requires to be free above a cell before it will
-    # plan through it. The mast reaches higher, but nothing up there is a collision risk.
+    # NOT the planner's headroom - alfred-nav passes ALFRED_HEIGHT_M (1.86 m, the
+    # top of the collision scene) for that. The claim this comment used to make,
+    # that nothing above 0.5 m is a collision risk, is contradicted by the URDF:
+    # the mast alone reaches 1.57 m. Kept because the MLS planner's body_height
+    # is also used as the free-span heuristic elsewhere.
     body_height=0.5,
+    # Unused by any Alfred blueprint - only the G1's read these two fields. They
+    # look authoritative here and are not; ALFRED_FOOTPRINT_RADIUS_M in
+    # alfred_model is the measured number the planner is given.
     height_clearance=2.0,  # meters
     width_clearance=1.0,
     # The Mid-360 is on the Jetson's wired 192.168.1.100/24 link.

@@ -376,3 +376,50 @@ def test_configure_refused_while_active_and_accepts_unknown_kwargs():
     assert task._config.speed == 0.7
     task.start_path(straight_rotate(), _pose())
     assert not task.configure(speed=0.3)
+
+
+def test_monotonic_progress_cannot_flip_back_across_a_vertex() -> None:
+    """A sharp corner made the tracker oscillate: sitting on the vertex, the
+    nearest point flipped between the incoming and outgoing legs and took the
+    reference yaw with it. back_m=0 is what stops that."""
+    import math as _m
+
+    from dimos.control.tasks.holonomic_pose_follower_task.progress_reference import (
+        ProgressPathReference,
+    )
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.nav_msgs.Path import Path
+
+    def _p(x, y, yaw):
+        return PoseStamped(
+            ts=0.0,
+            frame_id="odom",
+            position=Vector3(x, y, 0.0),
+            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+        )
+
+    # An L: 1 m east, then 1 m north. The vertex is at (1, 0).
+    step = 0.05
+    poses = [_p(i * step, 0.0, 0.0) for i in range(int(1 / step) + 1)]
+    poses += [_p(1.0, i * step, _m.pi / 2) for i in range(1, int(1 / step) + 1)]
+    path = Path(poses=poses)
+
+    ref = ProgressPathReference(path, back_m=0.0)
+    ref.advance(0.98, 0.0)
+    at_corner = ref.progress
+    # Jitter around the vertex: with a backward window this walks progress back
+    # onto the incoming leg and the reference yaw snaps from pi/2 to 0.
+    for x, y in ((1.0, 0.02), (0.97, 0.0), (1.0, 0.05), (0.96, 0.01)):
+        assert ref.advance(x, y) >= at_corner, "progress went backwards across the vertex"
+
+
+def test_the_corner_floor_leaves_the_unfloored_default_alone() -> None:
+    """Every existing consumer gets the old behaviour; 0 is a no-op floor."""
+    from dimos.control.tasks.holonomic_pose_follower_task.holonomic_pose_follower_task import (
+        HolonomicPoseFollowerTaskConfig,
+    )
+
+    assert HolonomicPoseFollowerTaskConfig(joint_names=["a", "b", "c"]).min_corner_speed == 0.0
+    assert HolonomicPoseFollowerTaskConfig(joint_names=["a", "b", "c"]).progress_back_m == 0.5

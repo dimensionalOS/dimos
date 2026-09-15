@@ -101,6 +101,19 @@ class HolonomicPoseFollowerTaskConfig:
     stop_hold_s: float = 1.0
     artifact_path: str = DEFAULT_ARTIFACT_PATH
     stale_pose_timeout: float = 0.3
+    # How far progress may slide BACKWARD when re-projecting onto the path.
+    # It exists so a robot shoved off the path can recover its place, but at a
+    # heading discontinuity it is what makes the tracker oscillate: sitting on a
+    # sharp vertex, the nearest point flips between the incoming and outgoing
+    # legs, and the reference yaw flips with it. 0 makes progress monotonic,
+    # which is what a path follower moving forward should do anyway.
+    progress_back_m: float = 0.5
+    # Floor under the yaw-rate and curvature speed caps. A sharp vertex is a
+    # heading DISCONTINUITY, not a curve: discretized at 0.05 m it reports
+    # dyaw/ds ~ 31 rad/m, so wz_max/dyaw_ds throttles the robot to a crawl at a
+    # corner it should simply slow for and turn through. 0 keeps the caps
+    # unfloored, which is the behaviour every existing consumer has.
+    min_corner_speed: float = 0.0
 
 
 class HolonomicPoseFollowerTask(BaseControlTask):
@@ -273,10 +286,11 @@ class HolonomicPoseFollowerTask(BaseControlTask):
             s_ref, self._config.regulate_horizon
         )
         v = v_cruise
+        floor = self._config.min_corner_speed
         if dyaw_ds_max > 1e-6:
-            v = min(v, self._wz_max / dyaw_ds_max)
+            v = min(v, max(self._wz_max / dyaw_ds_max, floor))
         if kappa_max > 1e-6:
-            v = min(v, math.sqrt(self._a_lat / kappa_max))
+            v = min(v, max(math.sqrt(self._a_lat / kappa_max), floor))
         # Only the goal ramp may go below the plant's floor speed (it must reach 0).
         v = max(v, min(self._min_speed, v_cruise))
         a_app = min(self._a_dec, self._config.approach_decel)
@@ -410,7 +424,7 @@ class HolonomicPoseFollowerTask(BaseControlTask):
             return False
         self._ensure_artifact_loaded()
         try:
-            reference = ProgressPathReference(path)
+            reference = ProgressPathReference(path, back_m=self._config.progress_back_m)
         except ValueError as e:
             logger.warning(f"HolonomicPoseFollowerTask '{self._name}': {e}")
             return False
@@ -525,6 +539,8 @@ class HolonomicPoseFollowerTaskParams(BaseConfig):
     approach_decel: float = 1.0
     stop_hold_s: float = 1.0
     stale_pose_timeout: float = 0.3
+    progress_back_m: float = 0.5
+    min_corner_speed: float = 0.0
 
 
 def create_task(cfg: Any, hardware: Any) -> HolonomicPoseFollowerTask:
@@ -544,5 +560,7 @@ def create_task(cfg: Any, hardware: Any) -> HolonomicPoseFollowerTask:
             stop_hold_s=params.stop_hold_s,
             artifact_path=params.artifact_path,
             stale_pose_timeout=params.stale_pose_timeout,
+            progress_back_m=params.progress_back_m,
+            min_corner_speed=params.min_corner_speed,
         ),
     )
