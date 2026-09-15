@@ -447,6 +447,23 @@ class WavefrontFrontierExplorer(Module):
                     direction.x / magnitude, direction.y / magnitude, 0.0
                 )
 
+    def _await_goal_outcome(self) -> bool:
+        """Wait for the published goal; on timeout, forget its direction.
+
+        Returns True when the goal was reached within goal_timeout.
+        """
+        logger.info("Waiting for goal to be reached...")
+        goal_reached = self.goal_reached_event.wait(timeout=self.config.goal_timeout)
+        if goal_reached:
+            logger.info("Goal reached, finding next frontier")
+        else:
+            logger.warning(
+                f"Goal timeout after {self.config.goal_timeout:g} seconds, "
+                "finding next frontier anyway"
+            )
+            self._on_goal_timeout()
+        return goal_reached
+
     def _on_goal_timeout(self) -> None:
         """Forget the direction of a goal the robot failed to reach.
 
@@ -844,17 +861,7 @@ class WavefrontFrontierExplorer(Module):
                 self.goal_reached_event.clear()
 
                 # Wait for goal to be reached or timeout
-                logger.info("Waiting for goal to be reached...")
-                goal_reached = self.goal_reached_event.wait(timeout=self.config.goal_timeout)
-
-                if goal_reached:
-                    logger.info("Goal reached, finding next frontier")
-                else:
-                    logger.warning(
-                        f"Goal timeout after {self.config.goal_timeout:g} seconds, "
-                        "finding next frontier anyway"
-                    )
-                    self._on_goal_timeout()
+                self._await_goal_outcome()
             else:
                 consecutive_failures += 1
 
