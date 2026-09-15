@@ -89,6 +89,20 @@ def test_profile_rejects_conflicting_raw_types(profile):
         CollectionProfile(**values)
 
 
+def test_profile_rejects_conflicting_source_kinds(profile):
+    values = profile.model_dump()
+    values["actions"]["target"].update(stream="measured", source_kind="joint_position_updates")
+    with pytest.raises(ValueError, match="conflicting source kinds"):
+        CollectionProfile(**values)
+
+
+def test_profile_rejects_updates_from_non_joint_messages(profile):
+    values = profile.model_dump()
+    values["actions"]["target"].update(message_type=Image, source_kind="joint_position_updates")
+    with pytest.raises(ValueError, match="requires JointState"):
+        CollectionProfile(**values)
+
+
 @pytest.mark.parametrize("anchor", ["absent", "target"])
 def test_sync_anchor_must_be_an_observation(profile, anchor):
     values = profile.model_dump()

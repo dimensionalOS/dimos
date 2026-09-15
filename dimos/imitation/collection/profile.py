@@ -27,7 +27,9 @@ from dimos.imitation.dataprep.core import (
     OutputConfig,
     QualityConfig,
     SyncConfig,
+    validate_source_kinds,
 )
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.service.spec import BaseConfig
 
 
@@ -65,8 +67,13 @@ class CollectionProfile(BaseConfig):
 
     def input_types(self) -> dict[str, type[Any]]:
         """Deduplicate raw inputs without merging their dataset projections."""
+        validate_source_kinds((*self.observations.values(), *self.actions.values()))
         inputs: dict[str, type[Any]] = {}
         for feature in (*self.observations.values(), *self.actions.values()):
+            if feature.source_kind == "joint_position_updates" and not issubclass(
+                feature.message_type, JointState
+            ):
+                raise ValueError("joint_position_updates requires JointState messages")
             previous = inputs.setdefault(feature.stream, feature.message_type)
             if previous is not feature.message_type:
                 raise ValueError(f"stream {feature.stream!r} has conflicting message types")

@@ -5,6 +5,13 @@ cameras, transports, and runtime lifecycle. A `CollectionProfile` declares
 typed inputs and dataset projections; `collection_recorder(profile=...)`
 creates matching recorder ports before autoconnect.
 
+Profiles have no separate registry. `dimos run` discovers Blueprints through the
+built-in registry or installed `dimos.blueprints` entry points. The Blueprint
+passes a profile to its recorder; the profile name is recording metadata, not
+a Blueprint lookup key. Profile validation checks declarations and shared-source
+consistency. Recorder wiring checks required inputs; preparation validates the
+actual recorded values.
+
 ## OpenYAM Quest collection
 
 ```bash
@@ -43,6 +50,21 @@ run_lerobot_dataprep(config)
 Preparation uses the saved schema, not a current robot profile. Only prepare
 trusted recordings; custom message classes must be installed in the reader
 environment. Generic `run_dataprep(config)` supports HDF5 output.
+
+Each feature declares its recorded source's meaning with `source_kind`:
+
+- `"snapshot"` (default): align to the nearest observation within the configured
+  tolerance. This also applies when measured state supplies a teaching action.
+- `"joint_position_updates"`: reconstruct persistent `JointState.position`
+  targets by joint name, using only updates at or before each dataset timestamp.
+  Omitted joints retain their targets, including across episode boundaries.
+  Missing initial joints and malformed updates fail validation.
+
+Features sharing a recorded stream must declare the same source kind. Command
+history is reconstructed once before projecting individual features. Inspection
+and preparation share alignment and value checks; MCAP and SQLite capture remain
+unaligned, native-rate streams. Start a new recording after an unrecorded target
+reset or control-mode change.
 
 ## Policy execution
 

@@ -32,6 +32,7 @@ import pytest
 from dimos.imitation.dataprep.build import _write_dimos_meta, inspect_dataset, run_dataprep
 from dimos.imitation.dataprep.core import (
     DataPrepConfig,
+    DatasetSchema,
     Episode,
     EpisodeExtractor,
     EpisodeQualityReport,
@@ -484,6 +485,295 @@ def test_sync_empty_anchor_yields_nothing() -> None:
     streams = {"a": _feature("a")}
     sync = SyncConfig(anchor="a", rate_hz=1.0, tolerance_ms=10.0)
     assert list(iter_episode_samples(store, ep, streams, sync, QualityConfig())) == []
+
+
+def _held_action():
+    return FeatureSpec(
+        stream="commands",
+        field="position",
+        dtype="float32",
+        shape=(3,),
+        names=["left", "right", "gripper"],
+        source_kind="joint_position_updates",
+    )
+
+
+@pytest.mark.parametrize("sampling", ["nearest", "joint_position_hold"])
+def test_obsolete_sampling_option_is_rejected(sampling):
+    values = _held_action().model_dump()
+    values["sampling"] = sampling
+    with pytest.raises(
+        ValueError,
+        match="Extra inputs are not permitted",
+    ):
+        FeatureSpec(**values)
+
+
+def test_saved_schema_rejects_conflicting_source_kinds():
+    updates = _held_action()
+    snapshot = FeatureSpec(**(updates.model_dump() | {"source_kind": "snapshot"}))
+    with pytest.raises(ValueError, match="conflicting source kinds"):
+        DatasetSchema.model_validate_json(
+            json.dumps(
+                {
+                    "observation": {"state": snapshot.model_dump()},
+                    "action": {"action": updates.model_dump()},
+                }
+            )
+        )
+
+
+def test_snapshots_can_align_forward_but_targets_remain_causal():
+    store = _FakeStore(
+        {
+            "anchor": _scalar_stream([(10, 0), (11, 0)]),
+            "measured": _scalar_stream([(10.01, 3), (10.99, 4)]),
+            "commands": [
+                _Obs(1, JointState(name=["left", "right", "gripper"], position=[1, 2, 0])),
+                _Obs(10.001, JointState(name=["left"], position=[5])),
+            ],
+        }
+    )
+    streams = {
+        "anchor": _feature("anchor"),
+        "measured": _feature("measured"),
+        "target": _held_action(),
+    }
+    episode = Episode(id="episode", start_ts=10, end_ts=11)
+    sync = SyncConfig(anchor="anchor", rate_hz=1, tolerance_ms=20)
+
+    report = inspect_episode_quality(store, episode, streams, sync, QualityConfig())
+    samples = list(
+        iter_episode_samples(
+            store, episode, streams, sync, QualityConfig(), action_keys={"measured"}
+        )
+    )
+
+    assert report.valid, report.rejection_reasons
+    assert report.emitted_frames == len(samples) == 2
+    assert report.max_alignment_error_ms == pytest.approx(10)
+    np.testing.assert_array_equal([sample.action["measured"] for sample in samples], [[3], [4]])
+    np.testing.assert_array_equal(
+        [sample.observation["target"] for sample in samples], [[1, 2, 0], [5, 2, 0]]
+    )
+
+
+def test_shared_update_source_is_read_once_for_multiple_projections(mocker):
+    store = _FakeStore(
+        {
+            "anchor": _scalar_stream([(10, 0)]),
+            "commands": [
+                _Obs(1, JointState(name=["left", "right", "gripper"], position=[1, 2, 0]))
+            ],
+        }
+    )
+    read = mocker.spy(store, "stream")
+    streams = {
+        "anchor": _feature("anchor"),
+        "all": _held_action(),
+        "gripper": FeatureSpec(
+            **(_held_action().model_dump() | {"names": ["gripper"], "shape": (1,)})
+        ),
+    }
+    samples = list(
+        iter_episode_samples(
+            store,
+            Episode(id="episode", start_ts=10, end_ts=10),
+            streams,
+            SyncConfig(anchor="anchor", rate_hz=1, tolerance_ms=20),
+            QualityConfig(),
+        )
+    )
+    assert read.call_args_list == [mocker.call("anchor"), mocker.call("commands")]
+    np.testing.assert_array_equal(samples[0].observation["all"], [1, 2, 0])
+    np.testing.assert_array_equal(samples[0].observation["gripper"], [0])
+
+
+def test_held_action_uses_causal_recording_history_across_episodes():
+    store = _FakeStore(
+        {
+            "anchor": _scalar_stream([(10.0, 0.0), (11.0, 0.0), (12.0, 0.0), (20.0, 0.0)]),
+            "commands": [
+                _Obs(1.0, JointState(name=["right", "left"], position=[2.0, 1.0])),
+                _Obs(2.0, JointState(name=["gripper"], position=[0.0])),
+                _Obs(10.0, JointState(name=["gripper"], position=[1.0])),
+                _Obs(10.01, JointState(name=["left"], position=[3.0])),
+                _Obs(12.0, JointState(name=["gripper", "right", "left"], position=[0.0, 5.0, 4.0])),
+            ],
+        }
+    )
+    streams = {"anchor": _feature("anchor"), "action": _held_action()}
+    sync = SyncConfig(anchor="anchor", rate_hz=1.0, tolerance_ms=20)
+    for start, end, expected in [
+        (10.0, 12.0, [[1, 2, 1], [3, 2, 1], [4, 5, 0]]),
+        (20.0, 20.0, [[4, 5, 0]]),
+    ]:
+        episode = Episode(id="episode", start_ts=start, end_ts=end)
+        report = inspect_episode_quality(store, episode, streams, sync, QualityConfig())
+        samples = list(
+            iter_episode_samples(
+                store,
+                episode,
+                streams,
+                sync,
+                QualityConfig(),
+                action_keys={"action"},
+            )
+        )
+        assert report.valid, report.rejection_reasons
+        assert report.emitted_frames == len(samples) == len(expected)
+        assert report.filled_frames == 0
+        assert report.max_alignment_error_ms == 0
+        np.testing.assert_array_equal([sample.action["action"] for sample in samples], expected)
+
+
+def test_held_action_does_not_initialize_from_future_commands():
+    store = _FakeStore(
+        {
+            "anchor": _scalar_stream([(10.0, 0.0), (11.0, 0.0)]),
+            "commands": [
+                _Obs(1.0, JointState(name=["left", "right"], position=[1.0, 2.0])),
+                _Obs(10.001, JointState(name=["gripper"], position=[1.0])),
+            ],
+        }
+    )
+    streams = {"anchor": _feature("anchor"), "action": _held_action()}
+    sync = SyncConfig(anchor="anchor", rate_hz=1, tolerance_ms=20)
+    episode = Episode(id="episode", start_ts=10, end_ts=11)
+    report = inspect_episode_quality(store, episode, streams, sync, QualityConfig())
+    samples = list(iter_episode_samples(store, episode, streams, sync, QualityConfig()))
+    assert not report.valid
+    assert report.emitted_frames == len(samples) == 1
+    assert "gripper" in " ".join(report.rejection_reasons)
+    assert "10.0" in " ".join(report.rejection_reasons)
+    assert samples[0].ts == 11
+
+
+@pytest.mark.parametrize(
+    "message, reason",
+    [
+        (JointState(name=["left", "left"], position=[1, 2]), "duplicate"),
+        (JointState(name=["left"], position=[]), "names but"),
+        (JointState(name=["left"], position=[float("nan")]), "non-finite"),
+        ({"position": [1]}, "JointState"),
+    ],
+)
+def test_held_action_rejects_malformed_updates_even_between_samples(message, reason):
+    store = _FakeStore(
+        {
+            "anchor": _scalar_stream([(10.0, 0.0)]),
+            "commands": [
+                _Obs(1, message),
+                _Obs(2, JointState(name=["left", "right", "gripper"], position=[1, 2, 0])),
+            ],
+        }
+    )
+    streams = {"anchor": _feature("anchor"), "action": _held_action()}
+    episode = Episode(id="episode", start_ts=10, end_ts=10)
+    sync = SyncConfig(anchor="anchor", rate_hz=1, tolerance_ms=20)
+    report = inspect_episode_quality(store, episode, streams, sync, QualityConfig())
+    assert not report.valid
+    assert reason in " ".join(report.rejection_reasons)
+    with pytest.raises(ValueError, match=reason):
+        list(iter_episode_samples(store, episode, streams, sync, QualityConfig()))
+
+
+def test_nearest_validates_selected_samples_not_unused_partial_messages():
+    store = _FakeStore(
+        {
+            "anchor": _scalar_stream([(10.0, 0.0), (11.0, 0.0)]),
+            "commands": [
+                _Obs(10, JointState(name=["joint"], position=[1])),
+                _Obs(10.5, JointState(name=[], position=[])),
+                _Obs(11, JointState(name=["joint"], position=[2])),
+            ],
+        }
+    )
+    streams = {"anchor": _feature("anchor"), "action": _feature("commands")}
+    episode = Episode(id="episode", start_ts=10, end_ts=11)
+    sync = SyncConfig(anchor="anchor", rate_hz=1, tolerance_ms=20)
+    report = inspect_episode_quality(store, episode, streams, sync, QualityConfig())
+    samples = list(iter_episode_samples(store, episode, streams, sync, QualityConfig()))
+    assert report.valid, report.rejection_reasons
+    assert report.emitted_frames == len(samples) == 2
+
+
+def test_held_action_without_history_reports_missing_joints_and_emits_nothing():
+    store = _FakeStore({"anchor": _scalar_stream([(10.0, 0.0)])})
+    streams = {"anchor": _feature("anchor"), "action": _held_action()}
+    episode = Episode(id="episode", start_ts=10, end_ts=10)
+    sync = SyncConfig(anchor="anchor", rate_hz=1, tolerance_ms=20)
+
+    report = inspect_episode_quality(store, episode, streams, sync, QualityConfig())
+
+    assert not report.valid
+    assert report.expected_frames == 1
+    assert report.emitted_frames == 0
+    assert "['left', 'right', 'gripper']" in report.rejection_reasons[0]
+    assert list(iter_episode_samples(store, episode, streams, sync, QualityConfig())) == []
+
+
+def test_held_actions_do_not_relax_camera_rate_or_gap_checks():
+    image = {"data": np.zeros((8, 8, 3), dtype=np.uint8)}
+    store = _FakeStore(
+        {
+            "camera": [_Obs(10, image), _Obs(10.1, image), _Obs(10.3, image)],
+            "commands": [
+                _Obs(
+                    1,
+                    JointState(
+                        name=["left", "right", "gripper"],
+                        position=[1, 2, 0],
+                    ),
+                )
+            ],
+        }
+    )
+    streams = {
+        "camera": FeatureSpec(
+            stream="camera",
+            field="data",
+            dtype="video",
+            shape=(8, 8, 3),
+            names=["height", "width", "channels"],
+        ),
+        "action": _held_action(),
+    }
+    episode = Episode(id="episode", start_ts=10, end_ts=10.3)
+    sync = SyncConfig(anchor="camera", rate_hz=30, tolerance_ms=20)
+
+    report = inspect_episode_quality(store, episode, streams, sync, QualityConfig())
+    samples = list(iter_episode_samples(store, episode, streams, sync, QualityConfig()))
+
+    assert not report.valid
+    assert report.source_rates_hz["camera"] == pytest.approx(2 / 0.3)
+    assert report.max_gaps_ms["camera"] == pytest.approx(200)
+    reasons = " ".join(report.rejection_reasons)
+    assert "source rate" in reasons
+    assert "maximum source gap" in reasons
+    assert report.emitted_frames == len(samples)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"field": "velocity"},
+        {"field": None},
+        {"dtype": "video", "shape": (2, 2, 3)},
+        {"names": ["left", "left", "gripper"]},
+    ],
+)
+def test_held_action_requires_named_position_vector(changes):
+    values = dict(
+        stream="commands",
+        field="position",
+        dtype="float32",
+        shape=(3,),
+        names=["left", "right", "gripper"],
+        source_kind="joint_position_updates",
+    )
+    with pytest.raises(ValueError):
+        FeatureSpec(**(values | changes))
 
 
 # ── summarize_lengths ────────────────────────────────────────────────────────

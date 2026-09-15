@@ -15,13 +15,15 @@
 """OpenYAM collection presets, safe to import without robot hardware."""
 
 from dimos.imitation.collection.profile import CollectionFeature, CollectionProfile
-from dimos.imitation.dataprep.core import QualityConfig, SyncConfig
+from dimos.imitation.dataprep.core import QualityConfig, SourceKind, SyncConfig
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openyam.joints import OPENYAM_JOINTS
 
 
-def _profile(name: str, action_stream: str) -> CollectionProfile:
+def _profile(
+    name: str, action_stream: str, *, action_source_kind: SourceKind = "snapshot"
+) -> CollectionProfile:
     return CollectionProfile(
         name=name,
         robot_type="openyam",
@@ -46,6 +48,7 @@ def _profile(name: str, action_stream: str) -> CollectionProfile:
         actions={
             "action": CollectionFeature(
                 stream=action_stream,
+                source_kind=action_source_kind,
                 message_type=JointState,
                 field="position",
                 dtype="float32",
@@ -58,4 +61,6 @@ def _profile(name: str, action_stream: str) -> CollectionProfile:
     )
 
 
-OPENYAM_QUEST_COLLECTION = _profile("openyam-quest", "applied_joint_position_command")
+OPENYAM_QUEST_COLLECTION = _profile(
+    "openyam-quest", "applied_joint_position_command", action_source_kind="joint_position_updates"
+)
