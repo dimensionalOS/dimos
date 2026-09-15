@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Offline CPU speech synthesis with locally installed Kokoro INT8 assets."""
+"""Offline CPU speech synthesis with the official Kokoro model and library."""
 
 from collections import OrderedDict
 import importlib
 import io
-from pathlib import Path
 import threading
 from typing import Annotated, Any
 import wave
@@ -25,22 +24,22 @@ import wave
 import numpy as np
 from pydantic import BaseModel, StringConstraints
 
-from dimos.stream.audio.tts.assets import (
-    MODEL_FILENAME,
-    TTS_CACHE_DIR,
-    VOICES_FILENAME,
-    ensure_asset,
-)
+from dimos.utils.assets import download_hf_asset
+from dimos.utils.cache import cache_usage_guard
+
+MODEL_REPO = "hexgrad/Kokoro-82M"
+MODEL_REVISION = "f3ff3571791e39611d31c381e3a41a3af07b4987"
 
 
 def _load_dependencies() -> tuple[Any, Any]:
     # Optional inference imports stay behind enabled helper preparation.
     try:
-        kokoro = importlib.import_module("kokoro_onnx")
-        ort = importlib.import_module("onnxruntime")
+        kokoro = importlib.import_module("kokoro")
+        torch = importlib.import_module("torch")
+        importlib.import_module("en_core_web_sm")
     except ImportError as exc:
         raise ImportError("Install offline speech dependencies with uv sync --extra tts") from exc
-    return kokoro, ort
+    return kokoro, torch
 
 
 class SpeechText(BaseModel):
@@ -49,9 +48,7 @@ class SpeechText(BaseModel):
 
 class KokoroTTSConfig(BaseModel):
     enabled: bool = False
-    model_path: Path = TTS_CACHE_DIR / MODEL_FILENAME
-    voices_path: Path = TTS_CACHE_DIR / VOICES_FILENAME
-    voice: str = "af_sarah"
+    voice: Annotated[str, StringConstraints(pattern=r"^a[fm]_[a-z]+$")] = "af_sarah"
 
 
 class KokoroTTS:
@@ -60,33 +57,32 @@ class KokoroTTS:
     def __init__(self, config: KokoroTTSConfig) -> None:
         self.config = config
         self._engine: Any = None
+        self._voice: Any = None
         self._synthesis_lock = threading.Lock()
         self._cache: OrderedDict[str, bytes] = OrderedDict()
 
     def prepare(self) -> None:
         if not self.config.enabled:
             return
-        kokoro, ort = _load_dependencies()
-        paths = (
-            (self.config.model_path, MODEL_FILENAME),
-            (self.config.voices_path, VOICES_FILENAME),
-        )
-        for path, filename in paths:
-            if path != TTS_CACHE_DIR / filename and not path.is_file():
-                raise FileNotFoundError(f"Missing custom TTS asset: {path}")
-        for path, filename in paths:
-            if path == TTS_CACHE_DIR / filename:
-                ensure_asset(path, filename)
-
-        options = ort.SessionOptions()
-        options.intra_op_num_threads = 1
-        options.inter_op_num_threads = 1
-        session = ort.InferenceSession(
-            str(self.config.model_path), options, providers=["CPUExecutionProvider"]
-        )
-        with self._synthesis_lock:
-            self._engine = kokoro.Kokoro.from_session(session, str(self.config.voices_path))
-            self._cache.clear()
+        with cache_usage_guard():
+            kokoro, torch = _load_dependencies()
+            config_path, model_path, voice_path = (
+                download_hf_asset(repo_id=MODEL_REPO, revision=MODEL_REVISION, filename=filename)
+                for filename in ("config.json", "kokoro-v1_0.pth", f"voices/{self.config.voice}.pt")
+            )
+            model = (
+                kokoro.KModel(repo_id=MODEL_REPO, config=str(config_path), model=str(model_path))
+                .to("cpu")
+                .eval()
+            )
+            pipeline = kokoro.KPipeline(
+                lang_code="a", repo_id=MODEL_REPO, model=model, device="cpu"
+            )
+            voice = torch.load(str(voice_path), map_location="cpu", weights_only=True)
+            with self._synthesis_lock:
+                self._engine = pipeline
+                self._voice = voice
+                self._cache.clear()
 
     def synthesize(self, text: str) -> bytes:
         """Synthesize up to 500 characters of English as mono PCM16 WAV."""
@@ -97,15 +93,19 @@ class KokoroTTS:
             if text in self._cache:
                 self._cache.move_to_end(text)
                 return self._cache[text]
-            samples, sample_rate = self._engine.create(
-                text, voice=self.config.voice, speed=1.0, lang="en-us"
-            )
+            chunks = [
+                audio.detach().cpu().numpy()
+                for _, _, audio in self._engine(text, voice=self._voice, speed=1.0)
+            ]
+            if not chunks:
+                raise RuntimeError("Kokoro produced no speech")
+            samples = np.concatenate(chunks)
             pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2")
             output = io.BytesIO()
             with wave.open(output, "wb") as wav:
                 wav.setnchannels(1)
                 wav.setsampwidth(2)
-                wav.setframerate(sample_rate)
+                wav.setframerate(24000)
                 wav.writeframes(pcm.tobytes())
             audio = output.getvalue()
             self._cache[text] = audio
@@ -116,4 +116,5 @@ class KokoroTTS:
     def close(self) -> None:
         with self._synthesis_lock:
             self._engine = None
+            self._voice = None
             self._cache.clear()
