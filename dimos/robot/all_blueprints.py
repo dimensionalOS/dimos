@@ -198,7 +198,6 @@ all_modules = {
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
     "basic-path-follower": "dimos.navigation.basic_path_follower.module.BasicPathFollower",
     "benchmarker": "dimos.control.benchmarking.benchmark.Benchmarker",
-    "body-tracking-monitor": "dimos.teleop.webxr.body_tracking_monitor.BodyTrackingMonitor",
     "camera-module": "dimos.hardware.sensors.camera.module.CameraModule",
     "camera-mux-module": "dimos.teleop.hosted.camera_mux.CameraMuxModule",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller.CartesianMotionController",

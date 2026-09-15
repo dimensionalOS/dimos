@@ -15,6 +15,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 import json
+import logging
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -35,6 +36,103 @@ from dimos.teleop.webxr.controller_types import (
 )
 from dimos.teleop.webxr.extensions import ArmTeleopModule, Go2TeleopModule, HandTeleopModule
 from dimos.teleop.webxr.module import WebXRTeleopModule, _ws_send_text
+
+
+@pytest.mark.parametrize("state", ["unavailable", "empty", "tracking"])
+def test_body_debug_logging_reports_received_snapshots(module, mocker, state) -> None:
+    logger = mocker.patch("dimos.teleop.webxr.module.logger")
+    level = mocker.patch("dimos.teleop.webxr.module._stdlib_logger")
+    level.isEnabledFor.return_value = True
+    clock = mocker.patch("dimos.teleop.webxr.module.time")
+    clock.monotonic.side_effect = [1000.0, 1001.0, 1005.0, 1006.0, 1010.0]
+    publish = mocker.patch.object(module.body_tracking, "publish")
+    joints = {
+        "vendor-joint": {
+            "position": [0.12345, 1.23456, -0.34567],
+            "orientation": [0.0, 0.0, 0.0, 1.0],
+        }
+    }
+    payload = json.dumps(
+        {
+            "type": "body_tracking_snapshot",
+            "capture_time_s": 1.0,
+            "frame_id": "bounded-floor",
+            "joints": None if state == "unavailable" else {} if state == "empty" else joints,
+        }
+    )
+
+    for _ in range(2):
+        assert module._dispatch_text_message(payload)
+    logger.debug.assert_not_called()
+    assert module._dispatch_text_message(payload)
+    logger.debug.assert_called_once_with(
+        "WebXR body tracking health",
+        snapshot_rate_hz=0.4,
+        state=state,
+        reference_space="bounded-floor",
+        resolved_joint_count=1 if state == "tracking" else 0,
+        joint_positions={"vendor-joint": (0.123, 1.235, -0.346)} if state == "tracking" else {},
+    )
+    assert module._dispatch_text_message(payload)
+    assert logger.debug.call_count == 1
+    assert module._dispatch_text_message(payload)
+    assert logger.debug.call_count == 2
+    assert logger.debug.call_args.kwargs["snapshot_rate_hz"] == 0.4
+    assert logger.info.call_count == (1 if state == "tracking" else 0)
+    logger.warning.assert_not_called()
+    assert publish.call_count == 5
+
+
+def test_body_acquisition_logs_once_without_debug_and_resets_on_start(module, mocker) -> None:
+    logger = mocker.patch("dimos.teleop.webxr.module.logger")
+    level = mocker.patch("dimos.teleop.webxr.module._stdlib_logger")
+    level.isEnabledFor.return_value = False
+    clock = mocker.patch("dimos.teleop.webxr.module.time")
+    publish = mocker.patch.object(module.body_tracking, "publish")
+    mocker.patch("dimos.teleop.webxr.module.RobotWebInterface")
+    mocker.patch.object(module, "_setup_routes")
+    mocker.patch.object(module, "_start_server")
+    mocker.patch.object(module, "_start_control_loop")
+    snapshot = {
+        "type": "body_tracking_snapshot",
+        "capture_time_s": 1.0,
+        "frame_id": "local-floor",
+        "joints": None,
+    }
+    assert module._dispatch_text_message(json.dumps(snapshot))
+    snapshot["joints"] = {}
+    assert module._dispatch_text_message(json.dumps(snapshot))
+    logger.info.assert_not_called()
+    snapshot["joints"] = {
+        "hips": {"position": [0.0, 1.0, 0.0], "orientation": [0.0, 0.0, 0.0, 1.0]}
+    }
+    for _ in range(2):
+        assert module._dispatch_text_message(json.dumps(snapshot))
+    logger.info.assert_called_once_with(
+        "WebXR body tracking acquired", reference_space="local-floor", resolved_joint_count=1
+    )
+    level.isEnabledFor.assert_called_with(logging.DEBUG)
+    logger.debug.assert_not_called()
+    logger.warning.assert_not_called()
+    clock.monotonic.assert_not_called()
+    assert publish.call_count == 4
+
+    module.start()
+    logger.info.reset_mock()
+    assert module._dispatch_text_message(json.dumps(snapshot))
+    logger.info.assert_called_once_with(
+        "WebXR body tracking acquired", reference_space="local-floor", resolved_joint_count=1
+    )
+
+
+def test_malformed_body_message_warns_without_logging_acquisition(module, mocker) -> None:
+    logger = mocker.patch("dimos.teleop.webxr.module.logger")
+    publish = mocker.patch.object(module.body_tracking, "publish")
+    assert not module._dispatch_text_message('{"type":"body_tracking_snapshot"}')
+    logger.warning.assert_called_once()
+    logger.info.assert_not_called()
+    logger.debug.assert_not_called()
+    publish.assert_not_called()
 
 
 @pytest.fixture

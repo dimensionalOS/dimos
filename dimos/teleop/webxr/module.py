@@ -24,6 +24,7 @@ deltas, and publishes PoseStamped commands.
 import asyncio
 from dataclasses import dataclass
 import json
+import logging
 import math
 from pathlib import Path
 import threading
@@ -54,6 +55,7 @@ from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 
 logger = setup_logger()
+_stdlib_logger = logging.getLogger(str(Path(__file__).relative_to(DIMOS_PROJECT_ROOT)))
 
 STATIC_DIR = Path(__file__).parent / "web" / "static"
 
@@ -153,6 +155,9 @@ class WebXRTeleopModule(Module):
         self._clients_lock = threading.Lock()
         self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._latest_episode_status: EpisodeStatus | None = None
+        self._body_report_started_at: float | None = None
+        self._body_snapshots_since_report = 0
+        self._body_tracking_acquired = False
 
     def _setup_routes(self) -> None:
         """Register teleop routes on the embedded web server."""
@@ -238,7 +243,42 @@ class WebXRTeleopModule(Module):
             logger.warning("Dropping malformed WebXR body snapshot", error=str(exc))
             return False
         self.body_tracking.publish(snapshot)
+        self._log_body_tracking(snapshot)
         return True
+
+    def _log_body_tracking(self, snapshot: BodyTrackingSnapshot) -> None:
+        joints = snapshot.joints
+        if joints and not self._body_tracking_acquired:
+            self._body_tracking_acquired = True
+            logger.info(
+                "WebXR body tracking acquired",
+                reference_space=snapshot.frame_id,
+                resolved_joint_count=len(joints),
+            )
+
+        if not _stdlib_logger.isEnabledFor(logging.DEBUG):
+            return
+        now = time.monotonic()
+        if self._body_report_started_at is None:
+            self._body_report_started_at = now
+            return
+        self._body_snapshots_since_report += 1
+        elapsed = now - self._body_report_started_at
+        if elapsed < 5.0:
+            return
+        logger.debug(
+            "WebXR body tracking health",
+            snapshot_rate_hz=round(self._body_snapshots_since_report / elapsed, 1),
+            state="unavailable" if joints is None else "empty" if not joints else "tracking",
+            reference_space=snapshot.frame_id,
+            resolved_joint_count=len(joints) if joints else 0,
+            joint_positions={
+                name: tuple(round(value, 3) for value in pose.position)
+                for name, pose in (joints or {}).items()
+            },
+        )
+        self._body_report_started_at = now
+        self._body_snapshots_since_report = 0
 
     def _client_connected(self, ws: WebSocket) -> bool:
         with self._clients_lock:
@@ -292,6 +332,9 @@ class WebXRTeleopModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        self._body_report_started_at = None
+        self._body_snapshots_since_report = 0
+        self._body_tracking_acquired = False
         self._web_server = RobotWebInterface(host="0.0.0.0", port=self.config.server_port)
         self._setup_routes()
         self._start_server()

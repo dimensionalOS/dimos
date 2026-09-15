@@ -26,7 +26,6 @@ from dimos.teleop.webxr.blueprints import (
     teleop_webxr_xarm7,
 )
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
-from dimos.teleop.webxr.body_tracking_monitor import BodyTrackingMonitor
 from dimos.teleop.webxr.extensions import ArmTeleopModule, HandTeleopModule
 from dimos.teleop.webxr.module import WebXRTeleopModule
 
@@ -113,11 +112,11 @@ def test_mixed_arm_blueprint_keeps_two_independent_one_binding_tasks() -> None:
     )
 
 
-def test_pico_body_tracking_demo_connects_required_webxr_to_monitor() -> None:
+def test_pico_body_tracking_demo_uses_single_required_webxr_module() -> None:
     modules = {atom.module for atom in demo_pico_body_tracking.blueprints}
     webxr = next(
         atom for atom in demo_pico_body_tracking.blueprints if atom.module is WebXRTeleopModule
     )
-    assert modules == {WebXRTeleopModule, BodyTrackingMonitor}
+    assert modules == {WebXRTeleopModule}
     assert webxr.kwargs["body_tracking_mode"] == "required"
     assert ("body_tracking", BodyTrackingSnapshot) not in demo_pico_body_tracking.transport_map
