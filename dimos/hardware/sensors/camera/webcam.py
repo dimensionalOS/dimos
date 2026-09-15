@@ -169,6 +169,16 @@ class Webcam(CameraHardware):
 
     @property
     def camera_info(self) -> CameraInfo:
-        return self.config.camera_info
+        info = self.config.camera_info
+        if info.width and info.height:
+            return info
+        # No intrinsics configured: a nominal pinhole so the image still renders.
+        return CameraInfo.from_fov(
+            60.0,
+            self.config.width,
+            self.config.height,
+            axis="horizontal",
+            frame_id=self._frame("camera_optical"),
+        )
 
     def emit(self, image: Image) -> None: ...
