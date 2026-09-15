@@ -2,7 +2,7 @@
 
 Spoken recording feedback is **off by default**. Enable it with `--tts.enabled=true` when
 starting a WebXR collection blueprint. The computer synthesizes speech locally
-using Kokoro INT8; the browser plays WAV audio through Web Audio.
+using the official Kokoro library on CPU; the browser plays WAV audio through Web Audio.
 
 ## First launch
 
@@ -23,18 +23,27 @@ TTS is nested configuration on the WebXR module. The fully qualified flag for
 collection is `--armteleopmodule.tts.enabled=true`; `--tts.enabled=true` is the
 ordinary unambiguous shorthand. Use `--tts.enabled=false` to disable it.
 
-Before modules start, WebXR prepares the speech helper. It downloads the
-**114 MB INT8 model** and **28 MB voice data** from the pinned
-[Kokoro ONNX release](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1)
-if needed, verifies their SHA-256 hashes, then generates the three recording
-phrases. Phrase generation took about 12 seconds on the development machine;
-first-time downloads add to that startup time. No separate setup command is needed.
+Before modules start, WebXR prepares the speech helper. It downloads the official
+[Kokoro v1.0 model](https://huggingface.co/hexgrad/Kokoro-82M) (about 327 MB),
+configuration and the selected voice (about 0.5 MB) at a pinned revision, then
+generates the three recording phrases. A fresh process with cached assets took
+about 5 seconds to prepare all three prompts on the development machine; first-use
+downloads add startup time. No separate setup command is needed.
 
-Assets are cached in `${XDG_CACHE_HOME:-$HOME/.cache}/dimos/tts`. Valid files are
-reused without network access; missing or corrupt default assets are downloaded
-again. Failed downloads never install partial files. Rerun collection to retry.
-Custom model and voice paths use existing files as supplied; missing custom files
-produce a path error rather than downloading defaults into those locations.
+Kokoro uses PyTorch on CPU. The `tts` extra includes the English tokenizer
+package, so collection startup does not invoke a package installer. Misaki's
+English dependencies provide the bundled eSpeak pronunciation support.
+
+Assets are stored under `${XDG_CACHE_HOME:-$HOME/.cache}/dimos/assets/huggingface`
+through the [shared model-asset helper](/docs/usage/model-assets.md). Cached files are reused
+without network access. A first launch needs internet access; a failed download
+reports its source and can be retried by launching again. `dimos cache clean`
+removes the downloaded models after collection stops. Old ONNX assets and custom
+ONNX-path options are no longer used.
+
+The default American English voice is `af_sarah`. Select another American English
+voice from the official model with `--tts.voice=af_heart`. TTS configuration is
+limited to `enabled` and `voice`; cache location follows dimOS's XDG cache root.
 
 Disabled TTS imports no inference dependencies, checks no assets, and creates no
 speech helper or worker. The `all` extra does not include `tts`. To have `uv run`
@@ -82,10 +91,10 @@ Use a fresh test recording directory and retain the robot and camera options
 from your working collection launch.
 
 1. Install the optional dependencies above. Launch your collection blueprint with
-   `uv run --extra tts dimos run BLUEPRINT --tts.enabled=true` and its usual options.
+   `uv run --no-sync dimos run BLUEPRINT --tts.enabled=true` and its usual options.
 2. Open the server's `/teleop` page in the headset browser. Select **Connect** and enter
    XR. Connecting should be silent. Ensure the headset volume is audible.
-3. In another terminal, run `uv run dimos imitation collect`. Use the table
+3. In another terminal, run `uv run --no-sync dimos imitation collect`. Use the table
    below to check controller and terminal inputs independently.
 
 | Starting state | Controller / terminal input | Expected result |
@@ -112,7 +121,7 @@ XR. The Chromium smoke test does not replace this check on each browser family.
 ## Data flow and extending prompts
 
 `KokoroTTS` is an ordinary library helper owned by WebXR. Its nested configuration
-controls assets and voice, and `synthesize(text: str) -> bytes` returns mono PCM16
+controls whether speech is enabled and which voice is used, and `synthesize(text: str) -> bytes` returns mono PCM16
 WAV. It accepts nonblank text up to 500 characters and caches 128 phrases.
 
 Python's `CollectionPrompts` selects feedback from confirmed episode status.
