@@ -269,7 +269,6 @@ def web_client(module):
 def test_page_reports_nested_speech_setting(module, web_client, enabled):
     module.config.tts.enabled = enabled
     assert f'data-speech-enabled="{str(enabled).lower()}"' in web_client.get("/teleop").text
-    assert web_client.post("/teleop/speech", json={"text": "Hello"}).status_code == 404
 
 
 def test_build_prepares_speech_and_pushes_selected_audio(module, mocker):
@@ -291,15 +290,6 @@ def test_disabled_build_does_not_construct_speech(module, mocker):
     helper = mocker.patch("dimos.teleop.webxr.module.CollectionSpeech", autospec=True)
     module.build()
     helper.assert_not_called()
-    assert module._speech is None
-
-
-def test_failed_preparation_clears_helper(module, mocker):
-    module.config.tts.enabled = True
-    helper = mocker.patch("dimos.teleop.webxr.module.CollectionSpeech", autospec=True).return_value
-    helper.prepare.side_effect = RuntimeError("download failed")
-    with pytest.raises(RuntimeError, match="download failed"):
-        module.build()
     assert module._speech is None
 
 

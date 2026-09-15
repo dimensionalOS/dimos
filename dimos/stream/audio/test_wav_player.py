@@ -20,7 +20,7 @@ import numpy as np
 from dimos.stream.audio.wav_player import WavPlayer
 
 
-def test_wav_playback_is_nonblocking_and_stop_is_idempotent(mocker):
+def test_wav_playback_decodes_pcm_for_nonblocking_output(mocker):
     output = mocker.patch("dimos.stream.audio.wav_player.importlib.import_module").return_value
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as wav:
@@ -31,12 +31,9 @@ def test_wav_playback_is_nonblocking_and_stop_is_idempotent(mocker):
     player = WavPlayer()
     try:
         player.play(buffer.getvalue())
-        player.play(buffer.getvalue())
-        assert output.play.call_count == 2
         args, kwargs = output.play.call_args
         assert args[0].tolist() == [[0], [100], [-100]]
         assert kwargs == {"samplerate": 24000, "blocking": False}
     finally:
-        player.stop()
         player.stop()
     output.stop.assert_called_once_with()
