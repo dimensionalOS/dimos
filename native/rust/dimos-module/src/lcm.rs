@@ -21,7 +21,7 @@ use std::time::Duration;
 use dimos_lcm::{Lcm, LcmOptions};
 use url::Url;
 
-use crate::transport::{Dispatch, Transport};
+use crate::transport::{Dispatch, TopicDispatch, Transport};
 
 /// LCM UDP multicast transport. Wraps `dimos_lcm::Lcm`.
 ///
@@ -30,6 +30,7 @@ use crate::transport::{Dispatch, Transport};
 pub struct LcmTransport {
     inner: Arc<Lcm>,
     routes: Arc<Mutex<HashMap<String, Vec<Dispatch>>>>,
+    all_routes: Arc<Mutex<Vec<TopicDispatch>>>,
     listening: AtomicBool,
     /// The runtime the transport was opened on. In a baked host each module has
     /// its own runtime, so the one shared recv loop must not land on whichever
@@ -96,6 +97,7 @@ impl LcmTransport {
         Self {
             inner: Arc::new(inner),
             routes: Arc::new(Mutex::new(HashMap::new())),
+            all_routes: Arc::new(Mutex::new(Vec::new())),
             listening: AtomicBool::new(false),
             runtime: tokio::runtime::Handle::current(),
         }
@@ -104,6 +106,7 @@ impl LcmTransport {
     fn spawn_recv_loop(&self) {
         let inner = Arc::clone(&self.inner);
         let routes = Arc::clone(&self.routes);
+        let all_routes = Arc::clone(&self.all_routes);
         self.runtime.spawn(async move {
             loop {
                 match inner.recv().await {
@@ -114,6 +117,7 @@ impl LcmTransport {
                                 cb(&msg.data);
                             }
                         }
+                        dispatch_all(&all_routes, &msg.channel, &msg.data);
                     }
                     Err(e) => {
                         crate::error_throttled!(
@@ -125,6 +129,15 @@ impl LcmTransport {
                 }
             }
         });
+    }
+}
+
+fn dispatch_all(all_routes: &Mutex<Vec<TopicDispatch>>, channel: &str, data: &[u8]) {
+    if channel != "LCM_SELF_TEST" {
+        let callbacks = all_routes.lock().unwrap().clone();
+        for callback in &callbacks {
+            callback(data, channel);
+        }
     }
 }
 
@@ -140,6 +153,14 @@ impl Transport for LcmTransport {
             .entry(channel.to_string())
             .or_default()
             .push(on_msg);
+        if !self.listening.swap(true, Ordering::SeqCst) {
+            self.spawn_recv_loop();
+        }
+        Ok(())
+    }
+
+    async fn subscribe_all(&self, on_msg: TopicDispatch) -> io::Result<()> {
+        self.all_routes.lock().unwrap().push(on_msg);
         if !self.listening.swap(true, Ordering::SeqCst) {
             self.spawn_recv_loop();
         }
@@ -169,8 +190,10 @@ impl Transport for LcmTransport {
 
 #[cfg(test)]
 mod tests {
-    use super::options_from_url;
+    use super::{dispatch_all, options_from_url};
+    use crate::transport::TopicDispatch;
     use std::net::Ipv4Addr;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn reads_group_port_and_ttl() {
@@ -201,5 +224,25 @@ mod tests {
             assert_eq!(options.port, defaults.port, "{url}");
             assert_eq!(options.ttl, defaults.ttl, "{url}");
         }
+    }
+
+    #[test]
+    fn subscribe_all_receives_the_channel_and_payload() {
+        let all = Arc::new(Mutex::new(Vec::new()));
+        let all_sink = Arc::clone(&all);
+        let all_routes = Mutex::new(vec![Arc::new(move |data: &[u8], topic: &str| {
+            all_sink
+                .lock()
+                .unwrap()
+                .push((topic.to_string(), data.to_vec()));
+        }) as TopicDispatch]);
+
+        dispatch_all(&all_routes, "camera", b"frame");
+        dispatch_all(&all_routes, "LCM_SELF_TEST", b"ignore");
+
+        assert_eq!(
+            *all.lock().unwrap(),
+            [("camera".to_string(), b"frame".to_vec())]
+        );
     }
 }
