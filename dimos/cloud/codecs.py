@@ -18,6 +18,7 @@ stored as the upload's `content_encoding`; decode is selected by that stamp."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import importlib
 from pathlib import Path
 import shutil
@@ -37,9 +38,26 @@ def suffix(codec_id: str) -> str:
     return CODEC_LIBS[codec_id][1] if codec_id else ""
 
 
-def compress(codec_id: str, src: Path, dst: Path) -> None:
+_CHUNK = 1 << 20  # coarse enough to be free, fine enough for a live bar
+
+
+def compress(
+    codec_id: str, src: Path, dst: Path, progress: Callable[[int, int], None] | None = None
+) -> None:
+    """Stream src into dst through the codec.
+
+    `progress(done, total)` gets input bytes consumed, so the caller can draw a
+    real bar for what used to be a silent pause on large recordings.
+    """
     with src.open("rb") as i, _lib(codec_id).open(dst, "wb") as o:
-        shutil.copyfileobj(i, o)
+        if progress is None:
+            shutil.copyfileobj(i, o)
+            return
+        total, done = src.stat().st_size, 0
+        while chunk := i.read(_CHUNK):
+            o.write(chunk)
+            done += len(chunk)
+            progress(done, total)
 
 
 def decompress(codec_id: str, src: Path, dst: Path) -> None:

@@ -60,6 +60,52 @@ def handle_fail(fn: Callable[..., None]) -> Callable[..., None]:
     return wrapper
 
 
+# What the bar says for each phase the backend reports. Progressive verbs: the
+# bar is a status line, and a bare "compress" read as an instruction.
+_PHASE = {
+    "compress": "compressing",
+    "checksum": "hashing",
+    "upload": "uploading",
+    "download": "downloading",
+    "verify": "verifying",
+    "decompress": "decompressing",
+}
+
+
+def _squeeze(r: dict[str, Any]) -> str:
+    """' — lz4 2.8 GB → 1.1 GB' when the upload was compressed, else ''.
+
+    The bar that showed the compression is transient; this is the trace it leaves.
+    """
+    from rich.filesize import decimal
+
+    enc, raw, wire = r.get("content_encoding"), r.get("raw_bytes"), r.get("wire_bytes")
+    if not (enc and raw and wire):
+        return ""
+    return f" — {enc} {decimal(raw)} → {decimal(wire)}"
+
+
+class _Ticker:
+    """Feeds backend progress into one rich task per phase.
+
+    A fresh task per phase gives an indeterminate phase a pulsing bar instead of
+    "0%" of the previous phase's total (rich reads total=None as "unchanged"),
+    and a speed and ETA that describe this phase rather than the last one.
+    """
+
+    def __init__(self, bar: Any, name: str) -> None:
+        self.bar, self.name, self.phase = bar, name, "reading"
+        self.task = bar.add_task(f"reading {name}", total=None)
+
+    def __call__(self, phase: str, done: int, total: int) -> None:
+        if phase != self.phase:
+            self.bar.remove_task(self.task)
+            label = f"{_PHASE.get(phase, phase)} {self.name}"
+            self.task = self.bar.add_task(label, total=total or None)
+            self.phase = phase
+        self.bar.update(self.task, completed=done, total=total or None)
+
+
 @contextlib.contextmanager
 def _bar(name: str) -> Iterator[Callable[[str, int, int], None]]:
     from rich.progress import (
@@ -81,12 +127,7 @@ def _bar(name: str) -> Iterator[Callable[[str, int, int], None]]:
         TimeRemainingColumn(),
         transient=True,
     ) as bar:
-        task = bar.add_task(name, total=None)
-
-        def tick(phase: str, done: int, total: int) -> None:
-            bar.update(task, description=f"{phase} {name}", completed=done, total=total or None)
-
-        yield tick
+        yield _Ticker(bar, name)
 
 
 @handle_fail
@@ -112,7 +153,7 @@ def upload(
                     skip_recent=not explicit,
                 )
             note = "already uploaded" if r["skipped"] else r["state"]
-            typer.echo(f"{t.name}: {note} ({r['upload_id'][:12]})")
+            typer.echo(f"{t.name}: {note}{_squeeze(r)} ({r['upload_id'][:12]})")
             if r["quota"].get("state") not in (None, "ok"):
                 typer.echo(r["quota"]["message"], err=True)
         except (RuntimeError, OSError) as e:
