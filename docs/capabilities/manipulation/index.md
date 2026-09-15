@@ -316,8 +316,8 @@ Python extras do not install native RealSense binaries, vendor SDK setup,
 system libraries, or robot/model assets. Follow the hardware-specific setup
 instructions. Agentic blueprints require provider credentials; the default
 EdgeTAM backend requires CUDA or MPS. The bundle includes CPU ONNX inference;
-specialized CUDA backends, GraspGenX, dataset export (`learning`), and DDS remain
-separate extras. Linux x86_64 is the primary supported bundle platform; backend
+specialized CUDA backends, dataset export (`learning`), and DDS remain
+separate extras. GraspGenX prepares its own isolated Python environment on first use. Linux x86_64 is the primary supported bundle platform; backend
 and hardware wheel availability still limits macOS and ARM installations.
 
 Safety behavior for unsupported RoboPlan features:

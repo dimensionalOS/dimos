@@ -20,12 +20,20 @@ Miss `--xarm7-ip` on hardware and the arm has no address to reach; leave
 `xarm-grasp-agent` and `xarm-grasp-graspgenx-agent` add an MCP agent over the
 top; drive those with `dimos agent-send "..."`.
 
-`xarm-grasp-graspgenx` needs the `graspgenx` extra and a CUDA GPU. Checkpoints
-download once from Hugging Face and cache under `~/.cache/huggingface`.
+GraspGenX requires Linux x86_64, a CUDA 12.8-compatible GPU, and `uv >=0.9.25`.
+The first launch prepares its isolated Python 3.12 environment and downloads the
+checkpoints. Use a source checkout or Git install; PyPI compatibility is unresolved.
+
+To show the MuJoCo window with Rerun disabled:
 
 ```bash
-uv sync --extra graspgenx
+MUJOCO_GL=glfw dimos --viewer none run xarm-grasp-graspgenx \
+  --simulation mujoco --headless false
 ```
+
+In another terminal, use `dimos shell` and follow [Driving it](#driving-it) to scan
+objects and request grasps. See the [isolated-runtime development guide](/dimos/experimental/isolated_python/README.md#runtime-development)
+for test and type-check commands.
 
 What differs between the arm and the sim is decided at import time: the hardware
 adapter, the base pose, the camera (RealSense plus its mount edge, versus the

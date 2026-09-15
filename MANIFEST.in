@@ -10,6 +10,12 @@ global-exclude .DS_Store
 # loading a new data type — never go back to per-package globs.
 recursive-include dimos *.yaml *.yml *.json *.urdf *.html *.css *.js *.svg *.tcss
 
+# GraspGenX runs this project separately; include its manifest and locked sources.
+include dimos/manipulation/grasping/grasp_gen_x/python/pyproject.toml
+include dimos/manipulation/grasping/grasp_gen_x/python/uv.lock
+recursive-include dimos/manipulation/grasping/grasp_gen_x/python/graspgenx_runtime *.py
+prune dimos/manipulation/grasping/grasp_gen_x/python/.venv
+
 # --- Exclusions (must come after the includes above so they win) ---
 # Test fixtures must never ship.
 recursive-exclude dimos/agents/fixtures *

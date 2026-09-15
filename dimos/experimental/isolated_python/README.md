@@ -72,16 +72,36 @@ take minutes to download; later builds reuse the cache. If `pixi.toml` exists,
 Pixi supplies `uv`. If `uv.lock` exists, dimOS uses `--frozen` and treats the
 lockfile as the source of truth.
 
-Source checkouts make the current dimOS checkout available to the runtime.
-Installed hosts let `uv` resolve `dimos`, so the host and runtime versions may
-differ. The sibling project's `.python-version` and `requires-python` select its
-Python version.
+Source checkouts use an editable install of the same tree, including local edits.
+Index installations pin `dimos` to the host's installed version. Git installations
+reuse the repository and resolved commit from `direct_url.json`. Preparation and
+launch use the same selection; an unavailable release fails rather than selecting
+another version. Direct wheels, archives, and non-editable local directories remain
+unsupported. Restart running modules after editing a checkout.
+
+The sibling project's `.python-version` and `requires-python` select its Python
+version. Environments are stored under the dimOS cache directory in
+`isolated-python/<project-path-hash>/.venv`, so projects do not share environments.
+Preparation also warms the DimOS overlay before starting the readiness deadline.
+
+For runtime sources shipped inside wheels, use a flat project with
+`[tool.uv] package = false` and include its sources, manifest, and lockfile as package
+data. Python imports the runtime from the project working directory, without an
+editable build writing metadata into `site-packages`. Load models and download
+checkpoints in the runtime's `start()`, keeping imports and construction lightweight.
 
 The host contract retains the public module name and forwards contract RPCs to a
 unique internal endpoint. Ordinary dimOS serialization and transport handle RPC
 values, exceptions, timeouts, async methods, skills, streams, and module
 references. Restarting the contract starts a fresh interpreter and reloads the
 runtime package.
+
+Nested Python projects own their runtime classes and tests. Host blueprint discovery
+and pytest collection stop at directories containing another `pyproject.toml`.
+Runtime classes can use public names without becoming host registry entries.
+Run runtime tests explicitly with their project's pytest configuration and
+`--confcutdir=.` to avoid loading the host's test fixtures. Keep test environments
+outside `dimos/`, where repository source checks would otherwise scan dependencies.
 
 ## Example
 
@@ -93,3 +113,19 @@ uv run python -m dimos.experimental.isolated_python.example.run
 
 The example demonstrates streams, RPCs, skills, an injected module reference,
 restart behavior, and automatic shutdown.
+
+## Runtime development
+
+Root pytest and mypy checks exclude isolated projects. Run their tests and type
+checks inside their own environment. For GraspGenX, from the repository root:
+
+```bash
+cd dimos/manipulation/grasping/grasp_gen_x/python
+export UV_PROJECT_ENVIRONMENT="${XDG_CACHE_HOME:-$HOME/.cache}/dimos/graspgenx-tests"
+uv run --frozen --group tests --with-editable ../../../../.. python -m pytest
+uv run --frozen --group lint --with-editable ../../../../.. python -m mypy
+```
+
+The tests mock the model backend and need no GPU or checkpoints. Runtime mypy
+reads the annotated dimOS and GraspGenX source despite their missing `py.typed`
+markers. Each runtime owns its lint configuration and dependencies.

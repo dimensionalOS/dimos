@@ -12,7 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import platform
+import sys
+
 import pytest
+
+# The tests extra excludes yourdfpy on Linux ARM because embreex has no wheel.
+if sys.platform == "linux" and platform.machine() == "aarch64":
+    pytest.importorskip(
+        "yourdfpy", reason="yourdfpy is unavailable in the Linux ARM test environment"
+    )
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
