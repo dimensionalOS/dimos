@@ -93,7 +93,6 @@ class PolicyModuleConfig(IsolatedPythonModuleConfig):
     diffusion_steps: int = Field(default=10, gt=0)
     execution_steps: int | None = Field(default=None, gt=0)
     norm_stats_path: str | None = None
-    clip_cache_dir: str | None = None
     policy_path: str = Field(min_length=1)
     task: str = Field(min_length=1)
     device: str | None = None
@@ -108,16 +107,20 @@ class PolicyModuleConfig(IsolatedPythonModuleConfig):
     def image_mapping_must_be_valid(cls, mapping: dict[str, str]) -> dict[str, str]:
         return validate_image_mapping(mapping)
 
-    @field_validator("norm_stats_path", "clip_cache_dir")
+    @field_validator("norm_stats_path")
     @classmethod
     def norm_stats_path_is_absolute(cls, path: str | None) -> str | None:
-        return str(Path(path).expanduser().resolve()) if path is not None else None
+        if path is None or path.startswith("https://"):
+            return path
+        return str(Path(path).expanduser().resolve())
 
     @field_validator("policy_path")
     @classmethod
     def policy_path_must_not_be_blank(cls, policy_path: str) -> str:
         if not policy_path.strip():
             raise ValueError("policy_path must not be blank")
+        if policy_path.startswith("https://"):
+            return policy_path
         path = Path(policy_path).expanduser()
         return str(path.resolve()) if path.exists() else policy_path
 

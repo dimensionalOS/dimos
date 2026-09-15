@@ -26,10 +26,18 @@ import torch
 
 from dimos.imitation.policy.backend import joint_permutations
 from dimos.imitation.policy.module import PolicyModuleConfig
+from dimos.utils import cache
 
 HARDWARE = [f"joint{i}" for i in range(14)]
 POLICY_INDICES = [0, 1, 2, 3, 4, 5, 12, 6, 7, 8, 9, 10, 11, 13]
 HARDWARE_INDICES = [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 6, 13]
+
+
+@pytest.fixture(autouse=True)
+def asset_downloads(tmp_path, monkeypatch, mocker):
+    monkeypatch.setattr(cache, "_CACHE_LOCK_DIR", tmp_path / "state/cache-users")
+    monkeypatch.setattr(cache, "_CACHE_GATE_PATH", tmp_path / "state/cache-clean.lock")
+    return mocker.patch.object(abc, "download_http_asset", return_value=tmp_path / "asset")
 
 
 @pytest.fixture
@@ -131,3 +139,58 @@ def test_execution_horizon_cannot_exceed_prediction(
     with pytest.raises(ValueError, match="30-action horizon"):
         abc.Backend(config)
     model.assert_not_called()
+
+
+def test_https_assets_are_resolved_before_loading(config, asset_downloads, mocker, tmp_path):
+    config.policy_path = "https://example.com/checkpoint.pt"
+    config.norm_stats_path = "https://example.com/stats.json"
+    loading = mocker.patch.object(abc, "DiTPolicy", side_effect=RuntimeError("model construction"))
+    with pytest.raises(RuntimeError, match="model construction"):
+        abc.Backend(config)
+    assert [call.args[0] for call in asset_downloads.call_args_list] == [
+        config.policy_path,
+        config.norm_stats_path,
+        abc.CLIP_MODEL_URL,
+        abc.CLIP_TOKENIZER_URL,
+    ]
+    loading.assert_called_once()
+
+
+def test_download_failure_prevents_model_construction(config, asset_downloads, mocker):
+    config.policy_path = "https://example.com/checkpoint.pt"
+    asset_downloads.side_effect = RuntimeError("checkpoint download failed")
+    model = mocker.patch.object(abc, "DiTPolicy")
+    with pytest.raises(RuntimeError, match="checkpoint download failed"):
+        abc.Backend(config)
+    model.assert_not_called()
+
+
+def test_model_loading_holds_cache_guard(config, asset_downloads, mocker):
+    def loading(*args, **kwargs):
+        with pytest.raises(cache.CacheInUseError), cache.cache_cleanup_guard():
+            pass
+        raise RuntimeError("model construction")
+
+    mocker.patch.object(abc, "DiTPolicy", side_effect=loading)
+    with pytest.raises(RuntimeError, match="model construction"):
+        abc.Backend(config)
+    with cache.cache_cleanup_guard():
+        pass
+
+
+def test_explicit_remote_normalization_overrides_embedded_statistics(
+    config, asset_downloads, mocker, tmp_path
+):
+    config.norm_stats_path = "https://example.com/stats.json"
+    stats = {kind: {"mean": np.zeros(14), "std": np.ones(14)} for kind in ("state", "actions")}
+    mocker.patch.object(abc, "DiTPolicy")
+    mocker.patch.object(abc, "load_pretrained", return_value={"norm_stats": "must not be used"})
+    load_stats = mocker.patch.object(abc, "load_norm_stats", return_value=stats)
+    embedder = mocker.patch.object(abc, "CLIPTextEmbedder")
+    embedder.return_value.encode.return_value = torch.zeros(1, 512)
+    value = abc.Backend(config)
+    try:
+        assert value.norm_stats is stats
+        load_stats.assert_called_once_with(tmp_path / "asset")
+    finally:
+        value.close()

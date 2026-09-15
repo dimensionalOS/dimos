@@ -35,11 +35,25 @@ import torch
 
 from dimos.imitation.policy.backend import Images, joint_permutations
 from dimos.imitation.policy.module import PolicyModuleConfig
+from dimos.utils.assets import download_http_asset
+from dimos.utils.cache import cache_usage_locked
+
+CLIP_MODEL_SHA256 = "40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af"
+CLIP_MODEL_URL = f"https://openaipublic.azureedge.net/clip/models/{CLIP_MODEL_SHA256}/ViT-B-32.pt"
+CLIP_TOKENIZER_URL = (
+    "https://raw.githubusercontent.com/openai/CLIP/"
+    "d05afc436d78f1c48dc0dbf8e5980a9d471f35f6/clip/bpe_simple_vocab_16e6.txt.gz"
+)
+
+
+def _asset_path(source: str) -> Path:
+    return download_http_asset(source) if source.startswith("https://") else Path(source)
 
 
 class Backend:
     """Predict 30 absolute targets and execute 15, as in ABC's default evaluator."""
 
+    @cache_usage_locked
     def __init__(self, config: PolicyModuleConfig) -> None:
         if set(config.image_mapping.values()) != {"top", "left", "right"}:
             raise ValueError("ABC requires camera bindings for top, left, and right")
@@ -66,11 +80,17 @@ class Backend:
         self.fps = config.fps or 1.0 / 0.034
         self.action_lower = None
         self.action_upper = None
+        checkpoint_path = _asset_path(config.policy_path)
+        stats_path = _asset_path(config.norm_stats_path) if config.norm_stats_path else None
+        clip_config = ClipConfig(
+            model_path=str(download_http_asset(CLIP_MODEL_URL, sha256=CLIP_MODEL_SHA256)),
+            bpe_path=str(download_http_asset(CLIP_TOKENIZER_URL)),
+        )
         self.model = DiTPolicy(self.config.model).to(self.device)
-        checkpoint = load_pretrained(self.model, Path(config.policy_path))
+        checkpoint = load_pretrained(self.model, checkpoint_path)
         self.model.eval()
-        if config.norm_stats_path is not None:
-            self.norm_stats = load_norm_stats(config.norm_stats_path)
+        if stats_path is not None:
+            self.norm_stats = load_norm_stats(stats_path)
         elif checkpoint.get("norm_stats") is not None:
             self.norm_stats = parse_norm_stats(checkpoint["norm_stats"])
         else:
@@ -82,9 +102,6 @@ class Backend:
                     raise ValueError(f"ABC {kind}.{field} must contain 14 finite values")
             if np.any(self.norm_stats[kind]["std"] < 0):
                 raise ValueError(f"ABC {kind}.std must not be negative")
-        clip_config = (
-            ClipConfig(cache_dir=config.clip_cache_dir) if config.clip_cache_dir else ClipConfig()
-        )
         self.embedder = CLIPTextEmbedder(clip_config, device=self.device)
         self.task = config.task
         self.task_vec = self.embedder.encode([config.task]).to(self.device)

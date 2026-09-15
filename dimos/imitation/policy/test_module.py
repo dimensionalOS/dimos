@@ -149,3 +149,14 @@ def test_camera_ports_and_runtime_survive_a_fresh_process(tmp_path):
 def test_camera_bindings_reject_reserved_ports_and_duplicate_features(mapping):
     with pytest.raises(ValueError):
         policy_module(image_mapping=mapping)
+
+
+def test_https_checkpoint_and_stats_remain_urls():
+    config = PolicyModuleConfig(
+        policy_path="https://example.com/checkpoint.pt",
+        norm_stats_path="https://example.com/stats.json",
+        task="pick",
+        joint_names=["joint"],
+    )
+    assert config.policy_path == "https://example.com/checkpoint.pt"
+    assert config.norm_stats_path == "https://example.com/stats.json"
