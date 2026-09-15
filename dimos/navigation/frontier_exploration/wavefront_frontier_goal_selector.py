@@ -91,7 +91,12 @@ class WavefrontConfig(ModuleConfig):
     info_gain_threshold: float = 0.03
     num_no_gain_attempts: int = 2
     goal_timeout: float = 15.0
-    momentum_weight: float = 0.3
+    # Weight of the direction momentum term in the frontier score. 0.05 is the
+    # value the score always used; with the signed term below, the gap between a
+    # frontier straight ahead and one straight behind goes from 0.05 to 0.10.
+    momentum_weight: float = 0.05
+    # Floor of the signed momentum score: -1.0 makes a U-turn cost, 0.0 restores
+    # the old clamp where turning around was priced like a sideways move.
     min_momentum_score: float = -1.0
 
 
@@ -442,6 +447,18 @@ class WavefrontFrontierExplorer(Module):
                     direction.x / magnitude, direction.y / magnitude, 0.0
                 )
 
+    def _on_goal_timeout(self) -> None:
+        """Forget the direction of a goal the robot failed to reach.
+
+        The momentum term keeps steering toward the last chosen goal. After a
+        timeout that goal is stale, so the direction is zeroed: the ranking
+        right after a timeout carries no directional preference, and the next
+        chosen goal re-establishes it through _update_exploration_direction.
+        This is a selection-policy choice, not a recovery routine: a goal that
+        merely took longer than goal_timeout loses its momentum bonus too.
+        """
+        self.exploration_direction = Vector3(0.0, 0.0, 0.0)
+
     def _compute_direction_momentum_score(self, frontier: Vector3, robot_pose: Vector3) -> float:
         """Compute direction momentum score for a frontier."""
         if self.exploration_direction.x == 0 and self.exploration_direction.y == 0:
@@ -468,7 +485,8 @@ class WavefrontFrontierExplorer(Module):
         # Return momentum score (higher for same direction, lower for opposite).
         # Signed: +1 straight ahead, 0 sideways, -1 a full U-turn. Clamping at
         # 0.0 priced a reversal exactly like a sideways move, so turning around
-        # was free. Set min_momentum_score to 0.0 to restore that behavior.
+        # carried no extra cost. Set min_momentum_score to 0.0 to restore that
+        # clamp (the direction reset of _on_goal_timeout is kept either way).
         return max(self.config.min_momentum_score, dot_product)
 
     def _compute_distance_to_explored_goals(self, frontier: Vector3) -> float:
@@ -836,11 +854,7 @@ class WavefrontFrontierExplorer(Module):
                         f"Goal timeout after {self.config.goal_timeout:g} seconds, "
                         "finding next frontier anyway"
                     )
-                    # A goal we failed to reach must not keep steering the next
-                    # ranking: zero the exploration direction so the momentum
-                    # term is neutral for the selection right after a timeout.
-                    # It re-establishes itself on the next chosen goal.
-                    self.exploration_direction = Vector3(0.0, 0.0, 0.0)
+                    self._on_goal_timeout()
             else:
                 consecutive_failures += 1
 
