@@ -36,7 +36,6 @@ def _load_dependencies() -> tuple[Any, Any]:
     try:
         kokoro = importlib.import_module("kokoro")
         torch = importlib.import_module("torch")
-        importlib.import_module("en_core_web_sm")
     except ImportError as exc:
         raise ImportError("Install offline speech dependencies with uv sync --extra tts") from exc
     return kokoro, torch
@@ -75,9 +74,16 @@ class KokoroTTS:
                 .to("cpu")
                 .eval()
             )
-            pipeline = kokoro.KPipeline(
-                lang_code="a", repo_id=MODEL_REPO, model=model, device="cpu"
-            )
+            try:
+                pipeline = kokoro.KPipeline(
+                    lang_code="a", repo_id=MODEL_REPO, model=model, device="cpu"
+                )
+            except SystemExit as exc:
+                # spaCy's lazy tokenizer installer can exit instead of raising an Exception.
+                raise RuntimeError(
+                    "TTS tokenizer installation failed. Check the installer output and "
+                    "network access, then retry collection."
+                ) from exc
             voice = torch.load(str(voice_path), map_location="cpu", weights_only=True)
             with self._synthesis_lock:
                 self._engine = pipeline
