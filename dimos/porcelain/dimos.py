@@ -14,6 +14,10 @@
 
 from __future__ import annotations
 
+# Load OpenCV before anything that loads PyAV: PyAV bundles its own libxcb, and an
+# OpenCV window opened after it hangs. Keeps cv2.imshow usable from this API.
+import cv2  # noqa: F401  # isort: skip
+
 import atexit
 from collections.abc import Callable
 import importlib
