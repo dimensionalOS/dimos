@@ -542,7 +542,7 @@ dependencies = [
 [[package]]
 name = "dimos-lcm"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#04d78e8622500244123ba9cefa4c51b4cb454549"
+source = "git+https://github.com/dimensionalOS/dimos-lcm.git?rev=dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5#dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5"
 dependencies = [
  "byteorder",
  "socket2 0.5.10",
@@ -1358,7 +1358,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 [[package]]
 name = "lcm-msgs"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#04d78e8622500244123ba9cefa4c51b4cb454549"
+source = "git+https://github.com/dimensionalOS/dimos-lcm.git?rev=dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5#dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5"
 dependencies = [
  "byteorder",
 ]
