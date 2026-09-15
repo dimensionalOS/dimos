@@ -5,6 +5,7 @@
 // registry.ts; this file owns the listeners and process-level wiring.
 import { PROTOCOL_VERSION } from "@dimos/shared";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { Auth } from "./auth.ts";
 import { makeEphemeralCert } from "./cert.ts";
 import { LATEST_STALE_MS } from "./forward.ts";
 import { Registry } from "./registry.ts";
@@ -37,12 +38,18 @@ export interface RelayOptions {
   cert?: string;
   key?: string;
   /**
-   * Explicit acknowledgment for binding a non-loopback host. This local
-   * relay trusts every origin that can reach it (wildcard CORS on the
-   * discovery endpoints, an unauthenticated WebTransport session, optional
-   * user-file serving), so startRelay refuses other hosts without this -
-   * only sensible behind the operator's own TLS and access control. A
-   * remote-capable relay is a separate, fail-closed mode (W10), not this.
+   * Parsed --auth-file (auth.ts): robot keys bound to robot ids and viewer
+   * tokens. Robots and viewers must present them in hello, /api/stats needs
+   * a bearer viewer token, and together with cert/key it lifts the
+   * loopback-only rule below.
+   */
+  auth?: Auth;
+  /**
+   * Explicit acknowledgment for binding a non-loopback host without cert,
+   * key, and auth. Such a relay trusts every origin that can reach it
+   * (wildcard CORS on the discovery endpoints, an unauthenticated
+   * WebTransport session), so startRelay refuses other hosts without this -
+   * only sensible behind the operator's own TLS and access control.
    */
   unsafeNonLoopback?: boolean;
 }
@@ -88,11 +95,12 @@ const MIME: Record<string, string> = {
   ".woff": "font/woff",
 };
 
-// Deliberate LOCAL-relay policy: this relay binds loopback (enforced in
-// startRelay unless unsafeNonLoopback overrides it) and trusts local browser
-// applications, so any local origin (e.g. a Vite dev server) may read the
-// discovery endpoints and import served JavaScript modules. A remotely
-// reachable relay (W10) is fail-closed and must NOT inherit this wildcard.
+// Deliberate policy: any origin may read the discovery endpoint and import
+// served JavaScript modules (public data, public code), so a local page
+// (e.g. a Vite dev server) can bootstrap against a loopback relay and a
+// hosted relay's SDK works cross-origin. The viewer token is the access
+// boundary, not CORS; the one exception is /api/stats, which needs a bearer
+// token and carries no CORS header once auth is on.
 const LOCAL_CORS = { "access-control-allow-origin": "*" };
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -167,12 +175,22 @@ export function installUnhandledRejectionGuard(): void {
 export async function startRelay(options: RelayOptions = {}): Promise<RelayHandle> {
   installUnhandledRejectionGuard();
   const host = options.host ?? "127.0.0.1";
-  if (!LOOPBACK_HOSTS.has(host) && options.unsafeNonLoopback !== true) {
+  const loopback = LOOPBACK_HOSTS.has(host);
+  const secured = options.cert !== undefined && options.key !== undefined &&
+    options.auth !== undefined;
+  if (!loopback && !secured && options.unsafeNonLoopback !== true) {
     throw new Error(
-      `host ${host} is not loopback: the local relay serves wildcard CORS, an ` +
-        "unauthenticated WebTransport session, and optional --serve-dir files to every " +
-        "origin that can reach it. Bind 127.0.0.1, or pass --unsafe-non-loopback " +
-        "(RelayOptions.unsafeNonLoopback) only behind your own TLS and access control",
+      `host ${host} is not loopback: without --cert, --key and --auth-file together the ` +
+        "relay serves wildcard CORS and an unauthenticated WebTransport session to every " +
+        "origin that can reach it. Bind 127.0.0.1, pass the three flags, or pass " +
+        "--unsafe-non-loopback (RelayOptions.unsafeNonLoopback) only behind your own TLS " +
+        "and access control",
+    );
+  }
+  if (!loopback && options.serveDir !== undefined) {
+    throw new Error(
+      `--serve-dir is refused on non-loopback host ${host}: a public relay serves only ` +
+        "the built cockpit",
     );
   }
 
@@ -239,6 +257,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   const wtUrl = `https://${urlHost}:${quicPort}`;
 
   const registry = new Registry();
+  const auth = options.auth ?? null;
   const sessions = new Set<WebTransport>();
   let nextViewerId = 1;
 
@@ -262,9 +281,10 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
         await wt.ready;
         track(wt);
         const path = new URL(wt.url).pathname;
-        if (path === "/robot") new RobotSession(wt, conn, registry).start();
-        else if (path === "/viewer") new ViewerSession(wt, nextViewerId++, registry).start();
-        else {
+        if (path === "/robot") new RobotSession(wt, conn, registry, auth).start();
+        else if (path === "/viewer") {
+          new ViewerSession(wt, nextViewerId++, registry, auth).start();
+        } else {
           console.log(`[relay] rejecting unknown WebTransport endpoint ${path}`);
           wt.close({ closeCode: 1, reason: "unknown WebTransport endpoint" });
         }
@@ -286,7 +306,15 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
       return Response.json(info, { headers: LOCAL_CORS });
     }
     if (url.pathname === "/api/stats") {
-      return Response.json(registry.stats(), { headers: LOCAL_CORS });
+      if (auth === null) return Response.json(registry.stats(), { headers: LOCAL_CORS });
+      // Operator tooling only: a bearer viewer token, and no CORS header.
+      if (!auth.bearerOk(req.headers.get("authorization"))) {
+        return new Response("unauthorized", {
+          status: 401,
+          headers: { "www-authenticate": "Bearer" },
+        });
+      }
+      return Response.json(registry.stats());
     }
     if (url.pathname === "/sdk.js") {
       // Never falls through to a static root: a missing bundle must yield the

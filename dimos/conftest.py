@@ -84,7 +84,7 @@ with suppress(ImportError, ValueError, OSError):
     if soft < target:
         resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 import pytest
 import tqdm
 
@@ -97,7 +97,10 @@ from dimos.utils.testing.waiting import retry_until as _retry_until, wait_until 
 # monitor only re-tunes miniters for smooth interactive rendering, so disable it for tests.
 tqdm.tqdm.monitor_interval = 0
 
-load_dotenv()
+_dotenv = dotenv_values()
+for _key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ALIBABA_API_KEY"):
+    if _dotenv.get(_key):
+        os.environ.setdefault(_key, _dotenv[_key])
 
 
 def _has_ros() -> bool:
@@ -218,20 +221,36 @@ def pytest_configure(config):
         )
 
 
-@pytest.fixture(autouse=True)
-def _restore_global_config():
-    """Undo global_config mutations after every test.
-
-    A build from a parsed config resets the singleton to the parse's full
-    resolution. With a hermetic parse (environ={}) that reverts mcp_port to
-    its schema default, and every later test on the worker then binds the
-    port every other worker also defaults to.
-    """
+def _global_config_guard():
     from dimos.core.global_config import global_config
 
     snapshot = global_config.model_dump()
     yield
     global_config.update(**snapshot)
+
+
+# Undo global_config mutations when the scope that made them ends. Without
+# the class and module guards, a class-scoped fixture's
+# `global_config.update(viewer="none", n_workers=1)` stays in effect for
+# every later test in the session.
+#
+# A build from a parsed config resets the singleton to the parse's full
+# resolution. With a hermetic parse (environ={}) that reverts mcp_port to
+# its schema default, and every later test on the worker then binds the
+# port every other worker also defaults to.
+@pytest.fixture(autouse=True)
+def _restore_global_config():
+    yield from _global_config_guard()
+
+
+@pytest.fixture(autouse=True, scope="class")
+def _restore_global_config_class():
+    yield from _global_config_guard()
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _restore_global_config_module():
+    yield from _global_config_guard()
 
 
 @pytest.fixture(scope="session")

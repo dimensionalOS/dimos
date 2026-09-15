@@ -3,12 +3,13 @@
 // everything else logs to stderr-adjacent console lines prefixed [relay].
 import { parseArgs } from "@std/cli";
 import { PROTOCOL_VERSION } from "@dimos/shared";
+import { loadAuthFile } from "./auth.ts";
 import { CERT_KEY_PAIR_ERROR, startRelay } from "./server.ts";
 
 const args = parseArgs(Deno.args, {
-  string: ["host", "cockpit-dir", "sdk-dir", "serve-dir", "cert", "key"],
-  // Non-loopback binds need this explicit acknowledgment: the local relay
-  // trusts every origin that can reach it (see RelayOptions.unsafeNonLoopback).
+  string: ["host", "cockpit-dir", "sdk-dir", "serve-dir", "cert", "key", "auth-file"],
+  // Non-loopback binds without --cert, --key and --auth-file need this
+  // explicit acknowledgment (see RelayOptions.unsafeNonLoopback).
   boolean: ["unsafe-non-loopback"],
   default: { port: 7780, host: "127.0.0.1" },
 });
@@ -38,6 +39,7 @@ const relay = await startRelay({
   unsafeNonLoopback: args["unsafe-non-loopback"],
   cert: args.cert === undefined ? undefined : await Deno.readTextFile(args.cert),
   key: args.key === undefined ? undefined : await Deno.readTextFile(args.key),
+  auth: args["auth-file"] === undefined ? undefined : await loadAuthFile(args["auth-file"]),
 });
 
 console.log(JSON.stringify({
@@ -59,7 +61,6 @@ if (args["serve-dir"] !== undefined) {
 if (args["sdk-dir"] !== undefined) {
   console.log(`[relay] sdk: ${pageBase}sdk.js`);
 }
-
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   try {
     Deno.addSignalListener(signal, async () => {
