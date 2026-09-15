@@ -6,10 +6,11 @@
     <title>DimOS WebXR Teleop</title>
     <link rel="stylesheet" href="/static/teleop.css">
 </head>
-<body>
+<body data-speech-enabled="__SPEECH_ENABLED__">
     <div id="ui">
         <h1>DimOS WebXR Teleop</h1>
         <div id="status">Ready to connect</div>
+        <div id="audioStatus" role="status" class="hidden">Audio unavailable</div>
         <button id="connectBtn" onclick="connect()">Connect</button>
         <button id="disconnectBtn" class="disconnect hidden" onclick="disconnect()">Disconnect</button>
     </div>

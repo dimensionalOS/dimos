@@ -6,6 +6,8 @@ window.onerror = (msg, url, line, col, error) => {
 
 import { geometry_msgs, std_msgs, sensor_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
 import { captureBody } from "./webxr_body.mjs";
+import { SpeechPlayer } from './speech.js';
+import { CollectionPrompts, RECORDING_PROMPTS } from './collection_prompts.js';
 
 // WebSocket and WebXR state
 let ws = null;
@@ -52,6 +54,15 @@ let hudTexture = null;
 let hudDirty = false;
 let hudElapsedSecond = -1;
 let hudPlaced = false;
+let audioUnavailable = false;
+const speechEnabled = document.body.dataset.speechEnabled === 'true';
+const collectionPrompts = new CollectionPrompts();
+const speech = new SpeechPlayer('/teleop/speech', unavailable => {
+    audioUnavailable = unavailable;
+    document.getElementById('audioStatus').classList.toggle('hidden', !unavailable);
+    hudDirty = true;
+});
+if (speechEnabled) void speech.preload(Object.values(RECORDING_PROMPTS));
 
 const HUD_WIDTH_PX = 2048;
 const HUD_HEIGHT_PX = 256;
@@ -86,6 +97,7 @@ function describeSessionRequestError(mode, error) {
 
 // WebSocket setup (LCM bridge)
 function setupWebSocket() {
+    collectionPrompts.reset();
     return new Promise((resolve, reject) => {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws`;
@@ -106,6 +118,8 @@ function setupWebSocket() {
             reject(error);
         };
         ws.onclose = () => {
+            speech.stop();
+            collectionPrompts.reset();
             hudOffline = true;
             hudDirty = true;
             if (xrSession) setStatus('WebSocket closed');
@@ -306,6 +320,8 @@ function handleServerMessage(data) {
     try {
         const message = JSON.parse(data);
         if (message.type !== 'episode_status') return;
+        const prompt = collectionPrompts.update(message);
+        if (prompt && speechEnabled && xrSession && !hudOffline) void speech.speak(prompt);
         episodeStatus = message;
         episodeStatusReceivedAtMs = performance.now();
         hudOffline = false;
@@ -405,7 +421,8 @@ function updateHudTexture() {
         [280, 'ELAPSED', hudOffline ? '--:--' : formatElapsed(elapsed), '#f4f7fb'],
         [260, 'SAVED', String(saved).padStart(3, '0'), '#8de2bd'],
         [320, 'DISCARDED', String(discarded).padStart(3, '0'), '#f7c66d'],
-        [568, 'LAST ACTION', lastEvent, '#f4f7fb'],
+        [568, audioUnavailable ? 'AUDIO' : 'LAST ACTION',
+            audioUnavailable ? 'UNAVAILABLE' : lastEvent, '#f4f7fb'],
     ];
 
     hudContext.clearRect(0, 0, HUD_WIDTH_PX, HUD_HEIGHT_PX);
@@ -692,6 +709,7 @@ async function startWebXRSession(clientConfig) {
 
 // Connect button handler
 window.connect = async function() {
+    if (speechEnabled) void speech.initialize();
     try {
         connectBtn.disabled = true;
 
@@ -724,6 +742,7 @@ window.connect = async function() {
         ws = null;
         if (failedWebSocket) failedWebSocket.close();
         setStatus(`Connection failed: ${message}`);
+        speech.stop();
         console.error('Connection error:', error);
         connectBtn.disabled = false;
     }
@@ -731,6 +750,8 @@ window.connect = async function() {
 
 // Disconnect button handler
 window.disconnect = async function() {
+    speech.stop();
+    collectionPrompts.reset();
     setStatus('Disconnecting...');
 
     if (xrSession) {

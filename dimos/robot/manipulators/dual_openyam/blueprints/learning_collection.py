@@ -22,6 +22,7 @@ from dimos.imitation.collection.recorder import collection_recorder
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import build_dual_openyam_webxr
 from dimos.robot.manipulators.dual_openyam.learning import DUAL_OPENYAM_COLLECTION
+from dimos.stream.audio.tts.kokoro_module import optional_tts
 
 dual_openyam_quest_collection = autoconnect(
     build_dual_openyam_webxr(visualization=ViserVisualizationConfig(host="0.0.0.0")),
@@ -41,6 +42,7 @@ dual_openyam_quest_collection = autoconnect(
     ),
     collection_recorder(profile=DUAL_OPENYAM_COLLECTION),
     EpisodeMonitorModule.blueprint(instance_name="episodes"),
+    *optional_tts(),
 ).remappings(
     [
         ("left_wrist", "color_image", "left_wrist_image"),
