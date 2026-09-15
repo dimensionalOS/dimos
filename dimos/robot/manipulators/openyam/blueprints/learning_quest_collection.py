@@ -21,7 +21,6 @@ from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import collection_recorder
 from dimos.robot.manipulators.openyam.blueprints.teleop import teleop_webxr_openyam
 from dimos.robot.manipulators.openyam.collection import OPENYAM_QUEST_COLLECTION
-from dimos.stream.audio.tts.kokoro_module import KokoroTTSModule
 
 openyam_quest_collection = autoconnect(
     teleop_webxr_openyam,
@@ -34,7 +33,6 @@ openyam_quest_collection = autoconnect(
     ),
     collection_recorder(profile=OPENYAM_QUEST_COLLECTION),
     EpisodeMonitorModule.blueprint(instance_name="episodes"),
-    KokoroTTSModule.blueprint(instance_name="tts"),
 ).remappings(
     [
         ("wrist", "color_image", "wrist_image"),

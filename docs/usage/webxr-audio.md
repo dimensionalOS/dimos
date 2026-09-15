@@ -12,42 +12,40 @@ Install the optional inference dependencies:
 uv sync --extra manipulation --extra tts
 ```
 
-Launch collection with `--tts.enabled=true`. Before modules start, TTS
-automatically downloads the **114 MB INT8 model** and **28 MB voice data** from
-the pinned [Kokoro ONNX release](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1).
-No separate model setup command is needed. Download progress appears in the logs.
-
-Assets are cached in `${XDG_CACHE_HOME:-$HOME/.cache}/dimos/tts` and checked
-against pinned SHA-256 hashes. Valid files are reused without network requests;
-missing or corrupt default assets are downloaded again. Failed downloads never
-replace an existing file with partial content. Rerun collection to retry a failure.
-
-Use `uv run --no-sync` after installation, or include
-`--extra manipulation --extra tts` in `uv run`. The module flag controls behavior,
-not package installation. The `all` extra does not include `tts`.
-
-Disabled TTS loads no inference dependencies and performs no asset checks or
-downloads. With valid cached assets, enabled TTS works offline. Custom model and
-voice paths use your existing files as supplied; missing custom files produce a
-path error rather than downloading the default model into that location.
-
-## Enable prompts
-
-Add `--tts.enabled=true` to your existing collection launch, retaining its robot, task,
-camera, and recording options. For example, the launch documented in
-[Imitation Learning for Manipulation](/docs/capabilities/manipulation/imitation-learning.md)
-becomes `uv run --extra tts dimos run dual-openyam-quest-collection --tts.enabled=true ...`.
-
-Then attach the terminal controls as usual:
+Add `--tts.enabled=true` to your existing collection launch, retaining your robot,
+camera, task, and recording options:
 
 ```bash
-uv run dimos imitation collect
+uv run --no-sync dimos run dual-openyam-quest-collection --tts.enabled=true ...
 ```
 
-`--tts.enabled=true` belongs to **stack startup**, not the attached terminal command. Restart
-the stack to change it. `--tts.enabled=false` explicitly disables it. This is the `enabled` field on
-`KokoroTTSConfig`, scoped to the module instance named `tts`; there is no global
-TTS flag or `DIMOS_TTS` setting.
+TTS is nested configuration on the WebXR module. The fully qualified flag for
+collection is `--armteleopmodule.tts.enabled=true`; `--tts.enabled=true` is the
+ordinary unambiguous shorthand. Use `--tts.enabled=false` to disable it.
+
+Before modules start, WebXR prepares the speech helper. It downloads the
+**114 MB INT8 model** and **28 MB voice data** from the pinned
+[Kokoro ONNX release](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1)
+if needed, verifies their SHA-256 hashes, then generates the three recording
+phrases. Phrase generation took about 12 seconds on the development machine;
+first-time downloads add to that startup time. No separate setup command is needed.
+
+Assets are cached in `${XDG_CACHE_HOME:-$HOME/.cache}/dimos/tts`. Valid files are
+reused without network access; missing or corrupt default assets are downloaded
+again. Failed downloads never install partial files. Rerun collection to retry.
+Custom model and voice paths use existing files as supplied; missing custom files
+produce a path error rather than downloading defaults into those locations.
+
+Disabled TTS imports no inference dependencies, checks no assets, and creates no
+speech helper or worker. The `all` extra does not include `tts`. To have `uv run`
+sync dependencies on launch, include `--extra manipulation --extra tts` before
+`dimos`; the module flag does not install Python packages.
+
+Attach terminal controls as usual:
+
+```bash
+uv run --no-sync dimos imitation collect
+```
 
 Supported collection blueprints:
 
@@ -70,12 +68,12 @@ Connection snapshots, initialization, duplicate events, and save/discard while
 idle remain silent. Saving confirms the episode transition shown by the HUD;
 it is not a separate disk-flush acknowledgment.
 
-The page silently preloads the three phrases. A new phrase can take several
-seconds to synthesize on CPU, while repeated phrases use caches. New events
-interrupt speech and invalidate older pending responses. Leaving XR or losing
+Python selects already prepared audio for each accepted event; recording
+callbacks perform no inference. New events interrupt speech and invalidate
+older pending audio decoding. Leaving XR or losing
 the WebSocket connection stops playback. Nothing is replayed on reconnect.
 
-If playback or a speech request fails, the page and collection HUD show
+If browser playback fails, the page and collection HUD show
 **Audio unavailable**. Collection and controller input continue to work.
 
 ## Manual headset test
@@ -85,8 +83,7 @@ from your working collection launch.
 
 1. Install the optional dependencies above. Launch your collection blueprint with
    `uv run --extra tts dimos run BLUEPRINT --tts.enabled=true` and its usual options.
-2. Open the server's `/teleop` page in the headset browser. Wait about 15 seconds
-   for the initial three phrases to preload, then select **Connect** and enter
+2. Open the server's `/teleop` page in the headset browser. Select **Connect** and enter
    XR. Connecting should be silent. Ensure the headset volume is audible.
 3. In another terminal, run `uv run dimos imitation collect`. Use the table
    below to check controller and terminal inputs independently.
@@ -112,41 +109,30 @@ from your working collection launch.
 Record the headset model, browser/version, and whether audio is audible during
 XR. The Chromium smoke test does not replace this check on each browser family.
 
-## Extend the prompts
+## Data flow and extending prompts
 
-`KokoroTTSModule.synthesize(text: str) -> bytes` returns mono PCM16 WAV through
-the `SpeechSynthesisSpec` RPC contract. It accepts nonblank text up to 500
-characters, uses English voice `af_sarah` by default, and caches 128 phrases.
-The module has no recording-specific behavior and does not play sound on the
-computer's speakers.
+`KokoroTTS` is an ordinary library helper owned by WebXR. Its nested configuration
+controls assets and voice, and `synthesize(text: str) -> bytes` returns mono PCM16
+WAV. It accepts nonblank text up to 500 characters and caches 128 phrases.
 
-The web server exposes `POST /teleop/speech` with JSON `{"text":"…"}` and an
-`audio/wav` response. It runs synthesis RPC off the server's event loop. The
-browser's `SpeechPlayer` owns playback and cancellation; `CollectionPrompts`
-owns recording-event wording. Add phrases to that mapping or call the speech
-helper from another UI feature.
+Python's `CollectionPrompts` selects feedback from confirmed episode status.
+Add wording to `RECORDING_PROMPTS` and the corresponding Python event selection;
+WebXR prepares every phrase in that mapping during build. Its status callback
+only looks up cached audio and schedules delivery.
 
-The existing video/status WebSocket carries no audio. Its status envelope has
-a `snapshot` boolean identifying cached connection state.
+The existing WebSocket sends the status message followed by an optional JSON
+speech message: `{"type":"speech","audio":"<base64 WAV>"}`. Binary frames remain
+JPEG video. The browser decodes and plays speech; it does not choose phrases or
+request synthesis. Connection snapshots contain only status, never historical
+speech. New events interrupt playback, and disconnects invalidate pending decoding.
 
 ## Validation
 
 ```bash
-uv run pytest dimos/stream/audio/tts/test_kokoro_module.py dimos/teleop/webxr/test_module.py
+uv run --no-sync pytest dimos/stream/audio/tts/test_kokoro.py dimos/stream/audio/tts/test_assets.py dimos/teleop/webxr/test_module.py dimos/teleop/webxr/test_collection_prompts.py
 node dimos/teleop/webxr/web/test_speech.mjs
 ```
 
-The INT8 model was exercised on CPU with outbound socket connections blocked,
-including a new phrase, “Episode 12 saved.” Browser-independent logic tests
-cover reconnects, cancellation, cache reuse, and out-of-order responses.
-An automated Chromium check exercised the real HTTP endpoint, WAV decoding,
-cached playback, and stopping audio. Cached playback was scheduled in about
-2.2 ms on the development machine; cold CPU synthesis took about 4 seconds per
-phrase. These measurements do not include physical headset output latency.
-
-Physical headset testing remains required for each supported browser family:
-enter an immersive session, test B/start/save and Y/discard plus terminal
-commands, reconnect silently, and check that video and controls stay responsive.
-Measure event receipt to cached playback start; the local-network target is
-under 250 ms. WebXR support alone does not guarantee browser audio permissions
-or a particular system output device.
+Physical headset testing remains required: verify start/save/discard, silent
+reconnects, prompt interruption, and responsive video and controls. Browser smoke
+checks do not measure physical headset output latency.

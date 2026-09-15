@@ -20,19 +20,21 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
-from dimos.stream.audio.tts import assets, kokoro_module
-from dimos.stream.audio.tts.kokoro_module import KokoroTTSConfig, KokoroTTSModule
+from dimos.stream.audio.tts import assets, kokoro
+from dimos.stream.audio.tts.kokoro import KokoroTTS, KokoroTTSConfig
 
 
 @pytest.fixture
 def module(tmp_path):
-    module = KokoroTTSModule(
-        enabled=True, model_path=tmp_path / "model.onnx", voices_path=tmp_path / "voices.bin"
+    module = KokoroTTS(
+        KokoroTTSConfig(
+            enabled=True, model_path=tmp_path / "model.onnx", voices_path=tmp_path / "voices.bin"
+        )
     )
     try:
         yield module
     finally:
-        module.stop()
+        module.close()
 
 
 @pytest.fixture
@@ -42,12 +44,12 @@ def engine(module, mocker):
     kokoro = mocker.MagicMock()
     ort = mocker.MagicMock()
     mocker.patch(
-        "dimos.stream.audio.tts.kokoro_module.importlib.import_module",
+        "dimos.stream.audio.tts.kokoro.importlib.import_module",
         side_effect={"kokoro_onnx": kokoro, "onnxruntime": ort}.__getitem__,
     )
     engine = kokoro.Kokoro.from_session.return_value
     engine.create.return_value = (np.array([-2.0, -0.5, 0.0, 0.5, 2.0]), 24000)
-    module.start()
+    module.prepare()
     return engine
 
 
@@ -87,20 +89,13 @@ def test_invalid_text_is_rejected_before_synthesis(module, engine, text):
     engine.create.assert_not_called()
 
 
-def test_missing_assets_fail_without_downloading(module, mocker):
-    load = mocker.patch("dimos.stream.audio.tts.kokoro_module.importlib.import_module")
-    with pytest.raises(FileNotFoundError, match="Call build"):
-        module.start()
-    load.assert_not_called()
-
-
 def test_missing_optional_dependency_explains_installation(module, mocker):
     mocker.patch(
-        "dimos.stream.audio.tts.kokoro_module.importlib.import_module",
+        "dimos.stream.audio.tts.kokoro.importlib.import_module",
         side_effect=ModuleNotFoundError("kokoro_onnx"),
     )
     with pytest.raises(ImportError, match="uv sync --extra tts"):
-        module.build()
+        module.prepare()
 
 
 def test_synthesis_error_does_not_poison_cache(module, engine):
@@ -111,33 +106,32 @@ def test_synthesis_error_does_not_poison_cache(module, engine):
         assert wav.getnframes() == 5
 
 
-def test_stopped_module_rejects_cached_speech(module, engine):
+def test_closed_helper_rejects_cached_speech(module, engine):
     module.synthesize("Recording started")
-    module.stop()
+    module.close()
     with pytest.raises(RuntimeError, match="not running"):
         module.synthesize("Recording started")
 
 
 def test_disabled_tts_requires_no_engine_or_assets(module, mocker):
     module.config.enabled = False
-    load = mocker.patch("dimos.stream.audio.tts.kokoro_module.importlib.import_module")
+    load = mocker.patch("dimos.stream.audio.tts.kokoro.importlib.import_module")
     assert KokoroTTSConfig.model_fields["enabled"].default is False
-    module.build()
-    module.start()
-    assert module.is_enabled() is False
+    module.prepare()
+    assert module.config.enabled is False
     load.assert_not_called()
     with pytest.raises(RuntimeError, match="not running"):
         module.synthesize("Hello")
 
 
 def test_enabled_tts_reports_module_config(module, engine):
-    assert module.is_enabled() is True
+    assert module.config.enabled is True
 
 
-def test_build_downloads_default_assets_and_reuses_cache(
+def test_prepare_downloads_default_assets_and_reuses_cache(
     module, tmp_path, monkeypatch, mocker, requests_mock
 ):
-    monkeypatch.setattr(kokoro_module, "TTS_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(kokoro, "TTS_CACHE_DIR", tmp_path)
     module.config.model_path = tmp_path / assets.MODEL_FILENAME
     module.config.voices_path = tmp_path / assets.VOICES_FILENAME
     contents = {assets.MODEL_FILENAME: b"model", assets.VOICES_FILENAME: b"voices"}
@@ -146,31 +140,29 @@ def test_build_downloads_default_assets_and_reuses_cache(
         "ASSET_SHA256",
         {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()},
     )
-    load = mocker.patch("dimos.stream.audio.tts.kokoro_module.importlib.import_module")
+    load = mocker.patch("dimos.stream.audio.tts.kokoro.importlib.import_module")
     for name, data in contents.items():
         requests_mock.get(f"{assets.RELEASE_URL}/{name}", content=data)
-    module.build()
+    module.prepare()
     assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == contents
-    load.return_value.InferenceSession.assert_not_called()
+    load.return_value.InferenceSession.assert_called_once()
     assert requests_mock.call_count == 2
     requests_mock.reset_mock()
-    module.build()
+    module.prepare()
     assert requests_mock.call_count == 0
-    module.start()
-    load.return_value.InferenceSession.assert_called_once()
 
 
-def test_build_uses_existing_custom_assets(module, mocker, requests_mock):
+def test_prepare_uses_existing_custom_assets(module, mocker, requests_mock):
     module.config.model_path.write_bytes(b"custom model")
     module.config.voices_path.write_bytes(b"custom voices")
-    mocker.patch("dimos.stream.audio.tts.kokoro_module.importlib.import_module")
-    module.build()
+    mocker.patch("dimos.stream.audio.tts.kokoro.importlib.import_module")
+    module.prepare()
     assert requests_mock.call_count == 0
     assert module.config.model_path.read_bytes() == b"custom model"
 
 
-def test_build_rejects_missing_custom_asset_before_downloading(module, mocker, requests_mock):
-    mocker.patch("dimos.stream.audio.tts.kokoro_module.importlib.import_module")
+def test_prepare_rejects_missing_custom_asset_before_downloading(module, mocker, requests_mock):
+    mocker.patch("dimos.stream.audio.tts.kokoro.importlib.import_module")
     with pytest.raises(FileNotFoundError, match="Missing custom TTS asset"):
-        module.build()
+        module.prepare()
     assert requests_mock.call_count == 0
