@@ -15,10 +15,10 @@
 """The ping-pong example, built on the C++ native module SDK.
 
 Ping publishes a Twist at 5 Hz on data. Pong echoes each one back on confirm,
-stamped with its sample_config. The C++ SDK supports LCM only.
+stamped with its sample_config.
 
 Run with:
-    python examples/native-modules/cpp_ping_pong.py
+    python examples/native-modules/cpp_ping_pong.py [--transport lcm|zenoh]
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ def blueprint() -> Blueprint:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--transport", choices=["lcm"], default="lcm")
+    parser.add_argument("--transport", choices=["lcm", "zenoh"], default="lcm")
     args = parser.parse_args()
 
     bp = blueprint().global_config(viewer="none", transport=args.transport)
