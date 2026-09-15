@@ -40,7 +40,7 @@ from dimos.robot.manipulators.openyam.collection import OPENYAM_QUEST_COLLECTION
 from dimos.utils.testing.waiting import wait_until
 
 pytestmark = [
-    pytest.mark.self_hosted_large,
+    pytest.mark.native_e2e,
     pytest.mark.skipif_macos,
     pytest.mark.skipif_aarch64,
     pytest.mark.skipif_no_turbojpeg,
@@ -53,7 +53,7 @@ _EXECUTABLE = DIMOS_PROJECT_ROOT / "target" / "debug" / "dimos-memory-recorder"
 @pytest.fixture(scope="module")
 def native_recorder_executable() -> Path:
     subprocess.run(
-        ["cargo", "build", "-p", "dimos-memory-recorder"],
+        ["cargo", "build", "--locked", "-p", "dimos-memory-recorder"],
         cwd=_RUST_WORKSPACE,
         check=True,
     )
