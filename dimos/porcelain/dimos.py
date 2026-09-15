@@ -14,10 +14,6 @@
 
 from __future__ import annotations
 
-# Load OpenCV before anything that loads PyAV: PyAV bundles its own libxcb, and an
-# OpenCV window opened after it hangs. Keeps cv2.imshow usable from this API.
-import cv2  # noqa: F401  # isort: skip
-
 import atexit
 from collections.abc import Callable
 import importlib
@@ -44,8 +40,21 @@ DescribeTarget: TypeAlias = str | ModuleHandle | RpcCall | ModuleInfo | RpcInfo
 S = TypeVar("S")
 
 
+def _load_opencv_first() -> None:
+    """PyAV bundles its own libxcb; an OpenCV window opened after PyAV loads hangs.
+
+    The Go2 stack loads PyAV, so import cv2 before anything this API starts.
+    Best effort: a headless box without libGL must still be able to connect.
+    """
+    try:
+        import cv2  # noqa: F401
+    except (ImportError, OSError):
+        pass
+
+
 class Dimos:
     def __init__(self, **config_overrides: Any) -> None:
+        _load_opencv_first()
         self._config_overrides = config_overrides
         self._coordinator: ModuleCoordinator | None = None
         self._source: ModuleSource | None = None
@@ -123,6 +132,7 @@ class Dimos:
         `@rpc` (and `@skill`, which implies `@rpc`) on a module are callable.
         `stop()` closes the connection without terminating the remote process.
         """
+        _load_opencv_first()
         source = RemoteModuleSource(timeout=timeout)
         instance = cls()
         instance._source = source
