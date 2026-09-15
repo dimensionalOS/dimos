@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import math
+
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
@@ -103,7 +105,7 @@ def openarm_hardware(
     left_can_port: str | None = None,
     right_can_port: str | None = None,
 ) -> HardwareComponent:
-    """Use mock hardware unless both physical CAN interfaces are explicit."""
+    """Resolve hardware at coordinator startup, including mock model limits."""
     if (left_can_port is None) != (right_can_port is None):
         raise ValueError("OpenArm hardware requires both left and right CAN ports")
 
@@ -116,9 +118,25 @@ def openarm_hardware(
             gravity_comp=True,
         )
     else:
+        model = OPENARM_BIMANUAL_MODEL.load()
+        lower: list[float] = []
+        upper: list[float] = []
+        for name in OPENARM_ARM_JOINTS:
+            joint = model.get_joint(name)
+            if (
+                joint is None
+                or joint.lower is None
+                or joint.upper is None
+                or not math.isfinite(joint.lower)
+                or not math.isfinite(joint.upper)
+                or joint.lower >= joint.upper
+            ):
+                raise ValueError(f"OpenArm model has invalid position limits for {name!r}")
+            lower.append(joint.lower)
+            upper.append(joint.upper)
         limits = JointLimits(
-            position_lower=[*([None] * len(OPENARM_ARM_JOINTS)), 0.0, 0.0],
-            position_upper=[*([None] * len(OPENARM_ARM_JOINTS)), 1.0, 1.0],
+            position_lower=[*lower, 0.0, 0.0],
+            position_upper=[*upper, 1.0, 1.0],
             velocity_max=[None] * len(OPENARM_JOINTS),
         )
     return HardwareComponent(
