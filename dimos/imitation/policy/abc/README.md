@@ -9,19 +9,22 @@ simulation packages are excluded from the deployment environment.
 
 ## Checkpoint and assets
 
-Download the official checkpoint (about 8 GB) and normalization statistics:
+The official checkpoint (about 8 GB), normalization statistics, CLIP text weights,
+and tokenizer download automatically during motion-free preflight when their
+URLs are configured. The launch example below uses the released ABC checkpoint.
+Local checkpoint and normalization paths are also accepted.
 
-```bash
-mkdir -p checkpoints/abc
-curl -L --fail https://abc-data.timehorizons.org/checkpoints/bottles_release_prep_75k.pt -o checkpoints/abc/bottles_75k.pt
-curl -L --fail https://abc-data.timehorizons.org/misc/norm_stats.json -o checkpoints/abc/norm_stats.json
-```
+Assets live under `${XDG_CACHE_HOME:-$HOME/.cache}/dimos/assets/http`. Completed
+files are reused offline. Downloads are serialized per asset and incomplete
+files are never published. A failed download leaves the policy unready; retry
+preflight after fixing connectivity. Model loading holds the DimOS cache-use
+guard, so `dimos cache clean` refuses cleanup while these files are in use.
+After stopping the stack, cache cleanup removes downloaded assets; it never
+removes user-supplied local checkpoints.
 
-CLIP text weights and its tokenizer are fetched by the upstream loader on first
-use. Set `--policy.clip-cache-dir` to choose their cache location. DINO weights
-are included in this complete inference checkpoint; separate DINO pretraining
-weights are only needed by the upstream training pipeline. The snapshot retains
-ABC, CLIP, and DINO license texts under `python/`.
+DINO weights are included in this complete inference checkpoint; separate DINO
+pretraining weights are only needed by the upstream training pipeline. The
+snapshot retains ABC, CLIP, and DINO license texts under `python/`.
 
 ## Launch
 
@@ -33,8 +36,8 @@ existing webcam module. All provide 640×480 RGB at 30 Hz.
 ```bash
 dimos run dual-openyam-policy-quest-rollout --daemon \
   --policy.backend abc \
-  --policy.policy-path checkpoints/abc/bottles_75k.pt \
-  --policy.norm-stats-path checkpoints/abc/norm_stats.json \
+  --policy.policy-path https://abc-data.timehorizons.org/checkpoints/bottles_release_prep_75k.pt \
+  --policy.norm-stats-path https://abc-data.timehorizons.org/misc/norm_stats.json \
   --policy.device cuda \
   --controlcoordinator.left-can-port follower_l \
   --controlcoordinator.right-can-port follower_r \
@@ -107,3 +110,15 @@ statistics' mean state produced finite `(30, 14)` chunks. The adapter reported
 These are inference smoke measurements, not task-performance results. Physical
 cameras, CAN buses, gripper calibration, and real robot execution remain untested
 on this host. Both backend environments also passed fresh-subprocess RPC checks.
+
+## Manual asset validation
+
+1. Start the configured stack and request preflight without starting rollout.
+   Confirm download progress and that the policy becomes ready after validation.
+2. Stop and restart with outbound internet blocked but the robot network available.
+   Preflight should reuse the downloaded files without internet access.
+3. A failed first download should report its source in preflight status and leave
+   the policy unready. Retry after connectivity is restored.
+4. While preflight is downloading or loading files, `dimos cache clean --yes`
+   must refuse cleanup. Stop the stack before cleaning. Your external checkpoint
+   files and recordings must remain present.

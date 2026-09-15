@@ -6,3 +6,8 @@ Training and simulation entrypoints are excluded. The package uses implicit name
 discovery, and CUDA warmup results are evaluated without unused assignments to `_`.
 These repository-style adaptations leave the numerical operations unchanged.
 Behavioral changes belong in dimos_abc/backend.py.
+
+Asset-loading adaptation: CLIP accepts local model/tokenizer paths. Its standalone
+HTTP downloader was removed; dimos_abc resolves all remote assets through the
+shared DimOS cache before constructing the upstream models. Numerical operations
+are unchanged.

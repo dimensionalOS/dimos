@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "dimos-abc-runtime"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["numpy>=2,<3", "torch==2.11.0+cu128", "ftfy", "regex"]
+dependencies = ["numpy>=2,<3", "torch==2.11.0+cu128", "ftfy", "regex", "requests", "filelock"]
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }

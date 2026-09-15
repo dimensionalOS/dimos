@@ -6,7 +6,6 @@ Includes the CLIP text encoder and DINOv3 vision backbone needed to run the mode
 import gzip
 import html
 import math
-import urllib.request
 from functools import lru_cache
 from pathlib import Path
 
@@ -38,22 +37,6 @@ def _load_clip_text_deps():
             "Run `uv sync` after pulling this version, or install them manually."
         ) from exc
     return ftfy, regex
-
-
-def _download_if_missing(url, path):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        urllib.request.urlretrieve(url, path)
-
-
-def ensure_clip_text_assets(config: ClipConfig):
-    """Download CLIP ViT-B/32 text assets if needed."""
-    root = Path(config.cache_dir).expanduser()
-    b32_path = root / config.model_name
-    bpe_path = root / config.bpe_name
-    _download_if_missing(config.model_url, b32_path)
-    _download_if_missing(config.bpe_url, bpe_path)
-    return b32_path, bpe_path
 
 
 @lru_cache()
@@ -212,7 +195,7 @@ class CLIPTextEmbedder:
     Holds a CPU memo cache keyed by prompt so repeats skip BPE+transformer."""
 
     def __init__(self, config: ClipConfig, device="cpu"):
-        b32_path, bpe_path = ensure_clip_text_assets(config)
+        b32_path, bpe_path = Path(config.model_path), Path(config.bpe_path)
         self.device = torch.device(device)
         try:
             state_dict = torch.jit.load(str(b32_path), map_location="cpu").state_dict()

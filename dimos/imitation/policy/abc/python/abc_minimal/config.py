@@ -40,17 +40,9 @@ class FlowConfig:
 
 @dataclass
 class ClipConfig:
-    """CLIP ViT-B/32 text asset locations."""
-    cache_dir: str = field(default_factory=lambda: str(Path.home() / ".cache" / "clip"))
-    model_url: str = (
-        "https://openaipublic.azureedge.net/clip/models/"
-        "40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt"
-    )
-    bpe_url: str = (
-        "https://github.com/openai/CLIP/raw/main/clip/bpe_simple_vocab_16e6.txt.gz"
-    )
-    model_name: str = "ViT-B-32.pt"
-    bpe_name: str = "bpe_simple_vocab_16e6.txt.gz"
+    """Local CLIP ViT-B/32 text assets, resolved by the DimOS adapter."""
+    model_path: str = "ViT-B-32.pt"
+    bpe_path: str = "bpe_simple_vocab_16e6.txt.gz"
 
 
 @dataclass

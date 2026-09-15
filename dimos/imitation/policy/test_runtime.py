@@ -123,3 +123,22 @@ def test_stale_camera_prevents_rollout_even_when_other_inputs_are_fresh(runtime)
     assert "overhead" in module.rollout_status()["last_error"]
     backend.predict.assert_not_called()
     control.execute_trajectory.assert_not_called()
+
+
+def test_download_failure_is_reported_by_preflight_without_motion(runtime, mocker):
+    module, backend, control = runtime
+    provide_observations(module)
+    load = mocker.patch.object(
+        module,
+        "_load_policy",
+        side_effect=RuntimeError("Could not download model asset https://example.com/model.pt"),
+    )
+    status = module.preflight_rollout()
+    assert not status["policy_ready"]
+    assert not status["active"]
+    assert "https://example.com/model.pt" in status["last_error"]
+    control.execute_trajectory.assert_not_called()
+    load.side_effect = None
+    load.return_value = backend
+    provide_observations(module)
+    assert module.preflight_rollout()["policy_ready"]
