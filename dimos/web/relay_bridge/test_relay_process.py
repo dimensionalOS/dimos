@@ -82,16 +82,15 @@ def test_relay_run_cmd_dir_flags() -> None:
     assert cmd[cmd.index("--sdk-dir") + 1] == "/sdk/dist"
     assert cmd[cmd.index("--serve-dir") + 1] == "/my/ui"
 
-    # The relay reads the PEM files itself, so they join the read scope.
-    cmd = relay_run_cmd(
-        "deno",
-        Path("/web"),
-        cert=Path("/etc/relay/fullchain.pem"),
-        key=Path("/etc/relay/privkey.pem"),
-    )
-    assert "--allow-read=/web,/etc/relay/fullchain.pem,/etc/relay/privkey.pem" in cmd
-    assert cmd[cmd.index("--cert") + 1] == "/etc/relay/fullchain.pem"
-    assert cmd[cmd.index("--key") + 1] == "/etc/relay/privkey.pem"
+    # The relay reads the PEM files itself, so they join the read scope. Paths
+    # are canonicalized (macOS /etc -> /private/etc), so assert the resolved
+    # forms rather than the literals.
+    cert = Path("/etc/relay/fullchain.pem")
+    key = Path("/etc/relay/privkey.pem")
+    cmd = relay_run_cmd("deno", Path("/web"), cert=cert, key=key)
+    assert f"--allow-read=/web,{cert.resolve()},{key.resolve()}" in cmd
+    assert cmd[cmd.index("--cert") + 1] == str(cert.resolve())
+    assert cmd[cmd.index("--key") + 1] == str(key.resolve())
 
     # The auth file too: the relay reads it itself.
     cmd = relay_run_cmd("deno", Path("/web"), auth_file=Path("/etc/relay/auth.json"))

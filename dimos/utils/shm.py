@@ -29,6 +29,7 @@ built by a peer with a different layout, which is a permanent error its caller m
 raise, not a race to wait out.
 """
 
+import _posixshmem
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 import os
@@ -83,6 +84,21 @@ def create_or_attach_shm(
 
 
 def _try_attach(name: str) -> tuple[SharedMemory | None, str]:
+    # Probe with a bare fd before constructing SharedMemory: its attach path
+    # unlinks the segment whenever mmap fails with an OSError, and on darwin
+    # the zero-length mmap inside the creation window fails with exactly that
+    # (EINVAL — shm fds are not regular files there, so Python's empty-file
+    # ValueError is never reached). Constructing eagerly would therefore
+    # destroy the creator's name mid-window.
+    try:
+        fd = _posixshmem.shm_open(name if name.startswith("/") else "/" + name, os.O_RDWR, mode=0)
+    except FileNotFoundError:
+        return None, "segment does not exist"
+    try:
+        if os.fstat(fd).st_size == 0:
+            return None, "creator has not sized the segment yet"
+    finally:
+        os.close(fd)
     try:
         return unregister(SharedMemory(name=name)), ""
     except FileNotFoundError:
