@@ -83,6 +83,7 @@ def test_g1_blueprint_uses_shared_bimanual_teleop_task() -> None:
     assert task.params["max_joint_velocity_rad_s"] == pytest.approx(np.deg2rad(120.0))
 
 
+@pytest.mark.self_hosted
 def test_g1_teleop_model_passes_planning_validation() -> None:
     """The coordinator prepares this model at start; missing limits raise here."""
     assert prepare_robot_model(_G1_TELEOP_MODEL).joint_space
