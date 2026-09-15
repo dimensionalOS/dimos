@@ -93,6 +93,12 @@ class GlobalConfig(BaseSettings):
     # Seconds ZenohService.start() blocks for the configured connect endpoints to
     # link before giving up and continuing. 0 disables the wait.
     zenoh_connect_timeout: float = Field(default=1.0, ge=0, le=86400)
+    # Whether this stack claims the bus-wide `Coordinator` RPC name. That name is
+    # global to a zenoh bus, so a second stack sharing the bus -- a viewer beside a
+    # robot that runs its own -- refuses to start. A leaf stack that coordinates
+    # nothing for anyone else turns this off and shares the bus. `dimos stop` and
+    # `dimos status` are unaffected: they work off the local run registry.
+    serve_coordinator_rpc: bool = True
     viewer: ViewerBackend = "rerun"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB

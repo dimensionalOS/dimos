@@ -32,7 +32,7 @@ use tracing::{error, info, warn};
 
 use crate::lcm::LcmTransport;
 use crate::module::{
-    init_tracing, log_wiring, parse_config_value, read_launch_config, run_module_core,
+    init_tracing, log_wiring, parse_config_value, read_stdin_line, run_module_core,
     validate_config, Module,
 };
 use crate::transport::{SharedTransport, Transport};
@@ -123,9 +123,13 @@ pub struct HostSpec {
     pub default_qos: &'static str,
     /// The rendered connection graph, printed by `<host> graph`.
     pub graph_json: &'static str,
-    /// Identity of the wiring this binary was baked with. A config emitted by
-    /// `dimos bake --emit-config` carries the same stamp under `graph`.
+    /// Identity of the wiring this binary was baked with; the embedded config
+    /// carries the same stamp under `graph`.
     pub graph_hash: &'static str,
+    /// The launch config `dimos bake` emitted for this graph: every module's
+    /// full config block, the wiring, qos and (for a deployment) the session.
+    /// A line on stdin deep-merges over it and never replaces it.
+    pub config_json: &'static str,
 }
 
 /// What the command line asks the binary to do. A baked host takes its whole
@@ -200,6 +204,62 @@ fn object<'a>(value: &'a Value, label: &str) -> io::Result<&'a Map<String, Value
     value
         .as_object()
         .ok_or_else(|| invalid(format!("`{label}` must be an object")))
+}
+
+/// The launch config: the embedded blob, with the stdin line (if any) merged in.
+fn launch_config(spec: &HostSpec, line: Option<&str>) -> io::Result<Value> {
+    let mut base = parse_baked("config", spec.config_json)?;
+    if let Some(line) = line {
+        let over: Value = serde_json::from_str(line.trim())
+            .map_err(|e| invalid(format!("stdin override is not valid JSON: {e}")))?;
+        check_override_keys(&over)?;
+        merge(&mut base, over);
+    }
+    Ok(base)
+}
+
+/// Deep-merge `over` into `base`: objects descend, everything else replaces.
+fn merge(base: &mut Value, over: Value) {
+    match (base, over) {
+        (Value::Object(base), Value::Object(over)) => {
+            for (key, value) in over {
+                match base.get_mut(&key) {
+                    Some(slot) => merge(slot, value),
+                    None => {
+                        base.insert(key, value);
+                    }
+                }
+            }
+        }
+        (base, over) => *base = over,
+    }
+}
+
+/// A typo in an override's outer keys would otherwise merge in silently.
+/// Config keys are checked later, against the struct, by `parse_config_value`.
+fn check_override_keys(over: &Value) -> io::Result<()> {
+    const TOP: &[&str] = &["modules", "graph", "qos", "suppress", "session"];
+    const SECTION: &[&str] = &["topics", "config"];
+    let unknown = |keys: &Map<String, Value>, allowed: &[&str], label: &str| match keys
+        .keys()
+        .find(|k| !allowed.contains(&k.as_str()))
+    {
+        Some(key) => Err(invalid(format!(
+            "stdin override: unknown key `{key}` in {label}"
+        ))),
+        None => Ok(()),
+    };
+    unknown(object(over, "stdin override")?, TOP, "the top level")?;
+    for (id, section) in over
+        .get("modules")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        let section = object(section, &format!("modules.{id}"))?;
+        unknown(section, SECTION, &format!("`modules.{id}`"))?;
+    }
+    Ok(())
 }
 
 /// Per-module topic map: the baked wiring with the stdin overrides applied.
@@ -354,8 +414,7 @@ fn check_graph_stamp(spec: &HostSpec, stdin: &Value) -> io::Result<()> {
     match stdin.get("graph").and_then(Value::as_str) {
         Some(stamp) if stamp == spec.graph_hash => Ok(()),
         Some(stamp) => Err(invalid(format!(
-            "config was baked for graph `{stamp}`, this binary is `{}`: \
-             re-run `dimos bake --emit-config`",
+            "config was baked for graph `{stamp}`, this binary is `{}`: re-run `dimos bake`",
             spec.graph_hash
         ))),
         None => {
@@ -445,7 +504,8 @@ fn run_host_fallible(spec: &HostSpec) -> io::Result<()> {
         .enable_all()
         .build()?;
 
-    let stdin = main_rt.block_on(read_launch_config())?;
+    let line = main_rt.block_on(read_stdin_line())?;
+    let stdin = launch_config(spec, line.as_deref())?;
     check_graph_stamp(spec, &stdin)?;
     let prepared = prepare_all(spec, &stdin)?;
     let known: Vec<String> = prepared
@@ -664,7 +724,7 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("0123456789abcdef"), "{message}");
         assert!(message.contains("test-graph"), "{message}");
-        assert!(message.contains("--emit-config"), "{message}");
+        assert!(message.contains("dimos bake"), "{message}");
     }
 
     #[test]
@@ -736,7 +796,75 @@ mod tests {
             default_qos: "{}",
             graph_json: "{}",
             graph_hash: "test-graph",
+            config_json: BASE_CONFIG,
         }
+    }
+
+    const BASE_CONFIG: &str = r#"{
+        "modules": {
+            "follower": {
+                "topics": {"odom": "dimos/odom", "path": "dimos/path"},
+                "config": {
+                    "rate_hz": 50,
+                    "embodiment": {
+                        "max_speed": 0.7,
+                        "control": {"k_pos": 1.0, "k_yaw": 2.0, "command_slew": [1, 2]}
+                    }
+                }
+            }
+        },
+        "graph": "test-graph",
+        "qos": {},
+        "suppress": [],
+        "session": {"mode": "client", "connect": ["tcp/127.0.0.1:7447"]}
+    }"#;
+
+    fn base() -> Value {
+        serde_json::from_str(BASE_CONFIG).unwrap()
+    }
+
+    #[test]
+    fn no_stdin_line_is_the_embedded_config() {
+        let spec = spec_with("{}");
+        assert_eq!(launch_config(&spec, None).unwrap(), base());
+    }
+
+    #[test]
+    fn a_stdin_override_descends_to_the_leaf_and_leaves_the_siblings() {
+        let spec = spec_with("{}");
+        let line = r#"{"modules":{"follower":{"config":{"embodiment":{"control":{"k_pos":1.5,"command_slew":[3]}}}}},"session":{"mode":"peer"}}"#;
+        let merged = launch_config(&spec, Some(line)).unwrap();
+        let mut expected = base();
+        let control = &mut expected["modules"]["follower"]["config"]["embodiment"]["control"];
+        control["k_pos"] = json!(1.5);
+        control["command_slew"] = json!([3]);
+        expected["session"]["mode"] = json!("peer");
+        assert_eq!(merged, expected);
+    }
+
+    #[test]
+    fn a_stdin_override_with_an_unknown_outer_key_is_refused() {
+        let spec = spec_with("{}");
+        let err = launch_config(&spec, Some(r#"{"sesion": {}}"#)).unwrap_err();
+        assert!(err.to_string().contains("unknown key `sesion`"), "{err}");
+        let err =
+            launch_config(&spec, Some(r#"{"modules": {"follower": {"cfg": {}}}}"#)).unwrap_err();
+        assert!(err.to_string().contains("unknown key `cfg`"), "{err}");
+    }
+
+    #[test]
+    fn a_stdin_override_with_an_unknown_config_key_still_fails_against_the_struct() {
+        #[derive(Debug, serde::Deserialize, serde::Serialize)]
+        #[serde(deny_unknown_fields)]
+        struct Follower {
+            rate_hz: u32,
+            embodiment: Value,
+        }
+        let spec = spec_with("{}");
+        let line = r#"{"modules":{"follower":{"config":{"rate_hz":10,"rate":1}}}}"#;
+        let merged = launch_config(&spec, Some(line)).unwrap();
+        let err = parse_config_value::<Follower>(&merged["modules"]["follower"]).unwrap_err();
+        assert!(err.to_string().contains("rate"), "{err}");
     }
 
     #[test]
@@ -975,6 +1103,7 @@ mod tests {
             default_qos: "{}",
             graph_json: "{}",
             graph_hash: "test-graph",
+            config_json: BASE_CONFIG,
         }
     }
 

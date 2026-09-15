@@ -16,9 +16,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 import importlib
-import json
 from pathlib import Path
 from typing import get_type_hints
 
@@ -26,6 +25,7 @@ import typer
 
 from dimos.cli.bake.build import BUILDERS, build_host, install
 from dimos.cli.bake.codegen import check_host_name, generate_crate
+from dimos.cli.bake.deployment import Deployment, load_deployment
 from dimos.cli.bake.discovery import (
     RegisteredModule,
     discover_modules,
@@ -49,14 +49,22 @@ def default_config(module: RegisteredModule) -> dict[str, object]:
     return dict(config_type().to_config_dict())
 
 
-def emit_config(graph: Graph, modules: Sequence[RegisteredModule]) -> dict[str, object]:
-    """The stdin blob for the host, bar the `session` block only the deployment knows."""
+def emit_config(
+    graph: Graph,
+    modules: Sequence[RegisteredModule],
+    configs: Mapping[str, Mapping[str, object]] | None = None,
+    session: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """The launch config the host embeds; `configs` replace class-default blocks."""
     topics = graph.topics()
-    return {
+    configs = configs or {}
+    if unknown := set(configs) - {module.id for module in modules}:
+        raise BakeError(f"deployment configures modules this bake does not have: {sorted(unknown)}")
+    blob: dict[str, object] = {
         "modules": {
             module.id: {
                 "topics": topics[module.id],
-                "config": default_config(module) or None,
+                "config": configs.get(module.id, default_config(module)) or None,
             }
             for module in modules
         },
@@ -64,6 +72,16 @@ def emit_config(graph: Graph, modules: Sequence[RegisteredModule]) -> dict[str, 
         "qos": graph.qos(),
         "suppress": list(graph.suppressed_topics()),
     }
+    if session is not None:
+        blob["session"] = session
+    return blob
+
+
+def deployment_modules(deployment: Deployment, modules: Sequence[str]) -> list[str]:
+    """The deployment's module list, refusing a positional list that disagrees."""
+    if modules and set(modules) != set(deployment.modules):
+        raise BakeError(f"the deployment bakes {sorted(deployment.modules)}, not {sorted(modules)}")
+    return list(deployment.modules)
 
 
 def bake(
@@ -85,8 +103,11 @@ def bake(
     builder: str = typer.Option("cargo", "--builder", help=f"Build driver: {', '.join(BUILDERS)}."),
     debug: bool = typer.Option(False, "--debug", help="Build the dev profile instead of release."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the graph and stop."),
-    emit_config_to: Path = typer.Option(
-        None, "--emit-config", help="Also write a ready-to-pipe stdin JSON config here."
+    deployment_ref: str = typer.Option(
+        None,
+        "--deployment",
+        help="`pkg.mod:NAME` of a Deployment: its module list, config overrides and "
+        "session are embedded in the binary.",
     ),
     list_modules: bool = typer.Option(
         False, "--list", help="List registered native modules and exit."
@@ -103,7 +124,10 @@ def bake(
             raise BakeError("-o/--out is required: its filename names the host binary")
         host = out.name
         check_host_name(host)
-        selected = select_modules(registry, modules or [])
+        deployment = Deployment(tuple(modules or []))
+        if deployment_ref is not None:
+            deployment = load_deployment(deployment_ref)
+        selected = select_modules(registry, deployment_modules(deployment, modules or []))
         graph = build_graph(
             host,
             selected,
@@ -113,18 +137,12 @@ def bake(
 
         typer.echo(render(graph))
         typer.echo("")
-
-        if emit_config_to is not None:
-            emit_config_to.parent.mkdir(parents=True, exist_ok=True)
-            # The host reads its config with a single read_line, so the blob must
-            # stay on one line.
-            emit_config_to.write_text(json.dumps(emit_config(graph, selected)) + "\n")
-            typer.echo(f"Wrote {emit_config_to}")
+        config = emit_config(graph, selected, deployment.configs, deployment.session)
 
         if dry_run:
             return
 
-        crate = generate_crate(host, selected, graph)
+        crate = generate_crate(host, selected, graph, config)
         typer.echo(f"Generated {crate}")
         artifact = build_host(crate, host, builder=builder, target=target, debug=debug)
         size = install(artifact, out)

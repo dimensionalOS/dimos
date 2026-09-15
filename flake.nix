@@ -10,6 +10,8 @@
     xome.inputs.nixpkgs.follows    = "nixpkgs";
     xome.inputs.flake-utils.follows = "flake-utils";
     diagon.url       = "github:petertrotman/nixpkgs/Diagon";
+    rustOverlay.url  = "github:oxalica/rust-overlay";
+    rustOverlay.inputs.nixpkgs.follows = "nixpkgs";
     # nixpkgs' lcm does not build on darwin, and the C++ native module flakes
     # already take it from here.
     lcm-extended.url = "github:jeff-hykin/lcm_extended";
@@ -17,10 +19,17 @@
     lcm-extended.inputs.flake-utils.follows = "flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils, lib, xome, diagon, lcm-extended, ... }:
+  outputs = { self, nixpkgs, flake-utils, lib, xome, diagon, rustOverlay, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs { inherit system; overlays = [ rustOverlay.overlays.default ]; };
+
+        # Pinned so the toolchain doesn't shift under contributors when the
+        # overlay moves. Carries the aarch64 std, which plain nixpkgs rustc does
+        # not -- that std is what `dimos bake --target aarch64-*` needs.
+        rustToolchain = pkgs.rust-bin.stable."1.97.1".default.override {
+          targets = [ "aarch64-unknown-linux-gnu" ];
+        };
 
         # ------------------------------------------------------------
         # 1. Shared package list (tool-chain + project deps)
@@ -84,6 +93,11 @@
           { vals.pkg=pkgs.python312Packages.virtualenv; flags={}; }
           { vals.pkg=pkgs.uv;                             flags={}; }
           { vals.pkg=pkgs.pre-commit;                   flags={}; }
+
+          ### Rust (rustc/cargo/clippy/rustfmt + aarch64 std) and the cross linker
+          { vals.pkg=rustToolchain;        flags={}; }
+          { vals.pkg=pkgs.cargo-zigbuild;  flags={}; }
+          { vals.pkg=pkgs.zig;             flags={}; }
 
           ### Runtime deps
           { vals.pkg=pkgs.portaudio;                 flags={ldLibraryGroup=true; packageConfGroup=true;}; }

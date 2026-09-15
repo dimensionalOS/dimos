@@ -124,6 +124,11 @@ class ModuleCoordinator(Resource):
 
     def start_rpc_service(self) -> None:
         """Expose the coordinator's API as @rpc methods over LCM."""
+        if not self._global_config.serve_coordinator_rpc:
+            # Deliberate: the name is bus-wide, and this stack shares the bus with
+            # one that owns it. Costs remote introspection of THIS stack, nothing else.
+            logger.info("serve_coordinator_rpc is off; not claiming the Coordinator name")
+            return
         with self._rpc_lock:
             if self._coordinator_rpc is not None:
                 return

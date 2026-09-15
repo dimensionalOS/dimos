@@ -1,0 +1,60 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""The Go2 motion host as `dimos bake --deployment` embeds it.
+
+The planner and the follower, and nothing else: tf and the mux stay on the
+laptop, in python. Every module block is its python config class at defaults
+plus the few values this deployment tunes; the rust side has no defaults of its
+own, so this is the only place they come from.
+"""
+
+from __future__ import annotations
+
+from dataclasses import replace
+
+from dimos.cli.bake.deployment import Deployment
+from dimos.navigation.motion.adapter.follower_native import TrajectoryFollowerNativeConfig
+from dimos.navigation.motion.adapter.planner_native import MotionPlannerNativeConfig
+from dimos.navigation.motion.embodiment.go2 import GO2
+from dimos.protocol.service.zenohservice import ZenohConfig
+from dimos.robot.unitree.go2.zenoh.blueprints import MOTION_BODY_DILATE_M
+
+# The deployment's ceiling over GO2's measured cruise; dial here, not in the law.
+MAX_SPEED = 0.7
+BODY = replace(GO2, max_speed=MAX_SPEED)
+
+# go2web is the zenoh ROUTER on 7447; the host is its CLIENT over loopback and
+# listens on nothing. Without this block the host opens zenoh's defaults -- a
+# peer with multicast scouting -- which a router does not forward to.
+SESSION = ZenohConfig(
+    mode="client",
+    connect=["tcp/127.0.0.1:7447"],
+    listen=[],
+    multicast=False,
+    scouting_interface="lo",
+    gossip=True,
+    connect_timeout=3.0,
+)
+
+GO2_MOTION_HOST = Deployment(
+    modules=("motion_planner", "trajectory_follower"),
+    configs={
+        "motion_planner": MotionPlannerNativeConfig(
+            embodiment=BODY, body_dilate_m=MOTION_BODY_DILATE_M
+        ).to_config_dict(),
+        "trajectory_follower": TrajectoryFollowerNativeConfig(embodiment=BODY).to_config_dict(),
+    },
+    session=SESSION.to_wire(),
+)

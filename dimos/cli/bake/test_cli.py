@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import dataclasses
-import json
 from pathlib import Path
 
 import pytest
@@ -25,8 +24,9 @@ import typer
 from typer.testing import CliRunner
 
 from dimos.cli.bake import cli
-from dimos.cli.bake.cli import bake, default_config, emit_config
+from dimos.cli.bake.cli import bake, default_config, deployment_modules, emit_config
 from dimos.cli.bake.codegen import render_main_rs
+from dimos.cli.bake.deployment import Deployment, load_deployment
 from dimos.cli.bake.discovery import discover_modules, select_modules
 from dimos.cli.bake.errors import BakeError
 from dimos.cli.bake.graph import build_graph
@@ -71,18 +71,37 @@ def test_dry_run_prints_the_graph_and_skips_the_build(
     assert calls == []
 
 
-def test_emit_config_writes_one_json_line_and_creates_parent_dirs(tmp_path: Path) -> None:
-    dest = tmp_path / "deploy" / "configs" / "hostbin.json"
+E2E = Deployment(("ray_tracing",), session={"mode": "peer"})
+
+
+def test_a_deployment_names_the_modules_and_embeds_its_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(cli, "generate_crate", lambda h, m, g, config: seen.append(config))
+    monkeypatch.setattr(cli, "build_host", lambda *a, **k: tmp_path / "built")
+    monkeypatch.setattr(cli, "install", lambda *a, **k: 0)
     result = CliRunner().invoke(
-        app(),
-        ["ray_tracing", "-o", str(tmp_path / "hostbin"), "--dry-run", "--emit-config", str(dest)],
+        app(), ["-o", str(tmp_path / "hostbin"), "--deployment", f"{__name__}:E2E"]
     )
-    assert result.exit_code == 0
-    text = dest.read_text()
-    # The host reads its config with a single read_line.
-    assert text.endswith("\n")
-    assert "\n" not in text[:-1]
-    assert set(json.loads(text)["modules"]) == {"ray_tracing"}
+    assert result.exit_code == 0, result.output
+    assert set(seen[0]["modules"]) == {"ray_tracing"}
+    assert seen[0]["session"] == {"mode": "peer"}
+
+
+def test_a_deployment_refuses_a_module_list_that_disagrees() -> None:
+    assert deployment_modules(E2E, []) == ["ray_tracing"]
+    assert deployment_modules(E2E, ["ray_tracing"]) == ["ray_tracing"]
+    with pytest.raises(BakeError, match="the deployment bakes"):
+        deployment_modules(E2E, ["mls_planner"])
+
+
+def test_load_deployment_names_what_is_wrong() -> None:
+    assert load_deployment(f"{__name__}:E2E") is E2E
+    with pytest.raises(BakeError, match="cannot import"):
+        load_deployment("dimos.no_such_module:X")
+    with pytest.raises(BakeError, match="not a Deployment"):
+        load_deployment(f"{__name__}:app")
 
 
 def test_default_config_reports_an_unimportable_wrapper() -> None:
@@ -95,11 +114,18 @@ def test_default_config_reports_an_unimportable_wrapper() -> None:
         default_config(missing_class)
 
 
-def test_emit_config_leaves_the_session_to_the_deployment() -> None:
-    """Only the machine the host runs on knows its interface and endpoints."""
+def test_emit_config_has_a_session_only_when_the_deployment_gives_one() -> None:
     selected = select_modules(discover_modules(), ["ray_tracing", "mls_planner"])
     graph = build_graph("go2-nav", selected)
     assert "session" not in emit_config(graph, selected)
+    assert emit_config(graph, selected, session={"mode": "peer"})["session"] == {"mode": "peer"}
+
+
+def test_emit_config_refuses_a_config_for_a_module_it_does_not_bake() -> None:
+    selected = select_modules(discover_modules(), ["ray_tracing"])
+    graph = build_graph("go2-nav", selected)
+    with pytest.raises(BakeError, match="mls_planner"):
+        emit_config(graph, selected, {"mls_planner": {}})
 
 
 def test_emit_config_is_a_complete_stdin_blob() -> None:
