@@ -1,0 +1,1010 @@
+[
+  {
+    "id": "go2_short_clearance_t5_east",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due east from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          4.89,
+          4.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          4.5,
+          5.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_clearance_t12_northeast",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due northeast from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          11.9,
+          12.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          11.5,
+          12.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_clearance_t20_north",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due north from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          19.85,
+          19.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          19.5,
+          20.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_clearance_t28_north",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due north from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          27.91,
+          28.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          27.5,
+          28.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_clearance_t36_northwest",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due northwest from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          35.85,
+          35.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          35.5,
+          36.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_clearance_t44_southeast",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due southeast from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          43.88,
+          43.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          43.5,
+          44.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_clearance_t52_southeast",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due southeast from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          51.88,
+          51.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          51.5,
+          52.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_china_office_clearance_t25_east",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due east from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          24.87,
+          24.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          24.5,
+          25.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t25_southeast",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due southeast from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          24.87,
+          24.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          24.5,
+          25.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t48_west",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due west from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          47.82,
+          47.92
+        ]
+      ],
+      [
+        "odom",
+        [
+          47.5,
+          48.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t55_south",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due south from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          54.84,
+          54.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          54.5,
+          55.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t62_southeast",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due southeast from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          61.86,
+          61.96
+        ]
+      ],
+      [
+        "odom",
+        [
+          61.5,
+          62.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t78_west",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due west from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          77.88,
+          77.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          77.5,
+          78.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t85_southeast",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due southeast from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          84.9,
+          85.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          84.5,
+          85.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t100_southeast",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due southeast from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          99.88,
+          99.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          99.5,
+          100.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t115_east",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due east from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          114.89,
+          114.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          114.5,
+          115.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t122_northwest",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due northwest from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          121.89,
+          121.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          121.5,
+          122.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t130_southeast",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due southeast from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "blocked",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          129.91,
+          130.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          129.5,
+          130.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_short_clearance_t5_north",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due north from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          4.89,
+          4.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          4.5,
+          5.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_clearance_t20_south",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due south from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          19.85,
+          19.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          19.5,
+          20.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_clearance_t36_north",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due north from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          35.85,
+          35.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          35.5,
+          36.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_clearance_t44_north",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due north from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          43.88,
+          43.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          43.5,
+          44.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_clearance_t58_southwest",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due southwest from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          57.94,
+          58.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          57.5,
+          58.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_china_office_clearance_t40_east",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due east from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          39.89,
+          39.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          39.5,
+          40.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t40_southeast",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due southeast from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          39.89,
+          39.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          39.5,
+          40.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t48_southwest",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due southwest from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          47.82,
+          47.92
+        ]
+      ],
+      [
+        "odom",
+        [
+          47.5,
+          48.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t62_west",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due west from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          61.86,
+          61.96
+        ]
+      ],
+      [
+        "odom",
+        [
+          61.5,
+          62.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t70_northeast",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due northeast from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          69.83,
+          69.93
+        ]
+      ],
+      [
+        "odom",
+        [
+          69.5,
+          70.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t78_east",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due east from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          77.88,
+          77.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          77.5,
+          78.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t85_northwest",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due northwest from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          84.9,
+          85.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          84.5,
+          85.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t93_northeast",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due northeast from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          92.84,
+          92.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          92.5,
+          93.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t93_southwest",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due southwest from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          92.84,
+          92.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          92.5,
+          93.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t108_south",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due south from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          107.93,
+          108.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          107.5,
+          108.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t115_southwest",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due southwest from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          114.89,
+          114.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          114.5,
+          115.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t130_northeast",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due northeast from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          129.91,
+          130.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          129.5,
+          130.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_clearance_t130_south",
+    "family": "clearance",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north). Consider a 0.6 m wide corridor running 2 m due south from your position, at body height (z between 0.15 and 1.0 m). Using only the mapped point cloud, is that corridor clear? Answer with exactly one word: blocked if mapped points lie inside the corridor, or clear if none do.",
+    "a": "clear",
+    "choices": [
+      "clear",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          129.91,
+          130.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          129.5,
+          130.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  }
+]

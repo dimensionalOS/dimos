@@ -14,16 +14,25 @@
 
 """Exercise Pi's configuration, event handling and shutdown without an external agent."""
 
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
+from functools import partial
 import json
 import os
 from pathlib import Path
+import shutil
+import socket
 import subprocess
+import sys
+from tempfile import TemporaryDirectory
+import threading
 
+import psutil
 import pytest
 
 from dimos.agents.llm_trace import request_path, response_path
 from dimos.evals.agents import pi
+from dimos.evals.agents.lib.pi_to_atif import PiToAtif
+from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.pi import PiAdapter, recording_file
 from dimos.evals.cli import load_agent
 from dimos.evals.types import (
@@ -240,3 +249,201 @@ def test_model_proxy_routing_preserves_registry_capabilities(tmp_path, mocker):
         "api": "openai-responses",
         "apiKey": "$OPENAI_API_KEY",
     }
+
+
+def test_missing_tmp_isolation_executable_fails_before_running(mocker, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    mocker.patch.object(pi.shutil, "which", side_effect=["/bin/pi", None])
+    environment = mocker.Mock(has_robot=False)
+
+    with pytest.raises(RuntimeError, match="temporary-file isolation needs PRoot"):
+        PiAdapter(tmp_isolation_proot="missing-proot").preflight(environment)
+
+
+def test_unusable_tmp_isolation_fails_without_fallback(mocker, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    mocker.patch.object(pi.shutil, "which", side_effect=["/bin/pi", "/bin/proot", "/bin/proot"])
+    mocker.patch.object(
+        pi.subprocess,
+        "run",
+        side_effect=subprocess.CalledProcessError(1, "proot", stderr="ptrace is unavailable"),
+    )
+
+    with pytest.raises(RuntimeError, match="cannot verify PRoot bindings: ptrace is unavailable"):
+        PiAdapter(tmp_isolation_proot="proot").preflight(mocker.Mock(has_robot=False))
+
+
+@pytest.fixture
+def proot_cli():
+    executable = os.environ.get("DIMOS_TEST_PROOT") or shutil.which("proot")
+    if executable is None:
+        pytest.skip("PRoot integration requires proot or DIMOS_TEST_PROOT")
+    return executable
+
+
+@pytest.mark.parametrize("wrapper", ["no-op", "ignores-binds"])
+def test_tmp_preflight_rejects_successful_wrappers_without_bindings(
+    tmp_path, mocker, monkeypatch, wrapper
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("PYTHONOPTIMIZE", "1")
+    probe_root = tmp_path / "probes"
+    probe_root.mkdir()
+    monkeypatch.setattr(pi, "TemporaryDirectory", partial(TemporaryDirectory, dir=probe_root))
+    executable = "/bin/true"
+    if wrapper == "ignores-binds":
+        script = tmp_path / "ignore-binds"
+        script.write_text(
+            f"#!{sys.executable}\n"
+            "import os, sys\n"
+            "args = sys.argv[1:]\n"
+            "while args[0] in ('-b', '-w'):\n"
+            "    args = args[2:]\n"
+            "os.execv(args[0], args)\n"
+        )
+        script.chmod(0o755)
+        executable = str(script)
+    agent = PiAdapter(cli=sys.executable, tmp_isolation_proot=executable)
+
+    with pytest.raises(RuntimeError, match="Pi temporary-file isolation .* bindings"):
+        agent.preflight(mocker.Mock(has_robot=False))
+
+    assert list(probe_root.iterdir()) == []
+
+
+@pytest.mark.parametrize("layout", ["nested", "tmp-root"])
+def test_tmp_preflight_verifies_real_bindings_and_cleans_probe(
+    tmp_path, proot_cli, mocker, monkeypatch, layout
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    created = []
+
+    def temporary_directory(*args, **kwargs):
+        directory = TemporaryDirectory(
+            *args, dir="/tmp" if layout == "tmp-root" else tmp_path, **kwargs
+        )
+        created.append(Path(directory.name))
+        return directory
+
+    monkeypatch.setattr(pi, "TemporaryDirectory", temporary_directory)
+
+    PiAdapter(cli=sys.executable, tmp_isolation_proot=proot_cli).preflight(
+        mocker.Mock(has_robot=False)
+    )
+
+    assert len(created) == 1
+    assert not created[0].exists()
+
+
+def test_private_tmp_keeps_concurrent_tools_inputs_and_localhost_separate(tmp_path, proot_cli):
+    """Literal scratch paths work across native reads and tool subprocesses."""
+    agent = PiAdapter(tmp_isolation_proot=proot_cli)
+    target = tmp_path / "selected-input.txt"
+    target.write_text("selected-input")
+    input_path = tmp_path / "selected-link.txt"
+    input_path.symlink_to(target)
+    with socket.socket() as server, ExitStack() as resources:
+        server.bind(("127.0.0.1", 0))
+        server.listen()
+        server.settimeout(10)
+
+        def respond():
+            for _ in range(2):
+                connection, _ = server.accept()
+                with connection:
+                    connection.sendall(b"localhost-ok")
+
+        thread = threading.Thread(target=respond, daemon=True)
+        thread.start()
+        resources.callback(thread.join, 11)
+        script = """
+from pathlib import Path
+import socket, subprocess, sys
+tag, selected, port = sys.argv[1:]
+for root in ('/tmp', '/var/tmp'):
+    Path(root, 'an.py').write_text(tag)
+print('ready', flush=True)
+input()
+assert Path(selected).read_text() == 'selected-input'
+for root in ('/tmp', '/var/tmp'):
+    assert Path(root, 'an.py').read_text() == tag
+    child = subprocess.check_output([sys.executable, '-c',
+        'from pathlib import Path; import sys; print(Path(sys.argv[1]).read_text())',
+        root + '/an.py'], text=True)
+    assert child.strip() == tag
+with socket.create_connection(('127.0.0.1', int(port)), timeout=5) as connection:
+    assert connection.recv(32) == b'localhost-ok'
+print(tag)
+"""
+        processes = []
+        for tag in ("first", "second"):
+            run_dir = tmp_path / tag
+            run_dir.mkdir()
+            command = agent._isolate_tmp(
+                [sys.executable, "-c", script, tag, str(input_path), str(server.getsockname()[1])],
+                run_dir,
+                (input_path,),
+            )
+            process = resources.enter_context(
+                subprocess.Popen(
+                    command,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=agent._build_process_env(run_dir),
+                )
+            )
+            resources.callback(process.kill)
+            resources.callback(
+                pi.kill_run_processes,
+                str(run_dir / ".pi-agent"),
+                env_var="PI_CODING_AGENT_DIR",
+                term_timeout=0,
+            )
+            processes.append(process)
+        for process in processes:
+            assert process.stdout.readline().strip() == "ready"
+        for process in processes:
+            process.stdin.write("\n")
+            process.stdin.flush()
+        for tag, process in zip(("first", "second"), processes, strict=True):
+            stdout, stderr = process.communicate(timeout=10)
+            assert (process.returncode, stdout.strip(), stderr) == (0, tag, "")
+            assert (tmp_path / tag / "pi-tmp/an.py").read_text() == tag
+            assert (tmp_path / tag / "pi-var-tmp/an.py").read_text() == tag
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+
+
+def test_private_tmp_timeout_reaps_detached_tool(tmp_path, proot_cli):
+    """PRoot can exit before its tracees; the run tag still identifies strays."""
+    agent = PiAdapter(tmp_isolation_proot=proot_cli, shutdown_timeout_s=0.05)
+    child_path = tmp_path / "child.pid"
+    script = """
+from pathlib import Path
+import subprocess, sys
+child = subprocess.Popen([sys.executable, '-c',
+    'import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN); print("ready", flush=True); signal.pause()'],
+    stdout=subprocess.PIPE, text=True, start_new_session=True)
+assert child.stdout.readline().strip() == 'ready'
+Path(sys.argv[1]).write_text(str(child.pid))
+print('{}', flush=True)
+child.wait()
+"""
+    command = agent._isolate_tmp([sys.executable, "-c", script, str(child_path)], tmp_path)
+    events = PiToAtif(tmp_path / "raw", TrajectoryBuilder("Question", name="Pi", model="test"))
+    try:
+        ended_by = agent._run_pi_process(command, tmp_path, events, timeout_s=1)
+
+        assert ended_by == "timeout"
+        child_pid = int(child_path.read_text())
+        try:
+            child_status = psutil.Process(child_pid).status()
+        except psutil.NoSuchProcess:
+            child_status = "absent"
+        assert child_status in ("absent", psutil.STATUS_ZOMBIE)
+    finally:
+        pi.kill_run_processes(
+            str(tmp_path / ".pi-agent"), env_var="PI_CODING_AGENT_DIR", term_timeout=0
+        )

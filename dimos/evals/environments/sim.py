@@ -46,6 +46,8 @@ class SimConfig(BaseConfig):
     setup: Callable[[DimSimClient], None] | None = None
     attach: bool = False
     launch_timeout_s: float = 1200.0
+    # These streams must contain observations before the agent starts.
+    required_recording_streams: tuple[str, ...] = ()
     at_rest_m: float = 0.05
     at_rest_s: float = 2.0
     settle_poll_s: float = 0.5
@@ -89,6 +91,9 @@ class Sim(Environment):
             proc = DimosCliCall()
             proc.simulator = self.config.simulator
             proc.global_args = ["--dimsim-scene", self.config.scene, "--record"]
+            if self.config.simulator == "dimsim":
+                # DimSim's bridge publishes sensor data over LCM.
+                proc.global_args += ["--transport", "lcm"]
             disabled = [arg for name in self.config.disable for arg in ("--disable", name)]
             proc.demo_args = ["run", *self.config.blueprint, *modules, *disabled]
             self._resources.callback(proc.stop)
@@ -108,7 +113,28 @@ class Sim(Environment):
         path = self._wait_recording(deadline, pid)
         self._recording = SqliteStore(path=str(path), must_exist=True)
         self._resources.callback(self._recording.stop)
+        self._wait_required_recording_streams(deadline)
         return RunningEnvironment(mcp_url=mcp_url, streams=(), artifacts={"recording": path})
+
+    def _wait_required_recording_streams(self, deadline: float) -> None:
+        """Wait for required observations within the original launch deadline."""
+        if not self.config.required_recording_streams:
+            return
+        assert self._recording is not None
+        while True:
+            pending = [
+                name
+                for name in self.config.required_recording_streams
+                if name not in self._recording.streams or not self._recording.streams[name].exists()
+            ]
+            if not pending:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"no observations in required recording streams {pending} within the launch timeout"
+                )
+            time.sleep(min(0.1, remaining))
 
     def _wait_recording(self, deadline: float, pid: int | None) -> Path:
         """Find the recording of the launched process, or the attached dimos."""

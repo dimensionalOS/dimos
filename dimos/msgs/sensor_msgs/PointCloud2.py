@@ -28,6 +28,7 @@ import numpy as np
 
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs import pointcloud_height_map
 from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
@@ -339,13 +340,58 @@ class PointCloud2(Timestamped):
     def __str__(self) -> str:
         return f"PointCloud2(frame_id='{self.frame_id}', num_points={len(self)})"
 
+    AGENT_ENCODE_LEGEND = pointcloud_height_map.LEGEND
+    """Field reference for agent_encode(); delivered once per stream by consumers."""
+
+    def agent_encode(
+        self,
+        *,
+        center: tuple[float, float] | None = None,
+        radius: float | None = None,
+        z_range: tuple[float, float] | None = None,
+        cell: float | None = None,
+        cells: int = pointcloud_height_map.DEFAULT_CELLS,
+        z_step: float | None = None,
+    ) -> dict[str, Any]:
+        """Describe the finite returns as exact native bounds and a top-down height map.
+
+        Keyword options select and scale the description. All are explicit; none
+        assume a robot, a floor or a gravity direction:
+
+            center=(x, y), radius=r   keep returns with |x-cx| <= r and |y-cy| <= r,
+                                      grid that whole square, empty cells included, and
+                                      add range_profile_m: the nearest selected return
+                                      per 10 degree bearing sector around the center.
+            z_range=(low, high)       keep returns with low <= z <= high.
+            cell=m                    grid cell size; by default the smallest round
+                                      size that fits within `cells` columns and rows.
+            cells=n                   maximum columns and rows (default 48, at most 120);
+                                      an explicit cell may use up to 120 and coarsens beyond.
+            z_step=m                  height quantum; by default the selection's z span
+                                      in at most 36 steps.
+
+        The result is deterministic for the same cloud and options. Fields are
+        documented in AGENT_ENCODE_LEGEND.
+        """
+        return pointcloud_height_map.encode_points(
+            self.points().numpy(),
+            frame_id=self.frame_id,
+            ts=self.ts,
+            center=center,
+            radius=radius,
+            z_range=z_range,
+            cell=cell,
+            cells=cells,
+            z_step=z_step,
+        )
+
     @functools.cached_property
     def center(self) -> Vector3:
         """Calculate the center of the pointcloud in world frame."""
         center = np.asarray(self.pointcloud.points).mean(axis=0)
         return Vector3(*center)
 
-    def points(self):  # type: ignore[no-untyped-def]
+    def points(self) -> o3d.core.Tensor:
         """Get points (returns tensor positions, use as_numpy() for numpy array)."""
         import open3d.core as o3c  # type: ignore[import-untyped]
 

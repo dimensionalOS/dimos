@@ -25,6 +25,8 @@ from pathlib import Path
 import selectors
 import shutil
 import subprocess
+import sys
+from tempfile import TemporaryDirectory
 import time
 from typing import IO, TYPE_CHECKING, Any
 
@@ -143,6 +145,10 @@ class PiAdapterConfig(ModelAgentConfig):
     # Pi executable name or path.
     cli: str = "pi"
 
+    # Optional PRoot executable. Give each attempt private /tmp and /var/tmp
+    # directories across Pi's native tools and all child processes.
+    tmp_isolation_proot: str | None = None
+
     # Skill files or directories loaded with --skill. Relative paths resolve
     # against the caller's working directory before Pi starts in the case directory.
     skills: tuple[str, ...] = ()
@@ -174,6 +180,47 @@ class PiAdapter(Agent):
             raise RuntimeError("Pi reaches the robot through its bash tool, which is not enabled")
         if environment.has_robot and shutil.which("dimos") is None:
             raise RuntimeError("Pi reaches the robot through the dimos CLI, which is not on PATH")
+        if self.config.tmp_isolation_proot is not None:
+            executable = shutil.which(self.config.tmp_isolation_proot)
+            if executable is None:
+                raise RuntimeError(
+                    f"Pi temporary-file isolation needs PRoot: {self.config.tmp_isolation_proot!r}"
+                )
+            try:
+                with TemporaryDirectory(prefix="dimos-pi-isolation-") as temporary:
+                    probe = Path(temporary)
+                    token = f"marker-{probe.name}"
+                    command = self._isolate_tmp(
+                        [
+                            sys.executable,
+                            "-c",
+                            "from pathlib import Path\nimport sys\ntoken = sys.argv[1]\n"
+                            "if (Path('/tmp', token).read_text() != 'pi-tmp' or "
+                            "Path('/var/tmp', token).read_text() != 'pi-var-tmp'):\n"
+                            "    raise SystemExit('temporary files are not isolated')\n"
+                            "print(token)\n",
+                            token,
+                        ],
+                        probe,
+                    )
+                    for directory in ("pi-tmp", "pi-var-tmp"):
+                        (probe / directory / token).write_text(directory)
+                    result = subprocess.run(
+                        command, check=True, capture_output=True, text=True, timeout=10
+                    )
+                    if result.stdout.strip() != token:
+                        raise RuntimeError(
+                            "Pi temporary-file isolation did not verify both bindings"
+                        )
+            except (OSError, subprocess.SubprocessError) as error:
+                detail = (
+                    error.stderr.strip()
+                    if isinstance(error, subprocess.CalledProcessError) and error.stderr
+                    else str(error)
+                )
+                raise RuntimeError(
+                    f"Pi temporary-file isolation cannot verify PRoot bindings: {detail}"
+                ) from error
 
     def run(
         self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
@@ -195,6 +242,7 @@ class PiAdapter(Agent):
                 files["recording"] = recording_file(env.streams, run_dir / "recording.db")
             system_prompt = self._write_system_prompt(files, env.mcp_url, run_dir)
             command = self._build_pi_command(inputs, system_prompt, run_dir)
+            command = self._isolate_tmp(command, run_dir, tuple(files.values()))
             ended_by = self._run_pi_process(command, run_dir, events, timeout_s)
         if limit_reached.exists():
             return events.trajectory.build("max_steps")
@@ -261,10 +309,48 @@ class PiAdapter(Agent):
         passed = {k: v for k, v in os.environ.items() if k in keep or k.startswith("DIMOS_")}
         return {
             **passed,
+            **(
+                {"TMPDIR": "/tmp", "TMP": "/tmp", "TEMP": "/tmp"}
+                if self.config.tmp_isolation_proot is not None
+                else {}
+            ),
             "PI_CODING_AGENT_DIR": str(run_dir / ".pi-agent"),
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",
         }
+
+    def _isolate_tmp(
+        self, command: list[str], run_dir: Path, files: Sequence[Path] = ()
+    ) -> list[str]:
+        """Isolate scratch paths without changing Pi's tools, prompt, or network."""
+        executable = self.config.tmp_isolation_proot
+        if executable is None:
+            return command
+        resolved_executable = shutil.which(executable)
+        if resolved_executable is None:
+            raise RuntimeError(f"Pi temporary-file isolation needs PRoot: {executable!r}")
+        prefix = [str(Path(resolved_executable).resolve())]
+        for name, target in (("pi-tmp", "/tmp"), ("pi-var-tmp", "/var/tmp")):
+            source = (run_dir / name).resolve()
+            if ":" in str(source):
+                raise ValueError("PRoot temporary-file isolation requires paths without ':'")
+            source.mkdir(parents=True, exist_ok=True)
+            prefix.extend(("-b", f"{source}:{target}"))
+        # Keep declared inputs and the case directory accessible at their exact
+        # paths even when a caller stores them below a temporary directory.
+        visible = (run_dir, *files, *(Path(path).expanduser() for path in self.config.skills))
+        paths = dict.fromkeys(
+            path for original in visible for path in (original.absolute(), original.resolve())
+        )
+        for path in paths:
+            if path in (Path("/tmp"), Path("/var/tmp")):
+                raise ValueError("Pi cannot isolate a temporary directory supplied as an input")
+            if path.is_relative_to("/tmp") or path.is_relative_to("/var/tmp"):
+                source = path.resolve()
+                if ":" in str(path) or ":" in str(source):
+                    raise ValueError("PRoot temporary-file isolation requires paths without ':'")
+                prefix.extend(("-b", f"{source}:{path}!"))
+        return [*prefix, "-w", str(run_dir.resolve()), *command]
 
     def _run_pi_process(
         self, command: list[str], run_dir: Path, events: PiToAtif, timeout_s: float

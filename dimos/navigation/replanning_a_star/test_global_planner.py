@@ -13,12 +13,68 @@
 # limitations under the License.
 
 import numpy as np
+import pytest
 
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.navigation.replanning_a_star.global_planner import GlobalPlanner
+
+
+@pytest.fixture
+def planner_without_motion(mocker):
+    planner = GlobalPlanner(GlobalConfig())
+    start_planning = mocker.patch.object(planner._local_planner, "start_planning")
+    try:
+        yield planner, start_planning
+    finally:
+        planner.stop()
+
+
+@pytest.mark.parametrize(
+    "remaining_m, reached", [(0.0, True), (0.19, True), (0.21, False), (1.1, False)]
+)
+def test_local_arrival_requires_reaching_requested_position(
+    planner_without_motion, remaining_m, reached
+):
+    planner, _ = planner_without_motion
+    planner.handle_global_costmap(
+        OccupancyGrid(grid=np.zeros((60, 60), dtype=np.int8), resolution=0.1, origin=Pose())
+    )
+    planner.handle_odom(PoseStamped(position=[1.0, 2.0, 0.0]))
+    planner.handle_goal_request(PoseStamped(position=[3.0, 2.0, 0.0]))
+    outcomes = []
+
+    with planner.goal_reached.subscribe(lambda msg: outcomes.append(msg.data)):
+        planner.handle_odom(PoseStamped(position=[3.0 - remaining_m, 2.0, 0.0]))
+        planner._handle_stop_message("arrived")
+
+    assert planner.is_goal_reached() is reached
+    assert outcomes == [reached]
+
+
+def test_arrival_at_snapped_endpoint_fails_original_goal_without_replanning(planner_without_motion):
+    planner, start_planning = planner_without_motion
+    grid = np.zeros((60, 60), dtype=np.int8)
+    grid[10:30, 30] = 100
+    planner.handle_global_costmap(OccupancyGrid(grid=grid, resolution=0.1, origin=Pose()))
+    planner.handle_odom(PoseStamped(position=[1.0, 2.0, 0.0]))
+    requested_goal = PoseStamped(position=[3.0, 2.0, 0.0])
+    planner.handle_goal_request(requested_goal)
+    planned_path = start_planning.call_args.args[0]
+    endpoint = planned_path.poses[-1]
+    assert endpoint.position.distance(requested_goal.position) > planner._goal_tolerance
+    outcomes = []
+
+    with planner.goal_reached.subscribe(lambda msg: outcomes.append(msg.data)):
+        planner.handle_odom(endpoint)
+        planner._handle_stop_message("arrived")
+
+    assert planner.is_goal_reached() is False
+    assert outcomes == [False]
+    start_planning.assert_called_once()
 
 
 def test_find_wide_path_with_start_inside_inflation() -> None:

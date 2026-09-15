@@ -60,8 +60,25 @@ from dimos.evals.scorers import (
     within,
     yes_no,
 )
-from dimos.evals.suites import dimsim_house, dimsim_pointcloud_mapping, examples, go2_smoke, go2_vqa
-from dimos.evals.suites.dimsim_pointcloud_mapping import N_ROOMS, ROOMS, grade_rooms
+from dimos.evals.suites import dimsim_house, examples, go2_smoke, go2_vqa
+from dimos.evals.suites.pointcloud.dataset import (
+    go2_pointcloud,
+    go2_pointcloud_clearance,
+    go2_pointcloud_doorway,
+    go2_pointcloud_floor_height,
+    go2_pointcloud_floor_level,
+    go2_pointcloud_free_disk,
+    go2_pointcloud_free_range,
+    go2_pointcloud_free_range_holdout,
+    go2_pointcloud_frontier,
+    go2_pointcloud_gap_width,
+    go2_pointcloud_glass,
+    go2_pointcloud_rooms,
+    go2_pointcloud_route,
+    go2_pointcloud_stairs,
+)
+from dimos.evals.suites.pointcloud.sim import dimsim_pointcloud_mapping
+from dimos.evals.suites.pointcloud.sim.dimsim_pointcloud_mapping import N_ROOMS, ROOMS, grade_rooms
 from dimos.evals.types import (
     EvalCase,
     Observation,
@@ -268,8 +285,11 @@ def test_sim_attach_rejects_added_modules() -> None:
         _sim(attach=True).preflight(McpClientAdapter(modules=("mcp-client",)))
 
 
+@pytest.mark.parametrize(
+    ("simulator", "transport_args"), [("dimsim", ["--transport", "lcm"]), ("mujoco", [])]
+)
 def test_sim_launches_base_blueprints_and_agent_modules_in_order(
-    dataset: str, mocker: MockerFixture
+    dataset: str, mocker: MockerFixture, simulator: str, transport_args: list[str]
 ) -> None:
     proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
     adapter = mocker.patch("dimos.evals.environments.sim.McpAdapter")
@@ -277,6 +297,7 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
     sim_client = mocker.patch("dimos.evals.environments.sim.DimSimClient")
     setup = mocker.Mock()
     env = _sim(
+        simulator=simulator,
         scene="empty",
         launch_timeout_s=4.0,
         setup=setup,
@@ -298,7 +319,7 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
             "--disable",
             "patrolling-module",
         ]
-        assert proc.global_args == ["--dimsim-scene", "empty", "--record"]
+        assert proc.global_args == ["--dimsim-scene", "empty", "--record", *transport_args]
         adapter.return_value.wait_for_ready.assert_called_once_with(timeout=4.0, interval=2.0)
         setup.assert_called_once_with(sim_client.return_value)
         proc.start.assert_called_once_with()
@@ -686,8 +707,27 @@ def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
 
 def test_suites_and_agents_importable() -> None:
     """Modules construct without data or network (lambdas stay lazy)."""
-
-    for module in (examples, go2_smoke, go2_vqa, dimsim_house, dimsim_pointcloud_mapping):
+    for module in (
+        examples,
+        go2_smoke,
+        go2_vqa,
+        go2_pointcloud,
+        go2_pointcloud_clearance,
+        go2_pointcloud_doorway,
+        go2_pointcloud_floor_height,
+        go2_pointcloud_floor_level,
+        go2_pointcloud_free_disk,
+        go2_pointcloud_free_range,
+        go2_pointcloud_free_range_holdout,
+        go2_pointcloud_frontier,
+        go2_pointcloud_gap_width,
+        go2_pointcloud_glass,
+        go2_pointcloud_rooms,
+        go2_pointcloud_route,
+        go2_pointcloud_stairs,
+        dimsim_house,
+        dimsim_pointcloud_mapping,
+    ):
         assert module.SUITE, module.__name__
     agents = list_agents()
     assert {m.rsplit(".", 1)[1] for m in agents} == {

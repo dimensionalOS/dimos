@@ -40,6 +40,19 @@ def _observation_blocks(obs: Observation[Any], stamp: str) -> Blocks:
     encoded = data.agent_encode() if hasattr(data, "agent_encode") else None
     if isinstance(encoded, list):  # e.g. Image -> image_url blocks
         return [{"type": "text", "text": stamp}, *encoded]
+    if isinstance(encoded, dict) and encoded.get("views"):
+        metadata = {key: value for key, value in encoded.items() if key != "views"}
+        blocks: Blocks = [{"type": "text", "text": f"{stamp} {json.dumps(metadata, default=str)}"}]
+        for view in encoded["views"]:
+            calibration = {key: value for key, value in view.items() if key != "png_base64"}
+            blocks.append({"type": "text", "text": json.dumps(calibration)})
+            blocks.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{view['png_base64']}"},
+                }
+            )
+        return blocks
     if encoded is not None:  # e.g. PointCloud2 -> dict
         return [{"type": "text", "text": f"{stamp} {json.dumps(encoded, default=str)}"}]
     return [{"type": "text", "text": f"{stamp} {data}"}]
@@ -54,6 +67,7 @@ def _legend_block(obs: Observation[Any]) -> Blocks:
 
 class QuestionAnswerConfig(SingleCallAgentConfig):
     frames_per_stream: int = Field(default=8, ge=1)
+    include_images: bool = True
 
 
 class QuestionAnswer(SingleCallAgent):
@@ -88,4 +102,10 @@ class QuestionAnswer(SingleCallAgent):
                 blocks += _observation_blocks(obs, f"[t={obs.ts - t0:.1f}s]")
         if not blocks:
             raise ValueError("nothing in the recording to encode; the run would be blind")
+        if not self.config.include_images:
+            blocks = [
+                block
+                for block in blocks
+                if not isinstance(block, dict) or block.get("type") != "image_url"
+            ]
         return blocks

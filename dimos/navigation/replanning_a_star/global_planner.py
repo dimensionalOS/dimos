@@ -271,8 +271,21 @@ class GlobalPlanner(Resource):
         self.path.on_next(Path())
 
         if stop_message == "arrived":
-            logger.info("Arrived at goal.")
-            self.cancel_goal(arrived=True)
+            with self._lock:
+                current_goal = self._current_goal
+                current_odom = self._current_odom
+            remaining = (
+                current_goal.position.distance(current_odom.position)
+                if current_goal is not None and current_odom is not None
+                else None
+            )
+            # The local path may end at a safe substitute for the requested goal.
+            arrived = remaining is not None and remaining < self._goal_tolerance
+            if arrived:
+                logger.info("Arrived at goal.")
+            else:
+                logger.warning("Path ended before requested goal.", remaining_distance_m=remaining)
+            self.cancel_goal(arrived=arrived)
         elif stop_message == "obstacle_found":
             logger.info("Replanning path due to obstacle found.")
             self._replan_path()

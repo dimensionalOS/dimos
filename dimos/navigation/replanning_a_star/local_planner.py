@@ -183,7 +183,7 @@ class LocalPlanner(Resource):
             angle_in_tolerance = abs(initial_yaw_error) < self._orientation_tolerance
             if angle_in_tolerance:
                 position_in_tolerance = (
-                    path.poses[0].position.distance(current_odom.position) < 0.01
+                    path.poses[-1].position.distance(current_odom.position) < self._goal_tolerance
                 )
                 if position_in_tolerance:
                     new_state = "final_rotation"

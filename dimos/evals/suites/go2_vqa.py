@@ -14,38 +14,29 @@
 
 """Generated VQA suite over the go2 replays.
 
-Rows (``go2_vqa.json``) are pure data emitted by
-:mod:`dimos.evals.suites.lib.generate` — ground truth computed analytically
-from odom, quizzing the encoded odom summary. Typing and scoring live here;
-the JSON stays behavior-free.
+Rows (``go2_vqa.json``) are pure data emitted by :func:`rows` — ground truth
+computed analytically from odom, quizzing the encoded odom summary. Scoring
+lives in :func:`dimos.evals.suites.lib.generate.cases`; the JSON stays
+behavior-free.
+
+Regenerate::
+
+    uv run python -m dimos.evals.suites.go2_vqa
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 from dimos.evals.environments.dataset import Dataset
-from dimos.evals.scorers import exact, first_number, within, yes_no
+from dimos.evals.scorers import exact, yes_no
+from dimos.evals.suites.lib import generate
 from dimos.evals.types import EvalCase, Suite
 
-_ROWS = json.loads((Path(__file__).parent / "go2_vqa.json").read_text())
-
-
-def _generated(row: dict[str, Any]) -> EvalCase:
-    stream, window = str(row["stream"]), tuple(row["window"])
-    expected, band = float(row["a"]), float(row["band"])
-    return EvalCase(
-        id=str(row["id"]),
-        inputs=f"{row['q']} Answer with just the number.",
-        environment=Dataset(
-            str(row["dataset"]), select=(lambda s: s.streams[stream].range_time(*window),)
-        ),
-        grade=lambda o: within(band)(expected, first_number(o.trajectory.final_answer)),
-        tags=frozenset({"generated", "odom", "numeric"}),
-    )
-
+_JSON = Path(__file__).parent / "go2_vqa.json"
+_SHORT = [(0.0, 60.0), (0.0, 30.0), (30.0, 60.0)]
+_HONGKONG = [(0.0, 558.0), (100.0, 300.0)]
 
 # Hand-labeled presence questions, verified against the recording imagery.
 _hand: list[EvalCase] = [
@@ -70,4 +61,21 @@ _hand: list[EvalCase] = [
     ),
 ]
 
-SUITE: Suite = [*(_generated(row) for row in _ROWS), *_hand]
+SUITE: Suite = [
+    *generate.cases(json.loads(_JSON.read_text()), tags=frozenset({"generated", "odom"})),
+    *_hand,
+]
+
+
+def rows() -> list[generate.Row]:
+    """The generator calls behind the committed JSON."""
+    return [
+        *generate.displacement_rows("go2_short", _SHORT),
+        *generate.path_length_rows("go2_short", _SHORT[:1]),
+        *generate.displacement_rows("go2_hongkong_office", _HONGKONG),
+        *generate.path_length_rows("go2_hongkong_office", _HONGKONG[:1]),
+    ]
+
+
+if __name__ == "__main__":
+    _JSON.write_text(json.dumps(rows(), indent=2) + "\n")

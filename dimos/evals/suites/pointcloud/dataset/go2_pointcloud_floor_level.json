@@ -1,0 +1,134 @@
+[
+  {
+    "id": "go2_stairs_20260819_floorlevel_t75",
+    "family": "floorlevel",
+    "type": "coords",
+    "q": "You are shown the point cloud the robot mapped (world frame: +x is east, +y is north, coordinates in meters). Is the floor all at one level, or is some part of it raised or sunken relative to the rest? If some part is at a different level, give the world coordinate of the middle of each such area and how far it sits above or below the main floor, in meters, positive for above. Answer with the single word level, or with one line per area as x,y,dz \u2014 nothing else.",
+    "a": [
+      [
+        9.0,
+        4.1,
+        0.25
+      ]
+    ],
+    "radius": 1.2,
+    "value_band": 0.15,
+    "context": [
+      [
+        "lidar",
+        [
+          74.82,
+          74.92
+        ]
+      ]
+    ],
+    "dataset": "go2_stairs_20260819"
+  },
+  {
+    "id": "go2_stairs_20260819_floorlevel_t95",
+    "family": "floorlevel",
+    "type": "coords",
+    "q": "You are shown the point cloud the robot mapped (world frame: +x is east, +y is north, coordinates in meters). Is the floor all at one level, or is some part of it raised or sunken relative to the rest? If some part is at a different level, give the world coordinate of the middle of each such area and how far it sits above or below the main floor, in meters, positive for above. Answer with the single word level, or with one line per area as x,y,dz \u2014 nothing else.",
+    "a": [
+      [
+        9.0,
+        4.1,
+        0.25
+      ]
+    ],
+    "radius": 1.2,
+    "value_band": 0.15,
+    "context": [
+      [
+        "lidar",
+        [
+          94.91,
+          95.01
+        ]
+      ]
+    ],
+    "dataset": "go2_stairs_20260819"
+  },
+  {
+    "id": "go2_stairs_20260819_floorlevel_t130",
+    "family": "floorlevel",
+    "type": "coords",
+    "q": "You are shown the point cloud the robot mapped (world frame: +x is east, +y is north, coordinates in meters). Is the floor all at one level, or is some part of it raised or sunken relative to the rest? If some part is at a different level, give the world coordinate of the middle of each such area and how far it sits above or below the main floor, in meters, positive for above. Answer with the single word level, or with one line per area as x,y,dz \u2014 nothing else.",
+    "a": [
+      [
+        9.0,
+        4.1,
+        0.25
+      ]
+    ],
+    "radius": 1.2,
+    "value_band": 0.15,
+    "context": [
+      [
+        "lidar",
+        [
+          129.84,
+          129.94
+        ]
+      ]
+    ],
+    "dataset": "go2_stairs_20260819"
+  },
+  {
+    "id": "go2_stairs_20260819_floorlevel_t3",
+    "family": "floorlevel",
+    "type": "coords",
+    "q": "You are shown the point cloud the robot mapped (world frame: +x is east, +y is north, coordinates in meters). Is the floor all at one level, or is some part of it raised or sunken relative to the rest? If some part is at a different level, give the world coordinate of the middle of each such area and how far it sits above or below the main floor, in meters, positive for above. Answer with the single word level, or with one line per area as x,y,dz \u2014 nothing else.",
+    "a": [],
+    "radius": 1.2,
+    "value_band": 0.15,
+    "context": [
+      [
+        "lidar",
+        [
+          2.89,
+          2.99
+        ]
+      ]
+    ],
+    "dataset": "go2_stairs_20260819"
+  },
+  {
+    "id": "go2_stairs_20260819_floorlevel_t23",
+    "family": "floorlevel",
+    "type": "coords",
+    "q": "You are shown the point cloud the robot mapped (world frame: +x is east, +y is north, coordinates in meters). Is the floor all at one level, or is some part of it raised or sunken relative to the rest? If some part is at a different level, give the world coordinate of the middle of each such area and how far it sits above or below the main floor, in meters, positive for above. Answer with the single word level, or with one line per area as x,y,dz \u2014 nothing else.",
+    "a": [],
+    "radius": 1.2,
+    "value_band": 0.15,
+    "context": [
+      [
+        "lidar",
+        [
+          22.86,
+          22.96
+        ]
+      ]
+    ],
+    "dataset": "go2_stairs_20260819"
+  },
+  {
+    "id": "go2_stairs_20260819_floorlevel_t25",
+    "family": "floorlevel",
+    "type": "coords",
+    "q": "You are shown the point cloud the robot mapped (world frame: +x is east, +y is north, coordinates in meters). Is the floor all at one level, or is some part of it raised or sunken relative to the rest? If some part is at a different level, give the world coordinate of the middle of each such area and how far it sits above or below the main floor, in meters, positive for above. Answer with the single word level, or with one line per area as x,y,dz \u2014 nothing else.",
+    "a": [],
+    "radius": 1.2,
+    "value_band": 0.15,
+    "context": [
+      [
+        "lidar",
+        [
+          24.94,
+          25.04
+        ]
+      ]
+    ],
+    "dataset": "go2_stairs_20260819"
+  }
+]
