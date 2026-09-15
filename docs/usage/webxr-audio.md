@@ -53,8 +53,8 @@ TTS flag or `DIMOS_TTS` setting.
 
 Supported collection blueprints:
 
-- `learning-collect-quest-xarm7`
-- `learning-collect-quest-piper`
+- `learning-collect-webxr-xarm7`
+- `learning-collect-webxr-piper`
 - `openyam-quest-collection`
 - `dual-openyam-quest-collection`
 
@@ -134,8 +134,8 @@ a `snapshot` boolean identifying cached connection state.
 ## Validation
 
 ```bash
-uv run pytest dimos/stream/audio/tts/test_kokoro_module.py dimos/teleop/quest/test_quest_teleop_module.py
-node dimos/teleop/quest/web/test_speech.mjs
+uv run pytest dimos/stream/audio/tts/test_kokoro_module.py dimos/teleop/webxr/test_module.py
+node dimos/teleop/webxr/web/test_speech.mjs
 ```
 
 The INT8 model was exercised on CPU with outbound socket connections blocked,
