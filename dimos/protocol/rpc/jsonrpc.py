@@ -85,6 +85,8 @@ class JsonRPC(ZenohRPC):
         deadline = time.monotonic() + timeout
         messages: Queue[tuple[str, Any]] = Queue()
         started = threading.Event()
+        join_after_start = threading.Event()
+        startup_owner = threading.current_thread()
 
         def on_reply(reply: zenoh.Reply) -> None:
             messages.put(("reply", reply))
@@ -160,6 +162,9 @@ class JsonRPC(ZenohRPC):
                 self._pending.pop(call_id, None)
             messages.put(("cancel", None))
             if threading.current_thread() is not worker:
+                if threading.current_thread() is startup_owner and not started.is_set():
+                    join_after_start.set()
+                    return
                 started.wait()
                 if worker.ident is not None:
                     worker.join()
@@ -177,6 +182,8 @@ class JsonRPC(ZenohRPC):
             raise
         finally:
             started.set()
+            if join_after_start.is_set() and worker.ident is not None:
+                worker.join()
         return unsubscribe_callback
 
     def stop(self) -> None:

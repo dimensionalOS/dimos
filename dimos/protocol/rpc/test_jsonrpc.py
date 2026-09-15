@@ -416,6 +416,46 @@ def test_cancellation_during_worker_start_prevents_send(
     querier.get.assert_not_called()
 
 
+def test_reentrant_stop_during_worker_start_does_not_wait_for_itself(
+    waiting_client: tuple[JsonRPC, Any],
+    mocker: MockerFixture,
+    request: pytest.FixtureRequest,
+) -> None:
+    transport, querier = waiting_client
+    querier.matching_status.matching = True
+    thread_type = threading.Thread
+    joins: list[Any] = []
+
+    def make_worker(**kwargs: Any) -> threading.Thread:
+        worker = thread_type(**kwargs)
+        start = worker.start
+        joins.append(mocker.spy(worker, "join"))
+
+        def cleanup_worker() -> None:
+            if worker.ident is not None:
+                worker.join(2)
+
+        request.addfinalizer(cleanup_worker)
+
+        def stop_during_start() -> None:
+            # A shutdown signal runs on this same startup thread.
+            wait = mocker.patch.object(
+                threading.Event, "wait", side_effect=AssertionError("startup thread waited")
+            )
+            transport.stop()
+            mocker.stop(wait)
+            start()
+
+        mocker.patch.object(worker, "start", side_effect=stop_during_start)
+        return worker
+
+    mocker.patch("dimos.protocol.rpc.jsonrpc.threading.Thread", side_effect=make_worker)
+    transport.call_cb("echo", ([], {}), lambda _: None)
+    assert not transport._pending
+    querier.get.assert_not_called()
+    joins[0].assert_called_once_with()
+
+
 async def test_async_missing_service_finishes_without_retry() -> None:
     with rpc_pair() as (_, client):
         client.default_rpc_timeout = 0.05
