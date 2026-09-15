@@ -62,7 +62,6 @@ class GlobalConfig(BaseSettings):
     device_path: str | None = None  # device path for real robot (e.g. /dev/ttyUSB0)
     simulation: str = ""
     replay: bool = False
-    tts: bool = False  # Enable offline spoken feedback in WebXR collection blueprints.
     replay_db: str = "go2_short"
     record: Literal["", "sqlite", "mcap"] = ""
     record_engine: Literal["python", "rust"] = Field(default="python", validate_default=True)

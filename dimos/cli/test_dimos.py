@@ -32,6 +32,7 @@ from dimos.core.module import Module, ModuleConfig
 import dimos.core.run_registry as run_registry
 from dimos.robot import external_blueprints as external
 import dimos.robot.get_all_blueprints as get_all_blueprints
+from dimos.stream.audio.tts.kokoro_module import KokoroTTSModule
 import dimos.utils.cache as cache_utils
 import dimos.utils.logging_config as logging_config
 
@@ -359,20 +360,20 @@ def test_after_run_global_config_is_applied_before_blueprint_resolution(
     assert observed_robot_ips == ["192.0.2.42"]
 
 
-@pytest.mark.parametrize("flag, enabled", [("--tts", True), ("--no-tts", False)])
-def test_tts_flag_applies_before_collection_blueprint_resolution(
-    stubbed_run, monkeypatch, flag, enabled
-):
-    observed = []
-
-    def resolve(name):
-        observed.append(global_config.tts)
-        return RunModuleA.blueprint()
-
-    monkeypatch.setattr(get_all_blueprints, "get_by_name_or_exit", resolve)
-    result = CliRunner().invoke(main, ["run", "alpha", flag])
+@pytest.mark.parametrize(
+    "flag, enabled", [("--tts.enabled=true", True), ("--tts.enabled=false", False)]
+)
+def test_tts_flag_is_module_config(stubbed_run, monkeypatch, flag, enabled):
+    monkeypatch.setattr(
+        get_all_blueprints,
+        "get_by_name_or_exit",
+        lambda name: KokoroTTSModule.blueprint(instance_name="tts"),
+    )
+    result = CliRunner().invoke(main, ["run", "speech", flag])
     assert result.exit_code == 0, result.output
-    assert observed == [enabled]
+    parsed = stubbed_run["parsed_config"]
+    assert parsed.module_kwargs("tts")["enabled"] is enabled
+    assert "tts" not in type(global_config).model_fields
 
 
 def test_qualified_global_relay_flag_is_applied_before_composition(

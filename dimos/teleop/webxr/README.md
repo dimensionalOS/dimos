@@ -40,7 +40,7 @@ the certificate, then tap Connect.
 
 WebXR collection blueprints can provide optional offline spoken recording
 feedback. It is disabled by default; install the `tts` extra and quantized model
-assets, then add `--tts` to the collection stack's `dimos run` command. See
+assets, then add `--tts.enabled=true` to the collection stack's `dimos run` command. See
 [offline WebXR speech](../../../docs/usage/webxr-audio.md) for setup and behavior.
 
 For hand teleop, remove the controllers. Pinch the thumb and index finger on

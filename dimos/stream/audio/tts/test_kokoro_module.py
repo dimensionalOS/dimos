@@ -19,14 +19,13 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.stream.audio.tts.kokoro_module import KokoroTTSModule, optional_tts
+from dimos.stream.audio.tts.kokoro_module import KokoroTTSConfig, KokoroTTSModule
 
 
 @pytest.fixture
 def module(tmp_path):
     module = KokoroTTSModule(
-        model_path=tmp_path / "model.onnx", voices_path=tmp_path / "voices.bin"
+        enabled=True, model_path=tmp_path / "model.onnx", voices_path=tmp_path / "voices.bin"
     )
     try:
         yield module
@@ -119,18 +118,16 @@ def test_stopped_module_rejects_cached_speech(module, engine):
         module.synthesize("Recording started")
 
 
-def test_disabled_tts_requires_no_engine_or_assets(monkeypatch, mocker):
-    monkeypatch.setattr(global_config, "tts", False)
+def test_disabled_tts_requires_no_engine_or_assets(module, mocker):
+    module.config.enabled = False
     load = mocker.patch("dimos.stream.audio.tts.kokoro_module.importlib.import_module")
-    assert GlobalConfig.model_fields["tts"].default is False
-    assert optional_tts() == ()
+    assert KokoroTTSConfig.model_fields["enabled"].default is False
+    module.start()
+    assert module.is_enabled() is False
     load.assert_not_called()
+    with pytest.raises(RuntimeError, match="not running"):
+        module.synthesize("Hello")
 
 
-def test_enabled_tts_is_composed_without_loading_engine(monkeypatch, mocker):
-    monkeypatch.setattr(global_config, "tts", True)
-    load = mocker.patch("dimos.stream.audio.tts.kokoro_module.importlib.import_module")
-    blueprints = optional_tts()
-    assert len(blueprints) == 1
-    assert blueprints[0].active_blueprints[0].module is KokoroTTSModule
-    load.assert_not_called()
+def test_enabled_tts_reports_module_config(module, engine):
+    assert module.is_enabled() is True

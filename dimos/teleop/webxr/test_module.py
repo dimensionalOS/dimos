@@ -270,6 +270,7 @@ def web_client(module):
 
 def test_speech_endpoint_returns_audio_without_changing_collection(module, web_client, mocker):
     module._speech = mocker.MagicMock(spec=SpeechSynthesisSpec)
+    module._speech.is_enabled.return_value = True
     module._speech.synthesize.return_value = b"RIFF-audio"
     response = web_client.post("/teleop/speech", json={"text": " Episode saved "})
     assert response.status_code == 200
@@ -283,6 +284,7 @@ def test_speech_endpoint_returns_audio_without_changing_collection(module, web_c
 @pytest.mark.parametrize("text", ["", " \n", "a" * 501])
 def test_speech_endpoint_rejects_invalid_text(module, web_client, mocker, text):
     module._speech = mocker.MagicMock(spec=SpeechSynthesisSpec)
+    module._speech.is_enabled.return_value = True
     response = web_client.post("/teleop/speech", json={"text": text})
     assert response.status_code == 422
     module._speech.synthesize.assert_not_called()
@@ -293,8 +295,17 @@ def test_speech_endpoint_reports_absent_module(web_client):
     assert 'data-speech-enabled="false"' in web_client.get("/teleop").text
 
 
+def test_disabled_speech_provider_keeps_page_silent(module, web_client, mocker):
+    module._speech = mocker.MagicMock(spec=SpeechSynthesisSpec)
+    module._speech.is_enabled.return_value = False
+    assert 'data-speech-enabled="false"' in web_client.get("/teleop").text
+    assert web_client.post("/teleop/speech", json={"text": "Hello"}).status_code == 503
+    module._speech.synthesize.assert_not_called()
+
+
 def test_speech_failure_does_not_break_web_interface(module, web_client, mocker):
     module._speech = mocker.MagicMock(spec=SpeechSynthesisSpec)
+    module._speech.is_enabled.return_value = True
     module._speech.synthesize.side_effect = RuntimeError("offline engine failed")
     assert web_client.post("/teleop/speech", json={"text": "Hello"}).status_code == 503
     assert web_client.get("/teleop").status_code == 200
@@ -310,6 +321,7 @@ def test_slow_synthesis_does_not_block_web_event_loop(module, web_client, mocker
         return b"RIFF-audio"
 
     module._speech = mocker.MagicMock(spec=SpeechSynthesisSpec)
+    module._speech.is_enabled.return_value = True
     module._speech.synthesize.side_effect = synthesize
     with ThreadPoolExecutor(max_workers=2) as executor:
         speech = executor.submit(web_client.post, "/teleop/speech", json={"text": "Hello"})
