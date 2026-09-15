@@ -393,21 +393,35 @@ mod tests {
     use super::*;
     use crate::wire::{build_imu_samples, build_points_high, DataPacket, DataType, ImuSample};
     use std::collections::HashSet;
+    use std::fs::File;
 
-    /// Distinct per test slot and per process, so parallel checkouts running
-    /// cargo test at once don't fight over loopback ports.
-    fn test_ports(slot: u16) -> Ports {
-        let base = 40000 + (std::process::id() % 1000) as u16 * 24 + slot * 8;
-        Ports {
-            cmd_data: base,
-            point_data: base + 1,
-            imu_data: base + 2,
-            host_cmd_data: base + 3,
-            host_point_data: base + 4,
-            host_imu_data: base + 5,
-            push_msg: base + 6,
-            host_push_msg: base + 7,
+    /// Eight free loopback ports, reserved until the returned lock file drops.
+    fn test_ports() -> (Ports, File) {
+        let dir = std::env::temp_dir().join("dimos-livox-test-ports");
+        std::fs::create_dir_all(&dir).unwrap();
+        for base in (10000..32768).step_by(8) {
+            let lock = File::create(dir.join(base.to_string())).unwrap();
+            if lock.try_lock().is_err() {
+                continue;
+            }
+            let free = (0..8).all(|offset| {
+                UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, base + offset)).is_ok()
+            });
+            if free {
+                let ports = Ports {
+                    cmd_data: base,
+                    point_data: base + 1,
+                    imu_data: base + 2,
+                    host_cmd_data: base + 3,
+                    host_point_data: base + 4,
+                    host_imu_data: base + 5,
+                    push_msg: base + 6,
+                    host_push_msg: base + 7,
+                };
+                return (ports, lock);
+            }
         }
+        panic!("no free port block below 32768");
     }
 
     /// A minimal in-test device: ACK every param-set, then stream one point
@@ -495,7 +509,7 @@ mod tests {
 
     #[test]
     fn handshake_and_stream_over_loopback() {
-        let ports = test_ports(0);
+        let (ports, _lock) = test_ports();
         let device = spawn_fake_device(ports);
 
         let stop = Arc::new(AtomicBool::new(false));
@@ -543,7 +557,7 @@ mod tests {
 
     #[test]
     fn packets_from_unexpected_senders_are_ignored() {
-        let ports = test_ports(3);
+        let (ports, _lock) = test_ports();
         let stop = Arc::new(AtomicBool::new(false));
         // A dropped loopback datagram fails the test instead of hanging it.
         let watchdog = stop.clone();
@@ -597,7 +611,7 @@ mod tests {
 
     #[test]
     fn recv_ends_on_stop() {
-        let ports = test_ports(1);
+        let (ports, _lock) = test_ports();
         let stop = Arc::new(AtomicBool::new(false));
         let mut source = LiveSource::start(
             LiveConfig {
@@ -618,7 +632,7 @@ mod tests {
 
     #[test]
     fn rejected_handshake_fails_the_source() {
-        let ports = test_ports(2);
+        let (ports, _lock) = test_ports();
         let device = std::thread::spawn(move || {
             let cmd =
                 UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, ports.cmd_data)).unwrap();
