@@ -14,6 +14,7 @@
 
 """Attached operator controls and offline dataset preparation."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -135,6 +136,8 @@ def visualize(
         )
 
     project = DIMOS_PROJECT_ROOT / "dimos" / "imitation" / "policy" / "lerobot" / "python"
+    # LeRobot uses repo_id as the Rerun application identity for saved layouts.
+    dataset_id = hashlib.sha256(str(dataset).encode("utf-8")).hexdigest()[:16]
     command = [
         "uv",
         "run",
@@ -145,7 +148,7 @@ def visualize(
         "--root",
         str(dataset),
         "--repo-id",
-        "local/dataset",
+        f"local/dataset-{dataset_id}",
         "--episode-index",
         str(episode),
         "--num-workers",

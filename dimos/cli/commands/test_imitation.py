@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+import hashlib
 import json
 
 import pytest
@@ -192,7 +193,7 @@ def test_visualize_launches_local_viewer(visualization, monkeypatch, flags, epis
         "--root",
         str(dataset),
         "--repo-id",
-        "local/dataset",
+        f"local/dataset-{hashlib.sha256(str(dataset.resolve()).encode('utf-8')).hexdigest()[:16]}",
         "--episode-index",
         episode,
         "--num-workers",
@@ -203,6 +204,35 @@ def test_visualize_launches_local_viewer(visualization, monkeypatch, flags, epis
     assert run.call_args.kwargs["env"]["HF_HUB_OFFLINE"] == "1"
     assert "VIRTUAL_ENV" not in run.call_args.kwargs["env"]
     assert set(run.call_args.kwargs) == {"env", "check"}
+
+
+def test_visualize_isolates_layouts_for_directories_with_same_basename(visualization, tmp_path):
+    dataset, run = visualization
+    other = tmp_path / "other" / dataset.name
+    (other / "meta").mkdir(parents=True)
+    (other / "meta" / "info.json").write_text("{}")
+    identities = []
+    for path in (dataset, other):
+        result = CliRunner().invoke(imitation_app, ["visualize", str(path)])
+        assert result.exit_code == 0, result.output
+        command = run.call_args.args[0]
+        identities.append(command[command.index("--repo-id") + 1])
+    assert identities[0] != identities[1]
+
+
+def test_visualize_preserves_identity_across_equivalent_paths_and_episodes(visualization, tmp_path):
+    dataset, run = visualization
+    alias = tmp_path / "alias"
+    alias.symlink_to(dataset, target_is_directory=True)
+    identities = []
+    for path, episode in [(dataset.name, 0), (str(dataset), 0), (str(alias), 1)]:
+        result = CliRunner().invoke(imitation_app, ["visualize", path, "--episode", str(episode)])
+        assert result.exit_code == 0, result.output
+        command = run.call_args.args[0]
+        identities.append(command[command.index("--repo-id") + 1])
+        assert command[command.index("--root") + 1] == str(dataset.resolve())
+        assert command[command.index("--episode-index") + 1] == str(episode)
+    assert identities[0] == identities[1] == identities[2]
 
 
 @pytest.mark.parametrize(
