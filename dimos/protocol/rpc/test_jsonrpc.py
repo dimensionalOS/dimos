@@ -250,7 +250,9 @@ def test_module_parameters_cannot_override_dispatch(mocker: MockerFixture) -> No
     assert transport.decode(query.reply.call_args.args[1])["result"] == {"fname": "private"}
 
 
-def test_isolated_methods_resolve_at_call_time(mocker: MockerFixture) -> None:
+def test_isolated_methods_resolve_at_call_time(
+    mocker: MockerFixture, request: pytest.FixtureRequest
+) -> None:
     class Contract(IsolatedPythonModule):
         implementation = "runtime:Runtime"
 
@@ -258,10 +260,12 @@ def test_isolated_methods_resolve_at_call_time(mocker: MockerFixture) -> None:
         def echo(self, value: str) -> str:
             raise NotImplementedError
 
-    module = object.__new__(Contract)
-    transport = JsonRPC()
-    serve = mocker.patch.object(transport, "serve_rpc")
-    transport.serve_module_rpc(module, "module")
+    mocker.patch.object(JsonRPC, "start")
+    serve = mocker.patch.object(JsonRPC, "serve_rpc")
+    module = Contract(rpc_transport=JsonRPC, instance_name="module")
+    request.addfinalizer(module.stop)
+    transport = module.rpc
+    assert isinstance(transport, JsonRPC)
     handler = next(call.args[0] for call in serve.call_args_list if call.args[1] == "module/echo")
     for result in ("first runtime", "restarted runtime"):
         client = mocker.Mock()
@@ -280,6 +284,19 @@ def test_isolated_methods_resolve_at_call_time(mocker: MockerFixture) -> None:
                 assert response["error"]["code"] == -32602
                 client.echo.assert_not_called()
         client.echo.assert_called_once_with(value="hello")
+
+
+def test_named_proxy_leaves_omitted_defaults_on_server() -> None:
+    def echo(value: Any = b"server default") -> str:
+        return str(value)
+
+    with rpc_pair() as (server, client):
+        server.serve_rpc(echo, "module/echo")
+        call = RpcCall(echo, client, "echo", "module", [])
+        assert call() == "b'server default'"
+        assert call("explicit") == "explicit"
+        with pytest.raises(TypeError, match="not JSON serializable"):
+            call(b"explicit bytes")
 
 
 @pytest.mark.parametrize("method", [lambda *args: args, lambda **kwargs: kwargs, lambda x, /: x])

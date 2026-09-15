@@ -93,7 +93,6 @@ class RpcCall:
                     "Named RPC calls do not support positional-only or variadic parameters"
                 )
             bound = self.__signature__.bind(*args, **kwargs)
-            bound.apply_defaults()
             arguments = ([], dict(bound.arguments))
 
         # For stop, use call_nowait to avoid deadlock
