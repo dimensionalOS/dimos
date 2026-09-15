@@ -14,6 +14,7 @@
 
 import asyncio
 from collections.abc import Callable
+from functools import wraps
 import threading
 from types import MappingProxyType
 from typing import Any, Protocol, overload
@@ -113,7 +114,16 @@ class RPCServer(Protocol):
                 name = module.__class__.__name__
 
             topic = name + "/" + fname
-            self.serve_rpc(getattr(module, fname), topic)
+            self.serve_rpc(_call_later(module, fname), topic)
+
+
+def _call_later(module: RPCInspectable, fname: str) -> Callable[..., Any]:
+    # Preserve the declaration's signature without resolving a runtime-backed method.
+    @wraps(object.__getattribute__(module, fname))
+    def call(*args: Any, **kwargs: Any) -> Any:
+        return getattr(module, fname)(*args, **kwargs)
+
+    return call
 
 
 class RPCSpec(RPCServer, RPCClient):

@@ -28,6 +28,7 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall, RPCClient
+from dimos.experimental.isolated_python.module import IsolatedPythonModule
 from dimos.porcelain.module_handle import RemoteModuleProxy
 from dimos.protocol.rpc.jsonrpc import JsonRPC, JsonRPCError
 from dimos.protocol.rpc.pubsubrpc import ShmRPC
@@ -247,6 +248,38 @@ def test_module_parameters_cannot_override_dispatch(mocker: MockerFixture) -> No
     transport._execute(handler, name, query)
     module.private.assert_not_called()
     assert transport.decode(query.reply.call_args.args[1])["result"] == {"fname": "private"}
+
+
+def test_isolated_methods_resolve_at_call_time(mocker: MockerFixture) -> None:
+    class Contract(IsolatedPythonModule):
+        implementation = "runtime:Runtime"
+
+        @rpc
+        def echo(self, value: str) -> str:
+            raise NotImplementedError
+
+    module = object.__new__(Contract)
+    transport = JsonRPC()
+    serve = mocker.patch.object(transport, "serve_rpc")
+    transport.serve_module_rpc(module, "module")
+    handler = next(call.args[0] for call in serve.call_args_list if call.args[1] == "module/echo")
+    for result in ("first runtime", "restarted runtime"):
+        client = mocker.Mock()
+        client.echo.return_value = result
+        module._runtime_client = client
+        for params in ({}, {"fname": "private"}, {"value": "hello"}):
+            query = mocker.Mock()
+            query.payload.to_bytes.return_value = transport.encode(
+                {"jsonrpc": "2.0", "id": 1, "method": "module/echo", "params": params}
+            )
+            transport._execute(handler, "module/echo", query)
+            response = transport.decode(query.reply.call_args.args[1])
+            if "value" in params:
+                assert response["result"] == result
+            else:
+                assert response["error"]["code"] == -32602
+                client.echo.assert_not_called()
+        client.echo.assert_called_once_with(value="hello")
 
 
 @pytest.mark.parametrize("method", [lambda *args: args, lambda **kwargs: kwargs, lambda x, /: x])
