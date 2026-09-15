@@ -260,6 +260,7 @@ mod tests {
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
             worker_threads: 4,
+            max_cloud_rate_hz: 0.0,
         }
     }
 

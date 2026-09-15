@@ -76,6 +76,13 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     tf_match_tolerance_s: float = TF_MATCH_TOLERANCE_S
     # Worker threads for parallel map work.
     worker_threads: int = 4
+    # Cap how often each source cloud is registered, per frame_id, in Hz. Zero
+    # accepts every cloud. Registration is the slowest stage in the nav stack;
+    # when it costs more than the arrival period the backlog grows until clouds
+    # are older than the tf history window and get dropped for want of a
+    # transform, so the map quietly stops using a sensor. Thinning at the source
+    # keeps it current instead.
+    max_cloud_rate_hz: float = 0.0
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
