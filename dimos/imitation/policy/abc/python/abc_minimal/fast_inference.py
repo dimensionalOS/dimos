@@ -114,7 +114,7 @@ class FastInferenceGraph:
             self._copy_inputs(warmup_obs, warmup_noise)
             self.graph.replay()
             assert self.output is not None
-            _ = self.output[0].float().detach().cpu().numpy()
+            self.output[0].float().detach().cpu().numpy()
         torch.cuda.synchronize()
 
     def infer(self, obs: dict[str, Any], noise: np.ndarray | None) -> np.ndarray:
@@ -174,7 +174,7 @@ class FastRTCInferenceGraph(FastInferenceGraph):
             self._copy_prefix(warmup_prefix)
             self.graph.replay()
             assert self.output is not None
-            _ = self.output[0].float().detach().cpu().numpy()
+            self.output[0].float().detach().cpu().numpy()
         torch.cuda.synchronize()
 
     def infer(
