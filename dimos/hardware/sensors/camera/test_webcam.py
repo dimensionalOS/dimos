@@ -26,3 +26,13 @@ def test_webcam_without_intrinsics_reports_a_nominal_pinhole() -> None:
 def test_webcam_keeps_configured_intrinsics() -> None:
     configured = CameraInfo.from_fov(90.0, 640, 480)
     assert Webcam(camera_info=configured).camera_info is configured
+
+
+def test_webcam_with_size_but_no_focal_length_gets_a_nominal_pinhole() -> None:
+    info = Webcam(camera_info=CameraInfo(width=1280, height=720)).camera_info
+    assert info.K[0] > 0
+
+
+def test_webcam_stereo_slice_halves_the_nominal_pinhole_width() -> None:
+    info = Webcam(width=1280, height=720, stereo_slice="left").camera_info
+    assert (info.width, info.height) == (640, 720)
