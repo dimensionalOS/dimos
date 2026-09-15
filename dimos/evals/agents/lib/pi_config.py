@@ -46,11 +46,17 @@ class RuntimeConfig(BaseModel):
     key_env: str
     allowed_tools: tuple[str, ...] | None = None
     max_output_tokens: int | None = Field(default=None, ge=1)
+    excluded_keywords: tuple[str, ...] = ()
+    # Path prefixes removed from tool arguments before keyword matching (the run's own directories).
+    ignored_paths: tuple[str, ...] = ()
+    # Upper bound on a single bash call; an agent cannot interrupt a hung script itself.
+    max_tool_seconds: float | None = Field(default=None, gt=0)
 
 
 class ToolPolicyState(BaseModel):
     tools: tuple[str, ...]
     unknown: tuple[str, ...]
+    blocked: int = 0
 
 
 class McpEndpoint(BaseModel):

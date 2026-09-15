@@ -108,3 +108,8 @@ def test_gateway_failure_preserves_completed_steps(tmp_path: Path, mode: str) ->
     assert result.final_metrics.total_cost_usd == 0.1
     assert result.extra.ended_by == ("answer" if mode == "answer" else "error")
     assert not agent._runtime_dir.exists()
+
+
+def test_dimcode_rejects_no_dimos() -> None:
+    with pytest.raises(ValueError, match="production environment"):
+        DimcodeAdapter(no_dimos=True, model="gpt-6-astra")

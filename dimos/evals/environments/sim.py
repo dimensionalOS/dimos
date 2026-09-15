@@ -31,6 +31,7 @@ from dimos.evals.environments.base import Environment
 from dimos.evals.environments.lib.launch import default_mcp_url, validate_blueprints
 from dimos.evals.types import RunningEnvironment
 from dimos.protocol.service.spec import BaseConfig
+from dimos.robot.raw_robot_bridge import RAW_ENDPOINT
 
 if TYPE_CHECKING:
     from dimos.evals.agents.base import Agent
@@ -44,6 +45,8 @@ class SimConfig(BaseConfig):
     simulator: str = "dimsim"
     scene: str = "apartment"
     setup: Callable[[DimSimClient], None] | None = None
+    # Also expose the robot as plain Zenoh topics (raw-robot-bridge) for agents without dimOS.
+    raw_bridge: bool = False
     attach: bool = False
     launch_timeout_s: float = 1200.0
     at_rest_m: float = 0.05
@@ -62,6 +65,10 @@ class Sim(Environment):
 
     config: SimConfig
 
+    @property
+    def provides_raw_robot(self) -> bool:
+        return self.config.raw_bridge
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._recording: Store | None = None
@@ -77,7 +84,10 @@ class Sim(Environment):
             if not McpAdapter(mcp_url).wait_for_ready(timeout=2.0):
                 raise RuntimeError(f"attach needs a running dimos at {mcp_url}")
             return
-        validate_blueprints((*self.config.blueprint, *agent.config.modules, *self.config.disable))
+        bridge = ["raw-robot-bridge"] if self.config.raw_bridge else []
+        validate_blueprints(
+            (*self.config.blueprint, *agent.config.modules, *bridge, *self.config.disable)
+        )
 
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
         # SQLite memory codecs are only needed for a running simulator.
@@ -90,7 +100,8 @@ class Sim(Environment):
             proc.simulator = self.config.simulator
             proc.global_args = ["--dimsim-scene", self.config.scene, "--record"]
             disabled = [arg for name in self.config.disable for arg in ("--disable", name)]
-            proc.demo_args = ["run", *self.config.blueprint, *modules, *disabled]
+            bridge = ["raw-robot-bridge"] if self.config.raw_bridge else []
+            proc.demo_args = ["run", *self.config.blueprint, *modules, *bridge, *disabled]
             self._resources.callback(proc.stop)
             proc.start()
             assert proc.process is not None
@@ -108,7 +119,12 @@ class Sim(Environment):
         path = self._wait_recording(deadline, pid)
         self._recording = SqliteStore(path=str(path), must_exist=True)
         self._resources.callback(self._recording.stop)
-        return RunningEnvironment(mcp_url=mcp_url, streams=(), artifacts={"recording": path})
+        return RunningEnvironment(
+            mcp_url=mcp_url,
+            streams=(),
+            artifacts={"recording": path},
+            raw_endpoint=RAW_ENDPOINT if self.config.raw_bridge else None,
+        )
 
     def _wait_recording(self, deadline: float, pid: int | None) -> Path:
         """Find the recording of the launched process, or the attached dimos."""

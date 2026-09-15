@@ -48,7 +48,7 @@ from dimos.evals.environments.image_file import ImageFile
 from dimos.evals.environments.lib.launch import default_mcp_url
 from dimos.evals.environments.sim import Sim
 from dimos.evals.module import list_agents
-from dimos.evals.runner import EvalRunner, summarize
+from dimos.evals.runner import EvalRunner, forbidden_call, summarize
 from dimos.evals.scorers import (
     choice,
     exact,
@@ -850,3 +850,65 @@ def test_summary_and_trajectory_preserve_unknown_cost(
     assert trajectory.build("answer").final_metrics.total_cost_usd == expected
     assert summary.n == len(costs)
     assert summary.mean_score == summary.pass_rate == 0.0
+
+
+def _trajectory_with(command: str, result: str) -> Trajectory:
+    builder = TrajectoryBuilder("q", name="t", model="m")
+    builder.step(
+        message="",
+        reasoning="",
+        tool_calls=(
+            ToolCall(tool_call_id="c1", function_name="bash", arguments={"command": command}),
+        ),
+        metrics=Metrics(prompt_tokens=1, completion_tokens=1),
+        model_name="m",
+        latency_s=0.0,
+        reasoning_tokens=0,
+        request=Path("r"),
+        response=Path("s"),
+    )
+    builder.observe("c1", result)
+    return builder.build("answer")
+
+
+@pytest.mark.parametrize(
+    "command,result,ignored,expected",
+    [
+        (
+            "pip install dimos",
+            "Successfully installed dimos",
+            (),
+            "invalid: step 2 ran bash mentioning 'dimos'",
+        ),
+        (
+            "pip install dimos",
+            "Tool call denied: its arguments mention the excluded keyword",
+            (),
+            "",
+        ),
+        ("echo dimosaurus", "dimosaurus", (), ""),
+        ("cat /tmp/dimos/run/notes", "x", ("/tmp/dimos/run",), ""),
+        (
+            "git clone https://github.com/DimensionalOS/x",
+            "done",
+            (),
+            "invalid: step 2 ran bash mentioning 'dimensionalos'",
+        ),
+    ],
+)
+def test_forbidden_call_flags_only_executed_whole_word_hits(
+    command: str, result: str, ignored: tuple[str, ...], expected: str
+) -> None:
+    trajectory = _trajectory_with(command, result)
+    assert forbidden_call(trajectory, ("dimos", "dimensionalos"), *ignored) == expected
+    assert forbidden_call(trajectory, ()) == ""
+
+
+@pytest.mark.parametrize(
+    "reply,expected",
+    [("**Yes.**\n\nAll frames show a person", "yes"), ("_no_", "no"), ("Yes", "yes")],
+)
+def test_yes_no_tolerates_markdown_emphasis(reply: str, expected: str) -> None:
+    from dimos.evals.scorers import yes_no
+
+    assert yes_no(reply) == expected

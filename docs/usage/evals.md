@@ -36,58 +36,76 @@ Every runner invocation writes one `~/.local/state/dimos/evals/run-*/` directory
 To generate deterministic image questions from recordings, see
 [Visual Question Answering](/docs/usage/vqa.md).
 
-## Baseline Bash versus dimcode + DimOS
+## Baseline without dimOS versus dimcode + dimOS
 
-For the complete-stack comparison, use `PiAdapter` with a sandbox against `DimcodeAdapter`
-with the **same model**. The primary pair is Astra with Bash versus Astra in
-dimcode with DimOS. This measures the combined product/robotics-stack effect;
-it does not isolate the harness contribution.
+For the product comparison, run `PiAdapter` with `no_dimos=true` against `DimcodeAdapter`
+with the **same model**. The baseline keeps Pi's normal tools, the internet, pip, git and any
+public SDK; the only thing withheld is dimOS.
 
 ```bash skip
 dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
-  --allow bash,grep --set sandbox=true \
-  --set model=gpt-6-astra --set thinking=medium \
-  --set max_steps=12 --set max_output_tokens=4096
+  --set no_dimos=true --set model=gpt-6-astra --set thinking=medium \
+  --set max_steps=250 --set max_output_tokens=4096
 
 dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.dimcode \
   --set model=gpt-6-astra --set thinking=medium \
-  --set max_steps=12 --set max_output_tokens=4096
+  --set max_steps=250 --set max_output_tokens=4096
 ```
 
-`PiAdapter` uses Pi's stock loop, provider support, tracing, limits and cleanup.
-The allowlist exposes only Pi's Bash and grep tools. Linux bubblewrap isolates their filesystem,
-processes, environment and network. The shell can read selected observations in
-`/input` and write `/workspace`; host homes, DimOS source, virtual environments,
-credentials, MCP, and host services are unavailable. The ordinary system tools
-under `/usr` are read-only, with `/usr/local` hidden. Bash, grep, coreutils and
-system Python remain available. Record the host system package versions when
-freezing a pilot; this is not a portable pinned container image.
+`no_dimos` does four things. Pi runs with a `PATH` that has no dimOS executable or checkout
+venv, no `PYTHONPATH` and no `DIMOS_*` variables, so `import dimos` and `dimos` fail. Recorded
+observations are exported as plain files, lossless PNGs, XYZ/RGB CSVs and JSON primitives with
+a manifest, instead of the memory store. A robot is exposed as plain topics through
+`raw-robot-bridge` (below); the MCP tool listing and the `dimos mcp call` guidance are omitted.
+And `excluded_keywords` defaults to `dimos, dimensionalos`, which denies any tool call that
+mentions them.
 
-The baseline receives selected point coordinates/colors as CSV, camera frames
-as lossless PNG and primitive observations as JSON, with timestamps and hashes.
-Selected PNGs are also attached to its initial model message because the allowed
-tools do not read images. No `agent_encode` summaries, labels, semantic tags or
-original database are exported. Dimcode receives the same selected observations
-through the DimOS store and retains its production tools. Representation and
-image-delivery differences are part of this stack comparison and must be reported.
+### Keyword guard
 
-The sandbox supports Bash and grep (including either alone or neither), and rejects
-other tools, skills, modules and MCP endpoints. Missing or
-unsupported isolation fails preflight; there is no unrestricted fallback. This
-adapter currently supports recordings only. Live tasks need a separately bounded
-vendor SDK/robot connection available to the baseline, without DimOS. A blocked
-robot interface is an unsupported case, not a baseline failure.
+`excluded_keywords` is shared `AgentConfig`; set it with `--exclude dimos,dimensionalos` or
+`--set excluded_keywords=[...]`. Before a tool runs, the shared Pi extension matches the call's
+arguments, lowercased, against each keyword as a whole token: `import dimos`, `/opt/dimos/x`,
+`dimos_lcm` and `github.com/dimensionalOS/dimos` hit; `dimosaurus` does not. The run's own
+workspace and config paths are stripped first, so a case directory under `~/.local/state/dimos`
+is not a hit. A denied call never executes; the model receives
+`Tool call denied: its arguments mention the excluded keyword "dimos"...` and continues. The
+guard reads arguments only: reasoning or answers that mention dimOS are untouched, and so is
+tool output. Denied calls are counted in the trajectory's `extra.blocked_calls`. Pi and dimcode
+both enforce it; single-call agents have no tools to guard.
 
-The primary benchmark uses only these two Pi-based adapters. Using the DimOS
-CLI in the baseline violates the experiment's access policy.
-Dimcode's current adapter still needs grader and unrelated-data isolation before
-publication runs. Neither arm may receive task-specific solutions or hidden truth.
+After the run, the runner re-checks executed calls (denied ones are recognised by their result
+text) and marks a trial `invalid: ...` in `error` if a keyword got through, for example a
+misconfigured extension. Invalid trials count as errors in the summary; report them separately.
+
+### Raw robot topics
+
+`Sim(raw_bridge=True)` adds the `raw-robot-bridge` module to the launch. It republishes the
+robot connection's streams as plain Zenoh topics on `tcp/127.0.0.1:7448`, a peer with multicast
+and gossip scouting off, so a subscriber sees these keys and none of dimOS's own bus:
+
+```
+robot/camera/jpeg        JPEG bytes per frame; attachment {"t": unix_seconds}
+robot/lidar/xyz_f32      float32 little-endian (N,3) metres in the lidar frame; attachment {"t": ...}
+robot/odom/json          {"t","x","y","z","qx","qy","qz","qw"}, base_link in the odom frame
+robot/camera_info/json   {"width","height","K"}, latched
+robot/cmd_vel/json       subscribed: {"vx","vy","wz","t"}; held for t seconds (max 2), then stop
+```
+
+That is the surface a vendor SDK exposes: sensors out, body velocity with a deadman in. Nothing
+above the connection (map, costmap, planner, `move_to`, memory) and nothing beneath it (simulator
+state, scene assets). The baseline agent gets a `ROBOT.md` describing the endpoint and builds
+whatever it needs from there. The bridge is inert for the dimcode arm, which keeps both
+simulator launches identical. On real hardware there is no bridge: the baseline gets the
+robot's address and uses the vendor SDK directly, while dimOS records through its own connection.
+
+Budgets: building a recorder, a map and a navigator from live topics is long-horizon work; start
+at 250 requests and an hour per case for both arms.
 
 ### Shared Pi runtime
 
 Use the same model, reasoning setting, output cap, case selection and timeout
 for each harness. Pi and dimcode use Pi's provider SDKs and built-in model
-registry; model capabilities and prices are not redefined by DimOS. Pin the
+registry; model capabilities and prices are not redefined by dimOS. Pin the
 same Pi version in both installations. The integration uses Pi 0.85.1 and
 dimcode's local gateway protocol (`0.1.0-next.2` / `0.1.0-next.3`).
 `DimcodeAdapter` extends `PiAdapter`, overriding gateway startup, session
@@ -135,10 +153,8 @@ The production MCP-client adapter does not yet implement filtering and rejects
 explicit allowlists; single-call agents accept only an empty list or defaults.
 Adapters must enforce selection or reject it, never silently ignore it.
 
-Tool selection is independent of filesystem and network access. `--allow bash`
-still permits any program the shell can reach. For the no-DimOS baseline, also
-use `--set sandbox=true`; this currently supports only Pi with recorded inputs.
-The sandbox is a composed isolation helper, not another agent subclass.
+Tool selection is independent of what an allowed tool can reach: `--allow bash` still permits any
+program on the shell's PATH. Use `no_dimos` to keep dimOS off that path.
 
 ### Reading the metrics
 
