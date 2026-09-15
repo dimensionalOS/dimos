@@ -15,6 +15,7 @@
 """Spoken feedback for confirmed collection transitions."""
 
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
+from dimos.stream.audio.tts.kokoro import KokoroTTS, KokoroTTSConfig
 
 RECORDING_PROMPTS = {
     "start": "Recording started",
@@ -31,13 +32,11 @@ class CollectionPrompts:
         previous = self.previous
         self.previous = status
         if previous is not None and (
-            status.ts,
             status.state,
             status.last_event,
             status.episodes_saved,
             status.episodes_discarded,
         ) == (
-            previous.ts,
             previous.state,
             previous.last_event,
             previous.episodes_saved,
@@ -55,3 +54,29 @@ class CollectionPrompts:
             ):
                 return RECORDING_PROMPTS["discard"]
         return None
+
+
+class CollectionSpeech:
+    """Prepare collection feedback once, then select WAVs for confirmed transitions."""
+
+    def __init__(self, config: KokoroTTSConfig) -> None:
+        self._config = config
+        self._prompts = CollectionPrompts()
+        self._audio: dict[str, bytes] = {}
+
+    def prepare(self) -> None:
+        if not self._config.enabled:
+            return
+        speech = KokoroTTS(self._config)
+        try:
+            speech.prepare()
+            self._audio = {
+                phrase: speech.synthesize(phrase) for phrase in RECORDING_PROMPTS.values()
+            }
+        finally:
+            # All feedback is cached; collection needs no live inference engine.
+            speech.close()
+
+    def update(self, status: EpisodeStatus, *, snapshot: bool = False) -> bytes | None:
+        phrase = self._prompts.update(status)
+        return self._audio.get(phrase) if phrase is not None and not snapshot else None

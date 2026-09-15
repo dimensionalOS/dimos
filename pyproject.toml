@@ -230,6 +230,7 @@ agents = [
 tts = [
     "kokoro==0.9.4",
     "huggingface-hub>=0.30,<1",
+    "sounddevice>=0.5.5",
 ]
 
 web = [

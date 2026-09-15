@@ -21,10 +21,12 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.imitation.collection.episode_monitor import EpisodeCommand, EpisodeControlSpec
+from dimos.imitation.collection.prompts import CollectionSpeech
 from dimos.imitation.policy.module import RolloutControlSpec
 from dimos.imitation.tui import CollectionApp, CollectionSession, RolloutApp, RolloutSession
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.porcelain.dimos import Dimos
+from dimos.stream.audio.tts.kokoro import KokoroTTSConfig
 
 
 @pytest.fixture
@@ -172,3 +174,57 @@ def test_rollout_disconnect_disables_commands_without_stopping_policy(mocker):
         driver.stop.assert_called_once_with()
     finally:
         session.close()
+
+
+async def test_collection_speech_follows_confirmed_status_and_stops_on_detach(
+    collection_session, mocker
+):
+    session, _, monitor = collection_session
+    engine = mocker.patch(
+        "dimos.imitation.collection.prompts.KokoroTTS", autospec=True
+    ).return_value
+    engine.synthesize.side_effect = lambda phrase: phrase.encode()
+    speech = CollectionSpeech(KokoroTTSConfig(enabled=True))
+    speech.prepare()
+    player = mocker.patch("dimos.imitation.tui.WavPlayer", autospec=True).return_value
+    monitor.get_status.return_value = EpisodeStatus(
+        ts=1, state="recording", last_event="start", episodes_saved=0, episodes_discarded=0
+    )
+    app = CollectionApp(session, speech=speech)
+    mocker.patch.object(app, "set_interval")
+    async with app.run_test(size=(80, 24)):
+        player.play.assert_not_called()
+        monitor.command.return_value = EpisodeStatus(
+            ts=2, state="idle", last_event="save", episodes_saved=1, episodes_discarded=0
+        )
+        app.action_toggle_recording()
+        player.play.assert_called_once_with(b"Episode saved")
+        monitor.get_status.return_value = monitor.command.return_value
+        app._poll()
+        player.play.assert_called_once_with(b"Episode saved")
+        monitor.get_status.return_value = EpisodeStatus(
+            ts=3, state="recording", last_event="start", episodes_saved=1, episodes_discarded=0
+        )
+        app._poll()
+        assert player.play.call_args.args == (b"Recording started",)
+        monitor.get_status.return_value = monitor.get_status.return_value.model_copy(
+            update={"ts": 3.5}
+        )
+        app._poll()
+        assert player.play.call_count == 2
+        monitor.command.return_value = EpisodeStatus(
+            ts=4, state="idle", last_event="discard", episodes_saved=1, episodes_discarded=1
+        )
+        player.play.side_effect = RuntimeError("No output device")
+        app.action_discard()
+        assert not app._disconnected
+        assert app._status.episodes_discarded == 1
+        assert "Audio unavailable" in str(app.query_one("#message", Static).render())
+    player.stop.assert_called_once_with()
+
+
+def test_disabled_collection_does_not_open_audio(collection_session, mocker):
+    session, _, _ = collection_session
+    player = mocker.patch("dimos.imitation.tui.WavPlayer", autospec=True)
+    CollectionApp(session)
+    player.assert_not_called()

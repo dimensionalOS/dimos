@@ -44,13 +44,13 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.imitation.collection.prompts import CollectionSpeech
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.stream.audio.tts.kokoro import KokoroTTS, KokoroTTSConfig
+from dimos.stream.audio.tts.kokoro import KokoroTTSConfig
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnapshot
-from dimos.teleop.webxr.collection_prompts import RECORDING_PROMPTS, CollectionPrompts
 
 # Hand is re-exported for callers; it lives in controller_types.
 from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
@@ -124,9 +124,7 @@ class WebXRTeleopModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
-        self._speech: KokoroTTS | None = None
-        self._speech_messages: dict[str, str] = {}
-        self._collection_prompts = CollectionPrompts()
+        self._speech: CollectionSpeech | None = None
         self._episode_status_lock = threading.RLock()
         self._text_send_lock = asyncio.Lock()
 
@@ -339,8 +337,12 @@ class WebXRTeleopModule(Module):
         with self._episode_status_lock:
             with self._lock:
                 self._latest_episode_status = status
-            phrase = self._collection_prompts.update(status)
-            speech = self._speech_messages.get(phrase) if phrase is not None else None
+            audio = self._speech.update(status) if self._speech is not None else None
+            speech = (
+                json.dumps({"type": "speech", "audio": base64.b64encode(audio).decode("ascii")})
+                if audio is not None
+                else None
+            )
             self._broadcast_text(self._encode_episode_status(status, snapshot=False), speech)
 
     @staticmethod
@@ -357,25 +359,11 @@ class WebXRTeleopModule(Module):
     def build(self) -> None:
         super().build()
         if self.config.tts.enabled:
-            self._speech = KokoroTTS(self.config.tts)
+            self._speech = CollectionSpeech(self.config.tts)
             try:
                 self._speech.prepare()
-                self._speech_messages = {
-                    phrase: json.dumps(
-                        {
-                            "type": "speech",
-                            "audio": base64.b64encode(self._speech.synthesize(phrase)).decode(
-                                "ascii"
-                            ),
-                        },
-                        separators=(",", ":"),
-                    )
-                    for phrase in RECORDING_PROMPTS.values()
-                }
             except BaseException:
-                self._speech.close()
                 self._speech = None
-                self._speech_messages.clear()
                 raise
         if self.status.connection is not None or self.status._transport is not None:
             self.register_disposable(Disposable(self.status.subscribe(self._on_episode_status)))
@@ -397,10 +385,7 @@ class WebXRTeleopModule(Module):
         self._stop_control_loop()
         self._reset_controller_state()
         self._stop_server()
-        if self._speech is not None:
-            self._speech.close()
-            self._speech = None
-        self._speech_messages.clear()
+        self._speech = None
         super().stop()
 
     def _reset_controller_state(self) -> None:
