@@ -25,9 +25,11 @@ from textual.widgets import Button, Footer, Static
 
 from dimos.cli import theme
 from dimos.imitation.collection.episode_monitor import EpisodeCommand, EpisodeControlSpec
+from dimos.imitation.collection.prompts import CollectionSpeech
 from dimos.imitation.policy.module import RolloutControlSpec, RolloutStatus
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.porcelain.dimos import Dimos
+from dimos.stream.audio.wav_player import WavPlayer
 
 
 class CollectionSession:
@@ -87,11 +89,22 @@ class CollectionApp(App[None]):
         Binding("ctrl+c", "quit", "Detach", show=False),
     ]
 
-    def __init__(self, session: CollectionSession, title: str = "Collection") -> None:
+    def __init__(
+        self,
+        session: CollectionSession,
+        title: str = "Collection",
+        *,
+        speech: CollectionSpeech | None = None,
+    ) -> None:
         super().__init__()
         self._session = session
         self._title = title
         self._status = session.get_status()
+        self._speech = speech
+        self._player = WavPlayer() if speech is not None else None
+        self._audio_error: str | None = None
+        if speech is not None:
+            speech.update(self._status, snapshot=True)
         self._message = "Reset the scene, then start a take."
         self._disconnected = False
         self._recording_started_at: float | None = None
@@ -118,7 +131,12 @@ class CollectionApp(App[None]):
         self.set_interval(0.25, self._poll)
 
     def on_unmount(self) -> None:
+        self.stop_audio()
         self._session.close()
+
+    def stop_audio(self) -> None:
+        if self._player is not None:
+            self._player.stop()
 
     @staticmethod
     def _format_elapsed(seconds: float) -> str:
@@ -133,6 +151,14 @@ class CollectionApp(App[None]):
             self._recording_started_at = time.monotonic()
         elif not recording:
             self._recording_started_at = None
+        if self._speech is not None and self._player is not None:
+            audio = self._speech.update(status)
+            if audio is not None:
+                try:
+                    self._player.play(audio)
+                    self._audio_error = None
+                except Exception as exc:
+                    self._audio_error = f"Audio unavailable: {exc}"
 
     def _refresh(self) -> None:
         recording = self._status.state == "recording"
@@ -159,7 +185,7 @@ class CollectionApp(App[None]):
             else "Reset the scene. Press Space when the demonstration begins."
         )
         self.query_one("#guidance", Static).update(guidance)
-        self.query_one("#message", Static).update(self._message)
+        self.query_one("#message", Static).update(self._audio_error or self._message)
         toggle = self.query_one("#toggle", Button)
         toggle.label = "Save episode" if recording else "Start recording"
         toggle.variant = "error" if recording else "success"
@@ -174,7 +200,9 @@ class CollectionApp(App[None]):
             self._refresh()
         except Exception as exc:
             self._message = f"Connection error: {exc}"
+            self._audio_error = None
             self._disconnected = True
+            self.stop_audio()
             self._session.close()
             self._refresh()
 

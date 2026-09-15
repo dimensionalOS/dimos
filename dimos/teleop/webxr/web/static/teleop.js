@@ -5,6 +5,7 @@ window.onerror = (msg, url, line, col, error) => {
 };
 
 import { geometry_msgs, std_msgs, sensor_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
+import { SpeechPlayer } from './speech.js';
 
 // WebSocket and WebXR state
 let ws = null;
@@ -47,6 +48,13 @@ let hudTexture = null;
 let hudDirty = false;
 let hudElapsedSecond = -1;
 let hudPlaced = false;
+let audioUnavailable = false;
+const speechEnabled = document.body.dataset.speechEnabled === 'true';
+const speech = new SpeechPlayer(unavailable => {
+    audioUnavailable = unavailable;
+    document.getElementById('audioStatus').classList.toggle('hidden', !unavailable);
+    hudDirty = true;
+});
 
 const HUD_WIDTH_PX = 2048;
 const HUD_HEIGHT_PX = 256;
@@ -87,6 +95,7 @@ function setupWebSocket() {
             reject(error);
         };
         ws.onclose = () => {
+            speech.stop();
             hudOffline = true;
             hudDirty = true;
             setStatus('WebSocket closed');
@@ -286,6 +295,10 @@ function renderVideoPanel(view, viewport) {
 function handleServerMessage(data) {
     try {
         const message = JSON.parse(data);
+        if (message.type === 'speech') {
+            if (speechEnabled && xrSession && !hudOffline) void speech.play(message.audio);
+            return;
+        }
         if (message.type !== 'episode_status') return;
         episodeStatus = message;
         episodeStatusReceivedAtMs = performance.now();
@@ -386,7 +399,8 @@ function updateHudTexture() {
         [280, 'ELAPSED', hudOffline ? '--:--' : formatElapsed(elapsed), '#f4f7fb'],
         [260, 'SAVED', String(saved).padStart(3, '0'), '#8de2bd'],
         [320, 'DISCARDED', String(discarded).padStart(3, '0'), '#f7c66d'],
-        [568, 'LAST ACTION', lastEvent, '#f4f7fb'],
+        [568, audioUnavailable ? 'AUDIO' : 'LAST ACTION',
+            audioUnavailable ? 'UNAVAILABLE' : lastEvent, '#f4f7fb'],
     ];
 
     hudContext.clearRect(0, 0, HUD_WIDTH_PX, HUD_HEIGHT_PX);
@@ -648,6 +662,7 @@ async function startWebXRSession() {
 
 // Connect button handler
 window.connect = async function() {
+    if (speechEnabled) void speech.initialize();
     try {
         connectBtn.disabled = true;
 
@@ -668,6 +683,7 @@ window.connect = async function() {
 
     } catch (error) {
         setStatus('Connection failed');
+        speech.stop();
         console.error('Connection error:', error);
         connectBtn.disabled = false;
     }
@@ -675,6 +691,7 @@ window.connect = async function() {
 
 // Disconnect button handler
 window.disconnect = async function() {
+    speech.stop();
     setStatus('Disconnecting...');
 
     if (xrSession) {

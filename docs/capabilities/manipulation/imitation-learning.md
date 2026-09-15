@@ -52,6 +52,21 @@ These are ordinary module-config flags. Use `dimos run BLUEPRINT --help` to see
 all options, including camera hardware settings. JSON config and environment
 overrides use the same matching rules as other dimOS blueprints.
 
+Spoken start/save/cancel feedback is **off by default**. Install it with
+`uv sync --extra manipulation --extra tts`, then choose where to hear it:
+
+- **Headset:** add `--tts.enabled=true` to the WebXR blueprint's `dimos run`
+  command, then select **Connect** in the headset browser to enable audio.
+- **Desktop, including teach collection:** attach with
+  `uv run --no-sync dimos imitation collect --tts`.
+
+First use automatically downloads the speech model and installs its tokenizer
+before preparing the prompts. Later launches work offline. Use `uv run --no-sync`
+to preserve the installed tokenizer; an exact `uv sync` may remove it.
+To check playback, start, save, then start and discard (Space, Space, Space, D;
+Quest uses B to start/save and Y to discard). Each transition should speak once;
+attachment and unchanged status should stay silent.
+
 The panel shows the task, recording state, elapsed time, and saved/discarded
 episode counts. Reset the scene before each take, then guide the arm through
 the demonstration.

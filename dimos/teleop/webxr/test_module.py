@@ -18,6 +18,8 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 import pytest
 import pytest_mock
 
@@ -119,6 +121,7 @@ def test_episode_status_is_cached_and_broadcast(
     payload = json.loads(broadcast.call_args.args[0])
     assert payload == {
         "type": "episode_status",
+        "snapshot": False,
         "elapsed_s": 42.5,
         "ts": 123.0,
         "state": "recording",
@@ -141,6 +144,64 @@ def test_connected_client_receives_latest_episode_status(
     payload = json.loads(broadcast.call_args.args[0])
     assert payload["type"] == "episode_status"
     assert payload["episodes_saved"] == 12
+    assert payload["snapshot"] is True
+
+
+@pytest.fixture
+def web_client(module):
+    module._web_server = SimpleNamespace(app=FastAPI())
+    module._setup_routes()
+    with TestClient(module._web_server.app) as client:
+        yield client
+    module._web_server = None
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_page_reports_nested_speech_setting(module, web_client, enabled):
+    module.config.tts.enabled = enabled
+    assert f'data-speech-enabled="{str(enabled).lower()}"' in web_client.get("/teleop").text
+
+
+def test_build_prepares_speech_and_pushes_selected_audio(module, mocker):
+    module.config.tts.enabled = True
+    helper = mocker.patch("dimos.teleop.webxr.module.CollectionSpeech", autospec=True).return_value
+    helper.update.side_effect = [b"wav", None]
+    module.build()
+    helper.prepare.assert_called_once()
+    broadcast = mocker.patch.object(module, "_broadcast_text")
+    event = _episode_status()
+    module._on_episode_status(event)
+    helper.update.assert_called_once_with(event)
+    assert json.loads(broadcast.call_args.args[1]) == {"type": "speech", "audio": "d2F2"}
+    module._on_episode_status(event)
+    assert broadcast.call_args.args[1] is None
+
+
+def test_disabled_build_does_not_construct_speech(module, mocker):
+    helper = mocker.patch("dimos.teleop.webxr.module.CollectionSpeech", autospec=True)
+    module.build()
+    helper.assert_not_called()
+    assert module._speech is None
+
+
+def test_status_and_speech_batches_do_not_interleave(module, mocker):
+    ws = mocker.MagicMock()
+    sent = []
+
+    async def send(text):
+        sent.append(text)
+        await asyncio.sleep(0)
+
+    ws.send_text = mocker.AsyncMock(side_effect=send)
+
+    async def deliver():
+        await asyncio.gather(
+            module._send_status(ws, "status1", "speech1"),
+            module._send_status(ws, "status2", "speech2"),
+        )
+
+    asyncio.run_coroutine_threadsafe(deliver(), module._loop).result(timeout=5)
+    assert sent == ["status1", "speech1", "status2", "speech2"]
 
 
 def test_connected_client_without_episode_status_does_not_show_collection_hud(

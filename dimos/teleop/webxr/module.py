@@ -22,6 +22,7 @@ deltas, and publishes PoseStamped commands.
 """
 
 import asyncio
+import base64
 from dataclasses import dataclass
 import json
 import math
@@ -42,9 +43,11 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.imitation.collection.prompts import CollectionSpeech
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.stream.audio.tts.kokoro import KokoroTTSConfig
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 
 # Hand is re-exported for callers; it lives in controller_types.
@@ -81,6 +84,7 @@ class WebXRTeleopStatus:
 class WebXRTeleopConfig(ModuleConfig):
     """Configuration for WebXR Teleoperation Module."""
 
+    tts: KokoroTTSConfig = Field(default_factory=KokoroTTSConfig)
     control_loop_hz: float = 50.0
     server_port: int = 8443
     input_timeout_s: float = Field(default=1.0, gt=0)
@@ -114,6 +118,10 @@ class WebXRTeleopModule(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+
+        self._speech: CollectionSpeech | None = None
+        self._episode_status_lock = threading.RLock()
+        self._text_send_lock = asyncio.Lock()
 
         # Engage state (per-hand)
         self._is_engaged: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
@@ -160,9 +168,14 @@ class WebXRTeleopModule(Module):
         assert self._web_server is not None
 
         @self._web_server.app.get("/teleop", response_class=HTMLResponse)
-        async def teleop_index() -> HTMLResponse:
+        def teleop_index() -> HTMLResponse:
             index_path = STATIC_DIR / "index.html"
-            return HTMLResponse(content=index_path.read_text())
+            return HTMLResponse(
+                content=index_path.read_text().replace(
+                    "__SPEECH_ENABLED__",
+                    str(self.config.tts.enabled).lower(),
+                )
+            )
 
         if STATIC_DIR.is_dir():
             self._web_server.app.mount(
@@ -195,16 +208,17 @@ class WebXRTeleopModule(Module):
                 self._client_disconnected(ws)
 
     def _client_connected(self, ws: WebSocket) -> bool:
-        with self._clients_lock:
-            if self._connected_clients:
-                return False
-            self._connected_clients.add(ws)
-            self._reset_controller_state()
-        with self._lock:
-            status = self._latest_episode_status
-        if status is not None:
-            self._broadcast_text(self._encode_episode_status(status))
-        return True
+        with self._episode_status_lock:
+            with self._clients_lock:
+                if self._connected_clients:
+                    return False
+                self._connected_clients.add(ws)
+                self._reset_controller_state()
+            with self._lock:
+                status = self._latest_episode_status
+            if status is not None:
+                self._broadcast_text(self._encode_episode_status(status, snapshot=True))
+            return True
 
     def _client_disconnected(self, ws: WebSocket) -> None:
         with self._clients_lock:
@@ -213,7 +227,13 @@ class WebXRTeleopModule(Module):
             if was_connected:
                 self._reset_controller_state()
 
-    def _broadcast_text(self, data: str) -> None:
+    async def _send_status(self, ws: WebSocket, data: str, speech: str | None) -> None:
+        async with self._text_send_lock:
+            await _ws_send_text(ws, data)
+            if speech is not None:
+                await _ws_send_text(ws, speech)
+
+    def _broadcast_text(self, data: str, speech: str | None = None) -> None:
         """Schedule a text message for the active WebXR client."""
         loop = self._ws_loop
         if loop is None:
@@ -221,17 +241,25 @@ class WebXRTeleopModule(Module):
         with self._clients_lock:
             clients = tuple(self._connected_clients)
         for ws in clients:
-            asyncio.run_coroutine_threadsafe(_ws_send_text(ws, data), loop)
+            asyncio.run_coroutine_threadsafe(self._send_status(ws, data, speech), loop)
 
     def _on_episode_status(self, status: EpisodeStatus) -> None:
-        with self._lock:
-            self._latest_episode_status = status
-        self._broadcast_text(self._encode_episode_status(status))
+        with self._episode_status_lock:
+            with self._lock:
+                self._latest_episode_status = status
+            audio = self._speech.update(status) if self._speech is not None else None
+            speech = (
+                json.dumps({"type": "speech", "audio": base64.b64encode(audio).decode("ascii")})
+                if audio is not None
+                else None
+            )
+            self._broadcast_text(self._encode_episode_status(status, snapshot=False), speech)
 
     @staticmethod
-    def _encode_episode_status(status: EpisodeStatus) -> str:
+    def _encode_episode_status(status: EpisodeStatus, *, snapshot: bool) -> str:
         payload = status.model_dump(mode="json")
         payload["type"] = "episode_status"
+        payload["snapshot"] = snapshot
         payload["elapsed_s"] = (
             max(0.0, time.time() - status.ts) if status.state == "recording" else 0.0
         )
@@ -240,6 +268,13 @@ class WebXRTeleopModule(Module):
     @rpc
     def build(self) -> None:
         super().build()
+        if self.config.tts.enabled:
+            self._speech = CollectionSpeech(self.config.tts)
+            try:
+                self._speech.prepare()
+            except BaseException:
+                self._speech = None
+                raise
         if self.status.connection is not None or self.status._transport is not None:
             self.register_disposable(Disposable(self.status.subscribe(self._on_episode_status)))
 
@@ -257,6 +292,7 @@ class WebXRTeleopModule(Module):
         self._stop_control_loop()
         self._reset_controller_state()
         self._stop_server()
+        self._speech = None
         super().stop()
 
     def _reset_controller_state(self) -> None:

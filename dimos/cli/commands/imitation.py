@@ -25,12 +25,14 @@ import typer
 
 from dimos.cli.imitation_inspect import print_inspection
 from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
+from dimos.imitation.collection.prompts import CollectionSpeech
 from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.build import inspect_dataset, inspect_recording
 from dimos.imitation.dataprep.core import OutputConfig
 from dimos.imitation.dataprep.lerobot import run_lerobot_dataprep
 from dimos.imitation.tui import CollectionApp, CollectionSession, RolloutApp, RolloutSession
 from dimos.porcelain.dimos import Dimos
+from dimos.stream.audio.tts.kokoro import KokoroTTSConfig
 from dimos.utils.cache import cache_usage_guard
 
 imitation_app = typer.Typer(help="Operate running collection/policy modules and prepare datasets")
@@ -48,16 +50,28 @@ def _require_new_path(path: Path) -> Path:
 
 
 @imitation_app.command()
-def collect() -> None:
+def collect(
+    tts: bool = typer.Option(False, "--tts", help="Speak recording feedback on this computer"),
+) -> None:
     """Attach episode controls to a blueprint started with dimos run."""
     driver = None
+    app = None
     try:
         driver = Dimos.connect()
-        CollectionApp(CollectionSession(driver)).run()
+        session = CollectionSession(driver)
+        speech = None
+        if tts:
+            typer.echo("Preparing recording speech...")
+            speech = CollectionSpeech(KokoroTTSConfig(enabled=True))
+            speech.prepare()
+        app = CollectionApp(session, speech=speech)
+        app.run()
     except Exception as exc:
         typer.echo(f"Collection controls failed: {exc}", err=True)
         raise typer.Exit(1) from exc
     finally:
+        if app is not None:
+            app.stop_audio()
         if driver is not None:
             driver.stop()
 
