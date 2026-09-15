@@ -15,7 +15,7 @@ using dimos::native::Output;
 namespace logging = dimos::native::log;
 using geometry_msgs::Twist;
 
-constexpr std::chrono::milliseconds kPublishPeriod{200};
+constexpr std::chrono::milliseconds PUBLISH_PERIOD{200};
 
 class Ping : public Module {
 public:
@@ -40,7 +40,7 @@ public:
                 msg.angular.z = 0.0;
                 data_.publish(msg);
                 ++seq;
-                std::this_thread::sleep_for(kPublishPeriod);
+                std::this_thread::sleep_for(PUBLISH_PERIOD);
             }
         });
     }
