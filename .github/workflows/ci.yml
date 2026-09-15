@@ -309,10 +309,10 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
-      - name: Install dependency for pyaudio
+      - name: Install Python audio and image dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
+          sudo apt-get install -y portaudio19-dev libturbojpeg
       - name: Build and test PyO3 bindings
         # PyO3 extension modules (cdylib + `extension-module`) are the one case
         # that still needs a plain build: pytest imports the compiled .so.
@@ -332,7 +332,9 @@ jobs:
       - name: Native module e2e tests
         run: |
           cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
-          uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
+          uv run pytest -m native_e2e \
+            dimos/hardware/sensors/lidar/livox/test_e2e.py \
+            dimos/robot/manipulators/openyam/blueprints/test_learning_collection_e2e.py --no-cov
 
   native:
     name: Native builds (C++ and Rust)
@@ -688,9 +690,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
+        id: tests
         run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       - name: Re-run the failing tests with maximum verbosity
-        if: failure()
+        if: failure() && steps.tests.outcome == 'failure'
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
@@ -917,9 +920,10 @@ jobs:
         if: contains(matrix.markers, 'self_hosted')
         run: cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
       - name: Run tests
+        id: tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
-        if: failure()
+        if: failure() && steps.tests.outcome == 'failure'
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
@@ -1066,11 +1070,12 @@ jobs:
         # The runner must have an Xorg server with NVIDIA GPU access running
         # on DISPLAY=:0 — dimsim's headless Chromium needs real WebGL for the
         # heavier scenes (`apt`). Software X via xvfb is not enough.
+        id: tests
         env:
           DISPLAY: ":0"
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m self_hosted_large
       - name: Re-run the failing tests with maximum verbosity
-        if: failure()
+        if: failure() && steps.tests.outcome == 'failure'
         env:
           COLOR: yes
           DISPLAY: ":0"

@@ -6,9 +6,9 @@ description = "Rust native module SDK for dimos NativeModule framework"
 license = "Apache-2.0"
 
 [dependencies]
-dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5" }
 dimos-module-macros = { version = "=0.1.0", path = "../dimos-module-macros" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5" }
 nalgebra = "0.35.0"
 rayon = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "io-std", "io-util"] }

@@ -11,8 +11,9 @@ The recorder is built as a locked Nix package. Nix supplies Rust, CMake, NASM,
 SQLite, and the native libraries used by TurboJPEG, so none of those tools or
 development packages need to be installed on the host.
 
-The Python module builds the package automatically on first use. To build it
-ahead of time, run:
+The Python module resolves the package through Nix before each launch, so its
+wire protocol always matches the Python checkout. Nix reuses the cached package
+when the native sources have not changed. To build it ahead of time, run:
 
 ```bash
 cd dimos/experimental/memory/rust
