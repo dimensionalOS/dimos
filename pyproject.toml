@@ -227,6 +227,10 @@ agents = [
     "faster-whisper>=1.0.0",
 ]
 
+tts = [
+    "kokoro-onnx==0.6.1",
+]
+
 web = [
     "fastapi>=0.115.6",
     "python-socketio>=5.16.1",  # WebsocketVisModule, also imported by Quest visualization

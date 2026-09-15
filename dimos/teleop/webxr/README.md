@@ -38,6 +38,11 @@ dimos --can-port a1zcan run teleop-webxr-a1z
 Open `https://<host-ip>:8443/teleop` in a WebXR-capable headset browser. Accept
 the certificate, then tap Connect.
 
+WebXR collection blueprints can provide optional offline spoken recording
+feedback. It is disabled by default; install the `tts` extra and quantized model
+assets, then add `--tts` to the collection stack's `dimos run` command. See
+[offline WebXR speech](../../../docs/usage/webxr-audio.md) for setup and behavior.
+
 For hand teleop, remove the controllers. Pinch the thumb and index finger on
 the selected hand to engage it, move the wrist to control the arm, then pinch
 again to disengage. Pinch the thumb and middle finger to close the gripper;

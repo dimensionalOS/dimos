@@ -52,6 +52,11 @@ These are ordinary module-config flags. Use `dimos run BLUEPRINT --help` to see
 all options, including camera hardware settings. JSON config and environment
 overrides use the same matching rules as other dimOS blueprints.
 
+WebXR collection supports optional spoken start/save/cancel feedback. It is off
+by default. After installing the offline speech dependencies and quantized model,
+add `--tts` to the stack's `dimos run` command. The attached `imitation collect`
+command stays the same. See [offline WebXR speech](/docs/usage/webxr-audio.md).
+
 The panel shows the task, recording state, elapsed time, and saved/discarded
 episode counts. Reset the scene before each take, then guide the arm through
 the demonstration.

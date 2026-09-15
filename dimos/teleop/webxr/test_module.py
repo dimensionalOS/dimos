@@ -14,8 +14,10 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
+import threading
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -27,6 +29,7 @@ import pytest_mock
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.stream.audio.tts.spec import SpeechSynthesisSpec
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import (
     Buttons,
@@ -230,6 +233,7 @@ def test_episode_status_is_cached_and_broadcast(
     payload = json.loads(broadcast.call_args.args[0])
     assert payload == {
         "type": "episode_status",
+        "snapshot": False,
         "elapsed_s": 42.5,
         "ts": 123.0,
         "state": "recording",
@@ -252,6 +256,71 @@ def test_connected_client_receives_latest_episode_status(
     payload = json.loads(broadcast.call_args.args[0])
     assert payload["type"] == "episode_status"
     assert payload["episodes_saved"] == 12
+    assert payload["snapshot"] is True
+
+
+@pytest.fixture
+def web_client(module):
+    module._web_server = SimpleNamespace(app=FastAPI())
+    module._setup_routes()
+    with TestClient(module._web_server.app) as client:
+        yield client
+    module._web_server = None
+
+
+def test_speech_endpoint_returns_audio_without_changing_collection(module, web_client, mocker):
+    module._speech = mocker.MagicMock(spec=SpeechSynthesisSpec)
+    module._speech.synthesize.return_value = b"RIFF-audio"
+    response = web_client.post("/teleop/speech", json={"text": " Episode saved "})
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.content == b"RIFF-audio"
+    module._speech.synthesize.assert_called_once_with("Episode saved")
+    assert module._latest_episode_status is None
+    assert 'data-speech-enabled="true"' in web_client.get("/teleop").text
+
+
+@pytest.mark.parametrize("text", ["", " \n", "a" * 501])
+def test_speech_endpoint_rejects_invalid_text(module, web_client, mocker, text):
+    module._speech = mocker.MagicMock(spec=SpeechSynthesisSpec)
+    response = web_client.post("/teleop/speech", json={"text": text})
+    assert response.status_code == 422
+    module._speech.synthesize.assert_not_called()
+
+
+def test_speech_endpoint_reports_absent_module(web_client):
+    assert web_client.post("/teleop/speech", json={"text": "Hello"}).status_code == 503
+    assert 'data-speech-enabled="false"' in web_client.get("/teleop").text
+
+
+def test_speech_failure_does_not_break_web_interface(module, web_client, mocker):
+    module._speech = mocker.MagicMock(spec=SpeechSynthesisSpec)
+    module._speech.synthesize.side_effect = RuntimeError("offline engine failed")
+    assert web_client.post("/teleop/speech", json={"text": "Hello"}).status_code == 503
+    assert web_client.get("/teleop").status_code == 200
+
+
+def test_slow_synthesis_does_not_block_web_event_loop(module, web_client, mocker):
+    started = threading.Event()
+    release = threading.Event()
+
+    def synthesize(text):
+        started.set()
+        assert release.wait(timeout=10)
+        return b"RIFF-audio"
+
+    module._speech = mocker.MagicMock(spec=SpeechSynthesisSpec)
+    module._speech.synthesize.side_effect = synthesize
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        speech = executor.submit(web_client.post, "/teleop/speech", json={"text": "Hello"})
+        try:
+            assert started.wait(timeout=5)
+            page = executor.submit(web_client.get, "/teleop")
+            assert page.result(timeout=5).status_code == 200
+            assert not speech.done()
+        finally:
+            release.set()
+        assert speech.result(timeout=5).status_code == 200
 
 
 def test_connected_client_without_episode_status_does_not_show_collection_hud(

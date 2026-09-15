@@ -18,3 +18,12 @@ horizon may exceed the portion executed before observing and predicting again.
 
 **Rollout**: A run of a policy in which observation, prediction, and action
 execution repeat until stopped.
+
+## Collection feedback
+
+**Recording prompt**: Spoken confirmation that a collection episode has started,
+been saved, or been discarded. A save prompt confirms the episode transition,
+not a separate acknowledgment that all recording data has been flushed to disk.
+
+**Episode discard**: Ending the current take without keeping it as a saved
+demonstration. The spoken recording prompt calls this cancellation.
