@@ -15,6 +15,7 @@
 """Authoring-API tests: cockpit()/panels/layout compile to pinned manifests."""
 
 from dataclasses import dataclass
+import math
 import pickle
 import struct
 import subprocess
@@ -44,7 +45,7 @@ from dimos.web.cockpit import (
 )
 from dimos.web.codecs import EncodedPayload, decode_json_v1, encode_json_v1, web_encoder
 from dimos.web.relay_bridge.audio_codec import AudioChunk, decode_audio_chunk
-from dimos.web.relay_bridge.builtin_codecs import decode_text, encode_stats
+from dimos.web.relay_bridge.builtin_codecs import decode_goal, decode_text, encode_stats
 from dimos.web.relay_bridge.chat_codec import encode_chat
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
 from dimos.web.relay_bridge.protocol import (
@@ -539,6 +540,43 @@ def test_chat_panel_declarations_merge_or_conflict() -> None:
     assert next(s for s in atom.kwargs["channels"] if s.ch == "agent").paced
 
 
+def test_map2d_goal_panel_blueprint() -> None:
+    blueprint = cockpit(layout=Map2D(goal="goal_request"))
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    assert {(c["ch"], c["dir"], c["encoding"], c["publish"]) for c in manifest["channels"]} == {
+        ("global_costmap", "rx", "costmap.zlib.v1", "none"),
+        ("odom", "rx", "pose.json.v1", "none"),
+        ("goal_request", "tx", "goal.json.v1", "shared"),
+    }
+    (panel,) = manifest["panels"]
+    assert panel["channels"] == ["global_costmap", "odom", "goal_request"]
+    assert panel["params"] == {"goal": "goal_request"}
+    assert parse_manifest(manifest).model_dump() == manifest
+    # The goal rides a generated Out port that autoconnects to the planner's
+    # goal_request by name + type.
+    ports = {(s.name, s.direction): s.type for s in atom.streams}
+    assert ports[("goal_request", "out")] is PoseStamped
+    # pose=None keeps the goal last: costmap, goal.
+    (atom,) = cockpit(layout=Map2D(pose=None, goal="goal_request")).blueprints
+    assert atom.kwargs["manifest"]["panels"][0]["channels"] == ["global_costmap", "goal_request"]
+    # View-only maps are unchanged.
+    (atom,) = cockpit(layout=Map2D()).blueprints
+    assert atom.kwargs["manifest"]["panels"][0]["params"] == {}
+
+
+def test_goal_decoder() -> None:
+    goal = decode_goal({"x": 1.5, "y": -2.0})
+    assert (goal.position.x, goal.position.y, goal.position.z) == (1.5, -2.0, 0.0)
+    assert goal.frame_id == "world"
+    yawed = decode_goal({"x": 0, "y": 0, "yaw": math.pi / 2, "frame": "map"})
+    assert yawed.frame_id == "map"
+    assert yawed.orientation.z == pytest.approx(math.sqrt(0.5))
+    for bad in ({"x": 1.0}, {"x": "a", "y": 1.0}, {"x": float("nan"), "y": 0.0}, [1.0, 2.0]):
+        with pytest.raises(ValueError):
+            decode_goal(bad)  # type: ignore[arg-type]
+
+
 def test_stats_panel_blueprint() -> None:
     blueprint = cockpit(layout=Video("color_image"), pages=[Stats()])
     (atom,) = blueprint.blueprints
@@ -599,9 +637,11 @@ def test_publish_tx_generic_json_and_dataclass_rejection() -> None:
 
 
 def test_publish_tx_codec_errors() -> None:
-    with pytest.raises(ValueError, match=r"@web_decoder\('goal.json.v1'\)"):
+    with pytest.raises(ValueError, match=r"@web_decoder\('waypoint.json.v1'\)"):
         cockpit(
-            channels=[Channel("goal", dict, dir="tx", encoding="goal.json.v1", publish="shared")]
+            channels=[
+                Channel("goal", dict, dir="tx", encoding="waypoint.json.v1", publish="shared")
+            ]
         )
     with pytest.raises(ValueError, match="decodes to str, not int"):
         cockpit(

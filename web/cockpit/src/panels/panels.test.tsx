@@ -6,8 +6,8 @@ import type { FrameHeader, PanelSpec } from "@dimos/shared";
 import type { CostmapValue } from "@dimos/sdk";
 import { ChannelStore } from "@dimos/sdk";
 import type { DrawHealth } from "../layout/PanelFrame.tsx";
-import { MapPanel, startMapSink } from "./MapPanel.tsx";
-import { fitTransform, posePath } from "./mapRenderer.ts";
+import { goalFromClick, MapPanel, startMapSink } from "./MapPanel.tsx";
+import { fitTransform, posePath, worldToCanvas } from "./mapRenderer.ts";
 import { ChatPanel } from "./ChatPanel.tsx";
 import { getPanel, UnknownPanel } from "./registry.tsx";
 import { startVideoSink, VideoPanel } from "./VideoPanel.tsx";
@@ -403,6 +403,16 @@ function defineSize(canvas: HTMLCanvasElement, w: number, h: number): void {
   Object.defineProperty(canvas, "clientWidth", { configurable: true, value: w });
   Object.defineProperty(canvas, "clientHeight", { configurable: true, value: h });
 }
+
+describe("goalFromClick", () => {
+  it("inverts the fitted transform through the DPR-scaled backing store", () => {
+    const place = { w: 10, h: 20, res: 0.5, origin: [1, -2, 0] as [number, number, number] };
+    const t = fitTransform(place, 200, 400); // device px
+    const box = { width: 200, height: 400, clientWidth: 100, clientHeight: 200 }; // dpr 2
+    const [cx, cy] = worldToCanvas(t, 3.25, 4.5);
+    expect(goalFromClick(t, cx / 2, cy / 2, box)).toEqual({ x: 3.25, y: 4.5 });
+  });
+});
 
 describe("startMapSink", () => {
   interface FakeCtx {

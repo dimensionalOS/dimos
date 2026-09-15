@@ -324,11 +324,17 @@ class Video(Panel):
 
 @dataclass(frozen=True)
 class Map2D(Panel):
-    """2D costmap with an optional pose overlay (pose=None drops it)."""
+    """2D costmap with an optional pose overlay (pose=None drops it).
+
+    `goal` names a PoseStamped stream to publish map clicks on (the
+    planner's goal_request); it rides the shared publish path, so any
+    viewer may click. Unset, the map is view-only.
+    """
 
     kind: ClassVar[str] = "map2d"
     costmap: str = "global_costmap"
     pose: str | None = "odom"
+    goal: str | None = field(default=None, kw_only=True)
     costmap_hz: float = field(default=5.0, kw_only=True)
     pose_hz: float = field(default=20.0, kw_only=True)
     title: str = field(default="", kw_only=True)
@@ -337,10 +343,29 @@ class Map2D(Panel):
         _check_stream("costmap", self.costmap)
         if self.pose is not None:
             _check_stream("pose", self.pose)
+        if self.goal is not None:
+            _check_stream("goal", self.goal)
         _check_rate("costmap_hz", self.costmap_hz)
         _check_rate("pose_hz", self.pose_hz)
 
+    def _channels(self) -> tuple[Channel, ...]:
+        if self.goal is None:
+            return ()
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
+        return (
+            Channel(
+                self.goal,
+                PoseStamped,
+                dir="tx",
+                encoding="goal.json.v1",
+                publish="shared",
+                max_hz=5.0,
+            ),
+        )
+
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        # Slot order: costmap, pose (optional), goal (optional, always last).
         requests = [
             ChannelRequest(
                 self.costmap, "rx", "costmap.zlib.v1", self.costmap_hz, delivery="latest"
@@ -348,7 +373,11 @@ class Map2D(Panel):
         ]
         if self.pose is not None:
             requests.append(ChannelRequest(self.pose, "rx", "pose.json.v1", self.pose_hz))
+        requests.extend(_request_of(channel) for channel in self._channels())
         return tuple(requests)
+
+    def _panel_params(self) -> dict[str, Any]:
+        return {} if self.goal is None else {"goal": self.goal}
 
 
 @dataclass(frozen=True)
