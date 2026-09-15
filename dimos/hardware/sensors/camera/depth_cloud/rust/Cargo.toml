@@ -1,0 +1,34 @@
+[package]
+name = "dimos-depth-cloud"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust depth-image to point cloud module for dimos"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_depth_cloud"
+path = "src/lib.rs"
+
+[[bin]]
+name = "depth_cloud"
+path = "src/main.rs"
+
+# Bake registry entry, cross-checked at compile time by the module macro.
+[package.metadata.dimos.module.depth_cloud]
+path = "dimos_depth_cloud::module::DepthCloud"
+python = "dimos.hardware.sensors.camera.depth_cloud.module:DepthCloud"
+
+[package.metadata.dimos.module.depth_cloud.inputs]
+depth = "sensor_msgs.Image"
+camera_info = "sensor_msgs.CameraInfo"
+
+[package.metadata.dimos.module.depth_cloud.outputs]
+cloud = "sensor_msgs.PointCloud2"
+
+[dependencies]
+dimos-module = { path = "../../../../../../native/rust/dimos-module" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
