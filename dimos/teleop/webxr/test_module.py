@@ -41,8 +41,7 @@ from dimos.teleop.webxr.module import WebXRTeleopModule, _ws_send_text
 @pytest.mark.parametrize("state", ["unavailable", "empty", "tracking"])
 def test_body_debug_logging_reports_received_snapshots(module, mocker, state) -> None:
     logger = mocker.patch("dimos.teleop.webxr.module.logger")
-    level = mocker.patch("dimos.teleop.webxr.module._stdlib_logger")
-    level.isEnabledFor.return_value = True
+    logger.isEnabledFor.return_value = True
     clock = mocker.patch("dimos.teleop.webxr.module.time")
     clock.monotonic.side_effect = [1000.0, 1001.0, 1005.0, 1006.0, 1010.0]
     publish = mocker.patch.object(module.body_tracking, "publish")
@@ -85,8 +84,7 @@ def test_body_debug_logging_reports_received_snapshots(module, mocker, state) ->
 
 def test_body_acquisition_logs_once_without_debug_and_resets_on_start(module, mocker) -> None:
     logger = mocker.patch("dimos.teleop.webxr.module.logger")
-    level = mocker.patch("dimos.teleop.webxr.module._stdlib_logger")
-    level.isEnabledFor.return_value = False
+    logger.isEnabledFor.return_value = False
     clock = mocker.patch("dimos.teleop.webxr.module.time")
     publish = mocker.patch.object(module.body_tracking, "publish")
     mocker.patch("dimos.teleop.webxr.module.RobotWebInterface")
@@ -111,7 +109,7 @@ def test_body_acquisition_logs_once_without_debug_and_resets_on_start(module, mo
     logger.info.assert_called_once_with(
         "WebXR body tracking acquired", reference_space="local-floor", resolved_joint_count=1
     )
-    level.isEnabledFor.assert_called_with(logging.DEBUG)
+    logger.isEnabledFor.assert_called_with(logging.DEBUG)
     logger.debug.assert_not_called()
     logger.warning.assert_not_called()
     clock.monotonic.assert_not_called()

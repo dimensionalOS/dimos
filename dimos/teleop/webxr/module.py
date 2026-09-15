@@ -55,7 +55,6 @@ from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 
 logger = setup_logger()
-_stdlib_logger = logging.getLogger(str(Path(__file__).relative_to(DIMOS_PROJECT_ROOT)))
 
 STATIC_DIR = Path(__file__).parent / "web" / "static"
 
@@ -256,7 +255,7 @@ class WebXRTeleopModule(Module):
                 resolved_joint_count=len(joints),
             )
 
-        if not _stdlib_logger.isEnabledFor(logging.DEBUG):
+        if not logger.isEnabledFor(logging.DEBUG):
             return
         now = time.monotonic()
         if self._body_report_started_at is None:
