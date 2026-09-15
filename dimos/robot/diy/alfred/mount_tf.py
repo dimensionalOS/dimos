@@ -28,16 +28,21 @@ from xml.etree import ElementTree
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
+from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.diy.alfred.config import ALFRED_URDF
 
 
-def mount_transforms() -> list[Transform]:
+def mount_transforms(root_frame: str = "base_link") -> list[Transform]:
     """One transform per fixed joint of the urdf, minus the imager frames.
 
     The drivers publish their own imager offsets from the factory extrinsics read
     off the device; the urdf's copies of those are nominal, so publishing them too
     would put a second, worse answer on tf for the same edge.
+
+    ``root_frame`` re-roots the tree when odometry owns a frame other than
+    base_link. Point-LIO publishes ``odom -> mid360_link``, so on alfred-nav the
+    lidar already has a parent and the ``base_link -> mid360_link`` edge has to be
+    inverted; publishing it as-is would give the lidar two parents and break tf.
     """
     transforms = []
     for joint in ElementTree.parse(ALFRED_URDF).getroot().findall("joint"):
@@ -59,11 +64,25 @@ def mount_transforms() -> list[Transform]:
                 child_frame_id=child_link,
             )
         )
+    if root_frame != "base_link":
+        for index, transform in enumerate(transforms):
+            if transform.child_frame_id == root_frame:
+                transforms[index] = -transform
+                break
+        else:
+            raise ValueError(f"{ALFRED_URDF.name} has no base_link -> {root_frame} joint")
     return transforms
+
+
+class AlfredMountTfConfig(StaticTfPublisherConfig):
+    # Frame the tree hangs from. Set it to whichever frame odometry already parents.
+    root_frame: str = "base_link"
 
 
 class AlfredMountTf(StaticTfPublisher):
     """Publishes Alfred's urdf mount tree onto tf on a fixed interval."""
 
+    config: AlfredMountTfConfig
+
     def transforms(self) -> list[Transform]:
-        return mount_transforms()
+        return mount_transforms(self.config.root_frame)
