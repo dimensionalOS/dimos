@@ -24,16 +24,21 @@ import wave
 
 import numpy as np
 
-from dimos.constants import CACHE_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.stream.audio.tts.assets import (
+    MODEL_FILENAME,
+    SETUP_COMMAND,
+    TTS_CACHE_DIR,
+    VOICES_FILENAME,
+)
 from dimos.stream.audio.tts.spec import SpeechRequest
 
 
 class KokoroTTSConfig(ModuleConfig):
     enabled: bool = False
-    model_path: Path = CACHE_DIR / "tts" / "kokoro-v1.0.int8.onnx"
-    voices_path: Path = CACHE_DIR / "tts" / "voices-v1.0.bin"
+    model_path: Path = TTS_CACHE_DIR / MODEL_FILENAME
+    voices_path: Path = TTS_CACHE_DIR / VOICES_FILENAME
     voice: str = "af_sarah"
 
 
@@ -57,8 +62,8 @@ class KokoroTTSModule(Module):
         for path in (self.config.model_path, self.config.voices_path):
             if not path.is_file():
                 raise FileNotFoundError(
-                    f"Missing TTS asset: {path}. Install the quantized Kokoro assets; "
-                    "see docs/usage/webxr-audio.md. Collection never downloads models."
+                    f"Missing TTS asset: {path}. Run: {SETUP_COMMAND}. "
+                    "Collection never downloads models."
                 )
         # Load optional inference dependencies only when this module is started.
         try:
