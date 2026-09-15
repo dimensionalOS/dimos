@@ -30,9 +30,11 @@ generates the three recording phrases. A fresh process with cached assets took
 about 5 seconds to prepare all three prompts on the development machine; first-use
 downloads add startup time. No separate setup command is needed.
 
-Kokoro uses PyTorch on CPU. The `tts` extra includes the English tokenizer
-package, so collection startup does not invoke a package installer. Misaki's
-English dependencies provide the bundled eSpeak pronunciation support.
+Kokoro uses PyTorch on CPU. On the first enabled startup, Misaki uses spaCy's
+installer to install the missing `en_core_web_sm` English tokenizer into the
+Python environment. This requires internet access and pip or uv. Later starts
+reuse the installed tokenizer. Misaki's English dependencies provide the bundled
+eSpeak pronunciation support.
 
 Assets are stored under `${XDG_CACHE_HOME:-$HOME/.cache}/dimos/assets/huggingface`
 through the [shared model-asset helper](/docs/usage/model-assets.md). Cached files are reused
@@ -48,7 +50,10 @@ limited to `enabled` and `voice`; cache location follows dimOS's XDG cache root.
 Disabled TTS imports no inference dependencies, checks no assets, and creates no
 speech helper or worker. The `all` extra does not include `tts`. To have `uv run`
 sync dependencies on launch, include `--extra manipulation --extra tts` before
-`dimos`; the module flag does not install Python packages.
+`dimos`. Install the `tts` extra explicitly; the module flag only triggers automatic
+tokenizer installation and model downloads. An exact `uv sync` can remove the
+lazily installed tokenizer because it is not in the lockfile; the next enabled
+startup installs it again. Use `uv run --no-sync` to preserve the prepared environment.
 
 Attach terminal controls as usual:
 
@@ -114,6 +119,10 @@ from your working collection launch.
    the headset page. Recording and the HUD should work silently, with no
    **Audio unavailable** warning. This mode must also start in an environment
    without Kokoro installed or its model assets present.
+7. After a successful enabled startup, stop the stack and block outbound internet
+   access while keeping the headset's local connection available. Relaunch with
+   `uv run --no-sync` and TTS enabled. Cached preparation and all three prompts
+   should work without downloads or installation.
 
 Record the headset model, browser/version, and whether audio is audible during
 XR. The Chromium smoke test does not replace this check on each browser family.
@@ -138,7 +147,7 @@ speech. New events interrupt playback, and disconnects invalidate pending decodi
 ## Validation
 
 ```bash
-uv run --no-sync pytest dimos/stream/audio/tts/test_kokoro.py dimos/stream/audio/tts/test_assets.py dimos/teleop/webxr/test_module.py dimos/teleop/webxr/test_collection_prompts.py
+uv run --no-sync pytest dimos/stream/audio/tts/test_kokoro.py dimos/utils/test_assets.py dimos/teleop/webxr/test_module.py dimos/teleop/webxr/test_collection_prompts.py
 node dimos/teleop/webxr/web/test_speech.mjs
 ```
 

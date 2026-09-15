@@ -142,6 +142,17 @@ def test_synthesis_error_does_not_poison_cache(speech, engine):
         assert wav.getnframes() == 5
 
 
+def test_tokenizer_installer_exit_becomes_startup_error(speech, dependencies):
+    library, _ = dependencies
+    library.KPipeline.side_effect = SystemExit(1)
+    with pytest.raises(RuntimeError, match="TTS tokenizer installation failed"):
+        speech.prepare()
+    with pytest.raises(RuntimeError, match="not running"):
+        speech.synthesize("Recording started")
+    with cache.cache_cleanup_guard():
+        pass
+
+
 def test_empty_synthesis_is_not_cached(speech, engine):
     engine.side_effect = [[], engine.return_value]
     with pytest.raises(RuntimeError, match="produced no speech"):
