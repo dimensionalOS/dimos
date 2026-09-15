@@ -48,3 +48,8 @@ prune dimos/web/command-center-extension
 
 global-exclude test_*.py
 global-exclude conftest.py
+
+include dimos/imitation/policy/abc/python/pyproject.toml
+include dimos/imitation/policy/abc/python/uv.lock
+include dimos/imitation/policy/abc/python/LICENSE
+recursive-include dimos/imitation/policy/abc/python/abc_minimal *.md LICENSE

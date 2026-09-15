@@ -23,9 +23,9 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.transport import pSHMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
-from dimos.imitation.policy.lerobot.module import (
+from dimos.imitation.policy.module import (
     POLICY_ROLLOUT_TASK_NAME,
-    LeRobotPolicyModule,
+    PolicyModule,
 )
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.sensor_msgs.Image import Image
@@ -60,7 +60,7 @@ def build_openyam_rollout(
         joint_names=list(OPENYAM_JOINTS),
         priority=10,
     )
-    policy = LeRobotPolicyModule.blueprint(
+    policy = PolicyModule.blueprint(
         instance_name="policy",
         **({"policy_path": checkpoint} if checkpoint is not None else {}),
         **({"task": task} if task is not None else {}),
@@ -68,8 +68,6 @@ def build_openyam_rollout(
         joint_names=list(OPENYAM_JOINTS),
         fps=_WRIST_FPS,
         robot_type="openyam",
-        image_width=_WRIST_WIDTH,
-        image_height=_WRIST_HEIGHT,
         trajectory_task_name=POLICY_ROLLOUT_TASK_NAME,
     )
     camera = CameraModule.blueprint(
@@ -126,5 +124,5 @@ def build_openyam_rollout(
     )
 
 
-openyam_lerobot_rollout = autoconnect(build_openyam_rollout())
-openyam_lerobot_quest_rollout = autoconnect(build_openyam_rollout(quest_control=True))
+openyam_policy_rollout = autoconnect(build_openyam_rollout())
+openyam_policy_quest_rollout = autoconnect(build_openyam_rollout(quest_control=True))

@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import inspect
 import os
 from pathlib import Path
 import subprocess
@@ -33,14 +32,13 @@ from dimos.imitation.dataprep._lerobot_protocol import (
     Result,
 )
 from dimos.imitation.dataprep.core import DataPrepConfig
-from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
+from dimos.imitation.policy.module import backend_project
 from dimos.utils.cache import cache_usage_guard
 
 
 def lerobot_project() -> Path:
     """Locate the packaged LeRobot project beside its host contract."""
-    source = Path(inspect.getfile(LeRobotPolicyModule)).resolve()
-    return source.parent / "python"
+    return backend_project("lerobot")
 
 
 def _run(request: Request) -> Result:
