@@ -95,14 +95,20 @@ class RPCClient(Protocol):
         future = loop.create_future()
 
         def receive_value(val) -> None:  # type: ignore[no-untyped-def]
-            if isinstance(val, BaseException):
-                loop.call_soon_threadsafe(future.set_exception, val)
-            else:
-                loop.call_soon_threadsafe(future.set_result, val)
+            def deliver() -> None:
+                if not future.done():
+                    if isinstance(val, BaseException):
+                        future.set_exception(val)
+                    else:
+                        future.set_result(val)
 
-        self.call(name, arguments, receive_value)
+            loop.call_soon_threadsafe(deliver)
 
-        return await future
+        unsubscribe = self.call(name, arguments, receive_value)
+        try:
+            return await future
+        finally:
+            unsubscribe()
 
 
 class RPCServer(Protocol):

@@ -17,11 +17,13 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 import os
 import pickle
+import threading
 from types import FunctionType
 from typing import Any, cast
 
 import pytest
 from pytest_mock import MockerFixture
+import zenoh
 
 from dimos.core.coordination.python_worker import Actor, MethodCallProxy, PythonWorker
 from dimos.core.core import rpc
@@ -312,35 +314,254 @@ def test_failed_send_does_not_keep_callback(mocker: MockerFixture) -> None:
     transport = JsonRPC()
     session = mocker.Mock()
     transport._session = session
-    session.get.side_effect = RuntimeError("send failed")
+    session.declare_querier.side_effect = RuntimeError("send failed")
     with pytest.raises(RuntimeError, match="send failed"):
-        transport.call_cb("echo", ([], {}), mocker.Mock())
+        transport.call_sync("echo", ([], {}), rpc_timeout=1)
     assert not transport._pending
 
 
 async def test_async_missing_service_finishes_without_retry() -> None:
     with rpc_pair() as (_, client):
         client.default_rpc_timeout = 0.05
-        with pytest.raises(ConnectionError, match="no reply"):
+        with pytest.raises(TimeoutError, match="timed out"):
             await asyncio.wait_for(client.call_async("missing", ([], {})), 0.5)
         assert not client._pending
 
 
-def test_callback_exception_does_not_deliver_twice(mocker: MockerFixture) -> None:
+def test_waits_for_late_responder_and_sends_once(mocker: MockerFixture) -> None:
+    with rpc_pair() as (server, client):
+        client.default_rpc_timeout = 2
+        received = threading.Event()
+        results: list[Any] = []
+        handler = mocker.Mock(side_effect=lambda value: value)
+
+        def on_result(value: Any) -> None:
+            results.append(value)
+            received.set()
+
+        client.call_cb("late", (["hello"], {}), on_result)
+        assert not received.is_set()
+        server.serve_rpc(handler, "late")
+        assert received.wait(3)
+        assert results == ["hello"]
+        handler.assert_called_once_with("hello")
+        assert not client._pending
+
+
+async def test_cancelled_async_call_does_not_wait_for_discovery() -> None:
+    with rpc_pair() as (_, client):
+        task = asyncio.create_task(client.call_async("missing", ([], {})))
+        await asyncio.sleep(0)
+        assert client._pending
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not client._pending
+
+
+@pytest.mark.parametrize("result", ["late reply", RuntimeError("late error")])
+async def test_async_cancellation_ignores_queued_delivery(
+    result: Any, mocker: MockerFixture
+) -> None:
     transport = JsonRPC()
-    session = mocker.Mock()
-    transport._session = session
+    loop = asyncio.get_running_loop()
+    loop_error = mocker.patch.object(loop, "call_exception_handler")
+    unsubscribe = mocker.Mock()
+
+    def call(name: str, args: Any, callback: Callable[..., Any]) -> Any:
+        task = asyncio.current_task()
+        assert task is not None
+        loop.call_soon(task.cancel)
+        callback(result)
+        return unsubscribe
+
+    mocker.patch.object(transport, "call", side_effect=call)
+    with pytest.raises(asyncio.CancelledError):
+        await transport.call_async("echo", ([], {}))
+    await asyncio.sleep(0)
+    loop_error.assert_not_called()
+    unsubscribe.assert_called_once()
+
+
+def test_executed_request_without_reply_is_not_retried(mocker: MockerFixture) -> None:
+    with rpc_pair() as (server, client):
+        executed = mocker.Mock(side_effect=lambda query: query.drop())
+        with server.session.declare_queryable(client._route("drop"), executed, complete=True):
+            with pytest.raises(ConnectionError, match="may have executed"):
+                client.call_sync("drop", ([], {}), rpc_timeout=1)
+        executed.assert_called_once()
+        assert not client._pending
+
+
+@pytest.fixture
+def waiting_client(mocker: MockerFixture) -> Iterator[tuple[JsonRPC, Any]]:
+    transport = JsonRPC(default_rpc_timeout=1)
+    transport._session = session = mocker.Mock()
+    querier = mocker.MagicMock()
+    session.declare_querier.return_value = querier
+    querier.__enter__.return_value = querier
+    querier.matching_status.matching = False
     mocker.patch("zenoh.handlers.Callback", side_effect=lambda callback, **_: callback)
-    callback = mocker.Mock(side_effect=RuntimeError("callback failed"))
+    yield transport, querier
+    transport.stop()
+
+
+@pytest.mark.parametrize("end", ["cancel", "timeout", "stop"])
+def test_discovery_cleanup_prevents_late_send(
+    end: str, waiting_client: tuple[JsonRPC, Any], mocker: MockerFixture
+) -> None:
+    transport, querier = waiting_client
+    transport.default_rpc_timeout = 0.2
+    session: Any = transport.session
+    callback = mocker.Mock()
+    cancel = transport.call_cb("late", ([], {}), callback)
+    wait_until(lambda: querier.declare_matching_listener.called, timeout=1)
+    assert (
+        session.declare_querier.call_args.kwargs["congestion_control"]
+        == zenoh.CongestionControl.DROP
+    )
+    listener_callback = querier.declare_matching_listener.call_args.args[0]
+    if end == "cancel":
+        cancel()
+    elif end == "timeout":
+        wait_until(lambda: callback.called, timeout=1)
+    else:
+        transport.stop()
+    listener_callback(mocker.Mock(matching=True))
+    querier.get.assert_not_called()
+    querier.declare_matching_listener.return_value.__exit__.assert_called_once()
+    querier.__exit__.assert_called_once()
+    assert not transport._pending
+    if end == "timeout":
+        assert isinstance(callback.call_args.args[0], TimeoutError)
+        callback.assert_called_once()
+    else:
+        callback.assert_not_called()
+
+
+def test_discovery_and_reply_share_one_deadline(
+    waiting_client: tuple[JsonRPC, Any], mocker: MockerFixture
+) -> None:
+    transport, querier = waiting_client
+    now = mocker.patch("dimos.protocol.rpc.jsonrpc.time.monotonic", return_value=10)
+    callback = mocker.Mock()
+    transport.call_cb("late", ([], {}), callback)
+    wait_until(lambda: querier.declare_matching_listener.called, timeout=1)
+    matching = querier.declare_matching_listener.call_args.args[0]
+    now.return_value = 10.8
+    matching(mocker.Mock(matching=True))
+    matching(mocker.Mock(matching=True))
+    wait_until(lambda: querier.get.called, timeout=1)
+    querier.get.assert_called_once()
+    now.return_value = 11
+    reply = mocker.Mock(err=None)
+    reply.ok.payload.to_bytes.return_value = transport.encode(
+        {"jsonrpc": "2.0", "id": 1, "result": "too late"}
+    )
+    querier.get.call_args.args[0](reply)
+    wait_until(lambda: callback.called, timeout=1)
+    callback.assert_called_once()
+    assert isinstance(callback.call_args.args[0], TimeoutError)
+    assert not transport._pending
+
+
+def test_matching_after_deadline_does_not_send(
+    waiting_client: tuple[JsonRPC, Any], mocker: MockerFixture
+) -> None:
+    transport, querier = waiting_client
+    now = mocker.patch("dimos.protocol.rpc.jsonrpc.time.monotonic", return_value=10)
+    callback = mocker.Mock()
+    transport.call_cb("late", ([], {}), callback)
+    wait_until(lambda: querier.declare_matching_listener.called, timeout=1)
+    now.return_value = 11
+    querier.declare_matching_listener.call_args.args[0](mocker.Mock(matching=True))
+    wait_until(lambda: callback.called, timeout=1)
+    querier.get.assert_not_called()
+    callback.assert_called_once()
+    assert isinstance(callback.call_args.args[0], TimeoutError)
+
+
+def test_stop_during_querier_creation_prevents_registration(
+    waiting_client: tuple[JsonRPC, Any], mocker: MockerFixture
+) -> None:
+    transport, querier = waiting_client
+    session = transport.session
+    querier.matching_status.matching = True
+
+    def declare(*args: Any, **kwargs: Any) -> Any:
+        transport.stop()
+        return querier
+
+    mocker.patch.object(session, "declare_querier", side_effect=declare)
+    callback = mocker.Mock()
     transport.call_cb("echo", ([], {}), callback)
+    wait_until(lambda: querier.__exit__.called, timeout=1)
+    assert not transport._pending
+    querier.get.assert_not_called()
+    callback.assert_not_called()
+    with pytest.raises(RuntimeError, match="Call start"):
+        transport.call_cb("echo", ([], {}), callback)
+
+
+def test_reply_during_listener_registration_cleans_up(
+    waiting_client: tuple[JsonRPC, Any], mocker: MockerFixture
+) -> None:
+    transport, querier = waiting_client
+    listener = querier.declare_matching_listener.return_value
     reply = mocker.Mock(err=None)
     reply.ok.payload.to_bytes.return_value = transport.encode(
         {"jsonrpc": "2.0", "id": 1, "result": "hello"}
     )
-    on_reply = session.get.call_args.args[1]
-    with pytest.raises(RuntimeError, match="callback failed"):
-        on_reply(reply)
+    inside_callback = False
+
+    def get(callback: Callable[..., Any], **kwargs: Any) -> None:
+        nonlocal inside_callback
+        assert not inside_callback
+        inside_callback = True
+        callback(reply)
+        inside_callback = False
+
+    def register(callback: Callable[..., Any]) -> Any:
+        nonlocal inside_callback
+        inside_callback = True
+        callback(mocker.Mock(matching=True))
+        inside_callback = False
+        return listener
+
+    def cleanup(*args: Any) -> None:
+        assert not inside_callback
+
+    querier.get.side_effect = get
+    querier.__exit__.side_effect = cleanup
+    listener.__exit__.side_effect = cleanup
+    querier.declare_matching_listener.side_effect = register
+    callback = mocker.Mock()
+    transport.call_cb("echo", ([], {}), callback)
+    wait_until(lambda: callback.called, timeout=1)
     callback.assert_called_once_with("hello")
+    querier.get.assert_called_once()
+    listener.__exit__.assert_called_once()
+    querier.__exit__.assert_called_once()
+    assert not transport._pending
+
+
+def test_callback_exception_does_not_deliver_twice(
+    waiting_client: tuple[JsonRPC, Any], mocker: MockerFixture
+) -> None:
+    transport, querier = waiting_client
+    querier.matching_status.matching = True
+    worker = mocker.patch("dimos.protocol.rpc.jsonrpc.threading.Thread")
+    worker.return_value.start.side_effect = lambda: worker.call_args.kwargs["target"]()
+    callback = mocker.Mock(side_effect=RuntimeError("callback failed"))
+    reply = mocker.Mock(err=None)
+    reply.ok.payload.to_bytes.return_value = transport.encode(
+        {"jsonrpc": "2.0", "id": 1, "result": "hello"}
+    )
+    querier.get.side_effect = lambda on_reply, **_: on_reply(reply)
+    with pytest.raises(RuntimeError, match="callback failed"):
+        transport.call_cb("echo", ([], {}), callback)
+    callback.assert_called_once_with("hello")
+    assert not transport._pending
 
 
 def test_handler_protocol_error_keeps_request_id(mocker: MockerFixture) -> None:

@@ -17,7 +17,10 @@ from __future__ import annotations
 from collections.abc import Callable
 import inspect
 import json
-from typing import Any
+from queue import Empty, Queue
+import threading
+import time
+from typing import Any, cast
 
 import zenoh
 import zenoh.handlers
@@ -38,6 +41,19 @@ class JsonRPC(ZenohRPC):
     named_params = True
     version = "v1"
     encoding = zenoh.Encoding.APPLICATION_JSON
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._pending_lock = threading.RLock()
+
+    def __getstate__(self) -> dict[str, Any]:
+        state: dict[str, Any] = super().__getstate__()  # type: ignore[no-untyped-call]
+        state.pop("_pending_lock", None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        super().__setstate__(state)
+        self._pending_lock = threading.RLock()
 
     @staticmethod
     def encode(value: Any) -> bytes:
@@ -65,50 +81,105 @@ class JsonRPC(ZenohRPC):
             "params": self._params(arguments),
         }
         payload = self.encode(request)
-        self._pending[call_id] = cb
+        route = self._route(name)
+        deadline = time.monotonic() + timeout
+        messages: Queue[tuple[str, Any]] = Queue()
 
         def on_reply(reply: zenoh.Reply) -> None:
-            callback = self._pending.pop(call_id, None)
-            if callback is None:
-                return
+            messages.put(("reply", reply))
+
+        def response(reply: zenoh.Reply) -> Any:
             if reply.err is not None:
                 message = reply.err.payload.to_bytes().decode(errors="replace")
                 if message == "Timeout" and reply.replier_id is None:
-                    callback(TimeoutError(f"RPC call to '{name}' timed out"))
-                else:
-                    callback(ConnectionError(f"Zenoh error answering {name}: {message}"))
-                return
+                    return TimeoutError(f"RPC call to '{name}' timed out")
+                return ConnectionError(f"Zenoh error answering {name}: {message}")
+            return self._response(self.decode(reply.ok.payload.to_bytes()), call_id)  # type: ignore[union-attr]
+
+        def run() -> None:
+            result: Any = TimeoutError(f"RPC call to '{name}' timed out")
             try:
-                payload = reply.ok.payload.to_bytes()  # type: ignore[union-attr]
-                result = self._response(self.decode(payload), call_id)
+                # Zenoh callbacks only enqueue; this thread owns all API calls and cleanup.
+                with session.declare_querier(
+                    route,
+                    target=zenoh.QueryTarget.ALL,
+                    consolidation=zenoh.ConsolidationMode.NONE,
+                    # A full transmit queue must not block timeout or cancellation.
+                    congestion_control=zenoh.CongestionControl.DROP,
+                    timeout=timeout,
+                ) as querier:
+                    with querier.declare_matching_listener(
+                        lambda status: messages.put(("match", status.matching))
+                    ):
+                        messages.put(
+                            (
+                                "match",
+                                cast("zenoh.MatchingStatus", querier.matching_status).matching,
+                            )
+                        )
+                        sent = False
+                        while time.monotonic() < deadline:
+                            kind, value = messages.get(timeout=max(0, deadline - time.monotonic()))
+                            if time.monotonic() >= deadline or kind == "cancel":
+                                break
+                            if kind == "match" and value and not sent:
+                                with self._pending_lock:
+                                    if call_id not in self._pending:
+                                        break
+                                    sent = True
+                                    querier.get(
+                                        zenoh.handlers.Callback(
+                                            on_reply,
+                                            drop=lambda: messages.put(("end", None)),
+                                        ),
+                                        payload=payload,
+                                        encoding=self.encoding,
+                                    )
+                            elif kind == "reply":
+                                result = response(value)
+                                break
+                            elif kind == "end":
+                                result = ConnectionError(
+                                    f"RPC call to '{name}' received no reply; it may have executed"
+                                )
+                                break
+            except Empty:
+                pass  # The shared discovery/reply deadline expired.
             except Exception as error:
                 result = error
-            callback(result)
-
-        def on_finalize() -> None:
-            callback = self._pending.pop(call_id, None)
+            with self._pending_lock:
+                callback = self._pending.pop(call_id, None)
             if callback is not None:
-                callback(ConnectionError(f"RPC call to '{name}' received no reply"))
-
-        try:
-            self.session.get(
-                self._route(name),
-                zenoh.handlers.Callback(on_reply, drop=on_finalize),
-                target=zenoh.QueryTarget.ALL,
-                consolidation=zenoh.ConsolidationMode.NONE,
-                congestion_control=zenoh.CongestionControl.BLOCK,
-                timeout=timeout,
-                payload=payload,
-                encoding=self.encoding,
-            )
-        except Exception:
-            self._pending.pop(call_id, None)
-            raise
+                if time.monotonic() >= deadline:
+                    result = TimeoutError(f"RPC call to '{name}' timed out")
+                cb(result)
 
         def unsubscribe_callback() -> None:
-            self._pending.pop(call_id, None)
+            with self._pending_lock:
+                self._pending.pop(call_id, None)
+            messages.put(("cancel", None))
+            if threading.current_thread() is not worker:
+                worker.join()
 
+        worker = threading.Thread(target=run, daemon=True)
+        with self._pending_lock:
+            session = self.session
+            self._pending[call_id] = unsubscribe_callback
+            try:
+                worker.start()
+            except Exception:
+                self._pending.pop(call_id, None)
+                raise
         return unsubscribe_callback
+
+    def stop(self) -> None:
+        with self._pending_lock:
+            self._session = None
+            callbacks = list(self._pending.values())
+            self._pending.clear()
+        for cancel in callbacks:
+            cancel()
+        super().stop()
 
     def call_nowait(self, name: str, arguments: Args) -> None:
         method = name.rsplit("/", 1)[-1]

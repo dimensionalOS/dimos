@@ -379,12 +379,10 @@ def test_nonexistent_service(rpc_context, impl_name: str) -> None:
     """Test calling a service that doesn't exist."""
     with rpc_context() as (_server, client):
         # Don't serve any function, just try to call
-        expected_error = ConnectionError if impl_name == "json" else TimeoutError
-        with pytest.raises(expected_error) as exc_info:
+        with pytest.raises(TimeoutError) as exc_info:
             client.call_sync("nonexistent", ([1, 2], {}), rpc_timeout=0.1)
         assert "nonexistent" in str(exc_info.value)
-        expected_message = "no reply" if impl_name == "json" else "timed out"
-        assert expected_message in str(exc_info.value)
+        assert "timed out" in str(exc_info.value)
 
 
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
