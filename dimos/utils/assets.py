@@ -16,7 +16,6 @@
 
 import hashlib
 import importlib
-import logging
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -25,8 +24,9 @@ import requests
 
 from dimos.constants import CACHE_DIR
 from dimos.utils.cache import cache_usage_locked
+from dimos.utils.logging_config import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 def _sha256(path: Path) -> str:
