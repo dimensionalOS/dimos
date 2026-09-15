@@ -16,6 +16,7 @@
 import hashlib
 import json
 
+from click import unstyle
 import pytest
 from typer.testing import CliRunner
 
@@ -245,7 +246,8 @@ def test_visualize_preserves_identity_across_equivalent_paths_and_episodes(visua
         ("negative", "--episode"),
     ],
 )
-def test_visualize_rejects_invalid_input(visualization, tmp_path, kind, message):
+@pytest.mark.parametrize("force_color", [False, True])
+def test_visualize_rejects_invalid_input(visualization, tmp_path, kind, message, force_color):
     dataset, run = visualization
     path = tmp_path / kind
     flags = []
@@ -258,9 +260,13 @@ def test_visualize_rejects_invalid_input(visualization, tmp_path, kind, message)
     elif kind == "negative":
         path = dataset
         flags = ["--episode", "-1"]
-    result = CliRunner().invoke(imitation_app, ["visualize", str(path), *flags])
+    result = CliRunner().invoke(
+        imitation_app,
+        ["visualize", str(path), *flags],
+        env={"FORCE_COLOR": "1" if force_color else None, "NO_COLOR": None if force_color else "1"},
+    )
     assert result.exit_code == 2
-    assert message in result.output
+    assert message in unstyle(result.output)
     run.assert_not_called()
 
 
@@ -287,9 +293,14 @@ def test_visualize_can_be_interrupted(visualization):
     assert list((dataset.parent / "locks").iterdir()) == []
 
 
-def test_visualize_help_does_not_launch_viewer(visualization):
+@pytest.mark.parametrize("force_color", [False, True])
+def test_visualize_help_does_not_launch_viewer(visualization, force_color):
     _, run = visualization
-    result = CliRunner().invoke(imitation_app, ["visualize", "--help"])
+    result = CliRunner().invoke(
+        imitation_app,
+        ["visualize", "--help"],
+        env={"FORCE_COLOR": "1" if force_color else None, "NO_COLOR": None if force_color else "1"},
+    )
     assert result.exit_code == 0
-    assert "--episode" in result.output
+    assert "--episode" in unstyle(result.output)
     run.assert_not_called()

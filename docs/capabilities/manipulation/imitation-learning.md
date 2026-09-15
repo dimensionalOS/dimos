@@ -49,7 +49,7 @@ dimos imitation collect
 
 These are ordinary module-config flags. Use `dimos run BLUEPRINT --help` to see
 all options, including camera hardware settings. JSON config and environment
-overrides use the same matching rules as other DimOS blueprints.
+overrides use the same matching rules as other dimOS blueprints.
 
 The panel shows the task, recording state, elapsed time, and saved/discarded
 episode counts. Reset the scene before each take, then guide the arm through
