@@ -320,6 +320,102 @@ def test_failed_send_does_not_keep_callback(mocker: MockerFixture) -> None:
     assert not transport._pending
 
 
+def test_slow_send_does_not_block_other_calls(
+    waiting_client: tuple[JsonRPC, Any], mocker: MockerFixture, request: pytest.FixtureRequest
+) -> None:
+    transport, querier = waiting_client
+    querier.matching_status.matching = True
+    sending, release, answered = threading.Event(), threading.Event(), threading.Event()
+    results: list[Any] = []
+
+    def send(callback: Callable[..., Any], **kwargs: Any) -> None:
+        call_id = transport.decode(kwargs["payload"])["id"]
+        if call_id == 1:
+            sending.set()
+            assert release.wait(2)
+        payload = transport.encode({"jsonrpc": "2.0", "id": call_id, "result": "hello"})
+        reply = mocker.Mock(err=None)
+        reply.ok.payload.to_bytes.return_value = payload
+        callback(reply)
+
+    def receive(value: Any) -> None:
+        results.append(value)
+        answered.set()
+
+    querier.get.side_effect = send
+    transport.call_cb("echo", ([], {}), lambda _: None)
+    request.addfinalizer(release.set)
+    assert sending.wait(1)
+    caller = threading.Thread(target=lambda: transport.call_cb("echo", ([], {}), receive))
+    request.addfinalizer(lambda: caller.join(2))
+    request.addfinalizer(release.set)
+    caller.start()
+    assert answered.wait(1)
+    assert results == ["hello"]
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_cancellation_during_worker_start_prevents_send(
+    fails: bool,
+    waiting_client: tuple[JsonRPC, Any],
+    mocker: MockerFixture,
+    request: pytest.FixtureRequest,
+) -> None:
+    transport, querier = waiting_client
+    querier.matching_status.matching = True
+    thread_type = threading.Thread
+    starting, release, cancelled = threading.Event(), threading.Event(), threading.Event()
+    errors: list[Exception] = []
+
+    def make_worker(**kwargs: Any) -> threading.Thread:
+        worker = thread_type(**kwargs)
+        start = worker.start
+
+        def delayed_start() -> None:
+            starting.set()
+            assert release.wait(2)
+            if fails:
+                raise RuntimeError("thread start failed")
+            start()
+
+        mocker.patch.object(worker, "start", side_effect=delayed_start)
+        return worker
+
+    def call() -> None:
+        try:
+            transport.call_cb("echo", ([], {}), lambda _: None)
+        except Exception as error:
+            errors.append(error)
+
+    mocker.patch("dimos.protocol.rpc.jsonrpc.threading.Thread", side_effect=make_worker)
+    caller = thread_type(target=call)
+    request.addfinalizer(lambda: caller.join(2))
+    request.addfinalizer(release.set)
+    caller.start()
+    assert starting.wait(1)
+    assert transport._pending_lock.acquire(timeout=1)
+    try:
+        cancel = transport._pending[1]
+    finally:
+        transport._pending_lock.release()
+
+    def cancel_call() -> None:
+        cancel()
+        cancelled.set()
+
+    canceller = thread_type(target=cancel_call)
+    request.addfinalizer(lambda: canceller.join(2))
+    request.addfinalizer(release.set)
+    canceller.start()
+    wait_until(lambda: not transport._pending, timeout=1)
+    release.set()
+    assert cancelled.wait(1)
+    caller.join(1)
+    assert [str(error) for error in errors] == (["thread start failed"] if fails else [])
+    assert not transport._pending
+    querier.get.assert_not_called()
+
+
 async def test_async_missing_service_finishes_without_retry() -> None:
     with rpc_pair() as (_, client):
         client.default_rpc_timeout = 0.05

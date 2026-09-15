@@ -84,6 +84,7 @@ class JsonRPC(ZenohRPC):
         route = self._route(name)
         deadline = time.monotonic() + timeout
         messages: Queue[tuple[str, Any]] = Queue()
+        started = threading.Event()
 
         def on_reply(reply: zenoh.Reply) -> None:
             messages.put(("reply", reply))
@@ -127,14 +128,14 @@ class JsonRPC(ZenohRPC):
                                     if call_id not in self._pending:
                                         break
                                     sent = True
-                                    querier.get(
-                                        zenoh.handlers.Callback(
-                                            on_reply,
-                                            drop=lambda: messages.put(("end", None)),
-                                        ),
-                                        payload=payload,
-                                        encoding=self.encoding,
-                                    )
+                                querier.get(
+                                    zenoh.handlers.Callback(
+                                        on_reply,
+                                        drop=lambda: messages.put(("end", None)),
+                                    ),
+                                    payload=payload,
+                                    encoding=self.encoding,
+                                )
                             elif kind == "reply":
                                 result = response(value)
                                 break
@@ -159,17 +160,23 @@ class JsonRPC(ZenohRPC):
                 self._pending.pop(call_id, None)
             messages.put(("cancel", None))
             if threading.current_thread() is not worker:
-                worker.join()
+                started.wait()
+                if worker.ident is not None:
+                    worker.join()
 
         worker = threading.Thread(target=run, daemon=True)
         with self._pending_lock:
             session = self.session
             self._pending[call_id] = unsubscribe_callback
-            try:
-                worker.start()
-            except Exception:
+        # Thread startup can wait for scheduling; do not hold up other calls.
+        try:
+            worker.start()
+        except Exception:
+            with self._pending_lock:
                 self._pending.pop(call_id, None)
-                raise
+            raise
+        finally:
+            started.set()
         return unsubscribe_callback
 
     def stop(self) -> None:
