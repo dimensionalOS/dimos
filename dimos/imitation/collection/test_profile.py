@@ -56,6 +56,7 @@ def profile():
         actions={
             "target": CollectionFeature(
                 stream="commanded",
+                source_kind="joint_position_updates",
                 message_type=JointState,
                 field="position",
                 dtype="float32",
@@ -77,6 +78,8 @@ def test_profile_lowers_to_existing_json_protocol_and_preserves_projections(prof
     }
     assert restored.observation["positions"].names == ["b", "a"]
     assert restored.action["target"].names == ["b"]
+    assert restored.action["target"].source_kind == "joint_position_updates"
+    assert restored.observation["positions"].source_kind == "snapshot"
     message = JointState(name=["a", "b"], position=[1.0, 2.0], velocity=[3.0, 4.0])
     np.testing.assert_array_equal(resolve_field(message, restored.observation["positions"]), [2, 1])
     np.testing.assert_array_equal(resolve_field(message, restored.observation["velocities"]), [3])
@@ -84,7 +87,7 @@ def test_profile_lowers_to_existing_json_protocol_and_preserves_projections(prof
 
 def test_profile_rejects_conflicting_raw_types(profile):
     values = profile.model_dump()
-    values["actions"]["target"]["stream"] = "camera"
+    values["actions"]["target"].update(stream="camera", source_kind="snapshot")
     with pytest.raises(ValueError, match="conflicting message types"):
         CollectionProfile(**values)
 
