@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from abc import abstractmethod
+from collections.abc import Sequence
 import math
 from pathlib import Path
 import time
@@ -25,7 +26,6 @@ from typing import TYPE_CHECKING, Any
 from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.run_registry import list_runs
-from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.environments.base import Environment
 from dimos.evals.environments.lib.launch import default_mcp_url, validate_blueprints
@@ -35,15 +35,13 @@ from dimos.protocol.service.spec import BaseConfig
 if TYPE_CHECKING:
     from dimos.evals.agents.base import Agent
     from dimos.memory.store.base import Store
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 class SimConfig(BaseConfig):
     blueprint: list[str]
     # Module registry names to disable in the composed blueprint.
     disable: tuple[str, ...] = ()
-    simulator: str = "dimsim"
-    scene: str = "apartment"
-    setup: Callable[[DimSimClient], None] | None = None
     attach: bool = False
     launch_timeout_s: float = 1200.0
     at_rest_m: float = 0.05
@@ -66,6 +64,21 @@ class Sim(Environment):
         super().__init__(**kwargs)
         self._recording: Store | None = None
 
+    @abstractmethod
+    def configure_launch(self, proc: DimosCliCall) -> None:
+        """Set simulator flags/environment on the owned process before launch."""
+
+    def setup_scene(self) -> None:
+        """Apply optional simulator setup after MCP is ready, before recording discovery."""
+
+    def prepare_recording(self, recording: Store, path: Path, deadline: float) -> dict[str, Path]:
+        """Wait for simulator observations and return extra artifacts, if needed."""
+        return {}
+
+    @abstractmethod
+    def latest_pose(self, recording: Store) -> PoseStamped:
+        """Return achieved pose for settling; raise LookupError before the first sample."""
+
     def preflight(self, agent: Agent) -> None:
         if self.config.attach:
             if agent.config.modules:
@@ -85,30 +98,47 @@ class Sim(Environment):
 
         deadline = time.monotonic() + self.config.launch_timeout_s
         pid = None
+        proc = None
         if not self.config.attach:
             proc = DimosCliCall()
-            proc.simulator = self.config.simulator
-            proc.global_args = ["--dimsim-scene", self.config.scene, "--record"]
+            self.configure_launch(proc)
+            proc.global_args.append("--record")
             disabled = [arg for name in self.config.disable for arg in ("--disable", name)]
-            proc.demo_args = ["run", *self.config.blueprint, *modules, *disabled]
+            proc.demo_args = [
+                "run",
+                *self.config.blueprint,
+                *modules,
+                *disabled,
+            ]
             self._resources.callback(proc.stop)
             proc.start()
             assert proc.process is not None
             pid = proc.process.pid
         mcp_url = default_mcp_url()
-        if not McpAdapter(mcp_url).wait_for_ready(
-            timeout=self.config.launch_timeout_s, interval=2.0
-        ):
+        adapter = McpAdapter(mcp_url)
+        if proc is not None:
+            process = proc.process
+            assert process is not None
+            while not adapter.wait_for_ready(
+                timeout=min(1.0, max(0.0, deadline - time.monotonic()))
+            ):
+                if process.poll() is not None:
+                    raise RuntimeError(
+                        f"Simulator eval process exited with code {process.returncode}"
+                    )
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"MCP at {mcp_url} not ready before simulator launch deadline"
+                    )
+        elif not adapter.wait_for_ready(timeout=self.config.launch_timeout_s, interval=2.0):
             raise RuntimeError(f"MCP at {mcp_url} not ready — is dimos up?")
-        if self.config.setup is not None:
-            sim = DimSimClient()
-            self._resources.callback(sim.stop)
-            sim.start()
-            self.config.setup(sim)
+        self.setup_scene()
         path = self._wait_recording(deadline, pid)
         self._recording = SqliteStore(path=str(path), must_exist=True)
         self._resources.callback(self._recording.stop)
-        return RunningEnvironment(mcp_url=mcp_url, streams=(), artifacts={"recording": path})
+        artifacts = {"recording": path}
+        artifacts.update(self.prepare_recording(self._recording, path, deadline))
+        return RunningEnvironment(mcp_url=mcp_url, streams=(), artifacts=artifacts)
 
     def _wait_recording(self, deadline: float, pid: int | None) -> Path:
         """Find the recording of the launched process, or the attached dimos."""
@@ -128,18 +158,17 @@ class Sim(Environment):
 
     def settle(self, budget_s: float) -> None:
         """Wait until the robot is at rest after skills that start asynchronous motion."""
-        if self._recording is None or "odom" not in self._recording.streams:
+        if self._recording is None:
             return
-        odom = self._recording.streams.odom
         anchor = None
         anchor_t = 0.0
         deadline = time.monotonic() + budget_s
         while time.monotonic() < deadline:
             try:
-                observation = odom.last()
+                pose = self.latest_pose(self._recording)
             except LookupError:
                 return
-            position = observation.data.position
+            position = pose.position
             if (
                 anchor is None
                 or math.hypot(position.x - anchor.x, position.y - anchor.y) > self.config.at_rest_m

@@ -44,9 +44,9 @@ from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.cli import load_agent
 from dimos.evals.environments.base import Environment
 from dimos.evals.environments.dataset import Dataset
+from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.environments.image_file import ImageFile
 from dimos.evals.environments.lib.launch import default_mcp_url
-from dimos.evals.environments.sim import Sim
 from dimos.evals.module import list_agents
 from dimos.evals.runner import EvalRunner, summarize
 from dimos.evals.scorers import (
@@ -88,8 +88,10 @@ def _pose(x: float, y: float) -> PoseStamped:
     )
 
 
-def _sim(**kwargs: Any) -> Sim:
-    return Sim(blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"], **kwargs)
+def _sim(**kwargs: Any) -> DimSimEnvironment:
+    return DimSimEnvironment(
+        blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"], **kwargs
+    )
 
 
 def _trajectory(answer: str, raw: Path, timed_out: bool = False) -> Trajectory:
@@ -274,7 +276,7 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
     proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
     adapter = mocker.patch("dimos.evals.environments.sim.McpAdapter")
     adapter.return_value.wait_for_ready.return_value = True
-    sim_client = mocker.patch("dimos.evals.environments.sim.DimSimClient")
+    sim_client = mocker.patch("dimos.evals.environments.dimsim.DimSimClient")
     setup = mocker.Mock()
     env = _sim(
         scene="empty",
@@ -299,7 +301,9 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
             "patrolling-module",
         ]
         assert proc.global_args == ["--dimsim-scene", "empty", "--record"]
-        adapter.return_value.wait_for_ready.assert_called_once_with(timeout=4.0, interval=2.0)
+        adapter.return_value.wait_for_ready.assert_called_once()
+        ready_call = adapter.return_value.wait_for_ready.call_args
+        assert 0 < ready_call.kwargs["timeout"] <= 1.0
         setup.assert_called_once_with(sim_client.return_value)
         proc.start.assert_called_once_with()
     finally:

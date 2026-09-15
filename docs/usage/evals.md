@@ -120,8 +120,9 @@ module path; `--set field=value` sets an agent option, e.g.
 options to the constructor: `QuestionAnswer(frames_per_stream=16)`.
 CLI values are parsed as JSON when possible; quote lists as shown below.
 
-**Tools.** The case's blueprint decides the tool set: `Sim(blueprint=...)`
-is the robot stack plus `McpServer`, and its skill containers are the tools.
+**Tools.** The case's blueprint decides the tool set:
+`DimSimEnvironment(blueprint=...)` or `HabitatEnvironment(blueprint=...)`
+supplies the robot stack plus `McpServer`, and its skill containers are the tools.
 There is no tool filter. The agent's `modules` list is appended to the
 launch command (`dimos run <blueprint> <modules>`), and `autoconnect` dedups
 anything shared with the case, so `--set 'modules=["unitree-go2-agentic"]'` adds
@@ -178,14 +179,17 @@ an **error**, not a score; the run continues.
 
 ## Live environments
 
-`Sim` launches `dimos --simulation dimsim --dimsim-scene <scene> --record run
+`Sim` is the abstract base for simulator environments. Use `DimSimEnvironment`
+for DimSim or `HabitatEnvironment` for Habitat.
+
+`DimSimEnvironment` launches `dimos --simulation dimsim --dimsim-scene <scene> --record run
 <blueprint> <modules>`, waits for MCP, runs the case's `setup`, and hands out the
 recording that `--record` writes (`recordings/<run-id>/memory.db`). The run
 ends when the agent finishes or `timeout_s` hits, the environment stops, and
 `grade` reads the recording once. `recording(o)` opens it:
 
 ```python session=evals ansi=false no-result
-from dimos.evals.environments.sim import Sim
+from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.scorers import ramp
 from dimos.evals.types import EvalCase, recording
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -205,9 +209,8 @@ def ended_near_bed(o):
 go_to_bed = EvalCase(
     id="go_to_bed",
     inputs="go to the bed",
-    environment=Sim(
+    environment=DimSimEnvironment(
         blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
-        simulator="dimsim",
         scene="apartment",
     ),
     grade=ended_near_bed,
@@ -221,8 +224,29 @@ dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.mcp_c
 
 The recording holds the whole history, so "never left the zone" is `min` over
 the `odom` stream in the grader, and "coverage per meter driven" fuses the
-recorded `lidar` and integrates `odom`. `Sim(attach=True)` drives an
+recorded `lidar` and integrates `odom`.
+`DimSimEnvironment(blueprint=[], attach=True)` drives an
 already-running dimos (start it with `--record`) instead of launching one.
+
+For Habitat, select a downloaded dataset and its scene handle on the environment:
+
+```python session=evals ansi=false no-result
+from dimos.evals.environments.habitat import HabitatEnvironment
+
+habitat_environment = HabitatEnvironment(
+    blueprint=["habitat-nav", "mcp-server", "observe-skill"],
+    scene_dataset_config="target/habitat/data/versioned_data/hm3d-0.2/hm3d/example/hm3d_annotated_example_basis.scene_dataset_config.json",
+    scene_id="00861-GLAQ4DNUx5U",
+    seed=0,
+)
+```
+
+Pass this environment to an `EvalCase`. Habitat requires a fresh launch and
+does not support `attach=True`. It waits for fresh RGB and odometry and records
+episode metadata alongside the recording. Its recording topic selection includes
+sensor streams and navigation streams supplied by the composed blueprint.
+The metadata's `point_cloud_source` describes how Habitat scans are generated
+(depth unprojection), not whether scan publication is enabled.
 
 ## Running
 
