@@ -125,14 +125,14 @@ class CoordinatorClient:
         return self._rpc.get_joint_positions() or {}
 
     def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
-        """Execute through the coordinator's sole trajectory task."""
+        """Execute through the coordinator's default trajectory task."""
         return cast(
             "TrajectoryExecutionResult",
             self._rpc.execute_trajectory(trajectory),
         )
 
     def cancel_trajectory(self) -> TrajectoryCancellationResult:
-        """Cancel the coordinator's sole trajectory task."""
+        """Cancel the coordinator's default trajectory task."""
         return cast(
             "TrajectoryCancellationResult",
             self._rpc.cancel_trajectory(),

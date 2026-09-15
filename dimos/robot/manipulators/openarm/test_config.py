@@ -12,16 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 from typing import cast
 
 import pinocchio
 import pytest
 
 from dimos.control.components import HardwareType
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.hardware_interface import ConnectedWholeBody
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JointTrajectoryTask,
+    JointTrajectoryTaskConfig,
+    TrajectoryExecutionStatus,
+)
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
+from dimos.hardware.whole_body.mock.adapter import MockWholeBodyAdapter
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
-from dimos.robot.manipulators.openarm.blueprints.basic import openarm_planner_coordinator
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
+from dimos.robot.manipulators.openarm.blueprints.basic import (
+    _OpenArmCoordinator,
+    openarm_planner_coordinator,
+)
+from dimos.robot.manipulators.openarm.blueprints.teleop import OpenArmTeleopCoordinator
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
     OPENARM_BIMANUAL_MODEL,
@@ -98,7 +114,26 @@ def test_openarm_model_fixes_fingers_without_removing_grasp_frames() -> None:
     assert {f"openarm_{side}_grasp_frame" for side in OPENARM_SIDES} <= frame_names
 
 
-def test_openarm_hardware_defaults_to_mock_without_can_ports() -> None:
+@pytest.fixture
+def model_bounds(mocker):
+    bounds = {name: (-float(i + 1), float(i + 2)) for i, name in enumerate(OPENARM_ARM_JOINTS)}
+    xml = (
+        '<robot name="test"><link name="base"/>'
+        + "".join(
+            f'<link name="{name}_link"/><joint name="{name}" type="revolute">'
+            f'<parent link="base"/><child link="{name}_link"/>'
+            f'<limit lower="{bounds[name][0]}" upper="{bounds[name][1]}"/></joint>'
+            for name in reversed(OPENARM_ARM_JOINTS)
+        )
+        + "</robot>"
+    )
+    mocker.patch.object(
+        RobotModel, "load", return_value=LoadedRobotModel(xml, Path("model.urdf"), {})
+    )
+    return bounds
+
+
+def test_openarm_hardware_defaults_to_mock_without_can_ports(model_bounds) -> None:
     hardware = openarm_hardware()
 
     assert (hardware.hardware_id, hardware.hardware_type, hardware.adapter_type) == (
@@ -108,8 +143,16 @@ def test_openarm_hardware_defaults_to_mock_without_can_ports() -> None:
     )
     limits = hardware.limits
     assert limits is not None
-    assert limits.position_lower == [*([None] * len(OPENARM_ARM_JOINTS)), 0.0, 0.0]
-    assert limits.position_upper == [*([None] * len(OPENARM_ARM_JOINTS)), 1.0, 1.0]
+    assert limits.position_lower == [
+        *[model_bounds[name][0] for name in OPENARM_ARM_JOINTS],
+        0.0,
+        0.0,
+    ]
+    assert limits.position_upper == [
+        *[model_bounds[name][1] for name in OPENARM_ARM_JOINTS],
+        1.0,
+        1.0,
+    ]
     assert limits.velocity_max == [None] * len(OPENARM_JOINTS)
 
 
@@ -120,6 +163,27 @@ def test_openarm_hardware_uses_physical_adapter_with_explicit_can_ports() -> Non
     runtime_config = hardware.adapter_kwargs["runtime_config"]
     assert isinstance(runtime_config, DamiaoRuntimeConfig)
     assert runtime_config.bus_devices == {"left": "can1", "right": "can0"}
+
+
+@pytest.mark.parametrize(
+    "limit_xml",
+    [
+        "",
+        '<limit lower="-1"/>',
+        '<limit lower="nan" upper="1"/>',
+        '<limit lower="-1" upper="inf"/>',
+        '<limit lower="1" upper="1"/>',
+        '<limit lower="2" upper="1"/>',
+    ],
+)
+def test_mock_hardware_rejects_invalid_model_limits(mocker, limit_xml):
+    name = OPENARM_ARM_JOINTS[0]
+    xml = f'<robot name="test"><joint name="{name}" type="revolute">{limit_xml}</joint></robot>'
+    mocker.patch.object(
+        RobotModel, "load", return_value=LoadedRobotModel(xml, Path("model.urdf"), {})
+    )
+    with pytest.raises(ValueError, match=f"invalid position limits for '{name}'"):
+        openarm_hardware()
 
 
 @pytest.mark.parametrize(
@@ -137,7 +201,8 @@ def test_openarm_hardware_rejects_partial_can_configuration(
         )
 
 
-def test_openarm_can_ports_are_blueprint_cli_options() -> None:
+def test_openarm_can_ports_are_blueprint_cli_options(mocker) -> None:
+    load = mocker.patch.object(RobotModel, "load", side_effect=AssertionError("Must stay lazy"))
     parsed = BlueprintConfigParser(openarm_planner_coordinator).parse(
         ["--left-can-port", "can1", "--right-can-port", "can0"],
         environ={},
@@ -146,3 +211,32 @@ def test_openarm_can_ports_are_blueprint_cli_options() -> None:
     coordinator = parsed.module_kwargs("ControlCoordinator")
     assert coordinator["left_can_port"] == "can1"
     assert coordinator["right_can_port"] == "can0"
+    load.assert_not_called()
+
+
+@pytest.mark.parametrize("coordinator_type", [_OpenArmCoordinator, OpenArmTeleopCoordinator])
+def test_startup_supplies_model_limits_to_trajectory_execution(
+    mocker, model_bounds, coordinator_type
+):
+    mocker.patch.object(ControlCoordinator, "_setup_from_config")
+    coordinator = coordinator_type()
+    try:
+        coordinator._setup_from_config()
+        [component] = coordinator.config.hardware
+        hardware = ConnectedWholeBody(MockWholeBodyAdapter(dof=len(component.joints)), component)
+        task = JointTrajectoryTask(
+            JointTrajectoryTaskConfig(joint_names=OPENARM_ARM_JOINTS), {"openarm": hardware}
+        )
+        for name in (OPENARM_ARM_JOINTS[0], OPENARM_ARM_JOINTS[7]):
+            valid = JointTrajectory(joint_names=[name], points=[TrajectoryPoint(positions=[0.0])])
+            assert task.execute(valid, {}).status is TrajectoryExecutionStatus.ACCEPTED
+            invalid = JointTrajectory(
+                joint_names=[name],
+                points=[TrajectoryPoint(positions=[model_bounds[name][1] + 0.1])],
+            )
+            assert (
+                task.execute(invalid, {}).status
+                is TrajectoryExecutionStatus.POSITION_LIMIT_VIOLATION
+            )
+    finally:
+        coordinator.stop()

@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dimos-lerobot-runtime"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "lerobot==0.6.0",
+    "opencv-contrib-python>=4.8,<5",
+    "transformers[torch]>=5.4,<5.6",
+]
+
+[dependency-groups]
+tests = [
+    "mypy==1.19.0",
+    "pytest==8.3.5",
+    "pytest-mock>=3.14",
+]
+
+[tool.uv]
+default-groups = []
+override-dependencies = [
+    # LeRobot's headless OpenCV wheel owns the same cv2/ tree as DimOS's
+    # opencv-contrib-python dependency. Contrib is the required superset.
+    "opencv-python-headless; sys_platform == 'never'",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dimos_lerobot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["dimos_lerobot"]
+python_files = ["*_tests.py"]
+
+[tool.mypy]
+files = ["dimos_lerobot/"]
+python_version = "3.12"
+strict = true
+explicit_package_bases = true
+mypy_path = "../../../../../"
+
+[[tool.mypy.overrides]]
+module = [
+    "lerobot.configs.policies",
+    "lerobot.datasets.lerobot_dataset",
+    "lerobot.policies.factory",
+    "lerobot.policies.pretrained",
+    "lerobot.policies.utils",
+    "lerobot.processor",
+    "lerobot.types",
+    "lerobot.utils.import_utils",
+]
+follow_untyped_imports = true
+ignore_missing_imports = true
