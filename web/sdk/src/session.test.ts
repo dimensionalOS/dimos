@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type JsonValue, type Msg, PROTOCOL_VERSION, type RobotInfo } from "@dimos/shared";
+import {
+  type JsonValue,
+  MAX_TOKEN_LEN,
+  type Msg,
+  PROTOCOL_VERSION,
+  type RobotInfo,
+} from "@dimos/shared";
 import type { CostmapValue } from "./decoders/costmap.ts";
 import { createDecoderRegistry } from "./decoders/index.ts";
 import { teleopHooks } from "./internal/teleopMachine.ts";
@@ -170,6 +176,53 @@ describe("Session over a fake WebTransport", () => {
     relay.pushManifest(robot.id, manifest(channels, panels));
     await until(() => adopted(handle).length === channels.length, "manifest");
   }
+
+  it("sends the viewer token in hello and treats auth_failed as terminal", async () => {
+    const { relay, handle } = start({ token: "viewer-token-0123456789abcdef" });
+    await until(() => relay.sent.some((m) => m.t === "hello"), "hello");
+    expect(relay.sent.find((m) => m.t === "hello")).toEqual({
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "viewer",
+      token: "viewer-token-0123456789abcdef",
+    });
+    relay.push({ t: "error", code: "auth_failed", message: "invalid viewer token" });
+    await until(() => handle.status.get().transport.phase === "failed", "failed");
+    expect(handle.status.get().transport).toEqual({
+      phase: "failed",
+      reason: "invalid viewer token",
+      code: "auth_failed",
+    });
+    expect(handle.status.get().lastError).toBeNull();
+  });
+
+  it("rejects an overlong viewer token before opening the transport", () => {
+    const { relay, handle } = start({ token: "x".repeat(MAX_TOKEN_LEN + 1) });
+    expect(handle.status.get().transport).toEqual({
+      phase: "failed",
+      reason: `viewer token exceeds the ${MAX_TOKEN_LEN}-character limit`,
+      code: "auth_failed",
+    });
+    expect(relay.sent).toEqual([]);
+  });
+
+  it("a token-less hello has no token field, and auth_failed never reconnects", async () => {
+    const { relays, handle } = startReconnecting();
+    await until(() => relays.length === 1, "first connection");
+    await until(() => relays[0].sent.some((m) => m.t === "hello"), "hello");
+    expect(relays[0].sent.find((m) => m.t === "hello")).toEqual({
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "viewer",
+    });
+    relays[0].push({ t: "error", code: "auth_failed", message: "missing viewer token" });
+    await until(() => handle.status.get().transport.phase === "failed", "failed");
+    // A stopped transport never reaches "reconnecting" (set right after the
+    // session ends, before any backoff) and never opens another connection.
+    await settle();
+    expect(handle.status.get().transport.phase).toBe("failed");
+    expect(relays.length).toBe(1);
+  });
 
   it("publishes connected only after the relay's welcome", async () => {
     const { relay, handle } = start();

@@ -612,11 +612,14 @@ def test_teleop_lease_exclusive_and_handover(teleop_bridge: RelayBridgeModule) -
 # --relay-url: a relay started by hand.
 
 
-def _external_bridge(relay_url: str, relay_ca: str | None = None) -> RelayBridgeModule:
+def _external_bridge(
+    relay_url: str, relay_ca: str | None = None, relay_key: str | None = None
+) -> RelayBridgeModule:
     """A bridge attached to a relay it did not spawn (the --relay-url path)."""
     return RelayBridgeModule(
         relay_url=relay_url,
         relay_ca=relay_ca,
+        relay_key=relay_key,
         open_browser=False,
         web_build=False,
         robot_id=ROBOT_ID,
@@ -719,6 +722,30 @@ def test_external_relay_with_real_certificate(tmp_path: Path) -> None:
             bridge.start()  # returns only after hello/welcome: registered
             info = bridge._relay_info
             assert info is not None and info.cert_hash is None and info.wt_url == wt_url
+            assert _session_live(bridge)
+        finally:
+            stop_module(bridge)
+
+
+def test_external_relay_with_auth(tmp_path: Path) -> None:
+    # --auth-file: relay_key must be the key bound to the bridge's robot id. A
+    # wrong one fails start with auth_failed (no retry loop); the right one
+    # registers.
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(
+        json.dumps({"robots": {ROBOT_ID: "robot-key-e2e-0123456789abcdef"}, "viewers": {}})
+    )
+    with RelayProcess(auth_file=auth_file) as ready:
+        wrong = _external_bridge(ready.open_url, relay_key="wrong-key-e2e-0123456789abcdef")
+        try:
+            with pytest.raises(RelayRejectedError, match="auth_failed: invalid robot key"):
+                wrong.start()
+        finally:
+            stop_module(wrong)
+
+        bridge = _external_bridge(ready.open_url, relay_key="robot-key-e2e-0123456789abcdef")
+        try:
+            bridge.start()  # returns only after hello/welcome: registered
             assert _session_live(bridge)
         finally:
             stop_module(bridge)

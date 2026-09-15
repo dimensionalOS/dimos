@@ -166,7 +166,7 @@
   color: var(--fg-faint);
 }
 
-.switchRobot {
+.action {
   background: none;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-s);
@@ -180,7 +180,7 @@
   white-space: nowrap;
 }
 
-.switchRobot:hover {
+.action:hover {
   border-color: var(--fg-faint);
   color: var(--fg);
 }
