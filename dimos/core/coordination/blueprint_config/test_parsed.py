@@ -100,6 +100,33 @@ def test_parsed_config_preserves_nested_callable_objects(model_input: bool) -> N
     assert parsed.module_kwargs("callbackmodule")["nested"]["callbacks"]["increment"].calls == []
 
 
+def test_dataclass_config_overrides_preserve_nested_callbacks() -> None:
+    @dataclass
+    class CallbackSettings:
+        callbacks: dict[str, Callable[[int], int]]
+        enabled: bool = True
+
+    class DataclassConfig(ModuleConfig):
+        nested: CallbackSettings
+
+    class DataclassModule(Module):
+        config: DataclassConfig
+
+    callback = RecordingCallback()
+    blueprint = DataclassModule.blueprint(
+        nested=CallbackSettings(callbacks={"increment": callback})
+    )
+    parsed = BlueprintConfigParser(blueprint).parse(
+        overrides={DataclassModule.name: {"nested": {"enabled": False}}},
+        environ={},
+    )
+
+    config = DataclassConfig(**parsed.module_kwargs(DataclassModule.name))
+    assert config.nested.enabled is False
+    assert config.nested.callbacks["increment"](4) == 5
+    assert callback.calls == []
+
+
 def test_parsed_config_is_deeply_immutable_and_accessors_return_copies() -> None:
     parsed = BlueprintConfigParser(PrimaryModule.blueprint()).parse(
         ["--labels", '["one"]', "--nested.mode", "manual"],

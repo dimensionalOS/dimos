@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import copy
+from dataclasses import fields, is_dataclass
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -42,11 +43,11 @@ def plain_mapping(values: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def plain(value: Any, *, exclude_unset: bool = False) -> Any:
-    """Copy constructor values, expanding config models but retaining runtime objects.
+    """Expand configuration models and dataclasses, retaining runtime callables.
 
     Pydantic's model_dump(mode="python") also serializes dataclasses, including
-    callable factories. Read model fields directly so a validated callback does
-    not become a dictionary before the worker validates its configuration again.
+    callable factories. Read fields directly so callbacks remain callable while
+    non-callable dataclasses remain mappings that support partial overrides.
     """
     if callable(value):
         return _copy_opaque(value)
@@ -55,6 +56,11 @@ def plain(value: Any, *, exclude_unset: bool = False) -> Any:
             key: plain(item, exclude_unset=exclude_unset)
             for key, item in value
             if not exclude_unset or key in value.model_fields_set
+        }
+    if is_dataclass(value):
+        return {
+            info.name: plain(getattr(value, info.name), exclude_unset=exclude_unset)
+            for info in fields(value)
         }
     if isinstance(value, Mapping):
         return {
