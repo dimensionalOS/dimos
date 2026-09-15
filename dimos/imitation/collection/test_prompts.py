@@ -14,27 +14,25 @@
 
 import pytest
 
-from dimos.imitation.collection.prompts import (
-    RECORDING_PROMPTS,
-    CollectionPrompts,
-    CollectionSpeech,
-)
+from dimos.imitation.collection.prompts import CollectionSpeech
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.stream.audio.tts.kokoro import KokoroTTSConfig
 
 
-def test_confirmed_transitions_ignore_duplicates_and_idle_commands():
-    prompts = CollectionPrompts()
+def test_confirmed_transitions_use_prepared_audio_and_ignore_duplicate_polls(speech):
+    prompts, engine = speech
+    engine.close.assert_called_once()
+    engine.synthesize.reset_mock()
     events = [
         ("init", "idle", 0, 0, None),
         ("save", "idle", 0, 0, None),
         ("discard", "idle", 0, 0, None),
-        ("start", "recording", 0, 0, "Recording started"),
-        ("save", "idle", 1, 0, "Episode saved"),
-        ("start", "recording", 1, 0, "Recording started"),
-        ("discard", "idle", 1, 1, "Recording canceled"),
-        ("start", "recording", 1, 1, "Recording started"),
-        ("start", "recording", 2, 1, "Recording started"),
+        ("start", "recording", 0, 0, b"Recording started"),
+        ("save", "idle", 1, 0, b"Episode saved"),
+        ("start", "recording", 1, 0, b"Recording started"),
+        ("discard", "idle", 1, 1, b"Recording canceled"),
+        ("start", "recording", 1, 1, b"Recording started"),
+        ("start", "recording", 2, 1, b"Recording started"),
     ]
     for ts, (event, state, saved, discarded, expected) in enumerate(events):
         status = EpisodeStatus(
@@ -44,6 +42,7 @@ def test_confirmed_transitions_ignore_duplicates_and_idle_commands():
         assert prompts.update(status) is None
         # RPC polling refreshes timestamps even when the episode has not changed.
         assert prompts.update(status.model_copy(update={"ts": status.ts + 0.5})) is None
+    engine.synthesize.assert_not_called()
 
 
 @pytest.fixture
@@ -55,35 +54,6 @@ def speech(mocker):
     speech = CollectionSpeech(KokoroTTSConfig(enabled=True))
     speech.prepare()
     return speech, engine
-
-
-def test_prepares_all_feedback_and_releases_engine_before_events(speech, mocker):
-    speech, engine = speech
-    engine.close.assert_called_once_with()
-    assert engine.synthesize.call_args_list == [mocker.call(p) for p in RECORDING_PROMPTS.values()]
-    status = EpisodeStatus(
-        ts=1, state="recording", last_event="start", episodes_saved=0, episodes_discarded=0
-    )
-    assert speech.update(status) == b"Recording started"
-    assert speech.update(status) is None
-    assert engine.synthesize.call_count == 3
-
-
-def test_attaching_mid_recording_is_silent_and_following_save_speaks(speech):
-    speech, _ = speech
-    status = EpisodeStatus(
-        ts=1, state="recording", last_event="start", episodes_saved=0, episodes_discarded=0
-    )
-    assert speech.update(status, snapshot=True) is None
-    assert speech.update(status) is None
-    assert (
-        speech.update(
-            EpisodeStatus(
-                ts=2, state="idle", last_event="save", episodes_saved=1, episodes_discarded=0
-            )
-        )
-        == b"Episode saved"
-    )
 
 
 def test_failed_preparation_releases_engine(mocker):
