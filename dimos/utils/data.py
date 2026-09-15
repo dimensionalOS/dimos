@@ -115,6 +115,7 @@ def get_data_dir(extra_path: str | None = None) -> Path:
 
 
 def resolve_named_path(name: str | Path, suffix: str = "") -> Path:
+    """A path, a stem in the working directory or project root, or an LFS name to pull."""
     s = str(name)
     p = Path(s)
     if p.is_absolute() or p.exists():

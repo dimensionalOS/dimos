@@ -53,6 +53,7 @@ SCAN_FRAME_SENSOR = "camera_optical"
 
 WORLD_FRAME = "world"
 voxel_size = 0.05
+wall_clearance_m = 0.1
 # Must be > 0: the planner's surface_map is what you click to set a goal.
 planner_viz_hz = 2.0
 ROBOT_HEIGHT = 0.5
@@ -146,7 +147,7 @@ _mls_planner = MLSPlannerNative.blueprint(
         robot_height=ROBOT_HEIGHT,
         start_z_offset_m=0.0,  # base_link sits on the navmesh
         surface_closing_radius=0.3,
-        wall_clearance_m=0.1,
+        wall_clearance_m=wall_clearance_m,
         wall_buffer_m=0.75,
         wall_buffer_weight=100.0,
         step_threshold_m=0.16,
@@ -181,9 +182,7 @@ habitat_nav = autoconnect(
         rerun_config=_rerun_config(
             {
                 "world/path": _render_path,
-                **planner_visual_override(
-                    planner_viz_hz, voxel_size=voxel_size, wall_clearance_m=0.1
-                ),
+                **planner_visual_override(planner_viz_hz, voxel_size, wall_clearance_m),
             }
         ),
     ).remappings(

@@ -110,6 +110,19 @@ def test_frames_batch_only_when_emit_every_is_set() -> None:
     assert batching.take_local_bounds()[2] == 0.0
 
 
+def test_seed_points_creates_only_absent_voxels() -> None:
+    mapper = make_mapper()
+    mapper.add_frame(np.array([[5.5, 0.5, 0.5]], dtype=np.float32), ORIGIN, IDENTITY)
+
+    cloud = np.array([[5.6, 0.6, 0.6], [7.5, 0.5, 0.5]], dtype=np.float32)
+    assert mapper.seed_points(cloud) == 1
+    assert mapper.voxel_count() == 2
+    centers = np.sort(mapper.global_map(), axis=0)
+    np.testing.assert_allclose(centers, [[5.5, 0.5, 0.5], [7.5, 0.5, 0.5]])
+
+    assert mapper.seed_points(cloud) == 0
+
+
 def test_add_frame_world_registers_at_world_coordinates() -> None:
     mapper = make_mapper()
     points = np.array([[105.55, 200.05, 3.05]], dtype=np.float32)
@@ -187,3 +200,14 @@ def test_global_map_normal_fits_min_eigs_track_planarity() -> None:
     assert min_eigs[rough_i] > 1e-4, "a jittered patch fits with a visible residual"
     np.testing.assert_allclose(np.abs(normals[flat_i]), [0.0, 0.0, 1.0], atol=1e-3)
     np.testing.assert_allclose(np.abs(normals[rough_i]), [0.0, 0.0, 1.0], atol=0.05)
+
+
+def test_full_map_applies_support_gate() -> None:
+    mapper = VoxelRayMapper(
+        voxel_size=1.0, max_range=100.0, min_health=0, max_health=1, support_min=3
+    )
+    cloud = [[x + 0.5, y + 0.5, 0.5] for x in range(3) for y in range(3)] + [[20.5, 20.5, 0.5]]
+    assert mapper.seed_points(np.array(cloud, dtype=np.float32)) == 10
+
+    assert mapper.full_map().shape == (9, 3), "isolated seed gated out"
+    assert mapper.global_map().shape == (10, 3)

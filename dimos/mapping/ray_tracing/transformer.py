@@ -16,23 +16,38 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
-from dimos.memory.transform import Transformer
+from dimos.memory.transform import FnTransformer, Transformer
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from dimos.memory.tf import StreamTF
     from dimos.memory.type.observation import Observation
 
 logger = setup_logger()
 
 
+def pose_from_tf(tf: StreamTF, world_frame: str) -> FnTransformer[PointCloud2, PointCloud2]:
+    """Attach the tf pose at each cloud's stamp. A failed lookup clears the pose."""
+
+    def attach(obs: Observation[PointCloud2]) -> Observation[PointCloud2]:
+        t = tf.get(
+            world_frame, obs.data.frame_id, time_point=obs.ts, time_tolerance=TF_MATCH_TOLERANCE_S
+        )
+        return obs.with_pose(t)
+
+    return FnTransformer(attach)
+
+
 class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
     """Accumulate lidar into a voxel map with raycast clearing.
 
-    Each cloud is sensor-frame and registered into the world by its odometry pose.
+    Each cloud is sensor-frame and registered into the world by its odometry
+    pose. The instance owns its mapper and a reused instance continues the same map.
     """
 
     def __init__(
@@ -45,10 +60,15 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
     ) -> None:
         if emit_every < 0:
             raise ValueError(f"emit_every must be >= 0, got {emit_every}")
-        self.voxel_size = voxel_size
-        self.max_range = max_range
         self.emit_every = emit_every
-        self._mapper_kwargs = mapper_kwargs
+        # emit_every=1 turns on frame batching. This transformer consumes it
+        # with take_local_bounds on its own cadence.
+        self.mapper = VoxelRayMapper(
+            voxel_size=voxel_size,
+            max_range=max_range,
+            emit_every=1,
+            **mapper_kwargs,
+        )
 
     def _make_obs(
         self,
@@ -72,14 +92,7 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         self,
         upstream: Iterator[Observation[PointCloud2]],
     ) -> Iterator[Observation[PointCloud2]]:
-        # emit_every=1 turns on frame batching. This transformer consumes it
-        # with take_local_bounds on its own cadence.
-        mapper = VoxelRayMapper(
-            voxel_size=self.voxel_size,
-            max_range=self.max_range,
-            emit_every=1,
-            **self._mapper_kwargs,
-        )
+        mapper = self.mapper
         last_obs: Observation[PointCloud2] | None = None
         count = 0
 

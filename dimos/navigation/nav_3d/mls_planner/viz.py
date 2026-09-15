@@ -12,15 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Rendering for :class:`MLSPlannerNative`'s introspection layers.
 
-The planner can publish what it actually searched over: the traversable surface it
-extracted, the graph nodes it sampled on that surface, and the weighted edges between
-them. Its ``viz_publish_hz`` config decides whether it emits them (0.0 = not at all,
-which is the default — the geometry is rebuilt from scratch every tick).
-:func:`planner_visual_override` reads that same number so a blueprint only has to set it
-in one place; drawing and publishing cannot drift apart.
-"""
+"""Rendering for what the planner searched over: its surface, nodes and weighted edges."""
 
 from __future__ import annotations
 
@@ -36,11 +29,11 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from rerun._baseclasses import Archetype
 
-# Small lift so graph artifacts render visibly above the surface points instead of z-fighting.
-_GRAPH_Z_LIFT = 0.05
+GRAPH_Z_LIFT = 0.05
 
 TIGHT_COLOR = (4.0, 8.0, 48.0)
 OPEN_COLOR = (150.0, 200.0, 255.0)
+NODE_COLOR = (255, 200, 0)
 
 
 def clearance_colors(clearance: NDArray[np.float32], clamp_m: float) -> NDArray[np.uint8]:
@@ -50,23 +43,16 @@ def clearance_colors(clearance: NDArray[np.float32], clamp_m: float) -> NDArray[
     return np.asarray(tight + norm[:, None] * (open_ - tight), dtype=np.uint8)
 
 
-def render_surface_map(
-    msg: PointCloud2,
-    voxel_size: float = 0.1,
-    wall_clearance_m: float = 0.0,
-    clearance_clamp_m: float = 1.0,
+def surface_points(
+    pts: NDArray[np.float32],
+    clearance: NDArray[np.float32],
+    voxel_size: float,
+    wall_clearance_m: float,
+    clearance_clamp_m: float,
 ) -> Archetype:
-    """Floor cells colored by wall clearance: dark navy where tight, pale blue in the open.
-
-    Clearance rides the cloud's intensity channel; cells below ``wall_clearance_m`` are
-    untraversable and dropped. Falls back to a flat color when the channel is absent.
-    """
+    """Floor cells colored by wall clearance, dropping the ones the robot cannot fit on."""
     import rerun as rr
 
-    pts = msg.points_f32()
-    clearance = msg.intensities_f32()
-    if clearance is None or len(clearance) != len(pts):
-        return msg.to_rerun(voxel_size=voxel_size, colors=[40, 75, 130])
     passable = clearance >= wall_clearance_m
     pts, clearance = pts[passable], clearance[passable]
     return rr.Points3D(
@@ -76,31 +62,56 @@ def render_surface_map(
     )
 
 
-def render_nodes(msg: PointCloud2) -> Archetype:
+def render_surface_map(
+    msg: PointCloud2,
+    voxel_size: float,
+    wall_clearance_m: float,
+    clearance_clamp_m: float,
+) -> Archetype:
+    """Surface cells with clearance on the intensity channel, flat blue without it."""
+    pts = msg.points_f32()
+    clearance = msg.intensities_f32()
+    if clearance is None or len(clearance) != len(pts):
+        return msg.to_rerun(voxel_size=voxel_size, colors=[40, 75, 130])
+    return surface_points(pts, clearance, voxel_size, wall_clearance_m, clearance_clamp_m)
+
+
+def graph_nodes(pts: NDArray[np.float32]) -> Archetype:
     import rerun as rr
 
-    pts, _ = msg.as_numpy()
-    if pts is None or len(pts) == 0:
+    if len(pts) == 0:
         return rr.Points3D([])
-    pts = pts.copy()
-    pts[:, 2] += _GRAPH_Z_LIFT
-    return rr.Points3D(positions=pts, colors=[[75, 156, 211]], radii=[0.15])
+    lifted = pts.copy()
+    lifted[:, 2] += GRAPH_Z_LIFT
+    return rr.Points3D(positions=lifted, colors=[NODE_COLOR], radii=0.05)
+
+
+def render_nodes(msg: PointCloud2) -> Archetype:
+    return graph_nodes(msg.points_f32())
+
+
+def graph_edges(edges: NDArray[np.float32]) -> Archetype:
+    """Edges as ``[x0, y0, z0, x1, y1, z1, cost]`` rows, colored green to red by cost."""
+    segments = LineSegments3D(
+        segments=edges[:, :6].reshape(-1, 2, 3) if len(edges) else None,
+        weights=edges[:, 6] if len(edges) else None,
+    )
+    return render_node_edges(segments)
 
 
 def render_node_edges(msg: LineSegments3D) -> Archetype:
-    return msg.to_rerun(z_offset=_GRAPH_Z_LIFT, radii=0.01)
+    return msg.to_rerun(z_offset=GRAPH_Z_LIFT, radii=0.01)
 
 
 def planner_visual_override(
     viz_publish_hz: float,
-    voxel_size: float = 0.1,
-    wall_clearance_m: float = 0.0,
+    voxel_size: float,
+    wall_clearance_m: float,
     clearance_clamp_m: float = 1.0,
 ) -> dict[str, Any]:
-    """rerun overrides for the planner's debug entities, keyed off its own publish rate.
+    """Bridge overrides for the planner's debug entities, keyed off its own publish rate.
 
-    Pass the same ``viz_publish_hz``, ``voxel_size`` and ``wall_clearance_m`` given to
-    ``MLSPlannerNative.blueprint(...)``.
+    Pass the same values given to ``MLSPlannerNative.blueprint(...)``.
     """
     on = viz_publish_hz > 0.0
     surface = partial(
