@@ -3,6 +3,7 @@
 set -euo pipefail
 
 bin/build-test-natives
+bin/fetch-test-data
 
 . .venv/bin/activate
 exec pytest "$@" -m '' --error-for-skips dimos
