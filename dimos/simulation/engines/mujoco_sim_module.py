@@ -26,8 +26,10 @@ the camera in different worker processes.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import math
 from pathlib import Path
+import sys
 import threading
 import time
 from typing import Any
@@ -40,7 +42,7 @@ import reactivex as rx
 from scipy.spatial.transform import Rotation as R
 
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import Module, ModuleConfig, WorkerRuntime
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig, DepthCameraHardware
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -333,6 +335,13 @@ class MujocoSimModule(
     # this to translate the robot in world space.
     odom: Out[PoseStamped]
     tf: Out[TFMessage]
+
+    @classmethod
+    def worker_runtime(cls, config_args: Mapping[str, Any]) -> WorkerRuntime:
+        """Use MuJoCo's Cocoa-aware Python runtime for native macOS viewers."""
+        if sys.platform == "darwin" and not bool(config_args.get("headless", False)):
+            return "mjpython"
+        return "python"
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
