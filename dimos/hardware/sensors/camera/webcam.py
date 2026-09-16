@@ -29,8 +29,11 @@ from dimos.utils.reactive import backpressure
 
 
 def _parse_camera_device(value: Any) -> Any:
-    if isinstance(value, str) and value.isdecimal():
-        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            pass
     return value
 
 
