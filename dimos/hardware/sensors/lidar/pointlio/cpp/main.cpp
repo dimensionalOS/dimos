@@ -19,6 +19,7 @@
 #include "estimator_pose.hpp"
 #include "livox_sdk_config.hpp"
 #include "point_cloud_utils.hpp"
+#include "publish_stamp.hpp"
 
 #include "dimos/native.hpp"
 
@@ -435,17 +436,30 @@ private:
 
         auto pose = point_lio_->get_pose();
         if (has_estimate(pose)) {
-            double ts = std::chrono::duration<double>(
-                            std::chrono::system_clock::now().time_since_epoch())
-                            .count();
+            // The stamp is the time of the STATE, not the time of the publish.
+            // Point-LIO already knows it -- `lidar_end_time`, written into the
+            // odometry header by the SDK -- and this used to be overwritten
+            // with `system_clock::now()`. See publish_stamp.hpp for what that
+            // cost. `wall_now` is only for the rate limits and the backlog log.
+            const double wall_now = std::chrono::duration<double>(
+                                        std::chrono::system_clock::now().time_since_epoch())
+                                        .count();
+            const double state_ts = point_lio_->get_odometry().header.stamp.toSec();
+            warn_if_behind(wall_now, state_ts);
 
             // get_body_cloud is the loop's costliest step, so build it only when
-            // a publish is due.
-            if (now - last_pc_publish_ >= pc_interval_) {
+            // a publish is due. The cloud is the scan this same state was
+            // solved from, so it carries the same stamp.
+            const auto pc = pointlio::publish_decision(
+                state_ts, last_pc_state_ts_,
+                std::chrono::duration<double>(now - last_pc_publish_).count(),
+                std::chrono::duration<double>(pc_interval_).count());
+            if (pc.publish) {
                 auto body_cloud = point_lio_->get_body_cloud();
                 if (body_cloud && !body_cloud->empty()) {
-                    publish_pointcloud(body_cloud, ts);
+                    publish_pointcloud(body_cloud, pc.stamp_s);
                     last_pc_publish_ = now;
+                    last_pc_state_ts_ = pc.stamp_s;
                     if (cfg_.debug) {
                         logging::info(
                             "pointlio publish lidar",
@@ -458,9 +472,14 @@ private:
             }
 
             // Pose + covariance at odom_freq.
-            if (now - last_odom_publish_ >= odom_interval_) {
-                publish_odometry(point_lio_->get_odometry(), ts);
+            const auto od = pointlio::publish_decision(
+                state_ts, last_odom_state_ts_,
+                std::chrono::duration<double>(now - last_odom_publish_).count(),
+                std::chrono::duration<double>(odom_interval_).count());
+            if (od.publish) {
+                publish_odometry(point_lio_->get_odometry(), od.stamp_s);
                 last_odom_publish_ = now;
+                last_odom_state_ts_ = od.stamp_s;
                 if (cfg_.debug) {
                     logging::info("pointlio publish odom",
                                   {logging::Field("x", pose[0]),
@@ -469,6 +488,22 @@ private:
                 }
             }
         }
+    }
+
+    // Say out loud when the estimator falls behind the world.
+    //
+    // A slow Point-LIO is visible in its output rate; a *behind* Point-LIO was
+    // not visible at all, because its cloud and its pose share the error and
+    // cancel against each other. Once per `kBacklogLogInterval` so a long stall
+    // does not become a log flood.
+    void warn_if_behind(double wall_now, double state_ts) {
+        const double lag = pointlio::backlog_s(wall_now, state_ts);
+        if (lag < kBacklogWarnSeconds) return;
+        if (wall_now - last_backlog_log_ < kBacklogLogInterval) return;
+        last_backlog_log_ = wall_now;
+        logging::warn("pointlio is behind the world",
+                      {logging::Field("lag_s", lag),
+                       logging::Field("state_ts", state_ts)});
     }
 
     // Publish the undistorted scan in the sensor's own frame (get_body_cloud),
@@ -534,6 +569,17 @@ private:
     std::chrono::steady_clock::time_point last_emit_;
     std::chrono::steady_clock::time_point last_pc_publish_;
     std::chrono::steady_clock::time_point last_odom_publish_;
+
+    // The ESTIMATOR time each port last sent, so a state is never published
+    // twice -- see publish_stamp.hpp.
+    double last_pc_state_ts_ = 0.0;
+    double last_odom_state_ts_ = 0.0;
+    double last_backlog_log_ = 0.0;
+
+    // A frame or two behind is the normal cost of batching; seconds behind is
+    // the failure this guards.
+    static constexpr double kBacklogWarnSeconds = 1.0;
+    static constexpr double kBacklogLogInterval = 5.0;
 
     // Frame accumulator (Livox SDK raw -> CustomMsg)
     std::mutex pc_mutex_;
