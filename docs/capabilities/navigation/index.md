@@ -20,3 +20,4 @@ For hardware setup, simulation, and the full blueprint list, see the [Go2 platfo
 | Workflow                 | When to use                                                            | Blueprint     | Docs                                                |
 |--------------------------|------------------------------------------------------------------------|---------------|-----------------------------------------------------|
 | **Simulation, no robot** | Run the raycaster and planner against a photoreal scan of a real house | `habitat-nav` | [Habitat](/docs/capabilities/navigation/habitat.md) |
+| **Mobile manipulation simulation** | Navigate R1 in a furnished scene and run BEHAVIOR tasks | `behavior-nav`, `behavior-task` | [BEHAVIOR](/docs/capabilities/simulation/behavior.md) |
