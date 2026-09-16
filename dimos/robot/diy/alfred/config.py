@@ -41,17 +41,14 @@ class AlfredConfig:
 
 ALFRED = AlfredConfig(
     name="alfred",
-    # The vertical span the MLS planner requires to be free above a cell before it will
-    # plan through it. The mast reaches higher, but nothing up there is a collision risk.
+    # Free-span heuristic, not planner headroom - alfred-nav passes ALFRED_HEIGHT_M.
     body_height=0.5,
     height_clearance=2.0,  # meters
     width_clearance=1.0,
-    # The Mid-360 is on the Jetson's wired 192.168.1.100/24 link.
     mid360_ip="192.168.1.189",
-    # The mast D455. The rear D435i stays plugged in, so the device is pinned by serial.
+    # The rear D435i stays plugged in, so the mast D455 is pinned by serial.
     d455_serial="260922302422",
     internal_odom_offsets={
-        # Mid-360 lidar: a bit forward, and a bit to the right of base center, above ground.
         "mid360_link": Pose(0.20, -0.20, 0.30, *Quaternion.from_euler(Vector3(0, 0, 0))),
     },
 )

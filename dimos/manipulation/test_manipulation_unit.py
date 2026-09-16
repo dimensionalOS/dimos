@@ -1192,3 +1192,30 @@ def _executed(coordinator, task: str = "joint_trajectory"):
 def _cancelled(coordinator) -> list[str]:
     """Tasks that were asked to cancel."""
     return [c.args[0] for c in coordinator.task_invoke.call_args_list if c.args[1] == "cancel"]
+
+
+def test_refresh_recovers_from_a_stranded_executing_state(module_factory) -> None:
+    """A terminal result nobody waited on must not pin the module in EXECUTING."""
+    module = module_factory()
+    module._state = ManipulationState.EXECUTING
+    module._execution_manager = MagicMock()
+    module._execution_manager.status = ExecutionStatus.COMPLETED
+    module._execution_manager.wait.return_value = ExecutionResult(ExecutionStatus.COMPLETED, "")
+
+    module._refresh_execution_status()
+
+    module._execution_manager.wait.assert_called_once_with(0.0)
+    assert module._state is ManipulationState.COMPLETED
+
+
+def test_refresh_leaves_a_settled_module_alone(module_factory) -> None:
+    """Only a stranded EXECUTING state justifies the extra poll."""
+    module = module_factory()
+    module._state = ManipulationState.IDLE
+    module._execution_manager = MagicMock()
+    module._execution_manager.status = ExecutionStatus.COMPLETED
+
+    module._refresh_execution_status()
+
+    module._execution_manager.wait.assert_not_called()
+    assert module._state is ManipulationState.IDLE

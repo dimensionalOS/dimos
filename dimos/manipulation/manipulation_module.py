@@ -461,6 +461,14 @@ class ManipulationModule(Module):
             ExecutionStatus.EXECUTING,
         }:
             self.wait_for_execution(timeout=0.0)
+            return
+
+        # A multi-task run's watchdog can finish the manager without the module
+        # seeing it, stranding _state in EXECUTING. wait(0.0) applies the cached result.
+        with self._lock:
+            stranded = self._state is ManipulationState.EXECUTING
+        if stranded:
+            self.wait_for_execution(timeout=0.0)
 
     def get_error(self) -> str:
         """Get last error message.
