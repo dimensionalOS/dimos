@@ -5,6 +5,21 @@
   width: 100%;
 }
 
+.clickable {
+  composes: canvas;
+  cursor: crosshair;
+}
+
+.note {
+  bottom: 0.3rem;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  left: 0.5rem;
+  pointer-events: none;
+  position: absolute;
+}
+
 .waiting {
   color: var(--fg-muted);
   font-family: var(--font-mono);

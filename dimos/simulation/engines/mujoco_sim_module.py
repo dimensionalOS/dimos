@@ -250,6 +250,7 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     spawn_xy: tuple[float, float] | None = None
     spawn_z: float | None = None
     spawn_yaw: float | None = None
+    timestep: float | None = Field(default=None, gt=0.0)
     reset_joint_positions: list[float] | None = None
     headless: bool = False
     dof: int = 7
@@ -632,7 +633,13 @@ class MujocoSimModule(
 
             # Keep the robot controller timing stable when attached to a scene
             # package whose wrapper may have different default options.
-            spec_scene.option.timestep = spec_robot.option.timestep
+            timestep = (
+                self.config.timestep
+                if self.config.timestep is not None
+                else spec_robot.option.timestep
+            )
+            spec_scene.option.timestep = timestep
+            spec_robot.option.timestep = timestep
 
             spawn_xy = self.config.spawn_xy or (0.0, 0.0)
             spawn_z = self.config.spawn_z if self.config.spawn_z is not None else 0.0
