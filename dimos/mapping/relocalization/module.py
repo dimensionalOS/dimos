@@ -39,6 +39,7 @@ MRO and ``start()`` chains through ``super()``.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import reactivex as rx
@@ -50,12 +51,16 @@ from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.utils.data import get_data
+from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 MAP_SUFFIX = ".pc2.lcm"
+
+
+def yaw_deg(tf: Transform) -> float:
+    return math.degrees(tf.rotation.euler.z)
 
 
 def fix_stream(fixes: Observable[Transform], interval: float) -> Observable[Transform]:
@@ -115,10 +120,8 @@ class RelocalizationModule(Module):
         logger.info(f"Relocalization module started: map_file={self.config.map_file!r}")
 
     def _load_premap(self, map_file: str) -> None:
-        # get_data, so a premap that is only in LFS is pulled and decompressed
-        # rather than reported missing.
-        name = map_file if map_file.endswith(MAP_SUFFIX) else map_file + MAP_SUFFIX
-        premap = PointCloud2.lcm_decode(get_data(name).read_bytes())
+        path = resolve_named_path(map_file, MAP_SUFFIX)
+        premap = PointCloud2.lcm_decode(path.read_bytes())
 
         premap.frame_id = self.config.map_frame
         self.premap = premap
@@ -145,7 +148,10 @@ class RelocalizationModule(Module):
             f"relocalize {source}: expected {world!r} -> {map_frame!r}, "
             f"got {tf.frame_id!r} -> {tf.child_frame_id!r}"
         )
-        logger.info(f"relocalize {source}: TF {world!r} -> {map_frame!r} t={tf.translation}")
+        logger.info(
+            f"relocalize {source}: TF {world!r} -> {map_frame!r} "
+            f"t={tf.translation} yaw={yaw_deg(tf):.1f}deg"
+        )
         self.fixes.on_next(tf)
         if not self._placed and self.config.relocalize_once:
             logger.info(f"relocalize {source}: placed, no further attempts (relocalize_once)")

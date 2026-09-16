@@ -91,11 +91,13 @@ RerunData: TypeAlias = "Archetype | RerunMulti"
 
 if TYPE_CHECKING:
     BlueprintFactory: TypeAlias = Callable[[], "Blueprint"]
-    VisualOverride: TypeAlias = Callable[[Any], "Archetype"]
+    # A renderer for an entity, or None to hide it.
+    VisualOverride: TypeAlias = Callable[..., "Archetype | None"] | None
 else:
     # Pydantic evaluates Config's annotations at runtime, so keep rerun types
     # out of them - importing rerun here would defeat the lazy import below.
-    BlueprintFactory = VisualOverride = Callable[..., Any]
+    BlueprintFactory = Callable[..., Any]
+    VisualOverride = Callable[..., Any] | None
 
 
 def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
@@ -218,7 +220,7 @@ class Config(ModuleConfig):
 
     pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
 
-    visual_override: dict[Glob | str, VisualOverride | None] = field(default_factory=dict)
+    visual_override: dict[Glob | str, VisualOverride] = field(default_factory=dict)
     static: dict[str, Callable[[Any], Any]] = field(default_factory=dict)
     max_hz: dict[str, float] = field(default_factory=dict)
 

@@ -88,3 +88,18 @@ def test_clear_drops_graph() -> None:
     planner.clear()
     assert len(planner.nodes()) == 0
     assert planner.plan((-2.0, -2.0, 0.0), (2.0, 2.0, 0.0)) is None
+
+
+def test_clear_drops_a_pending_load() -> None:
+    planner = make_planner()
+    assert planner.start_full_map_load(flat_floor(), (0.0, 0.0)) > 1
+    planner.clear()
+    assert planner.apply_full_map_tile() is None
+    assert planner.voxel_count() == 0
+
+
+def test_full_rebuild_drops_a_pending_load() -> None:
+    planner = make_planner()
+    assert planner.start_full_map_load(flat_floor(), (0.0, 0.0)) > 1
+    planner.update_global_map(flat_floor())
+    assert planner.apply_full_map_tile() is None

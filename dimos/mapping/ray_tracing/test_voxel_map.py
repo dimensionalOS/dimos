@@ -110,6 +110,19 @@ def test_frames_batch_only_when_emit_every_is_set() -> None:
     assert batching.take_local_bounds()[2] == 0.0
 
 
+def test_seed_points_creates_only_absent_voxels() -> None:
+    mapper = make_mapper()
+    mapper.add_frame(np.array([[5.5, 0.5, 0.5]], dtype=np.float32), ORIGIN, IDENTITY)
+
+    cloud = np.array([[5.6, 0.6, 0.6], [7.5, 0.5, 0.5]], dtype=np.float32)
+    assert mapper.seed_points(cloud) == 1
+    assert mapper.voxel_count() == 2
+    centers = np.sort(mapper.global_map(), axis=0)
+    np.testing.assert_allclose(centers, [[5.5, 0.5, 0.5], [7.5, 0.5, 0.5]])
+
+    assert mapper.seed_points(cloud) == 0
+
+
 def test_add_frame_world_registers_at_world_coordinates() -> None:
     mapper = make_mapper()
     points = np.array([[105.55, 200.05, 3.05]], dtype=np.float32)

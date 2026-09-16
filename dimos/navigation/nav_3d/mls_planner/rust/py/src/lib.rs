@@ -18,7 +18,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
-use dimos_mls_planner::mls_planner::{Config, Planner, RegionBounds};
+use dimos_mls_planner::mls_planner::{partition_cloud, Config, LoadStep, Planner, RegionBounds};
 use dimos_mls_planner::voxel::{surface_point_xyz, VoxelKey};
 
 #[pyclass]
@@ -61,6 +61,7 @@ impl MLSPlanner {
         voxel_size,
         robot_height,
         max_overhead_m = 2.0,
+        full_map_tile_m = 4.0,
         surface_closing_radius = 0.3,
         node_spacing_m = 1.0,
         wall_clearance_m = 0.1,
@@ -74,6 +75,7 @@ impl MLSPlanner {
         voxel_size: f32,
         robot_height: f32,
         max_overhead_m: f32,
+        full_map_tile_m: f32,
         surface_closing_radius: f32,
         node_spacing_m: f32,
         wall_clearance_m: f32,
@@ -100,6 +102,7 @@ impl MLSPlanner {
             step_penalty_weight,
             // Unused here. Only the binary's replan loop reads goal_tolerance.
             goal_tolerance: 1.0,
+            full_map_tile_m,
             // Unused here. Only the binary's worker publishes viz artifacts.
             viz_publish_hz: 1.0,
             worker_threads,
@@ -145,8 +148,37 @@ impl MLSPlanner {
         );
         let config = &self.config;
         let planner = &mut self.planner;
-        py.allow_threads(move || planner.update_region(&pts, &bounds, config));
+        py.allow_threads(|| planner.update_region(&pts, &bounds, config));
         Ok(())
+    }
+
+    /// Partition a whole-map cloud into pending tiles, ordered nearest
+    /// `center` first, replacing any pending tiles. Returns the tile count.
+    fn start_full_map_load(
+        &mut self,
+        py: Python<'_>,
+        points: &Bound<'_, PyAny>,
+        center: (f32, f32),
+    ) -> PyResult<usize> {
+        let pts = extract_points(points)?;
+        let config = &self.config;
+        let planner = &mut self.planner;
+        Ok(py.allow_threads(|| {
+            let part = partition_cloud(&pts, config.full_map_tile_m, config.voxel_size);
+            planner.start_load(part, center, config)
+        }))
+    }
+
+    /// Apply the next pending tile through the region pipeline, leaving what
+    /// a later update_region covered. None when no load is pending.
+    fn apply_full_map_tile(&mut self, py: Python<'_>) -> Option<usize> {
+        let config = &self.config;
+        let planner = &mut self.planner;
+        match py.allow_threads(|| planner.apply_next_tile(config)) {
+            LoadStep::Idle => None,
+            LoadStep::Applied { remaining } => Some(remaining),
+            LoadStep::Finished { .. } => Some(0),
+        }
     }
 
     fn surface_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {

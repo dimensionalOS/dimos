@@ -15,6 +15,7 @@
 //! Config and the owned-state Planner that builds and queries the MLS graph.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use ahash::{AHashMap, AHashSet};
 use dimos_module::{native_config, worker_pool};
@@ -76,6 +77,9 @@ pub struct Config {
     /// Ground-plane distance from goal at which the planner stops replanning.
     #[validate(range(exclusive_min = 0.0))]
     pub goal_tolerance: f32,
+    /// Full-map load tile spacing, small enough to apply one between live updates.
+    #[validate(range(exclusive_min = 0.0))]
+    pub full_map_tile_m: f32,
     /// Rate cap for republishing the surface_map / nodes / node_edges viz
     /// artifacts. 0 disables them entirely. The path output is unthrottled.
     #[validate(range(min = 0.0))]
@@ -127,6 +131,7 @@ impl Config {
 }
 
 /// Cylindrical region the planner re-derives from a local map slice.
+#[derive(Clone, Copy)]
 pub struct RegionBounds {
     pub origin_x: f32,
     pub origin_y: f32,
@@ -156,6 +161,23 @@ impl RegionBounds {
         }
     }
 
+    /// Whether `other`'s footprint lies entirely inside this one.
+    fn covers_xy(&self, other: &RegionBounds) -> bool {
+        let d = (other.origin_x - self.origin_x).hypot(other.origin_y - self.origin_y);
+        d + other.radius <= self.radius
+    }
+
+    /// Whether the two cylinders share any volume.
+    fn intersects(&self, other: &RegionBounds) -> bool {
+        let d = (other.origin_x - self.origin_x).hypot(other.origin_y - self.origin_y);
+        d <= self.radius + other.radius && self.z_min <= other.z_max && other.z_min <= self.z_max
+    }
+
+    /// Whether `other` lies entirely inside this cylinder.
+    fn covers(&self, other: &RegionBounds) -> bool {
+        self.covers_xy(other) && self.z_min <= other.z_min && other.z_max <= self.z_max
+    }
+
     fn contains_voxel(&self, (kx, ky, kz): VoxelKey, voxel_size: f32) -> bool {
         let half = voxel_size * 0.5;
         let z = kz as f32 * voxel_size + half;
@@ -178,6 +200,158 @@ impl RegionBounds {
     }
 }
 
+/// One tile of a full-map load: a region cylinder and the cloud points
+/// inside it, ready for update_region.
+struct MapTile {
+    bounds: RegionBounds,
+    points: Vec<(f32, f32, f32)>,
+}
+
+/// Inclusive z extent, empty until extended.
+#[derive(Clone, Copy)]
+struct ZBand {
+    min: f32,
+    max: f32,
+}
+
+impl Default for ZBand {
+    fn default() -> Self {
+        ZBand {
+            min: f32::INFINITY,
+            max: f32::NEG_INFINITY,
+        }
+    }
+}
+
+impl ZBand {
+    fn extend(&mut self, z: f32) {
+        self.min = self.min.min(z);
+        self.max = self.max.max(z);
+    }
+}
+
+/// The cloud points one tile covers and their z extent.
+#[derive(Default)]
+struct TileCloud {
+    points: Vec<(f32, f32, f32)>,
+    band: ZBand,
+}
+
+/// Tile clouds keyed by grid cell.
+type TileClouds = AHashMap<(i32, i32), TileCloud>;
+
+/// The cloud half of a full-map partition, computed without the planner so
+/// it can run off the worker thread. `Planner::finish_partition` merges it
+/// against the map.
+pub struct CloudPartition {
+    clouds: TileClouds,
+    tile_size_m: f32,
+}
+
+/// Assign a whole-map cloud to grid tiles. A point lands in every tile whose
+/// cylinder contains its voxel center, the same test the tiles apply when
+/// they replace voxels, so tile order cannot decide whether a point survives.
+pub fn partition_cloud(
+    points: &[(f32, f32, f32)],
+    tile_size_m: f32,
+    voxel_size: f32,
+) -> CloudPartition {
+    let radius = tile_radius(tile_size_m, voxel_size);
+    let half = voxel_size * 0.5;
+    let mut clouds = TileClouds::default();
+    for &p in points {
+        let (kx, ky, _) = voxelize(p, voxel_size);
+        let cx = kx as f32 * voxel_size + half;
+        let cy = ky as f32 * voxel_size + half;
+        covering_cells(cx, cy, tile_size_m, radius, |cell| {
+            let tile = clouds.entry(cell).or_default();
+            tile.points.push(p);
+            tile.band.extend(p.2);
+        });
+    }
+    CloudPartition {
+        clouds,
+        tile_size_m,
+    }
+}
+
+/// Circumradius of an s x s grid cell plus a voxel of margin, so the tile
+/// cylinders cover the plane.
+fn tile_radius(s: f32, voxel_size: f32) -> f32 {
+    s * std::f32::consts::FRAC_1_SQRT_2 + voxel_size
+}
+
+/// A tiled full-map load in progress. Live regions applied meanwhile are
+/// recorded, and every tile leaves them exactly as the live update did.
+struct MapLoad {
+    tiles: Vec<MapTile>,
+    next: usize,
+    regions: Vec<RegionBounds>,
+    started: Instant,
+}
+
+impl MapLoad {
+    fn new(tiles: Vec<MapTile>) -> Self {
+        MapLoad {
+            tiles,
+            next: 0,
+            regions: Vec::new(),
+            started: Instant::now(),
+        }
+    }
+
+    fn remaining(&self) -> usize {
+        self.tiles.len() - self.next
+    }
+
+    fn finished(&self) -> bool {
+        self.next >= self.tiles.len()
+    }
+
+    fn elapsed(&self) -> Duration {
+        self.started.elapsed()
+    }
+
+    /// Record a live region applied since the load started. Only regions no
+    /// other covers are kept, so the tiles test against a short list.
+    fn region_applied(&mut self, bounds: RegionBounds) {
+        if self.regions.iter().any(|r| r.covers(&bounds)) {
+            return;
+        }
+        self.regions.retain(|r| !bounds.covers(r));
+        self.regions.push(bounds);
+    }
+
+    /// Apply what live regions left of the next tile. False once every tile is consumed.
+    fn apply_next_tile(&mut self, planner: &mut Planner, config: &Config) -> bool {
+        while let Some(tile) = self.tiles.get(self.next) {
+            self.next += 1;
+            let keep: Vec<RegionBounds> = self
+                .regions
+                .iter()
+                .filter(|r| r.intersects(&tile.bounds))
+                .copied()
+                .collect();
+            if keep.iter().any(|r| r.covers(&tile.bounds)) {
+                continue;
+            }
+            planner.update_region_keeping(&tile.points, &tile.bounds, &keep, config);
+            return true;
+        }
+        false
+    }
+}
+
+/// What one pass of a pending full-map load did.
+pub enum LoadStep {
+    /// No load is pending.
+    Idle,
+    /// A tile went in, with this many still to come.
+    Applied { remaining: usize },
+    /// The last tile went in, this long after the load started.
+    Finished { elapsed: Duration },
+}
+
 pub struct Planner {
     // The planner owns its worker pool, so its thread setting cannot collide
     // with other components sharing the process.
@@ -191,6 +365,9 @@ pub struct Planner {
     // Last goal and whether a full plan reached it, so replan outcomes log
     // on transitions instead of every cycle.
     last_result: Option<((f32, f32, f32), bool)>,
+    // A tiled full-map load in progress. update_region records into it and a
+    // full rebuild drops it.
+    load: Option<MapLoad>,
 }
 
 impl Planner {
@@ -202,6 +379,7 @@ impl Planner {
             by_col: ColumnIz::default(),
             last_path: None,
             last_result: None,
+            load: None,
         }
     }
 
@@ -228,6 +406,8 @@ impl Planner {
 
             self.rebuild_graph(config);
         });
+        // A full rebuild replaces everything a load would add.
+        self.load = None;
     }
 
     /// Update planner artifacts within a local region instead of rebuilding
@@ -238,13 +418,27 @@ impl Planner {
         bounds: &RegionBounds,
         config: &Config,
     ) {
+        self.update_region_keeping(local_points, bounds, &[], config);
+        if let Some(load) = self.load.as_mut() {
+            load.region_applied(*bounds);
+        }
+    }
+
+    /// Like update_region, but voxels inside any `keep` region are left as they are.
+    fn update_region_keeping(
+        &mut self,
+        local_points: &[(f32, f32, f32)],
+        bounds: &RegionBounds,
+        keep: &[RegionBounds],
+        config: &Config,
+    ) {
         let pool = Arc::clone(&self.pool);
         pool.install(|| {
             let voxel_size = config.voxel_size;
             let clearance = config.headroom_cells();
             let pad = (2 * config.closing_passes()) as i32;
 
-            let changed = self.replace_region_voxels(local_points, bounds, voxel_size);
+            let changed = self.replace_region_voxels(local_points, bounds, keep, voxel_size);
 
             // No voxel changed, so surfaces and the graph are untouched.
             let Some((bx0, bx1, by0, by1)) = changed else {
@@ -259,6 +453,95 @@ impl Planner {
 
             self.rebuild_region_graph(added, removed, config);
         });
+    }
+
+    /// Finish a cloud partition against the current map, so the tiles also
+    /// sweep every voxel absent from the cloud. Nearest `center` first.
+    fn finish_partition(
+        &self,
+        part: CloudPartition,
+        center: (f32, f32),
+        config: &Config,
+    ) -> Vec<MapTile> {
+        let s = part.tile_size_m;
+        let vs = config.voxel_size;
+        let radius = tile_radius(s, vs);
+        let half = vs * 0.5;
+        let CloudPartition { mut clouds, .. } = part;
+
+        // A stale voxel needs only one covering tile, and its home tile
+        // always covers it.
+        for &(kx, ky, kz) in &self.voxel_map {
+            let x = kx as f32 * vs + half;
+            let y = ky as f32 * vs + half;
+            let cell = ((x / s).floor() as i32, (y / s).floor() as i32);
+            clouds
+                .entry(cell)
+                .or_default()
+                .band
+                .extend(kz as f32 * vs + half);
+        }
+        if clouds.is_empty() {
+            return Vec::new();
+        }
+
+        let mut tiles: Vec<MapTile> = clouds
+            .into_iter()
+            .map(|(cell, cloud)| MapTile {
+                bounds: RegionBounds {
+                    origin_x: (cell.0 as f32 + 0.5) * s,
+                    origin_y: (cell.1 as f32 + 0.5) * s,
+                    radius,
+                    z_min: cloud.band.min - vs,
+                    z_max: cloud.band.max + vs,
+                },
+                points: cloud.points,
+            })
+            .collect();
+        let dist = |t: &MapTile| {
+            (t.bounds.origin_x - center.0).powi(2) + (t.bounds.origin_y - center.1).powi(2)
+        };
+        tiles.sort_unstable_by(|a, b| {
+            dist(a)
+                .total_cmp(&dist(b))
+                .then(a.bounds.origin_x.total_cmp(&b.bounds.origin_x))
+                .then(a.bounds.origin_y.total_cmp(&b.bounds.origin_y))
+        });
+        tiles
+    }
+
+    /// Queue a partitioned full map as a tiled load, nearest `center` first,
+    /// replacing any pending tiles. Returns the tile count.
+    pub fn start_load(
+        &mut self,
+        part: CloudPartition,
+        center: (f32, f32),
+        config: &Config,
+    ) -> usize {
+        let tiles = self.finish_partition(part, center, config);
+        let count = tiles.len();
+        self.load = (count > 0).then(|| MapLoad::new(tiles));
+        count
+    }
+
+    pub fn loading(&self) -> bool {
+        self.load.is_some()
+    }
+
+    /// Apply the next pending tile, leaving what live regions covered meanwhile.
+    pub fn apply_next_tile(&mut self, config: &Config) -> LoadStep {
+        let Some(mut load) = self.load.take() else {
+            return LoadStep::Idle;
+        };
+        load.apply_next_tile(self, config);
+        if load.finished() {
+            return LoadStep::Finished {
+                elapsed: load.elapsed(),
+            };
+        }
+        let remaining = load.remaining();
+        self.load = Some(load);
+        LoadStep::Applied { remaining }
     }
 
     /// Patch changed cells, then repair nodes and edges around the change.
@@ -331,18 +614,20 @@ impl Planner {
         );
     }
 
-    /// Replace the cylinder's voxels with the local map points, ignoring
-    /// points outside it. Returns the column bbox of changed voxels, or None
-    /// if nothing changed.
+    /// Replace the cylinder's voxels outside `keep` with the local map points,
+    /// ignoring points outside it. Returns the column bbox of changed voxels.
     fn replace_region_voxels(
         &mut self,
         local_points: &[(f32, f32, f32)],
         bounds: &RegionBounds,
+        keep: &[RegionBounds],
         voxel_size: f32,
     ) -> Option<(i32, i32, i32, i32)> {
+        let kept = |k: VoxelKey| keep.iter().any(|r| r.contains_voxel(k, voxel_size));
         let new_set: AHashSet<VoxelKey> = local_points
             .iter()
             .map(|&p| voxelize(p, voxel_size))
+            .filter(|&k| !kept(k))
             .collect();
 
         let (x0, x1, y0, y1) = bounds.column_bbox(voxel_size);
@@ -357,7 +642,8 @@ impl Planner {
                     };
                     for &iz in zs {
                         let k = (ix, iy, iz);
-                        if bounds.contains_voxel(k, voxel_size) && !new_set.contains(&k) {
+                        if bounds.contains_voxel(k, voxel_size) && !new_set.contains(&k) && !kept(k)
+                        {
                             local.push(k);
                         }
                     }
@@ -661,6 +947,23 @@ impl Planner {
     }
 }
 
+/// Call `f` with every grid cell whose covering cylinder contains (x, y):
+/// the 3x3 neighborhood of the home cell, distance-tested.
+fn covering_cells(x: f32, y: f32, s: f32, radius: f32, mut f: impl FnMut((i32, i32))) {
+    let hx = (x / s).floor() as i32;
+    let hy = (y / s).floor() as i32;
+    let r_sq = radius * radius;
+    for gx in (hx - 1)..=(hx + 1) {
+        for gy in (hy - 1)..=(hy + 1) {
+            let dx = x - (gx as f32 + 0.5) * s;
+            let dy = y - (gy as f32 + 0.5) * s;
+            if dx * dx + dy * dy <= r_sq {
+                f((gx, gy));
+            }
+        }
+    }
+}
+
 /// Running inclusive xy bounding box of changed columns.
 struct ChangeBounds {
     min_x: i32,
@@ -696,803 +999,4 @@ impl ChangeBounds {
 }
 
 #[cfg(test)]
-mod region_tests {
-    use super::*;
-    use std::collections::{BTreeMap, BTreeSet};
-
-    /// Slack for comparing regional and full-rebuild path lengths. Node
-    /// placement differs between the two, so paths are equivalent, not equal.
-    const PATH_LEN_RATIO: f32 = 1.6;
-    const PATH_LEN_SLACK_M: f32 = 0.5;
-
-    fn test_config() -> Config {
-        Config {
-            world_frame: String::new(),
-            base_frame: String::new(),
-            voxel_size: 0.1,
-            robot_height: 0.5,
-            start_z_offset_m: 0.0,
-            max_overhead_m: 2.0,
-            surface_closing_radius: 0.3,
-            node_spacing_m: 1.0,
-            wall_clearance_m: 0.0,
-            wall_buffer_m: 0.3,
-            wall_buffer_weight: 1.0,
-            step_threshold_m: 0.25,
-            step_penalty_weight: 0.0,
-            goal_tolerance: 0.3,
-            viz_publish_hz: 2.0,
-            worker_threads: 4,
-        }
-    }
-
-    #[test]
-    fn region_bounds_capped_clamps_ceiling_to_sensor_overhead() {
-        // A ceiling above sensor_z + max_overhead is pulled down to the cap.
-        let capped = RegionBounds::capped(0.0, 0.0, 1.0, -1.0, 5.0, 0.5, 2.0);
-        assert_eq!(capped.z_max, 2.5, "ceiling capped to sensor_z + overhead");
-        // A ceiling already below the cap is left untouched.
-        let low = RegionBounds::capped(0.0, 0.0, 1.0, -1.0, 1.0, 0.5, 2.0);
-        assert_eq!(low.z_max, 1.0, "cap never raises a lower ceiling");
-        assert_eq!(low.z_min, -1.0);
-        assert_eq!(low.radius, 1.0);
-    }
-
-    #[test]
-    fn step_cells_floors_to_a_hard_bound() {
-        let mut cfg = test_config();
-        cfg.voxel_size = 0.08;
-        // 0.15 / 0.08 = 1.875 floors to 1: a 2-voxel (0.16m) step exceeds 0.15m.
-        cfg.step_threshold_m = 0.15;
-        assert_eq!(cfg.step_cells(), 1);
-        // 0.20 / 0.08 = 2.5 floors to 2, so 2-voxel steps are allowed.
-        cfg.step_threshold_m = 0.20;
-        assert_eq!(cfg.step_cells(), 2);
-    }
-
-    /// Floor slab with a wall down the middle, as world-frame point centers.
-    fn world_points() -> Vec<(f32, f32, f32)> {
-        let vs = 0.1_f32;
-        let half = vs * 0.5;
-        let mut pts = Vec::new();
-        for ix in 0..40 {
-            for iy in 0..40 {
-                pts.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
-            }
-        }
-        // a wall column from z=0 up, to create wall-adjacency for nodes
-        for iy in 0..40 {
-            for iz in 0..15 {
-                pts.push((
-                    20.0 * vs + half,
-                    iy as f32 * vs + half,
-                    iz as f32 * vs + half,
-                ));
-            }
-        }
-        pts
-    }
-
-    fn surface_set(p: &Planner) -> BTreeSet<VoxelKey> {
-        p.surface().collect()
-    }
-
-    fn voxel_set(p: &Planner) -> BTreeSet<VoxelKey> {
-        p.voxel_map.iter().copied().collect()
-    }
-
-    /// Cell adjacency keyed by coordinate, independent of CellId.
-    fn cell_edges(p: &Planner) -> BTreeMap<VoxelKey, BTreeSet<(VoxelKey, u32)>> {
-        let cells = &p.graph.cells;
-        let mut out: BTreeMap<VoxelKey, BTreeSet<(VoxelKey, u32)>> = BTreeMap::new();
-        for (id, edges) in cells.iter() {
-            let src = cells.coord(id);
-            let set = out.entry(src).or_default();
-            for e in edges {
-                set.insert((cells.coord(e.dest), e.cost.to_bits()));
-            }
-        }
-        out
-    }
-
-    fn node_coords(p: &Planner) -> BTreeSet<VoxelKey> {
-        p.graph
-            .nodes
-            .iter()
-            .map(|n| p.graph.cells.coord(n.cell_id))
-            .collect()
-    }
-
-    fn node_edge_pairs(p: &Planner) -> BTreeSet<(VoxelKey, VoxelKey, u32)> {
-        let cells = &p.graph.cells;
-        p.graph
-            .node_edges
-            .iter()
-            .map(|e| {
-                let a = cells.coord(e.a);
-                let b = cells.coord(e.b);
-                let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
-                (lo, hi, e.cost.to_bits())
-            })
-            .collect()
-    }
-
-    #[test]
-    fn region_update_removes_stale_voxels() {
-        let cfg = test_config();
-        let bounds = RegionBounds {
-            origin_x: 2.0,
-            origin_y: 2.0,
-            radius: 1.0,
-            z_min: -1.0,
-            z_max: 2.0,
-        };
-        let all = world_points();
-
-        let mut full = Planner::new(cfg.worker_threads);
-        full.update_global_map(&all, &cfg);
-
-        let inside: Vec<_> = all
-            .iter()
-            .copied()
-            .filter(|&p| bounds.contains_voxel(voxelize(p, cfg.voxel_size), cfg.voxel_size))
-            .collect();
-        let outside: Vec<_> = all
-            .iter()
-            .copied()
-            .filter(|&p| !bounds.contains_voxel(voxelize(p, cfg.voxel_size), cfg.voxel_size))
-            .collect();
-
-        // Seed the cylinder with a stack of junk voxels not present in the
-        // world, so update_region must clear them and the surface they induce.
-        let mut seeded = outside.clone();
-        for iz in 3..8 {
-            seeded.push((2.05, 2.05, iz as f32 * cfg.voxel_size + 0.05));
-        }
-        let mut region = Planner::new(cfg.worker_threads);
-        region.update_global_map(&seeded, &cfg);
-        region.update_region(&inside, &bounds, &cfg);
-
-        assert_eq!(voxel_set(&region), voxel_set(&full), "voxel mismatch");
-        assert_eq!(surface_set(&region), surface_set(&full), "surface mismatch");
-        assert_eq!(
-            cell_edges(&region),
-            cell_edges(&full),
-            "cell edges mismatch"
-        );
-        // Nodes are sticky, not re-derived, so their positions may differ
-        // from a fresh build. Equivalent planning is the contract.
-        let s = (0.5, 0.5, 0.1);
-        let g = (1.5, 3.5, 0.1);
-        let pf = full.plan(s, g, &cfg).expect("full build plans");
-        let pr = region.plan(s, g, &cfg).expect("region build plans");
-        let (lf, lr) = (path_len(&pf), path_len(&pr));
-        assert!(
-            lr <= lf * PATH_LEN_RATIO + PATH_LEN_SLACK_M,
-            "region path too long: {lr} vs {lf}"
-        );
-        assert!(
-            lf <= lr * PATH_LEN_RATIO + PATH_LEN_SLACK_M,
-            "full path too long: {lf} vs {lr}"
-        );
-    }
-
-    /// A local change must not move nodes beyond its reach. Distant nodes are
-    /// sticky by contract, which keeps refined paths stable frame to frame.
-    /// A floor patch raised by one voxel must relocate its nodes upward in
-    /// place. Every node's position must match the cell it claims, which a
-    /// stale-id relocation breaks by leaving nodes meters from their cell.
-    #[test]
-    fn raised_floor_relocates_nodes_in_place() {
-        use crate::voxel::surface_point_xyz;
-
-        let cfg = test_config();
-        let all = big_world();
-        let vs = cfg.voxel_size;
-        let mut p = Planner::new(cfg.worker_threads);
-        p.update_global_map(&all, &cfg);
-        let in_patch = |pos: (f32, f32, f32)| {
-            let d = (pos.0 - 1.5, pos.1 - 1.5);
-            (d.0 * d.0 + d.1 * d.1).sqrt() < 1.2
-        };
-        let doomed_xy: Vec<(f32, f32)> = p
-            .graph
-            .nodes
-            .iter()
-            .filter(|n| in_patch(n.pos))
-            .map(|n| (n.pos.0, n.pos.1))
-            .collect();
-        assert!(!doomed_xy.is_empty(), "test needs a node inside the patch");
-
-        let b = RegionBounds {
-            origin_x: 1.5,
-            origin_y: 1.5,
-            radius: 1.2,
-            z_min: -1.0,
-            z_max: 2.0,
-        };
-        let pts: Vec<(f32, f32, f32)> = slice(&all, &b, vs)
-            .iter()
-            .map(|&(x, y, _)| (x, y, 0.15))
-            .collect();
-        p.update_region(&pts, &b, &cfg);
-
-        for n in p.graph.nodes.iter() {
-            let k = p.graph.cells.coord(n.cell_id);
-            assert_eq!(
-                n.pos,
-                surface_point_xyz(k.0, k.1, k.2, vs),
-                "node pos must match its cell {k:?}"
-            );
-        }
-        // Relocation preserves each node's xy exactly. A drop-and-re-derive
-        // pass would place fresh NMS nodes at different cells.
-        for &(x, y) in &doomed_xy {
-            assert!(
-                p.graph
-                    .nodes
-                    .iter()
-                    .any(|n| n.pos.0 == x && n.pos.1 == y && (n.pos.2 - 0.2).abs() < 1e-6),
-                "node at ({x}, {y}) must relocate up in place"
-            );
-        }
-    }
-
-    /// A junk voxel near a node shifts the local wall-distance field. A
-    /// fresh re-derivation would move the node to the new local maximum, but
-    /// sticky retention must keep it exactly where it was.
-    #[test]
-    fn sticky_node_keeps_its_place_when_the_field_shifts() {
-        let cfg = test_config();
-        let all = big_world();
-        let vs = cfg.voxel_size;
-        let mut p = Planner::new(cfg.worker_threads);
-        p.update_global_map(&all, &cfg);
-
-        // The node nearest the center of the open left half.
-        let target = p
-            .graph
-            .nodes
-            .iter()
-            .map(|n| n.pos)
-            .min_by(|a, b| {
-                let da = (a.0 - 2.0).powi(2) + (a.1 - 2.0).powi(2);
-                let db = (b.0 - 2.0).powi(2) + (b.1 - 2.0).powi(2);
-                da.total_cmp(&db)
-            })
-            .unwrap();
-
-        // Junk appears 0.25 m from the node, shrinking its wall distance.
-        let b = RegionBounds {
-            origin_x: target.0,
-            origin_y: target.1,
-            radius: 1.0,
-            z_min: -1.0,
-            z_max: 2.0,
-        };
-        let mut pts = slice(&all, &b, vs);
-        pts.push((target.0 + 0.25, target.1, 0.45));
-        p.update_region(&pts, &b, &cfg);
-
-        assert!(
-            p.graph.nodes.iter().any(|n| n.pos == target),
-            "sticky node moved on a nearby junk voxel: {target:?}"
-        );
-    }
-
-    /// The drop side of sticky retention: a node whose cell falls inside the
-    /// clearance zone of newly grown structure dies instead of persisting.
-    #[test]
-    fn sticky_node_dies_when_a_wall_grows_next_to_it() {
-        let cfg = Config {
-            wall_clearance_m: 0.2,
-            ..test_config()
-        };
-        let all = big_world();
-        let vs = cfg.voxel_size;
-        let mut p = Planner::new(cfg.worker_threads);
-        p.update_global_map(&all, &cfg);
-
-        let target = p
-            .graph
-            .nodes
-            .iter()
-            .map(|n| n.pos)
-            .min_by(|a, b| {
-                let da = (a.0 - 2.0).powi(2) + (a.1 - 2.0).powi(2);
-                let db = (b.0 - 2.0).powi(2) + (b.1 - 2.0).powi(2);
-                da.total_cmp(&db)
-            })
-            .unwrap();
-
-        // A wall stack grows in the column right next to the node's cell.
-        let b = RegionBounds {
-            origin_x: target.0,
-            origin_y: target.1,
-            radius: 1.0,
-            z_min: -1.0,
-            z_max: 2.0,
-        };
-        let mut pts = slice(&all, &b, vs);
-        for iz in 0..5 {
-            pts.push((target.0 + vs, target.1, iz as f32 * vs + vs * 0.5));
-        }
-        p.update_region(&pts, &b, &cfg);
-
-        assert!(
-            !p.graph.nodes.iter().any(|n| n.pos == target),
-            "sub-clearance node must be dropped, not kept: {target:?}"
-        );
-    }
-
-    #[test]
-    fn sticky_nodes_survive_distant_changes() {
-        let cfg = test_config();
-        let all = big_world();
-        let vs = cfg.voxel_size;
-        let mut p = Planner::new(cfg.worker_threads);
-        p.update_global_map(&all, &cfg);
-        let before = node_coords(&p);
-
-        // A junk voxel appears in one corner: a genuine local change.
-        let b = RegionBounds {
-            origin_x: 1.0,
-            origin_y: 1.0,
-            radius: 1.0,
-            z_min: -1.0,
-            z_max: 2.0,
-        };
-        let mut pts = slice(&all, &b, vs);
-        pts.push((1.05, 1.05, 0.45));
-        p.update_region(&pts, &b, &cfg);
-
-        let after = node_coords(&p);
-        let far = |c: &VoxelKey| {
-            let x = c.0 as f32 * vs;
-            let y = c.1 as f32 * vs;
-            ((x - 1.0).powi(2) + (y - 1.0).powi(2)).sqrt() > 3.5
-        };
-        for c in before.iter().filter(|c| far(c)) {
-            assert!(
-                after.contains(c),
-                "distant node {c:?} moved on a local change"
-            );
-        }
-    }
-
-    /// A point outside the region bounds must not enter the planner's voxel
-    /// map, where it could never be cleared and would inflate the rebuild box.
-    #[test]
-    fn region_update_ignores_points_outside_bounds() {
-        let cfg = test_config();
-        let bounds = RegionBounds {
-            origin_x: 2.0,
-            origin_y: 2.0,
-            radius: 1.0,
-            z_min: -1.0,
-            z_max: 2.0,
-        };
-        let inside = (2.05, 2.05, 0.05);
-        let outside = (10.05, 10.05, 0.05);
-
-        let mut p = Planner::new(cfg.worker_threads);
-        p.update_region(&[inside, outside], &bounds, &cfg);
-
-        assert!(p.voxel_map.contains(&voxelize(inside, cfg.voxel_size)));
-        assert!(!p.voxel_map.contains(&voxelize(outside, cfg.voxel_size)));
-    }
-
-    /// Floor 8m x 8m with a wall at x=4m that only a gap at y in [3.5, 4.5]
-    /// passes through, so crossing the wall is a non-trivial route.
-    fn big_world() -> Vec<(f32, f32, f32)> {
-        let vs = 0.1_f32;
-        let half = vs * 0.5;
-        let mut pts = Vec::new();
-        for ix in 0..80 {
-            for iy in 0..80 {
-                pts.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
-            }
-        }
-        for iy in 0..80 {
-            if (35..45).contains(&iy) {
-                continue;
-            }
-            for iz in 0..15 {
-                pts.push((
-                    40.0 * vs + half,
-                    iy as f32 * vs + half,
-                    iz as f32 * vs + half,
-                ));
-            }
-        }
-        pts
-    }
-
-    fn slice(all: &[(f32, f32, f32)], b: &RegionBounds, vs: f32) -> Vec<(f32, f32, f32)> {
-        all.iter()
-            .copied()
-            .filter(|&p| b.contains_voxel(voxelize(p, vs), vs))
-            .collect()
-    }
-
-    fn path_len(w: &[(f32, f32, f32)]) -> f32 {
-        w.windows(2)
-            .map(|p| {
-                let dx = p[1].0 - p[0].0;
-                let dy = p[1].1 - p[0].1;
-                let dz = p[1].2 - p[0].2;
-                (dx * dx + dy * dy + dz * dz).sqrt()
-            })
-            .sum()
-    }
-
-    type Pose = (f32, f32, f32);
-    const PLAN_PAIRS: [(Pose, Pose); 4] = [
-        ((0.5, 0.5, 0.05), (7.5, 7.5, 0.05)),
-        ((0.5, 7.5, 0.05), (7.5, 0.5, 0.05)),
-        ((0.5, 0.5, 0.05), (0.5, 7.5, 0.05)),
-        ((7.5, 0.5, 0.05), (7.5, 7.5, 0.05)),
-    ];
-
-    fn assert_plans_equivalent(full: &Planner, region: &Planner, cfg: &Config) {
-        for (s, g) in PLAN_PAIRS {
-            let pf = full.plan(s, g, cfg);
-            let pr = region.plan(s, g, cfg);
-            assert_eq!(
-                pf.is_some(),
-                pr.is_some(),
-                "path existence differs for {s:?} -> {g:?}"
-            );
-            if let (Some(pf), Some(pr)) = (pf, pr) {
-                let (lf, lr) = (path_len(&pf), path_len(&pr));
-                assert!(
-                    lr <= lf * PATH_LEN_RATIO + PATH_LEN_SLACK_M,
-                    "region path too long: {lr} vs {lf}"
-                );
-                assert!(
-                    lf <= lr * PATH_LEN_RATIO + PATH_LEN_SLACK_M,
-                    "full path too long: {lf} vs {lr}"
-                );
-            }
-        }
-    }
-
-    /// Re-observing the same geometry must change nothing: no voxel, surface,
-    /// cell, node, or edge moves. This is the anti-jitter guarantee.
-    #[test]
-    fn region_reobserve_leaves_graph_bit_identical() {
-        let cfg = test_config();
-        let all = big_world();
-        let vs = cfg.voxel_size;
-
-        let mut p = Planner::new(cfg.worker_threads);
-        p.update_global_map(&all, &cfg);
-        let before_cells = cell_edges(&p);
-        let before_nodes = node_coords(&p);
-        let before_edges = node_edge_pairs(&p);
-
-        for &(cx, cy) in &[(2.0, 2.0), (4.0, 4.0), (6.0, 3.0), (1.5, 7.0), (7.0, 7.0)] {
-            let b = RegionBounds {
-                origin_x: cx,
-                origin_y: cy,
-                radius: 1.2,
-                z_min: -1.0,
-                z_max: 2.0,
-            };
-            p.update_region(&slice(&all, &b, vs), &b, &cfg);
-        }
-
-        assert_eq!(
-            cell_edges(&p),
-            before_cells,
-            "cells changed on re-observation"
-        );
-        assert_eq!(
-            node_coords(&p),
-            before_nodes,
-            "nodes moved on re-observation"
-        );
-        assert_eq!(
-            node_edge_pairs(&p),
-            before_edges,
-            "edges changed on re-observation"
-        );
-    }
-
-    /// Build the planner purely from streamed local cylinders, as the live
-    /// pipeline does, and require equivalent planning to a one-shot full build.
-    #[test]
-    fn region_stream_only_plans_like_full() {
-        let cfg = test_config();
-        let all = big_world();
-        let vs = cfg.voxel_size;
-
-        let mut full = Planner::new(cfg.worker_threads);
-        full.update_global_map(&all, &cfg);
-
-        let mut region = Planner::new(cfg.worker_threads);
-        let mut cx = 0.5;
-        while cx <= 7.5 {
-            let mut cy = 0.5;
-            while cy <= 7.5 {
-                let b = RegionBounds {
-                    origin_x: cx,
-                    origin_y: cy,
-                    radius: 1.5,
-                    z_min: -1.0,
-                    z_max: 2.0,
-                };
-                let s = slice(&all, &b, vs);
-                if !s.is_empty() {
-                    region.update_region(&s, &b, &cfg);
-                }
-                cy += 1.0;
-            }
-            cx += 1.0;
-        }
-
-        assert_eq!(
-            voxel_set(&region),
-            voxel_set(&full),
-            "stream did not reconstruct the map"
-        );
-        assert_plans_equivalent(&full, &region, &cfg);
-    }
-
-    /// Floor split by a wall with a narrow 1-cell gap near x=1.0 and a wide gap
-    /// near x=4.5. Start and goal straddle the narrow gap.
-    fn two_gap_world() -> Vec<(f32, f32, f32)> {
-        let vs = 0.1_f32;
-        let half = vs * 0.5;
-        let mut pts = Vec::new();
-        for ix in 0..60 {
-            for iy in 0..40 {
-                pts.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
-            }
-        }
-        for ix in 0..60 {
-            if ix == 10 || (40..50).contains(&ix) {
-                continue;
-            }
-            for iz in 0..7 {
-                pts.push((
-                    ix as f32 * vs + half,
-                    20.0 * vs + half,
-                    iz as f32 * vs + half,
-                ));
-            }
-        }
-        pts
-    }
-
-    /// The hard clearance floor must make the narrow gap impassable, forcing
-    /// the longer detour through the wide gap.
-    #[test]
-    fn hard_clearance_floor_avoids_narrow_gap() {
-        let mut cfg = test_config();
-        cfg.node_spacing_m = 0.8;
-        let pts = two_gap_world();
-        let start = (1.0, 1.0, 0.05);
-        let goal = (1.0, 3.5, 0.05);
-        let max_x = |w: &[(f32, f32, f32)]| w.iter().map(|p| p.0).fold(f32::MIN, f32::max);
-
-        // No clearance: the shortest route slips straight through the narrow gap.
-        cfg.wall_clearance_m = 0.0;
-        let mut open = Planner::new(cfg.worker_threads);
-        open.update_global_map(&pts, &cfg);
-        let wp_open = open.plan(start, goal, &cfg).expect("open plan exists");
-
-        // Clearance wider than the narrow gap: it is impassable, so detour wide.
-        cfg.wall_clearance_m = 0.2;
-        let mut safe = Planner::new(cfg.worker_threads);
-        safe.update_global_map(&pts, &cfg);
-        let wp_safe = safe.plan(start, goal, &cfg).expect("safe plan exists");
-
-        assert!(max_x(&wp_open) < 2.0, "open path should use the near gap");
-        assert!(
-            max_x(&wp_safe) > 3.5,
-            "safe path should detour to the wide gap: max_x={}",
-            max_x(&wp_safe)
-        );
-        assert!(
-            path_len(&wp_safe) > path_len(&wp_open) * 1.5,
-            "safe route should be substantially longer: {} vs {}",
-            path_len(&wp_safe),
-            path_len(&wp_open)
-        );
-    }
-
-    /// Every cell the smoothed path crosses, between waypoints included, must
-    /// clear the hard wall distance.
-    #[test]
-    fn final_path_clears_wall_distance() {
-        let mut cfg = test_config();
-        cfg.wall_clearance_m = 0.2;
-        cfg.wall_buffer_m = 0.5;
-        let all = big_world();
-        let mut p = Planner::new(cfg.worker_threads);
-        p.update_global_map(&all, &cfg);
-
-        let wp = p
-            .plan((0.7, 4.0, 0.05), (7.3, 4.0, 0.05), &cfg)
-            .expect("plan exists");
-        let clearance: std::collections::HashMap<VoxelKey, f32> =
-            p.surface_clearance().into_iter().collect();
-        let vs = cfg.voxel_size;
-        let key = |x: f32, y: f32, z: f32| {
-            (
-                (x / vs).floor() as i32,
-                (y / vs).floor() as i32,
-                (z / vs).round() as i32 - 1,
-            )
-        };
-
-        // Interior waypoints are exact cell centers. Sample between them too.
-        let interior = &wp[1..wp.len() - 1];
-        assert!(interior.len() >= 2, "expected a multi-cell path");
-        for pair in interior.windows(2) {
-            let (a, b) = (pair[0], pair[1]);
-            for k in 0..=24 {
-                let t = k as f32 / 24.0;
-                let x = a.0 + t * (b.0 - a.0);
-                let y = a.1 + t * (b.1 - a.1);
-                let z = a.2 + t * (b.2 - a.2);
-                if let Some(&c) = clearance.get(&key(x, y, z)) {
-                    assert!(
-                        c >= cfg.wall_clearance_m - 1e-4,
-                        "path point ({x:.2},{y:.2}) sits {c:.3} from a wall, under the {} clearance",
-                        cfg.wall_clearance_m
-                    );
-                }
-            }
-        }
-    }
-
-    /// Solid 0.3 m block, taller than the step threshold. The path must route
-    /// around it and never climb on.
-    fn block_world() -> Vec<(f32, f32, f32)> {
-        let vs = 0.1_f32;
-        let half = vs * 0.5;
-        let mut pts = Vec::new();
-        for ix in 0..40 {
-            for iy in 0..12 {
-                pts.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
-            }
-        }
-        // A solid block, 0.3 m tall, blocking the iy 0..6 lane around ix 18..22.
-        for ix in 18..22 {
-            for iy in 0..6 {
-                for iz in 0..4 {
-                    pts.push((
-                        ix as f32 * vs + half,
-                        iy as f32 * vs + half,
-                        iz as f32 * vs + half,
-                    ));
-                }
-            }
-        }
-        pts
-    }
-
-    #[test]
-    fn final_path_never_climbs_over_threshold_step() {
-        let mut cfg = test_config();
-        cfg.surface_closing_radius = 0.0;
-        cfg.wall_clearance_m = 0.0;
-        cfg.wall_buffer_m = 0.0;
-        cfg.node_spacing_m = 0.5;
-        let pts = block_world();
-        let mut p = Planner::new(cfg.worker_threads);
-        p.update_global_map(&pts, &cfg);
-
-        let wp = p
-            .plan((1.0, 0.5, 0.05), (3.9, 0.5, 0.05), &cfg)
-            .expect("plan exists");
-
-        // The block top is at z = 0.4. The floor surface point is z = 0.1. No
-        // interior waypoint may land on the block.
-        for w in &wp[1..wp.len() - 1] {
-            assert!(
-                w.2 < 0.25,
-                "path climbed onto the 0.3 m block at {w:?}, exceeding the step threshold"
-            );
-        }
-        // It had to detour out of the blocked lane (iy < 0.6).
-        let max_y = wp.iter().map(|p| p.1).fold(f32::MIN, f32::max);
-        assert!(
-            max_y > 0.6,
-            "path did not detour around the block: max_y={max_y}"
-        );
-    }
-
-    /// Flat floor with a crossable 0.2 m ridge blocking ix 15 except a flat gap
-    /// at iy 10..12. Crossing is short but climbs two steps. The detour is flat.
-    /// Route choice is read from the xy lane, since smoothing flattens the ridge
-    /// waypoints away.
-    fn ridge_world() -> Vec<(f32, f32, f32)> {
-        let vs = 0.1_f32;
-        let half = vs * 0.5;
-        let mut pts = Vec::new();
-        for ix in 0..40 {
-            for iy in 0..12 {
-                pts.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
-            }
-        }
-        // A 0.2 m ridge cap at ix 15, iy 0..10: a 2-cell step up and back down.
-        for iy in 0..10 {
-            pts.push((15.0 * vs + half, iy as f32 * vs + half, 2.0 * vs + half));
-        }
-        pts
-    }
-
-    #[test]
-    fn step_penalty_diverts_path_around_ridge() {
-        let mut cfg = test_config();
-        cfg.surface_closing_radius = 0.0;
-        cfg.wall_clearance_m = 0.0;
-        cfg.wall_buffer_m = 0.0;
-        cfg.node_spacing_m = 0.5;
-        let pts = ridge_world();
-        let start = (1.0, 0.5, 0.05);
-        let goal = (2.9, 0.5, 0.05);
-        let max_y = |w: &[(f32, f32, f32)]| w.iter().map(|p| p.1).fold(f32::MIN, f32::max);
-
-        // No step penalty: the short route crosses the ridge low.
-        cfg.step_penalty_weight = 0.0;
-        let mut cheap = Planner::new(cfg.worker_threads);
-        cheap.update_global_map(&pts, &cfg);
-        let wp_cheap = cheap.plan(start, goal, &cfg).expect("plan exists");
-
-        // Heavy step penalty: the flat detour to the iy 10 gap wins.
-        cfg.step_penalty_weight = 30.0;
-        let mut avoid = Planner::new(cfg.worker_threads);
-        avoid.update_global_map(&pts, &cfg);
-        let wp_avoid = avoid.plan(start, goal, &cfg).expect("plan exists");
-
-        assert!(
-            max_y(&wp_cheap) < 0.6,
-            "with no step penalty the path should cross the ridge low: max_y={}",
-            max_y(&wp_cheap)
-        );
-        assert!(
-            max_y(&wp_avoid) > 0.9,
-            "with a heavy step penalty the path should detour to the flat gap: max_y={}",
-            max_y(&wp_avoid)
-        );
-    }
-
-    #[test]
-    fn goal_on_subclearance_spur_still_plans() {
-        let mut cfg = test_config();
-        cfg.surface_closing_radius = 0.0;
-        cfg.wall_clearance_m = 0.3;
-        cfg.wall_buffer_m = 0.0;
-        cfg.wall_buffer_weight = 0.0;
-        cfg.node_spacing_m = 0.5;
-
-        let vs = 0.1_f32;
-        let half = vs * 0.5;
-        let mut pts = Vec::new();
-        for ix in 0..10 {
-            for iy in 0..10 {
-                pts.push((ix as f32 * vs + half, iy as f32 * vs + half, half));
-            }
-        }
-        // A 1-wide spur off the open area: every spur cell is wall-adjacent so
-        // none clears the clearance and the penalized Voronoi cannot own them.
-        for ix in 10..16 {
-            pts.push((ix as f32 * vs + half, 5.0 * vs + half, half));
-        }
-
-        let mut p = Planner::new(cfg.worker_threads);
-        p.update_global_map(&pts, &cfg);
-
-        let start = (0.45, 0.45, 0.0);
-        let goal = (15.0 * vs + half, 5.0 * vs + half, 0.0);
-        let wp = p
-            .plan(start, goal, &cfg)
-            .expect("goal on a sub-clearance spur still reaches its component node");
-        let last = *wp.last().expect("path has waypoints");
-        assert!((last.0 - goal.0).abs() < 1e-3 && (last.1 - goal.1).abs() < 1e-3);
-    }
-}
+mod region_tests;

@@ -22,7 +22,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.utils import data
-from dimos.utils.data import LfsPath, backup_file
+from dimos.utils.data import LfsPath, backup_file, resolve_named_path
 
 
 def _make_backups(dir_path: Path, stem: str, suffix: str, timestamps: list[str]) -> None:
@@ -91,6 +91,22 @@ def test_pull_lfs_archive_initializes_lfs_before_pull(
         call.initialize(tmp_path),
         call.pull(archive, tmp_path),
     ]
+
+
+def test_resolve_named_path_appends_the_suffix_to_a_path(tmp_path: Path) -> None:
+    (tmp_path / "premap.pc2.lcm").touch()
+    assert resolve_named_path(tmp_path / "premap", ".pc2.lcm") == tmp_path / "premap.pc2.lcm"
+    assert (
+        resolve_named_path(tmp_path / "premap.pc2.lcm", ".pc2.lcm") == tmp_path / "premap.pc2.lcm"
+    )
+    assert resolve_named_path("/nowhere/premap", ".pc2.lcm") == Path("/nowhere/premap.pc2.lcm")
+
+
+def test_resolve_named_path_keeps_a_nested_lfs_name(mocker: MockerFixture) -> None:
+    pulled = Path("/lfs/maps/office.pc2.lcm")
+    get_data = mocker.patch.object(data, "get_data", return_value=pulled)
+    assert resolve_named_path("maps/office", ".pc2.lcm") == pulled
+    get_data.assert_called_once_with("maps/office.pc2.lcm")
 
 
 def test_backup_file_missing_is_noop(tmp_path: Path) -> None:

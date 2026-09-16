@@ -28,11 +28,13 @@ from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
+from dimos.navigation.nav_3d.viz import render_path
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.05
+wall_clearance_m = 0.2
 # Raise above 0 to draw what the planner searched over (surface, nodes, weighted edges).
 planner_viz_hz = 0.0
 # Height of the head-mounted lidar above the ground while standing.
@@ -43,14 +45,6 @@ go2_lidar_height = 0.5
 
 def _render_global_map(msg: Any) -> Any:
     return msg.to_rerun()
-
-
-def _render_path(msg: Any) -> Any:
-    # The planner emits an empty path when it finds no route to the goal.
-    # Logging those would blank the line, so drop them and keep the last path.
-    if len(msg.poses) == 0:
-        return None
-    return msg
 
 
 _nav_rerun_config = {
@@ -64,8 +58,10 @@ _nav_rerun_config = {
         **rerun_config["visual_override"],
         "world/global_map": _render_global_map,
         "world/planner_path": None,
-        "world/path": _render_path,
-        **planner_visual_override(planner_viz_hz),
+        "world/path": render_path,
+        **planner_visual_override(
+            planner_viz_hz, voxel_size=voxel_size, wall_clearance_m=wall_clearance_m
+        ),
     },
 }
 
@@ -82,7 +78,7 @@ unitree_go2_mls_htc = autoconnect(
         voxel_size=voxel_size,
         robot_height=go2_lidar_height,
         start_z_offset_m=go2_lidar_height,
-        wall_clearance_m=0.2,
+        wall_clearance_m=wall_clearance_m,
         wall_buffer_m=0.75,
         wall_buffer_weight=100.0,
         step_threshold_m=0.16,

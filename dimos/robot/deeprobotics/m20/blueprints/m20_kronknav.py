@@ -27,6 +27,7 @@ from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
+from dimos.navigation.nav_3d.viz import render_path
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
 from dimos.robot.deeprobotics.m20.camera import M20CameraRelay
 from dimos.robot.deeprobotics.m20.connection import M20Connection
@@ -40,13 +41,8 @@ from dimos.robot.deeprobotics.m20.constants import (
 from dimos.visualization.vis_module import vis_module
 
 VOXEL_SIZE_M = 0.1
+WALL_CLEARANCE_M = 0.3
 PLANNER_VIZ_HZ = 0.0
-
-
-def _render_path(msg: Any) -> Any:
-    if len(msg.poses) == 0:
-        return None
-    return msg
 
 
 def _render_h265(msg: CompressedVideo) -> Any:
@@ -121,13 +117,15 @@ _rerun_config = {
         # The navigation view shows maps rather than the registered lidar.
         "world/lidar": None,
         "world/slam_body_points": None,
-        "world/planner_path": _render_path,
+        "world/planner_path": render_path,
         "world/path": None,
         "world/front_camera": _render_h265,
         "world/rear_camera": _render_h265,
         "world/front_camera_info": _render_front_camera_info,
         "world/rear_camera_info": _render_rear_camera_info,
-        **planner_visual_override(PLANNER_VIZ_HZ),
+        **planner_visual_override(
+            PLANNER_VIZ_HZ, voxel_size=VOXEL_SIZE_M, wall_clearance_m=WALL_CLEARANCE_M
+        ),
     },
     "static": {
         "world/robot_body": _static_robot_body,
@@ -156,7 +154,7 @@ deeprobotics_m20_kronknav_control = (
             voxel_size=VOXEL_SIZE_M,
             robot_height=PLANNING_HEIGHT_M,
             start_z_offset_m=BASE_LINK_HEIGHT_M,
-            wall_clearance_m=0.3,
+            wall_clearance_m=WALL_CLEARANCE_M,
             wall_buffer_m=0.85,
             wall_buffer_weight=100.0,
             step_threshold_m=0.25,

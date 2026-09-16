@@ -62,6 +62,13 @@ class _Prepared(NamedTuple):
     fine: PointCloud  # downsampled at voxel_fine, with normals
 
 
+class RelocAttempt(NamedTuple):
+    """One decided attempt: the ``world -> map`` fix if accepted, and what it was scored on."""
+
+    fix: Transform | None
+    result: RegistrationResult
+
+
 class RelocalizeConfig(BaseConfig):
     """The aligner's knobs for **one rig**. There is no universal setting.
 
@@ -139,7 +146,10 @@ MID360 = RelocalizeConfig(
 
 # A rig's name to its measured settings. Add an entry by running a study for
 # that rig (tune.md); do not retune an existing one for a new sensor.
-PRESETS: dict[str, RelocalizeConfig] = {"mid360": MID360}
+# The mid360 scales with the go2 nav_3d accept policy, from the sf office replays.
+GO2_NAV = MID360.model_copy(update={"fitness_threshold": 0.8, "ransac_restarts": 3})
+
+PRESETS: dict[str, RelocalizeConfig] = {"mid360": MID360, "go2-nav": GO2_NAV}
 DEFAULT_PRESET = "mid360"
 
 
@@ -250,20 +260,16 @@ class LidarRelocalizer:
     def relocalize(
         self, local_map: PointCloud, world_frame: str, map_frame: str
     ) -> Transform | None:
-        """The ``world_frame -> map_frame`` transform, or ``None`` when nothing was good enough.
+        """The ``world_frame -> map_frame`` transform, or ``None`` when nothing was good enough."""
+        return self.attempt(local_map, world_frame, map_frame).fix
 
-        Ready to publish: stamped with the frames the TF tree expects, and
-        already inverted from the placement open3d computes. Refusing is a
-        real answer and the common one for a place the prior map never saw.
-        Everything the decision rests on - the aligner's knobs and
-        ``fitness_threshold`` - is this object's config, so a caller
-        configures it once and checks whether it got a transform.
-        """
+    def attempt(self, local_map: PointCloud, world_frame: str, map_frame: str) -> RelocAttempt:
+        """The fix if accepted, ready to publish, with the registration it was scored on."""
         result = self.align(local_map)
         logger.info(f"align: fitness={result.fitness:.3f} rmse={result.inlier_rmse:.3f}")
         if result.fitness < self.config.fitness_threshold:
-            return None
+            return RelocAttempt(None, result)
         placement = Transform.from_matrix(
             np.asarray(result.transformation), frame_id=map_frame, child_frame_id=world_frame
         )
-        return placement.inverse()
+        return RelocAttempt(placement.inverse(), result)

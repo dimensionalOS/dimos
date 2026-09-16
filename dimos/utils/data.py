@@ -115,19 +115,17 @@ def get_data_dir(extra_path: str | None = None) -> Path:
 
 
 def resolve_named_path(name: str | Path, suffix: str = "") -> Path:
+    """A path, a stem in the working directory or project root, or an LFS name to pull."""
     s = str(name)
-    p = Path(s)
-    if p.is_absolute() or p.exists():
-        return p
-    if (DIMOS_PROJECT_ROOT / p).exists():
-        return DIMOS_PROJECT_ROOT / p
-    if suffix and not s.endswith(suffix):
-        p = Path(s + suffix)
-        if p.is_absolute() or p.exists():
+    names = [s] if not suffix or s.endswith(suffix) else [s, s + suffix]
+    for n in names:
+        p = Path(n)
+        if p.exists():
             return p
         if (DIMOS_PROJECT_ROOT / p).exists():
             return DIMOS_PROJECT_ROOT / p
-    return get_data(p.name)
+    p = Path(names[-1])
+    return p if p.is_absolute() else get_data(names[-1])
 
 
 def backup_file(path: str | Path, keep_last: int = 3) -> Path | None:

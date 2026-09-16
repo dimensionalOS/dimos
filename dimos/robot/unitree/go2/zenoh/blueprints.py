@@ -35,27 +35,24 @@ from typing import Any
 from dimos.core.baked_host import baked_host
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.mapping.ray_tracing.module import RayTracingVoxelMap, RayTracingVoxelMapConfig
+from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_3d.mls_planner.mls_planner_native import (
-    MLSPlannerNative,
-    MLSPlannerNativeConfig,
-)
+from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
-from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
-from dimos.robot.unitree.go2.constants import (
-    BASE_LINK_HEIGHT,
-    ROBOT_HEIGHT,
-    ROBOT_LENGTH,
-    ROBOT_WIDTH,
+from dimos.navigation.nav_3d.viz import nav_static, nav_visual_override
+from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
+from dimos.robot.unitree.go2.nav_3d_config import (
+    mls_planner_config,
+    ray_tracing_config,
+    voxel_size,
+    wall_clearance_m,
 )
 from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh
 from dimos.visualization.vis_module import vis_module
 
-voxel_size = 0.08
 # Raise above 0 (2.0 works) to draw what the planner searched over: surface, nodes and
 # cost-colored edges. Drives both its publishing and the rerun overrides.
 planner_viz_hz = 2.0
@@ -63,17 +60,6 @@ planner_viz_hz = 2.0
 # GO2Zenoh publishes this mount onto tf, where nav reads its odometry corrections.
 # Either a raw (roll, pitch, yaw) tuple in degrees or a GO2ZenohConfig.mid360_mount preset.
 MID360_MOUNT = "SF"
-
-
-def _static_robot_body(rr: Any) -> list[Any]:
-    """Go2-shaped box on the body frame."""
-    return [
-        rr.Boxes3D(
-            half_sizes=[ROBOT_LENGTH / 2, ROBOT_WIDTH / 2, ROBOT_HEIGHT / 2],
-            colors=[(0, 255, 127)],
-        ),
-        rr.Transform3D(parent_frame="tf#/base_link"),
-    ]
 
 
 def _camera_info_to_pinhole(camera_info: Any) -> Any:
@@ -123,14 +109,6 @@ def _render_map(msg: Any) -> Any:
     return msg.to_rerun(voxel_size=0.01)
 
 
-def _render_path(msg: Any) -> Any:
-    # The planner emits an empty path when it finds no route to the goal.
-    # Logging those would blank the line, so drop them and keep the last path.
-    if len(msg.poses) == 0:
-        return None
-    return msg
-
-
 def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, Any]:
     """The bridge's own view, plus whatever the layer above it adds."""
     return {
@@ -138,17 +116,12 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
         "tf_axes": 0.5,
         # The robot box hangs off base_link on its own entity: a static transform
         # under world/tf would override the live one.
-        "static": {
-            "world/robot_body": _static_robot_body,
-        },
+        "static": nav_static(ROBOT_LENGTH, ROBOT_WIDTH, ROBOT_HEIGHT, wall_clearance_m),
         "visual_override": {
             "world/camera_info": _camera_info_to_pinhole,
             "world/pointlio_map": _render_map,
             "world/lidar": _render_map,
-            "world/local_map": _render_map,
-            "world/global_map": _render_map,
-            "world/path": _render_path,
-            **planner_visual_override(planner_viz_hz, voxel_size=voxel_size, wall_clearance_m=0.1),
+            **nav_visual_override(planner_viz_hz, voxel_size, wall_clearance_m),
             **(visual_override or {}),
         },
     }
@@ -162,24 +135,10 @@ go2_zenoh_basic = autoconnect(
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=4, robot_model="unitree_go2")
 
-# global_map is remapped off so the planner runs purely on the
-# incremental local_map + region_bounds pair.
-mls_planner_config = MLSPlannerNativeConfig(
-    world_frame="odom",
-    voxel_size=voxel_size,
-    robot_height=ROBOT_HEIGHT,
-    start_z_offset_m=BASE_LINK_HEIGHT,
-    surface_closing_radius=0.3,
-    wall_clearance_m=0.1,
-    wall_buffer_m=0.75,
-    wall_buffer_weight=100.0,
-    step_threshold_m=0.16,
-    step_penalty_weight=4.0,
-    viz_publish_hz=planner_viz_hz,
-)
+_planner_config = mls_planner_config.model_copy(update={"viz_publish_hz": planner_viz_hz})
 
 _mls_planner = MLSPlannerNative.blueprint(
-    **mls_planner_config.model_dump(exclude_unset=True)
+    **_planner_config.model_dump(exclude_unset=True)
 ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")])
 
 # Consumes GO2Zenoh's lidar + odometry directly: the bridge stamps them exactly as
@@ -190,15 +149,6 @@ _mls_planner = MLSPlannerNative.blueprint(
 _raytraced_vis = vis_module(
     viewer_backend=global_config.viewer,
     rerun_config=_rerun_config({"world/pointlio_map": None}),
-)
-
-ray_tracing_config = RayTracingVoxelMapConfig(
-    voxel_size=voxel_size,
-    emit_every=1,
-    global_emit_every=50,
-    min_health=-1,
-    max_health=5,
-    support_min=4,
 )
 
 go2_zenoh_raycaster = autoconnect(
@@ -239,7 +189,7 @@ go2_zenoh_nav_baked = autoconnect(
     _raytraced_vis,
     GoNav.blueprint(
         ray_tracing_config=ray_tracing_config,
-        mls_planner_config=mls_planner_config,
+        mls_planner_config=_planner_config,
     ),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=1.5, max_angular=1.5),
     MovementManager.blueprint(),

@@ -131,6 +131,8 @@ def test_relocalizer_refuses_below_its_own_threshold(monkeypatch):
         )
 
     assert relocalizer(0.5).relocalize(None, "world", "map") is None
+    refused = relocalizer(0.5).attempt(None, "world", "map")
+    assert refused.fix is None and refused.result.fitness == 0.4
 
     # Accepted: open3d places the live cloud in the map, the TF tree wants the
     # other direction, and relocalize() is what turns one into the other.
