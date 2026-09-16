@@ -7,6 +7,7 @@
 
 #include "publish_stamp.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <string>
 
@@ -28,12 +29,69 @@ void check(bool ok, const std::string& what) {
 constexpr double kWallNow = 1789521303.0;
 constexpr double kStateNow = 1789521281.0;
 constexpr double kInterval = 0.1;
+// What the Mid-360 actually reported on 2026-09-16: 45 hours of its own
+// uptime, against a host at epoch.
+constexpr double kDeviceNow = 162771.318961911;
 
 }  // namespace
 
 int main() {
     using pointlio::backlog_s;
+    using pointlio::HostClockOffset;
     using pointlio::publish_decision;
+
+    {
+        // The Livox reports 45 hours of its own uptime while the host is at
+        // epoch. Stamping with the sensor's number raw is worse than the
+        // publish time it replaces: nothing downstream would resolve at all.
+        HostClockOffset clock;
+        check(!clock.ready(), "no packet seen yet: not ready");
+        check(clock.to_host(kDeviceNow) == 0.0, "and it refuses to answer");
+
+        // Packets arrive with a delay that is always positive, so the minimum
+        // of (host - device) is the offset. Give it a lucky one and two late.
+        const double offset = kWallNow - kDeviceNow;
+        clock.observe(kDeviceNow, kWallNow + 0.004);
+        clock.observe(kDeviceNow + 0.1, kWallNow + 0.1);
+        clock.observe(kDeviceNow + 0.2, kWallNow + 0.2 + 0.050);
+        check(clock.ready(), "one packet is enough to be ready");
+        // A microsecond, not a nanosecond: these are epoch seconds, and a
+        // double carries about 2e-7 s of resolution at 1.8e9. Fine for a
+        // timestamp, worth knowing before writing a tighter assertion.
+        check(std::abs(clock.offset() - offset) < 1e-6, "the offset is the minimum delay");
+        check(std::abs(clock.to_host(kDeviceNow + 1.0) - (kWallNow + 1.0)) < 1e-6,
+              "a sensor time comes back on the host's clock");
+    }
+    {
+        // A backlog inside this process delays every packet equally and must
+        // not drag the offset: the minimum is taken over arrivals, not over
+        // anything the estimator touches.
+        HostClockOffset clock;
+        const double offset = kWallNow - kDeviceNow;
+        for (int i = 0; i < 50; ++i) {
+            clock.observe(kDeviceNow + i * 0.1, kWallNow + i * 0.1 + 20.0);
+        }
+        clock.observe(kDeviceNow + 5.0, kWallNow + 5.0 + 0.001);
+        check(std::abs(clock.offset() - (offset + 0.001)) < 1e-6,
+              "fifty late packets do not move it; one prompt one does");
+    }
+    {
+        // Two buckets, so the estimate follows the clocks drifting apart
+        // instead of being captured by the luckiest packet ever seen.
+        HostClockOffset clock(10.0);
+        clock.observe(kDeviceNow, kWallNow);
+        const double drifted = kWallNow - kDeviceNow + 0.5;
+        for (int i = 1; i <= 30; ++i) {
+            clock.observe(kDeviceNow + i, kDeviceNow + i + drifted);
+        }
+        check(clock.offset() > kWallNow - kDeviceNow + 0.4,
+              "the window expires and the old minimum is let go");
+    }
+    {
+        HostClockOffset clock;
+        clock.observe(0.0, kWallNow);
+        check(!clock.ready(), "a packet with no device stamp is not an observation");
+    }
 
     {
         // A fresh state past the rate limit publishes, and carries the STATE's

@@ -33,7 +33,65 @@
 #ifndef DIMOS_POINTLIO_PUBLISH_STAMP_HPP
 #define DIMOS_POINTLIO_PUBLISH_STAMP_HPP
 
+#include <limits>
+
 namespace pointlio {
+
+/// The offset that carries the Livox's own clock onto the host's.
+///
+/// Point-LIO's `lidar_end_time` is in the **sensor's** time base, because that
+/// is what the Livox packets carry: on this Mid-360 it reads 162,771 s, which
+/// is 45 hours of lidar uptime, not an epoch. Publishing it raw is worse than
+/// the publish-time stamp it replaces -- every consumer that looks a pose up by
+/// timestamp would find nothing at all.
+///
+/// So the sensor's time has to be carried onto the host's, and the only handle
+/// on that is when packets arrive: `host_arrival - device_stamp` is the offset
+/// plus a transport and scheduling delay that is always positive and sometimes
+/// enormous. The **minimum** of that difference is therefore the estimate --
+/// the least-delayed packet is the closest look at the true offset, and a
+/// backlog inside this process cannot bias it downwards.
+///
+/// A plain running minimum would be captured by the single luckiest packet and
+/// then never follow the clocks drifting apart. Two buckets fix that: the
+/// offset in use is the minimum over the previous window, while a candidate
+/// accumulates the minimum over the current one, and they swap when the window
+/// ends. The estimate is then never older than two windows.
+class HostClockOffset {
+public:
+    explicit HostClockOffset(double window_s = 30.0) : window_s_(window_s) {}
+
+    /// One packet: `device_s` is its own stamp, `host_s` the wall clock now.
+    void observe(double device_s, double host_s) {
+        if (!(device_s > 0.0)) return;
+        const double difference = host_s - device_s;
+        if (difference < candidate_) candidate_ = difference;
+        if (difference < offset_) offset_ = difference;
+        if (window_started_ <= 0.0) {
+            window_started_ = host_s;
+        } else if (host_s - window_started_ >= window_s_) {
+            offset_ = candidate_;
+            candidate_ = std::numeric_limits<double>::infinity();
+            window_started_ = host_s;
+        }
+    }
+
+    bool ready() const { return offset_ < std::numeric_limits<double>::infinity(); }
+
+    /// A sensor time on the host's clock, or 0 if no packet has been seen.
+    double to_host(double device_s) const {
+        if (!ready() || !(device_s > 0.0)) return 0.0;
+        return device_s + offset_;
+    }
+
+    double offset() const { return ready() ? offset_ : 0.0; }
+
+private:
+    double window_s_;
+    double offset_ = std::numeric_limits<double>::infinity();
+    double candidate_ = std::numeric_limits<double>::infinity();
+    double window_started_ = 0.0;
+};
 
 /// Whether an output port may publish now, and the stamp it must carry.
 struct PublishDecision {
@@ -65,6 +123,8 @@ inline PublishDecision publish_decision(double state_s, double last_state_s,
 }
 
 /// How far the estimator's state trails the wall clock, in seconds.
+///
+/// Both arguments must already be on the host's clock -- see HostClockOffset.
 ///
 /// This is the quantity that silently became a 22 s pose error. It is worth
 /// logging: it is the difference between "Point-LIO is slow" (visible in the

@@ -289,6 +289,10 @@ private:
         if (shutdown_requested() || data == nullptr) return;
 
         uint64_t ts_ns = packet_timestamp_ns(data);
+        // Seen here, on the SDK's own callback thread, because this is the one
+        // moment the arrival time is honest -- anywhere further in and the
+        // estimator's backlog is folded into it. See publish_stamp.hpp.
+        note_packet_arrival(static_cast<double>(ts_ns) / 1e9);
         uint16_t dot_num = data->dot_num;
 
         // Per-point intra-packet offset, needed for deskew. time_interval is
@@ -340,6 +344,7 @@ private:
         if (shutdown_requested() || data == nullptr || !point_lio_) return;
 
         double ts = static_cast<double>(packet_timestamp_ns(data)) / 1e9;
+        note_packet_arrival(ts);
         auto* imu_pts = reinterpret_cast<const LivoxLidarImuRawPoint*>(data->data);
         uint16_t dot_num = data->dot_num;
 
@@ -444,7 +449,11 @@ private:
             const double wall_now = std::chrono::duration<double>(
                                         std::chrono::system_clock::now().time_since_epoch())
                                         .count();
-            const double state_ts = point_lio_->get_odometry().header.stamp.toSec();
+            // The estimator answers in the SENSOR's time base; everything
+            // downstream speaks the host's. Nothing is published until the two
+            // have been tied together.
+            const double state_ts =
+                host_clock_.to_host(point_lio_->get_odometry().header.stamp.toSec());
             warn_if_behind(wall_now, state_ts);
 
             // get_body_cloud is the loop's costliest step, so build it only when
@@ -496,6 +505,16 @@ private:
     // not visible at all, because its cloud and its pose share the error and
     // cancel against each other. Once per `kBacklogLogInterval` so a long stall
     // does not become a log flood.
+    // The Livox packet clock, seen as it arrives. Written from the SDK's
+    // callback threads and read by the loop, so it is guarded.
+    void note_packet_arrival(double device_s) {
+        const double host_s = std::chrono::duration<double>(
+                                  std::chrono::system_clock::now().time_since_epoch())
+                                  .count();
+        std::lock_guard<std::mutex> lock(clock_mutex_);
+        host_clock_.observe(device_s, host_s);
+    }
+
     void warn_if_behind(double wall_now, double state_ts) {
         const double lag = pointlio::backlog_s(wall_now, state_ts);
         if (lag < kBacklogWarnSeconds) return;
@@ -575,6 +594,11 @@ private:
     double last_pc_state_ts_ = 0.0;
     double last_odom_state_ts_ = 0.0;
     double last_backlog_log_ = 0.0;
+
+    // Sensor time -> host time. Guarded: the SDK feeds it from its callback
+    // threads while handle() reads it.
+    std::mutex clock_mutex_;
+    pointlio::HostClockOffset host_clock_;
 
     // A frame or two behind is the normal cost of batching; seconds behind is
     // the failure this guards.
