@@ -38,6 +38,7 @@ from dimos.control.components import (
 )
 import dimos.control.coordinator as coord_mod
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.task import CoordinatorState
 from dimos.control.tasks.registry import control_task_registry
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JOINT_TRAJECTORY_TASK_NAME,
@@ -323,6 +324,80 @@ def _base_component() -> HardwareComponent:
         joints=make_twist_base_joints("base"),
         adapter_type="mock_twist_base",
     )
+
+
+class _TwoSourceCoordinator(ControlCoordinator):
+    """Two twist sources arbitrated by priority: teleop outranks navigation."""
+
+    tele_twist_command: In[Twist]
+    tele_joint_command: In[JointState]
+    nav_joint_command: In[JointState]
+
+    twist_ports = {
+        "twist_command": "nav_joint_command",
+        "tele_twist_command": "tele_joint_command",
+    }
+
+
+def _two_source_coordinator(make_coordinator, tele_cooldown: float = 1.0):
+    return make_coordinator(
+        coordinator_cls=_TwoSourceCoordinator,
+        hardware=[_base_component()],
+        tasks=[
+            TaskConfig(
+                name="nav",
+                type="velocity",
+                joint_names=make_twist_base_joints("base"),
+                priority=10,
+                stream_bind={"joint_command": "nav_joint_command"},
+            ),
+            TaskConfig(
+                name="tele",
+                type="velocity",
+                joint_names=make_twist_base_joints("base"),
+                priority=20,
+                stream_bind={"joint_command": "tele_joint_command"},
+                # Going inactive rather than holding zeros is what hands the base back
+                # to navigation once the operator stops driving.
+                params={"timeout": tele_cooldown, "zero_on_timeout": False},
+            ),
+        ],
+    )
+
+
+class TestTwistPortArbitration:
+    """The teleop/navigation mux, expressed as two velocity tasks at two priorities."""
+
+    def test_each_source_reaches_only_its_own_task(self, make_coordinator):
+        coordinator, taps = _two_source_coordinator(make_coordinator)
+        coordinator.start()
+
+        taps["twist_command"].emit(Twist(linear=[1.0, 0.0, 0.0], angular=[0.0, 0.0, 0.0]))
+        taps["tele_twist_command"].emit(Twist(linear=[0.0, 0.0, 0.0], angular=[0.0, 0.0, 2.0]))
+
+        assert coordinator.get_task("nav")._velocities == [1.0, 0.0, 0.0]
+        assert coordinator.get_task("tele")._velocities == [0.0, 0.0, 2.0]
+
+    def test_teleop_stays_inactive_until_it_is_driven(self, make_coordinator):
+        coordinator, taps = _two_source_coordinator(make_coordinator)
+        coordinator.start()
+
+        taps["twist_command"].emit(Twist(linear=[1.0, 0.0, 0.0], angular=[0.0, 0.0, 0.0]))
+
+        assert coordinator.get_task("nav").is_active()
+        assert not coordinator.get_task("tele").is_active()
+
+    def test_teleop_hands_the_base_back_after_the_cooldown(self, make_coordinator):
+        coordinator, taps = _two_source_coordinator(make_coordinator, tele_cooldown=1.0)
+        coordinator.start()
+        tele = coordinator.get_task("tele")
+
+        taps["tele_twist_command"].emit(Twist(linear=[0.0, 0.0, 0.0], angular=[0.0, 0.0, 2.0]))
+        assert tele.is_active()
+
+        state = CoordinatorState(joints=None, t_now=tele._last_update_time + 1.5, dt=0.01)
+        assert tele.compute(state) is None
+        assert not tele.is_active()
 
 
 class TestTwistRouting:
