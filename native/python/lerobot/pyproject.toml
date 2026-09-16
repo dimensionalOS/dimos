@@ -7,6 +7,28 @@ name = "dimos-lerobot-runtime"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    # DimOS module, transport, and message dependencies (host installed without deps).
+    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5",
+    "eclipse-zenoh>=1.10.1,<2",
+    "numpy>=1.26.4",
+    "scipy>=1.10",
+    "pydantic>=2",
+    "pydantic-settings>=2",
+    "reactivex>=4",
+    "structlog>=25,<26",
+    "typer>=0.19,<1",
+    "python-dotenv",
+    "annotation-protocol>=1.4",
+    "plum-dispatch==2.5.7",
+    "sortedcontainers",
+    "toolz",
+    "psutil>=7",
+    "PyTurboJPEG==1.8.2",
+    "typing-extensions",
+    "rich",
+    "PyYAML",
+    "filelock",
+
     "lerobot[dataset,viz]==0.6.0",
     "mcap>=1.2",
     "opencv-contrib-python>=4.8,<5",

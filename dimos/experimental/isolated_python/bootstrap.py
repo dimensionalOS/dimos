@@ -114,8 +114,9 @@ def main(
 
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
-    stopping.wait()
-    if module is not None:
+    try:
+        module.run_runtime(stopping)
+    finally:
         module.stop()
 
 

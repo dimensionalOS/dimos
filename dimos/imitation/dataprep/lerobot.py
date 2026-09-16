@@ -23,6 +23,7 @@ from typing import Any
 from dimos.experimental.isolated_python.module import (
     isolated_python_environment,
     isolated_python_run_command,
+    prepare_isolated_python,
 )
 from dimos.imitation.dataprep._lerobot_protocol import (
     RESULT_ADAPTER,
@@ -55,6 +56,7 @@ def _run(request: Request) -> Result:
     env = isolated_python_environment(project)
     try:
         with cache_usage_guard():
+            prepare_isolated_python(project, env)
             result = subprocess.run(
                 command,
                 cwd=project,

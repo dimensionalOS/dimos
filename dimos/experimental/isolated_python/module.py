@@ -38,16 +38,45 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-def isolated_python_run_command(project: Path, *command: str) -> list[str]:
-    """Run a project with dimOS from the shared source checkout."""
-    args = ["uv", "run"]
-    if (project / "uv.lock").is_file():
-        args.append("--frozen")
-    args.extend(("--with-editable", str(get_project_root())))
-    args.extend(command)
+def _project_command(project: Path, *command: str) -> list[str]:
+    args = list(command)
     if (project / "pixi.toml").is_file():
         return ["pixi", "run", "--executable", *args]
     return args
+
+
+def isolated_python_run_command(project: Path, *command: str) -> list[str]:
+    """Run in a prepared project without changing its dependency environment."""
+    return _project_command(project, "uv", "run", "--no-sync", *command)
+
+
+def prepare_isolated_python(project: Path, env: dict[str, str], output_limit: int = 65536) -> None:
+    """Sync the runtime's lock, then install host code without host dependencies."""
+    sync = ["uv", "sync", "--frozen"]
+    install = [
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        str(Path(env["UV_PROJECT_ENVIRONMENT"]) / "bin/python"),
+        "--no-deps",
+        "--editable",
+        str(get_project_root()),
+    ]
+    for command in (sync, install):
+        result = subprocess.run(
+            _project_command(project, *command),
+            cwd=project,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode:
+            output = (result.stdout + "\n" + result.stderr).strip()
+            raise RuntimeError(
+                f"Isolated Python environment preparation failed (exit {result.returncode}): "
+                f"{output[-output_limit:]}"
+            )
 
 
 def isolated_python_environment(project: Path) -> dict[str, str]:
@@ -132,11 +161,9 @@ class IsolatedPythonModule(NativeModule):
             )
         return project
 
-    def _prepare_command(self) -> list[str]:
-        # `uv run` syncs the declared project and builds the cached overlay that
-        # holds the shared checkout’s dimOS with its dependencies. Doing it here keeps the
-        # first install, which can take minutes, out of the startup timeout.
-        return isolated_python_run_command(self.runtime_project, "python", "-c", "pass")
+    def run_runtime(self, stopping: threading.Event) -> None:
+        """Own the subprocess main thread; override for thread-affine engines."""
+        stopping.wait()
 
     def _launch_command(self, handshake_fd: int) -> list[str]:
         return isolated_python_run_command(
@@ -165,19 +192,7 @@ class IsolatedPythonModule(NativeModule):
         return env
 
     def _run_prepare(self) -> None:
-        result = subprocess.run(
-            self._prepare_command(),
-            cwd=self.runtime_project,
-            env=self._runtime_env(),
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode:
-            output = (result.stdout + "\n" + result.stderr).strip()
-            raise RuntimeError(
-                f"Isolated Python environment preparation failed (exit {result.returncode}): "
-                f"{output[-self.config.output_limit :]}"
-            )
+        prepare_isolated_python(self.runtime_project, self._runtime_env(), self.config.output_limit)
 
     def _spawn_runtime(self) -> None:
         parent_read, child_write = os.pipe()
