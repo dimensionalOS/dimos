@@ -21,7 +21,7 @@ from dimos.msgs.std_msgs.Int32 import Int32
 
 
 class ExampleExternalRuntime(ExampleExternal):
-    """Concrete implementation loaded in the sibling environment."""
+    """Concrete implementation loaded in the isolated environment."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
