@@ -6,7 +6,7 @@ Before the first run:
 
 - `bin/fetch-test-data` pulls the LFS archives the code references. Tests otherwise pull lazily, and a slow link trips the 600 s per-test timeout.
 - `uv run playwright install chromium firefox` for the browser tests.
-- On a laptop pass `--numprocesses=8` for the default suite and `--numprocesses=4` for `bin/pytest-all`. `auto` starts one worker per core and exhausts memory.
+- If tests get killed for lack of memory, pass a smaller `--numprocesses` than `auto`, which starts one worker per core regardless of RAM.
 
 Self-hosted tests need the heavy optional extras (LFS data, perception models, simulation, hardware SDKs, …). Sync them explicitly before running:
 
