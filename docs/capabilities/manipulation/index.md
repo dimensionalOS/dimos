@@ -288,7 +288,7 @@ after clear.
 Validate Cartesian, twist, and teleop behavior in simulation or replay before
 hardware use.
 
-Install the manipulation dependencies:
+Start with the [official installer](/docs/installation/index.md); its default extras include manipulation. To add manipulation to an existing developer environment:
 
 ```bash
 uv sync --extra manipulation --inexact
@@ -307,7 +307,7 @@ are needed.
 
 For a smaller installation, use `uv sync --extra planning --inexact` or
 `uv sync --extra control --inexact`. Add `--no-default-groups` to omit contributor test
-dependencies. Library installations use `pip install 'dimos[manipulation]'`.
+dependencies. For a new library installation, pass `--mode library --extras manipulation` to the official installer.
 The `--inexact` flag preserves additional packages already installed in your
 environment. The bundle supplies its own dependencies without requiring `misc`.
 Embedding models and unrelated utilities remain available through `misc`.
