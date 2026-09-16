@@ -771,7 +771,8 @@ jobs:
             experimental: false
           - os: macOS
             container: null  # run on host — `container:` is Linux-only
-            markers: "self_hosted"
+            # web_browser: the cockpit browser e2e that Linux runs in the `web` job.
+            markers: "self_hosted or web_browser"
             experimental: true
     runs-on:
       - self-hosted
@@ -819,6 +820,12 @@ jobs:
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
+      - name: Install web_browser e2e dependencies (macOS)
+        if: matrix.os == 'macOS'
+        run: |
+          brew install ffmpeg
+          uv sync --group tests-self-hosted --group browser-tests --frozen
+          uv run playwright install chromium firefox
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
       - name: Source ROS environment

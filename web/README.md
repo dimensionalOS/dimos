@@ -132,7 +132,11 @@ Panels are authored in Python (`dimos.web.cockpit`: `Video`, `Map2D`, `Teleop`, 
 compiled into the manifest; `cockpit(pages=[...])` panels render as full-page tabs in the header,
 next to Overview and the panels/channels toggle. `Stats()` is dtop as a tab: the bridge re-encodes
 the resource monitor's `/resource_stats` dict as `stats.json.v1`, and the blueprint switches the
-monitor on (`GlobalConfig.dtop`) by itself.
+monitor on (`GlobalConfig.dtop`) by itself. `Map2D(path=, click=, stop=)` adds the planner's path
+overlay, click-to-goal (a click publishes a `PointStamped` on `click`) and a cancel button (a `Bool`
+on `stop`, shown while a path is active). `Channel(paced=True)` spaces sends instead of sampling and
+`Channel(resend_on_subscribe=True)` replays the last message when the first viewer subscribes.
+Additional viewers wait for the next publish on channels already being watched.
 
 Dev workflow: run the relay (`deno task dev` in `web/`, or just `dimos run <bp> --local-relay`) and
 the vite server side by side. `localhost:5173` is a secure context; vite proxies `/api` to the relay
