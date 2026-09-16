@@ -60,7 +60,7 @@ def test_point_decodes_a_click() -> None:
     ids=["list", "missing_y", "string", "bool", "inf"],
 )
 def test_point_rejects_a_malformed_click(value: object) -> None:
-    with pytest.raises(ValueError, match="point.json.v1"):
+    with pytest.raises(ValueError, match="point.json.v1|finite number"):
         decode_point(value)
 
 

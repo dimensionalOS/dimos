@@ -60,6 +60,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.utils.generic import finite_number
 from dimos.utils.logging_config import setup_logger
 
 # No import cycle: cockpit.py only imports this module lazily inside
@@ -1173,17 +1174,13 @@ class RelayBridgeModule(Module):
         values: dict[str, float] = {}
         for key, default in _TELEOP_PARAM_DEFAULTS.items():
             candidate = spec.params.get(key, default)
-            if (
-                isinstance(candidate, bool)
-                or not isinstance(candidate, (int, float))
-                or not math.isfinite(candidate)
-                or candidate <= 0
-            ):
+            value = finite_number(candidate, f"manifest channel {spec.ch!r} {key}")
+            if value <= 0:
                 raise RuntimeError(
                     f"manifest channel {spec.ch!r} {key} must be a positive number, "
                     f"got {candidate!r}"
                 )
-            values[key] = float(candidate)
+            values[key] = value
         return _TeleopParams(
             max_linear=values["maxLinear"],
             max_angular=values["maxAngular"],
