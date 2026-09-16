@@ -27,7 +27,7 @@ import math
 from typing import Any
 import zlib
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool
 import numpy as np
 
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped

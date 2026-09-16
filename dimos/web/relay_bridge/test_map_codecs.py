@@ -16,7 +16,7 @@
 
 import math
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool
 import pytest
 
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
@@ -61,7 +61,7 @@ def test_point_decodes_a_click() -> None:
 )
 def test_point_rejects_a_malformed_click(value: object) -> None:
     with pytest.raises(ValueError, match="point.json.v1"):
-        decode_point(value)  # type: ignore[arg-type]
+        decode_point(value)
 
 
 def test_bool_decodes_to_std_msgs_bool() -> None:
@@ -70,4 +70,4 @@ def test_bool_decodes_to_std_msgs_bool() -> None:
     assert decode_bool(False).data is False
     assert resolve_decoder("bool.json.v1", Bool).decode is decode_bool
     with pytest.raises(ValueError, match="bool.json.v1"):
-        decode_bool(1)  # type: ignore[arg-type]
+        decode_bool(1)

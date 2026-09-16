@@ -20,7 +20,7 @@ import struct
 import subprocess
 import sys
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool
 from langchain_core.messages import BaseMessage
 import pytest
 

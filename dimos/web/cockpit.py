@@ -46,7 +46,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool
 
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.nav_msgs.Path import Path
