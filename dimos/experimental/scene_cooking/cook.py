@@ -28,6 +28,7 @@ from pathlib import Path
 import time
 from typing import Any
 
+from dimos.deps.requires import Requires
 from dimos.experimental.scene_cooking.browser.collision import cook_browser_collision
 from dimos.experimental.scene_cooking.browser.visuals import cook_browser_visual
 from dimos.experimental.scene_cooking.entities.collision import (
@@ -55,6 +56,8 @@ from dimos.simulation.scene_assets.spec import (
 )
 from dimos.utils.data import get_data_dir
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("sim",))
 
 logger = setup_logger()
 

@@ -24,11 +24,14 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from dimos.agents.llm_trace import list_llm_trace_pairs
+from dimos.deps.requires import Requires
 from dimos.evals.agents.base import Agent
 from dimos.evals.agents.lib.langchain_to_atif import append_ai_message_to_atif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.environments.base import Environment
 from dimos.evals.types import RunningEnvironment, Trajectory
+
+REQUIRES = Requires(extras=("agents",))
 
 
 class _Turn:

@@ -25,6 +25,7 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
+from dimos.deps.requires import Requires
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -33,6 +34,8 @@ from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
 from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("unitree",))
 
 logger = setup_logger()
 

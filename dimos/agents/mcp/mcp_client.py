@@ -23,6 +23,10 @@ import warnings
 
 from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("agents",))
+
 # Importing langchain_core un-mutes its pending-deprecation warnings, so this ignore
 # must be registered after that import to take precedence. It silences the noisy
 # `allowed_objects` warning emitted when langchain.agents pulls in langgraph.checkpoint.

@@ -43,6 +43,7 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.deps.requires import Requires
 from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
@@ -53,6 +54,8 @@ from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnaps
 from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
+
+REQUIRES = Requires(extras=("web",))
 
 logger = setup_logger()
 

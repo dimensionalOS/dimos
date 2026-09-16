@@ -42,6 +42,7 @@ from scipy.spatial.transform import Rotation as R
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.deps.requires import Requires
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig, DepthCameraHardware
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -68,6 +69,8 @@ from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
 from dimos.simulation.mujoco.constants import LIDAR_RESOLUTION, MAX_HEIGHT, MAX_RANGE, MIN_RANGE
 from dimos.spec import perception
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("sim",))
 
 logger = setup_logger()
 

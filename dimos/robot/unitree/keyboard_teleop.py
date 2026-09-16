@@ -30,11 +30,14 @@ from dimos.control.benchmarking.gate import GATE_ADVANCE, GATE_QUIT, GATE_SKIP
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
+from dimos.deps.requires import Requires
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.Int8 import Int8
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("control",))
 
 logger = setup_logger()
 

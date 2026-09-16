@@ -15,6 +15,15 @@
 from typing import overload
 import warnings
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(
+    extras=(
+        "misc",
+        "perception",
+    )
+)
+
 warnings.filterwarnings("ignore", message="Cython evaluation.*unavailable", category=UserWarning)
 
 from functools import cached_property

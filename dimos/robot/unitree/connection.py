@@ -38,6 +38,7 @@ from unitree_webrtc_connect.webrtc_driver import (
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
+from dimos.deps.requires import Requires
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -54,6 +55,8 @@ from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.utils.sequential_ids import SequentialIds
+
+REQUIRES = Requires(extras=("unitree",))
 
 VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 

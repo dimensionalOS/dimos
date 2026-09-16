@@ -22,6 +22,7 @@ from typing import Any
 
 import numpy as np
 
+from dimos.deps.requires import Requires
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -29,6 +30,8 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("spot",))
 
 logger = setup_logger()
 

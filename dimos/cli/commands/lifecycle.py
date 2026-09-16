@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+import contextlib
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -36,9 +39,20 @@ from dimos.core.daemon import (
     redirect_stdio_to_devnull,
     write_daemon_status,
 )
-from dimos.core.global_config import global_config
+from dimos.core.global_config import SECRET_CONFIG_FIELDS, GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
-from dimos.utils.cache import cache_usage_guard, cache_usage_locked
+from dimos.deps.catalog import CatalogError, catalog_names, default_catalog
+from dimos.deps.launch import (
+    OFFLINE_ENV,
+    Decision,
+    LaunchError,
+    exec_into,
+    hold_current_lease,
+    select_environment,
+)
+from dimos.deps.planning import RunPlan, plan_run
+from dimos.deps.selectors import collect_selector_inputs
+from dimos.utils.cache import cache_usage_guard
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -47,6 +61,97 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 DEFAULT_CONFIG_PATH = CONFIG_DIR / "config"
+
+
+@dataclass(frozen=True)
+class RunRequest:
+    """What a run-like command asked for, resolved before any blueprint is imported."""
+
+    blueprint_names: tuple[str, ...]
+    config_tokens: tuple[str, ...]
+    global_overrides: dict[str, Any]
+    """Root flags plus the command's own global-config flags."""
+    global_values: dict[str, Any]
+    """Every GlobalConfig value after config file, environment and flags."""
+    config_sections: Mapping[str, Any]
+    """Raw contents of the config file; the planner reads its module sections for selections."""
+
+    @property
+    def planning_values(self) -> dict[str, Any]:
+        """Global values plus the derived properties the catalog selects on."""
+        return GlobalConfig.planning_values(self.global_values)
+
+
+def resolve_run_request(
+    ctx: typer.Context,
+    robot_types: list[str],
+    config_path: Path,
+    run_overrides: Mapping[str, Any] | None = None,
+) -> RunRequest:
+    """Split blueprint names from config tokens and preparse the global config.
+
+    Shared by ``run``, ``deps``, ``doctor`` and ``prepare`` so every command
+    resolves the same names under the same configuration precedence.
+    """
+    from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+    from dimos.core.coordination.blueprint_config.parser import (
+        BlueprintConfigParser,
+        split_run_arguments,
+    )
+    from dimos.core.coordination.blueprint_config.sources import read_config_file
+
+    try:
+        blueprint_names, config_tokens = split_run_arguments(robot_types)
+        config_sections = read_config_file(config_path)
+    except BlueprintConfigError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    global_overrides: dict[str, Any] = dict(ctx.obj or {})
+    if run_overrides:
+        global_overrides.update(run_overrides)
+    try:
+        global_values = BlueprintConfigParser.preparse_global_config(
+            config_tokens,
+            config_path=config_path,
+            environ=os.environ,
+            global_overrides=global_overrides,
+        )
+    except BlueprintConfigError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    return RunRequest(
+        blueprint_names, config_tokens, global_overrides, global_values, config_sections
+    )
+
+
+def plan_request(request: RunRequest, profile: str | None) -> RunPlan:
+    """Plan the request from the catalog, with the selections it can read without a schema."""
+    inputs = collect_selector_inputs(
+        request.config_tokens,
+        request.config_sections,
+        os.environ,
+        default_catalog().selector_fields(),
+    )
+    return plan_run(request.blueprint_names, request.planning_values, profile, inputs)
+
+
+def apply_global_values(values: Mapping[str, Any]) -> None:
+    """Make the preparsed global config visible to blueprint modules."""
+    try:
+        global_config.update(**values)
+    except ValidationError as error:
+        typer.echo(f"Error: {error.errors()[0]['msg']}", err=True)
+        raise typer.Exit(2) from error
+
+
+def public_config(values: Mapping[str, Any]) -> dict[str, Any]:
+    """Global values without secrets, safe to hand to another process or a file."""
+    return {key: value for key, value in values.items() if key not in SECRET_CONFIG_FIELDS}
+
+
+def _echo_error(message: str) -> None:
+    typer.echo(message, err=True)
 
 
 def _reject_legacy_config() -> None:
@@ -76,7 +181,6 @@ def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
     return with_relay_bridge(blueprint)
 
 
-@cache_usage_locked
 def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
@@ -101,6 +205,17 @@ def run(
         "--relay-ca",
         help="PEM CA bundle that signed the relay's certificate (mkcert, a private CA)",
     ),
+    environment: str = typer.Option(
+        "auto",
+        "--environment",
+        help="Where to run: auto, current, managed, or the path of a virtualenv with dimos",
+    ),
+    profile: str | None = typer.Option(
+        None, "--profile", help="Hardware profile of the managed environment (default: detect)"
+    ),
+    offline: bool = typer.Option(
+        False, "--offline", help="Require a prepared environment; never download anything"
+    ),
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
@@ -110,11 +225,106 @@ def run(
 
     if config_path == DEFAULT_CONFIG_PATH:
         _reject_legacy_config()
+    from dimos.utils.logging_config import setup_exception_handler
+
+    setup_exception_handler()
+
+    # These flags are accepted on `run` itself, not just as global options.
+    run_overrides = {
+        name: value
+        for name, value in (
+            ("local_relay", local_relay),
+            ("relay_url", relay_url),
+            ("relay_ca", relay_ca),
+        )
+        if value is not None
+    }
+    request = resolve_run_request(ctx, robot_types, config_path, run_overrides)
+    # Some blueprint modules select their composition at import time, so all
+    # global sources must be visible before resolving the requested names.
+    apply_global_values(request.global_values)
+
+    if offline:
+        os.environ.update(OFFLINE_ENV)
+    # The lease on the managed environment the run executes from lives as long
+    # as this process; a daemon keeps it through the fork, an exec hands it over.
+    with contextlib.ExitStack() as resources:
+        if not show_help:
+            with cache_usage_guard():
+                decision = _select_runtime(request, environment, profile, offline)
+            if decision is not None and decision.dimos_executable is not None:
+                assert decision.env_dir is not None
+                try:
+                    exec_into(
+                        decision.dimos_executable,
+                        decision.env_dir,
+                        sys.argv,
+                        offline=offline,
+                        lease=decision.lease,
+                    )
+                except LaunchError as error:
+                    typer.echo(f"Error: {error}", err=True)
+                    raise typer.Exit(error.exit_code) from error
+            lease = hold_current_lease(echo=_echo_error)
+            if lease is not None:
+                resources.enter_context(lease)
+
+        with cache_usage_guard():
+            _start(
+                ctx,
+                request,
+                daemon=daemon,
+                disable=disable,
+                config_path=config_path,
+                show_help=show_help,
+            )
+
+
+def _select_runtime(
+    request: RunRequest, environment: str, profile: str | None, offline: bool
+) -> Decision | None:
+    """Plan the run and pick its interpreter; ``None`` continues in this one."""
+    builtin = [name for name in request.blueprint_names if "." not in name]
+    if any(name not in catalog_names() for name in builtin):
+        # Unknown names are reported with suggestions by the resolver.
+        return None
+    try:
+        planned = plan_request(request, profile)
+    except (CatalogError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    if planned.unsupported is not None and environment == "auto":
+        logger.warning(
+            "No tested hardware profile for this host; running in the current environment",
+            reason=str(planned.unsupported),
+        )
+        return None
+    try:
+        return select_environment(
+            planned,
+            environment=environment,
+            offline=offline,
+            blueprints=planned.builtin_names,
+            global_config=public_config(request.global_values),
+            echo=_echo_error,
+        )
+    except LaunchError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(error.exit_code) from error
+
+
+def _start(
+    ctx: typer.Context,
+    request: RunRequest,
+    *,
+    daemon: bool,
+    disable: list[str],
+    config_path: Path,
+    show_help: bool,
+) -> None:
+    """Build and run the blueprint in this interpreter."""
     from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
-    from dimos.core.coordination.blueprint_config.parser import (
-        BlueprintConfigParser,
-        split_run_arguments,
-    )
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.core.coordination.module_coordinator import ModuleCoordinator, stream_name_types
     from dimos.core.coordination.process_lifecycle import (
@@ -128,48 +338,11 @@ def run(
     )
     from dimos.memory.tap import check_topics, recording
     from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
-    from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
+    from dimos.utils.logging_config import set_run_log_dir
 
-    setup_exception_handler()
-
-    try:
-        blueprint_names, config_tokens = split_run_arguments(robot_types)
-    except BlueprintConfigError as error:
-        typer.echo(f"Error: {error}", err=True)
-        raise typer.Exit(2) from error
-
-    global_option_overrides: dict[str, Any] = dict(ctx.obj or {})
-
-    # These flags are accepted on `run` itself, not just as global options.
-    run_overrides = {
-        name: value
-        for name, value in (
-            ("local_relay", local_relay),
-            ("relay_url", relay_url),
-            ("relay_ca", relay_ca),
-        )
-        if value is not None
-    }
-    if run_overrides:
-        global_option_overrides.update(run_overrides)
-
-    try:
-        preparsed_global_config = BlueprintConfigParser.preparse_global_config(
-            config_tokens,
-            config_path=config_path,
-            environ=os.environ,
-            global_overrides=global_option_overrides,
-        )
-    except BlueprintConfigError as error:
-        typer.echo(f"Error: {error}", err=True)
-        raise typer.Exit(2) from error
-    # Some blueprint modules select their composition at import time, so all
-    # global sources must be visible before resolving the requested names.
-    try:
-        global_config.update(**preparsed_global_config)
-    except ValidationError as error:
-        typer.echo(f"Error: {error.errors()[0]['msg']}", err=True)
-        raise typer.Exit(2) from error
+    blueprint_names = request.blueprint_names
+    config_tokens = request.config_tokens
+    global_option_overrides = request.global_overrides
 
     blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names))
 
@@ -287,6 +460,7 @@ def run(
                 cli_args=list(blueprint_names),
                 config_overrides=global_option_overrides,
                 original_argv=sys.argv,
+                environment=sys.prefix,
             )
             entry.save()
             spawn_watchdog(run_id, log_dir=log_dir)
@@ -325,6 +499,7 @@ def run(
             cli_args=list(blueprint_names),
             config_overrides=global_option_overrides,
             original_argv=sys.argv,
+            environment=sys.prefix,
         )
         entry.save()
         spawn_watchdog(run_id, log_dir=log_dir)
@@ -363,6 +538,8 @@ def status() -> None:
     typer.echo(f"  Blueprint: {entry.blueprint}")
     typer.echo(f"  Uptime:    {uptime}")
     typer.echo(f"  Log:       {entry.log_dir}")
+    if entry.environment:
+        typer.echo(f"  Env:       {entry.environment}")
 
 
 def stop(

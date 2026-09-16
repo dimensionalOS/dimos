@@ -45,7 +45,10 @@ from unitree_sdk2py.idl.unitree_go.msg.dds_ import (
     WirelessController_,
 )
 
+from dimos.deps.requires import Requires
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("unitree-dds",))
 
 logger = setup_logger()
 

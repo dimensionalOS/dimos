@@ -20,11 +20,14 @@ import numpy as np
 from numpy.typing import NDArray
 import torch
 
+from dimos.deps.requires import Requires
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("perception",))
 
 logger = setup_logger()
 

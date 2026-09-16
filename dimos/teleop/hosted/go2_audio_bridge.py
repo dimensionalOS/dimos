@@ -33,9 +33,12 @@ from unitree_webrtc_connect.constants import AUDIO_API, RTC_TOPIC
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.deps.requires import Requires
 from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
 from dimos.stream.audio.base import AudioEvent
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("unitree",))
 
 logger = setup_logger()
 

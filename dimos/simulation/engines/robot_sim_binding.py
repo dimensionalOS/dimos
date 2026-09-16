@@ -26,7 +26,10 @@ from dataclasses import dataclass
 
 import mujoco
 
+from dimos.deps.requires import Requires
 from dimos.simulation.utils.xml_parser import JointMapping
+
+REQUIRES = Requires(extras=("sim",))
 
 _MJOBJ_BODY = int(mujoco.mjtObj.mjOBJ_BODY)
 _MJOBJ_JOINT = int(mujoco.mjtObj.mjOBJ_JOINT)

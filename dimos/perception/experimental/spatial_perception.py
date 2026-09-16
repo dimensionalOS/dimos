@@ -40,6 +40,9 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("perception",))
 
 _OUTPUT_DIR = DIMOS_PROJECT_ROOT / "assets" / "output"
 _MEMORY_DIR = _OUTPUT_DIR / "memory"

@@ -30,11 +30,14 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import session_config
+from dimos.deps.requires import Requires
 from dimos.experimental.memory.rust_recorder import RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(native=("dimos-memory-recorder",))
 
 logger = setup_logger()
 

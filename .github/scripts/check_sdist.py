@@ -27,6 +27,7 @@ MAX_UNCOMPRESSED_MB = 40
 
 # Paths below the dimos-<version>/ root that every release sdist must carry.
 REQUIRED = (
+    "dimos/deps/constraints.txt",
     "web/cockpit/dist/index.html",
     "web/deno.lock",
     "web/relay/main.ts",

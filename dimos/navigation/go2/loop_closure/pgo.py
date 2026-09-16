@@ -64,6 +64,9 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     import gtsam  # type: ignore[import-not-found,import-untyped]
     from typing_extensions import Unpack  # TODO(PY311): import from typing
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("mapping",))
 
 T = TypeVar("T")
 

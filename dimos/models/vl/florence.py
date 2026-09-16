@@ -19,9 +19,12 @@ from PIL import Image as PILImage
 import torch
 from transformers import AutoModelForCausalLM, AutoProcessor
 
+from dimos.deps.requires import Requires
 from dimos.models.base import HuggingFaceModel
 from dimos.models.vl.base import Captioner
 from dimos.msgs.sensor_msgs.Image import Image
+
+REQUIRES = Requires(extras=("perception",))
 
 
 class CaptionDetail(Enum):

@@ -20,6 +20,7 @@ on:
       - web/deno.json
       - web/deno.lock
       - dimos/utils/deno.py
+      - dimos/deps/**
 
 permissions: {}
 

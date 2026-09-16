@@ -45,6 +45,9 @@ class LazyAdapterRegistry(Generic[AdapterT]):
     manifest_roots: ClassVar[tuple[tuple[str, int], ...]]
     """``(package, max_depth)`` roots scanned for ``_registry.py`` manifests."""
 
+    manifest_table: ClassVar[str] = "ADAPTER_FACTORIES"
+    """Name of the dict a manifest declares its factories in."""
+
     def __init__(self) -> None:
         self._factory_paths: dict[str, str] = {}
         self._factories: dict[str, Callable[..., AdapterT]] = {}
@@ -80,13 +83,14 @@ class LazyAdapterRegistry(Generic[AdapterT]):
             ImportError: If the factory's module cannot be imported (e.g.
                 the vendor SDK is not installed).
         """
-        return self._resolve_factory(name)(**kwargs)
+        return self.resolve(name)(**kwargs)
 
     def available(self) -> list[str]:
         """List registered adapter names; import is not attempted."""
         return sorted(self._factory_paths.keys() | self._factories.keys())
 
-    def _resolve_factory(self, name: str) -> Callable[..., AdapterT]:
+    def resolve(self, name: str) -> Callable[..., AdapterT]:
+        """The factory registered under ``name``, importing its module on first use."""
         key = name.lower()
         if key in self._factories:
             return self._factories[key]
@@ -126,10 +130,10 @@ class LazyAdapterRegistry(Generic[AdapterT]):
             if exc.name == module_name:
                 return
             raise
-        factories = getattr(module, "ADAPTER_FACTORIES", None)
+        factories = getattr(module, self.manifest_table, None)
         if not isinstance(factories, Mapping):
-            raise TypeError(f"{module_name} must define ADAPTER_FACTORIES")
+            raise TypeError(f"{module_name} must define {self.manifest_table}")
         for name, factory_path in factories.items():
             if not isinstance(name, str) or not isinstance(factory_path, str):
-                raise TypeError(f"{module_name}.ADAPTER_FACTORIES must map strings to strings")
+                raise TypeError(f"{module_name}.{self.manifest_table} must map strings to strings")
             self.register_path(name, factory_path)

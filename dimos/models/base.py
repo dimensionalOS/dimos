@@ -23,7 +23,10 @@ from typing import Annotated, Any
 import torch
 
 from dimos.core.resource import Resource
+from dimos.deps.requires import Requires
 from dimos.protocol.service.spec import BaseConfig, Configurable
+
+REQUIRES = Requires(extras=("perception",))
 
 # Device string type - 'cuda', 'cpu', 'cuda:0', 'cuda:1', 'mps', etc.
 DeviceType = Annotated[str, "Device identifier (e.g., 'cuda', 'cpu', 'cuda:0', 'mps')"]

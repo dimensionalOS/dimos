@@ -27,6 +27,9 @@ from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.Image import Image
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("perception",))
 
 
 class EmbeddingModelConfig(LocalModelConfig):

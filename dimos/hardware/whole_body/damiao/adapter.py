@@ -26,11 +26,14 @@ import can_motor_control
 import numpy as np
 import pinocchio
 
+from dimos.deps.requires import Requires
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("control",))
 
 logger = setup_logger()
 

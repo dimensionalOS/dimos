@@ -22,8 +22,11 @@ import mujoco
 import numpy as np
 import onnxruntime as ort  # type: ignore[import-untyped]
 
+from dimos.deps.requires import Requires
 from dimos.simulation.mujoco.input_controller import InputController
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("sim",), backends=("onnxruntime",))
 
 logger = setup_logger()
 

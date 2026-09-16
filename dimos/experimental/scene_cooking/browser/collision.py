@@ -38,6 +38,9 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     import open3d as o3d  # type: ignore[import-untyped]
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("scene",))
 
 logger = setup_logger()
 

@@ -21,8 +21,11 @@ from pathlib import Path
 from langchain_core.messages import AIMessage
 from langchain_core.messages.ai import UsageMetadata
 
+from dimos.deps.requires import Requires
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.types import Metrics, ToolCall
+
+REQUIRES = Requires(extras=("agents",))
 
 
 def append_ai_message_to_atif(

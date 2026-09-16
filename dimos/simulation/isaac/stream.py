@@ -15,7 +15,11 @@
 from pathlib import Path
 import time
 
+from dimos.deps.requires import Requires
+
 from ..base.stream_base import AnnotatorType, StreamBase, TransportType
+
+REQUIRES = Requires(system=("omni",))
 
 
 class IsaacStream(StreamBase):

@@ -23,7 +23,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from dimos.deps.requires import Requires
 from dimos.imitation.dataprep.core import summarize_lengths
+
+REQUIRES = Requires(extras=("learning",))
 
 
 class _Hdf5Reader:

@@ -20,10 +20,13 @@ import numpy as np
 from reactivex import Observable
 import sounddevice as sd  # type: ignore[import-untyped]
 
+from dimos.deps.requires import Requires
 from dimos.stream.audio.base import (
     AbstractAudioTransform,
 )
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("agents",))
 
 logger = setup_logger()
 

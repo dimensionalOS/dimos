@@ -43,6 +43,9 @@ from dimos.simulation.scene_assets.spec import SceneMeshAlignment
 
 if TYPE_CHECKING:
     import open3d as o3d  # type: ignore[import-untyped]
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("scene",))
 
 _TRIMESH_DUPLICATE_SUFFIX_RE = re.compile(r"_[0-9a-f]{6}$", re.IGNORECASE)
 

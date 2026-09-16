@@ -23,6 +23,11 @@ import sys
 
 import typer
 
+from dimos.deps.requires import Requires
+
+# The command imports its SDK when it runs; installing the control extra is the user's step.
+REQUIRES = Requires(defers=("can_motor_control",))
+
 app = typer.Typer(help="Discover and configure CAN interfaces", no_args_is_help=True)
 
 GS_USB_VENDOR_ID = 0x1D50

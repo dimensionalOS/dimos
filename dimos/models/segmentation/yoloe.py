@@ -23,12 +23,15 @@ import numpy as np
 from numpy.typing import NDArray
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 
+from dimos.deps.requires import Requires
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("perception",))
 
 logger = setup_logger()
 

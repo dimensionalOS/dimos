@@ -55,6 +55,10 @@ import numpy as np
 import numpy.typing as npt
 import zenoh
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(system=("habitat_sim",))
+
 _spec = importlib.util.spec_from_file_location(
     "_habitat_frames", Path(__file__).parent / "frames.py"
 )

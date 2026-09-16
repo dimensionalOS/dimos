@@ -82,6 +82,9 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...] [--<
 | `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--voxelgridmapper.voxel-size=1` |
 | `--local-relay` | Start a relay on this machine and open the cockpit in the browser (see [Web](/docs/web/index.md)) |
 | `--relay-url` | Connect the robot to a relay started elsewhere, by its HTTP URL; `--relay-ca` adds a private CA and `RELAY_KEY` the robot's key (see [Bridge](/docs/web/bridge.md#robot-side-options)) |
+| `--environment` | `auto` (default), `current`, `managed`, or the path of a virtualenv with dimos; see [Dependencies](/docs/usage/dependencies.md) |
+| `--profile` | Hardware profile for the managed environment (default: detected) |
+| `--offline` | Require an already prepared environment and forbid downloads |
 | `--help` | Display the run options and available blueprint configuration flags |
 
 Dynamic values accept both `--field=value` and `--field value`. A shorthand is
@@ -134,6 +137,11 @@ and must be lowercase kebab-case, for example `keyboard-teleop`.
 
 Heavy replay workloads can be unreliable over LCM UDP, which is one reason `zenoh` is the default transport; you can still force either path explicitly with `--transport=lcm` or `--transport=zenoh`.
 
+Before importing the blueprint, `run` checks that the current interpreter
+satisfies the blueprint's requirements and otherwise prepares a managed
+environment and continues there. See
+[Dependencies and Runtime Environments](/docs/usage/dependencies.md).
+
 When `--daemon` is used, the process:
 1. Builds and starts all modules (foreground, so you see errors)
 2. Runs a health check (polls worker PIDs)
@@ -153,6 +161,52 @@ This auto-generates `dimos/robot/all_blueprints.py` for built-in blueprints. Ext
 packages do not edit that file; they expose blueprints through Python package entry
 points. See [blueprints](/docs/usage/blueprints.md) for composition and external
 publishing details.
+
+### `dimos deps`
+
+Explain which extras, backends and prerequisites a blueprint needs, under the
+same configuration `run` would use.
+
+```bash skip
+dimos deps unitree-go2
+dimos --simulation deps unitree-go2
+dimos deps unitree-go2 --why perception
+dimos deps unitree-go2 --json
+```
+
+### `dimos doctor`
+
+Diagnose packages, providers, native modules, host-provided modules, tools and
+backends for a blueprint in the current interpreter, the managed environment
+or a virtualenv. Each prerequisite is `satisfied`, `missing` or `unchecked`;
+the command fails when packages or any checked prerequisite are missing.
+
+```bash skip
+dimos doctor unitree-go2
+dimos doctor unitree-go2 --environment managed
+```
+
+### `dimos prepare`
+
+Prepare the managed runtime environment for a blueprint without running it.
+
+```bash skip
+dimos prepare unitree-go2
+dimos prepare unitree-go2 --profile linux-aarch64-cpu --offline
+```
+
+### `dimos envs`
+
+List, remove and prune managed environments. `list` shows each environment as
+`idle`, `in use` (a run holds its lease), `preparing` or `incomplete`. `remove`
+takes a name from `list`, never a path, and refuses an environment that is in
+use or being prepared; `prune` skips such environments and says so.
+
+```bash skip
+dimos envs list
+dimos envs remove <name>
+dimos envs prune [--all]
+```
 
 ### `dimos graph`
 
@@ -508,4 +562,6 @@ Also available as `dimos rerun-bridge`.
 |------|----------|
 | `~/.local/state/dimos/runs/<run-id>.json` | Run registry (PID, blueprint, args, ports). Used by `status`/`stop`/`restart`. Cleaned up when processes exit. |
 | `~/.local/state/dimos/logs/<run-id>/main.jsonl` | Structured logs (main process + all workers) |
+| `~/.local/share/dimos/envs/<name>/` | Managed runtime environments (`.venv/`, `dimos-env.json`, `validations/`); see `dimos envs` |
+| `~/.local/share/dimos/envs/.locks/` | Lease files that mark environments as in use or being prepared |
 | `.env` | Local config overrides (`ROBOT_IP=192.168.123.161`) |

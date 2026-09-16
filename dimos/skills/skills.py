@@ -24,6 +24,9 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("agents",))
 
 logger = setup_logger()
 

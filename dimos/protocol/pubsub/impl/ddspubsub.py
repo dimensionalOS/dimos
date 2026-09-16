@@ -31,6 +31,9 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from cyclonedds.idl import IdlStruct
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("dds",))
 
 logger = setup_logger()
 

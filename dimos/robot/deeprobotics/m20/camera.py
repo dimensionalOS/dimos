@@ -24,6 +24,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
+from dimos.deps.requires import Requires
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -35,6 +36,8 @@ from dimos.robot.deeprobotics.m20.constants import (
     REAR_CAMERA_RTSP_URL,
 )
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("webrtc",))
 
 logger = setup_logger()
 

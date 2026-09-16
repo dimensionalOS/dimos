@@ -26,7 +26,10 @@ import time
 from aiortc.mediastreams import VIDEO_CLOCK_RATE, VIDEO_TIME_BASE, VideoStreamTrack
 import av
 
+from dimos.deps.requires import Requires
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+
+REQUIRES = Requires(extras=("webrtc",))
 
 _AV_FORMAT_MAP = {
     ImageFormat.BGR: "bgr24",

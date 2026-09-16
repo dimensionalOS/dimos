@@ -51,8 +51,11 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial import ConvexHull, QhullError  # type: ignore[import-untyped]
 
+from dimos.deps.requires import Requires
 from dimos.experimental.scene_cooking.coacd_util import silence_coacd_logging
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("scene",))
 
 logger = setup_logger()
 

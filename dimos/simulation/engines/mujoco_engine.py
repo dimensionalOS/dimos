@@ -41,6 +41,9 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("sim",))
 
 logger = setup_logger()
 

@@ -30,6 +30,7 @@ from numpy.typing import NDArray
 import trimesh
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
+from dimos.deps.requires import Requires
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import DEFAULT_OBSTACLE_RGBA, Obstacle
@@ -50,6 +51,8 @@ from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("planning",))
 
 try:
     from viser import (

@@ -57,8 +57,8 @@ def dual_openyam_hardware(
     if left_can_port == right_can_port:
         raise ValueError("Dual OpenYAM hardware requires distinct left and right CAN ports")
     return _hardware_component(
-        DUAL_OPENYAM_ADAPTER_TYPE,
-        {
+        adapter_type=DUAL_OPENYAM_ADAPTER_TYPE,
+        adapter_kwargs={
             "runtime_config": DamiaoRuntimeConfig(
                 bus_devices={"left": left_can_port, "right": right_can_port},
                 gravity_comp=True,
@@ -70,8 +70,8 @@ def dual_openyam_hardware(
 def dual_openyam_mock_hardware() -> HardwareComponent:
     """Build an in-memory complete dual-arm actuator component."""
     return _hardware_component(
-        "mock_whole_body",
-        {"initial_positions": [*DUAL_OPENYAM_HOME_JOINTS, 0.0, 0.0]},
+        adapter_type="mock_whole_body",
+        adapter_kwargs={"initial_positions": [*DUAL_OPENYAM_HOME_JOINTS, 0.0, 0.0]},
     )
 
 

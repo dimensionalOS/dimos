@@ -33,6 +33,7 @@ import threading
 import time
 from typing import IO
 
+from dimos.deps.requires import Requires
 from dimos.utils.deno import ensure_deno
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.locate import (
@@ -44,6 +45,8 @@ from dimos.web.relay_bridge.locate import (
     find_web_dir,
     relay_run_cmd,
 )
+
+REQUIRES = Requires(tools=("deno",))
 
 logger = setup_logger()
 

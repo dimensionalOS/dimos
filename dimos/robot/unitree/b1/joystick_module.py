@@ -20,6 +20,10 @@
 import os
 import threading
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("control",))
+
 # Force X11 driver to avoid OpenGL threading issues
 os.environ["SDL_VIDEODRIVER"] = "x11"
 

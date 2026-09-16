@@ -51,6 +51,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from textual.events import Key
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("agents",))
 
 # Custom theme for JSON highlighting
 JSON_THEME = Theme(

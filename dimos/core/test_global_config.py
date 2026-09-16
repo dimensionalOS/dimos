@@ -72,3 +72,36 @@ def test_dotenv_is_ignored_under_pytest(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.delenv("ROBOT_IP", raising=False)
 
     assert GlobalConfig().robot_ip is None
+
+
+def test_simulation_is_normalized() -> None:
+    assert GlobalConfig(simulation="TRUE").simulation == "mujoco"
+    assert GlobalConfig(simulation=" Mujoco ").simulation == "mujoco"
+    config = GlobalConfig()
+    config.update(simulation="true")
+    assert config.simulation == "mujoco"
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ({}, "webrtc"),
+        ({"simulation": "mujoco"}, "mujoco"),
+        ({"simulation": "dimsim"}, "dimsim"),
+        ({"replay": True, "simulation": "mujoco"}, "replay"),
+        ({"robot_ip": "mock"}, "replay"),
+        ({"robot_ip": "fake", "simulation": "mujoco"}, "replay"),
+        ({"robot_ip": "mujoco"}, "mujoco"),
+    ],
+)
+def test_unitree_connection_type_follows_replay_address_aliases_and_simulation(
+    values: dict[str, object], expected: str
+) -> None:
+    assert GlobalConfig(**values).unitree_connection_type == expected
+
+
+def test_planning_values_add_the_derived_properties() -> None:
+    values = GlobalConfig(simulation="mujoco").model_dump()
+    planning = GlobalConfig.planning_values(values)
+    assert planning["unitree_connection_type"] == "mujoco" and planning["simulation"] == "mujoco"
+    assert set(planning) - set(values) == {"unitree_connection_type"}

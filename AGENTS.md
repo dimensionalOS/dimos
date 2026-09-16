@@ -192,6 +192,10 @@ autoconnect(module_a(), module_b(), module_c()).build().loop()
 
 For in-repo DimOS blueprints, expose a module-level variable for `dimos run` to find it and add it to the built-in registry by running `pytest dimos/robot/test_all_blueprints_generation.py`. External packages should not edit `all_blueprints.py`; expose runnable blueprints through installed Python package entry points in the `dimos.blueprints` group.
 
+### Dependencies
+
+Blueprints do not declare extras by hand. A file declares what its code needs with a literal `Requires(...)` (`dimos/deps/requires.py`) at module scope, e.g. `REQUIRES = Requires(extras=("perception",))`; `dimos/deps/blueprint_catalog.json` is generated from those declarations (`pytest dimos/deps/test_catalog_generation.py`, verified in CI like `all_blueprints.py`) and audited against every eager and lazy import; the test names the declaration to add. Configuration that picks an implementation goes through a `_registry.py` manifest plus `Requires(selectors=...)`, never through a bare inline import. Keep optional heavy imports inside the function that uses them. See `docs/usage/dependencies.md`.
+
 ### GlobalConfig
 
 Singleton config. Values cascade: defaults → `.env` → env vars → blueprint → CLI flags. Env vars prefixed `DIMOS_`. Key fields: `robot_ip`, `simulation`, `replay`, `viewer`, `n_workers`, `mcp_port`.
@@ -216,12 +220,16 @@ Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simul
 
 | Command | Description |
 |---------|-------------|
-| `dimos run <blueprint> [--daemon]` | Start a blueprint |
+| `dimos run <blueprint> [--daemon] [--environment auto\|current\|managed] [--offline]` | Start a blueprint; prepares a managed environment when the current one lacks its extras |
 | `dimos shell` | Open an attached IPython session for live module/RPC discovery and calls |
 | `dimos status` | Show running instance (run ID, PID, blueprint, uptime, log path) |
 | `dimos stop [--force]` | SIGTERM → SIGKILL after 5s; `--force` = immediate SIGKILL |
 | `dimos restart [--force]` | Stop + re-exec with original args |
 | `dimos list` | List all non-demo blueprints |
+| `dimos deps <blueprint> [--why EXTRA]` | Extras, backends and prerequisites a blueprint needs, with install recipes |
+| `dimos doctor <blueprint> [--environment managed]` | Diagnose an environment for a blueprint (packages, providers, native, tools, backends) |
+| `dimos prepare <blueprint>` | Prepare the managed runtime environment without running |
+| `dimos envs list / remove / prune` | Manage managed runtime environments (`~/.local/share/dimos/envs`) |
 | `dimos show-config` | Print resolved GlobalConfig values |
 | `dimos cache clean [--yes] [--force]` | Remove DimOS caches; preserve robot Git work unless forced |
 | `dimos log [-f] [-n N] [--json] [-r <run-id>]` | View per-run logs |

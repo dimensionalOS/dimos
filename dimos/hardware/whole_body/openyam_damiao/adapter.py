@@ -19,10 +19,13 @@ from __future__ import annotations
 import can_motor_control
 from can_motor_control import damiao
 
+from dimos.deps.requires import Requires
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.data import LfsPath
+
+REQUIRES = Requires(extras=("control",))
 
 
 class OpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):

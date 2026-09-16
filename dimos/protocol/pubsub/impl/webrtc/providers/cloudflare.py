@@ -36,6 +36,7 @@ import hashlib
 import re
 from typing import Any
 
+from dimos.deps.requires import Requires
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
     WEBRTC_AVAILABLE,
     AsyncProviderBase,
@@ -44,6 +45,8 @@ from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
     wait_open,
 )
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("webrtc",))
 
 logger = setup_logger()
 

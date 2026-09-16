@@ -34,6 +34,9 @@ import numpy as np
 import trimesh
 
 from dimos.cli.apriltag import _families, cell_matrix, display_color, row_runs
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("apriltag",))
 
 # Cutting solids overshoot the plate by this much so coplanar faces never meet in a
 # boolean; the exported solids stay at their exact nominal dimensions.

@@ -15,7 +15,16 @@
 
 from isaacsim import SimulationApp  # type: ignore[import-not-found]
 
+from dimos.deps.requires import Requires
+
 from ..base.simulator_base import SimulatorBase
+
+REQUIRES = Requires(
+    system=(
+        "isaacsim",
+        "omni",
+    )
+)
 
 
 class IsaacSimulator(SimulatorBase):

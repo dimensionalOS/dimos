@@ -40,6 +40,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos.deps.requires import Requires
 from dimos.protocol.pubsub.impl.webrtc.providers.sdp import propagate_bundle_candidates
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
     WEBRTC_AVAILABLE,
@@ -48,6 +49,15 @@ from dimos.protocol.pubsub.impl.webrtc.providers.spec import (
     wait_connected,
 )
 from dimos.utils.logging_config import setup_logger
+
+# Needed when a WebRTC pubsub is constructed. Transports are chosen through the Python
+# API (.transports), which the planner does not read, so the composing code declares webrtc.
+REQUIRES = Requires(
+    defers=(
+        "aiohttp",
+        "aiortc",
+    )
+)
 
 logger = setup_logger()
 

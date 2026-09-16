@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Mapping
 import os
 from pathlib import Path
 import re
-from typing import Literal, TypeAlias
+from typing import Any, ClassVar, Literal, TypeAlias
 
 from pydantic import AliasChoices, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -49,6 +50,19 @@ SECRET_CONFIG_FIELDS = frozenset(
 
 def _get_all_numbers(s: str) -> list[float]:
     return [float(x) for x in re.findall(r"-?\d+\.?\d*", s)]
+
+
+def unitree_connection_type_for(ip: str | None, *, simulation: str, replay: bool) -> str:
+    """Go2 connection registry name for a robot address and the global choices.
+
+    The address aliases (``fake``, ``mock``, ``replay`` and ``mujoco``) win so a
+    fleet can mix a simulated robot into real ones.
+    """
+    if replay or ip in ("fake", "mock", "replay"):
+        return "replay"
+    if ip == "mujoco":
+        return "mujoco"
+    return simulation or "webrtc"
 
 
 class GlobalConfig(BaseSettings):
@@ -199,13 +213,28 @@ class GlobalConfig(BaseSettings):
                 raise AttributeError(f"GlobalConfig has no field '{key}'")
             setattr(self, key, value)
 
+    @field_validator("simulation")
+    @classmethod
+    def _normalize_simulation(cls, value: str) -> str:
+        """Lowercase; a bare ``--simulation`` (``true``) means MuJoCo."""
+        value = value.strip().lower()
+        return "mujoco" if value == "true" else value
+
+    PLANNING_PROPERTIES: ClassVar[tuple[str, ...]] = ("unitree_connection_type",)
+    """Derived values dependency planning keys on; ``planning_values`` adds them."""
+
+    @classmethod
+    def planning_values(cls, values: Mapping[str, Any]) -> dict[str, Any]:
+        """Preparsed field values plus the derived properties the catalog selects on."""
+        config = cls.model_construct(**values)
+        return {**values, **{name: getattr(config, name) for name in cls.PLANNING_PROPERTIES}}
+
     @property
     def unitree_connection_type(self) -> str:
-        if self.replay:
-            return "replay"
-        if self.simulation:
-            return self.simulation
-        return "webrtc"
+        """Which Go2 connection implementation a run uses (``go2/_registry.py`` names)."""
+        return unitree_connection_type_for(
+            self.robot_ip, simulation=self.simulation, replay=self.replay
+        )
 
     @property
     def mujoco_start_pos_float(self) -> tuple[float, float]:

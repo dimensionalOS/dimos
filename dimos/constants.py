@@ -22,10 +22,13 @@ except ImportError:
     CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "dimos"
     STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "dimos"
     CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "dimos"
+    # Managed runtime environments (not caches: `dimos cache clean` leaves them alone).
+    DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "dimos"
 else:
     CONFIG_DIR = Path(GLib.get_user_config_dir()) / "dimos"
     STATE_DIR = Path(GLib.get_user_state_dir()) / "dimos"
     CACHE_DIR = Path(GLib.get_user_cache_dir()) / "dimos"
+    DATA_DIR = Path(GLib.get_user_data_dir()) / "dimos"
 
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
 

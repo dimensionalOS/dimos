@@ -42,6 +42,9 @@ from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo
 
 if TYPE_CHECKING:
     from dimos.memory.type.observation import Observation
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("webrtc",))
 
 
 class H264Decoder(Transformer[CompressedVideo, Image]):

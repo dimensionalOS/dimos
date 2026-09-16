@@ -65,6 +65,9 @@ from dimos.web.relay_bridge.manifest import (
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(defers=("langchain_core",))
 
 
 def _check_stream(name: str, value: str) -> None:

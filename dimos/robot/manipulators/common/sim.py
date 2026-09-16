@@ -17,15 +17,31 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
+from dimos.core.module import Module
+from dimos.deps.requires import Requires
+from dimos.hardware.adapter_registry import LazyAdapterRegistry
+
+REQUIRES = Requires(selectors={"g.simulation": "simulation"})
+
+
+class SimModuleRegistry(LazyAdapterRegistry[Module]):
+    """Simulation module blueprints by ``--simulation`` value, from ``engines/_registry.py``."""
+
+    kind = "simulation module"
+    manifest_table = "SIM_MODULE_FACTORIES"
+    manifest_roots = (("dimos.simulation.engines", 0),)
+
+
+sim_modules = SimModuleRegistry()
 
 
 def mujoco_if_sim(sim_path: str | Path, dof: int) -> tuple[Blueprint, ...]:
+    """The simulation module for the selected simulator, or nothing on real hardware."""
     if not global_config.simulation:
         return ()
-
-    from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
-
-    return (MujocoSimModule.blueprint(address=str(sim_path), headless=False, dof=dof),)
+    module = cast("type[Module]", sim_modules.resolve(global_config.simulation))
+    return (module.blueprint(address=str(sim_path), headless=False, dof=dof),)

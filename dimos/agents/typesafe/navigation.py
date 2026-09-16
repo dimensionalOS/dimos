@@ -53,6 +53,7 @@ from dimos.agents.typesafe.world_state import WorldState, build_world_state
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.deps.requires import Requires
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -63,6 +64,8 @@ from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.types.timestamped import Timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import LatestReader, getter_streaming
+
+REQUIRES = Requires(extras=("agents",))
 
 logger = setup_logger()
 

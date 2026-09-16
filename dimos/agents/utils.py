@@ -17,7 +17,10 @@ from typing import Any
 
 from langchain_core.messages.base import BaseMessage
 
+from dimos.deps.requires import Requires
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("agents",))
 
 logger = setup_logger()
 

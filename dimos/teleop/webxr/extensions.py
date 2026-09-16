@@ -29,6 +29,7 @@ from fastapi import WebSocket
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.deps.requires import Requires
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -38,6 +39,8 @@ from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
 from dimos.teleop.webxr.module import WebXRTeleopConfig, WebXRTeleopModule
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("web",))
 
 logger = setup_logger()
 

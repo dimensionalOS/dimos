@@ -24,6 +24,7 @@ import math
 
 from xarm.wrapper import XArmAPI
 
+from dimos.deps.requires import Requires
 from dimos.hardware.manipulators.spec import (
     ControlMode,
     ManipulatorAdapter,
@@ -31,6 +32,8 @@ from dimos.hardware.manipulators.spec import (
 )
 from dimos.hardware.spec import JointLimits
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("control",))
 
 logger = setup_logger()
 

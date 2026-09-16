@@ -23,6 +23,7 @@ import numpy as np
 import roboplan.core as roboplan_core
 import roboplan.toppra as roboplan_toppra
 
+from dimos.deps.requires import Requires
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
 from dimos.manipulation.planning.spec.joint_space import JointSpace
 from dimos.manipulation.planning.spec.protocols import WorldSpec
@@ -38,6 +39,8 @@ from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+
+REQUIRES = Requires(extras=("planning",))
 
 
 @dataclass(frozen=True)

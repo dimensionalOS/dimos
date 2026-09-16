@@ -24,7 +24,10 @@ from typing import Any
 
 import numpy as np
 
+from dimos.deps.requires import Requires
 from dimos.utils.data import get_data
+
+REQUIRES = Requires(extras=("visualization",))
 
 JointNameMapper = Callable[[str], str]
 RERUN_URDF_INSTALL_HINT = (

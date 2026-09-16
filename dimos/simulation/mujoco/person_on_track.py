@@ -20,7 +20,10 @@ from numpy.typing import NDArray
 
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
+from dimos.deps.requires import Requires
 from dimos.msgs.geometry_msgs.Pose import Pose
+
+REQUIRES = Requires(extras=("sim",))
 
 
 class PersonPositionController:

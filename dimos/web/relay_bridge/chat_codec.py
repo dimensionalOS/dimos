@@ -30,7 +30,10 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
+from dimos.deps.requires import Requires
 from dimos.web.codecs import web_encoder
+
+REQUIRES = Requires(extras=("agents",))
 
 # Tool progress rides /agent as HumanMessage("[tool:NAME] text")
 # (mcp_client._on_tool_stream_message); same parse as humancli.

@@ -46,6 +46,7 @@ from typing import Any
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.deps.requires import Requires
 from dimos.experimental.robot.bosdyn.spot.config import (
     CAMERA_MAX_HZ,
     FRONT_CAMERA_MIRROR_HALF_TURN,
@@ -82,6 +83,8 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("spot",))
 
 logger = setup_logger()
 

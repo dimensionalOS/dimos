@@ -35,6 +35,9 @@ if TYPE_CHECKING:
 
     from dimos.navigation.global_planner.evaluator.cases import Case
     from dimos.navigation.global_planner.evaluator.curation import CaseStore
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("planning",))
 
 START_COLOR = (0, 255, 255)
 GOAL_COLOR = (255, 140, 0)

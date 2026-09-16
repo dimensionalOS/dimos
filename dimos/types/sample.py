@@ -32,6 +32,10 @@ from pydantic.fields import FieldInfo
 from pydantic_core import from_json
 import torch
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("perception",))
+
 Flattenable = Annotated[Literal["dict", "np", "pt", "list"], "Numpy, PyTorch, list, or dict"]
 
 

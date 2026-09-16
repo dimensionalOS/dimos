@@ -26,6 +26,9 @@ if TYPE_CHECKING:
     from ultralytics.engine.results import Results
 
     from dimos.msgs.sensor_msgs.Image import Image
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(defers=("torch",))
 
 
 @dataclass

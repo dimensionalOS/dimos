@@ -21,7 +21,6 @@ dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
 from collections.abc import Callable, Iterator
 import threading
 import time
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -37,22 +36,32 @@ from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 
 @pytest.fixture
 def stub_webrtc(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace UnitreeWebRTCConnection in go2.connection so the webrtc branch
-    runs without dialing out."""
+    """Register a stub under ``webrtc`` in a fresh registry so the branch never dials out."""
     stub = MagicMock(name="UnitreeWebRTCConnection")
-    monkeypatch.setattr(go2_conn, "UnitreeWebRTCConnection", stub)
+    registry = go2_conn.Go2ConnectionRegistry()
+    registry.register("webrtc", stub)
+    monkeypatch.setattr(go2_conn, "go2_connections", registry)
     return stub
 
 
 def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> None:
     """Webrtc branch forwards aes_128_key as a kwarg to UnitreeWebRTCConnection."""
-    cfg = SimpleNamespace(unitree_connection_type="webrtc")
-    go2_conn.make_connection("192.168.123.161", cfg, aes_128_key="cafe" * 8)
+    go2_conn.make_connection("192.168.123.161", GlobalConfig(), aes_128_key="cafe" * 8)
     stub_webrtc.assert_called_once_with(
         "192.168.123.161",
         aes_128_key="cafe" * 8,
         velocity_api=False,
     )
+
+
+def test_connection_registry_names_match_the_manifest() -> None:
+    """Planning reads the same manifest, so every name must resolve to a class."""
+    assert go2_conn.go2_connections.available() == ["dimsim", "mujoco", "replay", "webrtc"]
+    assert go2_conn.go2_connections.resolve("replay") is go2_conn.ReplayConnection
+    with pytest.raises(
+        ValueError, match="Unknown simulator 'genesis'. Choose from: dimsim, mujoco"
+    ):
+        go2_conn.make_connection(None, GlobalConfig(simulation="genesis"))
 
 
 def test_make_connection_replay_forwards_exit_on_complete() -> None:

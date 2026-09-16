@@ -72,6 +72,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+from dimos.deps.requires import Requires
 
 logger = setup_logger()
 
@@ -145,6 +146,8 @@ class ControlCoordinator(Module):
         ...     ],
         ... )
     """
+
+    requires = Requires(selectors={"hardware": "adapter", "tasks": "task"})
 
     config: ControlCoordinatorConfig
 

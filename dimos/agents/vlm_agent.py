@@ -26,6 +26,9 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("agents",))
 
 logger = setup_logger()
 

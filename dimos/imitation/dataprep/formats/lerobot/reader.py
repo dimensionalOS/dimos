@@ -24,8 +24,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from dimos.deps.requires import Requires
 from dimos.imitation.dataprep.core import summarize_lengths
 from dimos.imitation.dataprep.formats.lerobot.writer import CHUNK, EPISODES_DIR, FILE, META_DIR
+
+REQUIRES = Requires(extras=("learning",))
 
 _META_COLS = {"timestamp", "frame_index", "episode_index", "index", "task_index"}
 

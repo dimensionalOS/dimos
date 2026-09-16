@@ -20,9 +20,12 @@ from typing import IO
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.global_config import GlobalConfig
+from dimos.deps.requires import Requires
 from dimos.simulation.dimsim.deno_utils import ensure_playwright_chromium
 from dimos.utils.deno import ensure_deno
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(tools=("deno",))
 
 logger = setup_logger()
 

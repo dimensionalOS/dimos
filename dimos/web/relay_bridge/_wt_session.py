@@ -42,6 +42,7 @@ from aioquic.h3.events import (
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.events import ConnectionTerminated, QuicEvent, StreamReset
 
+from dimos.deps.requires import Requires
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.protocol import (
     CONTROL_CHANNEL,
@@ -61,6 +62,8 @@ from dimos.web.relay_bridge.protocol import (
     encode_data_frame,
     encode_datagram,
 )
+
+REQUIRES = Requires(extras=("web",))
 
 logger = setup_logger()
 

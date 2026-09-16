@@ -28,6 +28,9 @@ if TYPE_CHECKING:
 
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(defers=("torch",))
 
 T = TypeVar("T")
 R = TypeVar("R")

@@ -42,12 +42,15 @@ from dimos.core.resource import CompositeResource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import IO, In, Out, RemoteOut, Transport
 from dimos.core.transport_factory import rpc_backend
+from dimos.deps.requires import Requires
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.protocol.tf.tf import TF
 from dimos.utils import colors
 from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(defers=("langchain_core",))
 
 logger = setup_logger()
 

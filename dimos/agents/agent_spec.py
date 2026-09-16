@@ -16,7 +16,10 @@ from typing import Any, Protocol
 
 from langchain_core.messages.base import BaseMessage
 
+from dimos.deps.requires import Requires
 from dimos.spec.utils import Spec
+
+REQUIRES = Requires(extras=("agents",))
 
 
 class AgentSpec(Spec, Protocol):

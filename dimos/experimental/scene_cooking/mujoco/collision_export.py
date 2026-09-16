@@ -72,6 +72,7 @@ from scipy.spatial import ConvexHull, QhullError  # type: ignore[import-untyped]
 from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
 from dimos.constants import CACHE_DIR as _DIMOS_CACHE_DIR
+from dimos.deps.requires import Requires
 from dimos.experimental.scene_cooking.mujoco.collision_policy import (
     CollisionSpec,
     decide_for_prim,
@@ -83,6 +84,13 @@ from dimos.experimental.scene_cooking.source_assets.mesh import (
 )
 from dimos.simulation.scene_assets.spec import SceneMeshAlignment
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(
+    extras=(
+        "scene",
+        "sim",
+    )
+)
 
 logger = setup_logger()
 

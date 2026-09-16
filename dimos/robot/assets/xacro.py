@@ -31,7 +31,10 @@ import os
 from pathlib import Path
 import threading
 
+from dimos.deps.requires import Requires
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT
+
+REQUIRES = Requires(defers=("xacro",))
 
 _lock = threading.Lock()
 

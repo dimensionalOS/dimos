@@ -40,6 +40,14 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.module import SkillInfo
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(
+    extras=(
+        "agents",
+        "web",
+    )
+)
 
 logger = setup_logger()
 

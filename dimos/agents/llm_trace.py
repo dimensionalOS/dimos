@@ -35,7 +35,10 @@ from typing import Any
 
 import httpx
 
+from dimos.deps.requires import Requires
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("agents",))
 
 logger = setup_logger()
 

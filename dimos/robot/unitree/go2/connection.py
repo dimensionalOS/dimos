@@ -29,10 +29,11 @@ from reactivex.observable import Observable
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig
+from dimos.core.global_config import GlobalConfig, unitree_connection_type_for
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
+from dimos.hardware.adapter_registry import LazyAdapterRegistry
 from dimos.memory.replay import Replay, ReplayStream, resolve_db_path
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -54,6 +55,9 @@ if sys.version_info < (3, 13):
     from typing_extensions import TypeVar
 else:
     from typing import TypeVar
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(selectors={"g.unitree_connection_type": "connection"})
 
 logger = setup_logger()
 
@@ -135,33 +139,39 @@ BASE_TO_OPTICAL: Transform = Transform(
 )
 
 
+class Go2ConnectionRegistry(LazyAdapterRegistry[Go2ConnectionProtocol]):
+    """Connection implementations by ``unitree_connection_type``, from ``_registry.py``."""
+
+    kind = "Go2 connection"
+    manifest_table = "CONNECTION_FACTORIES"
+    manifest_roots = (("dimos.robot.unitree.go2", 0),)
+
+
+go2_connections = Go2ConnectionRegistry()
+
+
 def make_connection(
     ip: str | None,
     cfg: GlobalConfig,
     aes_128_key: str | None = None,
     velocity_api: bool = False,
 ) -> Go2ConnectionProtocol:
-    connection_type = cfg.unitree_connection_type.lower()
-
-    if ip in ("fake", "mock", "replay") or connection_type == "replay":
-        return ReplayConnection(dataset=cfg.replay_db, exit_on_complete=cfg.replay_exit)
-    elif ip == "mujoco" or connection_type in ("mujoco", "true"):
-        from dimos.robot.unitree.mujoco_connection import MujocoConnection
-
-        return MujocoConnection(cfg)
-    elif connection_type == "dimsim":
-        from dimos.robot.unitree.dimsim_connection import DimSimConnection
-
-        return DimSimConnection(cfg)
-    elif connection_type == "webrtc":
+    connection_type = unitree_connection_type_for(ip, simulation=cfg.simulation, replay=cfg.replay)
+    try:
+        factory = go2_connections.resolve(connection_type)
+    except KeyError:
+        simulators = [
+            name for name in go2_connections.available() if name not in ("webrtc", "replay")
+        ]
+        raise ValueError(
+            f"Unknown simulator {cfg.simulation!r}. Choose from: {', '.join(simulators)}"
+        ) from None
+    if connection_type == "replay":
+        return factory(dataset=cfg.replay_db, exit_on_complete=cfg.replay_exit)
+    if connection_type == "webrtc":
         assert ip is not None, "IP address must be provided"
-        return UnitreeWebRTCConnection(
-            ip,
-            aes_128_key=aes_128_key,
-            velocity_api=velocity_api,
-        )
-    else:
-        raise ValueError(f"Unknown simulator {cfg.simulation!r}. Choose from: mujoco, dimsim")
+        return factory(ip, aes_128_key=aes_128_key, velocity_api=velocity_api)
+    return factory(cfg)
 
 
 _T = TypeVar("_T")

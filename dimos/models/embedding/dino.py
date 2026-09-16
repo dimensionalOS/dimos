@@ -22,9 +22,12 @@ import torch
 import torch.nn.functional as functional
 from transformers import AutoImageProcessor, AutoModel
 
+from dimos.deps.requires import Requires
 from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
 from dimos.msgs.sensor_msgs.Image import Image
+
+REQUIRES = Requires(extras=("perception",))
 
 
 class DINOModelConfig(HuggingFaceEmbeddingModelConfig):

@@ -17,8 +17,11 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
+from dimos.deps.requires import Requires
 from dimos.manipulation.visualization.viser.runtime import VISER_INSTALL_HINT
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("planning",))
 
 try:
     from viser import ViserServer

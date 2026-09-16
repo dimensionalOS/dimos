@@ -18,13 +18,27 @@
 Imports the native extension, asserts the packaged relay + Cockpit files, then
 starts the packaged relay and fetches /api/info and the Cockpit at /. Deno is
 not preinstalled in the manylinux test containers: ensure_deno() downloads the
-pinned DENO_VERSION there, exactly as it does on a customer machine.
+pinned DENO_VERSION there, exactly as it does on a customer machine. It also
+checks that the dependency catalog and the resolver policy ship in the wheel
+and that the launcher can explain a blueprint from them.
 """
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 import urllib.request
 
+from dimos.deps.catalog import CATALOG_PATH, default_catalog
+from dimos.deps.policy import (
+    SHIPPED_CONSTRAINTS_FILE,
+    SHIPPED_PROJECT_FILE,
+    load_constraints,
+    load_uv_policy,
+    render_wheel_project,
+)
+from dimos.deps.probe import ProbeRequest
+from dimos.deps.profiles import PROFILES
 from dimos.navigation.go2.replanning_a_star.min_cost_astar_ext import (
     min_cost_astar_cpp,  # noqa: F401
 )
@@ -45,7 +59,52 @@ REQUIRED = (
 RELAY_READY_TIMEOUT_S = 120.0
 
 
+def check_dependency_catalog() -> None:
+    """The static catalog, the resolver policy and the launcher work from the wheel."""
+    if not CATALOG_PATH.is_file():
+        raise SystemExit(f"missing from installed wheel: {CATALOG_PATH}")
+    if "unitree-go2" not in default_catalog().names:
+        raise SystemExit("blueprint catalog in the wheel does not list unitree-go2")
+    if not SHIPPED_PROJECT_FILE.is_file():
+        raise SystemExit(f"missing from installed wheel: {SHIPPED_PROJECT_FILE}")
+    policy = load_uv_policy(SHIPPED_PROJECT_FILE)
+    if not policy.override_dependencies:
+        raise SystemExit("shipped pyproject.toml carries no uv override policy")
+    if not SHIPPED_CONSTRAINTS_FILE.is_file():
+        raise SystemExit(f"missing from installed wheel: {SHIPPED_CONSTRAINTS_FILE}")
+    constraints = load_constraints(SHIPPED_CONSTRAINTS_FILE)
+    if not any(line.startswith("numpy==") for line in constraints):
+        raise SystemExit("constraints.txt in the wheel pins no numpy version")
+    rendered = render_wheel_project(
+        "0", (), "3.12", PROFILES["linux-x86_64-cpu"], policy, constraints
+    )
+    if constraints[0] not in rendered:
+        raise SystemExit("the managed project does not apply the shipped constraints")
+    explained = subprocess.run(
+        [sys.executable, "-m", "dimos.cli.dimos", "deps", "unitree-go2"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if explained.returncode != 0 or "unitree" not in explained.stdout:
+        raise SystemExit(f"dimos deps failed in the wheel:\n{explained.stdout}\n{explained.stderr}")
+    request = ProbeRequest(extras=(), checks=("packages", "providers"))
+    probed = subprocess.run(
+        [sys.executable, "-m", "dimos.deps.probe"],
+        input=json.dumps(request.to_json()),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if probed.returncode != 0:
+        raise SystemExit(f"environment probe failed in the wheel:\n{probed.stderr}")
+    report = json.loads(probed.stdout)
+    if not report.get("dimos_version") or report.get("missing"):
+        raise SystemExit(f"the wheel's own core requirements are not satisfied: {report}")
+
+
 def main() -> None:
+    check_dependency_catalog()
     dist = Path(locate.__file__).resolve().parent / "_relay_dist"
     for rel in REQUIRED:
         if not (dist / rel).is_file():

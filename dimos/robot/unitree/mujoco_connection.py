@@ -39,6 +39,7 @@ from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
+from dimos.deps.requires import Requires
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -58,6 +59,8 @@ from dimos.simulation.mujoco.menagerie import SIM_INSTALL_HINT, ensure_menagerie
 from dimos.simulation.mujoco.shared_memory import ShmWriter
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("sim",), subprocesses=("dimos.simulation.mujoco.mujoco_process",))
 
 ODOM_FREQUENCY = 50
 

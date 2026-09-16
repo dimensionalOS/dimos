@@ -31,7 +31,10 @@ import webbrowser
 from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
 
+from dimos.deps.requires import Requires
 from dimos.utils.data import get_data
+
+REQUIRES = Requires(extras=("web",))
 
 # Path to the frontend HTML templates and command-center build
 _TEMPLATES_DIR = FilePath(__file__).parent.parent / "templates"

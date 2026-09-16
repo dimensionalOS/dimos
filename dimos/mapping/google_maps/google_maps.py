@@ -16,6 +16,7 @@ import os
 
 import googlemaps  # type: ignore[import-untyped]
 
+from dimos.deps.requires import Requires
 from dimos.mapping.google_maps.models import (
     Coordinates,
     LocationContext,
@@ -26,6 +27,8 @@ from dimos.mapping.google_maps.models import (
 from dimos.mapping.models import LatLon
 from dimos.mapping.utils.distance import distance_in_meters
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("misc",))
 
 logger = setup_logger()
 

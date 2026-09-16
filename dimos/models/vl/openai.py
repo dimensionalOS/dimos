@@ -19,9 +19,12 @@ from typing import Any
 import numpy as np
 from openai import OpenAI
 
+from dimos.deps.requires import Requires
 from dimos.models.vl.base import VlModel, VlModelConfig
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("agents",))
 
 logger = setup_logger()
 

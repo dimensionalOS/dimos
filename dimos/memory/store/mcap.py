@@ -35,6 +35,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, Protocol, runtime_checkable
 
+from dimos.deps.requires import Requires
 from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for
 from dimos.memory.codecs.jpeg import JpegCodec
@@ -45,6 +46,8 @@ from dimos.memory.store.base import Store, StoreConfig
 from dimos.memory.type.filter import StreamQuery
 from dimos.memory.type.observation import Observation
 from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
+
+REQUIRES = Requires(extras=("unitree-dds",))
 
 
 @runtime_checkable

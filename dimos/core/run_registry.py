@@ -65,6 +65,8 @@ class RunEntry:
     cli_args: list[str] = field(default_factory=list)
     config_overrides: dict[str, object] = field(default_factory=dict)
     original_argv: list[str] = field(default_factory=list)
+    environment: str = ""
+    """``sys.prefix`` of the interpreter running the coordinator."""
 
     def __post_init__(self) -> None:
         self.config_overrides = {

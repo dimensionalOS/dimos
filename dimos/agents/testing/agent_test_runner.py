@@ -25,6 +25,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("agents",))
 
 
 class Config(ModuleConfig):

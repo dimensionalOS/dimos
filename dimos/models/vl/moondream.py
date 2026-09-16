@@ -21,12 +21,15 @@ from PIL import Image as PILImage
 import torch
 from transformers import AutoModelForCausalLM
 
+from dimos.deps.requires import Requires
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
 from dimos.models.vl.base import VlModel, VlModelConfig
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.point import Detection2DPoint
+
+REQUIRES = Requires(extras=("perception",))
 
 # Moondream works well with 512x512 max
 MOONDREAM_DEFAULT_AUTO_RESIZE = (512, 512)

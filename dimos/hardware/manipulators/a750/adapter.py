@@ -19,12 +19,15 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from dimos.deps.requires import Requires
 from dimos.hardware.manipulators.spec import (
     ControlMode,
     ManipulatorInfo,
 )
 from dimos.hardware.spec import JointLimits
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("control",))
 
 logger = setup_logger()
 

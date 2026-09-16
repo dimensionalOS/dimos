@@ -38,6 +38,9 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from sam2.sam2_video_predictor import SAM2VideoPredictor
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("perception",))
 
 
 logger = setup_logger()

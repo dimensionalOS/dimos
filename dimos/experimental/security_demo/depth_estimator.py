@@ -22,7 +22,10 @@ from PIL import Image as PILImage
 import torch
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.deps.requires import Requires
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+
+REQUIRES = Requires(extras=("perception",))
 
 _DEPTH_MODEL_NAME = "depth-anything/Depth-Anything-V2-Small-hf"
 _DEPTH_MAX_WIDTH = 640

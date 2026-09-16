@@ -133,3 +133,29 @@ def test_go2_blueprint_import_does_not_pull_heavy_deps() -> None:
         env=env,
     )
     assert leaked == []
+
+
+def test_deps_command_does_not_import_heavy_deps() -> None:
+    """`dimos deps` plans from the static catalog; it must not load ML or viewer libraries."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys\n"
+                "sys.argv = ['dimos', 'deps', 'demo-mcp-stress-test']\n"
+                "from dimos.cli.dimos import cli_main\n"
+                "try:\n"
+                "    cli_main()\n"
+                "except SystemExit as exit:\n"
+                "    assert exit.code in (None, 0), exit.code\n"
+                "bad = [m for m in ('torch', 'scipy', 'cv2', 'open3d', 'rerun', 'matplotlib') "
+                "if m in sys.modules]\n"
+                "assert not bad, f'Heavy deps imported: {bad}'\n"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, f"dimos deps loaded heavy modules:\n{result.stderr}"

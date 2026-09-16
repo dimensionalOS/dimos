@@ -20,6 +20,10 @@ import signal
 import sys
 import time
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(system=("gi",))
+
 # Add system path for gi module if needed
 if "/usr/lib/python3/dist-packages" not in sys.path:
     sys.path.insert(0, "/usr/lib/python3/dist-packages")

@@ -26,6 +26,9 @@ from reportlab.lib.units import mm
 import yaml
 
 from dimos.cli.apriltag import _grid_layout
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("apriltag",))
 
 PAGE_SIZES_PT = {
     "a4": A4,

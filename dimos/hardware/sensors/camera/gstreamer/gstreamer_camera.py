@@ -26,8 +26,11 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.deps.requires import Requires
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(system=("gi",))
 
 # Add system path for gi module if needed
 if "/usr/lib/python3/dist-packages" not in sys.path:

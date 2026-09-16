@@ -52,6 +52,16 @@ from typing import Any, TypeVar
 
 import can
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(
+    extras=("control",),
+    system=(
+        "gs_usb",
+        "usb",
+    ),
+)
+
 # HHS USB-CANFD adapter bundled with the Galaxea A1Z
 GALAXEA_VENDOR_ID = 0xA8FA
 GALAXEA_PRODUCT_ID = 0x8598

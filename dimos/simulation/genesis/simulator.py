@@ -15,7 +15,11 @@
 
 import genesis as gs  # type: ignore[import-not-found]
 
+from dimos.deps.requires import Requires
+
 from ..base.simulator_base import SimulatorBase
+
+REQUIRES = Requires(system=("genesis",))
 
 
 class GenesisSimulator(SimulatorBase):

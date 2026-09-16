@@ -23,9 +23,12 @@ from typing import Any
 
 import numpy as np
 
+from dimos.deps.requires import Requires
 from dimos.perception.experimental.visual_memory import VisualMemory
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("perception",))
 
 logger = setup_logger()
 

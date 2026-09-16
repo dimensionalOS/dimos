@@ -22,10 +22,13 @@ import numpy as np
 from PIL import Image as PILImage
 import torch
 
+from dimos.deps.requires import Requires
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+
+REQUIRES = Requires(extras=("perception",))
 
 
 class OmDetConfig(HuggingFaceModelConfig):

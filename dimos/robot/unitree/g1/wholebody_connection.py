@@ -40,6 +40,7 @@ from dimos.control.components import make_humanoid_joints
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.deps.requires import Requires
 from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -47,6 +48,8 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("unitree-dds",))
 
 logger = setup_logger()
 

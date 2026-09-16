@@ -54,6 +54,9 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     import portal
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("misc",))
 
 logger = setup_logger()
 

@@ -47,6 +47,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.deps.requires import Requires
 from dimos.hardware.whole_body.spec import VEL_STOP
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -61,6 +62,15 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(
+    system=(
+        "builtin_interfaces",
+        "geometry_msgs",
+        "rclpy",
+        "sensor_msgs",
+    )
+)
 
 logger = setup_logger()
 

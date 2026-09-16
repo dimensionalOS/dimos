@@ -29,6 +29,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.global_config import GlobalConfig
+from dimos.deps.requires import Requires
 from dimos.simulation.mujoco.constants import (
     DEPTH_CAMERA_FOV,
     LIDAR_FPS,
@@ -42,6 +43,8 @@ from dimos.simulation.mujoco.model import load_model, load_scene_xml
 from dimos.simulation.mujoco.person_on_track import PersonPositionController
 from dimos.simulation.mujoco.shared_memory import ShmReader
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("sim",))
 
 logger = setup_logger()
 

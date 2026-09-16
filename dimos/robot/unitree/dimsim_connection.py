@@ -21,6 +21,7 @@ from reactivex import Observable, Subject
 from dimos.core.global_config import GlobalConfig
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
+from dimos.deps.requires import Requires
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -32,6 +33,8 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.dimsim.dimsim_process import DimSimProcess
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(tools=("deno",))
 
 logger = setup_logger()
 

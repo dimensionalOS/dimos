@@ -50,6 +50,9 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.hardware.whole_body.spec import WholeBodyAdapter
     from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(backends=("onnxruntime",))
 
 logger = setup_logger()
 

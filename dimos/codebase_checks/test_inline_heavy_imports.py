@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import ast
-from collections.abc import Iterable, Iterator
+from pathlib import Path
 
 from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.deps.imports import ImportKind, is_test_file, iter_source_files, scan_file
 
 DIMOS_DIR = DIMOS_PROJECT_ROOT / "dimos"
 
@@ -25,58 +25,21 @@ DIMOS_DIR = DIMOS_PROJECT_ROOT / "dimos"
 # uses them (or under `if TYPE_CHECKING:` for annotations only).
 HEAVY_MODULES = ("cv2", "open3d", "rerun")
 
-
-def _is_type_checking(test: ast.expr) -> bool:
-    """True for the guard of `if TYPE_CHECKING:` / `if typing.TYPE_CHECKING:`."""
-    if isinstance(test, ast.Name):
-        return test.id == "TYPE_CHECKING"
-    if isinstance(test, ast.Attribute):
-        return test.attr == "TYPE_CHECKING"
-    return False
+# Function-local imports are deferred and TYPE_CHECKING blocks never run;
+# everything else (including try/except guards and __main__ blocks) executes
+# at import time and counts as eager.
+DEFERRED_KINDS = frozenset({ImportKind.LAZY, ImportKind.TYPE_ONLY})
 
 
-def _iter_eager_nodes(nodes: Iterable[ast.AST]) -> Iterator[ast.AST]:
-    """Yield nodes whose code runs at import time.
-
-    Skips function/lambda bodies (imports there are inline, i.e. deferred) and
-    the body of `if TYPE_CHECKING:` blocks (never executed at runtime). The
-    `else:` branch of a TYPE_CHECKING guard does run at import time.
-    """
-    for node in nodes:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            continue
-        if isinstance(node, ast.If) and _is_type_checking(node.test):
-            yield from _iter_eager_nodes(node.orelse)
-            continue
-        yield node
-        yield from _iter_eager_nodes(ast.iter_child_nodes(node))
-
-
-def _heavy_import(node: ast.Import | ast.ImportFrom) -> str | None:
-    """The heavy module an import statement pulls in, or None."""
-    if isinstance(node, ast.Import):
-        for alias in node.names:
-            if alias.name.split(".")[0] in HEAVY_MODULES:
-                return alias.name
-    if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-        if node.module.split(".")[0] in HEAVY_MODULES:
-            return node.module
-    return None
-
-
-def find_eager_heavy_imports() -> dict[str, list[tuple[int, str]]]:
+def find_eager_heavy_imports(root: Path = DIMOS_DIR) -> dict[str, list[tuple[int, str]]]:
     """Map of dimos-relative file path -> [(line, module)] for eager heavy imports."""
     hits: dict[str, list[tuple[int, str]]] = {}
-    for path in sorted(DIMOS_DIR.rglob("*.py")):
-        if path.name.startswith("test_") or path.name == "conftest.py":
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in _iter_eager_nodes(tree.body):
-            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+    for path in iter_source_files(root, exclude=is_test_file):
+        scan = scan_file(path, project_root=root.parent)
+        for site in scan.imports:
+            if site.kind in DEFERRED_KINDS or site.top_level not in HEAVY_MODULES:
                 continue
-            module = _heavy_import(node)
-            if module is not None:
-                hits.setdefault(str(path.relative_to(DIMOS_DIR)), []).append((node.lineno, module))
+            hits.setdefault(str(path.relative_to(root)), []).append((site.lineno, site.module))
     return hits
 
 
@@ -96,3 +59,24 @@ def test_heavy_imports_are_inline() -> None:
             "method that uses them; imports needed only for type annotations go "
             "under `if TYPE_CHECKING:`."
         )
+
+
+def test_detection_rules(tmp_path: Path) -> None:
+    """Guarded and __main__ imports are still violations; deferred ones are not."""
+    root = tmp_path / "dimos"
+    root.mkdir()
+    (root / "mod.py").write_text(
+        "from typing import TYPE_CHECKING\n"
+        "try:\n"
+        "    import cv2\n"
+        "except ImportError:\n"
+        "    pass\n"
+        "if TYPE_CHECKING:\n"
+        "    import open3d\n"
+        "def f():\n"
+        "    import rerun\n"
+        'if __name__ == "__main__":\n'
+        "    import open3d.core\n"
+    )
+    (root / "test_mod.py").write_text("import cv2\n")
+    assert find_eager_heavy_imports(root) == {"mod.py": [(3, "cv2"), (11, "open3d.core")]}

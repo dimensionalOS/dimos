@@ -13,6 +13,11 @@
 # limitations under the License.
 
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(defers=("torch",))
+
+
 def is_cuda_available():  # type: ignore[no-untyped-def]
     try:
         # Lazy: gpu_utils must stay importable in torch-less contexts.

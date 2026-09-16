@@ -31,6 +31,9 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     import onnxruntime as ort
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("perception",), backends=("onnxruntime",))
 
 logger = setup_logger()
 

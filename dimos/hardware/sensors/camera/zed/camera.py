@@ -28,6 +28,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.core.transport_factory import make_transport
+from dimos.deps.requires import Requires
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
     DepthCameraConfig,
@@ -42,6 +43,8 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
 from dimos.utils.reactive import backpressure
+
+REQUIRES = Requires(system=("pyzed",))
 
 
 def default_base_transform() -> Transform:

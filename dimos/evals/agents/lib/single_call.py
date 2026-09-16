@@ -26,10 +26,13 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.outputs import ChatGeneration
 
 from dimos.agents.llm_trace import latest_pair, write_normalized
+from dimos.deps.requires import Requires
 from dimos.evals.agents.base import Agent, ModelAgentConfig
 from dimos.evals.agents.lib.langchain_to_atif import append_ai_message_to_atif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.types import RunningEnvironment, Trajectory
+
+REQUIRES = Requires(extras=("agents",))
 
 Blocks = list[str | dict[str, Any]]
 

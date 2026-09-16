@@ -30,12 +30,15 @@ import yourdfpy  # type: ignore[import-untyped]
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.deps.requires import Requires
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("planning",))
 
 logger = setup_logger()
 

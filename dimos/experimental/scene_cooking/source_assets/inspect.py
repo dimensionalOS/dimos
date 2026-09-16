@@ -22,6 +22,10 @@ from typing import Any
 
 import numpy as np
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("scene",))
+
 
 @dataclass(frozen=True)
 class SceneAssetStats:

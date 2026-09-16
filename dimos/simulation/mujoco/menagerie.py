@@ -17,6 +17,10 @@
 import importlib.util
 from pathlib import Path
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("sim",))
+
 SIM_INSTALL_HINT = "Simulation dependencies are not installed. Run `uv sync --extra sim --inexact` to install them."
 
 

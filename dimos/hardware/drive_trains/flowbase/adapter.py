@@ -30,7 +30,10 @@ import threading
 
 import numpy as np
 
+from dimos.deps.requires import Requires
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("misc",))
 
 logger = setup_logger()
 

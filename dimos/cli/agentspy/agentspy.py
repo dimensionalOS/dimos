@@ -33,6 +33,9 @@ from textual.widgets import Footer, RichLog
 
 from dimos.cli import theme
 from dimos.core.transport_factory import apply_transport_arg, make_transport
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("agents",))
 
 # Type alias for all message types we might receive
 AnyMessage = Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]

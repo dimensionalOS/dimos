@@ -31,6 +31,10 @@ from langchain_core.messages import (
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("agents",))
+
 
 class MockModel(SimpleChatModel):
     """Custom fake chat model that supports tool calls for testing.

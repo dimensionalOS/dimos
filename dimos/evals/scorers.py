@@ -30,6 +30,10 @@ from collections.abc import Callable, Sequence
 import math
 from typing import TypeVar
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("agents",))
+
 T = TypeVar("T")
 
 

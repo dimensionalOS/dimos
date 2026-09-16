@@ -22,12 +22,20 @@ from openai import OpenAI
 from reactivex import Observable, Subject
 import soundfile as sf  # type: ignore[import-untyped]
 
+from dimos.deps.requires import Requires
 from dimos.stream.audio.base import (
     AbstractAudioEmitter,
     AudioEvent,
 )
 from dimos.stream.audio.text.base import AbstractTextConsumer, AbstractTextEmitter
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(
+    extras=(
+        "agents",
+        "web",
+    )
+)
 
 logger = setup_logger()
 

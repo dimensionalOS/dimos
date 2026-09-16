@@ -40,8 +40,11 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.deps.requires import Requires
 from dimos.imitation.dataprep.core import DEFAULT_FPS, OutputConfig, Sample
 from dimos.imitation.dataprep.formats._stats import stats_from_metadata
+
+REQUIRES = Requires(extras=("learning",))
 
 
 class _Hdf5Writer:

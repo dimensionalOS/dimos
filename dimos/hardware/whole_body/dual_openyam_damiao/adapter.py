@@ -19,9 +19,12 @@ from __future__ import annotations
 import can_motor_control
 from can_motor_control import damiao
 
+from dimos.deps.requires import Requires
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.dual_openyam.model import DUAL_OPENYAM_MODEL
+
+REQUIRES = Requires(extras=("control",))
 
 
 def _arm_motors(side: str) -> list[can_motor_control.MotorSpec]:

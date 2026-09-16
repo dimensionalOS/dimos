@@ -34,6 +34,7 @@ from unitree_webrtc_connect.constants import SPORT_CMD
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.deps.requires import Requires
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -41,6 +42,8 @@ from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.utils.generic import finite_number
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("unitree",))
 
 logger = setup_logger()
 

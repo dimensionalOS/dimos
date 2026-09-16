@@ -54,6 +54,7 @@ from dimos.cli.commands.bake import bake
 from dimos.cli.commands.cameracalibrate import cameracalibrate
 from dimos.cli.commands.data import data_app
 from dimos.cli.commands.dataprep import dataprep_app
+from dimos.cli.commands.deps import deps, doctor, envs_app, prepare
 from dimos.cli.commands.docs import docs
 from dimos.cli.commands.global_options import create_dynamic_callback
 from dimos.cli.commands.graph import graph
@@ -114,6 +115,10 @@ main.command("login")(cloud_login)
 main.command("logout")(cloud_logout)
 main.command("whoami")(cloud_whoami)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(run)
+main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(deps)
+main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(doctor)
+main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(prepare)
+main.add_typer(envs_app, name="envs")
 main.command()(status)
 main.command()(stop)
 main.command("log")(log_cmd)

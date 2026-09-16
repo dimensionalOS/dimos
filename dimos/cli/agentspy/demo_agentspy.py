@@ -24,8 +24,11 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from dimos.deps.requires import Requires
 import dimos.protocol.pubsub.impl.lcmpubsub as lcm
 from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM
+
+REQUIRES = Requires(extras=("agents",))
 
 
 def test_publish_messages() -> None:

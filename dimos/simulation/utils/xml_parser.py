@@ -24,6 +24,9 @@ import mujoco
 
 if TYPE_CHECKING:
     from pathlib import Path
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("sim",))
 
 
 @dataclass(frozen=True)

@@ -651,6 +651,12 @@ prompt_extras() {
             *Simulation*) extras_list+=("sim");; *Web*) extras_list+=("web");; *Misc*) extras_list+=("misc");; esac
     done
 
+    # A platform alone installs only its connection SDK; add the standard stack
+    # (agents, web, perception, visualization) so its blueprints run.
+    if [[ ${#platform_sel[@]} -gt 0 ]] && [[ ${#feature_sel[@]} -eq 0 ]]; then
+        extras_list+=("base")
+    fi
+
     if [[ "$DETECTED_GPU" == "nvidia" ]] && [[ "$NO_CUDA" != "1" ]]; then
         prompt_confirm "NVIDIA GPU detected — install CUDA support?" "yes" && extras_list+=("cuda") || extras_list+=("cpu")
     else

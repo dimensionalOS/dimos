@@ -42,6 +42,9 @@ from dimos.utils.turbojpeg import get_turbojpeg
 
 if TYPE_CHECKING:
     from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("perception",))
 
 logger = setup_logger()
 

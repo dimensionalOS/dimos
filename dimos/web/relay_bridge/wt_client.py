@@ -32,6 +32,7 @@ import urllib.request
 
 from aioquic.asyncio.client import connect as aioquic_connect
 
+from dimos.deps.requires import Requires
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge._wt_session import SessionProtocol, make_quic_configuration
 from dimos.web.relay_bridge.protocol import (
@@ -51,6 +52,8 @@ from dimos.web.relay_bridge.protocol import (
     Role,
     encode_datagram,
 )
+
+REQUIRES = Requires(extras=("web",))
 
 logger = setup_logger()
 

@@ -27,6 +27,10 @@ from typing import Any
 
 import numpy as np
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("planning",))
+
 
 class WorkspaceMap:
     """Sampled reachability + manipulability map. Works on any URDF Pinocchio can load."""

@@ -27,6 +27,7 @@ from typing import Any
 
 from piper_sdk import C_PiperInterface_V2
 
+from dimos.deps.requires import Requires
 from dimos.hardware.manipulators.spec import (
     ControlMode,
     ManipulatorAdapter,
@@ -34,6 +35,8 @@ from dimos.hardware.manipulators.spec import (
 )
 from dimos.hardware.spec import JointLimits
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("control",))
 
 # Unit conversion constants
 # Piper uses 0.001 degrees (millidegrees) for angles

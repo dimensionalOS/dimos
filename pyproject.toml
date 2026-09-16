@@ -49,6 +49,7 @@ exclude = [
     "**/*.svg",
     "**/*.tcss",
     "**/*.pyi",
+    "deps/constraints.txt",  # the tested lock a release's managed environments reuse
 ]
 
 [tool.setuptools.exclude-package-data]
@@ -121,8 +122,21 @@ dependencies = [
     "annotation-protocol>=1.4.0",
     "lazy_loader",
     "typing_extensions>=4.7; python_version < '3.13'",
+    "tomli>=2.0; python_version < '3.11'", # pyproject parsing (bake CLI, managed environments)
+    # Imported eagerly by core modules; previously only reached through
+    # transitive dependencies (open3d, rerun-sdk, dimos-lcm, plum-dispatch,
+    # pydantic). A distribution dimos imports must be declared directly.
+    "attrs>=23",
+    "pillow>=10",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+    "rich>=13",
+    "websockets>=12",
     "plum-dispatch==2.5.7",
     "GitPython>=3.1.45",
+    "pydantic-core>=2.30",
+    "lcm-dimos-fork>=1.5",
+    "matplotlib>=3.7",
     # Logging
     "structlog>=25.5.0,<26",
     # Core Msgs
@@ -219,6 +233,8 @@ agents = [
     "langchain-ollama>=1,<2",
     "ollama>=0.6.0",
     "openevals>=0.1",  # eval scorers (LLM-as-judge etc.) — dimos/evals
+    "langgraph>=1,<2",  # imported directly by the MCP client; langchain pins the version
+    "httpx>=0.27",  # imported directly by llm_trace; ollama and langsmith pin the version
 
     # Audio
     "openai",
@@ -236,6 +252,7 @@ web = [
     "ffmpeg-python",
     "soundfile",
     "aioquic>=1.2.0",  # WebTransport client for the cockpit relay bridge
+    "starlette>=0.40",  # imported directly by the MCP server; fastapi pins the version
 ]
 
 perception = [
@@ -245,6 +262,12 @@ perception = [
     "Pillow",
     "lap>=0.5.12",
     "transformers[torch]>=4.53.0,<4.54",
+    # Imported directly across dimos/models and dimos/perception; the torch
+    # override and the pytorch index in [tool.uv] apply to these declarations.
+    "torch>=2.1,<2.8",
+    "torchvision>=0.16,<0.23",
+    "huggingface-hub>=0.30",  # OmDet weights download
+    "safetensors>=0.4",  # OmDet weights loading
     # Florence2 (dimos/models/vl/florence.py) loads via transformers trust_remote_code;
     # its downloaded modeling file imports einops (not captured by package metadata).
     "einops>=0.8.1",
@@ -258,9 +281,12 @@ perception = [
     "sentencepiece>=0.2.0",
 ]
 
+# Direct requirements of the Unitree connections only. Blueprints declare what
+# else they need (see `dimos deps <blueprint>`); `base` remains the convenience
+# bundle for a full stack: pip install 'dimos[base,unitree]'.
 unitree = [
-    "dimos[base,mapping]",
     "unitree-webrtc-connect>=2.1.2",
+    "aiortc>=1.14.0",  # imported directly by the Unitree WebRTC connection; the SDK pins it
 ]
 
 unitree-dds = [
@@ -348,13 +374,13 @@ webrtc = [
     # WebRTC DataChannel pubsub (Cloudflare Realtime SFU)
     "aiortc>=1.14.0",
     "aiohttp>=3.9.0",
+    "av>=14",  # imported directly by the video track and the M20 camera; aiortc pins it
 ]
 
 base = [
     "dimos[agents,web,perception,visualization]",
 ]
 
-# All extras except dds and unitree-dds (which require special system setup).
 apriltag = [
     "reportlab>=4.5.0",
     # 3D-printable tag plates (--3d). manifold3d is trimesh's boolean engine; it only
@@ -373,8 +399,12 @@ scene = [
     "usd-core>=23.11",
 ]
 
+# Everything except dds/unitree-dds (special system setup), spot and learning
+# (vendor or pinned stacks). On Linux x86_64 this installs both onnxruntime
+# providers (cpu via manipulation, gpu via cuda); `dimos prepare` selects one
+# per profile instead.
 all = [
-    "dimos[apriltag,cuda,drone,manipulation,misc,scene,unitree,webrtc]",
+    "dimos[apriltag,base,cuda,drone,manipulation,mapping,misc,scene,unitree,webrtc]",
 ]
 
 [dependency-groups]
@@ -744,6 +774,8 @@ ignore = [
     "uv.lock",
     # an evolved planner: one generated rust file, not hand-edited source
     "dimos/navigation/local_planner/rust/src/planner.rs",
+    # generated from the sources and verified in CI (dimos/deps/test_catalog_generation.py)
+    "dimos/deps/blueprint_catalog.json",
     "*/uv.lock",
     "*/package-lock.json",
     "Cargo.lock",

@@ -42,8 +42,11 @@ from sse_starlette.sse import EventSourceResponse
 import uvicorn
 
 from dimos.core.global_config import global_config
+from dimos.deps.requires import Requires
 from dimos.stream.audio.decode import decode_audio_bytes
 from dimos.web.edge_io import EdgeIO
+
+REQUIRES = Requires(extras=("web",))
 
 # TODO: Resolve threading, start/stop stream functionality.
 

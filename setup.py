@@ -79,6 +79,12 @@ RELAY_DIST_SOURCES = (
 )
 RELAY_DIST_TARGET = os.path.join("dimos", "web", "relay_bridge", "_relay_dist")
 
+# The uv resolver policy ([tool.uv] overrides, constraints, sources, indexes) is
+# not part of the distribution metadata, yet a managed environment for an
+# installed release must resolve with it. Ship a copy of pyproject.toml so
+# dimos.deps.policy reads the same policy in a checkout and in a wheel.
+PROJECT_FILE_TARGET = os.path.join("dimos", "deps", "_project", "pyproject.toml")
+
 
 class build_py(_build_py):
     def find_package_modules(self, package, package_dir):
@@ -94,6 +100,13 @@ class build_py(_build_py):
         super().run()
         if not getattr(self, "editable_mode", False):
             self._copy_relay_dist()
+            self._copy_project_file()
+
+    def _copy_project_file(self):
+        src = Path(__file__).parent / "pyproject.toml"
+        dst = Path(self.build_lib) / PROJECT_FILE_TARGET
+        self.mkpath(str(dst.parent))
+        self.copy_file(str(src), str(dst))
 
     def _copy_relay_dist(self):
         src = Path(__file__).parent / "web"

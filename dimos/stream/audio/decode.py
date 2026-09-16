@@ -27,8 +27,11 @@ import ffmpeg  # type: ignore[import-untyped]
 import numpy as np
 import soundfile as sf  # type: ignore[import-untyped]
 
+from dimos.deps.requires import Requires
 from dimos.stream.audio.base import AudioEvent
 from dimos.utils.logging_config import setup_logger
+
+REQUIRES = Requires(extras=("web",), tools=("ffmpeg",))
 
 logger = setup_logger()
 

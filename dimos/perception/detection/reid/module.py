@@ -45,7 +45,7 @@ class ReidModule(Module):
                 idsystem = EmbeddingIDSystem(model=TorchReIDModel, padding=0)
             except Exception as e:
                 raise RuntimeError(
-                    "TorchReIDModel not available. Please install with: pip install dimos[torchreid]"
+                    "TorchReIDModel not available. Please install with: pip install 'dimos[misc]'"
                 ) from e
 
         self.idsystem = idsystem

@@ -30,6 +30,10 @@ from reportlab.lib.pagesizes import A0, A1, A2, A3, A4, A5, A6, A7, A8, LETTER
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("apriltag",))
+
 
 @functools.cache
 def _families() -> dict[str, tuple[int, int, int]]:

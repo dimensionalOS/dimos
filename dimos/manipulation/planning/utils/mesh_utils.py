@@ -36,6 +36,9 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("planning",))
 
 logger = setup_logger()
 

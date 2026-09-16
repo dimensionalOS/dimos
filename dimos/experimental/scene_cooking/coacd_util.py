@@ -16,6 +16,10 @@
 
 from __future__ import annotations
 
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("scene",))
+
 
 def silence_coacd_logging() -> None:
     """Quiet CoACD's per-invocation C-library log spam.

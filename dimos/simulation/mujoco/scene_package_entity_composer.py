@@ -50,6 +50,9 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     import mujoco
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("sim",))
 
 logger = setup_logger()
 

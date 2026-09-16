@@ -19,8 +19,11 @@ from typing import Any
 import numpy as np
 from openai import OpenAI
 
+from dimos.deps.requires import Requires
 from dimos.models.vl.base import VlModel, VlModelConfig
 from dimos.msgs.sensor_msgs.Image import Image
+
+REQUIRES = Requires(extras=("agents",))
 
 # Must be a model that returns ABSOLUTE pixel coordinates. The qwen3-vl-* models return
 # normalized 0-1000 coordinates and ignore prompts asking for pixels, which silently breaks

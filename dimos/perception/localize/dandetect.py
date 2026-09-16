@@ -38,6 +38,9 @@ if TYPE_CHECKING:
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
     from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
     from dimos.perception.localize.types import Localization, LocalizePolicy
+from dimos.deps.requires import Requires
+
+REQUIRES = Requires(extras=("perception",))
 
 
 class DanDetector(Resource):

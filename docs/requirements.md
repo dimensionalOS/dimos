@@ -35,27 +35,42 @@ Choose extras with the installer's `--extras` option. The default is `all`, adju
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --extras base,unitree,sim
 ```
 
+Blueprints declare which extras they need: `dimos deps <blueprint>` prints them
+together with the matching install command, and `dimos run` prepares a managed
+environment when the current one is not enough (see
+[Dependencies and Runtime Environments](/docs/usage/dependencies.md)).
+
 | Extra | What it adds | Key packages | GPU? |
 |-------|-------------|--------------|------|
-| *(core)* | Transport, streams, CLI, blueprints, occupancy maps | dimos-lcm, numpy, scipy, opencv, open3d, numba, Pinocchio, typer, textual | No |
+| *(core)* | Transport, streams, CLI, blueprints, occupancy maps, viewer | dimos-lcm, zenoh, numpy, scipy, opencv, open3d, numba, Pinocchio, rerun-sdk, typer, textual | No |
 | `agents` | LLM agent, speech, tool use | langchain, openai, ollama, faster-whisper | No |
-| `perception` | Object detection, VLMs, tracking | ultralytics, transformers, moondream | **Yes** |
-| `visualization` | Rerun viewer + bridge | rerun-sdk, dimos-viewer | No |
-| `web` | FastAPI web interface, audio | fastapi, uvicorn, ffmpeg-python | No |
+| `perception` | Object detection, VLMs, tracking, spatial memory | ultralytics, transformers (torch), moondream, chromadb | **Yes** |
+| `visualization` | Rerun URDF robot visualization | yourdfpy | No |
+| `web` | FastAPI web interface, cockpit relay bridge, audio | fastapi, uvicorn, python-socketio, aioquic, ffmpeg-python | No |
 | `sim` | MuJoCo simulation | mujoco, playground, pygame | No |
-| `unitree` | Unitree Go2 / G1 support | unitree-webrtc-connect | No |
-| `unitree-dds` | Unitree DDS bridge (superset of 'unitree') | unitree-sdk2py, cyclonedds | No |
+| `unitree` | Unitree Go2 / G1 WebRTC connection | unitree-webrtc-connect | No |
+| `unitree-dds` | Unitree DDS bridge (superset of `unitree`) | unitree-sdk2py, cyclonedds, mcap | No |
 | `drone` | DJI Tello / MAVLink drones | pymavlink | No |
-| `manipulation` | Arm planning + control | Drake, piper-sdk, xarm-sdk | No |
+| `control` | Arm hardware adapters and keyboard control | piper-sdk, xarm-python-sdk, can-motor-control, pygame | No |
+| `planning` | Motion planning and its visualization (includes `control`) | drake, roboplan, viser, trimesh | No |
+| `manipulation` | Complete manipulation workflow (`planning`, `base`, `sim`, `cpu`) | | No |
 | `mapping` | GTSAM-backed pose graph optimization (relocalization) | gtsam-extended | No |
 | `cuda` | GPU inference backends | cupy, onnxruntime-gpu | **Yes** |
 | `cpu` | CPU inference backend | onnxruntime | No |
-| `misc` | Extra models, embeddings, hardware SDKs | edgetam, timm, torchreid, xarm-sdk | Varies |
-| `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |
+| `misc` | Extra models and embeddings | open_clip_torch, torchreid, googlemaps | Varies |
+| `base` | Standard stack (`agents`, `web`, `perception`, `visualization`) | | No |
 | `dds` | DDS transport (CycloneDDS) | cyclonedds | No |
+| `webrtc` | WebRTC data channels (Cloudflare Realtime) | aiortc, aiohttp | No |
+| `apriltag` | AprilTag fixture printing and 3D plates | reportlab, trimesh, manifold3d | No |
+| `scene` | Scene package cooking (USD import, convex decomposition) | usd-core, coacd, trimesh | No |
+| `learning` | Imitation datasets (LeRobot, HDF5) | pyarrow, pandas, h5py | No |
+| `spot` | Boston Dynamics Spot | bosdyn-client | No |
+| `all` | Everything except `dds`, `unitree-dds`, `spot`, `learning` | | Varies |
 
-Cockpit voice input and the legacy browser audio upload require the `ffmpeg`
-executable in addition to the Python `web` extra. The installer supplies it through system packages on Ubuntu and macOS.
+`perception` brings PyTorch through `transformers[torch]`; `base` therefore
+includes PyTorch. Cockpit voice input and the legacy browser audio upload
+require the `ffmpeg` executable in addition to the Python `web` extra. The
+installer supplies it through system packages on Ubuntu and macOS.
 
 ## Headless / Server Environments
 
