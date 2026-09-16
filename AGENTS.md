@@ -8,9 +8,11 @@ The agentic operating system for generalist robotics. `Modules` communicate via 
 
 ## Quick Start
 
+For environment setup, follow the [setup-dimos skill](.agents/skills/setup-dimos/SKILL.md). Select navigation, manipulation, or both from the user’s task; the example below installs both.
+
 ```bash
 # Set up the current checkout, including test and lint dependencies
-bash scripts/install.sh --mode dev --project-dir .
+bash scripts/install.sh --non-interactive --mode dev --project-dir . --capabilities navigation,manipulation
 
 # List all runnable blueprints
 dimos list

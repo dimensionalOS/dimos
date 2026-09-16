@@ -307,7 +307,7 @@ are needed.
 
 For a smaller installation, use `uv sync --extra planning --inexact` or
 `uv sync --extra control --inexact`. Add `--no-default-groups` to omit contributor test
-dependencies. For a new library installation, pass `--mode library --extras manipulation` to the official installer.
+dependencies. For a new library installation, pass `--mode library --capabilities manipulation` to the official installer.
 The `--inexact` flag preserves additional packages already installed in your
 environment. The bundle supplies its own dependencies without requiring `misc`.
 Embedding models and unrelated utilities remain available through `misc`.
