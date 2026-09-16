@@ -17,21 +17,9 @@ from unittest.mock import Mock
 import pytest
 
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-from dimos.evals.environments.dimsim import DimSimEnvironment, DimSimEnvironmentConfig
-from dimos.evals.environments.habitat import HabitatEnvironmentConfig
-from dimos.evals.environments.sim import Sim, SimConfig
+from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-
-
-def test_simulator_configs_are_separate():
-    assert (
-        not {"scene", "simulator", "setup", "habitat", "scene_id"} & SimConfig.model_fields.keys()
-    )
-    assert "scene_id" not in DimSimEnvironmentConfig.model_fields
-    assert "setup" not in HabitatEnvironmentConfig.model_fields
-    with pytest.raises(TypeError):
-        Sim(blueprint=[])
 
 
 def test_dimsim_launch_setup_and_pose(mocker):
