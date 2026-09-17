@@ -56,9 +56,6 @@ from dimos.evals.scorers import (
     final,
     first_number,
     floor,
-    last_number,
-    last_yes_no,
-    letter,
     mean,
     ramp,
     within,
@@ -957,21 +954,16 @@ def test_attach_with_raw_bridge_needs_a_listening_bridge() -> None:
         env.start(())
 
 
-def test_last_line_parsers() -> None:
+def test_parsers_take_the_answer_after_an_explanation() -> None:
     enumerated = "Rooms observed:\n\n1. Living room\n2. Kitchen\n3. Bedroom\n4. Bathroom\n\n4"
-    assert last_number(enumerated) == 4  # first_number would read the list index 1
-    assert last_number("**3.4**") == 3.4
-    assert last_number(enumerated + "**.") == 4  # emphasis and punctuation together
-    assert last_yes_no("Visible.\n\n**yes**.") == "yes"
-    assert last_number("About 12.5 meters, give or take.") == 12.5  # falls back to the first number
-    assert last_yes_no("Bathtub, toilet and vanity are visible.\n\nyes") == "yes"
-    assert last_yes_no("**No.**") == "no"
-    assert last_yes_no("Yes, there is one.") == "yes"
-    parse = letter("ABCD")
-    assert parse("The doors are shut.\n\n**A**") == "A"
-    assert parse("It is a kitchen with a fridge, so B.") == "B"  # articles do not count
-    assert parse("C") == "C"
-    with pytest.raises(ValueError, match="no option letter"):
-        parse("no idea")
-    with pytest.raises(ValueError, match="no number"):
-        last_number("none")
+    assert first_number(enumerated) == 4  # not the list index 1
+    assert first_number(enumerated + "**.") == 4  # emphasis and punctuation together
+    assert first_number("**3.4**") == 3.4
+    assert first_number("About 12.5 meters, give or take.") == 12.5
+    assert yes_no("Bathtub, toilet and vanity are visible.\n\n**yes**.") == "yes"
+    assert yes_no("**No.**") == "no"
+    lettered = choice("ABCD", case_sensitive=True)
+    assert lettered("The doors are shut.\n\n**A**") == "A"
+    assert lettered("It is a kitchen with a fridge, so B.") == "B"  # the article does not count
+    with pytest.raises(ValueError, match="no option"):
+        lettered("no idea")
