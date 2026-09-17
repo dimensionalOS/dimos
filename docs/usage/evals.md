@@ -52,6 +52,23 @@ dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.dimcode \
   --set max_steps=250 --set max_output_tokens=4096
 ```
 
+The same switches compose with the tool allowlist and an explicit keyword list, so a
+restricted or differently guarded baseline is one flag away:
+
+```bash skip
+# Bash and grep only, no dimOS
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
+  --allow bash,grep --set no_dimos=true --set model=gpt-6-astra
+
+# full Pi toolset, dimOS available, but any tool call naming a vendor SDK is denied
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
+  --exclude unitree_sdk2py,go2_webrtc --set model=gpt-6-astra
+
+# no tools at all: the model answers from the prompt
+dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi \
+  --allow "" --set model=gpt-6-astra
+```
+
 `no_dimos` is a field of the shared `AgentConfig`; adapters that can honour it set `supports_no_dimos`, and every other agent rejects it. For Pi it does four things. Pi runs with a `PATH` that has no dimOS executable or checkout
 venv, no `PYTHONPATH` and no `DIMOS_*` variables, so `import dimos` and `dimos` fail. A robot
 is exposed as live topics through `raw-robot-bridge` (below) and nothing else: no recording,
