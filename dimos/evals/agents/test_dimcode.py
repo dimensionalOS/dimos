@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import socket
 import sys
+import time
 
 from pydantic import JsonValue
 import pytest
@@ -84,6 +85,7 @@ def serve_gateway() -> None:
                         send({"type": "event", "event": "not-an-event"})
                         break
                     send({"type": "event", "event": {"type": "idle"}})
+                    time.sleep(0.05)  # a slow gateway acks after the adapter has seen idle
                 send({"type": "response", "id": packet.id, "data": None})
 
 

@@ -131,9 +131,12 @@ class DimcodeAdapter(PiAdapter):
                 return request_id
 
             request_id = send(next(commands))
+            closing = False
             with sock.makefile("rb", buffering=0) as incoming:
                 for record in read_pi_events(incoming, deadline):
                     packet = gateway_packet.validate_python(record)
+                    if closing:
+                        continue  # the gateway acks and closes; keep the pipe open until then
                     if isinstance(packet, GatewayResponse) and packet.id == request_id:
                         if packet.error:
                             raise RuntimeError(packet.error)
@@ -148,6 +151,8 @@ class DimcodeAdapter(PiAdapter):
                             raise RuntimeError(str(event.get("message", "dimcode turn failed")))
                         if event["type"] == "idle":
                             send(Shutdown())
-                            return
+                            closing = True
+                            continue
                         yield event
-            raise RuntimeError("dimcode disconnected before completion")
+            if not closing:
+                raise RuntimeError("dimcode disconnected before completion")
