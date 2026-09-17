@@ -37,8 +37,8 @@ wins at both 0.05 m and 0.025 m grid resolution; distances are approximate.
 from collections.abc import Callable
 from typing import TypeVar
 
-from dimos.evals.environments.sim import Sim
-from dimos.evals.scorers import exact, first_number, numeric, rank_order, ranking, yes_no
+from dimos.evals.environments.dimsim import DimSimEnvironment
+from dimos.evals.scorers import choice, exact, first_number, numeric, rank_order, ranking, yes_no
 from dimos.evals.types import EvalCase, Outcome, Suite
 
 T = TypeVar("T")
@@ -67,12 +67,15 @@ def _parsed(parser: Callable[[str], T], score: Callable[[T], float]) -> Callable
     return grade
 
 
-def _environment() -> Sim:
-    return Sim(
+_LETTER = choice("ABCD", case_sensitive=True)
+
+
+def _environment() -> DimSimEnvironment:
+    return DimSimEnvironment(
         blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
         disable=("wavefront-frontier-explorer", "patrolling-module"),
-        simulator="dimsim",
         scene="apartment",
+        raw_bridge=True,  # agents without dimOS get the robot as plain topics
     )
 
 
@@ -83,7 +86,7 @@ SUITE: Suite = [
         + "\n\n"
         + "Which room contains the refrigerator? A: Bedroom; B: Kitchen; C: Bathroom; D: Living room. Return only A, B, C, or D.",
         environment=_environment(),
-        grade=lambda o: exact("B", o.trajectory.final_answer.strip().upper()),
+        grade=_parsed(_LETTER, lambda value: exact("B", value)),
         timeout_s=1200.0,
         tags=frozenset({"object-location", "single-choice"}),
     ),
@@ -93,7 +96,7 @@ SUITE: Suite = [
         + "\n\n"
         + "Which room contains the work desk? A: Kitchen; B: Bathroom; C: Living room; D: Bedroom. Return only A, B, C, or D.",
         environment=_environment(),
-        grade=lambda o: exact("D", o.trajectory.final_answer.strip().upper()),
+        grade=_parsed(_LETTER, lambda value: exact("D", value)),
         timeout_s=1200.0,
         tags=frozenset({"object-location", "single-choice"}),
     ),
@@ -239,7 +242,7 @@ SUITE: Suite = [
         + "\n\n"
         + "Is the refrigerator open or closed? A: Closed; B: Open. Return only A or B.",
         environment=_environment(),
-        grade=lambda o: exact("A", o.trajectory.final_answer.strip().upper()),
+        grade=_parsed(_LETTER, lambda value: exact("A", value)),
         timeout_s=1200.0,
         tags=frozenset({"object-state", "single-choice"}),
     ),
@@ -269,7 +272,7 @@ SUITE: Suite = [
         + "\n\n"
         + "Which pair of objects is on opposite sides of the same wall? A: Sofa and television; B: Work desk and bed; C: Refrigerator and work desk; D: Bathtub and toilet. Return only A, B, C, or D.",
         environment=_environment(),
-        grade=lambda o: exact("C", o.trajectory.final_answer.strip().upper()),
+        grade=_parsed(_LETTER, lambda value: exact("C", value)),
         timeout_s=1200.0,
         tags=frozenset({"spatial-relation", "single-choice", "draft-reference"}),
     ),
@@ -279,7 +282,7 @@ SUITE: Suite = [
         + "\n\n"
         + "Which object is closest to the sofa by straight-line distance? A: Refrigerator; B: Dining table; C: Work desk. Return only A, B, or C.",
         environment=_environment(),
-        grade=lambda o: exact("B", o.trajectory.final_answer.strip().upper()),
+        grade=_parsed(_LETTER, lambda value: exact("B", value)),
         timeout_s=1200.0,
         tags=frozenset({"spatial-ordering", "single-choice", "draft-reference"}),
     ),
