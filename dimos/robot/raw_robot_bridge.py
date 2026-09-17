@@ -48,6 +48,24 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 RAW_ENDPOINT = "tcp/127.0.0.1:7448"
 
 
+def readme(endpoint: str) -> str:
+    """What an agent without dimOS is told about the bridge."""
+    return f"""\
+Robot interface: a Zenoh peer at {endpoint}. Connect to it directly (multicast scouting is off);
+any Zenoh client works, e.g. `pip install eclipse-zenoh`.
+
+  robot/camera/jpeg        JPEG bytes per frame; attachment is JSON {{"t": unix_seconds}}
+  robot/lidar/xyz_f32      float32 little-endian (N,3) x y z in metres, lidar frame; attachment {{"t": ...}}
+  robot/odom/json          {{"t","x","y","z","qx","qy","qz","qw"}}: base_link pose in the odom frame
+  robot/camera_info/json   {{"width","height","K"}}: intrinsics, republished periodically
+  robot/cmd_vel/json       publish {{"vx": m/s, "vy": m/s, "wz": rad/s, "t": seconds}}; the robot holds
+                           that velocity for t seconds (max 2), then stops. Republish to keep moving.
+                           Speeds are clamped to 1.0 m/s and 1.5 rad/s; non-finite values are ignored.
+
+There is no other interface to this robot.
+"""
+
+
 def zenoh_config(endpoint: str, *, listen: bool) -> zenoh.Config:
     """A peer that talks only to *endpoint*: no multicast or gossip scouting."""
     config = zenoh.Config()

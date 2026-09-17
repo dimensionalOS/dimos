@@ -112,7 +112,7 @@ def test_gateway_failure_preserves_completed_steps(tmp_path: Path, mode: str) ->
 
 
 def test_dimcode_rejects_no_dimos() -> None:
-    with pytest.raises(ValueError, match="production environment"):
+    with pytest.raises(ValueError, match="does not support no_dimos"):
         DimcodeAdapter(no_dimos=True, model="gpt-6-astra")
 
 

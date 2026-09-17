@@ -28,10 +28,10 @@ import tempfile
 import time
 from typing import IO, TYPE_CHECKING, Any, ClassVar
 
-from pydantic import Field, JsonValue, TypeAdapter, model_validator
+from pydantic import Field, JsonValue, TypeAdapter
 
 from dimos.core.coordination.process_lifecycle import kill_run_processes
-from dimos.evals.agents.base import Agent, ModelAgentConfig
+from dimos.evals.agents.base import NO_DIMOS_GUIDANCE, Agent, ModelAgentConfig, strip_dimos
 from dimos.evals.agents.lib.model_trace_proxy import model_trace_proxy
 from dimos.evals.agents.lib.pi_config import (
     PROVIDERS,
@@ -50,6 +50,7 @@ from dimos.evals.types import (
     RunningEnvironment,
     Trajectory,
 )
+from dimos.robot.raw_robot_bridge import readme as raw_readme
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
@@ -111,38 +112,6 @@ def read_pi_events(
                 yield _json_object.validate_json(line)
 
 
-NO_DIMOS_KEYWORDS = ("dimos", "dimensionalos")
-
-NO_DIMOS_GUIDANCE = (
-    "There is no robotics framework installed. You may use any public tool, library, SDK or "
-    "web resource, and write whatever code you need under the current directory. Do not "
-    "install, clone, import or run dimOS or anything from the dimensionalOS organisation; "
-    "tool calls that mention it are denied."
-)
-
-
-def raw_robot_readme(endpoint: str) -> str:
-    return f"""\
-Robot interface: a Zenoh peer at {endpoint}. Connect to it directly (multicast scouting is off);
-any Zenoh client works, e.g. `pip install eclipse-zenoh`.
-
-  robot/camera/jpeg        JPEG bytes per frame; attachment is JSON {{"t": unix_seconds}}
-  robot/lidar/xyz_f32      float32 little-endian (N,3) x y z in metres, lidar frame; attachment {{"t": ...}}
-  robot/odom/json          {{"t","x","y","z","qx","qy","qz","qw"}}: base_link pose in the odom frame
-  robot/camera_info/json   {{"width","height","K"}}: intrinsics, republished periodically
-  robot/cmd_vel/json       publish {{"vx": m/s, "vy": m/s, "wz": rad/s, "t": seconds}}; the robot holds
-                           that velocity for t seconds (max 2), then stops. Republish to keep moving.
-                           Speeds are clamped to 1.0 m/s and 1.5 rad/s; non-finite values are ignored.
-
-There is no other interface to this robot.
-"""
-
-
-def _ships_dimos(directory: str) -> bool:
-    d = Path(directory)
-    return (d / "dimos").exists() or "dimos" in d.parts
-
-
 class PiAdapterConfig(ModelAgentConfig):
     """Settings for the headless Pi adapter."""
 
@@ -160,9 +129,6 @@ class PiAdapterConfig(ModelAgentConfig):
     # Explain recording access and robot tools. Disable if a skill teaches these.
     builtin_guidance: bool = True
 
-    # The agent gets the robot as plain topics or files and no dimOS: PATH without dimOS,
-    # no memory store or MCP guidance, and excluded_keywords defaulting to dimOS's names.
-    no_dimos: bool = False
     # Host variables the Pi process may inherit; the provider key is added by name and
     # DIMOS_* variables pass through unless no_dimos. Everything else stays on the host.
     passthrough_env: tuple[str, ...] = (
@@ -187,12 +153,6 @@ class PiAdapterConfig(ModelAgentConfig):
     # against the caller's working directory before Pi starts in the case directory.
     skills: tuple[str, ...] = ()
 
-    @model_validator(mode="after")
-    def _no_dimos_defaults(self) -> PiAdapterConfig:
-        if self.no_dimos and not self.excluded_keywords:
-            object.__setattr__(self, "excluded_keywords", NO_DIMOS_KEYWORDS)
-        return self
-
 
 class PiAdapter(Agent):
     """Run headless Pi against case files and robot tools, recording an ATIF trajectory."""
@@ -201,6 +161,7 @@ class PiAdapter(Agent):
     default_tools: ClassVar[tuple[str, ...]] = ("read", "bash", "edit", "write")
     tool_names: ClassVar[tuple[str, ...] | None] = (*default_tools, "grep", "find", "ls")
     robot_via_bash: ClassVar[bool] = True
+    supports_no_dimos: ClassVar[bool] = True
 
     @property
     def selected_tools(self) -> tuple[str, ...]:
@@ -315,7 +276,7 @@ class PiAdapter(Agent):
         files.pop("recording", None)  # a dimOS memory store; not readable without dimOS
         if env.raw_endpoint:
             readme = run_dir / "ROBOT.md"
-            readme.write_text(raw_robot_readme(env.raw_endpoint))
+            readme.write_text(raw_readme(env.raw_endpoint))
             files["robot"] = readme
         elif env.mcp_url:
             raise ValueError("no_dimos on a robot environment needs raw_bridge=True")
@@ -387,9 +348,7 @@ class PiAdapter(Agent):
             if k in keep or (dimos_vars and k.startswith("DIMOS_"))
         }
         if self.config.no_dimos:
-            env["PATH"] = os.pathsep.join(
-                d for d in env.get("PATH", "").split(os.pathsep) if not _ships_dimos(d)
-            )
+            env = strip_dimos(env)
         env["DIMOS_EVAL_RUN_ID"] = str(paths.workspace)
         return env
 

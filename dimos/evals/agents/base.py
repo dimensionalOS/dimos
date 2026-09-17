@@ -17,17 +17,43 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import os
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
+from typing_extensions import Self
 
 from dimos.evals.types import RunningEnvironment, Trajectory
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
     from dimos.evals.environments.base import Environment
+
+
+NO_DIMOS_KEYWORDS = ("dimos", "dimensionalos")
+
+NO_DIMOS_GUIDANCE = (
+    "There is no robotics framework installed. You may use any public tool, library, SDK or "
+    "web resource, and write whatever code you need under the current directory. Do not "
+    "install, clone, import or run dimOS or anything from the dimensionalOS organisation; "
+    "tool calls that mention it are denied."
+)
+
+
+def strip_dimos(env: dict[str, str]) -> dict[str, str]:
+    """A process environment with no DIMOS_* variables and no PATH entry that ships dimOS."""
+    env = {k: v for k, v in env.items() if not k.startswith("DIMOS_")}
+    env["PATH"] = os.pathsep.join(
+        d for d in env.get("PATH", "").split(os.pathsep) if not _ships_dimos(d)
+    )
+    return env
+
+
+def _ships_dimos(directory: str) -> bool:
+    d = Path(directory)
+    return (d / "dimos").exists() or "dimos" in d.parts
 
 
 class AgentConfig(BaseConfig):
@@ -37,6 +63,9 @@ class AgentConfig(BaseConfig):
     excluded_keywords: tuple[str, ...] = ()
     # Cap on one bash call's runtime, seconds; the model's own timeout is clamped to it.
     max_tool_seconds: float | None = Field(default=300.0, gt=0)
+    # Hand the agent the robot or data without dimOS: no dimOS on PATH, no memory store,
+    # no MCP guidance; excluded_keywords defaults to dimOS's names. Adapters opt in.
+    no_dimos: bool = False
 
     @field_validator("excluded_keywords")
     @classmethod
@@ -59,6 +88,12 @@ class AgentConfig(BaseConfig):
 class ModelAgentConfig(AgentConfig):
     model: str = "gpt-5.6-luna"
 
+    @model_validator(mode="after")
+    def _no_dimos_defaults(self) -> Self:
+        if self.no_dimos and not self.excluded_keywords:
+            object.__setattr__(self, "excluded_keywords", NO_DIMOS_KEYWORDS)
+        return self
+
 
 class Agent(Configurable, ABC):
     """Run an instruction independently of the case and its grader.
@@ -68,10 +103,13 @@ class Agent(Configurable, ABC):
     """
 
     config: AgentConfig
+    supports_no_dimos: ClassVar[bool] = False
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.validate_tools()
+        if self.config.no_dimos and not self.supports_no_dimos:
+            raise ValueError(f"{type(self).__name__} does not support no_dimos")
 
     def validate_tools(self) -> None:
         """Adapters must enforce explicit allowlists, or reject them.

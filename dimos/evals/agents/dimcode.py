@@ -67,8 +67,10 @@ class DimcodeAdapter(PiAdapter):
     tool_names: ClassVar[tuple[str, ...] | None] = None
     robot_via_bash: ClassVar[bool] = False
 
+    supports_no_dimos: ClassVar[bool] = False
+
     def validate_tools(self) -> None:
-        if self.config.no_dimos or self.config.skills:
+        if self.config.skills:
             raise ValueError("dimcode uses its production environment and skills")
 
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:

@@ -22,9 +22,11 @@ import numpy as np
 from PIL import Image as PILImage
 import pytest
 
+from dimos.evals.agents.base import NO_DIMOS_KEYWORDS
 from dimos.evals.agents.lib.pi_config import RunPaths
 from dimos.evals.agents.lib.plain_recording import plain_recording
-from dimos.evals.agents.pi import NO_DIMOS_KEYWORDS, PiAdapter
+from dimos.evals.agents.pi import PiAdapter
+from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.types import RunningEnvironment
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -43,6 +45,8 @@ def test_no_dimos_defaults_the_excluded_keywords_but_keeps_explicit_ones() -> No
         PiAdapter(no_dimos=True, modules=("mcp-server",))
     with pytest.raises(ValueError, match="modules or Pi skills"):
         PiAdapter(no_dimos=True, skills=("dimensional/SKILL.md",))
+    with pytest.raises(ValueError, match="does not support no_dimos"):
+        QuestionAnswer(no_dimos=True)
 
 
 def test_robot_environment_needs_raw_topics(tmp_path: Path) -> None:
