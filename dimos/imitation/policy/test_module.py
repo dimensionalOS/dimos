@@ -40,14 +40,16 @@ def test_contract_imports_without_runtime_dependencies() -> None:
     }
 
 
-def test_contract_resolves_checkout_runtime_project() -> None:
+@pytest.mark.parametrize("backend", ["lerobot", "abc"])
+def test_contract_resolves_checkout_runtime_project(backend) -> None:
     module = PolicyModule(
+        backend=backend,
         policy_path="unused",
         task="test task",
         joint_names=["joint"],
     )
     try:
-        assert module.runtime_project == get_project_root() / "native/python/lerobot"
+        assert module.runtime_project == get_project_root() / "native/python" / backend
     finally:
         module.stop()
 

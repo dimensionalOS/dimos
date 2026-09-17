@@ -32,13 +32,15 @@ abc_minimal = ["UPSTREAM.md", "third_party/dinov3/LICENSE.md", "third_party/clip
 [tool.pytest.ini_options]
 testpaths = ["dimos_abc"]
 python_files = ["*_tests.py"]
+addopts = "--confcutdir=."
 
 [tool.mypy]
 files = ["dimos_abc/"]
+exclude = ["_tests[.]py$"]
 python_version = "3.12"
 strict = true
 explicit_package_bases = true
-mypy_path = "../../../../../"
+mypy_path = "../../.."
 
 [[tool.mypy.overrides]]
 module = ["abc_minimal", "abc_minimal.*"]
