@@ -24,7 +24,9 @@ from dimos.mapping.loop_closure.pgo import (
     PGOConfig,
     PoseGraph,
     _obs_to_pose3,
+    _PGOState,
     _pose3_to_transform,
+    _transform_to_pose3,
 )
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.stream import Stream
@@ -159,7 +161,95 @@ def _make_lidar_stream(n_frames: int = 12, points_per_frame: int = 500) -> Strea
     return lidar
 
 
+class TestSubmapExclusion:
+    @pytest.mark.parametrize(
+        "excluded, expected",
+        [
+            (1, [21.0, 31.0]),
+            (2, [11.0, 31.0]),
+            (3, [11.0, 21.0]),
+            (0, [11.0, 21.0, 31.0]),
+            (4, [11.0, 21.0, 31.0]),
+            (None, [11.0, 21.0, 31.0]),
+        ],
+    )
+    def test_members(self, excluded: int | None, expected: list[float]) -> None:
+        state = _PGOState(PGOConfig())
+        for i in range(5):
+            ts = 100.0 + i
+            tf = Transform(translation=Vector3(10.0 * i + 1.0, 0.0, 0.0), ts=ts)
+            pose = _transform_to_pose3(tf)
+            cloud = PointCloud2.from_numpy(np.array([[0.0, 0.0, 0.0]]), timestamp=ts)
+            state.process(pose, ts, cloud.transform(tf))
+        points, _ = state._get_submap(2, 1, exclude_idx=excluded).as_numpy()
+        np.testing.assert_allclose(np.sort(points[:, 0]), expected)
+        assert len(state._get_submap(4, 0, exclude_idx=4)) == 0
+        singleton, _ = state._get_submap(4, 0).as_numpy()
+        np.testing.assert_allclose(singleton, [[41.0, 0.0, 0.0]])
+
+
 class TestPipelineEndToEnd:
+    def test_closed_trajectory_still_improves_position(self) -> None:
+        u, v = np.meshgrid(np.arange(-3.0, 3.01, 0.15), np.arange(-3.0, 3.01, 0.15))
+        u, v = u.ravel(), v.ravel()
+        room = np.concatenate(
+            [
+                np.column_stack([u, v, np.full_like(u, -3.0)]),
+                np.column_stack([np.full_like(u, 3.0), u, v]),
+                np.column_stack([u, np.full_like(u, 3.0), v]),
+            ]
+        )
+        angles = np.linspace(0.0, 2.0 * np.pi, 33)
+        truth = np.column_stack([4.0 * np.cos(angles) + 1.0, 4.0 * np.sin(angles), np.ones(33)])
+        raw = truth.copy()
+        raw[:, 0] += np.linspace(0.0, 0.12, 33)
+        mem = MemoryStore()
+        lidar: Stream[PointCloud2] = mem.stream("lidar", PointCloud2)
+        for i in range(33):
+            ts = 100.0 + 3.0 * i
+            lidar.append(
+                PointCloud2.from_numpy(room + raw[i] - truth[i], timestamp=ts),
+                ts=ts,
+                pose=(*raw[i].tolist(), 0.0, 0.0, 0.0, 1.0),
+            )
+        graph = lidar.transform(PGO()).last().data
+        assert len(graph.keyframes) == 33
+        assert len(graph.loops) > 0
+        corrected = np.array([k.optimized.translation.to_numpy() for k in graph.keyframes])
+        assert np.isfinite(corrected).all()
+        assert np.mean(np.sum((corrected - truth) ** 2, axis=1)) < np.mean(
+            np.sum((raw - truth) ** 2, axis=1)
+        )
+        assert np.max(np.linalg.norm(corrected - truth, axis=1)) < 0.15
+
+    def test_no_loop_without_historical_cloud_overlap(self) -> None:
+        # Three perpendicular planes constrain ICP. All historical scans are
+        # far from the current scan, despite poses passing the candidate gates.
+        u, v = np.meshgrid(np.arange(-3.0, 3.01, 0.15), np.arange(-3.0, 3.01, 0.15))
+        u, v = u.ravel(), v.ravel()
+        room = np.concatenate(
+            [
+                np.column_stack([u, v, np.full_like(u, -3.0)]),
+                np.column_stack([np.full_like(u, 3.0), u, v]),
+                np.column_stack([u, np.full_like(u, 3.0), v]),
+            ]
+        )
+        mem = MemoryStore()
+        lidar: Stream[PointCloud2] = mem.stream("lidar", PointCloud2)
+        for i in range(10):
+            ts = 100.0 + 3.0 * i
+            world = room + 100.0 if i < 9 else room
+            x = float(i + 1) if i < 9 else 1.0
+            lidar.append(
+                PointCloud2.from_numpy(world.astype(np.float32), timestamp=ts),
+                ts=ts,
+                pose=(x, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
+            )
+
+        graph = lidar.transform(PGO()).last().data
+        assert len(graph.keyframes) == 10
+        assert len(graph.loops) == 0
+
     def test_straight_line_produces_keyframes(self) -> None:
         lidar = _make_lidar_stream(n_frames=12)
         graph = lidar.transform(PGO()).last().data

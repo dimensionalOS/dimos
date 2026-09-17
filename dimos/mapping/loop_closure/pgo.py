@@ -489,20 +489,24 @@ class _PGOState:
             )
         )
 
-    def _get_submap(self, idx: int, half_range: int) -> PointCloud2:
+    def _get_submap(
+        self, idx: int, half_range: int, *, exclude_idx: int | None = None
+    ) -> PointCloud2:
         lo = max(0, idx - half_range)
         hi = min(len(self._key_poses) - 1, idx + half_range)
-        if lo > hi:
+        indices = [i for i in range(lo, hi + 1) if i != exclude_idx]
+        if not indices:
             return PointCloud2()
-        cloud = self._key_poses[lo].body_cloud.transform(
+        first = self._key_poses[indices[0]]
+        cloud = first.body_cloud.transform(
             _pose3_to_transform(
-                self._key_poses[lo].optimized,
-                ts=self._key_poses[lo].timestamp,
+                first.optimized,
+                ts=first.timestamp,
                 frame_id=FRAME_WORLD_CORRECTED,
                 child_frame_id=FRAME_BODY,
             )
         )
-        for i in range(lo + 1, hi + 1):
+        for i in indices[1:]:
             kp = self._key_poses[i]
             cloud = cloud + kp.body_cloud.transform(
                 _pose3_to_transform(
@@ -556,7 +560,8 @@ class _PGOState:
         candidates.sort()
         loop_idx = candidates[0][1]
 
-        target = self._get_submap(loop_idx, self._cfg.loop_submap_half_range)
+        # The target window must not contain the source scan itself.
+        target = self._get_submap(loop_idx, self._cfg.loop_submap_half_range, exclude_idx=cur_idx)
         source = self._get_submap(cur_idx, 0)
 
         icp_tf, fitness = _icp(
