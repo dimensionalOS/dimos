@@ -56,6 +56,9 @@ from dimos.evals.scorers import (
     final,
     first_number,
     floor,
+    last_number,
+    last_yes_no,
+    letter,
     mean,
     ramp,
     within,
@@ -952,3 +955,21 @@ def test_attach_with_raw_bridge_needs_a_listening_bridge() -> None:
     env.config.launch_timeout_s = 1.0
     with pytest.raises(RuntimeError, match="raw-robot-bridge"):
         env.start(())
+
+
+def test_last_line_parsers() -> None:
+    enumerated = "Rooms observed:\n\n1. Living room\n2. Kitchen\n3. Bedroom\n4. Bathroom\n\n4"
+    assert last_number(enumerated) == 4  # first_number would read the list index 1
+    assert last_number("**3.4**") == 3.4
+    assert last_number("About 12.5 meters, give or take.") == 12.5  # falls back to the first number
+    assert last_yes_no("Bathtub, toilet and vanity are visible.\n\nyes") == "yes"
+    assert last_yes_no("**No.**") == "no"
+    assert last_yes_no("Yes, there is one.") == "yes"
+    parse = letter("ABCD")
+    assert parse("The doors are shut.\n\n**A**") == "A"
+    assert parse("It is a kitchen with a fridge, so B.") == "B"  # articles do not count
+    assert parse("C") == "C"
+    with pytest.raises(ValueError, match="no option letter"):
+        parse("no idea")
+    with pytest.raises(ValueError, match="no number"):
+        last_number("none")

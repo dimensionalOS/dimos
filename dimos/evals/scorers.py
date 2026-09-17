@@ -75,6 +75,44 @@ def choice(options: Sequence[str]) -> Callable[[str], str]:
     return parse
 
 
+def letter(options: str) -> Callable[[str], str]:
+    """Parser for a lettered choice ("A: Kitchen; B: Bedroom"): the last standalone
+    letter from ``options``. Case-sensitive, so the article "a" never counts."""
+    import re
+
+    pattern = re.compile(rf"\b([{re.escape(options)}])\b")
+
+    def parse(text: str) -> str:
+        found = pattern.findall(text)
+        if not found:
+            raise ValueError(f"no option letter {options} in reply: {text[:80]!r}")
+        return str(found[-1])
+
+    return parse
+
+
+def last_number(text: str) -> float:
+    """A bare number on the reply's last line, else the first number in the reply.
+
+    Models that explain before answering end with the value; an enumerated
+    explanation would otherwise be read as its first list index."""
+    import re
+
+    last = _last_line(text)
+    return float(last) if re.fullmatch(r"-?\d+(?:\.\d+)?", last) else first_number(text)
+
+
+def last_yes_no(text: str) -> str:
+    """A bare yes/no on the reply's last line, else ``yes_no`` on the whole reply."""
+    last = _last_line(text).lower()
+    return last if last in ("yes", "no") else yes_no(text)
+
+
+def _last_line(text: str) -> str:
+    lines = [line.strip().strip("*_`") for line in text.strip().splitlines() if line.strip()]
+    return lines[-1].rstrip(".!").strip() if lines else ""
+
+
 def within(band: float) -> Callable[[float, float], float]:
     """1.0 at exact, linear to 0.0 at ``band`` away."""
     return lambda expected, got: max(0.0, 1.0 - abs(got - expected) / band)
