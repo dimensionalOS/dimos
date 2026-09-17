@@ -741,6 +741,7 @@ ignore = [
     "native/python/example/uv.lock",
     "native/python/graspgenx/uv.lock",
     "*/package-lock.json",
+    "agent/npm-shrinkwrap.json",
     "Cargo.lock",
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",
