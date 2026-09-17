@@ -51,7 +51,7 @@ class Episode(BaseModel):
     truncated: bool = False
     info: dict[str, Any] = Field(default_factory=dict)
     execution_kinds: list[str] = Field(default_factory=list)
-    grasping_mode: str = "sticky"
+    grasping_mode: str = "assisted"
 
 
 class BehaviorStatus(BaseModel):
