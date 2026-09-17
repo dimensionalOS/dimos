@@ -34,7 +34,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUTS
-from dimos.simulation.behavior.setup import MARKER, runtime_environment
+from dimos.simulation.behavior.setup import MARKER, PROJECT_DIR, runtime_environment
 from dimos.simulation.behavior.types import BehaviorStatus, ControlMode, Operation, TaskSelection
 
 
@@ -65,6 +65,7 @@ class BehaviorConfig(IsolatedPythonModuleConfig):
 class BehaviorConnection(IsolatedPythonModule):
     """A continuous R1 Pro simulator with explicit task and control ownership."""
 
+    project_dir = PROJECT_DIR
     implementation = "dimos_behavior.runtime:BehaviorRuntime"
     config: BehaviorConfig
 

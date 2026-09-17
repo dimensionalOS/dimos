@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
 import sys
 
 import pytest
@@ -29,8 +30,10 @@ def test_setup_requires_both_license_acceptances(mocker):
     run.assert_not_called()
 
 
-def test_upstream_shadowing_fix_preserves_other_packages(tmp_path):
-    root = tmp_path / ".venv/lib/python3.11/site-packages/isaacsim/extscache"
+def test_upstream_shadowing_fix_preserves_other_packages(tmp_path, monkeypatch):
+    monkeypatch.setattr("dimos.experimental.isolated_python.module.CACHE_DIR", tmp_path / "cache")
+    environment = Path(setup.isolated_python_environment(tmp_path)["UV_PROJECT_ENVIRONMENT"])
+    root = environment / "lib/python3.11/site-packages/isaacsim/extscache"
     archive = root / "omni.services/pip_prebundle"
     for name in ("websockets", "packaging", "other"):
         (archive / name).mkdir(parents=True)
@@ -49,4 +52,7 @@ def test_runtime_environment_uses_recorded_assets_and_own_toolchain(tmp_path, mo
     assert env["OMNIGIBSON_DATA_PATH"] == "/assets/behavior"
     assert env["CUDA_HOME"] == str(tmp_path / ".pixi/envs/default")
     assert "ISAAC_PATH" not in env
-    assert "UV_PROJECT_ENVIRONMENT" not in env
+    assert (
+        env["UV_PROJECT_ENVIRONMENT"]
+        == setup.isolated_python_environment(tmp_path)["UV_PROJECT_ENVIRONMENT"]
+    )

@@ -69,3 +69,7 @@ explicit = true
 name = "nvidia"
 url = "https://pypi.nvidia.com"
 explicit = false
+
+[tool.pytest.ini_options]
+testpaths = ["dimos_behavior"]
+addopts = "--confcutdir=."

@@ -27,6 +27,11 @@ from dimos.robot.manipulators.openyam.collection import OPENYAM_TEACH_COLLECTION
 from dimos.utils.data import get_project_root
 
 
+@pytest.fixture(autouse=True)
+def isolate_preparation(mocker):
+    return mocker.patch("dimos.cli.commands.imitation.prepare_isolated_python")
+
+
 def test_help_exposes_attached_controls_and_no_workflow_launcher():
     result = CliRunner().invoke(imitation_app, ["--help"])
     assert result.exit_code == 0
@@ -197,9 +202,7 @@ def test_visualize_launches_local_viewer(visualization, monkeypatch, flags, epis
     assert run.call_args.args[0] == [
         "uv",
         "run",
-        "--frozen",
-        "--with-editable",
-        str(get_project_root()),
+        "--no-sync",
         "--project",
         str(project),
         "lerobot-dataset-viz",
