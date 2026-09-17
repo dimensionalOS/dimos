@@ -36,6 +36,8 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 
+pytestmark = pytest.mark.macos
+
 
 class TestControlCoordinatorE2E:
     """End-to-end tests for ControlCoordinator."""

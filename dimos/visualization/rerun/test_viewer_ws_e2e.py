@@ -30,6 +30,8 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import global_config
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
+pytestmark = pytest.mark.macos
+
 
 @pytest.fixture()
 def server(wait_for_server: Any) -> RerunWebSocketServer:
