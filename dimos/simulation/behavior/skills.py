@@ -97,7 +97,7 @@ class BehaviorSkills(Module):
         return "Cancellation requested; poll the operation for acknowledgement."
 
 
-SYSTEM_PROMPT = """You control R1 in an OmniGibson BEHAVIOR environment.
+SYSTEM_PROMPT = """You control R1 Pro in an OmniGibson BEHAVIOR environment.
 Inspect capabilities, task status, and ground_truth before acting. Object identifiers
 are scoped to the current episode. Take primitive control explicitly and wait for
 that operation to succeed before starting an action. Poll operation handles; never

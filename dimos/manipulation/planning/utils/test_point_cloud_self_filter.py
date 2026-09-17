@@ -22,6 +22,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+import trimesh
 
 # The tests extra excludes yourdfpy on Linux ARM because embreex has no wheel.
 if sys.platform == "linux" and platform.machine() == "aarch64":
@@ -44,8 +45,9 @@ _URDF = """<?xml version="1.0"?>
   <link name="arm">
     <collision><geometry><box size="0.2 0.2 0.2"/></geometry></collision>
   </link>
-  <joint name="shoulder" type="fixed">
+  <joint name="shoulder" type="revolute">
     <parent link="base"/><child link="arm"/>
+    <axis xyz="0 0 1"/><limit lower="-3.14" upper="3.14" effort="10" velocity="1"/>
   </joint>
 </robot>
 """
@@ -167,3 +169,40 @@ def test_a_cloud_without_capture_time_tf_is_dropped_whole(
     module = make_filter()
 
     assert module.filter_cloud(_cloud([[2.0, 0.0, 0.0]])) is None
+
+
+def test_fixed_collision_links_use_the_movable_ancestor_tf(
+    make_filter: Callable[..., PointCloudSelfFilter],
+    tmp_path: Path,
+) -> None:
+    urdf = tmp_path / "fixed.urdf"
+    urdf.write_text("""<robot name="fixed_links">
+      <link name="base"/><link name="mount"/>
+      <link name="arm"><collision><origin xyz="0.1 0 0"/>
+        <geometry><box size="0.2 0.2 0.2"/></geometry></collision></link>
+      <joint name="mounting" type="fixed"><parent link="base"/><child link="mount"/>
+        <origin xyz="1 0 0" rpy="0 0 1.5707963267948966"/></joint>
+      <joint name="tool" type="fixed"><parent link="mount"/><child link="arm"/>
+        <origin xyz="0.2 0 0"/></joint>
+    </robot>""")
+    module = make_filter(model=RobotModel.from_file(urdf))
+    for frame in ("camera", "world"):
+        module.tfbuffer.receive_transform(Transform(frame_id=frame, child_frame_id="base", ts=1.0))
+    result = module.filter_cloud(_cloud([[1.0, 0.3, 0.0], [1.3, 0.3, 0.0]]))
+    assert result is not None
+    np.testing.assert_allclose(result[0].points_f32(), [[1.3, 0.3, 0.0]], atol=1e-6)
+
+
+def test_mesh_distance_filter_preserves_padding_and_free_space(
+    make_filter: Callable[..., PointCloudSelfFilter],
+    tmp_path: Path,
+) -> None:
+    mesh = tmp_path / "box.obj"
+    trimesh.creation.box(extents=[0.2, 0.2, 0.2]).export(mesh)
+    urdf = tmp_path / "mesh.urdf"
+    urdf.write_text(_URDF.replace('<box size="0.2 0.2 0.2"/>', '<mesh filename="box.obj"/>'))
+    module = make_filter(model=RobotModel.from_file(urdf))
+    _place_arm(module, (0.0, 0.0, 0.0), 1.0)
+    result = module.filter_cloud(_cloud([[0.0, 0.0, 0.0], [0.105, 0.0, 0.0], [0.12, 0.0, 0.0]]))
+    assert result is not None
+    np.testing.assert_allclose(result[0].points_f32(), [[0.12, 0.0, 0.0]], atol=1e-6)

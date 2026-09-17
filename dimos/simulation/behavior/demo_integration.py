@@ -149,10 +149,14 @@ def check_native(connection: Any, probe: Any) -> dict[str, Any]:
     measured = probe.snapshot()["joints"]
     action = [0.0] * len(description["action_bounds"])
     for group, indices in description["action_layout"].items():
-        if group != "base":
+        if group.startswith("gripper"):
+            # The evaluator's smooth gripper controller has one normalized action.
+            action[indices[0]] = 1.0  # Keep both grippers open.
+        elif group != "base":
             for index, name in zip(indices, description["joint_groups"][group], strict=True):
                 action[index] = measured[name]
-    action[description["action_layout"]["base"][0]] = 0.1 / description["action_hz"]
+    # Native base actions are normalized velocities, not per-step displacement.
+    action[description["action_layout"]["base"][0]] = 0.2
     before = probe.snapshot()["position"]
     run_for_simulation_time(connection, lambda: probe.send_native(action))
     # Let the command expire before checking the measured hold.
@@ -161,7 +165,8 @@ def check_native(connection: Any, probe: Any) -> dict[str, Any]:
     time.sleep(0.5)
     held = probe.snapshot()["position"]
     assert math.dist(before[:2], after[:2]) >= 0.02, "Native action did not move the base"
-    assert math.dist(after[:2], held[:2]) < 0.03, "Expired native action kept moving"
+    assert abs(after[2] - before[2]) < 0.1, "Native action lost floor support"
+    assert math.dist(after, held) < 0.03, "Expired native action kept moving"
     wait_operation(connection, connection.take_control(ControlMode.DIMOS))
     return {"before": before, "after": after, "held": held}
 
@@ -249,6 +254,7 @@ def main() -> None:
             drive(connection, probe)
             check_runtime(connection)
             after = probe.snapshot()["position"]
+            assert abs(after[2] - before[2]) < 0.1, "Base lost floor support"
             if math.dist(before[:2], after[:2]) < 0.02:
                 raise AssertionError(
                     f"Base failed to move at least 2 cm: {before} -> {after}; "

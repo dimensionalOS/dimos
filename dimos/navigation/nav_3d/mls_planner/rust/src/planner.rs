@@ -29,9 +29,6 @@ const CANDIDATE_RADIUS_FACTOR: f32 = 3.0;
 /// Horizontal search radius when snapping a pose to the surface.
 const SNAP_SEARCH_RADIUS_M: f32 = 1.5;
 
-/// Max snap candidates tried when connecting the start.
-const MAX_SNAP_ATTEMPTS: usize = 64;
-
 /// On a blocked path, stop this far short of the last traversable point.
 const BEST_EFFORT_DISTANCE_M: f32 = 1.0;
 
@@ -133,9 +130,10 @@ pub fn plan(
         tracing::debug!(?goal_coord, "plan failed: goal cell is not in the graph");
         return None;
     };
+    // The metric search radius already bounds this set. A cell-count cap can
+    // hide reachable surfaces behind dense, disconnected camera fragments.
     let start_cells: Vec<CellId> = start_candidates
         .iter()
-        .take(MAX_SNAP_ATTEMPTS)
         .filter_map(|&candidate| plg.cells.id(candidate))
         .collect();
 
@@ -1295,6 +1293,21 @@ mod tests {
         );
         assert_eq!(lead.last(), Some(&goal_node));
         assert_eq!(node_seq, vec![goal_node]);
+    }
+
+    #[test]
+    fn start_snap_search_reaches_beyond_a_dense_disconnected_patch() {
+        let mut surface: Vec<_> = (-4..=4)
+            .flat_map(|x| (-4..=4).map(move |y| (x, y, 0)))
+            .collect();
+        surface.extend((10..=25).map(|x| (x, 0, 0)));
+        let plg = graph_with_nodes(&surface, &[(20, 0, 0)]);
+        let start = (0.05, 0.05, 0.1);
+        let goal = (2.55, 0.05, 0.1);
+        let path = plan_simple(&plg, start, goal)
+            .expect("nearby camera fragments must not hide a connected surface within snap radius");
+        assert_eq!(path.first(), Some(&start));
+        assert_eq!(path.last(), Some(&goal));
     }
 
     #[test]

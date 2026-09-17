@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Host-visible contract for the isolated OmniGibson R1 runtime."""
+"""Host-visible contract for the isolated OmniGibson R1 Pro runtime."""
 
 import json
 from typing import Any
@@ -25,6 +25,7 @@ from dimos.experimental.isolated_python.module import (
     IsolatedPythonModule,
     IsolatedPythonModuleConfig,
 )
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -50,6 +51,8 @@ class BehaviorConfig(IsolatedPythonModuleConfig):
     publish_scan: bool = False
     publish_semantic: bool = False
     max_depth: float = Field(default=5, gt=0)
+    spawn_position: tuple[float, float, float] | None = None
+    spawn_yaw: float = 0.0
     seed: int = 0
     max_episode_steps: int = Field(default=30000, ge=1)
     shutdown_timeout: float = 10.0
@@ -60,7 +63,7 @@ class BehaviorConfig(IsolatedPythonModuleConfig):
 
 
 class BehaviorConnection(IsolatedPythonModule):
-    """A continuous R1 simulator with explicit task and control ownership."""
+    """A continuous R1 Pro simulator with explicit task and control ownership."""
 
     implementation = "dimos_behavior.runtime:BehaviorRuntime"
     config: BehaviorConfig
@@ -80,8 +83,11 @@ class BehaviorConnection(IsolatedPythonModule):
     semantic_image: Out[Image]
     joint_state: Out[JointState]
     odometry: Out[Odometry]
+    odom: Out[PoseStamped]
     tf: Out[TFMessage]
     registered_scan: Out[PointCloud2]
+    left_wrist_scan: Out[PointCloud2]
+    right_wrist_scan: Out[PointCloud2]
     status: Out[BehaviorStatus]
 
     def _runtime_env(self) -> dict[str, str]:

@@ -15,6 +15,8 @@
 """OmniGibson adapter. All methods run on the subprocess main thread."""
 
 from collections.abc import Iterator
+from importlib.metadata import version
+import json
 import math
 from pathlib import Path
 import random
@@ -32,15 +34,20 @@ from omnigibson.action_primitives.symbolic_semantic_action_primitives import (
     SymbolicSemanticActionPrimitiveSet,
 )
 from omnigibson.controllers import ControllerView
+import omnigibson.lazy as lazy
 from omnigibson.macros import gm
 from omnigibson.object_states.object_state_base import AbsoluteObjectState, BooleanStateMixin
 from omnigibson.sensors.vision_sensor import VisionSensor
 from omnigibson.tasks.behavior_task import BehaviorTask
+from omnigibson.utils.asset_utils import get_task_instance_path
+from omnigibson.utils.python_utils import recursively_convert_to_torch
+from omnigibson.utils.usd_utils import RigidContactAPI
 from scipy.spatial.transform import Rotation
 import torch
 import yaml
 
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -96,20 +103,17 @@ class OmniEngine:
         torch.manual_seed(config.seed)
         self.env = og.Environment(configs=self._configuration(config.task))
         self.task = config.task
+        self.robot = self.env.robots[0]
+        self._apply_robot_settings()
+        self._load_instance()
+        self._prepare_spawn()
         self._bind_robot()
 
     def _configuration(self, task: TaskSelection | None) -> dict[str, Any]:
-        with (Path(og.example_config_path) / "r1_primitives.yaml").open() as stream:
-            config: dict[str, Any] = yaml.safe_load(stream)
-        config["env"].update(
-            action_frequency=self.config.action_hz,
-            physics_frequency=self.config.physics_hz,
-            rendering_frequency=self.config.action_hz,
-            automatic_reset=False,
-        )
-        config["scene"]["scene_model"] = task.scene if task else self.config.scene
-        robot = config["robots"][0]
-        robot["name"] = "r1"
+        # Read the pinned evaluator's robot rather than duplicating its controllers.
+        with (Path(og.__file__).parent / "eval" / "r1pro.yaml").open() as stream:
+            robot = yaml.safe_load(stream)
+        self.camera_roles = robot.pop("eval")["camera_sensor_names"]
         robot["obs_modalities"] = ["rgb", "depth_linear", "proprio"]
         if self.config.publish_semantic:
             robot["obs_modalities"].append("seg_semantic")
@@ -117,19 +121,126 @@ class OmniEngine:
             image_width=self.config.image_width,
             image_height=self.config.image_height,
         )
-        if task is not None:
-            config["scene"].update(
-                load_task_relevant_only=True, not_load_object_categories=["ceilings"]
+        if task is None and self.config.spawn_position is not None:
+            robot["position"] = list(self.config.spawn_position)
+            robot["orientation"] = (
+                Rotation.from_euler("z", self.config.spawn_yaw).as_quat().tolist()
             )
-            config["task"] = {
+        return {
+            "env": {
+                "action_frequency": self.config.action_hz,
+                "physics_frequency": self.config.physics_hz,
+                "rendering_frequency": self.config.action_hz,
+                "automatic_reset": False,
+            },
+            "scene": {
+                "type": "InteractiveTraversableScene",
+                "scene_model": task.scene if task else self.config.scene,
+                "include_robots": False,
+                "load_task_relevant_only": task is not None,
+                "not_load_object_categories": ["ceilings"],
+            },
+            "robots": [robot],
+            "task": {
                 "type": "BehaviorTask",
                 "activity_name": task.activity,
                 "activity_definition_id": task.definition,
-                "activity_instance_id": task.instance,
+                "activity_instance_id": 0,
                 "online_object_sampling": False,
+                "use_presampled_robot_pose": True,
                 "termination_config": {"max_steps": self.config.max_episode_steps},
             }
-        return config
+            if task
+            else {"type": "DummyTask"},
+        }
+
+    def _load_instance(self) -> None:
+        """Apply training instance state and prescribed pose, as the upstream evaluator does."""
+        if self.task is None:
+            return
+        task = self.task
+        filename = self.env.task.get_cached_activity_scene_filename(
+            scene_model=task.scene,
+            activity_name=task.activity,
+            activity_definition_id=task.definition,
+            activity_instance_id=task.instance,
+        )
+        path = get_task_instance_path(
+            task.scene,
+            f"{task.scene}_task_{task.activity}_instances/{filename}-tro_state",
+            mode="train",
+        )
+        if path is None:
+            raise FileNotFoundError(f"Missing BEHAVIOR training instance: {task}")
+        state = recursively_convert_to_torch(json.loads(Path(path).read_text()))
+        for name, value in state.items():
+            if name == "robot_poses":
+                poses = {key.lower(): poses for key, poses in value.items()}
+                pose = poses["robot" if "robot" in poses else "r1pro"][0]
+                self.robot.set_position_orientation(pose["position"], pose["orientation"])
+                self.env.scene.write_task_metadata(key=name, data=value)
+            else:
+                self.env.task.object_scope[name].load_state(value, serialized=False)
+        og.sim.update_handles()
+        for _ in range(25):
+            og.sim.step_physics()
+            self.robot.keep_still()
+            for entity in self.env.task.object_scope.values():
+                if entity is not None and hasattr(entity, "keep_still"):
+                    entity.keep_still()
+        self.env.scene.update_initial_file()
+        self.env.scene.reset()
+
+    def _apply_robot_settings(self) -> None:
+        # Stopping physics resets virtual base joints: do this before restoring task state.
+        og.sim.stop()
+        self.robot.base_footprint_link.mass = 250.0
+        og.sim.play()
+
+    def _prepare_spawn(self) -> None:
+        # Ground-truth contacts are setup checks only.
+        if self.task is None and self.config.spawn_position is not None:
+            self.robot.set_position_orientation(
+                torch.tensor(self.config.spawn_position),
+                torch.tensor(Rotation.from_euler("z", self.config.spawn_yaw).as_quat()),
+            )
+        obstacle_links = {
+            link.prim_path
+            for obj in self.env.scene.objects
+            if obj is not self.robot and obj.category not in ("floors", "ground_plane")
+            for link in obj.links.values()
+        }
+        floor_links = {
+            link.prim_path
+            for obj in self.env.scene.objects
+            if obj.category in ("floors", "ground_plane")
+            for link in obj.links.values()
+        }
+        attempts = 32 if self.task is None and self.config.spawn_position is None else 1
+        for _ in range(attempts):
+            if self.task is None and self.config.spawn_position is None:
+                _, position = self.env.scene.get_random_point(floor=0, robot=self.robot)
+                position = position.clone()
+                position[2] += 0.2
+                self.robot.set_position_orientation(position, torch.tensor([0.0, 0.0, 0.0, 1.0]))
+            for _ in range(25 if self.task else int(self.config.physics_hz)):
+                og.sim.step_physics()
+                if self.task:
+                    self.robot.keep_still()
+            self.robot.keep_still()
+            og.sim.step()
+            # Some scene objects (e.g. cloth carpets) have no rigid contact column.
+            # Query actual pairs rather than looking up every obstacle in that table.
+            contacts = RigidContactAPI.get_contact_pairs(
+                self.env.scene.idx, {self.robot}, None, True
+            )
+            supported = self.task is not None or any(other in floor_links for _, other in contacts)
+            if supported and not any(other in obstacle_links for _, other in contacts):
+                self.env.scene.update_initial_file()
+                return
+        raise RuntimeError(
+            "R1 Pro spawn lacks floor support or contacts furniture; choose another spawn position"
+        )
 
     def _bind_robot(self) -> None:
         self.robot = self.env.robots[0]
@@ -153,22 +264,11 @@ class OmniEngine:
                 plain(self.robot.action_space.low), plain(self.robot.action_space.high), strict=True
             )
         )
-        self.cameras: dict[str, Any] = {}
-        for name, sensor in self.robot.sensors.items():
-            if not isinstance(sensor, VisionSensor):
-                continue
-            slot = (
-                "left_wrist"
-                if "left" in name.lower()
-                else "right_wrist"
-                if "right" in name.lower()
-                else "head"
-            )
-            if slot in self.cameras:
-                raise ValueError(f"Ambiguous R1 {slot} camera: {name}")
-            self.cameras[slot] = sensor
-        if set(self.cameras) != {"head", "left_wrist", "right_wrist"}:
-            raise ValueError(f"Expected R1 head and wrist cameras, got {list(self.cameras)}")
+        self.cameras = {role: self.robot.sensors[name] for role, name in self.camera_roles.items()}
+        if not all(isinstance(sensor, VisionSensor) for sensor in self.cameras.values()):
+            raise ValueError("Benchmark camera roles must refer to vision sensors")
+        # EVAL_HEAD_HORIZONTAL_APERTURE in the pinned evaluator.
+        self.cameras["head"].horizontal_aperture = 40.0
         # Attach all calibration annotators before rendering. Lazy attachment while
         # publishing the first frame can return an uninitialized projection matrix.
         for sensor in self.cameras.values():
@@ -181,12 +281,25 @@ class OmniEngine:
         self.intrinsics = {
             slot: plain(sensor.intrinsic_matrix) for slot, sensor in self.cameras.items()
         }
+        if not self.config.headless:
+            position, orientation = self.robot.base_footprint_link.get_position_orientation()
+            position = cpu(position)
+            offset = Rotation.from_quat(cpu(orientation)).apply([1.5, 1.5, 1.8])
+            with og.sim.editing_usd():
+                lazy.isaacsim.core.utils.viewports.set_camera_view(
+                    eye=position + offset,
+                    target=position + np.array([0.0, 0.0, 0.7]),
+                    camera_prim_path=og.sim.viewer_camera.prim_path,
+                )
         self.physical: Any = None
         self.symbolic: Any = None
 
     def describe(self) -> dict[str, Any]:
         return {
-            "robot": "R1",
+            "robot": "R1Pro",
+            "versions": {name: version(name) for name in ("omnigibson", "isaacsim", "torch")},
+            "localization": "simulator_ground_truth",
+            "scene": self.task.scene if self.task else self.config.scene,
             "action_hz": self.config.action_hz,
             "max_episode_steps": self.config.max_episode_steps,
             "joint_names": self.names,
@@ -234,6 +347,10 @@ class OmniEngine:
             og.clear()
             self.env = og.Environment(configs=self._configuration(task))
             self.task = task
+            self.robot = self.env.robots[0]
+            self._apply_robot_settings()
+            self._load_instance()
+            self._prepare_spawn()
         else:
             self.env.reset()
         self._bind_robot()
@@ -246,17 +363,25 @@ class OmniEngine:
         action = torch.zeros(self.robot.action_dim, dtype=torch.float32)
         for name, (key, index) in self.controllers.items():
             values = ControllerView.compute_no_op_action(key, index)
-            if name != "base":
+            if name in ("trunk", "arm_left", "arm_right"):
                 values = torch.tensor(
                     [control.targets[self.names[i]] for i in self.indices[name]],
                     dtype=torch.float32,
                 )
-            elif name == "base" and control.mode == ControlMode.DIMOS:
-                # The upstream position-mode holonomic controller expects body-frame deltas.
-                values = (
-                    torch.tensor(control.get_velocity(now), dtype=torch.float32)
-                    / self.config.action_hz
+            elif name.startswith("gripper"):
+                # Smooth gripper commands are scalar [-1, 1], not per-finger positions.
+                joint = self.names[self.indices[name][0]]
+                low, high = self.limits[joint]
+                values = torch.tensor([2 * (control.targets[joint] - low) / (high - low) - 1])
+            elif name == "base":
+                # The evaluator scales normalized xy commands to +/-0.75 m/s.
+                velocity = (
+                    control.get_velocity(now) if control.mode == ControlMode.DIMOS else (0, 0, 0)
                 )
+                values = torch.tensor(velocity, dtype=torch.float32) / torch.tensor(
+                    [0.75, 0.75, 1.0]
+                )
+                values = values.clamp(-1, 1)
             action[self.robot.controller_action_idx[name]] = values
         return action
 
@@ -316,6 +441,14 @@ class OmniEngine:
             }
         return {
             "objects": objects,
+            "links": {
+                name: {
+                    "position": plain(link.get_position_orientation()[0]),
+                    "orientation": plain(link.get_position_orientation()[1]),
+                }
+                for name, link in self.robot.links.items()
+                if name in ("base_link", "left_gripper_link", "right_gripper_link")
+            },
             # The evaluator reports goals through step(); task.info rejects pre-step reads.
             "goal_status": self._goal_status,
             "goal_description": self.env.task.activity_natural_language_goal_conditions
@@ -328,7 +461,7 @@ class OmniEngine:
         return {"obs": cpu(obs), "info": cpu(info)}
 
     def messages(self, ts: float) -> dict[str, Any]:
-        pos, quat = self.robot.get_position_orientation()
+        pos, quat = self.robot.base_footprint_link.get_position_orientation()
         p, q = plain(pos), plain(quat)
         base_rotation = Rotation.from_quat(q)
         linear = base_rotation.inv().apply(plain(self.robot.get_linear_velocity()))
@@ -340,6 +473,10 @@ class OmniEngine:
                 name=self.names,
                 position=plain(self.robot.get_joint_positions()),
                 velocity=plain(self.robot.get_joint_velocities()),
+                effort=plain(self.robot.get_joint_efforts()),
+            ),
+            "odom": PoseStamped(
+                ts=ts, frame_id="world", position=Vector3(*p), orientation=Quaternion(*q)
             ),
             "odometry": Odometry(
                 ts=ts,
@@ -393,16 +530,33 @@ class OmniEngine:
                     ts=ts,
                 )
             )
-            if slot == "head":
-                if self.config.publish_scan:
-                    messages["registered_scan"] = PointCloud2.from_rgbd(
+            if self.config.publish_scan:
+                messages["registered_scan" if slot == "head" else f"{slot}_scan"] = (
+                    PointCloud2.from_rgbd(
                         rgb, depth, calibration, depth_trunc=self.config.max_depth
                     )
+                )
+            if slot == "head":
                 if self.config.publish_semantic:
                     # Semantic IDs are metadata, not an 8-bit color image.
                     messages["semantic_image"] = Image(
                         cpu(data["seg_semantic"]).astype(np.uint16), ImageFormat.GRAY16, frame, ts
                     )
+        if self.config.publish_scan:
+            # The self filter needs every collision link at the cloud's capture time.
+            for name, link in self.robot.links.items():
+                if name == "base_link":
+                    continue
+                link_position, link_orientation = link.get_position_orientation()
+                transforms.append(
+                    Transform(
+                        translation=Vector3(*plain(link_position)),
+                        rotation=Quaternion(*plain(link_orientation)),
+                        frame_id="world",
+                        child_frame_id=name,
+                        ts=ts,
+                    )
+                )
         messages["tf"] = TFMessage(*transforms)
         return messages
 
