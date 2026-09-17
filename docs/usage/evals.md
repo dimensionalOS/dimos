@@ -78,6 +78,20 @@ which ask about an existing recording with no robot running, the selected observ
 exported as plain files, lossless PNGs, XYZ/RGB CSVs and JSON primitives with a manifest,
 because the memory store needs dimOS to read.
 
+`PiAdapter` uses Pi's stock loop, provider support, tracing, limits and cleanup; `no_dimos`
+changes only what it is handed. For a `Dataset` case the baseline receives selected point
+coordinates and colors as CSV, camera frames as lossless PNG and primitive observations as
+JSON, with timestamps and hashes; no `agent_encode` summaries, labels, semantic tags or the
+original database. For a robot case it receives the raw topics and `ROBOT.md`. Dimcode
+receives the same selected observations through the dimOS store, the robot through MCP, and
+keeps its production tools and skills. Representation and delivery differences between the
+arms are part of the comparison and belong in the report.
+
+The baseline runs on the host with the host's system packages; record their versions when
+freezing a pilot, this is not a pinned container image. Neither arm may receive task-specific
+solutions or hidden truth, and dimcode's production environment must not be able to reach
+graders or reference data.
+
 ### Keyword guard
 
 `excluded_keywords` is shared `AgentConfig`; set it with `--exclude dimos,dimensionalos` or
