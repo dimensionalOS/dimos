@@ -113,6 +113,10 @@ def odom_json(pose: PoseStamped) -> str:
     )
 
 
+def _clamp(value: float, limit: float) -> float:
+    return max(-limit, min(limit, value))
+
+
 @dataclass
 class Deadman:
     """The latest velocity command, valid until its deadline passes."""
@@ -131,10 +135,9 @@ class Deadman:
         vx, vy, wz, hold = (float(c.get(k, 0.0)) for k in ("vx", "vy", "wz", "t"))
         if not all(math.isfinite(v) for v in (vx, vy, wz, hold)):
             raise ValueError("velocity command must be finite")
-        clamp = lambda v, limit: max(-limit, min(limit, v))  # noqa: E731
         with self.lock:
-            self.vx, self.vy = clamp(vx, self.max_linear), clamp(vy, self.max_linear)
-            self.wz = clamp(wz, self.max_angular)
+            self.vx, self.vy = _clamp(vx, self.max_linear), _clamp(vy, self.max_linear)
+            self.wz = _clamp(wz, self.max_angular)
             self.until = time.monotonic() + max(0.0, min(hold, self.max_s))
 
     def current(self) -> tuple[float, float, float]:
