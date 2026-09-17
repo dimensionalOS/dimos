@@ -71,11 +71,11 @@ Host tests live beside the shared module and robot blueprints. Each isolated
 project has its own backend tests and type checks:
 
 ```bash
-cd dimos/imitation/policy/abc/python
-uv run --locked --group tests --with-editable ../../../../../ python -m pytest
-uv run --locked --group tests --with-editable ../../../../../ python -m mypy
+cd native/python/abc
+uv run --locked --group tests --with-editable ../../.. python -m pytest
+uv run --locked --group tests --with-editable ../../.. python -m mypy
 ```
 
-Run the same commands in `lerobot/python` for LeRobot. The ABC unit test compares
+Run the same commands in `native/python/lerobot` for LeRobot. The ABC unit test compares
 the adapter with the actual upstream sampler using a small model; it needs no
 GPU, network, or downloaded checkpoint.

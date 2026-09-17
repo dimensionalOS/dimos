@@ -3,7 +3,7 @@
 This backend targets the released 75k-step bottles-in-bin checkpoint from
 [ABC](https://github.com/amazon-far/abc). The inference source is pinned to
 `6bc6586721cf0c409ccee80f675a28de9b9b2f5e`; see
-[upstream provenance](python/abc_minimal/UPSTREAM.md). Model loading, normalization,
+[upstream provenance](../../../../native/python/abc/abc_minimal/UPSTREAM.md). Model loading, normalization,
 image processing, sampling, and CUDA graphs use that source. Training and
 simulation packages are excluded from the deployment environment.
 
@@ -24,7 +24,7 @@ removes user-supplied local checkpoints.
 
 DINO weights are included in this complete inference checkpoint; separate DINO
 pretraining weights are only needed by the upstream training pipeline. The
-snapshot retains ABC, CLIP, and DINO license texts under `python/`.
+snapshot retains ABC, CLIP, and DINO license texts under `native/python/abc/`.
 
 ## Launch
 
