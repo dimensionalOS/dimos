@@ -24,12 +24,19 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 import threading
 from typing import Any, cast
 import uuid
 
 import websocket
 
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.simulation.dimsim.object_detections import (
+    snapshot_to_detection3d_array,
+    write_detection3d_array,
+    write_detection3d_json,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -228,7 +235,8 @@ class SceneClient:
         ``scene``, ``THREE``, ``RAPIER``, ``rapierWorld``, ``renderer``,
         ``camera``, ``agent``, ``assets``, ``assetsGroup``,
         ``loadGLTF(url)``, ``addCollider(obj, shape?)``,
-        ``removeCollider(obj)``, ``addNPC(opts)``, ``removeNPC(name)``.
+        ``removeCollider(obj)``, ``addNPC(opts)``, ``removeNPC(name)``,
+        ``getObjectAnnotations()``.
 
         Use ``return`` to send a value back to Python.
 
@@ -926,3 +934,36 @@ const p = agent.group.position;
 return { x: p.x, y: p.y, z: p.z };
 """
         return cast("dict[str, Any]", self.exec(code))
+
+    def get_object_detections(self) -> Detection3DArray:
+        """Snapshot scene objects and walls as ground-truth 3D detections.
+
+        Mirrors the viewer's "Object labels + boxes" overlay: while it is shown,
+        the displayed snapshot and its capture time are exported; otherwise the
+        current geometry is measured once. Boxes are world-axis-aligned in the
+        DimOS Z-up ``world`` frame with identity orientation. For identified
+        assets, ``id`` is the stable asset ID and ``results[0].hypothesis.class_id``
+        the authored title. Walls baked into the structure (nodes named like
+        ``wall-north``) or added with :meth:`add_wall` use their node name for both.
+
+        The result is a regular DimOS LCM message: publish it with
+        ``LCMTransport("/detections_3d", Detection3DArray)`` for LCM consumers,
+        or persist it with :meth:`export_object_detections`.
+        """
+        snapshot = self.exec("return getObjectAnnotations();")
+        return snapshot_to_detection3d_array(cast("dict[str, Any]", snapshot))
+
+    def export_object_detections(self, path: str | Path) -> Detection3DArray:
+        """Write :meth:`get_object_detections` to ``path``.
+
+        A ``.json`` path gets a readable view (label, center, size per
+        detection). Any other path gets the single LCM-encoded
+        ``Detection3DArray`` message (not an LCM event log); read that back
+        with ``object_detections.read_detection3d_array``.
+        """
+        detections = self.get_object_detections()
+        if Path(path).suffix.lower() == ".json":
+            write_detection3d_json(detections, path)
+        else:
+            write_detection3d_array(detections, path)
+        return detections

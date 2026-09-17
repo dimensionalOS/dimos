@@ -6,6 +6,7 @@ import { AiAvatar } from "./AiAvatar.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { ObjectAnnotations } from "./objectAnnotations.js";
 
 let RAPIER = null;
 let _rapierInitPromise = null;
@@ -60,6 +61,8 @@ const simCameraModeToggleBtn = document.getElementById("sim-camera-toggle");
 const simViewRgbdBtn = document.getElementById("sim-view-rgbd");
 const simViewLidarBtn = document.getElementById("sim-view-lidar");
 const simViewCompareBtn = document.getElementById("sim-view-compare");
+const simObjectAnnotationsBtn = document.getElementById("sim-object-annotations");
+const objectAnnotations = new ObjectAnnotations();
 const simRgbdGrayBtn = document.getElementById("sim-rgbd-gray");
 const simRgbdColormapBtn = document.getElementById("sim-rgbd-colormap");
 const simRgbdAutoRangeBtn = document.getElementById("sim-rgbd-auto-range");
@@ -4046,6 +4049,7 @@ function renderSceneInMode(mode) {
     lidarVizGroup.visible = false;
     scene.background = DEFAULT_SCENE_BG;
     renderer.render(scene, camera);
+    objectAnnotations.render(renderer, camera);
   } else if (mode === "lidar") {
     scene.overrideMaterial = null;
     assetsGroup.visible = false;
@@ -4120,6 +4124,7 @@ function renderActiveView() {
     renderRgbdView();
   } else {
     renderer.render(scene, camera);
+    if (simSensorViewMode === "rgb") objectAnnotations.render(renderer, camera);
   }
 }
 
@@ -4436,6 +4441,22 @@ simViewRgbdBtn?.addEventListener("click", () => {
   simCompareView = false;
   setSimSensorViewMode("rgbd");
 });
+simObjectAnnotationsBtn?.addEventListener("click", () => {
+  if (objectAnnotations.enabled) {
+    objectAnnotations.clear();
+    simObjectAnnotationsBtn.textContent = "Object labels + boxes: Off";
+  } else {
+    simCompareView = false;
+    setSimSensorViewMode("rgb");
+    const count = objectAnnotations.show(assets, assetsGroup, scene);
+    simObjectAnnotationsBtn.textContent = count
+      ? `Object labels + boxes: On (${count})`
+      : "Object labels + boxes: Off";
+    setStatus(count ? `${count} object and wall snapshots. Toggle off/on to refresh after scene edits.` : "No identified objects or walls loaded yet.");
+  }
+  simObjectAnnotationsBtn.classList.toggle("active", objectAnnotations.enabled);
+  simObjectAnnotationsBtn.setAttribute("aria-pressed", String(objectAnnotations.enabled));
+});
 simRgbdGrayBtn?.addEventListener("click", () => {
   rgbdVizMode = "gray";
   updateSimSensorButtons();
@@ -4571,6 +4592,12 @@ async function importLevelFromJSON(json, options = {}) {
     ? normalizeSceneSettings(json.sceneSettings)
     : null;
   if (!importedTags) throw new Error("Invalid level file.");
+  objectAnnotations.clear();
+  if (simObjectAnnotationsBtn) {
+    simObjectAnnotationsBtn.textContent = "Object labels + boxes: Off";
+    simObjectAnnotationsBtn.classList.remove("active");
+    simObjectAnnotationsBtn.setAttribute("aria-pressed", "false");
+  }
   // Clean up old primitive colliders
   for (const p of primitives) removePrimitiveCollider(p);
   tags = importedTags;
@@ -5906,7 +5933,11 @@ if (dimosMode) {
       const sceneEditor = new SceneEditor({
         bridge,
         channel,
-        globals: { scene, THREE, RAPIER, rapierWorld, renderer, camera, agent, assets, assetsGroup, gltfLoader },
+        globals: {
+          scene, THREE, RAPIER, rapierWorld, renderer, camera, agent, assets, assetsGroup, gltfLoader,
+          // Closure, not a reference: `assets` is reassigned on level import.
+          getObjectAnnotationSnapshot: () => objectAnnotations.snapshot(assets, assetsGroup, scene),
+        },
       });
 
       // Agent POV only in headless (sensor capture needs it). Headed = free orbit.
