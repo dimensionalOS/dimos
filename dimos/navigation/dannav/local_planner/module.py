@@ -238,6 +238,8 @@ class DanLocalPlanner(Module):
 
     def _on_goal(self, msg: PointStamped) -> None:
         self._gate.on_goal(msg)
+        if math.isnan(msg.x) or math.isnan(msg.y):
+            self.path.publish(Path(frame_id=msg.frame_id))
 
     def _on_planner_path(self, msg: Path) -> None:
         forwarded = self._gate.on_planner_path(msg)

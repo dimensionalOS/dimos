@@ -36,6 +36,7 @@ from dimos.simulation.behavior.connection import BehaviorConnection
 from dimos.simulation.behavior.demo_integration import check_runtime
 from dimos.simulation.behavior.r1pro_bridge import BehaviorR1ProBridge
 from dimos.simulation.behavior.types import TaskSelection
+from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 
 def wait_ready(sim: Any, bridge: Any, manip: Any) -> dict[str, Any]:
@@ -177,6 +178,10 @@ def main() -> None:
                 allow_task_changes=False,
             ),
         )
+        if args.headless and any(a.module is RerunBridgeModule for a in blueprint.blueprints):
+            blueprint = autoconnect(
+                blueprint, RerunBridgeModule.blueprint(rerun_open="none", rerun_web=False)
+            )
         app = ModuleCoordinator.build(blueprint)
         sim = app.get_instance(BehaviorConnection)
         bridge = app.get_instance(BehaviorR1ProBridge)
