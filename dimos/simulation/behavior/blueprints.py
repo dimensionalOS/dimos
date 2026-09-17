@@ -14,6 +14,10 @@
 
 """R1 Pro teleop, navigation, manipulation, and task execution."""
 
+import math
+from types import ModuleType
+
+import rerun as rr
 import rerun.blueprint as rrb
 
 from dimos.agents.mcp.mcp_client import McpClient
@@ -28,12 +32,14 @@ from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.utils.point_cloud_self_filter import PointCloudSelfFilter
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
+from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.simulation.behavior.connection import BehaviorConnection
@@ -54,6 +60,49 @@ def _view() -> rrb.Blueprint:
                 rrb.Spatial2DView(origin="world/left_wrist_image"),
                 rrb.Spatial2DView(origin="world/right_wrist_image"),
             ),
+        )
+    )
+
+
+def _navigation_goal(msg: PointStamped) -> list[tuple[str, rr.Points3D]]:
+    # Viewer clicks carry the picked entity path, but their coordinates are world-space.
+    position = [msg.x, msg.y, msg.z]
+    return [
+        (
+            "world/navigation_goal",
+            rr.Points3D(
+                [position] if all(math.isfinite(v) for v in position) else [],
+                colors=[255, 180, 0],
+                radii=0.08,
+            ),
+        )
+    ]
+
+
+def _robot_heading(rerun: ModuleType) -> list[rr.Arrows3D]:
+    return [rerun.Arrows3D(vectors=[[0.5, 0, 0]], colors=[255, 180, 0], radii=0.03)]
+
+
+def _navigation_view() -> rrb.Blueprint:
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial3DView(
+                name="Navigation",
+                origin="world",
+                contents=[
+                    "world/global_map/**",
+                    "world/surface_map/**",
+                    "world/path/**",
+                    "world/navigation_goal/**",
+                    "world/odometry/**",
+                ],
+            ),
+            rrb.Vertical(
+                rrb.Spatial2DView(origin="world/color_image"),
+                rrb.Spatial2DView(origin="world/left_wrist_image"),
+                rrb.Spatial2DView(origin="world/right_wrist_image"),
+            ),
+            column_shares=[3, 1],
         )
     )
 
@@ -137,6 +186,37 @@ behavior_r1pro = (
             task=TaskSelection(), headless=False, publish_scan=True, allow_task_changes=False
         ),
         BehaviorR1ProBridge.blueprint(),
+        vis_module(
+            global_config.viewer,
+            rerun_config={
+                "blueprint": _navigation_view,
+                "memory_limit": "4GB",
+                "max_hz": {
+                    "world/global_map": 2.0,
+                    "world/tf": 2.0,
+                    "world/planning_tf": 2.0,
+                    "world/color_image": 5.0,
+                    "world/left_wrist_image": 5.0,
+                    "world/right_wrist_image": 5.0,
+                },
+                "visual_override": {
+                    **planner_visual_override(
+                        viz_publish_hz=2.0, voxel_size=0.05, wall_clearance_m=0.35
+                    ),
+                    "world/goal": _navigation_goal,
+                    "world/raw_scan": None,
+                    "world/registered_scan": None,
+                    "world/local_map": None,
+                    "world/local_map_fine": None,
+                    "world/nodes": None,
+                    "world/node_edges": None,
+                    "world/depth_image": None,
+                    "world/left_wrist_depth": None,
+                    "world/right_wrist_depth": None,
+                },
+                "static": {"world/odometry": _robot_heading},
+            },
+        ),
         BehaviorCoordinator.blueprint(
             instance_name="ControlCoordinator",
             tick_rate=30,

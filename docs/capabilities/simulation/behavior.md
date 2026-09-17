@@ -86,14 +86,39 @@ Rust and Python use Zenoh 1.10.1 or newer for loopback peer discovery. Version
 that can leave the native planner disconnected from the mapper.
 
 ```bash
-dimos run behavior-r1pro
+env -u WAYLAND_DISPLAY dimos --rerun-open native run behavior-r1pro
 # Repeatable verification without a desktop window:
 python -m dimos.simulation.behavior.demo_r1pro --headless --report /tmp/r1pro.json
 ```
 
-The blueprint opens the native Isaac Sim viewport and the existing manipulation
-Viser server (its URL appears in the startup log). Viser exposes the torso and both
-arm planning groups. Preview a target before executing it. Base navigation uses
+The blueprint opens the native Isaac Sim viewport, the DimOS Rerun viewer, and
+the existing manipulation Viser server (its URL appears in the startup log).
+Unsetting `WAYLAND_DISPLAY` avoids a native viewer hang on the tested Linux desktop.
+Rerun shows the fused voxel map, traversable surface, robot heading, current goal
+and path beside the three cameras. Duplicate clouds and unused map layers are
+not logged; map and transform displays update at 2 Hz, camera views at 5 Hz,
+and viewer memory is capped at 4 GB. These display limits do not change mapping
+or control rates.
+Long recordings can still trigger Rerun memory-pressure warnings and display lag;
+the viewer's memory cap bounds retained history rather than guaranteeing latency.
+
+For navigation and base teleop in the **native DimOS viewer**:
+
+1. Wait for the map and camera images to appear, with the timeline following live data.
+2. Click a mapped floor point in the **Navigation** view to send a goal. Pick the
+   traversable floor, rather than a wall, tabletop, camera image, or empty background.
+3. Watch the goal marker and path, and the robot moving in Isaac.
+4. Click the **Keyboard Teleop** overlay to engage it. W/S drive forward/backward,
+   A/D turn, and Q/E strafe. Manual input cancels navigation; releasing keys stops
+   manual motion. Space or the overlay's **STOP** control cancels and stops movement.
+5. Click the overlay again to disengage keyboard capture, then click a new floor
+   goal to resume navigation. The old goal does not resume automatically.
+
+Use `--viewer none` to omit Rerun. The verification demo's `--headless` flag
+suppresses both native windows.
+
+Viser exposes the torso and both arm planning groups. Preview a target before
+executing it. Base navigation uses
 KronkNav: head and wrist RGB-D clouds → robot self-filter → ray-traced voxel map → MLS planner → local planner →
 holonomic controller → simulator velocity commands. Each cloud retains its own
 optical frame and ray origin; the wrist cameras cover floor hidden from the head
@@ -286,3 +311,11 @@ as horizontal displacement.
 
 This verifies the navigation/manipulation connection and its control lifecycle.
 It does not establish full BEHAVIOR task completion or benchmark performance.
+
+On 2026-09-17, native Rerun click events reached the planner and keyboard takeover
+cleared the active path. A repeat through the viewer's WebSocket interface moved
+1.20 m with 0.138 m goal error, stopped on manual takeover, held within 0.000002 m,
+and accepted a fresh goal. With the final visualization rate limits, the same
+control sequence passed again: 0.651 m displacement, 0.149 m goal error, stationary
+hold, and 0.139 m error at the fresh goal. The headless navigation/manipulation
+regression also passed with the visualization modules included.
