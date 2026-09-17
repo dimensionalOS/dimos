@@ -28,10 +28,7 @@ import time
 from typing import Any
 
 from dimos.agents.llm_trace import tracing_http_client
-
-_RETRY_STATUSES = {429, 500, 502, 503, 529}
-_RETRIES = 3
-_RETRY_BACKOFF_S = 2.0
+from dimos.evals.constants import RETRIES, RETRY_BACKOFF_S, RETRY_STATUSES
 
 
 def _serve(raw_dir: Path, upstream: str, max_requests: int | None, limit_reached: Path) -> None:
@@ -60,13 +57,13 @@ def _serve(raw_dir: Path, upstream: str, max_requests: int | None, limit_reached
                     "transfer-encoding",
                 }
                 headers = {k: v for k, v in self.headers.items() if k.lower() not in skip}
-                for attempt in range(_RETRIES + 1):
+                for attempt in range(RETRIES + 1):
                     reply = client.request(
                         self.command, upstream + self.path, content=body, headers=headers
                     )
-                    if reply.status_code not in _RETRY_STATUSES or attempt == _RETRIES:
+                    if reply.status_code not in RETRY_STATUSES or attempt == RETRIES:
                         break
-                    time.sleep(_RETRY_BACKOFF_S * 2**attempt)  # overload, not the agent's turn
+                    time.sleep(RETRY_BACKOFF_S * 2**attempt)  # overload, not the agent's turn
                 self.send_response(reply.status_code)
                 self.send_header(
                     "Content-Type", reply.headers.get("content-type", "application/json")

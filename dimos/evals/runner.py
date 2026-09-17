@@ -34,6 +34,7 @@ from typing import Any
 
 from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.evals.agents.base import Agent
+from dimos.evals.constants import DENIED
 from dimos.evals.types import (
     EvalCase,
     EvalResult,
@@ -257,9 +258,6 @@ class EvalRunner(Configurable):
         summary: dict[str, Any] = asdict(summarize(results))
         summary["manifest"] = "manifest.json"
         (self.run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
-
-
-DENIED = "Tool call denied"
 
 
 def forbidden_call(trajectory: Trajectory, keywords: Sequence[str], *ignored: str) -> str:

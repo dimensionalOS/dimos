@@ -25,21 +25,12 @@ from typing import TYPE_CHECKING, Any
 from pydantic import Field, field_validator, model_validator
 from typing_extensions import Self
 
+from dimos.evals.constants import MAX_TOOL_SECONDS, NO_DIMOS_KEYWORDS
 from dimos.evals.types import RunningEnvironment, Trajectory
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
     from dimos.evals.environments.base import Environment
-
-
-NO_DIMOS_KEYWORDS = ("dimos", "dimensionalos")
-
-NO_DIMOS_GUIDANCE = (
-    "There is no robotics framework installed. You may use any public tool, library, SDK or "
-    "web resource, and write whatever code you need under the current directory. Do not "
-    "install, clone, import or run dimOS or anything from the dimensionalOS organisation; "
-    "tool calls that mention it are denied."
-)
 
 
 def strip_dimos(env: dict[str, str]) -> dict[str, str]:
@@ -62,7 +53,7 @@ class AgentConfig(BaseConfig):
     # Tool calls whose arguments mention any of these (case-insensitive, whole token) are denied.
     excluded_keywords: tuple[str, ...] = ()
     # Cap on one bash call's runtime, seconds; the model's own timeout is clamped to it.
-    max_tool_seconds: float | None = Field(default=300.0, gt=0)
+    max_tool_seconds: float | None = Field(default=MAX_TOOL_SECONDS, gt=0)
     # Robot or data handed over without dimOS; excluded_keywords defaults to dimOS's names.
     no_dimos: bool = False
 

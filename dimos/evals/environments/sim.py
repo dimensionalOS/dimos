@@ -28,11 +28,11 @@ from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.run_registry import list_runs
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+from dimos.evals.constants import RAW_ENDPOINT
 from dimos.evals.environments.base import Environment
 from dimos.evals.environments.lib.launch import default_mcp_url, validate_blueprints
 from dimos.evals.types import RunningEnvironment
 from dimos.protocol.service.spec import BaseConfig
-from dimos.robot.raw_robot_bridge import RAW_ENDPOINT
 
 if TYPE_CHECKING:
     from dimos.evals.agents.base import Agent

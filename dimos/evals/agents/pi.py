@@ -31,10 +31,9 @@ from typing import IO, TYPE_CHECKING, Any, ClassVar
 from pydantic import Field, JsonValue, TypeAdapter
 
 from dimos.core.coordination.process_lifecycle import kill_run_processes
-from dimos.evals.agents.base import NO_DIMOS_GUIDANCE, Agent, ModelAgentConfig, strip_dimos
+from dimos.evals.agents.base import Agent, ModelAgentConfig, strip_dimos
 from dimos.evals.agents.lib.model_trace_proxy import model_trace_proxy
 from dimos.evals.agents.lib.pi_config import (
-    PROVIDERS,
     Provider,
     RunPaths,
     RuntimeConfig,
@@ -44,6 +43,7 @@ from dimos.evals.agents.lib.pi_config import (
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.plain_recording import plain_recording
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
+from dimos.evals.constants import NO_DIMOS_GUIDANCE, PASSTHROUGH_ENV, PROVIDERS
 from dimos.evals.environments.base import Environment
 from dimos.evals.types import (
     EndedBy,
@@ -131,10 +131,7 @@ class PiAdapterConfig(ModelAgentConfig):
 
     # Host variables the Pi process may inherit; the provider key is added by name and
     # DIMOS_* variables pass through unless no_dimos. Everything else stays on the host.
-    passthrough_env: tuple[str, ...] = (
-        "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR",
-        "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR",
-    )  # fmt: skip
+    passthrough_env: tuple[str, ...] = PASSTHROUGH_ENV
 
     # Reasoning level passed to Pi's --thinking flag.
     thinking: Thinking = "medium"

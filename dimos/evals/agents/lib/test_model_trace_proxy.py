@@ -68,7 +68,7 @@ def proxy_server(tmp_path, mocker, request):
 def test_forwarding_retries_overload_upstream_and_budgets_client_requests(
     proxy_server, tmp_path, mocker, posts, statuses, limited
 ):
-    mocker.patch.object(proxy, "_RETRY_BACKOFF_S", 0.0)
+    mocker.patch.object(proxy, "RETRY_BACKOFF_S", 0.0)
     url, upstream = proxy_server
     body = b'{"model": "pi", "stream": false}'
     with requests.Session() as session:

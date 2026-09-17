@@ -22,12 +22,12 @@ import numpy as np
 from PIL import Image as PILImage
 import pytest
 
-from dimos.evals.agents.base import NO_DIMOS_KEYWORDS
 from dimos.evals.agents.lib.pi_config import RunPaths
 from dimos.evals.agents.lib.plain_recording import plain_recording
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
 from dimos.evals.agents.pi import PiAdapter
 from dimos.evals.agents.question_answer import QuestionAnswer
+from dimos.evals.constants import NO_DIMOS_KEYWORDS
 from dimos.evals.types import RunningEnvironment
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat

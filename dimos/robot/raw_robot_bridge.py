@@ -39,13 +39,20 @@ import zenoh
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.evals.constants import (
+    RAW_DRIVE_HZ,
+    RAW_ENDPOINT,
+    RAW_JPEG_QUALITY,
+    RAW_MAX_ANGULAR_RPS,
+    RAW_MAX_CMD_S,
+    RAW_MAX_LINEAR_MPS,
+    RAW_TOPIC_PREFIX,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-RAW_ENDPOINT = "tcp/127.0.0.1:7448"
 
 
 def readme(endpoint: str) -> str:
@@ -82,7 +89,7 @@ class RawTopics:
     """Publish and subscribe on the bridge's key space; shared by the module and its clients."""
 
     def __init__(
-        self, endpoint: str = RAW_ENDPOINT, prefix: str = "robot", *, listen: bool
+        self, endpoint: str = RAW_ENDPOINT, prefix: str = RAW_TOPIC_PREFIX, *, listen: bool
     ) -> None:
         self.prefix = prefix
         self.session = zenoh.open(zenoh_config(endpoint, listen=listen))
@@ -139,9 +146,9 @@ def _clamp(value: float, limit: float) -> float:
 class Deadman:
     """The latest velocity command, valid until its deadline passes."""
 
-    max_s: float = 2.0
-    max_linear: float = 1.0  # m/s
-    max_angular: float = 1.5  # rad/s
+    max_s: float = RAW_MAX_CMD_S
+    max_linear: float = RAW_MAX_LINEAR_MPS
+    max_angular: float = RAW_MAX_ANGULAR_RPS
     vx: float = 0.0
     vy: float = 0.0
     wz: float = 0.0
@@ -171,12 +178,12 @@ class Deadman:
 
 class RawRobotBridgeConfig(ModuleConfig):
     endpoint: str = RAW_ENDPOINT
-    prefix: str = "robot"
-    max_cmd_s: float = 2.0
-    max_linear_mps: float = 1.0
-    max_angular_rps: float = 1.5
-    jpeg_quality: int = 90
-    drive_hz: float = 10.0
+    prefix: str = RAW_TOPIC_PREFIX
+    max_cmd_s: float = RAW_MAX_CMD_S
+    max_linear_mps: float = RAW_MAX_LINEAR_MPS
+    max_angular_rps: float = RAW_MAX_ANGULAR_RPS
+    jpeg_quality: int = RAW_JPEG_QUALITY
+    drive_hz: float = RAW_DRIVE_HZ
 
 
 class RawRobotBridge(Module):
