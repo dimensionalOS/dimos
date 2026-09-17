@@ -114,3 +114,11 @@ def test_deadman_rejects_non_finite_and_clamps_speed() -> None:
     assert deadman.current() == (0.0, 0.0, 0.0)  # nothing armed by the bad packets
     deadman.set(json.dumps({"vx": 1e308, "vy": -7.0, "wz": 40.0, "t": 1}))
     assert deadman.current() == (1.0, -1.0, 1.5)
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"max_linear": -1.0}, {"max_angular": 0.0}, {"max_s": float("inf")}]
+)
+def test_deadman_rejects_non_positive_limits(kwargs: dict[str, float]) -> None:
+    with pytest.raises(ValueError, match="finite positive limit"):
+        Deadman(**kwargs)

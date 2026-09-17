@@ -130,6 +130,12 @@ class Deadman:
     until: float = 0.0
     lock: threading.Lock = field(default_factory=threading.Lock)
 
+    def __post_init__(self) -> None:
+        for name in ("max_s", "max_linear", "max_angular"):
+            limit = getattr(self, name)
+            if not (math.isfinite(limit) and limit > 0):
+                raise ValueError(f"{name} must be a finite positive limit, got {limit!r}")
+
     def set(self, command: bytes | str) -> None:
         c = json.loads(command)
         vx, vy, wz, hold = (float(c.get(k, 0.0)) for k in ("vx", "vy", "wz", "t"))
