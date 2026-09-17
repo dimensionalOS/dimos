@@ -46,7 +46,7 @@ from dimos.web.relay_bridge.protocol import (
 from dimos.web.relay_bridge.relay_process import RelayProcess, RelayReadyInfo
 from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError
 
-pytestmark = pytest.mark.macos
+pytestmark = pytest.mark.macos_ci
 
 # One robot identity for the whole module; function-scoped clients close before
 # the next test registers it. No manifest on purpose: undeclared channels take

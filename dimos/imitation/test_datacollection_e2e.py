@@ -49,7 +49,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.testing.waiting import wait_until
 
 pytestmark = [
-    pytest.mark.macos,
+    pytest.mark.macos_ci,
     pytest.mark.skipif_aarch64,
     pytest.mark.skipif_no_turbojpeg,
 ]

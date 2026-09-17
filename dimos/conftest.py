@@ -203,7 +203,7 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "macos: hosted job tests that also run in the macOS self-hosted-tests job; "
+        "macos_ci: hosted job tests that also run in the macOS self-hosted-tests job; "
         "not listed in hosted job tests not (...)",
     )
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
