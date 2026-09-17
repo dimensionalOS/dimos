@@ -21,10 +21,10 @@ import pytest
 from typer.testing import CliRunner
 
 from dimos.cli.commands.imitation import imitation_app
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.imitation.collection.recording import RecordingSchema
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.robot.manipulators.openyam.collection import OPENYAM_TEACH_COLLECTION
+from dimos.utils.data import get_project_root
 
 
 def test_help_exposes_attached_controls_and_no_workflow_launcher():
@@ -147,7 +147,10 @@ def test_inspect_preserves_failure_exit_code(recording, mocker, flags):
     assert "Inspection failed: bad payload" in result.output
 
 
-def test_train_forwards_arguments_and_exit_code(mocker):
+def test_train_forwards_arguments_and_exit_code(mocker, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("UV_PYTHON", "3.10")
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", "/host/env")
     run = mocker.patch(
         "dimos.cli.commands.imitation.subprocess.run", return_value=mocker.Mock(returncode=17)
     )
@@ -155,6 +158,13 @@ def test_train_forwards_arguments_and_exit_code(mocker):
         imitation_app, ["train", "--policy.type=act", "--dataset.repo_id=local/test"]
     )
     assert result.exit_code == 17
+    assert "cwd" not in run.call_args.kwargs
+    assert "UV_PYTHON" not in run.call_args.kwargs["env"]
+    assert run.call_args.kwargs["env"]["UV_PROJECT_ENVIRONMENT"] != "/host/env"
+    command = run.call_args.args[0]
+    assert command[command.index("--project") + 1] == str(
+        get_project_root() / "native/python/lerobot"
+    )
     assert run.call_args.args[0][-3:] == [
         "lerobot-train",
         "--policy.type=act",
@@ -183,13 +193,15 @@ def test_visualize_launches_local_viewer(visualization, monkeypatch, flags, epis
     monkeypatch.setenv("VIRTUAL_ENV", "/host/venv")
     result = CliRunner().invoke(imitation_app, ["visualize", dataset.name, *flags])
     assert result.exit_code == 0, result.output
-    project = DIMOS_PROJECT_ROOT / "dimos" / "imitation" / "policy" / "lerobot" / "python"
+    project = get_project_root() / "native/python/lerobot"
     assert run.call_args.args[0] == [
         "uv",
         "run",
+        "--frozen",
+        "--with-editable",
+        str(get_project_root()),
         "--project",
         str(project),
-        "--frozen",
         "lerobot-dataset-viz",
         "--root",
         str(dataset),

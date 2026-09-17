@@ -16,7 +16,6 @@
 
 import hashlib
 import json
-import os
 from pathlib import Path
 import subprocess
 
@@ -24,11 +23,15 @@ from rich.console import Console
 import typer
 
 from dimos.cli.imitation_inspect import print_inspection
-from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
+from dimos.constants import STATE_DIR
+from dimos.experimental.isolated_python.module import (
+    isolated_python_environment,
+    isolated_python_run_command,
+)
 from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.build import inspect_dataset, inspect_recording
 from dimos.imitation.dataprep.core import OutputConfig
-from dimos.imitation.dataprep.lerobot import run_lerobot_dataprep
+from dimos.imitation.dataprep.lerobot import lerobot_project, run_lerobot_dataprep
 from dimos.imitation.tui import CollectionApp, CollectionSession, RolloutApp, RolloutSession
 from dimos.porcelain.dimos import Dimos
 from dimos.utils.cache import cache_usage_guard
@@ -135,15 +138,13 @@ def visualize(
             f"Not a prepared LeRobot dataset: missing {dataset / 'meta/info.json'}"
         )
 
-    project = DIMOS_PROJECT_ROOT / "dimos" / "imitation" / "policy" / "lerobot" / "python"
+    project = lerobot_project()
     # LeRobot uses repo_id as the Rerun application identity for saved layouts.
     dataset_id = hashlib.sha256(str(dataset).encode("utf-8")).hexdigest()[:16]
-    command = [
-        "uv",
-        "run",
+    command = isolated_python_run_command(
+        project,
         "--project",
         str(project),
-        "--frozen",
         "lerobot-dataset-viz",
         "--root",
         str(dataset),
@@ -155,9 +156,8 @@ def visualize(
         "0",
         "--mode",
         "local",
-    ]
-    env = dict(os.environ)
-    env.pop("VIRTUAL_ENV", None)
+    )
+    env = isolated_python_environment(project)
     env["HF_HUB_OFFLINE"] = "1"
     try:
         with cache_usage_guard():
@@ -178,8 +178,10 @@ def visualize(
 )
 def train(ctx: typer.Context) -> None:
     """Pass all arguments directly to ``lerobot-train``."""
-    project = DIMOS_PROJECT_ROOT / "dimos" / "imitation" / "policy" / "lerobot" / "python"
-    command = ["uv", "run", "--project", str(project), "--frozen", "lerobot-train", *ctx.args]
-    result = subprocess.run(command, check=False)
+    project = lerobot_project()
+    command = isolated_python_run_command(
+        project, "--project", str(project), "lerobot-train", *ctx.args
+    )
+    result = subprocess.run(command, env=isolated_python_environment(project), check=False)
     if result.returncode:
         raise typer.Exit(result.returncode)
