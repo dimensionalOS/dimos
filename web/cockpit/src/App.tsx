@@ -8,6 +8,8 @@ import { startChatTranscripts } from "./panels/chatTranscript.ts";
 import { ChannelList } from "./ui/ChannelList.tsx";
 import { RobotPicker } from "./ui/RobotPicker.tsx";
 import { StatusBar, type View } from "./ui/StatusBar.tsx";
+import { TokenForm } from "./ui/TokenForm.tsx";
+import { clearToken, readToken, storeToken } from "./token.ts";
 import styles from "./App.module.css";
 
 export function App({ session }: { session: Session }) {
@@ -60,11 +62,28 @@ export function App({ session }: { session: Session }) {
   // "switch robot" in the status bar reopens the list.
   const showPicker = hasMultipleRobots && (picking || status.watchedRobot === null);
 
+  // Token changes reload the page instead of re-creating the session: that
+  // keeps the single connect() in main.tsx.
+  const logOut = () => {
+    clearToken();
+    location.reload();
+  };
+
   let content;
   let pages: PageTab[] = [];
   let page: string | null = null;
   if (status.transport.phase === "failed") {
-    content = <p className={styles.notice}>Connection failed: {status.transport.reason}</p>;
+    content = status.transport.code === "auth_failed"
+      ? (
+        <TokenForm
+          message={status.transport.reason}
+          onSubmit={(token) => {
+            storeToken(token);
+            location.reload();
+          }}
+        />
+      )
+      : <p className={styles.notice}>Connection failed: {status.transport.reason}</p>;
   } else if (showPicker) {
     content = <RobotPicker robots={status.robots} current={watchedId} onPick={pickRobot} />;
   } else if (status.manifestUnsupported) {
@@ -121,6 +140,7 @@ export function App({ session }: { session: Session }) {
         page={page}
         onPageChange={openPage}
         onSwitchRobot={hasMultipleRobots && !showPicker ? () => setPicking(true) : null}
+        onLogOut={readToken() !== null ? logOut : null}
       />
       {/* A changed manifest remounts everything below the status bar. */}
       <main className={styles.main} key={status.epoch}>

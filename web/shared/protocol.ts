@@ -26,6 +26,10 @@ import { type Delivery, MAX_MANIFEST_ID_LEN } from "./manifest.ts";
 export type { ChannelSpec, Delivery, Dir, PanelSpec, Publish } from "./manifest.ts";
 export { RESERVED_CHANNEL_PREFIX } from "./manifest.ts";
 
+// v6 (amended, T12d): hello gains an optional `token` (a robot key or viewer
+// token for a relay started with --auth-file) and the relay answers
+// auth_failed; no bump: an older peer omits the field and an auth-on relay
+// rejects it, an auth-off relay ignores it.
 // v6: /api/info.wtUrl is a WebTransport base URL; clients append their role
 // path. v5 advertised the complete /viewer endpoint.
 // v5: the robot hello leaves datagrams (and their ~1100 B budget) and rides
@@ -69,6 +73,9 @@ export const MAX_PUB_DATA_BYTES = 32 * 1024;
 // the relay forwards its own per-robot token robot-ward.
 export const MAX_REQUEST_ID_LEN = 64;
 
+// Bound for hello.token (a robot key or viewer token, see relay/auth.ts).
+export const MAX_TOKEN_LEN = 256;
+
 // Reject absurd header lengths before allocating.
 export const MAX_HEADER_LEN = 65536;
 
@@ -99,6 +106,8 @@ export interface HelloMsg {
   // role=robot only: identity + channel manifest, registered by the relay.
   robot?: RobotInfo;
   manifest?: RobotManifest;
+  // Robot key or viewer token for a relay started with --auth-file.
+  token?: string;
 }
 
 export interface WelcomeMsg {
@@ -318,8 +327,8 @@ function isRobotInfo(value: unknown): value is RobotInfo {
 }
 
 // Structural checks for nested fields, run after the flat MSG_FIELDS pass.
-// Optional fields (hello.robot, hello/manifest.manifest, teleop gen, pub
-// clientTs, error requestId) accept absent but reject null: JSON encoders on
+// Optional fields (hello.robot/token, hello/manifest.manifest, teleop gen,
+// pub clientTs, error requestId) accept absent but reject null: JSON encoders on
 // both sides omit absent fields and never emit null. Required pub.data is
 // different: it spans all of JSON (null included), so only absence is
 // invalid. The manifest is only checked for record-ness here -- its
@@ -327,10 +336,12 @@ function isRobotInfo(value: unknown): value is RobotInfo {
 const absentOrNumber = (v: unknown) => v === undefined || typeof v === "number";
 const requestIdOk = (v: unknown) =>
   typeof v === "string" && v.length >= 1 && v.length <= MAX_REQUEST_ID_LEN;
+const tokenOk = (v: unknown) => typeof v === "string" && v.length <= MAX_TOKEN_LEN;
 const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean> = {
   hello: (v) =>
     (v.robot === undefined || isRobotInfo(v.robot)) &&
-    (v.manifest === undefined || isRecord(v.manifest)),
+    (v.manifest === undefined || isRecord(v.manifest)) &&
+    (v.token === undefined || tokenOk(v.token)),
   error: (v) => v.requestId === undefined || requestIdOk(v.requestId),
   robots: (v) => Array.isArray(v.robots) && v.robots.every(isRobotInfo),
   manifest: (v) => v.manifest === undefined || isRecord(v.manifest),

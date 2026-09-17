@@ -288,7 +288,7 @@ after clear.
 Validate Cartesian, twist, and teleop behavior in simulation or replay before
 hardware use.
 
-Install the manipulation dependencies:
+Start with the [official installer](/docs/installation/index.md); its default extras include manipulation. To add manipulation to an existing developer environment:
 
 ```bash
 uv sync --extra manipulation --inexact
@@ -307,7 +307,7 @@ are needed.
 
 For a smaller installation, use `uv sync --extra planning --inexact` or
 `uv sync --extra control --inexact`. Add `--no-default-groups` to omit contributor test
-dependencies. Library installations use `pip install 'dimos[manipulation]'`.
+dependencies. For a new library installation, pass `--mode library --extras manipulation` to the official installer.
 The `--inexact` flag preserves additional packages already installed in your
 environment. The bundle supplies its own dependencies without requiring `misc`.
 Embedding models and unrelated utilities remain available through `misc`.
@@ -316,8 +316,8 @@ Python extras do not install native RealSense binaries, vendor SDK setup,
 system libraries, or robot/model assets. Follow the hardware-specific setup
 instructions. Agentic blueprints require provider credentials; the default
 EdgeTAM backend requires CUDA or MPS. The bundle includes CPU ONNX inference;
-specialized CUDA backends, GraspGenX, dataset export (`learning`), and DDS remain
-separate extras. Linux x86_64 is the primary supported bundle platform; backend
+specialized CUDA backends, dataset export (`learning`), and DDS remain
+separate extras. GraspGenX prepares its own isolated Python environment on first use. Linux x86_64 is the primary supported bundle platform; backend
 and hardware wheel availability still limits macOS and ARM installations.
 
 Safety behavior for unsupported RoboPlan features:

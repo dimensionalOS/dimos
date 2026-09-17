@@ -12,17 +12,18 @@ and `dimos --local-relay` auto-downloads Deno via `ensure_deno()`.
 ```bash
 deno task dev            # relay on http://127.0.0.1:7780 (add --cockpit-dir cockpit/dist for the UI,
                          # --sdk-dir sdk/dist for /sdk.js, --serve-dir DIR for a custom page at /,
-                         # --cert PEM --key PEM for real TLS)
+                         # --cert PEM --key PEM for real TLS, --auth-file auth.json for auth)
 deno task test           # relay + shared tests (unit + loopback e2e)
 deno task check          # type-check relay + shared; deno fmt + deno lint for style (all of web/)
 ```
 
-The local relay deliberately answers `/api/info`, `/api/stats`, `/sdk.js`, and served JavaScript
-modules with wildcard CORS so any local origin (a Vite dev server, a `file:` page) can bootstrap
-against it; a remotely reachable relay is a different, fail-closed mode (W10) and must not inherit
-that. For the same reason `startRelay` refuses to bind a non-loopback host unless
-`--unsafe-non-loopback` explicitly acknowledges it (only sensible behind your own TLS and access
-control).
+The relay answers `/api/info`, `/sdk.js`, and served JavaScript modules with wildcard CORS so any
+origin can bootstrap against it (a Vite dev server, a `file:` page, a hosted relay's SDK): the
+viewer token, not CORS, is the access boundary. `/api/stats` is the exception: with auth on it needs
+`Authorization: Bearer <viewer token>` and carries no CORS header. `startRelay` binds a non-loopback
+host only with `--cert`, `--key`, and `--auth-file` together (and refuses `--serve-dir` there: a
+public relay serves only the built cockpit), or with `--unsafe-non-loopback` behind your own TLS and
+access control.
 
 ## SDK
 
@@ -48,14 +49,26 @@ side; like the cockpit dev server it proxies `/api` to the relay on `:7780`.
 
 Each session owns a `DecoderRegistry` (pass one via `connect({decoders})`; the default is a fresh
 registry with the built-ins). A decoder is
-`(payload: Uint8Array, header: FrameHeader) => { value, preview? }`, looked up by the channel's
-manifest `encoding`. Built-ins: `jpeg.v1`, `costmap.zlib.v1`, `json.v1`; any other `*.json.vN`
-encoding JSON-decodes without registration. An exact registration wins over that convention, and a
-duplicate `register()` throws unless `{ replace: true }`. An encoding with no decoder is not an
-error: the channel still counts frames and renders as unsupported. A throwing decoder bumps the
-channel's `decodeErrors`/`decodeFailing` stats and keeps the last good value. Keep decoders
-synchronous and cheap - they run on the ingest path; panel-paced work (inflate, draw) belongs in the
-consumer.
+`(payload: Uint8Array, header: FrameHeader) => { value, preview? }`. The session finds one per
+manifest channel with `registry.resolve(spec)`: a registered `encoding` id first, then the
+`*.json.vN` convention (JSON-decodes without registration), then `*.lcm.v1`: a DimOS message decoded
+with the LCM schema the robot put in the channel's `params.lcm`, compiled once per adopted manifest.
+Built-in ids: `jpeg.v1`, `costmap.zlib.v1`, `json.v1`. An exact registration wins over both
+conventions, and a duplicate `register()` throws unless `{ replace: true }`.
+
+An LCM value is a plain object with the LCM fields in wire order (`*_length` count fields included):
+nested structs are plain objects, `byte[]` is a `Uint8Array` and `int8_t[]` an `Int8Array` viewing
+the frame (a view pins the whole frame, `slice()` copies it out), other primitive arrays are typed
+arrays (`Float32Array`, `Float64Array`, `Int16Array`, `Int32Array`, `BigInt64Array`), and `int64_t`
+is a `bigint` (`JSON.stringify` throws on it). A frame that would expand into more than 100k struct,
+string or boolean array elements is reported as oversized instead of decoded, like an oversized
+`json.v1` payload. A page that needs more registers `lcmDecoder(schema, { maxArrayElements })` for
+that encoding (the schema is the channel's `params.lcm` in the manifest).
+
+An encoding with no decoder is not an error: the channel still counts frames and renders as
+unsupported. A throwing decoder bumps the channel's `decodeErrors`/`decodeFailing` stats and keeps
+the last good value. Keep decoders synchronous and cheap - they run on the ingest path; panel-paced
+work (inflate, draw) belongs in the consumer.
 
 The Python half is `@web_encoder` (`dimos.web.codecs`) plus `Channel` (`dimos.web.cockpit`);
 `examples/custom-path/` is the end-to-end pair for this exact codec:
@@ -89,9 +102,9 @@ dimos run <bp> --local-relay --serve-dir web/examples/minimal
 `--serve-dir` replaces the cockpit at `/` with the given directory (`/api/*` and `/sdk.js` keep
 precedence, and the relay's traversal/symlink guards apply); it needs the spawned local relay and is
 rejected with `--relay-url`. A page can also import the absolute `http://127.0.0.1:7780/sdk.js` and
-pass that base to `connect({url})` - from another local origin or straight from a `file:` page (both
-supported browsers permit WebTransport there; `dimos/e2e_tests/test_sdk_browser.py` pins all three
-forms).
+pass that base to `connect({url})` (plus `token` for a relay with `--auth-file`) - from another
+local origin or straight from a `file:` page (both supported browsers permit WebTransport there;
+`dimos/e2e_tests/test_sdk_browser.py` pins all three forms).
 
 A relay started by hand (`deno task dev` above) takes robots through `--relay-url`, given the
 relay's HTTP URL (`http://127.0.0.1:7780`): the bridge fetches `/api/info` on every connect, exactly
@@ -99,8 +112,27 @@ like the SDK, so a relay restart (new QUIC port, new ephemeral certificate) is t
 `docs/usage/web_sdk.md` has the recipe.
 
 With `--cert PEM --key PEM`, HTTPS and QUIC share `--port` and clients verify the certificate
-normally. A private CA reaches the robot as `--relay-ca`; non-loopback binding still needs
-`--unsafe-non-loopback` until relay auth lands.
+normally. A private CA reaches the robot as `--relay-ca`.
+
+`--auth-file auth.json` turns auth on: robot keys bound to robot ids, and viewer tokens. Secrets are
+16 to 256 characters (`openssl rand -hex 32`) and no secret appears twice:
+
+```json
+{
+  "robots": { "go2-lab": "<key>" },
+  "viewers": { "paul": "<token>" }
+}
+```
+
+A robot sends its key in hello (`RELAY_KEY=<key>` in its environment or `.env`, bound to its
+`--robot-id`); a viewer sends its token (the cockpit asks for it and keeps it in `localStorage`
+until "log out"; the SDK takes `connect({url, token})`). A wrong secret fails with `auth_failed`,
+which is terminal: neither client retries. `relay/auth.ts` compares in constant time and never logs
+a secret; edits to the file need a restart.
+
+Hosting a relay on a VM (container image, compose file, certbot, firewall, the auth file) is
+[docs/usage/relay_hosting.md](../docs/usage/relay_hosting.md); `docker/relay/` holds the Dockerfile
+and the compose file.
 
 ## Cockpit
 
@@ -116,7 +148,14 @@ Panels are authored in Python (`dimos.web.cockpit`: `Video`, `Map2D`, `Teleop`, 
 compiled into the manifest; `cockpit(pages=[...])` panels render as full-page tabs in the header,
 next to Overview and the panels/channels toggle. `Stats()` is dtop as a tab: the bridge re-encodes
 the resource monitor's `/resource_stats` dict as `stats.json.v1`, and the blueprint switches the
-monitor on (`GlobalConfig.dtop`) by itself.
+monitor on (`GlobalConfig.dtop`) by itself. `Map2D(path=, click=, stop=)` adds the planner's path
+overlay, click-to-goal (a click publishes a `PointStamped` on `click`) and a cancel button (a `Bool`
+on `stop`, shown while a path is active). `Channel(paced=True)` spaces sends instead of sampling and
+`Channel(resend_on_subscribe=True)` replays the last message when the first viewer subscribes.
+Additional viewers wait for the next publish on channels already being watched. The channels tab
+subscribes `json.v1` channels and `*.lcm.v1` channels whose schema has no variable-length array by
+itself. A bulk message (point cloud, scan, path) is subscribed only by a panel that binds it or by
+an SDK page.
 
 Dev workflow: run the relay (`deno task dev` in `web/`, or just `dimos run <bp> --local-relay`) and
 the vite server side by side. `localhost:5173` is a secure context; vite proxies `/api` to the relay
@@ -169,8 +208,10 @@ deadman. Each hop covers the failure of the previous one:
 The framing is defined once in `shared/protocol.ts`, mirrored in Python, and pinned by golden
 vectors in `shared/fixtures/` (regenerate via
 `deno run --allow-write=shared/fixtures shared/fixtures/gen.ts`; tested from both `deno test` and
-pytest). The one exception is `costmap_frames.json`: its payloads pin the Python encoder's zlib
-bytes, so it is generated by `uv run python -m dimos.web.relay_bridge.gen_costmap_fixtures`.
+pytest). Two exceptions pin Python encoder output and are generated from Python:
+`costmap_frames.json` (zlib bytes, `uv run python -m dimos.web.relay_bridge.gen_costmap_fixtures`)
+and `lcm_frames.json` (`lcm_encode()` bytes plus the exported schemas,
+`uv run python -m dimos.web.relay_bridge.gen_lcm_fixtures`).
 
 The transport per leg is deliberately asymmetric (the numbered workarounds below explain why):
 
