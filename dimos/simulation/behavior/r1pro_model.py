@@ -22,7 +22,7 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.galaxea.r1pro.config import R1PRO_PLANAR_BASE, make_r1pro_model_config
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
-from dimos.simulation.behavior.setup import MARKER, PROJECT
+from dimos.simulation.behavior.setup import MARKER, behavior_project
 
 GRIPPER_JOINTS = tuple(
     f"{side}_gripper_finger_joint{i}" for side in ("left", "right") for i in (1, 2)
@@ -47,11 +47,12 @@ COLLISION_EXCLUSIONS = (
 
 def simulation_model(assets: Path | None = None) -> RobotModel:
     if assets is None:
-        marker = PROJECT / MARKER
+        project = behavior_project()
+        marker = project / MARKER
         assets = (
             Path(json.loads(marker.read_text())["data_path"])
             if marker.exists()
-            else PROJECT / ".assets"
+            else project / ".assets"
         )
     return (
         RobotModel.from_file(

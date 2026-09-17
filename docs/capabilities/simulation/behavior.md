@@ -38,7 +38,7 @@ and completion in an ignored local marker. Subsequent launches use that location
 A failed setup leaves the marker incomplete; rerun setup to finish it.
 
 The runtime owns all its dependencies. Setup syncs its lockfile, then installs the
-current DimOS checkout (or exactly the installed host version) with `--no-deps`.
+shared DimOS checkout selected by `get_project_root()` with `--no-deps`.
 It never installs host Rerun dependencies into the simulator environment. The
 lockfile uses NumPy 1.26.4 for bidirectional NumPy 2 array serialization and
 explicitly reproduces upstream's Pillow, websockets, packaging, and cffi
@@ -319,3 +319,15 @@ and accepted a fresh goal. With the final visualization rate limits, the same
 control sequence passed again: 0.651 m displacement, 0.149 m goal error, stationary
 hold, and 0.139 m error at the fresh goal. The headless navigation/manipulation
 regression also passed with the visualization modules included.
+
+## Runtime development
+
+The host contract stays in `dimos/simulation/behavior`; the isolated project lives
+in `native/python/behavior`. Setup and startup share a cached Python environment.
+The setup marker, Pixi toolchain, downloads, and default assets belong to the project.
+
+Run mocked runtime tests without installing Isaac Sim from the repository root:
+
+```bash
+PYTHONPATH="$PWD:$PWD/native/python/behavior" .venv/bin/pytest --confcutdir=native/python/behavior native/python/behavior/dimos_behavior/test_runtime.py
+```

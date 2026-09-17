@@ -80,7 +80,7 @@ wheels = [
 [[package]]
 name = "example-isolated-python-runtime"
 version = "0.1.0"
-source = { editable = "." }
+source = { virtual = "." }
 dependencies = [
     { name = "annotation-protocol" },
     { name = "dimos-lcm" },

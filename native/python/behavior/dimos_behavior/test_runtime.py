@@ -14,12 +14,12 @@
 
 import threading
 
+from dimos_behavior.runtime import BehaviorRuntime
 import pytest
 
 from dimos.experimental.isolated_python.bootstrap import validate_runtime
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.simulation.behavior.connection import BehaviorConnection
-from dimos.simulation.behavior.python.dimos_behavior.runtime import BehaviorRuntime
 from dimos.simulation.behavior.types import ControlMode
 
 
@@ -53,7 +53,7 @@ def test_initialization_failure_preserves_error_and_closes_engine(runtime, mocke
     module, engine = runtime
     engine.initialize.side_effect = RuntimeError("Camera calibration is invalid")
     mocker.patch(
-        "dimos.simulation.behavior.python.dimos_behavior.runtime.load_class",
+        "dimos_behavior.runtime.load_class",
         return_value=mocker.Mock(return_value=engine),
     )
     stopping = threading.Event()

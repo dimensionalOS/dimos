@@ -75,8 +75,10 @@ project has its own backend tests and type checks:
 
 ```bash
 cd native/python/abc
-uv run --locked --group tests --with-editable ../../.. python -m pytest
-uv run --locked --group tests --with-editable ../../.. python -m mypy
+uv sync --frozen --group tests
+uv pip install --no-deps --editable ../../..
+uv run --no-sync python -m pytest
+uv run --no-sync python -m mypy
 ```
 
 Run the same commands in `native/python/lerobot` for LeRobot. The ABC unit test compares

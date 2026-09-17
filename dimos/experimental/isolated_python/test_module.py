@@ -78,7 +78,9 @@ def test_missing_runtime_reports_expected_path(tmp_path, monkeypatch, manifest):
 
 
 @pytest.mark.parametrize("installed", [False, True])
-def test_runtime_uses_shared_checkout(tmp_path, monkeypatch, installed):
+def test_runtime_uses_shared_checkout(tmp_path, monkeypatch, installed, mocker):
+    run = mocker.patch("dimos.experimental.isolated_python.module.subprocess.run")
+    run.return_value.returncode = 0
     checkout = tmp_path / "repo"
     (checkout / ".git").mkdir(parents=True)
     project = checkout / Contract.project_dir
@@ -92,6 +94,8 @@ def test_runtime_uses_shared_checkout(tmp_path, monkeypatch, installed):
     module = Contract()
     try:
         assert module.runtime_project == project
+        module._run_prepare()
+        assert run.call_args.args[0][-3:] == ["--no-deps", "--editable", str(checkout)]
         assert isolated_python_run_command(project, "python") == [
             "uv",
             "run",
@@ -228,7 +232,9 @@ def test_runtime_build_skips_environment_preparation(mocker: MockerFixture) -> N
         module.stop()
 
 
-def test_preparation_warms_the_launch_environment(project: Path, mocker: MockerFixture) -> None:
+def test_preparation_populates_the_cached_launch_environment(
+    project: Path, mocker: MockerFixture
+) -> None:
     run = mocker.patch(
         "dimos.experimental.isolated_python.module.subprocess.run",
         return_value=subprocess.CompletedProcess([], 0, "", ""),
@@ -237,10 +243,13 @@ def test_preparation_warms_the_launch_environment(project: Path, mocker: MockerF
     try:
         module._run_prepare()
 
-        assert [call.args[0] for call in run.call_args_list] == [
-            isolated_python_run_command(project, "python", "-c", "pass"),
-        ]
-        assert module._launch_command(7)[:5] == run.call_args.args[0][:5]
+        sync, install = run.call_args_list
+        assert sync.args[0] == ["uv", "sync", "--frozen"]
+        command = install.args[0]
+        environment = Path(module._runtime_env()["UV_PROJECT_ENVIRONMENT"])
+        assert command[command.index("--python") + 1] == str(environment / "bin/python")
+        assert command[-3:] == ["--no-deps", "--editable", str(project.parents[2])]
+        assert module._launch_command(7)[:3] == ["uv", "run", "--no-sync"]
         for call in run.call_args_list:
             assert call.kwargs["cwd"] == project
             assert call.kwargs["env"] == module._runtime_env()
