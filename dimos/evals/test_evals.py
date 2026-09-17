@@ -786,9 +786,14 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
         if goes_idle:
             idle.publish(True)
 
-    unsubscribe = human.subscribe(
-        lambda msg: threading.Thread(target=fake_mcp_client, args=(msg,)).start()
-    )
+    workers: list[threading.Thread] = []
+
+    def on_human(msg: str) -> None:
+        worker = threading.Thread(target=fake_mcp_client, args=(msg,))
+        workers.append(worker)
+        worker.start()
+
+    unsubscribe = human.subscribe(on_human)
     try:
         env = RunningEnvironment(mcp_url="http://localhost:1/mcp", streams=(), artifacts={})
         agent = McpClientAdapter()
@@ -797,6 +802,8 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
         )
     finally:
         unsubscribe()
+        for worker in workers:  # a publish still in flight would race the undeclare below
+            worker.join(timeout=5.0)
         for t in (human, agent_t, idle):
             t.stop()
 
