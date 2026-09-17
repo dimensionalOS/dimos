@@ -16,13 +16,14 @@
 
 from __future__ import annotations
 
-import inspect
-import os
 from pathlib import Path
 import subprocess
 from typing import Any
 
-from dimos.experimental.isolated_python.module import isolated_python_run_command
+from dimos.experimental.isolated_python.module import (
+    isolated_python_environment,
+    isolated_python_run_command,
+)
 from dimos.imitation.dataprep._lerobot_protocol import (
     RESULT_ADAPTER,
     BuildRequest,
@@ -35,12 +36,12 @@ from dimos.imitation.dataprep._lerobot_protocol import (
 from dimos.imitation.dataprep.core import DataPrepConfig
 from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
 from dimos.utils.cache import cache_usage_guard
+from dimos.utils.data import get_project_root
 
 
 def lerobot_project() -> Path:
-    """Locate the packaged LeRobot project beside its host contract."""
-    source = Path(inspect.getfile(LeRobotPolicyModule)).resolve()
-    return source.parent / "python"
+    """Locate the LeRobot project in the shared checkout."""
+    return get_project_root() / LeRobotPolicyModule.project_dir
 
 
 def _run(request: Request) -> Result:
@@ -52,8 +53,7 @@ def _run(request: Request) -> Result:
         "-m",
         "dimos_lerobot.dataprep",
     )
-    env = dict(os.environ)
-    env.pop("VIRTUAL_ENV", None)
+    env = isolated_python_environment(project)
     try:
         with cache_usage_guard():
             result = subprocess.run(

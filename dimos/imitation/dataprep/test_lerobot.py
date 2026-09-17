@@ -25,12 +25,20 @@ from dimos.imitation.dataprep.lerobot import (
     lerobot_project,
     run_lerobot_dataprep,
 )
+from dimos.utils.data import get_project_root
 
 
-def test_conversion_runs_packaged_module_in_policy_project(
+def test_conversion_runs_module_in_checkout_policy_project(
     tmp_path: Path, mocker: pytest_mock.MockerFixture
 ) -> None:
-    mocker.patch.dict("os.environ", {"VIRTUAL_ENV": "/parent/.venv"})
+    mocker.patch.dict(
+        "os.environ",
+        {
+            "VIRTUAL_ENV": "/parent/.venv",
+            "UV_PYTHON": "3.10",
+            "UV_PROJECT_ENVIRONMENT": "/parent/env",
+        },
+    )
     run = mocker.patch(
         "dimos.imitation.dataprep.lerobot.subprocess.run",
         return_value=subprocess.CompletedProcess(
@@ -50,13 +58,15 @@ def test_conversion_runs_packaged_module_in_policy_project(
     assert run_lerobot_dataprep(config) == tmp_path / "dataset"
 
     command = run.call_args.args[0]
-    project = Path(__file__).parents[1] / "policy" / "lerobot" / "python"
+    project = get_project_root() / "native/python/lerobot"
     assert lerobot_project() == project
     assert command[:3] == ["uv", "run", "--frozen"]
     assert command[-3:] == ["python", "-m", "dimos_lerobot.dataprep"]
     assert "--python" not in command
     assert run.call_args.kwargs["cwd"] == project
     assert "VIRTUAL_ENV" not in run.call_args.kwargs["env"]
+    assert "UV_PYTHON" not in run.call_args.kwargs["env"]
+    assert run.call_args.kwargs["env"]["UV_PROJECT_ENVIRONMENT"] != "/parent/env"
     assert run.call_args.kwargs["capture_output"] is True
     assert run.call_args.kwargs["text"] is True
     assert '"command":"build"' in run.call_args.kwargs["input"]
