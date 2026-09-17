@@ -54,8 +54,8 @@ The robot registers with the broker. Open
 the [console Teleop tab](https://console.dimensional.org/console/teleop), sign in, and your
 robot appears under **Available Robots**. Click **Connect** and you're driving.
 
-The API key alone is enough; one key drives the CLI, uploads, and teleop. The
-robot identifies itself by `TRANSPORTS__BROKER__ROBOT_ID` (blueprint default).
+The API key alone is enough; one key drives the CLI, uploads, and teleop. By
+default, the broker derives the robot identity from the API key.
 `TRANSPORTS__BROKER__ROBOT_ID` / `TRANSPORTS__BROKER__ROBOT_NAME` are optional
 overrides. All broker settings can also be passed on the CLI, e.g.
 `--transports.broker.api-key=dimos_sk_...`.

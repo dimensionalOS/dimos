@@ -70,6 +70,10 @@ from dimos.web.relay_bridge.manifest import (
 
 logger = setup_logger()
 
+# v6 (amended, T12d): hello gains an optional `token` (a robot key or viewer
+# token for a relay started with --auth-file) and the relay answers
+# auth_failed; no bump: an older peer omits the field and an auth-on relay
+# rejects it, an auth-off relay ignores it.
 # v6: /api/info.wtUrl is a WebTransport base URL; clients append their role
 # path. v5 advertised the complete /viewer endpoint.
 # v5: the robot hello leaves datagrams (and their ~1100 B budget) and rides
@@ -109,6 +113,9 @@ MAX_PUB_DATA_BYTES = 32 * 1024
 # to its publish). Ids are opaque: the SDK sends random-prefix + counter,
 # the relay forwards its own per-robot token robot-ward.
 MAX_REQUEST_ID_LEN = 64
+
+# Bound for hello.token (a robot key or viewer token, see web/relay/auth.ts).
+MAX_TOKEN_LEN = 256
 
 # Reject absurd header lengths before allocating (mirrors protocol.ts).
 MAX_HEADER_LEN = 65536
@@ -166,14 +173,20 @@ def _optional_reject_wire_null(value: Any, info: ValidationInfo) -> Any:
     return value
 
 
-# Optional wire scalars (teleop gen, pub clientTs, error requestId): absent is
-# fine, never null on the wire (mirrors the absent-or-typed validators in
-# protocol.ts).
+# Optional wire scalars (teleop gen, pub clientTs, error requestId, hello
+# token): absent is fine, never null on the wire (mirrors the absent-or-typed
+# validators in protocol.ts).
 _WireOptNumber = Annotated[int | float | None, BeforeValidator(_optional_reject_wire_null)]
 _WireOptRequestId = Annotated[
     str | None,
     BeforeValidator(_optional_reject_wire_null),
     Field(min_length=1, max_length=MAX_REQUEST_ID_LEN),
+]
+# The bound sits on the str member: a constrained `str | None` rejects an
+# explicit None (the client passes token=None when there is no key).
+_WireOptToken = Annotated[
+    Annotated[str, Field(max_length=MAX_TOKEN_LEN)] | None,
+    BeforeValidator(_optional_reject_wire_null),
 ]
 
 
@@ -184,6 +197,8 @@ class Hello(_WireModel):
     # role=robot only: identity + channel manifest, registered by the relay.
     robot: RobotInfo | None = None
     manifest: RobotManifest | None = None
+    # Robot key or viewer token for a relay started with --auth-file.
+    token: _WireOptToken = None
 
     @field_validator("robot", "manifest", mode="before")
     @classmethod

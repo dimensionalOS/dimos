@@ -16,7 +16,7 @@ body:
         <!-- e.g. Ubuntu 24.04, macOS 15.4 -->
 
         ## Robot / Sim / Hardware
-        <!-- e.g. Unitree Go2 EDU 1.1.7, or Unity sim, with firmware version -->
+        <!-- e.g. Unitree Go2 EDU 1.1.7, or MuJoCo sim, with firmware version -->
 
         ## Steps to reproduce
         <!-- the exact command you ran -->

@@ -7,6 +7,7 @@ import { createRoot } from "react-dom/client";
 import { connect } from "@dimos/sdk";
 import { App } from "./App.tsx";
 import { cockpitDecoders, installAutoSubscriptions } from "./subscriptions.ts";
+import { readToken } from "./token.ts";
 
 const root = createRoot(document.getElementById("root")!);
 
@@ -25,7 +26,7 @@ if (!globalThis.isSecureContext) {
     </p>,
   );
 } else {
-  const session = connect({ decoders: cockpitDecoders });
+  const session = connect({ decoders: cockpitDecoders, token: readToken() ?? undefined });
   installAutoSubscriptions(session);
   root.render(<App session={session} />);
 }

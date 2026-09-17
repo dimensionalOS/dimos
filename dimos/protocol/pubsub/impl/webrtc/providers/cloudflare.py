@@ -16,7 +16,7 @@
 
 Never deploy this on a robot: it authenticates with the CF *app secret*,
 which must not leave server-side/dev environments (robots carry revocable
-``dtk_live_*`` keys and go through the dimensional-teleop broker — see
+``dimos_sk_*`` keys and go through the dimensional-teleop broker — see
 ``broker.py``). CF DataChannels are unidirectional, so this provider holds
 two CF sessions — one publishing, one subscribing — giving a single process
 loopback pubsub through the CF edge: exactly what the integration tests and

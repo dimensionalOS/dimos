@@ -47,12 +47,12 @@ SSH into the robot, then:
 
 ```bash
 # pick the "developer" setup
-bash <(curl -fsSL https://pub-4767fdd15e6a41b6b2ce2558d71ec8d9.r2.dev/install.sh)
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --mode dev
 ```
 
 #### Notes
 
-dimOS handles DDS setup automatically. If you're using the Unitree SDK directly, set:
+For DDS dependencies, follow the [DDS setup guide](/docs/usage/transports/dds.md). The installer does not provision every robot SDK. If you're using the Unitree SDK directly, set:
 ```bash
 export CYCLONEDDS_HOME="$HOME/cyclonedds/install"
 ```
@@ -87,7 +87,7 @@ command locomotion in this blueprint.
 On the G1 computer:
 
 ```bash
-uv sync --extra all
+# Activate the developer environment created by the installer first.
 uv run dimos run unitree-g1-teleop --network-interface eth0
 ```
 
