@@ -12,15 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Export selected sensor observations without a DimOS runtime or derived answers.
-
-For ``Dataset`` cases only: a question about an existing recording, with no robot running.
-A recording is a dimOS memory store of pickled message objects, which a ``no_dimos`` agent
-cannot read, so the selected observations are converted to plain files before it starts.
-Robot cases never come through here; there the agent gets live topics from
-``raw-robot-bridge`` and no recording at all. Introduced with the sandboxed baseline in
-https://github.com/dimensionalOS/dimos/pull/4112 and kept for the recorded-case path.
-"""
+"""Export selected sensor observations as plain files for agents without dimOS."""
 
 from __future__ import annotations
 

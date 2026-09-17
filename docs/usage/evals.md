@@ -76,10 +76,7 @@ no MCP tool listing, no `dimos mcp call` guidance. `excluded_keywords` defaults 
 `dimos, dimensionalos`, which denies any tool call that mentions them. And for `Dataset` cases,
 which ask about an existing recording with no robot running, the selected observations are
 exported as plain files, lossless PNGs, XYZ/RGB CSVs and JSON primitives with a manifest,
-because the memory store is pickled dimOS objects the agent cannot read. That export,
-`plain_recording`, came in with the sandboxed baseline in
-[#4112](https://github.com/dimensionalOS/dimos/pull/4112) and is the recorded-data counterpart
-of the bridge; robot cases never use it.
+because the memory store needs dimOS to read.
 
 ### Keyword guard
 
