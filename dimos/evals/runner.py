@@ -261,21 +261,15 @@ class EvalRunner(Configurable):
 
 
 def forbidden_call(trajectory: Trajectory, keywords: Sequence[str], *ignored: str) -> str:
-    """``"invalid: ..."`` if a tool call mentioning an excluded keyword actually executed.
-
-    The runtime guard denies such calls before they run; this catches a guard that did not.
-    Denied calls are recognised by their result text and do not count.
-    """
+    """``"invalid: ..."`` when a tool call mentioning an excluded keyword executed anyway."""
     if not keywords:
         return ""
     pattern = re.compile("|".join(rf"(?<![a-z0-9]){re.escape(k)}(?![a-z0-9])" for k in keywords))
     for step in trajectory.steps:
-        results = {
-            r.source_call_id: r.content
-            for r in ((step.observation and step.observation.results) or ())
-        }
+        results = step.observation.results if step.observation else ()
+        denied = {r.source_call_id for r in results if r.content.startswith(DENIED)}
         for call in step.tool_calls or ():
-            if str(results.get(call.tool_call_id, "")).startswith(DENIED):
+            if call.tool_call_id in denied:
                 continue
             text = json.dumps(call.arguments).lower()
             for path in ignored:
