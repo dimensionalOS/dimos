@@ -109,8 +109,8 @@ def last_yes_no(text: str) -> str:
 
 
 def _last_line(text: str) -> str:
-    lines = [line.strip().strip("*_`") for line in text.strip().splitlines() if line.strip()]
-    return lines[-1].rstrip(".!").strip() if lines else ""
+    lines = [line.strip("*_` .!\t") for line in text.splitlines() if line.strip()]
+    return lines[-1] if lines else ""
 
 
 def within(band: float) -> Callable[[float, float], float]:

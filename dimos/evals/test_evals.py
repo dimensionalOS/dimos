@@ -961,6 +961,8 @@ def test_last_line_parsers() -> None:
     enumerated = "Rooms observed:\n\n1. Living room\n2. Kitchen\n3. Bedroom\n4. Bathroom\n\n4"
     assert last_number(enumerated) == 4  # first_number would read the list index 1
     assert last_number("**3.4**") == 3.4
+    assert last_number(enumerated + "**.") == 4  # emphasis and punctuation together
+    assert last_yes_no("Visible.\n\n**yes**.") == "yes"
     assert last_number("About 12.5 meters, give or take.") == 12.5  # falls back to the first number
     assert last_yes_no("Bathtub, toilet and vanity are visible.\n\nyes") == "yes"
     assert last_yes_no("**No.**") == "no"
