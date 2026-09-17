@@ -1,6 +1,6 @@
 # The hosted relay: web/ built into one image, run as the image's unprivileged
 # deno user (uid 1993) with the certificate and auth file mounted at /etc/relay.
-# Guide: docs/usage/relay_hosting.md; compose.yaml next to this file runs it.
+# Guide: docs/web/relay_hosting.md; compose.yaml next to this file runs it.
 # The Deno pin lives in dimos/utils/deno.py (CI greps it there); keep them equal.
 FROM denoland/deno:2.6.10
 

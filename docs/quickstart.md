@@ -87,6 +87,17 @@ dimos mcp call move_to --arg x=0.5 --arg relative=true
 
 Manage the background run with `dimos status`, `dimos log -f`, and `dimos stop`. The full command reference is in the [CLI guide](/docs/usage/cli.md).
 
+### Cockpit in the browser
+
+Add `--local-relay` to see the camera and the map in your browser and drive the robot with the keyboard. It needs the `web` extra:
+
+```bash
+uv pip install 'dimos[base,unitree,web]'
+dimos --replay run unitree-go2 --local-relay
+```
+
+The page opens at `http://127.0.0.1:7780/`. The [web guide](/docs/web/index.md) covers the cockpit, the web SDK for pages of your own, and hosting a relay so a robot can be reached from anywhere.
+
 ## More blueprints to try
 
 | Command | What it does |

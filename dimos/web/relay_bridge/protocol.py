@@ -18,7 +18,7 @@ Pinned by the golden vectors in web/shared/fixtures/ (tested from both pytest
 and deno test). Validation runs on pydantic; nothing here needs aioquic or the
 rest of the [web] extra.
 
-Framing (see web/README.md for the upstream-bug rationale):
+Framing (see docs/web/protocol.md for the upstream-bug rationale):
 - Control stream frame: u32-LE length | UTF-8 JSON.
 - Datagram: raw UTF-8 JSON, no length prefix.
 - Data frame: u32-LE headerLen | u32-LE payloadLen | header JSON | payload.
