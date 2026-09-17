@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 import os
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, field_validator, model_validator
 from typing_extensions import Self
@@ -64,7 +64,8 @@ class AgentConfig(BaseConfig):
     # Cap on one bash call's runtime, seconds; the model's own timeout is clamped to it.
     max_tool_seconds: float | None = Field(default=300.0, gt=0)
     # Hand the agent the robot or data without dimOS: no dimOS on PATH, no memory store,
-    # no MCP guidance; excluded_keywords defaults to dimOS's names. Adapters opt in.
+    # no MCP guidance; excluded_keywords defaults to dimOS's names. Agents that are dimOS
+    # (dimcode, the MCP client) reject it; tool-less agents satisfy it as is.
     no_dimos: bool = False
 
     @field_validator("excluded_keywords")
@@ -103,13 +104,10 @@ class Agent(Configurable, ABC):
     """
 
     config: AgentConfig
-    supports_no_dimos: ClassVar[bool] = False
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.validate_tools()
-        if self.config.no_dimos and not self.supports_no_dimos:
-            raise ValueError(f"{type(self).__name__} does not support no_dimos")
 
     def validate_tools(self) -> None:
         """Adapters must enforce explicit allowlists, or reject them.

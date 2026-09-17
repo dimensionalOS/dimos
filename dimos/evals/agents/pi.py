@@ -161,7 +161,6 @@ class PiAdapter(Agent):
     default_tools: ClassVar[tuple[str, ...]] = ("read", "bash", "edit", "write")
     tool_names: ClassVar[tuple[str, ...] | None] = (*default_tools, "grep", "find", "ls")
     robot_via_bash: ClassVar[bool] = True
-    supports_no_dimos: ClassVar[bool] = True
 
     @property
     def selected_tools(self) -> tuple[str, ...]:
