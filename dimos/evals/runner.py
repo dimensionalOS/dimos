@@ -163,8 +163,10 @@ class EvalRunner(Configurable):
                     dict.fromkeys(agent.available_tools(tuple(_tools_exposed(env.mcp_url))))
                 )
                 started = time.monotonic()
-                trajectory = agent.run(case.inputs, env, case_dir, timeout_s=case.timeout_s)
-                agent_duration_s = time.monotonic() - started
+                try:
+                    trajectory = agent.run(case.inputs, env, case_dir, timeout_s=case.timeout_s)
+                finally:
+                    agent_duration_s = time.monotonic() - started
                 _write_trajectory(case_dir, trajectory, tools)
                 case.environment.settle(max(0.0, case.timeout_s - agent_duration_s))
             finally:

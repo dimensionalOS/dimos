@@ -129,6 +129,12 @@ class PiAdapterConfig(ModelAgentConfig):
 
     # Isolate supported tools from DimOS, host files, credentials and network.
     sandbox: bool = False
+    # Host variables the Pi process may inherit; the provider key is added by name and
+    # DIMOS_* variables pass through outside the sandbox. Everything else stays on the host.
+    passthrough_env: tuple[str, ...] = (
+        "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR",
+        "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR",
+    )  # fmt: skip
 
     # Reasoning level passed to Pi's --thinking flag.
     thinking: Thinking = "medium"
@@ -321,14 +327,15 @@ class PiAdapter(Agent):
             raise ValueError(f"Tool allowlist was not applied: {state}")
 
     def _build_process_env(self, paths: RunPaths) -> dict[str, str]:
-        return {
-            **{
-                k: v
-                for k, v in os.environ.items()
-                if not (self.config.sandbox and k.startswith("DIMOS_"))
-            },
-            "DIMOS_EVAL_RUN_ID": str(paths.workspace),
+        keep = {*self.config.passthrough_env, self._key_env}
+        dimos_vars = not self.config.sandbox
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k in keep or (dimos_vars and k.startswith("DIMOS_"))
         }
+        env["DIMOS_EVAL_RUN_ID"] = str(paths.workspace)
+        return env
 
     def _process_events(
         self, proc: subprocess.Popen[bytes], paths: RunPaths, deadline: float

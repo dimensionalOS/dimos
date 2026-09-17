@@ -247,6 +247,8 @@ def test_model_proxy_keeps_native_provider_and_no_secret(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: Provider, key: str
 ) -> None:
     monkeypatch.setenv(key, "private-value")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "unrelated-host-secret")
+    monkeypatch.setenv("DIMOS_ROBOT_IP", "10.0.0.5")
     agent = PiAdapter(provider=provider, model="registered-model", max_output_tokens=4096)
     paths = RunPaths.for_run(tmp_path)
     agent._configure(
@@ -261,6 +263,8 @@ def test_model_proxy_keeps_native_provider_and_no_secret(
     assert config.max_output_tokens == 4096
     env = agent._build_process_env(paths)
     assert env[key] == "private-value"
+    assert "AWS_SECRET_ACCESS_KEY" not in env  # only the allowlist and the provider key pass
+    assert env["DIMOS_ROBOT_IP"] == "10.0.0.5"
     for name in (
         "HOME",
         "XDG_CONFIG_HOME",

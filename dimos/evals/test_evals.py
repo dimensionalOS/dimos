@@ -25,6 +25,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -850,3 +851,22 @@ def test_summary_and_trajectory_preserve_unknown_cost(
     assert trajectory.build("answer").final_metrics.total_cost_usd == expected
     assert summary.n == len(costs)
     assert summary.mean_score == summary.pass_rate == 0.0
+
+
+def test_failed_agent_run_keeps_its_duration(dataset: str, tmp_path: Path) -> None:
+    class RaisingAgent(FakeAgent):
+        def run(
+            self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
+        ) -> Trajectory:
+            time.sleep(0.05)
+            raise RuntimeError("adapter died")
+
+    case = EvalCase(
+        id="dies",
+        inputs="?",
+        environment=Dataset(dataset, select=(lambda store: store.streams.odom.limit(1),)),
+        grade=lambda outcome: 1.0,
+    )
+    result = EvalRunner(out_dir=tmp_path).run([case], RaisingAgent())[0]
+    assert "adapter died" in result.error
+    assert result.agent_duration_s >= 0.05
