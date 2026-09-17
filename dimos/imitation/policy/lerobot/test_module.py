@@ -22,6 +22,7 @@ from dimos.imitation.policy.lerobot.module import (
     LeRobotPolicyModule,
     LeRobotPolicyModuleConfig,
 )
+from dimos.utils.data import get_project_root
 
 
 def test_contract_imports_without_runtime_dependencies() -> None:
@@ -34,14 +35,14 @@ def test_contract_imports_without_runtime_dependencies() -> None:
     }
 
 
-def test_contract_resolves_sibling_runtime_project() -> None:
+def test_contract_resolves_checkout_runtime_project() -> None:
     module = LeRobotPolicyModule(
         policy_path="unused",
         task="test task",
         joint_names=["joint"],
     )
     try:
-        assert module.runtime_project == Path(__file__).parent / "python"
+        assert module.runtime_project == get_project_root() / "native/python/lerobot"
     finally:
         module.stop()
 

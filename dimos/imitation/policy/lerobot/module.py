@@ -124,6 +124,7 @@ class LeRobotPolicyModuleConfig(IsolatedPythonModuleConfig):
 class LeRobotPolicyModule(IsolatedPythonModule):
     """Convert live image and joint-state observations into joint targets."""
 
+    project_dir = "native/python/lerobot"
     implementation = "dimos_lerobot.runtime:LeRobotPolicyRuntime"
     config: LeRobotPolicyModuleConfig
 

@@ -2,7 +2,7 @@
 
 `LeRobotPolicyModule` runs trained LeRobot policies in a managed Python-native
 subprocess. Its LeRobot, Transformers, Torch, and NumPy versions live in the
-sibling `python/` project and do not change the main DimOS environment.
+`native/python/lerobot` project and do not change the main DimOS environment.
 
 The host contract subscribes to:
 
@@ -58,7 +58,7 @@ grippers.
 Run isolated runtime checks with:
 
 ```bash
-cd dimos/imitation/policy/lerobot/python
-uv run --isolated --locked --group tests --with-editable ../../../../../ python -m pytest
-uv run --isolated --locked --group tests --with-editable ../../../../../ python -m mypy
+cd native/python/lerobot
+uv run --isolated --locked --group tests --with-editable ../../.. python -m pytest
+uv run --isolated --locked --group tests --with-editable ../../.. python -m mypy
 ```

@@ -155,9 +155,6 @@ def _is_production_module_file(file_path: Path, root: Path) -> bool:
         or "/testing/" in rel
         or "example" in relative_path.parts
         or relative_path == Path("experimental/isolated_python/module.py")
-        # Python-native implementations are private subprocess details. Only
-        # their host contracts belong in the runnable module registry.
-        or "python" in relative_path.parts
         or rel.startswith("core/")
     )
 
@@ -175,22 +172,6 @@ def test_isolated_python_framework_is_not_a_production_module(
     relative_path: str,
 ) -> None:
     assert _is_production_module_file(tmp_path / relative_path, tmp_path) is False
-
-
-def test_python_native_runtime_is_not_a_production_module(tmp_path: Path) -> None:
-    runtime = tmp_path / "feature" / "python" / "package" / "runtime.py"
-
-    assert _is_production_module_file(runtime, tmp_path) is False
-
-
-def test_python_native_runtime_tree_is_not_scanned(tmp_path: Path) -> None:
-    contract = tmp_path / "feature" / "module.py"
-    runtime = tmp_path / "feature" / "python" / "package" / "runtime.py"
-    runtime.parent.mkdir(parents=True)
-    contract.write_text("")
-    runtime.write_text("")
-
-    assert list(_get_all_python_files(tmp_path)) == [contract]
 
 
 def _scan_for_blueprints(root: Path) -> tuple[dict[str, str], dict[str, str]]:

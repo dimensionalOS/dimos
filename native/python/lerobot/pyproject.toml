@@ -34,13 +34,14 @@ include = ["dimos_lerobot*"]
 [tool.pytest.ini_options]
 testpaths = ["dimos_lerobot"]
 python_files = ["*_tests.py"]
+addopts = "--confcutdir=."
 
 [tool.mypy]
 files = ["dimos_lerobot/"]
 python_version = "3.12"
 strict = true
 explicit_package_bases = true
-mypy_path = "../../../../../"
+mypy_path = "../../.."
 
 [[tool.mypy.overrides]]
 module = [
