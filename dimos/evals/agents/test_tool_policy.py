@@ -14,6 +14,7 @@
 
 """The same provider and tool contract across native Pi and dimcode runtimes."""
 
+from dataclasses import replace
 import json
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -104,32 +105,80 @@ def test_missing_runtime_extension_fails_before_inference(
     assert provider.requests == []
 
 
-@pytest.mark.parametrize("harness", ["sandbox"], indirect=True)
-def test_sandbox_grep_cannot_read_host_files(
-    harness: NativeHarness, provider: ScriptedProvider, tmp_path: Path
-) -> None:
-    secret = tmp_path / "host-only.txt"
-    secret.write_text("host-only-content")
-    provider.call("grep", pattern="host-only-content", path=str(secret), context=1)
-    result = harness.run(harness.agent(provider, ("grep",)))
-    assert result.extra.ended_by == "answer", result.extra
-    observation = result.steps[-2].observation
-    assert observation is not None
-    output = observation.results[0].content
-    assert "No such file or directory" in output
-    assert "exited with code 2" in output
-    assert "host-only-content" not in output
-    assert json.dumps(output) in json.dumps(provider.requests[-1])
-
-
-@pytest.mark.parametrize("harness", ["sandbox"], indirect=True)
-@pytest.mark.parametrize("provider", ["openai"], indirect=True)
-def test_sandbox_grep_treats_shell_metacharacters_as_data(
+def test_excluded_keywords_deny_only_whole_word_matches(
     harness: NativeHarness, provider: ScriptedProvider
 ) -> None:
-    provider.call(
-        "grep", pattern="$(touch /workspace/forbidden) ' \" ;", literal=True, path="/input"
-    )
-    result = harness.run(harness.agent(provider, ("grep",)))
+    provider.call("bash", command="python3 -c 'import dimos'")  # code mentioning it
+    provider.call("read", path="/opt/DimOS/README.md")  # a path into it, any case
+    provider.call("bash", command=f"echo dimosaurus > {harness.path('ok.txt')}")  # not a whole word
+    provider.call("bash", command=f"cat {harness.path('ok.txt')}")  # the run's own path is exempt
+    result = harness.run(harness.agent(provider, None, excluded_keywords=("dimos",)))
     assert result.extra.ended_by == "answer", result.extra
-    assert not (harness.workspace / "forbidden").exists()
+    assert result.final_answer == "OK"
+    assert len(provider.requests) == 5
+    outcomes = [
+        (call.function_name, obs.results[0].content)
+        for step in result.steps
+        if step.tool_calls and (obs := step.observation)
+        for call in step.tool_calls
+    ]
+    assert [name for name, _ in outcomes] == ["bash", "read", "bash", "bash"]
+    denied = [text for _, text in outcomes[:2]]
+    assert all("Tool call denied" in text and '"dimos"' in text for text in denied)
+    assert not any("Tool call denied" in text for _, text in outcomes[2:])
+    assert (harness.workspace / "ok.txt").read_text().strip() == "dimosaurus"
+    assert "dimosaurus" in outcomes[3][1]
+    assert result.extra.blocked_calls == 2
+
+
+@pytest.mark.parametrize("provider", ["openai"], indirect=True)
+def test_excluded_keyword_in_workspace_path_is_not_a_hit(
+    harness: NativeHarness, provider: ScriptedProvider, tmp_path: Path
+) -> None:
+    root = tmp_path / "dimos" / "run"
+    root.mkdir(parents=True)
+    harness = replace(harness, root=root)
+    provider.call("bash", command=f"printf inside > {harness.path('note.txt')}")
+    result = harness.run(harness.agent(provider, None, excluded_keywords=("dimos",)))
+    assert result.extra.ended_by == "answer", result.extra
+    assert (root / "note.txt").read_text() == "inside"
+    assert result.extra.blocked_calls == 0
+
+
+@pytest.mark.parametrize("harness", ["pi"], indirect=True)
+@pytest.mark.parametrize("provider", ["openai"], indirect=True)
+def test_no_dimos_strips_dimos_from_the_environment(
+    harness: NativeHarness, provider: ScriptedProvider
+) -> None:
+    # Spelling the name in two halves gets past the keyword guard on purpose: the
+    # process environment must not have dimOS even when the guard is circumvented.
+    probe = "python3 -c \"import importlib.util as u; print(u.find_spec('di'+'mos'))\"; command -v di''mos || echo no-cli"
+    provider.call("bash", command=probe)
+    provider.call("bash", command="echo $PATH")
+    result = harness.run(harness.agent(provider, None, no_dimos=True))
+    assert result.extra.ended_by == "answer", result.extra
+    outputs = [
+        obs.results[0].content
+        for step in result.steps
+        if step.tool_calls and (obs := step.observation)
+    ]
+    assert outputs[0].split() == ["None", "no-cli"]
+    assert ".venv" not in outputs[1]
+    assert result.extra.blocked_calls == 0
+    prompt = (harness.root / "system-prompt.txt").read_text()
+    assert "dimensionalOS" in prompt and "observations" in prompt
+    assert not (harness.root / "recording.db").exists()
+
+
+@pytest.mark.parametrize("provider", ["openai"], indirect=True)
+def test_max_tool_seconds_clamps_bash(harness: NativeHarness, provider: ScriptedProvider) -> None:
+    provider.call("bash", command="sleep 30; echo finished", timeout=600)
+    result = harness.run(harness.agent(provider, None, max_tool_seconds=1))
+    assert result.extra.ended_by == "answer", result.extra
+    output = next(
+        obs.results[0].content
+        for step in result.steps
+        if step.tool_calls and (obs := step.observation)
+    )
+    assert "finished" not in output
+    assert "timed out" in output.lower() or "timeout" in output.lower()

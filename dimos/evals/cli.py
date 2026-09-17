@@ -21,6 +21,7 @@ from collections.abc import Iterable
 import importlib
 import inspect
 import json
+import re
 from typing import TYPE_CHECKING, Any
 
 import typer
@@ -63,12 +64,11 @@ def agent_kwargs(overrides: Iterable[str]) -> dict[str, Any]:
 
 
 def _has_secret(value: Any) -> bool:
-    words = ("key", "token", "secret", "password", "credential", "authorization")
+    words = {"key", "apikey", "token", "secret", "password", "credential", "authorization"}
     if isinstance(value, dict):
         return any(
-            any(word in str(key).casefold() for word in words) or _has_secret(item)
+            bool(words & set(re.split(r"[\s_\-]+", str(key).casefold()))) or _has_secret(item)
             for key, item in value.items()
-            if not (key == "max_output_tokens" and isinstance(item, (int, type(None))))
         )
     return isinstance(value, list) and any(_has_secret(item) for item in value)
 
@@ -106,6 +106,11 @@ def run(
     allow: str | None = typer.Option(
         None, "--allow", help="Allowed tool names, e.g. bash,grep; empty string disables tools"
     ),
+    exclude: str | None = typer.Option(
+        None,
+        "--exclude",
+        help="Deny tool calls mentioning these keywords, e.g. dimos,dimensionalos",
+    ),
     tags: str = typer.Option("", help="Comma-separated tag filter"),
     limit: int = typer.Option(0, min=0, help="Run at most N cases"),
 ) -> None:
@@ -120,6 +125,10 @@ def run(
         if any(not name for name in names) or len(names) != len(set(names)):
             raise typer.BadParameter("Tool names must be nonempty and unique", param_hint="--allow")
         kwargs["allowed_tools"] = names
+    if exclude is not None:
+        if "excluded_keywords" in kwargs:
+            raise typer.BadParameter("Use --exclude or --set excluded_keywords, not both")
+        kwargs["excluded_keywords"] = [w.strip() for w in exclude.split(",") if w.strip()]
     runner = EvalRunner()
     results = runner.run(
         cases,

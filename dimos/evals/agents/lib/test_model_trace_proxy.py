@@ -61,13 +61,14 @@ def proxy_server(tmp_path, mocker, request):
 
 
 @pytest.mark.parametrize(
-    ("proxy_server", "last_status", "forwarded", "limited"),
-    [(None, 201, 3, False), (2, 400, 2, True)],
+    ("proxy_server", "posts", "statuses", "limited"),
+    [(None, 2, [201, 201], False), (2, 3, [201, 201, 400], True)],
     indirect=["proxy_server"],
 )
-def test_forwarding_records_retries_and_counts_failed_attempts(
-    proxy_server, tmp_path, last_status, forwarded, limited
+def test_forwarding_retries_overload_upstream_and_budgets_client_requests(
+    proxy_server, tmp_path, mocker, posts, statuses, limited
 ):
+    mocker.patch.object(proxy, "_RETRY_BACKOFF_S", 0.0)
     url, upstream = proxy_server
     body = b'{"model": "pi", "stream": false}'
     with requests.Session() as session:
@@ -79,14 +80,12 @@ def test_forwarding_records_retries_and_counts_failed_attempts(
                 timeout=5,
                 headers={"Authorization": "Bearer secret", "Host": "client.test", "X-Run": "7"},
             )
-            for _ in range(3)
+            for _ in range(posts)
         ]
-    assert [response.status_code for response in responses] == [503, 201, last_status]
-    assert responses[0].content == b"retry"
-    assert responses[0].headers["Content-Type"] == "text/plain; charset=utf-8"
-    assert responses[1].json() == {"answer": 42}
+    assert [response.status_code for response in responses] == statuses
+    assert responses[0].json() == {"answer": 42}  # the upstream 503 was retried, not forwarded
     assert (tmp_path / "limit").exists() == limited
-    assert upstream.call_count == forwarded
+    assert upstream.call_count == 3  # 503 + 201 for the first post, 201 for the second
     sent = upstream.call_args.args[0]
     assert str(sent.url) == "https://provider.test/v1/chat/completions?version=1"
     assert sent.content == body
@@ -95,12 +94,12 @@ def test_forwarding_records_retries_and_counts_failed_attempts(
     recorded = {
         path.name: json.loads(path.read_text()) for path in (tmp_path / "raw").glob("*.json")
     }
-    assert len(recorded) == forwarded * 2
+    assert len(recorded) == 6  # every upstream attempt is traced
     request = recorded["000-request.json"]
     assert request["body"] == {"model": "pi", "stream": False}
     assert request["headers"]["x-run"] == "7"
     assert "authorization" not in request["headers"]
-    failed, success = recorded["000-response.json"], recorded[f"{forwarded - 1:03d}-response.json"]
+    failed, success = recorded["000-response.json"], recorded["001-response.json"]
     assert (failed["status"], failed["body"]) == (503, "retry")
     assert (success["status"], success["body"]) == (201, {"answer": 42})
 

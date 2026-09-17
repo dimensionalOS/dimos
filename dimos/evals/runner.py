@@ -26,6 +26,7 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import time
@@ -171,6 +172,12 @@ class EvalRunner(Configurable):
                 case.environment.settle(max(0.0, case.timeout_s - agent_duration_s))
             finally:
                 case.environment.stop()
+            if violation := forbidden_call(
+                trajectory, agent.config.excluded_keywords, str(case_dir)
+            ):
+                return self._result(
+                    case, t0, trajectory, agent_duration_s=agent_duration_s, error=violation
+                )
             if trajectory.extra.ended_by == "error":
                 return self._result(
                     case,
@@ -250,6 +257,34 @@ class EvalRunner(Configurable):
         summary: dict[str, Any] = asdict(summarize(results))
         summary["manifest"] = "manifest.json"
         (self.run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+
+
+DENIED = "Tool call denied"
+
+
+def forbidden_call(trajectory: Trajectory, keywords: Sequence[str], *ignored: str) -> str:
+    """``"invalid: ..."`` if a tool call mentioning an excluded keyword actually executed.
+
+    The runtime guard denies such calls before they run; this catches a guard that did not.
+    Denied calls are recognised by their result text and do not count.
+    """
+    if not keywords:
+        return ""
+    pattern = re.compile("|".join(rf"(?<![a-z0-9]){re.escape(k)}(?![a-z0-9])" for k in keywords))
+    for step in trajectory.steps:
+        results = {
+            r.source_call_id: r.content
+            for r in ((step.observation and step.observation.results) or ())
+        }
+        for call in step.tool_calls or ():
+            if str(results.get(call.tool_call_id, "")).startswith(DENIED):
+                continue
+            text = json.dumps(call.arguments).lower()
+            for path in ignored:
+                text = text.replace(path.lower(), "")
+            if match := pattern.search(text):
+                return f"invalid: step {step.step_id} ran {call.function_name} mentioning {match.group()!r}"
+    return ""
 
 
 def _tools_exposed(mcp_url: str) -> list[str]:

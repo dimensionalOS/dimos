@@ -52,11 +52,15 @@ class RuntimeConfig(BaseModel):
     key_env: str
     allowed_tools: tuple[str, ...] | None = None
     max_output_tokens: int | None = Field(default=None, ge=1)
+    excluded_keywords: tuple[str, ...] = ()
+    ignored_paths: tuple[str, ...] = ()
+    max_tool_seconds: float | None = Field(default=None, gt=0)
 
 
 class ToolPolicyState(BaseModel):
     tools: tuple[str, ...]
     unknown: tuple[str, ...]
+    blocked: int = 0
 
 
 class McpEndpoint(BaseModel):
