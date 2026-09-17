@@ -35,6 +35,7 @@ from dimos.evals.agents.base import Agent, ModelAgentConfig
 from dimos.evals.agents.lib import sandbox
 from dimos.evals.agents.lib.model_trace_proxy import model_trace_proxy
 from dimos.evals.agents.lib.pi_config import (
+    PROVIDERS,
     Provider,
     RunPaths,
     RuntimeConfig,
@@ -217,12 +218,7 @@ class PiAdapter(Agent):
         if self.config.max_steps == 0:
             return events.trajectory.build("max_steps")
         paths = RunPaths.for_run(run_dir)
-        upstream = os.environ.get(
-            f"{self.config.provider.upper()}_BASE_URL",
-            "https://api.openai.com/v1"
-            if self.config.provider == "openai"
-            else "https://api.anthropic.com",
-        )
+        upstream = os.environ.get(f"{self.config.provider.upper()}_BASE_URL", self._base_url)
         limit_reached = run_dir / "pi-request-limit-reached"
         with model_trace_proxy(
             raw_dir, upstream, max_requests=self.config.max_steps, limit_reached=limit_reached
@@ -300,7 +296,11 @@ class PiAdapter(Agent):
 
     @property
     def _key_env(self) -> str:
-        return f"{self.config.provider.upper()}_API_KEY"
+        return PROVIDERS[self.config.provider][0]
+
+    @property
+    def _base_url(self) -> str:
+        return PROVIDERS[self.config.provider][1]
 
     def _configure(self, env: RunningEnvironment, paths: RunPaths, proxy_url: str) -> None:
         config = RuntimeConfig(

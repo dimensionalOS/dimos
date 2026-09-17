@@ -25,6 +25,12 @@ from pydantic.alias_generators import to_camel
 from dimos.constants import CACHE_DIR, CONFIG_DIR
 
 Provider = Literal["openai", "anthropic"]
+# Per provider: the environment variable holding the API key, and the default upstream
+# base URL the trace proxy forwards to (overridable with <PROVIDER>_BASE_URL).
+PROVIDERS: dict[Provider, tuple[str, str]] = {
+    "openai": ("OPENAI_API_KEY", "https://api.openai.com/v1"),
+    "anthropic": ("ANTHROPIC_API_KEY", "https://api.anthropic.com"),
+}
 Thinking = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
