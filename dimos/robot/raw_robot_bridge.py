@@ -27,6 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 import io
 import json
+import math
 import threading
 import time
 from typing import Any
@@ -117,6 +118,8 @@ class Deadman:
     """The latest velocity command, valid until its deadline passes."""
 
     max_s: float = 2.0
+    max_linear: float = 1.0  # m/s
+    max_angular: float = 1.5  # rad/s
     vx: float = 0.0
     vy: float = 0.0
     wz: float = 0.0
@@ -125,14 +128,14 @@ class Deadman:
 
     def set(self, command: bytes | str) -> None:
         c = json.loads(command)
-        hold = min(float(c.get("t", 0.0)), self.max_s)
+        vx, vy, wz, hold = (float(c.get(k, 0.0)) for k in ("vx", "vy", "wz", "t"))
+        if not all(math.isfinite(v) for v in (vx, vy, wz, hold)):
+            raise ValueError("velocity command must be finite")
+        clamp = lambda v, limit: max(-limit, min(limit, v))  # noqa: E731
         with self.lock:
-            self.vx, self.vy, self.wz = (
-                float(c.get("vx", 0)),
-                float(c.get("vy", 0)),
-                float(c.get("wz", 0)),
-            )
-            self.until = time.monotonic() + max(0.0, hold)
+            self.vx, self.vy = clamp(vx, self.max_linear), clamp(vy, self.max_linear)
+            self.wz = clamp(wz, self.max_angular)
+            self.until = time.monotonic() + max(0.0, min(hold, self.max_s))
 
     def current(self) -> tuple[float, float, float]:
         with self.lock:
@@ -143,6 +146,8 @@ class RawRobotBridgeConfig(ModuleConfig):
     endpoint: str = RAW_ENDPOINT
     prefix: str = "robot"
     max_cmd_s: float = 2.0
+    max_linear_mps: float = 1.0
+    max_angular_rps: float = 1.5
     jpeg_quality: int = 90
     drive_hz: float = 10.0
 
@@ -163,7 +168,9 @@ class RawRobotBridge(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._deadman = Deadman(max_s=self.config.max_cmd_s)
+        self._deadman = Deadman(
+            self.config.max_cmd_s, self.config.max_linear_mps, self.config.max_angular_rps
+        )
         self._stop = threading.Event()
         self._topics = RawTopics(self.config.endpoint, self.config.prefix, listen=True)
         q = self.config.jpeg_quality

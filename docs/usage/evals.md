@@ -84,15 +84,15 @@ misconfigured extension. Invalid trials count as errors in the summary; report t
 ### Raw robot topics
 
 `Sim(raw_bridge=True)` adds the `raw-robot-bridge` module to the launch. It republishes the
-robot connection's streams as plain Zenoh topics on `tcp/127.0.0.1:7448`, a peer with multicast
-and gossip scouting off, so a subscriber sees these keys and none of dimOS's own bus:
+robot connection's streams as plain Zenoh topics on a per-run loopback port (an attached dimos
+uses `tcp/127.0.0.1:7448`), a peer with multicast and gossip scouting off, so a subscriber sees these keys and none of dimOS's own bus:
 
 ```
 robot/camera/jpeg        JPEG bytes per frame; attachment {"t": unix_seconds}
 robot/lidar/xyz_f32      float32 little-endian (N,3) metres in the lidar frame; attachment {"t": ...}
 robot/odom/json          {"t","x","y","z","qx","qy","qz","qw"}, base_link in the odom frame
-robot/camera_info/json   {"width","height","K"}, latched
-robot/cmd_vel/json       subscribed: {"vx","vy","wz","t"}; held for t seconds (max 2), then stop
+robot/camera_info/json   {"width","height","K"}, republished periodically
+robot/cmd_vel/json       subscribed: {"vx","vy","wz","t"}; clamped to 1.0 m/s and 1.5 rad/s, held for t seconds (max 2), then stop
 ```
 
 That is the surface a vendor SDK exposes: sensors out, body velocity with a deadman in. Nothing

@@ -39,8 +39,10 @@ def test_no_dimos_defaults_the_excluded_keywords_but_keeps_explicit_ones() -> No
     assert PiAdapter().config.excluded_keywords == ()
     with pytest.raises(ValueError, match="nonempty words"):
         PiAdapter(excluded_keywords=("dim os",))
-    with pytest.raises(ValueError, match="modules"):
+    with pytest.raises(ValueError, match="modules or Pi skills"):
         PiAdapter(no_dimos=True, modules=("mcp-server",))
+    with pytest.raises(ValueError, match="modules or Pi skills"):
+        PiAdapter(no_dimos=True, skills=("dimensional/SKILL.md",))
 
 
 def test_robot_environment_needs_raw_topics(tmp_path: Path) -> None:
@@ -130,3 +132,19 @@ def test_process_env_drops_dimos_paths_and_variables(
 
     kept = PiAdapter()._build_process_env(paths)
     assert str(venv_bin) in kept["PATH"] and kept["DIMOS_TRANSPORT"] == "lcm"
+
+
+def test_pi_is_launched_by_absolute_path_when_it_shares_a_dir_with_dimos(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shared = tmp_path / "bin"
+    shared.mkdir()
+    for name in ("pi", "dimos"):
+        (shared / name).write_text("#!/bin/sh\n")
+        (shared / name).chmod(0o755)
+    monkeypatch.setenv("PATH", os.pathsep.join((str(shared), "/usr/bin")))
+    agent = PiAdapter(no_dimos=True, cli="pi")
+    paths = RunPaths.for_run(tmp_path / "run")
+    command = agent._build_pi_command("inputs", "prompt", paths)
+    assert command[0] == str(shared / "pi")
+    assert str(shared) not in agent._build_process_env(paths)["PATH"]

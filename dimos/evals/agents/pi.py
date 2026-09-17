@@ -129,9 +129,10 @@ any Zenoh client works, e.g. `pip install eclipse-zenoh`.
   robot/camera/jpeg        JPEG bytes per frame; attachment is JSON {{"t": unix_seconds}}
   robot/lidar/xyz_f32      float32 little-endian (N,3) x y z in metres, lidar frame; attachment {{"t": ...}}
   robot/odom/json          {{"t","x","y","z","qx","qy","qz","qw"}}: base_link pose in the odom frame
-  robot/camera_info/json   {{"width","height","K"}}: intrinsics, latched
+  robot/camera_info/json   {{"width","height","K"}}: intrinsics, republished periodically
   robot/cmd_vel/json       publish {{"vx": m/s, "vy": m/s, "wz": rad/s, "t": seconds}}; the robot holds
                            that velocity for t seconds (max 2), then stops. Republish to keep moving.
+                           Speeds are clamped to 1.0 m/s and 1.5 rad/s; non-finite values are ignored.
 
 There is no other interface to this robot.
 """
@@ -212,8 +213,8 @@ class PiAdapter(Agent):
             unknown = set(self.selected_tools) - set(self.tool_names)
             if unknown:
                 raise ValueError(f"Unknown Pi tools: {sorted(unknown)}")
-        if self.config.no_dimos and self.config.modules:
-            raise ValueError("no_dimos cannot add dimOS modules")
+        if self.config.no_dimos and (self.config.modules or self.config.skills):
+            raise ValueError("no_dimos cannot add dimOS modules or Pi skills")
 
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
         """Pi's native tools plus robot tools exposed through its bash tool."""
@@ -333,7 +334,8 @@ class PiAdapter(Agent):
         )
         policy = ["--extension", str(paths.config / "extensions/runtime.js")]
         return [
-            self.config.cli, "--mode", "json", "--model", f"{self.config.provider}/{self.config.model}",
+            shutil.which(self.config.cli) or self.config.cli,  # no_dimos strips PATH dirs
+            "--mode", "json", "--model", f"{self.config.provider}/{self.config.model}",
             "--thinking", self.config.thinking, "--session-dir", str(paths.workspace / "pi-session"),
             *tool_args, *policy,
             "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",

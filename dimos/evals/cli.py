@@ -63,11 +63,17 @@ def agent_kwargs(overrides: Iterable[str]) -> dict[str, Any]:
     return {name: _value(text) for name, _, text in pairs}
 
 
+def _key_words(key: str) -> list[str]:
+    """``accessToken`` -> ["access", "token"], ``max_output_tokens`` -> ["max", "output", "tokens"]."""
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", key)
+    return re.split(r"[\s_\-]+", spaced.casefold())
+
+
 def _has_secret(value: Any) -> bool:
     words = {"key", "apikey", "token", "secret", "password", "credential", "authorization"}
     if isinstance(value, dict):
         return any(
-            bool(words & set(re.split(r"[\s_\-]+", str(key).casefold()))) or _has_secret(item)
+            bool(words & set(_key_words(str(key)))) or _has_secret(item)
             for key, item in value.items()
         )
     return isinstance(value, list) and any(_has_secret(item) for item in value)

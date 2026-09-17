@@ -158,6 +158,8 @@ def test_provenance_retains_numeric_output_limit() -> None:
         run_provenance({}, "agent", {"excluded_keywords": ["dimos"]})["agent"]["kwargs"] is not None
     )
     assert run_provenance({}, "agent", {"api_key": "sk-x"})["agent"]["kwargs"] is None
+    for camel in ("clientSecret", "accessToken", "myApiKey", "databasePassword"):
+        assert run_provenance({}, "agent", {camel: "x"})["agent"]["kwargs"] is None, camel
 
 
 @pytest.mark.parametrize("allowed,expected", [("bash, grep", ["bash", "grep"]), ("", [])])

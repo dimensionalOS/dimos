@@ -99,3 +99,18 @@ def test_deadman_holds_then_stops_and_caps_the_hold() -> None:
 
     with pytest.raises(ValueError):
         deadman.set(b"not json")
+
+
+def test_deadman_rejects_non_finite_and_clamps_speed() -> None:
+    deadman = Deadman(max_s=2.0, max_linear=1.0, max_angular=1.5)
+    for bad in (
+        '{"vx": NaN, "t": 1}',
+        '{"vx": Infinity, "t": 1}',
+        '{"wz": -Infinity, "t": 1}',
+        '{"vx": 1, "t": NaN}',
+    ):
+        with pytest.raises(ValueError):
+            deadman.set(bad)
+    assert deadman.current() == (0.0, 0.0, 0.0)  # nothing armed by the bad packets
+    deadman.set(json.dumps({"vx": 1e308, "vy": -7.0, "wz": 40.0, "t": 1}))
+    assert deadman.current() == (1.0, -1.0, 1.5)

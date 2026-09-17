@@ -20,6 +20,7 @@ from abc import abstractmethod
 from collections.abc import Sequence
 import math
 from pathlib import Path
+import socket
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -70,6 +71,7 @@ class Sim(Environment):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._recording: Store | None = None
+        self._raw_endpoint = RAW_ENDPOINT  # an attached dimos runs its bridge on the default
 
     @abstractmethod
     def configure_launch(self, proc: DimosCliCall) -> None:
@@ -109,12 +111,19 @@ class Sim(Environment):
         deadline = time.monotonic() + self.config.launch_timeout_s
         pid = None
         proc = None
+        if self.config.attach and self.config.raw_bridge and not _listening(self._raw_endpoint):
+            raise RuntimeError(
+                f"attach with raw_bridge needs a running raw-robot-bridge at {self._raw_endpoint}"
+            )
         if not self.config.attach:
             proc = DimosCliCall()
             self.configure_launch(proc)
             proc.global_args.append("--record")
             disabled = [arg for name in self.config.disable for arg in ("--disable", name)]
             bridge = ["raw-robot-bridge"] if self.config.raw_bridge else []
+            if self.config.raw_bridge:
+                self._raw_endpoint = f"tcp/127.0.0.1:{_free_port()}"  # one bridge per run
+                proc.extra_env["RAWROBOTBRIDGE__ENDPOINT"] = self._raw_endpoint
             proc.demo_args = ["run", *self.config.blueprint, *modules, *bridge, *disabled]
             self._resources.callback(proc.stop)
             proc.start()
@@ -148,7 +157,7 @@ class Sim(Environment):
             mcp_url=mcp_url,
             streams=(),
             artifacts=artifacts,
-            raw_endpoint=RAW_ENDPOINT if self.config.raw_bridge else None,
+            raw_endpoint=self._raw_endpoint if self.config.raw_bridge else None,
         )
 
     def _wait_recording(self, deadline: float, pid: int | None) -> Path:
@@ -194,3 +203,16 @@ class Sim(Environment):
             super().stop()
         finally:
             self._recording = None
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _listening(endpoint: str) -> bool:
+    host, port = endpoint.rsplit("/", 1)[1].rsplit(":", 1)
+    with socket.socket() as s:
+        s.settimeout(1.0)
+        return s.connect_ex((host, int(port))) == 0

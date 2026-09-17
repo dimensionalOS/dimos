@@ -943,3 +943,12 @@ def test_failed_agent_run_keeps_its_duration(dataset: str, tmp_path: Path) -> No
     result = EvalRunner(out_dir=tmp_path).run([case], RaisingAgent())[0]
     assert "adapter died" in result.error
     assert result.agent_duration_s >= 0.05
+
+
+def test_attach_with_raw_bridge_needs_a_listening_bridge() -> None:
+    from dimos.evals.environments.dimsim import DimSimEnvironment
+
+    env = DimSimEnvironment(blueprint=["unitree-go2"], attach=True, raw_bridge=True)
+    env.config.launch_timeout_s = 1.0
+    with pytest.raises(RuntimeError, match="raw-robot-bridge"):
+        env.start(())
