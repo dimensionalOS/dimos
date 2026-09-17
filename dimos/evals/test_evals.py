@@ -989,7 +989,7 @@ def test_parsers_take_the_answer_after_an_explanation() -> None:
     # Shapes the matrix did not produce but the rule must cover.
     assert first_number(rooms + " rooms") == 4  # value with a trailing word
     assert (
-        first_number("Length 2.05 m and width 1.51 m.\n\n~ 3.1 m2") == 3.1
+        first_number("Length 2.05 m and width 1.51 m.\n\n~ 3.1 sq m") == 3.1
     )  # unit on the last line
     assert first_number("Counted twice.\n\nAnswer: 4") == 4
     assert first_number(rooms + "**.") == 4  # emphasis and punctuation together
