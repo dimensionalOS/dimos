@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from PIL import Image as PILImage
 
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -38,6 +37,8 @@ def plain_recording(streams: Sequence[Stream[Any, Any]], directory: Path) -> Pat
     Only explicitly supported payloads are exported. No pickle, Python repr,
     semantic tags, source paths or agent_encode summaries cross this boundary.
     """
+    from PIL import Image as PILImage  # optional dependency, only for image exports
+
     directory.mkdir(parents=True, exist_ok=False)
     records: list[dict[str, Any]] = []
     for stream_index, stream in enumerate(streams):

@@ -43,14 +43,21 @@ from dimos.evals.agents.lib.pi_config import (
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.plain_recording import plain_recording
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
-from dimos.evals.constants import NO_DIMOS_GUIDANCE, PASSTHROUGH_ENV, PROVIDERS
+from dimos.evals.constants import (
+    NO_DIMOS_GUIDANCE,
+    PASSTHROUGH_ENV,
+    PROVIDERS,
+    RAW_MAX_ANGULAR_RPS,
+    RAW_MAX_CMD_S,
+    RAW_MAX_LINEAR_MPS,
+    RAW_README,
+)
 from dimos.evals.environments.base import Environment
 from dimos.evals.types import (
     EndedBy,
     RunningEnvironment,
     Trajectory,
 )
-from dimos.robot.raw_robot_bridge import readme as raw_readme
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
@@ -271,7 +278,14 @@ class PiAdapter(Agent):
         files.pop("recording", None)  # a dimOS memory store; not readable without dimOS
         if env.raw_endpoint:
             readme = run_dir / "ROBOT.md"
-            readme.write_text(raw_readme(env.raw_endpoint))
+            readme.write_text(
+                RAW_README.format(
+                    endpoint=env.raw_endpoint,
+                    max_cmd_s=RAW_MAX_CMD_S,
+                    max_linear=RAW_MAX_LINEAR_MPS,
+                    max_angular=RAW_MAX_ANGULAR_RPS,
+                )
+            )
             files["robot"] = readme
         elif env.mcp_url:
             raise ValueError("no_dimos on a robot environment needs raw_bridge=True")

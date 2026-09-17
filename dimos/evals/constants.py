@@ -52,3 +52,18 @@ RAW_MAX_LINEAR_MPS = 1.0
 RAW_MAX_ANGULAR_RPS = 1.5
 RAW_DRIVE_HZ = 10.0
 RAW_JPEG_QUALITY = 90
+
+RAW_README = """\
+Robot interface: a Zenoh peer at {endpoint}. Connect to it directly (multicast scouting is off);
+any Zenoh client works, e.g. `pip install eclipse-zenoh`.
+
+  robot/camera/jpeg        JPEG bytes per frame; attachment is JSON {{"t": unix_seconds}}
+  robot/lidar/xyz_f32      float32 little-endian (N,3) x y z in metres, lidar frame; attachment {{"t": ...}}
+  robot/odom/json          {{"t","x","y","z","qx","qy","qz","qw"}}: base_link pose in the odom frame
+  robot/camera_info/json   {{"width","height","K"}}: intrinsics, republished periodically
+  robot/cmd_vel/json       publish {{"vx": m/s, "vy": m/s, "wz": rad/s, "t": seconds}}; the robot holds
+                           that velocity for t seconds (max {max_cmd_s:g}), then stops. Republish to keep moving.
+                           Speeds are clamped to {max_linear:g} m/s and {max_angular:g} rad/s; non-finite values are ignored.
+
+There is no other interface to this robot.
+"""
