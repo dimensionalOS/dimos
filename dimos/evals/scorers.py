@@ -40,24 +40,27 @@ def exact(expected: T, got: T) -> float:
 
 
 def first_number(text: str) -> float:
-    """The number a reply answers with: a bare number on its last line ("...\\n\\n4"),
-    else the first number in it ("about 12.5 meters" -> 12.5)."""
+    """The number a reply answers with: the only number on its last line ("...\\n\\n4",
+    "≈ 3.1 m²", "Answer: 4"), else the first number anywhere ("about 12.5 meters")."""
     import re
 
-    last = _last_line(text)
-    if re.fullmatch(r"-?\d+(?:\.\d+)?", last):
-        return float(last)
-    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    plain = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text)  # 20,834 -> 20834
+    on_last_line = re.findall(_NUMBER, _last_line(plain))
+    if len(on_last_line) == 1:
+        return float(on_last_line[0])
+    match = re.search(_NUMBER, plain)
     if match is None:
         raise ValueError(f"no number in reply: {text[:80]!r}")
     return float(match.group())
 
 
 def yes_no(text: str) -> str:
-    """Normalize a reply to "yes"/"no": a bare yes/no on its last line, else its opening word."""
-    last = _last_line(text).lower()
-    if last in ("yes", "no"):
-        return last
+    """Normalize a reply to "yes"/"no": the only yes/no on its last line, else its opening word."""
+    import re
+
+    on_last_line = re.findall(r"\b(yes|no)\b", _last_line(text).lower())
+    if len(on_last_line) == 1:
+        return str(on_last_line[0])
     t = text.strip().lower().lstrip("*_`#\"' ")
     if t.startswith(("yes", "no")):
         return "yes" if t.startswith("yes") else "no"
@@ -82,6 +85,9 @@ def choice(options: Sequence[str], *, case_sensitive: bool = False) -> Callable[
         return str(found[-1]) if case_sensitive else str(found[-1]).lower()
 
     return parse
+
+
+_NUMBER = r"-?\d+(?:\.\d+)?"
 
 
 def _last_line(text: str) -> str:

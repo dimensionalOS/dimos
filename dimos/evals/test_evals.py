@@ -955,15 +955,64 @@ def test_attach_with_raw_bridge_needs_a_listening_bridge() -> None:
 
 
 def test_parsers_take_the_answer_after_an_explanation() -> None:
-    enumerated = "Rooms observed:\n\n1. Living room\n2. Kitchen\n3. Bedroom\n4. Bathroom\n\n4"
-    assert first_number(enumerated) == 4  # not the list index 1
-    assert first_number(enumerated + "**.") == 4  # emphasis and punctuation together
+    # Verbatim replies from the 2026-09-15 apartment matrix (Fable 5.1, Opus 4.7).
+    rooms = (
+        "I've now explored the whole footprint (~10 m x 12 m). The rooms observed are:\n\n"
+        "1. **Living/dining room** (sofa, TV) - start room\n2. **Bedroom** (bed) - west\n"
+        "3. **Bathroom** (bathtub, toilet) - north\n4. **Kitchen** (oven, fridge) - south\n\n4"
+    )
+    assert first_number(rooms) == 4  # not the list index 1
+    doorway = (
+        "All four passable doorways (NE<->SW at x~0, NW<->SW at y~1) measure 1.00 m wide in the "
+        "lidar map, so the largest robot radius that fits is half of that.\n\n0.5"
+    )
+    assert first_number(doorway) == 0.5
+    assert (
+        first_number(
+            "...the top edge projects to ~2.05-2.08 m across three viewpoints.\n\n**2.05**"
+        )
+        == 2.05
+    )
+    assert (
+        yes_no(
+            "The bathroom (frame at yaw 62) shows a bathtub with a faucet, alongside a toilet.\n\nyes"
+        )
+        == "yes"
+    )
+    assert (
+        yes_no("...the apartment contains additional rooms consistent with a bathroom.\n\nyes")
+        == "yes"
+    )
+    fridge = "Close-up confirms the refrigerator: both doors are flush and shut (k5.jpg).\n\n**A**"
+    assert choice("ABCD", case_sensitive=True)(fridge) == "A"
+
+    # Shapes the matrix did not produce but the rule must cover.
+    assert first_number(rooms + " rooms") == 4  # value with a trailing word
+    assert (
+        first_number("Length 2.05 m and width 1.51 m.\n\n~ 3.1 m2") == 3.1
+    )  # unit on the last line
+    assert first_number("Counted twice.\n\nAnswer: 4") == 4
+    assert first_number(rooms + "**.") == 4  # emphasis and punctuation together
     assert first_number("**3.4**") == 3.4
-    assert first_number("About 12.5 meters, give or take.") == 12.5
-    assert yes_no("Bathtub, toilet and vanity are visible.\n\n**yes**.") == "yes"
+    assert first_number("There are 20,834 points in the frame.") == 20834  # thousands separator
+    assert first_number("About 12.5 meters, give or take.") == 12.5  # single line: first number
+    assert (
+        first_number("I see 4 chairs and 1 table.") == 4
+    )  # two numbers on the last line: first wins
+    assert first_number("-3") == -3.0
+    assert yes_no("Visible.\n\n**yes**.") == "yes"
     assert yes_no("**No.**") == "no"
+    assert yes_no("Checked every room.\n\nAnswer: no") == "no"
+    assert yes_no("Yes, there is one.") == "yes"
+    assert yes_no("No bathtub, but yes a shower.") == "no"  # ambiguous last line: opening word wins
     lettered = choice("ABCD", case_sensitive=True)
-    assert lettered("The doors are shut.\n\n**A**") == "A"
-    assert lettered("It is a kitchen with a fridge, so B.") == "B"  # the article does not count
+    assert lettered("It is a kitchen with a fridge, so B.") == "B"  # the article "a" does not count
+    assert lettered("(C)") == "C"
+    assert lettered("I would say B, not A.") == "A"  # last option named wins, as documented
+    assert choice(["swimming pool", "sofa"])("no swimming pool, just a sofa") == "sofa"
     with pytest.raises(ValueError, match="no option"):
         lettered("no idea")
+    with pytest.raises(ValueError, match="no number"):
+        first_number("none")
+    with pytest.raises(ValueError, match="not a yes/no"):
+        yes_no("maybe\n\nunclear")
