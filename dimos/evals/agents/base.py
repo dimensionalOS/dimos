@@ -97,10 +97,15 @@ class ModelAgentConfig(AgentConfig):
 
 
 class Agent(Configurable, ABC):
-    """Run an instruction independently of the case and its grader.
+    """The thing under evaluation, behind one interface.
 
-    ``modules`` names the blueprints the environment launches for this agent.
-    An empty sequence uses only what the environment already provides.
+    A subclass adapts one way of answering a case: a coding harness plus a model
+    (Pi, dimcode), dimOS's own agent loop (the MCP client), or a single model call
+    with no tools (question/answer, blind). The runner gives it the case prompt and
+    a running environment and gets back a trajectory; grading happens elsewhere.
+
+    ``config.modules`` names extra blueprints the environment launches for this
+    agent; empty means only what the environment already provides.
     """
 
     config: AgentConfig
