@@ -354,7 +354,12 @@ class PiAdapter(Agent):
         max_steps = self.config.max_steps
         stderr_path = paths.workspace / "pi-stderr.txt"
         paths.cache.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="run-", dir=paths.cache) as runtime:
+        # The runtime dir hosts Unix sockets, whose paths are capped near 100 bytes; a
+        # deeply nested cache (pytest tmp dirs on CI) falls back to the system temp dir.
+        parent = (
+            paths.cache if len(str(paths.cache / "run-XXXXXXXX" / "dimcode.sock")) < 96 else None
+        )
+        with tempfile.TemporaryDirectory(prefix="run-", dir=parent) as runtime:
             self._runtime_dir = Path(runtime)
             process_env = self._build_process_env(paths)
             process_env["XDG_RUNTIME_DIR"] = runtime

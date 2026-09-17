@@ -24,6 +24,7 @@ from pydantic import JsonValue
 import pytest
 
 from dimos.evals.agents.dimcode import DimcodeAdapter
+from dimos.evals.agents.lib import pi_config
 from dimos.evals.agents.lib.pi_config import (
     Prompt,
     SessionSettings,
@@ -107,4 +108,27 @@ def test_gateway_failure_preserves_completed_steps(tmp_path: Path, mode: str) ->
     assert result.final_answer == "42", result.extra
     assert result.final_metrics.total_cost_usd == 0.1
     assert result.extra.ended_by == ("answer" if mode == "answer" else "error")
+    assert not agent._runtime_dir.exists()
+
+
+def test_gateway_socket_survives_a_deep_cache_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deep = tmp_path.joinpath(*["a-long-cache-directory-segment"] * 4)
+    monkeypatch.setattr(pi_config, "CACHE_DIR", deep)
+    assert len(str(deep)) > 100  # longer than any Unix socket path may be
+    cli = tmp_path / "fake-dimcode"
+    cli.write_text(
+        f"#!{sys.executable}\n"
+        "from dimos.evals.agents.test_dimcode import serve_gateway\n"
+        "serve_gateway()\n"
+    )
+    cli.chmod(0o755)
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    agent = DimcodeAdapter(cli=str(cli), provider="anthropic", model="claude-fable-5-1")
+    result = agent.run(
+        "answer", RunningEnvironment(mcp_url="", streams=(), artifacts={}), case_dir, timeout_s=10
+    )
+    assert result.final_answer == "42", result.extra
     assert not agent._runtime_dir.exists()
