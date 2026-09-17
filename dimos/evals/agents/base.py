@@ -75,6 +75,12 @@ class AgentConfig(BaseConfig):
             raise ValueError("excluded_keywords must be nonempty words (letters, digits, _ . -)")
         return cleaned
 
+    @model_validator(mode="after")
+    def _no_dimos_defaults(self) -> Self:
+        if self.no_dimos and not self.excluded_keywords:
+            object.__setattr__(self, "excluded_keywords", NO_DIMOS_KEYWORDS)
+        return self
+
     @field_validator("allowed_tools")
     @classmethod
     def validate_allowed_tools(cls, names: tuple[str, ...] | None) -> tuple[str, ...] | None:
@@ -87,12 +93,6 @@ class AgentConfig(BaseConfig):
 
 class ModelAgentConfig(AgentConfig):
     model: str = "gpt-5.6-luna"
-
-    @model_validator(mode="after")
-    def _no_dimos_defaults(self) -> Self:
-        if self.no_dimos and not self.excluded_keywords:
-            object.__setattr__(self, "excluded_keywords", NO_DIMOS_KEYWORDS)
-        return self
 
 
 class Agent(Configurable, ABC):
