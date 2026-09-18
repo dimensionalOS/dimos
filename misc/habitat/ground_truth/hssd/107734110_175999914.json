@@ -1,0 +1,1764 @@
+{
+  "dataset": "hssd-hab",
+  "scene_id": "107734110_175999914",
+  "frame_id": "world",
+  "timestamp": 0.0,
+  "count": 75,
+  "detections": [
+    {
+      "id": "f51e066d210a34e439921cec1d7b52a339fc298c@0",
+      "label": "Casio CDP100ST Lightweight Digital Piano.",
+      "score": 1.0,
+      "center_xyz": [
+        12.459642500000001,
+        5.580563,
+        0.5050009999999999
+      ],
+      "size_xyz": [
+        0.3790029999999991,
+        1.327992,
+        1.01
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "827ab09e2f5097436bc0304266036bb62e4326a9@1",
+      "label": "Playboy - Ice Bucket",
+      "score": 1.0,
+      "center_xyz": [
+        10.716642499999999,
+        9.585563,
+        0.9100005
+      ],
+      "size_xyz": [
+        0.12999099999999864,
+        0.1729920000000007,
+        0.19999900000000004
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "7e4ad8ed943b48e6f5af221467312a79056008d1@2",
+      "label": "Staircase",
+      "score": 1.0,
+      "center_xyz": [
+        4.836771499999999,
+        -0.21175350000000004,
+        -2.470751
+      ],
+      "size_xyz": [
+        1.5835169999999996,
+        1.583445,
+        4.938502
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "cbc8b75de1f3f1ec1d4ad261e8e27842aeb33b68@3",
+      "label": "printer",
+      "score": 1.0,
+      "center_xyz": [
+        2.311645,
+        0.497564,
+        0.5444315
+      ],
+      "size_xyz": [
+        0.36599800000000027,
+        0.28399599999999997,
+        0.22714500000000004
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "printer",
+        "Laser Jet P2015 Printer/Copier"
+      ]
+    },
+    {
+      "id": "a0572493a81702f6c6ed5debb127b2e3a0b06df9@4",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        8.9678055,
+        3.8535630000000003,
+        0.304999
+      ],
+      "size_xyz": [
+        0.508007000000001,
+        0.5080060000000004,
+        0.609996
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Blanton Round End Table"
+      ]
+    },
+    {
+      "id": "3fe10518eb7c00d7a58b15a513980e9606373a27@5",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        12.119641999999999,
+        0.49806300000000003,
+        0.38050100000000003
+      ],
+      "size_xyz": [
+        1.060001999999999,
+        0.396992,
+        0.761
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Edel Console, Ebonized Oak"
+      ]
+    },
+    {
+      "id": "e47ded5e48492aa11fde1cb6df59f7b80ad2cbf9@6",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        10.710911,
+        7.149273,
+        0.4083295
+      ],
+      "size_xyz": [
+        1.3754159999999995,
+        1.3754159999999995,
+        0.816657
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Mokolo, Game Table, Poker Table, Espresso"
+      ]
+    },
+    {
+      "id": "4e2258e475ad86158a5cfb7edf908f655630c51a@7",
+      "label": "bathtub",
+      "score": 1.0,
+      "center_xyz": [
+        5.1316445,
+        9.256564000000001,
+        1.0768045000000002
+      ],
+      "size_xyz": [
+        1.829999,
+        0.9999979999999997,
+        2.152393
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "bathtub",
+        "Delta Shower Bath, right"
+      ]
+    },
+    {
+      "id": "2056e0db6d0d28703bb100d63a2d864ffe295b10@8",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xyz": [
+        12.354643,
+        9.667563,
+        0.890972
+      ],
+      "size_xyz": [
+        0.11000000000000121,
+        0.10999999999999943,
+        0.15999999999999992
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "drinkware",
+        "Baroque Black Martini Glass"
+      ]
+    },
+    {
+      "id": "2db9ab8f4ff2dc2315a41244168e7d21a36d2216@9",
+      "label": "couch",
+      "score": 1.0,
+      "center_xyz": [
+        1.450343,
+        4.281763,
+        0.375888
+      ],
+      "size_xyz": [
+        2.299402,
+        1.0016480000000003,
+        0.751776
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "couch",
+        "Supra Sofa Bed"
+      ]
+    },
+    {
+      "id": "ce32a87a585cb4308eeeb1e7a1e0428c0fbbedc9@10",
+      "label": "tv",
+      "score": 1.0,
+      "center_xyz": [
+        4.028639500000001,
+        2.5755635,
+        1.7494999999999998
+      ],
+      "size_xyz": [
+        0.07599900000000037,
+        1.376997,
+        0.8510059999999997
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "tv",
+        "60'' Led TV"
+      ]
+    },
+    {
+      "id": "ce32a87a585cb4308eeeb1e7a1e0428c0fbbedc9@11",
+      "label": "tv",
+      "score": 1.0,
+      "center_xyz": [
+        4.028639500000001,
+        8.924346,
+        1.7494999999999998
+      ],
+      "size_xyz": [
+        0.07599900000000037,
+        1.3769980000000004,
+        0.8510059999999997
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "tv",
+        "60'' Led TV"
+      ]
+    },
+    {
+      "id": "a312bac46b28ef8b1e4c71c0e9702529a27de8a7@12",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        2.7566425,
+        9.1525635,
+        2.7350035
+      ],
+      "size_xyz": [
+        0.4419970000000002,
+        0.44200700000000026,
+        0.12999899999999975
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Moni Soffitto 2 - by Flos"
+      ]
+    },
+    {
+      "id": "a312bac46b28ef8b1e4c71c0e9702529a27de8a7@13",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        2.622643,
+        2.7355635,
+        2.7350035
+      ],
+      "size_xyz": [
+        0.44199600000000006,
+        0.44200700000000026,
+        0.12999899999999975
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Moni Soffitto 2 - by Flos"
+      ]
+    },
+    {
+      "id": "a312bac46b28ef8b1e4c71c0e9702529a27de8a7@14",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        3.6276425000000003,
+        5.798563,
+        2.7350035
+      ],
+      "size_xyz": [
+        0.4419970000000002,
+        0.4420060000000001,
+        0.12999899999999975
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Moni Soffitto 2 - by Flos"
+      ]
+    },
+    {
+      "id": "a312bac46b28ef8b1e4c71c0e9702529a27de8a7@15",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        10.0656425,
+        1.5125635000000002,
+        2.7350035
+      ],
+      "size_xyz": [
+        0.44199699999999886,
+        0.44200700000000004,
+        0.12999899999999975
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Moni Soffitto 2 - by Flos"
+      ]
+    },
+    {
+      "id": "a312bac46b28ef8b1e4c71c0e9702529a27de8a7@16",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        6.7316424999999995,
+        1.4655635,
+        2.7350035
+      ],
+      "size_xyz": [
+        0.44199699999999975,
+        0.4420069999999998,
+        0.12999899999999975
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Moni Soffitto 2 - by Flos"
+      ]
+    },
+    {
+      "id": "a312bac46b28ef8b1e4c71c0e9702529a27de8a7@17",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        10.071642,
+        5.9025635,
+        2.7350035
+      ],
+      "size_xyz": [
+        0.4419959999999996,
+        0.44200700000000026,
+        0.12999899999999975
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Moni Soffitto 2 - by Flos"
+      ]
+    },
+    {
+      "id": "a312bac46b28ef8b1e4c71c0e9702529a27de8a7@18",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        10.0636425,
+        9.865564,
+        2.7350035
+      ],
+      "size_xyz": [
+        0.44199700000000064,
+        0.442006000000001,
+        0.12999899999999975
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Moni Soffitto 2 - by Flos"
+      ]
+    },
+    {
+      "id": "a312bac46b28ef8b1e4c71c0e9702529a27de8a7@19",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        6.5966425,
+        5.8885629999999995,
+        2.7350035
+      ],
+      "size_xyz": [
+        0.44199699999999975,
+        0.4420060000000001,
+        0.12999899999999975
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Moni Soffitto 2 - by Flos"
+      ]
+    },
+    {
+      "id": "0af9732417cdf12a734bd3133f493b18cfe03e91@20",
+      "label": "Central Heating",
+      "score": 1.0,
+      "center_xyz": [
+        6.4011815,
+        10.424813,
+        1.7495005000000001
+      ],
+      "size_xyz": [
+        0.3968569999999998,
+        0.4499279999999999,
+        0.7350970000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "0af9732417cdf12a734bd3133f493b18cfe03e91@21",
+      "label": "Central Heating",
+      "score": 1.0,
+      "center_xyz": [
+        6.4011815,
+        9.777807,
+        1.7495005000000001
+      ],
+      "size_xyz": [
+        0.3968569999999998,
+        0.4499279999999999,
+        0.7350970000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "50650be5620fefc2598653fbf9719096f457f9cb@22",
+      "label": "Fuse box",
+      "score": 1.0,
+      "center_xyz": [
+        7.008643,
+        11.109568,
+        1.3998015
+      ],
+      "size_xyz": [
+        0.9000000000000004,
+        0.4609179999999995,
+        2.799997
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "c5eac1bf1396fb363596d90f7f871f6386054930@23",
+      "label": "Hanging Clothes",
+      "score": 1.0,
+      "center_xyz": [
+        5.692641999999999,
+        10.6195625,
+        0.7075125
+      ],
+      "size_xyz": [
+        0.7200800000000003,
+        1.4399990000000003,
+        1.2950689999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "825bce5ff93725dbd0ab11b82e6a2b13f96475cf@24",
+      "label": "Stairs",
+      "score": 1.0,
+      "center_xyz": [
+        1.450666,
+        5.8375255,
+        1.399991
+      ],
+      "size_xyz": [
+        2.29997,
+        1.8200129999999994,
+        2.799982
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "10444a1165c1745f960eb6183d24dd05b60e781f@25",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        11.251641500000002,
+        11.0425635,
+        0.554763
+      ],
+      "size_xyz": [
+        2.795999,
+        0.593001000000001,
+        1.11296
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen Base Unit"
+      ]
+    },
+    {
+      "id": "5d05a4dc9951f8e15c8efb9f4cead8b8d9f87cfa@26",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        10.427478,
+        2.518124,
+        0.2024915
+      ],
+      "size_xyz": [
+        1.11665,
+        1.1025819999999997,
+        0.40498100000000004
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Boscage Coffee Table Round"
+      ]
+    },
+    {
+      "id": "0d6acbc9f35c8834a605e284167f44c84582a975@27",
+      "label": "tv",
+      "score": 1.0,
+      "center_xyz": [
+        12.6029915,
+        2.792563,
+        1.7500429999999998
+      ],
+      "size_xyz": [
+        0.08660899999999927,
+        2.155914,
+        1.215886
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "tv",
+        "98'' Led TV"
+      ]
+    },
+    {
+      "id": "2555d0416b8d7e2d59442bc387f37e7751996b67@28",
+      "label": "bench",
+      "score": 1.0,
+      "center_xyz": [
+        12.207625499999999,
+        5.547554,
+        0.24000149999999998
+      ],
+      "size_xyz": [
+        0.3499730000000003,
+        0.6199840000000005,
+        0.480001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "bench",
+        "Majestic Bench"
+      ]
+    },
+    {
+      "id": "0394a9d79148ddbc8709ad1d2aa0e26199e53bac@29",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xyz": [
+        11.556643000000001,
+        9.652566,
+        0.910001
+      ],
+      "size_xyz": [
+        0.23800600000000038,
+        0.13900199999999963,
+        0.19999999999999996
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "drinkware",
+        "Set of 6 assorted shot glasses"
+      ]
+    },
+    {
+      "id": "7ad9c27fb63d911b0301edbd9446905a97f2d94e@30",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xyz": [
+        11.958642,
+        9.6525635,
+        0.9300015
+      ],
+      "size_xyz": [
+        0.20699600000000018,
+        0.20200499999999977,
+        0.24000299999999997
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "drinkware",
+        "Tu Set of 4 Black Baroque Wine Glasses"
+      ]
+    },
+    {
+      "id": "3750c1d708079a103ee2c64a9215d8ba8b10e86f@31",
+      "label": "Modus Printer Trolley, Oak",
+      "score": 1.0,
+      "center_xyz": [
+        2.3146430000000002,
+        0.5095635000000001,
+        0.255
+      ],
+      "size_xyz": [
+        0.52,
+        0.37999900000000003,
+        0.51
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "2ef61d99fd000eb3fbda85d82e022a9fafda98d8@32",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xyz": [
+        11.173641,
+        9.663563,
+        0.845001
+      ],
+      "size_xyz": [
+        0.28000000000000114,
+        0.13500000000000156,
+        0.07000000000000006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "drinkware",
+        "Inspire 6 Piece Fizz Hi Ball Glass Set."
+      ]
+    },
+    {
+      "id": "1309f128b7bb4f88a82e7f837d1f70a5c02ccaad@33",
+      "label": "Charles Eames Style Lounge Chair &amp; Ottoman",
+      "score": 1.0,
+      "center_xyz": [
+        9.6088035,
+        4.3376969999999995,
+        0.426002
+      ],
+      "size_xyz": [
+        1.495305,
+        1.2347259999999998,
+        0.8520019999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "9fe0adbde0ac85b01668517398d8eac2460582f3@34",
+      "label": "Universal Storage",
+      "score": 1.0,
+      "center_xyz": [
+        5.823937,
+        1.904064,
+        0.8382525
+      ],
+      "size_xyz": [
+        0.45740999999999943,
+        0.6096000000000001,
+        1.676505
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "9fe0adbde0ac85b01668517398d8eac2460582f3@35",
+      "label": "Universal Storage",
+      "score": 1.0,
+      "center_xyz": [
+        5.823937,
+        2.5136640000000003,
+        0.8382525
+      ],
+      "size_xyz": [
+        0.45740999999999943,
+        0.6095999999999999,
+        1.676505
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "9fe0adbde0ac85b01668517398d8eac2460582f3@36",
+      "label": "Universal Storage",
+      "score": 1.0,
+      "center_xyz": [
+        5.823937,
+        3.123264,
+        0.8382525
+      ],
+      "size_xyz": [
+        0.45740999999999943,
+        0.6095999999999999,
+        1.676505
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "96aa481c97443d17b9946bc68e188bfd877c2ebf@37",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        11.549655999999999,
+        9.449594000000001,
+        0.5659959999999999
+      ],
+      "size_xyz": [
+        2.200000000000001,
+        0.6039639999999995,
+        1.13199
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Bar counter"
+      ]
+    },
+    {
+      "id": "098786c84741c4f692a5c745ae27d167215e4af4@38",
+      "label": "bed",
+      "score": 1.0,
+      "center_xyz": [
+        1.418643,
+        9.097564,
+        0.7365
+      ],
+      "size_xyz": [
+        2.235,
+        1.6629900000000006,
+        1.473
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "bed",
+        "Logan Queen Panel Bed"
+      ]
+    },
+    {
+      "id": "3efb80a75720ef1848a6ddf5011959653e53b172@39",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        10.252642,
+        11.142564,
+        1.7500005
+      ],
+      "size_xyz": [
+        0.5,
+        0.3930000000000007,
+        0.7499990000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen wall cabinet"
+      ]
+    },
+    {
+      "id": "3efb80a75720ef1848a6ddf5011959653e53b172@40",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        10.743642,
+        11.142564,
+        1.7500010000000001
+      ],
+      "size_xyz": [
+        0.5,
+        0.3930000000000007,
+        0.7500000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen wall cabinet"
+      ]
+    },
+    {
+      "id": "3efb80a75720ef1848a6ddf5011959653e53b172@41",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        11.222642,
+        11.142564,
+        1.7500010000000001
+      ],
+      "size_xyz": [
+        0.5,
+        0.3930000000000007,
+        0.7500000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen wall cabinet"
+      ]
+    },
+    {
+      "id": "3efb80a75720ef1848a6ddf5011959653e53b172@42",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        11.661642,
+        11.142564,
+        1.7500010000000001
+      ],
+      "size_xyz": [
+        0.5,
+        0.3930000000000007,
+        0.7500000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen wall cabinet"
+      ]
+    },
+    {
+      "id": "3efb80a75720ef1848a6ddf5011959653e53b172@43",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        12.156642,
+        11.142564,
+        1.7500010000000001
+      ],
+      "size_xyz": [
+        0.5,
+        0.3930000000000007,
+        0.7500000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Kitchen wall cabinet"
+      ]
+    },
+    {
+      "id": "35230dedd6b3f035a602f7226fae2dcb61bf1e4a@44",
+      "label": "fridge",
+      "score": 1.0,
+      "center_xyz": [
+        9.162642,
+        11.053563,
+        0.9475025
+      ],
+      "size_xyz": [
+        1.0500000000000007,
+        0.5719960000000004,
+        1.895005
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "fridge",
+        "American fridge freezer, small"
+      ]
+    },
+    {
+      "id": "5990bd240667b753ec647ca7ed0697e58464b7cf@45",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        1.250643,
+        1.5975655,
+        0.965
+      ],
+      "size_xyz": [
+        1.9,
+        2.5970050000000002,
+        1.93
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Winchester 7 Piece Office Set"
+      ]
+    },
+    {
+      "id": "3e3e11715d4597064167a3408085e9917974e7b8@46",
+      "label": "Waschplatz/zone lavabo Laufen Pro S",
+      "score": 1.0,
+      "center_xyz": [
+        5.808643,
+        7.3975635,
+        1.0820525
+      ],
+      "size_xyz": [
+        0.4870380000000001,
+        1.0000010000000001,
+        1.593959
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "88c69eb16145fa25df00eb158f7490af690c9442@47",
+      "label": "couch",
+      "score": 1.0,
+      "center_xyz": [
+        9.894195,
+        1.9495495,
+        0.5065
+      ],
+      "size_xyz": [
+        2.956900000000001,
+        3.2999769999999997,
+        1.013
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "couch",
+        "Marcus 6 Piece Sectional W/Power Headrest And Usb, Oyster"
+      ]
+    },
+    {
+      "id": "61ad95ab5d6553cb5849188e5782ee6cb8979dc5@48",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        1.2726145,
+        1.767563,
+        0.579765
+      ],
+      "size_xyz": [
+        0.6569410000000001,
+        0.718998,
+        1.1584679999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Columbia Upholstered Office Chair"
+      ]
+    },
+    {
+      "id": "2efebdcc1ba9514b0deb0dfb05951341432bd26a@49",
+      "label": "APPLE iMac 5K 27\"",
+      "score": 1.0,
+      "center_xyz": [
+        1.2786425,
+        2.360564,
+        1.0447955
+      ],
+      "size_xyz": [
+        0.645007,
+        0.46699199999999985,
+        0.48841499999999993
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "68a6193e3b67cedefb14ab590fc748bcc7955c5d@50",
+      "label": "Toilette/toilette puristisch",
+      "score": 1.0,
+      "center_xyz": [
+        5.7466425,
+        8.2505635,
+        0.3840595
+      ],
+      "size_xyz": [
+        0.6110090000000001,
+        0.7069970000000012,
+        0.549879
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "0e469ac0e119d1b2307a76fa0ac9611ecf13e6d8@51",
+      "label": "Electric Water Heater Tank",
+      "score": 1.0,
+      "center_xyz": [
+        8.034143,
+        10.2199975,
+        0.6675
+      ],
+      "size_xyz": [
+        0.6629959999999997,
+        0.6360090000000014,
+        1.335
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "0e469ac0e119d1b2307a76fa0ac9611ecf13e6d8@52",
+      "label": "Electric Water Heater Tank",
+      "score": 1.0,
+      "center_xyz": [
+        8.034143,
+        9.583996500000001,
+        0.6675
+      ],
+      "size_xyz": [
+        0.6629959999999997,
+        0.6360089999999996,
+        1.335
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "979c49104318fdfe2e09758ae7a3f53825a7eb94@53",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        7.1419975,
+        9.877432500000001,
+        2.7485549999999996
+      ],
+      "size_xyz": [
+        0.3996229999999992,
+        0.39962300000000006,
+        0.10288999999999993
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "TRIO Leuchten LED Deckenleuchte, LUGANO, grey"
+      ]
+    },
+    {
+      "id": "979c49104318fdfe2e09758ae7a3f53825a7eb94@54",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        5.039667,
+        2.8016025,
+        2.7485545
+      ],
+      "size_xyz": [
+        0.3996219999999999,
+        0.39962300000000006,
+        0.10289099999999962
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "TRIO Leuchten LED Deckenleuchte, LUGANO, grey"
+      ]
+    },
+    {
+      "id": "2cf4b67bb56ea55fae5db024212ebfe8a3a4b6eb@55",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        5.115561,
+        0.642563,
+        1.1
+      ],
+      "size_xyz": [
+        1.2000000000000002,
+        0.6860060000000001,
+        2.2
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Storage Cabinet"
+      ]
+    },
+    {
+      "id": "ab69e2f34692335d3b782d82bc5ab0c77b411d3c@56",
+      "label": "Hammered Cocktail Shaker",
+      "score": 1.0,
+      "center_xyz": [
+        12.222642,
+        9.659562999999999,
+        0.918503
+      ],
+      "size_xyz": [
+        0.09500199999999914,
+        0.09499600000000008,
+        0.21700399999999997
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "93951e48e6f29a5592dd6e8e2c426427707d6496@57",
+      "label": "microwave",
+      "score": 1.0,
+      "center_xyz": [
+        12.203642,
+        11.088566,
+        1.0406625
+      ],
+      "size_xyz": [
+        0.48900000000000077,
+        0.29999399999999987,
+        0.2746049999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "microwave",
+        "Samsung Microwave MW872S"
+      ]
+    },
+    {
+      "id": "8ade057f6f57ec16e1a8e17932d92518ddb27c84@58",
+      "label": "table_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        0.523643,
+        10.437564,
+        0.754999
+      ],
+      "size_xyz": [
+        0.28998999999999997,
+        0.2899899999999995,
+        0.460006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table_lamp",
+        "Duke Table Lamp"
+      ]
+    },
+    {
+      "id": "63c2ea5b388948f5c2625defb37dfd03f9dcecf5@59",
+      "label": "chest_of_drawers",
+      "score": 1.0,
+      "center_xyz": [
+        0.521643,
+        10.413563,
+        0.258501
+      ],
+      "size_xyz": [
+        0.44300399999999995,
+        0.6010039999999996,
+        0.517002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chest_of_drawers",
+        "Optec Night Stand"
+      ]
+    },
+    {
+      "id": "12f2b36812411b47a61f2a949e82e5127ce04557@60",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        4.407143,
+        1.998674,
+        0.3556
+      ],
+      "size_xyz": [
+        0.38099999999999934,
+        0.762,
+        0.7112
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Universal Storage"
+      ]
+    },
+    {
+      "id": "12f2b36812411b47a61f2a949e82e5127ce04557@61",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        4.407143,
+        2.760674,
+        0.3556
+      ],
+      "size_xyz": [
+        0.38099999999999934,
+        0.762,
+        0.7112
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Universal Storage"
+      ]
+    },
+    {
+      "id": "12f2b36812411b47a61f2a949e82e5127ce04557@62",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        4.407143,
+        3.5226740000000003,
+        0.3556
+      ],
+      "size_xyz": [
+        0.38099999999999934,
+        0.762,
+        0.7112
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "Universal Storage"
+      ]
+    },
+    {
+      "id": "eb9f9ecf8e2aeac2f0e5a82c08ea90935e547380@63",
+      "label": "chest_of_drawers",
+      "score": 1.0,
+      "center_xyz": [
+        1.0626825,
+        7.138605,
+        0.6095
+      ],
+      "size_xyz": [
+        1.5239989999999999,
+        0.48300000000000054,
+        1.219
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chest_of_drawers",
+        "CANYON DRESSER"
+      ]
+    },
+    {
+      "id": "wall_11.079",
+      "label": "wall_11.079",
+      "score": 1.0,
+      "center_xyz": [
+        7.2841425,
+        11.489563,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        2.313001,
+        0.3000000000000007,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_12.069",
+      "label": "wall_12.069",
+      "score": 1.0,
+      "center_xyz": [
+        10.695143,
+        11.489563,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        4.509,
+        0.3000000000000007,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_13.077",
+      "label": "wall_13.077",
+      "score": 1.0,
+      "center_xyz": [
+        12.7996435,
+        5.8195630000000005,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.2999989999999997,
+        11.64,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_14.072",
+      "label": "wall_14.072",
+      "score": 1.0,
+      "center_xyz": [
+        0.150643,
+        9.231063500000001,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.3,
+        4.816999000000001,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_16.063",
+      "label": "wall_16.063",
+      "score": 1.0,
+      "center_xyz": [
+        0.150643,
+        5.840063499999999,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.3,
+        1.965001,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_17.073",
+      "label": "wall_17.073",
+      "score": 1.0,
+      "center_xyz": [
+        0.150643,
+        2.428563,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.3,
+        4.858,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_19.076",
+      "label": "wall_19.076",
+      "score": 1.0,
+      "center_xyz": [
+        2.071143,
+        0.149563,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        4.141,
+        0.30000000000000004,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_21.067",
+      "label": "wall_21.067",
+      "score": 1.0,
+      "center_xyz": [
+        5.1346430000000005,
+        0.149563,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        1.9859999999999998,
+        0.30000000000000004,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_22.068",
+      "label": "wall_22.068",
+      "score": 1.0,
+      "center_xyz": [
+        9.5386425,
+        0.149563,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        6.822001,
+        0.30000000000000004,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_6.083",
+      "label": "wall_6.083",
+      "score": 1.0,
+      "center_xyz": [
+        5.1346430000000005,
+        11.489563,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        1.9859999999999998,
+        0.3000000000000007,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_7.092",
+      "label": "wall_7.092",
+      "score": 1.0,
+      "center_xyz": [
+        2.071143,
+        11.489563,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        4.141,
+        0.3000000000000007,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  ]
+}
