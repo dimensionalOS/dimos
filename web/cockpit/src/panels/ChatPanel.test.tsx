@@ -4,8 +4,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { FrameHeader, Msg, PanelSpec } from "@dimos/shared";
 import type { Manifest } from "@dimos/shared/manifest";
-import { ChannelStore, PublishError, type Session, StatusStore } from "@dimos/sdk";
+import { PublishError, StatusStore } from "@dimos/sdk";
 import type { TeleopHooks } from "@dimos/sdk/internal/teleop";
+import { FakeSession } from "../testing/fakeSession.ts";
 import { ChatPanel } from "./ChatPanel.tsx";
 import { TeleopPanel } from "./TeleopPanel.tsx";
 
@@ -68,22 +69,6 @@ const MANIFEST: Manifest = {
 
 function header(ch: string, seq: number): FrameHeader {
   return { ch, seq, ts: 1_700_000_000 + seq, delivery: ch === "agent" ? "reliable" : "latest" };
-}
-
-class FakeSession implements Session {
-  status = new StatusStore();
-  store = new ChannelStore();
-  published: [string, unknown][] = [];
-  reject: PublishError | null = null;
-  watch = () => new Promise<never>(() => {});
-  subscribe = () => () => {};
-  publish = (ch: string, value: unknown) => {
-    this.published.push([ch, value]);
-    return this.reject === null
-      ? Promise.resolve({ ch, relayTs: 1, bridgeTs: 2 })
-      : Promise.reject(this.reject);
-  };
-  close = () => {};
 }
 
 class FakeHooks implements TeleopHooks {

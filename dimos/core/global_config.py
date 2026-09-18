@@ -36,6 +36,11 @@ ZenohMode: TypeAlias = Literal["peer", "client", "router"]
 # process can hold, so it is pinned on the one session that owns that port.
 ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 
+# pytest exports PYTEST_VERSION to the whole process tree. Tests must not pick up
+# a developer's .env (ROBOT_IP, SIMULATION, ...); dimos/conftest.py exports the
+# LLM API keys itself.
+ENV_FILE = None if "PYTEST_VERSION" in os.environ else ".env"
+
 
 def _get_all_numbers(s: str) -> list[float]:
     return [float(x) for x in re.findall(r"-?\d+\.?\d*", s)]
@@ -143,7 +148,7 @@ class GlobalConfig(BaseSettings):
     dimos_staging_dir: Path | None = None
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
         validate_assignment=True,
@@ -194,9 +199,10 @@ class GlobalConfig(BaseSettings):
     @property
     def processed_robot_ips(self) -> tuple[str, ...]:
         ips = [x.strip() for x in (self.robot_ips or "").split(",") if x.strip()]
-        is_running_tests = "PYTEST_CURRENT_TEST" in os.environ
-        if not ips and not is_running_tests:
-            raise ValueError("No robot IPs specified. Must have at least one IP.")
+        if not ips:
+            raise ValueError(
+                "No robot IPs specified. Set ROBOT_IPS or --robot-ips to at least one IP."
+            )
         return tuple(ips)
 
 
