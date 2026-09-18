@@ -200,14 +200,13 @@ def test_keyboard_teleop_gripper_control_is_independent() -> None:
     assert gripper.type == "gripper"
 
 
-def test_keyboard_teleop_openyam_planner_trajectory_has_priority_over_eef_task() -> None:
+def test_keyboard_teleop_openyam_overrides_planner_trajectory() -> None:
     tasks = _coordinator_kwargs(keyboard_teleop_openyam_planner)["tasks"]
     trajectory = next(task for task in tasks if task.type == "trajectory")
     eef_twist = next(task for task in tasks if task.type == "eef_twist")
 
     assert trajectory.joint_names == OPENYAM_JOINTS
-    assert trajectory.priority == 20
-    assert eef_twist.priority == 10
+    assert eef_twist.priority > trajectory.priority
 
 
 def test_keyboard_teleop_openyam_gripper_task_has_no_extra_params() -> None:
