@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "dimos/native/lcm_transport.hpp"
+#include "dimos/native/transport_factory.hpp"
 
 using namespace dimos::native;
 

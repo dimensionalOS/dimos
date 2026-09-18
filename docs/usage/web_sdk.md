@@ -68,6 +68,8 @@ RELAY_KEY=<key> uv run dimos run unitree-go2 --relay-url https://dimos-relay.exa
 
 The cockpit asks for the viewer token, keeps it in `localStorage`, and "log out" in the status bar forgets it. Your own page passes it to `connect({ url, token })`. `/api/stats` wants it as `Authorization: Bearer <token>` and drops its CORS header. A wrong key or token fails with `auth_failed` and neither client retries: fix the secret and restart. Edits to the file need a relay restart.
 
+To host one on a VM with Docker and a Let's Encrypt certificate, or on a LAN with mkcert, follow [Relay hosting](/docs/usage/relay_hosting.md).
+
 ## Your first page
 
 Create `ui/index.html`:
@@ -166,7 +168,7 @@ So far the page could only subscribe to the bridge's built-in channels (`odom`, 
 Channel(
     stream,                  # stream name, matched by autoconnect
     message_type,            # the stream's Python type
-    encoding="json.v1",      # wire encoding (see codecs below)
+    encoding=None,           # default: <msg_name>.lcm.v1 for dimOS messages, json.v1 otherwise
     delivery="reliable",     # or "latest"
     max_hz=10.0,             # encode-rate cap
 )
@@ -264,7 +266,8 @@ go2_web = autoconnect(
 How the pieces connect:
 
 - A `Channel` whose stream is not a built-in bridge port generates a bridge input port of that name and type. `autoconnect` then wires it like any other stream: `health` to `HealthMonitor.health`, `lidar` to the driver's `lidar: Out[PointCloud2]` already inside `unitree_go2`.
-- `Channel("health", Health)` uses the default `json.v1` encoding. It works for JSON scalars, lists, dicts, and plain dataclasses, and the browser decodes it without registration. Anything potentially large (dimOS/LCM messages, images, arrays, bytes) is rejected at authoring time and needs an explicit `@web_encoder`.
+- `Channel("health", Health)` uses `json.v1`, the default for JSON scalars, lists, dicts and plain dataclasses. The browser decodes it without registration.
+- A dimOS message type (`PoseStamped`, `Odometry`, `LaserScan`, ...) defaults to `<msg_name>.lcm.v1`, for example `geometry_msgs.PoseStamped.lcm.v1`: the frame is the message's `lcm_encode()` bytes and the manifest carries its LCM schema, so the browser decodes it to a plain object without registration. `Image` has no default (raw pixels): use `jpeg.v1` or an `@web_encoder`. Types without a `dimos_lcm` schema need an explicit encoding too. A bulk message costs its full size per frame (`PointCloud2` is 16 bytes per point) and the cockpit's channel table does not subscribe a schema with a variable-length array by itself (an SDK page subscribes explicitly), so set `max_hz`, or send less with an `@web_encoder` like `lidar.xy.v1` below.
 - An encoder returns `bytes`, an `EncodedPayload` (payload plus a small JSON meta mapping that rides the frame header), or `None` to skip a sample. The first parameter annotation declares the message type it supports, and the channel's type must match.
 - You can normally use `cockpit(layout=..., channels=[...])` to create a cockpit layout UI. But for a pure SDK access, leave "layout" out and just specify which channels you want to serve.
 - Encoding is lazy. A channel costs nothing until some viewer subscribes, and stops encoding when the last viewer leaves.
@@ -273,7 +276,7 @@ Caveat: because dimOS modules live on different processes, registered functions 
 
 ## Decoding custom encodings in the browser
 
-`json.v1` and any `*.json.vN` encoding decode automatically. `lidar.xy.v1` is opaque bytes to the SDK, so the page registers the matching decoder. `page/index.html`:
+`json.v1`, any `*.json.vN`, and any `*.lcm.v1` encoding decode automatically. `lidar.xy.v1` is opaque bytes to the SDK, so the page registers the matching decoder. `page/index.html`:
 
 ```html
 <!DOCTYPE html>
@@ -327,6 +330,7 @@ The page opens automatically: health updates once a second and the lidar scatter
 Decoder notes:
 
 - A decoder is `(payload: Uint8Array, header) => { value }`, looked up by the channel's manifest encoding. `header.meta` carries the encoder's `EncodedPayload` meta.
+- A `*.lcm.v1` value is a plain object with the LCM fields in wire order: nested structs as objects, `byte[]` and `int8_t[]` as `Uint8Array`/`Int8Array` views into the frame, other arrays as typed arrays, `int64_t` as `bigint`. A frame above 100k struct, string or boolean array elements is reported as oversized instead of decoded. A page that needs more registers `lcmDecoder(schema, { maxArrayElements })` from the SDK for that encoding.
 - Each session owns its registry (`connect({decoders})`), so two apps on one page cannot clobber each other. Registering a taken encoding throws unless you pass `{replace: true}`.
 - An encoding with no decoder is not an error. The channel still counts frames and renders as unsupported. A throwing decoder bumps `decodeErrors` and keeps the last good value.
 - Decoders run on the ingest path, so keep them synchronous and cheap. Heavy work (inflate, draw) belongs in the consumer.

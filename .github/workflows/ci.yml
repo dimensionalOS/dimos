@@ -252,6 +252,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Reject Git sources in root pyproject.toml
+        run: |
+          python3 - <<'PY'
+          import sys
+          import tomllib
+
+          with open("pyproject.toml", "rb") as file:
+              config = tomllib.load(file)
+          sources = config.get("tool", {}).get("uv", {}).get("sources", {})
+          rejected = []
+          for name, source in sources.items():
+              entries = source if isinstance(source, list) else [source]
+              if any("git" in entry for entry in entries):
+                  rejected.append(name)
+          if rejected:
+              sys.exit(
+                  "::error file=pyproject.toml::Git sources are not allowed in root "
+                  "pyproject.toml. Use published packages instead: " + ", ".join(rejected)
+              )
+          PY
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
         with:
@@ -344,11 +364,32 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      # need liblcm installed for testing transport
+      # The SDK headers include both transports, so liblcm and zenoh are both
+      # needed to build at all. Zenoh has no apt package, so it comes from its
+      # release
       - name: Install system dependencies
+        env:
+          ZENOH_VERSION: 1.10.0
         run: |
           sudo apt-get update
-          sudo apt-get install -y liblcm-dev nlohmann-json3-dev
+          # lcm.pc carries `Requires: glib-2.0`, so pkg-config cannot resolve
+          # lcm at all without glib's own .pc file
+          sudo apt-get install -y liblcm-dev libglib2.0-dev nlohmann-json3-dev
+          base=https://github.com/eclipse-zenoh
+          curl -fsSL -o /tmp/zenoh-c.zip \
+            "$base/zenoh-c/releases/download/$ZENOH_VERSION/zenoh-c-$ZENOH_VERSION-x86_64-unknown-linux-gnu-standalone.zip"
+          curl -fsSL -o /tmp/zenoh-cpp.zip \
+            "$base/zenoh-cpp/releases/download/$ZENOH_VERSION/zenohcpp-$ZENOH_VERSION-standalone.zip"
+          # A release asset can be replaced in place, so the bytes are pinned too
+          printf '%s  /tmp/zenoh-c.zip\n%s  /tmp/zenoh-cpp.zip\n' \
+            1168b3dffa7f4f48ffabfd640a3878ec0527c0a612ce825aa6f93e2cd05762d1 \
+            7a50a74e98fd1e1e7ed8461b8490b30d67f878649f0727dea2cf0936501780af \
+            | sha256sum -c -
+          # The zips are laid out for /usr/local, where cmake and the loader
+          # already look
+          sudo unzip -q /tmp/zenoh-c.zip -d /usr/local
+          sudo unzip -q /tmp/zenoh-cpp.zip -d /usr/local
+          sudo ldconfig
       - name: Configure
         run: cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON
       - name: Build
@@ -573,11 +614,15 @@ jobs:
           uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py
           dimos/e2e_tests/test_sdk_browser.py
           dimos/e2e_tests/test_custom_channel_browser.py
+          dimos/e2e_tests/test_lcm_channel_browser.py
           dimos/e2e_tests/test_publish_browser.py
           dimos/e2e_tests/test_voice_browser.py
           dimos/e2e_tests/test_stats_browser.py
           dimos/e2e_tests/test_robot_picker_browser.py
           dimos/e2e_tests/test_relay_auth_browser.py --no-cov
+
+      - name: Relay image build  # docker/relay/Dockerfile must not rot silently
+        run: docker build -f docker/relay/Dockerfile .
 
   tests:
     if: |
@@ -750,7 +795,8 @@ jobs:
             experimental: false
           - os: macOS
             container: null  # run on host — `container:` is Linux-only
-            markers: "self_hosted"
+            # web_browser: the cockpit browser e2e that Linux runs in the `web` job.
+            markers: "self_hosted or web_browser"
             experimental: true
     runs-on:
       - self-hosted
@@ -798,6 +844,12 @@ jobs:
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
+      - name: Install web_browser e2e dependencies (macOS)
+        if: matrix.os == 'macOS'
+        run: |
+          brew install ffmpeg
+          uv sync --group tests-self-hosted --group browser-tests --frozen
+          uv run playwright install chromium firefox
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
       - name: Source ROS environment

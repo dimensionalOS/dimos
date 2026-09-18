@@ -40,39 +40,59 @@ def exact(expected: T, got: T) -> float:
 
 
 def first_number(text: str) -> float:
-    """Pull the first number out of a model reply ("about 12.5 meters" -> 12.5)."""
+    """The number a reply answers with: the only number on its last line ("...\\n\\n4",
+    "≈ 3.1 m²", "Answer: 4"), else the first number anywhere ("about 12.5 meters")."""
     import re
 
-    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    plain = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text)  # 20,834 -> 20834
+    on_last_line = re.findall(_NUMBER, _last_line(plain))
+    if len(on_last_line) == 1:
+        return float(on_last_line[0])
+    match = re.search(_NUMBER, plain)
     if match is None:
         raise ValueError(f"no number in reply: {text[:80]!r}")
     return float(match.group())
 
 
 def yes_no(text: str) -> str:
-    """Normalize a reply to "yes"/"no"."""
-    t = text.strip().lower()
+    """Normalize a reply to "yes"/"no": the only yes/no on its last line, else its opening word."""
+    import re
+
+    on_last_line = re.findall(r"\b(yes|no)\b", _last_line(text).lower())
+    if len(on_last_line) == 1:
+        return str(on_last_line[0])
+    t = text.strip().lower().lstrip("*_`#\"' ")
     if t.startswith(("yes", "no")):
         return "yes" if t.startswith("yes") else "no"
     raise ValueError(f"not a yes/no reply: {text[:80]!r}")
 
 
-def choice(options: Sequence[str]) -> Callable[[str], str]:
+def choice(options: Sequence[str], *, case_sensitive: bool = False) -> Callable[[str], str]:
     """Parser for a multiple-choice reply: the last option the model names, so
     that reasoning before the answer does not decide it. Longest option first,
-    so "northeast" wins over "north"."""
+    so "northeast" wins over "north". ``case_sensitive`` for lettered options
+    ("A", "B"), where the article "a" must not count."""
     import re
 
-    pattern = re.compile(r"\b(" + "|".join(sorted(options, key=len, reverse=True)) + r")\b", re.I)
+    words = "|".join(re.escape(o) for o in sorted(options, key=len, reverse=True))
+    pattern = re.compile(rf"\b({words})\b", 0 if case_sensitive else re.I)
 
     def parse(text: str) -> str:
         # "north-west" must read as northwest, not as west.
         found = pattern.findall(re.sub(r"(?<=[A-Za-z])-(?=[A-Za-z])", "", text))
         if not found:
             raise ValueError(f"no option from {list(options)} in reply: {text[:80]!r}")
-        return str(found[-1]).lower()
+        return str(found[-1]) if case_sensitive else str(found[-1]).lower()
 
     return parse
+
+
+_NUMBER = r"-?\d+(?:\.\d+)?"
+
+
+def _last_line(text: str) -> str:
+    lines = [line.strip("*_` .!\t") for line in text.splitlines() if line.strip()]
+    return lines[-1] if lines else ""
 
 
 def within(band: float) -> Callable[[float, float], float]:

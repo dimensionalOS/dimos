@@ -30,7 +30,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from dimos.evals.environments.sim import Sim
+from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.scorers import ramp
 from dimos.evals.types import EvalCase, Outcome, Suite, recording
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -110,9 +110,8 @@ def _ended_near(target: Vector3) -> Callable[[Outcome], float]:
 go_to_bed = EvalCase(
     id="dimsim_go_to_bed",
     inputs="go to the bed",
-    environment=Sim(
+    environment=DimSimEnvironment(
         blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
-        simulator="dimsim",
         scene="apartment",
         setup=_explore_house,
     ),

@@ -6,16 +6,14 @@ management. Its API is experimental and may change without compatibility aliases
 
 ## Project layout
 
-Place the host contract beside a `python/` project that contains the concrete
-runtime:
+Keep the host contract in `dimos/` and its isolated project outside the package:
 
 ```text
-my_module/
-├── contract.py
-└── python/
-    ├── pyproject.toml
-    └── my_runtime/
-        └── runtime.py
+dimos/my_module/contract.py
+native/python/my_module/
+├── pyproject.toml
+└── my_runtime/
+    └── runtime.py
 ```
 
 Define the host-visible contract:
@@ -33,6 +31,7 @@ class MultiplierConfig(IsolatedPythonModuleConfig):
 
 
 class Multiplier(IsolatedPythonModule):
+    project_dir = "native/python/my_module"
     implementation = "my_runtime.runtime:MultiplierRuntime"
     config: MultiplierConfig
 
@@ -41,13 +40,13 @@ class Multiplier(IsolatedPythonModule):
         raise NotImplementedError
 ```
 
-The sibling runtime imports and implements that contract:
+The isolated runtime imports and implements that contract:
 
 ```python skip
 from typing import Any
 
 from dimos.core.core import rpc
-from my_module.contract import Multiplier
+from dimos.my_module.contract import Multiplier
 
 
 class MultiplierRuntime(Multiplier):
@@ -66,22 +65,38 @@ a contract stub or changes its signature or classification.
 
 ## Runtime behavior
 
-During `build()`, dimOS syncs the sibling project and installs the host dimOS
-with its dependencies into a cached `uv run --with` overlay. The first build can
-take minutes to download; later builds reuse the cache. If `pixi.toml` exists,
-Pixi supplies `uv`. If `uv.lock` exists, dimOS uses `--frozen` and treats the
-lockfile as the source of truth.
+During `build()`, dimOS uses `uv run` to sync the declared project and prepare a
+cached overlay containing dimOS from the shared checkout and its dependencies.
+The first build can take minutes to download; later builds reuse the cache.
+If `pixi.toml` exists, Pixi supplies `uv`. If `uv.lock` exists, dimOS uses
+`--frozen` and treats the lockfile as the source of truth.
 
-Source checkouts make the current dimOS checkout available to the runtime.
-Installed hosts let `uv` resolve `dimos`, so the host and runtime versions may
-differ. The sibling project's `.python-version` and `requires-python` select its
-Python version.
+The runtime project and child dimOS come from `get_project_root()`, the shared
+LFS checkout helper. Development uses the current checkout, including local edits.
+Installed hosts reuse the cached repository or clone `main` on first use. The child
+installs dimOS from that checkout with `--with-editable`; its revision may differ
+from the host's. Existing clones are not updated automatically. The checkout must
+contain the declared project. Restart running modules after editing sources.
+
+The project's `.python-version` and `requires-python` select its Python
+version. Environments are stored under the dimOS cache directory in
+`isolated-python/<project-path-hash>/.venv`, so projects do not share environments.
+Preparation also warms the DimOS overlay before starting the readiness deadline.
+
+Runtime projects are not packaged in dimOS wheels or source distributions.
+The examples use `[tool.uv] package = false` and import runtime code from the
+project working directory. Load models and download checkpoints in `start()`,
+keeping imports and construction lightweight.
 
 The host contract retains the public module name and forwards contract RPCs to a
 unique internal endpoint. Ordinary dimOS serialization and transport handle RPC
 values, exceptions, timeouts, async methods, skills, streams, and module
 references. Restarting the contract starts a fresh interpreter and reloads the
 runtime package.
+
+Runtime classes and tests live outside `dimos/`, so host blueprint discovery and
+source checks do not scan them. Run runtime tests with their project's pytest
+configuration and `--confcutdir=.` to avoid loading host fixtures.
 
 ## Example
 
@@ -93,3 +108,19 @@ uv run python -m dimos.experimental.isolated_python.example.run
 
 The example demonstrates streams, RPCs, skills, an injected module reference,
 restart behavior, and automatic shutdown.
+
+## Runtime development
+
+Root pytest and mypy check `dimos/`; isolated projects live outside that tree. Run their tests and type
+checks inside their own environment. For GraspGenX, from the repository root:
+
+```bash
+cd native/python/graspgenx
+export UV_PROJECT_ENVIRONMENT="${XDG_CACHE_HOME:-$HOME/.cache}/dimos/graspgenx-tests"
+uv run --frozen --group tests --with-editable ../../.. python -m pytest
+uv run --frozen --group lint --with-editable ../../.. python -m mypy
+```
+
+The tests mock the model backend and need no GPU or checkpoints. Runtime mypy
+reads the annotated dimOS and GraspGenX source despite their missing `py.typed`
+markers. Each runtime owns its lint configuration and dependencies.

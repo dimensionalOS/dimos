@@ -1,0 +1,18 @@
+# The hosted relay (docs/usage/relay_hosting.md). From a checkout:
+#   docker compose -f docker/relay/compose.yaml up -d --build
+# config/ (gitignored) holds fullchain.pem, privkey.pem, and auth.json, owned
+# by uid 1993 (the image's deno user). The relay reads them at startup only.
+services:
+  relay:
+    image: dimos-relay
+    build:
+      context: ../..
+      dockerfile: docker/relay/Dockerfile
+    ports:
+      - "443:443/tcp"
+      - "443:443/udp"
+    volumes:
+      - ./config:/etc/relay:ro
+    restart: unless-stopped
+    # The relay closes its sessions on SIGTERM and exits at once.
+    stop_grace_period: 5s
