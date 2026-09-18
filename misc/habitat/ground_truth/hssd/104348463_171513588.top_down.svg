@@ -50,23 +50,31 @@
 <line x1="0.048" y1="-14" x2="14.957" y2="-14" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
 <text x="0.115" y="-13.942" font-size="0.166" fill="#52514e">14</text>
 <line x1="0.048" y1="-15" x2="14.957" y2="-15" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
-<rect x="1.048" y="-11.222" width="0.242" height="8.333" fill="#52514e"><title>wall_000</title></rect>
-<rect x="1.048" y="-13.028" width="1.351" height="1.852" fill="#52514e"><title>wall_001</title></rect>
-<rect x="1.142" y="-2.976" width="2.929" height="1.767" fill="#52514e"><title>wall_002</title></rect>
-<rect x="2.293" y="-13.068" width="4.567" height="0.150" fill="#52514e"><title>wall_003</title></rect>
-<rect x="4.030" y="-1.359" width="4.047" height="0.150" fill="#52514e"><title>wall_004</title></rect>
-<rect x="6.397" y="-7.887" width="0.150" height="3.637" fill="#52514e"><title>wall_005</title></rect>
-<rect x="6.397" y="-4.434" width="6.186" height="0.183" fill="#52514e"><title>wall_006</title></rect>
-<rect x="6.397" y="-7.888" width="2.288" height="0.150" fill="#52514e"><title>wall_007</title></rect>
-<rect x="6.775" y="-13.043" width="1.209" height="1.097" fill="#52514e"><title>wall_008</title></rect>
-<rect x="7.885" y="-12.059" width="0.214" height="4.246" fill="#52514e"><title>wall_009</title></rect>
-<rect x="7.927" y="-4.326" width="0.150" height="3.116" fill="#52514e"><title>wall_010</title></rect>
-<rect x="8.098" y="-11.901" width="4.485" height="0.150" fill="#52514e"><title>wall_011</title></rect>
-<rect x="8.535" y="-7.888" width="0.150" height="3.529" fill="#52514e"><title>wall_012</title></rect>
-<rect x="12.433" y="-11.901" width="0.150" height="7.617" fill="#52514e"><title>wall_013</title></rect>
-<rect x="12.508" y="-8.252" width="1.449" height="0.150" fill="#52514e"><title>wall_014</title></rect>
-<rect x="12.508" y="-11.409" width="1.449" height="0.157" fill="#52514e"><title>wall_015</title></rect>
-<rect x="13.807" y="-11.409" width="0.150" height="3.307" fill="#52514e"><title>wall_016</title></rect>
+<rect x="1.048" y="-11.300" width="0.242" height="8.411" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_000</title></rect>
+<rect x="1.048" y="-12.512" width="0.889" height="1.290" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_001</title></rect>
+<rect x="1.142" y="-2.889" width="2.929" height="1.560" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_002</title></rect>
+<rect x="1.199" y="-11.674" width="0.343" height="8.112" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_003</title></rect>
+<rect x="1.542" y="-12.918" width="0.858" height="1.245" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_004</title></rect>
+<rect x="1.937" y="-12.937" width="0.292" height="0.424" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_005</title></rect>
+<rect x="2.230" y="-13.068" width="4.951" height="0.306" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_006</title></rect>
+<rect x="3.824" y="-1.359" width="4.172" height="0.150" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_007</title></rect>
+<rect x="6.397" y="-4.434" width="6.186" height="0.389" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_008</title></rect>
+<rect x="6.397" y="-7.887" width="0.271" height="3.637" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_009</title></rect>
+<rect x="6.775" y="-12.918" width="0.793" height="0.695" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_010</title></rect>
+<rect x="7.181" y="-12.762" width="0.803" height="0.703" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_011</title></rect>
+<rect x="7.567" y="-12.224" width="0.247" height="0.216" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_012</title></rect>
+<rect x="7.648" y="-7.963" width="1.037" height="0.225" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_013</title></rect>
+<rect x="7.788" y="-1.637" width="0.289" height="0.428" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_014</title></rect>
+<rect x="7.814" y="-12.059" width="0.284" height="0.643" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_015</title></rect>
+<rect x="7.815" y="-12.053" width="4.769" height="0.333" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_016</title></rect>
+<rect x="7.927" y="-4.256" width="0.150" height="1.466" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_017</title></rect>
+<rect x="7.927" y="-8.942" width="0.193" height="1.129" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_018</title></rect>
+<rect x="8.535" y="-7.887" width="0.150" height="3.637" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_019</title></rect>
+<rect x="12.433" y="-8.458" width="0.237" height="4.173" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_020</title></rect>
+<rect x="12.433" y="-11.437" width="1.524" height="0.394" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_021</title></rect>
+<rect x="12.433" y="-11.901" width="0.150" height="0.574" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_022</title></rect>
+<rect x="12.583" y="-8.338" width="1.374" height="0.236" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_023</title></rect>
+<rect x="13.807" y="-11.409" width="0.150" height="3.307" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_024</title></rect>
 <rect x="4.384" y="-1.873" width="0.350" height="0.361" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>trashcan</title></rect>
 <rect x="12.150" y="-7.758" width="0.077" height="0.094" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>alarm_clock</title></rect>
 <rect x="1.496" y="-4.022" width="0.111" height="0.249" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Set of Tins - Black/White</title></rect>
@@ -278,5 +286,5 @@
 <text x="3.619" y="-4.451" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">stool</text>
 <text x="1.721" y="-12.065" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">window</text>
 <text x="7.372" y="-12.495" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">window</text>
-<text x="0.214" y="-13.803" font-size="0.215" fill="#0b0b0b">hssd-hab 104348463_171513588  164 objects, 17 walls  (meters, ROS world frame: x right, y up)</text>
+<text x="0.214" y="-13.803" font-size="0.215" fill="#0b0b0b">hssd-hab 104348463_171513588  164 objects, 25 walls  (meters, ROS world frame: x right, y up)</text>
 </svg>

@@ -11,9 +11,10 @@ by `dimos/simulation/habitat/hssd_ground_truth.py`; no simulator is involved.
   Habitat `(x, y, z)` maps to ROS `(-z, -x, y)`.
 - Objects: `id` is `<template hash>@<index in scene_instance.json>`; `label` is the HSSD
   category and `labels` adds the product name, both from `semantics/objects.csv`.
-- Walls: every ceiling-height `geometry_wallTop` face in the stage (exterior and interior,
-  grouped or merged) is a wall footprint; touching collinear faces merge into one segment,
-  perpendicular walls stay separate, and each segment is extruded down to the floor.
+- Walls: the stage geometry sliced 20 cm above the floor. Whatever is solid there is a wall
+  segment, so a doorway is a gap between two wall boxes that a robot can pass through, and
+  door or window headers are not boxed. Cut lines merge into thin segments (perpendicular
+  walls stay separate) and each segment is extruded up to the top of its wall geometry.
   `label` is `wall`; `id` is `wall_<k>`, numbered by footprint position. Walls follow the
   objects.
 - Boxes are world-axis-aligned and measured from mesh vertices, so they are tight for

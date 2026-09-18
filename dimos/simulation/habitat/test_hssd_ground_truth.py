@@ -27,7 +27,6 @@ from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.simulation.habitat import frames
 from dimos.simulation.habitat.hssd_ground_truth import (
     HSSD_DATASET_CONFIG_ENV,
-    WALL_TOP_PATTERN,
     HssdDataset,
     LabelMode,
     habitat_to_ros,
@@ -50,68 +49,36 @@ def _box(name: str, lo: tuple[float, float, float], hi: tuple[float, float, floa
     return mesh
 
 
-def _quad(x0: float, x1: float, y: float, z0: float, z1: float) -> Any:
-    """A flat quad at height ``y`` spanning x0..x1 and z0..z1 (Habitat frame)."""
-    return trimesh.Trimesh(
-        vertices=[[x0, y, z0], [x1, y, z0], [x1, y, z1], [x0, y, z1]],
-        faces=[[0, 1, 2], [0, 2, 3]],
-        process=False,
-    )
-
-
 def _stage_glb(path: Path) -> None:
     scene: Any = trimesh.Scene()
-    # Merged top-level wallTop mesh: one 2 m wall split into two collinear pieces, a
-    # perpendicular 1.5 m wall touching its end, and a bottom strip that must be ignored.
-    merged_top = trimesh.util.concatenate(
-        [
-            _quad(0.0, 1.0, 2.7, 0.0, 0.1),
-            _quad(1.0, 2.0, 2.7, 0.0, 0.1),
-            _quad(1.95, 2.05, 2.7, 0.1, 1.6),
-            _quad(0.0, 2.0, 0.0, 0.0, 0.1),
-            # A bay-window block: two nearly coincident thick tops that must become one wall.
-            _quad(4.0, 4.8, 2.7, 0.0, 0.9),
-            _quad(4.02, 4.8, 2.7, 0.0, 0.92),
-        ]
+
+    def add(name: str, mesh: Any, parent: str | None = None) -> None:
+        kwargs = {"parent_node_name": parent} if parent else {}
+        scene.add_geometry(mesh, node_name=name, geom_name=name, **kwargs)
+
+    # A 2 m wall along x with a 0.7 m doorway: two solid pieces and a header above
+    # the door that must not become a wall. Faces live in one merged mesh.
+    add(
+        "geometry_wall.123",
+        trimesh.util.concatenate(
+            [
+                _box("a1", (0.0, 0.0, 0.0), (0.8, 2.7, 0.1)),
+                _box("a2", (1.5, 0.0, 0.0), (2.0, 2.7, 0.1)),
+                _box("header", (0.8, 2.1, 0.0), (1.5, 2.7, 0.1)),
+            ]
+        ),
     )
-    scene.add_geometry(
-        merged_top, node_name="geometry_wallTop.146", geom_name="geometry_wallTop.146"
-    )
-    # Side face of the same wall: not a top face, never a wall on its own.
-    scene.add_geometry(
-        _box("geometry_wall.123", (0, 0, 0), (2, 2.7, 0.001)),
-        node_name="geometry_wall.123",
-        geom_name="geometry_wall.123",
-    )
-    # A grouped wall carries its own wallTop child.
+    # A perpendicular wall touching the end of the first one.
+    add("geometry_#FFFFFF", _box("b", (1.95, 0.0, 0.1), (2.05, 2.7, 1.6)))
+    # A grouped wall, and a half-height wall.
     scene.graph.update(frame_to=WALL_PARENT, frame_from=scene.graph.base_frame, matrix=np.eye(4))
-    scene.add_geometry(
-        _quad(3.0, 3.1, 2.7, 0.0, 2.0),
-        node_name="geometry_wallTop.9",
-        geom_name="geometry_wallTop.9",
-        parent_node_name=WALL_PARENT,
-    )
-    scene.add_geometry(
-        _box("geometry_wall.9", (3, 0, 0), (3.1, 2.7, 2)),
-        node_name="geometry_wall.9",
-        geom_name="geometry_wall.9",
-        parent_node_name=WALL_PARENT,
-    )
-    scene.add_geometry(
-        _box("geometry_floor", (-9, 0, -9), (9, 0.001, 9)),
-        node_name="geometry_floor",
-        geom_name="geometry_floor",
-    )
-    scene.add_geometry(
-        _box("geometry_ceiling", (-9, 2.7, -9), (9, 2.8, 9)),
-        node_name="geometry_ceiling",
-        geom_name="geometry_ceiling",
-    )
-    scene.add_geometry(
-        _box("geometry_wallpaper", (-9, 0, -9), (9, 0.1, 9)),
-        node_name="geometry_wallpaper",
-        geom_name="geometry_wallpaper",
-    )
+    add("geometry_wall.9", _box("c", (3.0, 0.0, 0.0), (3.1, 2.7, 2.0)), parent=WALL_PARENT)
+    add("geometry_wallTop.9", _box("c-top", (3.0, 2.7, 0.0), (3.1, 2.701, 2.0)), parent=WALL_PARENT)
+    add("geometry_wall.77", _box("d", (5.0, 0.0, 0.0), (6.0, 1.0, 0.1)))
+    # Floor, ceiling and a wallpaper roll on the floor never reach the slice height.
+    add("geometry_floor", _box("floor", (-9, 0.0, -9), (9, 0.001, 9)))
+    add("geometry_ceiling", _box("ceiling", (-9, 2.7, -9), (9, 2.8, 9)))
+    add("geometry_wallpaper", _box("roll", (-9, 0.0, -9), (9, 0.1, 9)))
     scene.export(str(path))
 
 
@@ -217,6 +184,7 @@ def test_objects_then_walls_with_exact_ros_boxes(dataset: HssdDataset) -> None:
         "wall_001",
         "wall_002",
         "wall_003",
+        "wall_004",
     ]
     boxes = _view(detections)
     # aaaa@0: habitat x[0.9,1.1] y[0,0.6] z[-2.2,-1.8] -> ROS (-z,-x,y), corners re-sorted.
@@ -224,14 +192,16 @@ def test_objects_then_walls_with_exact_ros_boxes(dataset: HssdDataset) -> None:
     # aaaa@1: scaled x[-0.2,0.2], rotated 90 deg about Y so x<->z swap: habitat x[-0.2,0.2] z[-0.2,0.2].
     assert boxes["aaaa@1"] == ((0.0, 0.0, 0.3), (0.4, 0.4, 0.6))
     assert boxes["bbbb_part_1@2"] == ((-5.0, -5.0, 0.25), (1.0, 1.0, 0.5))
-    # Walls come from the wallTop faces, extruded to the floor, ordered by ROS min corner:
-    # the grouped 2 m wall along z, the perpendicular 1.5 m wall, the bay-window block
-    # (two coincident thick pieces merged), then the split 2 m wall whose collinear
-    # pieces merged into one box.
+    # Walls are the stage sliced 20 cm up, ordered by ROS min corner: the grouped wall
+    # along z, the perpendicular wall, the half-height wall (1 m tall), then the two
+    # pieces on either side of the doorway; the header above the door is not a wall.
     assert boxes["wall_000"] == ((-1.0, -3.05, 1.35), (2.0, 0.1, 2.7))
-    assert boxes["wall_001"] == ((-0.85, -2.0, 1.35), (1.5, 0.1, 2.7))
-    assert boxes["wall_002"] == ((-0.46, -4.4, 1.35), (0.92, 0.8, 2.7))
-    assert boxes["wall_003"] == ((-0.05, -1.0, 1.35), (0.1, 2.0, 2.7))
+    # The perpendicular wall also absorbs its neighbour's end cap at the junction, so
+    # the two boxes overlap by the neighbour's thickness there.
+    assert boxes["wall_001"] == ((-0.8, -2.0, 1.35), (1.6, 0.1, 2.7))
+    assert boxes["wall_002"] == ((-0.05, -5.5, 0.5), (0.1, 1.0, 1.0))
+    assert boxes["wall_003"] == ((-0.05, -1.75, 1.35), (0.1, 0.5, 2.7))
+    assert boxes["wall_004"] == ((-0.05, -0.4, 1.35), (0.1, 0.8, 2.7))
     assert detections.frame_id == "world"
     assert detections.ts == 0.0
     for d in detections.detections:
@@ -282,27 +252,6 @@ def test_labels_reach_the_detections_and_walls_use_node_names(dataset: HssdDatas
     assert [r.hypothesis.class_id for r in by_id["wall_000"].results] == ["wall"]
 
 
-@pytest.mark.parametrize(
-    "name", ["geometry_wallTop.146", "geometry_wallTop", "WallTop_3", "geometry_walltop.9"]
-)
-def test_wall_top_pattern_accepts(name: str) -> None:
-    assert WALL_TOP_PATTERN.search(name)
-
-
-@pytest.mark.parametrize(
-    "name",
-    [
-        "geometry_wall.123",
-        "wall_0.003",
-        "wallpaper",
-        "geometry_#8DB4D0.008",
-        "geometry_ceiling.005",
-    ],
-)
-def test_wall_top_pattern_rejects(name: str) -> None:
-    assert not WALL_TOP_PATTERN.search(name)
-
-
 def test_habitat_to_ros_matches_frames_module() -> None:
     rng = np.random.default_rng(0)
     for point in rng.normal(size=(5, 3)):
@@ -335,7 +284,7 @@ def test_main_writes_scene_json(dataset: HssdDataset, tmp_path: Path) -> None:
     assert view["scene_id"] == "s1"
     assert view["frame_id"] == "world"
     assert view["timestamp"] == 0.0
-    assert view["count"] == 8
+    assert view["count"] == 9
     assert view["detections"][0]["labels"] == ["drinkware", "Frosty mug"]
     assert "labels" not in view["detections"][4]
     assert view["detections"][4]["id"] == "wall_000"
@@ -344,11 +293,11 @@ def test_main_writes_scene_json(dataset: HssdDataset, tmp_path: Path) -> None:
     flat = json.loads((out / "s1.top_down.json").read_text())
     assert flat["projection"] == "top_down_xy"
     assert flat["scene_id"] == "s1"
-    assert flat["count"] == 8
+    assert flat["count"] == 9
     by_id = {d["id"]: d for d in flat["detections"]}
     assert by_id["aaaa@0"]["center_xy"] == pytest.approx([2.0, -1.0])
     assert by_id["aaaa@0"]["size_xy"] == pytest.approx([0.4, 0.2])
     assert by_id["aaaa@0"]["labels"] == ["drinkware", "Frosty mug"]
-    assert by_id["wall_003"]["center_xy"] == pytest.approx([-0.05, -1.0])
-    assert by_id["wall_003"]["size_xy"] == pytest.approx([0.1, 2.0])
-    assert by_id["wall_003"]["theta"] == 0.0
+    assert by_id["wall_004"]["center_xy"] == pytest.approx([-0.05, -0.4])
+    assert by_id["wall_004"]["size_xy"] == pytest.approx([0.1, 0.8])
+    assert by_id["wall_004"]["theta"] == 0.0

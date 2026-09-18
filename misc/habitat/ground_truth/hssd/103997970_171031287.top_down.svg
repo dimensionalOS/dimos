@@ -43,18 +43,22 @@
 <line x1="-5.405" y1="-11" x2="7.898" y2="-11" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
 <line x1="-5.405" y1="-12" x2="7.898" y2="-12" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
 <text x="-5.346" y="-11.948" font-size="0.148" fill="#52514e">12</text>
-<rect x="-4.381" y="-10.778" width="0.216" height="8.077" fill="#52514e"><title>wall_000</title></rect>
-<rect x="-4.381" y="-10.778" width="3.033" height="0.150" fill="#52514e"><title>wall_001</title></rect>
-<rect x="-4.313" y="-2.901" width="11.211" height="0.200" fill="#52514e"><title>wall_002</title></rect>
-<rect x="-4.277" y="-7.447" width="5.064" height="0.192" fill="#52514e"><title>wall_003</title></rect>
-<rect x="-1.497" y="-10.778" width="0.150" height="3.424" fill="#52514e"><title>wall_004</title></rect>
-<rect x="-1.422" y="-9.210" width="3.310" height="0.150" fill="#52514e"><title>wall_005</title></rect>
-<rect x="0.638" y="-7.447" width="0.187" height="4.630" fill="#52514e"><title>wall_006</title></rect>
-<rect x="1.737" y="-10.778" width="0.150" height="1.717" fill="#52514e"><title>wall_007</title></rect>
-<rect x="1.737" y="-10.778" width="2.883" height="0.150" fill="#52514e"><title>wall_008</title></rect>
-<rect x="4.470" y="-10.042" width="2.427" height="0.150" fill="#52514e"><title>wall_009</title></rect>
-<rect x="4.470" y="-10.778" width="0.150" height="0.885" fill="#52514e"><title>wall_010</title></rect>
-<rect x="6.748" y="-10.042" width="0.150" height="7.292" fill="#52514e"><title>wall_011</title></rect>
+<rect x="-4.381" y="-10.778" width="0.278" height="8.077" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_000</title></rect>
+<rect x="-4.352" y="-7.411" width="0.895" height="0.156" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_001</title></rect>
+<rect x="-4.313" y="-2.901" width="11.211" height="0.200" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_002</title></rect>
+<rect x="-4.235" y="-10.778" width="2.887" height="0.150" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_003</title></rect>
+<rect x="-2.478" y="-7.422" width="1.057" height="0.153" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_004</title></rect>
+<rect x="-2.408" y="-7.673" width="1.816" height="0.397" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_005</title></rect>
+<rect x="-1.692" y="-10.778" width="0.345" height="2.124" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_006</title></rect>
+<rect x="-1.422" y="-9.210" width="3.310" height="0.150" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_007</title></rect>
+<rect x="0.386" y="-7.447" width="0.401" height="0.153" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_008</title></rect>
+<rect x="0.620" y="-7.447" width="0.357" height="4.705" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_009</title></rect>
+<rect x="1.737" y="-10.778" width="0.206" height="1.717" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_010</title></rect>
+<rect x="1.776" y="-10.778" width="0.497" height="0.150" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_011</title></rect>
+<rect x="3.252" y="-10.778" width="1.368" height="0.150" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_012</title></rect>
+<rect x="4.286" y="-10.778" width="0.334" height="0.885" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_013</title></rect>
+<rect x="4.470" y="-10.095" width="2.427" height="0.203" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_014</title></rect>
+<rect x="6.585" y="-10.042" width="0.313" height="7.289" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_015</title></rect>
 <rect x="5.336" y="-5.934" width="0.762" height="2.438" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Strata Runner</title></rect>
 <rect x="6.151" y="-6.424" width="0.596" height="2.378" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cabinet</title></rect>
 <rect x="-1.997" y="-7.279" width="0.985" height="0.119" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Molten Disc Wall Art LG, Silver Leaf</title></rect>
@@ -160,5 +164,5 @@
 <text x="3.275" y="-7.302" font-size="0.148" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.037">chair</text>
 <text x="1.024" y="-5.009" font-size="0.108" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.027">counter</text>
 <text x="2.741" y="-3.499" font-size="0.128" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.032">potted_plant</text>
-<text x="-5.258" y="-11.589" font-size="0.192" fill="#0b0b0b">hssd-hab 103997970_171031287  77 objects, 12 walls  (meters, ROS world frame: x right, y up)</text>
+<text x="-5.258" y="-11.589" font-size="0.192" fill="#0b0b0b">hssd-hab 103997970_171031287  77 objects, 16 walls  (meters, ROS world frame: x right, y up)</text>
 </svg>

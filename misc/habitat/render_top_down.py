@@ -14,8 +14,9 @@
 
 """Draw a top-down ground-truth file (``*.top_down.json``) as a reference SVG.
 
-Walls are filled grey, objects are outlined rectangles with their category
-written inside when the footprint is large enough to hold text. Coordinates are
+Walls and objects are outlined rectangles; objects get their category written
+inside when the footprint is large enough to hold text, and doorways show up as
+gaps between wall boxes. Coordinates are
 the file's ROS ``world`` meters: x to the right, y up.
 
     uv run python misc/habitat/render_top_down.py misc/habitat/ground_truth/hssd/*.top_down.json
@@ -33,7 +34,6 @@ SURFACE = "#fcfcfb"
 INK = "#0b0b0b"
 INK_SECONDARY = "#52514e"
 GRID = "#e6e5e0"
-WALL = "#52514e"
 OBJECT = "#2a78d6"
 PADDING_M = 1.0
 
@@ -107,16 +107,13 @@ def render(view: dict[str, object], rects: list[Rect], *, width_px: int, min_lab
                 f'<text x="{lo_x + font * 0.4:.3f}" y="{y(gy) + font * 0.35:.3f}" font-size="{font:.3f}" '
                 f'fill="{INK_SECONDARY}">{gy}</text>'
             )
-    for r in walls:
-        parts.append(
-            f'<rect x="{r.cx - r.w / 2:.3f}" y="{y(r.cy + r.h / 2):.3f}" width="{r.w:.3f}" '
-            f'height="{r.h:.3f}" fill="{WALL}"><title>{escape(r.id)}</title></rect>'
-        )
-    for r in objects:
+    # Walls and objects share one style; a doorway simply has no box.
+    for r in walls + objects:
         parts.append(
             f'<rect x="{r.cx - r.w / 2:.3f}" y="{y(r.cy + r.h / 2):.3f}" width="{r.w:.3f}" '
             f'height="{r.h:.3f}" fill="{OBJECT}" fill-opacity="0.08" stroke="{OBJECT}" '
-            f'stroke-width="1.5" vector-effect="non-scaling-stroke"><title>{escape(r.label)}</title></rect>'
+            f'stroke-width="1.5" vector-effect="non-scaling-stroke">'
+            f"<title>{escape(r.id if r.is_wall else r.label)}</title></rect>"
         )
     for r in objects:
         if min(r.w, r.h) < min_label_m:
