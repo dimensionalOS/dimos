@@ -660,7 +660,9 @@ def test_preflight_rejects_unavailable_cuda(
 
 
 @pytest.mark.parametrize("grip", ["left_grip", "right_grip"])
-def test_grip_takeover_stops_rollout_until_explicit_restart(make_runtime, grip):
+def test_grip_takeover_stops_rollout_until_explicit_restart(
+    make_runtime: RuntimeFactory, grip: str
+) -> None:
     module, control = make_runtime(FakePolicy(_action_chunk()))
     _provide_observation(module)
     _preflight(module)
@@ -672,7 +674,7 @@ def test_grip_takeover_stops_rollout_until_explicit_restart(make_runtime, grip):
     module._on_teleop_buttons(held)
     wait_until(lambda: not module.rollout_status()["active"], timeout=1)
     assert module.start_rollout()["active"] is False
-    assert "release" in module.rollout_status()["last_error"]
+    assert "release" in (module.rollout_status()["last_error"] or "")
     submissions = control.execute_trajectory.call_count
     module._on_teleop_buttons(Buttons())
     assert module.rollout_status()["active"] is False
@@ -682,14 +684,16 @@ def test_grip_takeover_stops_rollout_until_explicit_restart(make_runtime, grip):
     module.stop_rollout()
 
 
-def test_grip_during_inference_discards_result_without_blocking_input(make_runtime, mocker):
+def test_grip_during_inference_discards_result_without_blocking_input(
+    make_runtime: RuntimeFactory, mocker: pytest_mock.MockerFixture
+) -> None:
     module, control = make_runtime(FakePolicy(_action_chunk()))
     _provide_observation(module)
     _preflight(module)
     predicting = Event()
     release_prediction = Event()
 
-    def predict(*args, **kwargs):
+    def predict(*args: Any, **kwargs: Any) -> NDArray[np.float32]:
         predicting.set()
         assert release_prediction.wait(timeout=2)
         return _action_chunk()[None, :]
@@ -711,7 +715,9 @@ def test_grip_during_inference_discards_result_without_blocking_input(make_runti
     assert module.rollout_status()["active"] is False
 
 
-def test_stopping_inactive_policy_leaves_planner_trajectory_alone(make_runtime):
+def test_stopping_inactive_policy_leaves_planner_trajectory_alone(
+    make_runtime: RuntimeFactory,
+) -> None:
     module, control = make_runtime(FakePolicy(_action_chunk()))
     module.stop_rollout()
     held = Buttons()
