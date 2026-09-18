@@ -59,6 +59,7 @@ class Webcam(CameraHardware):
         self._capture_thread = None
         self._stop_event = threading.Event()
         self._observer = None
+        self._emitted_size: tuple[int, int] | None = None
 
     @cache
     def image_stream(self) -> Observable[Image]:
@@ -158,6 +159,7 @@ class Webcam(CameraHardware):
             else:
                 image = image.crop(half_width, 0, half_width, image.height)
 
+        self._emitted_size = (image.width, image.height)
         return image
 
     def _capture_loop(self) -> None:
@@ -187,6 +189,18 @@ class Webcam(CameraHardware):
 
     @property
     def camera_info(self) -> CameraInfo:
-        return self.config.camera_info
+        info = self.config.camera_info
+        if info.width and info.height and info.K[0] > 0 and info.K[4] > 0:
+            return info
+        # No intrinsics configured: a nominal pinhole so the image still renders.
+        # Sized from the frames actually emitted (the stereo slice halves them).
+        if self._emitted_size is not None:
+            width, height = self._emitted_size
+        else:
+            width = self.config.width // 2 if self.config.stereo_slice else self.config.width
+            height = self.config.height
+        return CameraInfo.from_fov(
+            60.0, width, height, axis="horizontal", frame_id=self._frame("camera_optical")
+        )
 
     def emit(self, image: Image) -> None: ...
