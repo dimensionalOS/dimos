@@ -110,7 +110,7 @@ the recorder captures that source once.
 ```python skip
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
-from dimos.imitation.collection.native_recorder import collection_recorder
+from dimos.imitation.collection.recorder import collection_recorder
 
 # MY_PROFILE, my_robot, and my_cameras are defined in your robot package.
 collect = autoconnect(
