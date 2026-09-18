@@ -59,6 +59,7 @@ all_blueprints = {
     "demo-mid360-pcap-replay": "dimos.hardware.sensors.lidar.livox.livox_blueprints:demo_mid360_pcap_replay",
     "demo-object-scene-registration": "dimos.perception.experimental.demo_object_scene_registration:demo_object_scene_registration",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
+    "demo-pico-body-tracking": "dimos.teleop.webxr.blueprints:demo_pico_body_tracking",
     "demo-skill": "dimos.agents.skills.demo_skill:demo_skill",
     "demo-virtual-mid360-fastlio": "dimos.hardware.sensors.lidar.virtual_mid360.blueprints:demo_virtual_mid360_fastlio",
     "demo-virtual-mid360-pointlio": "dimos.hardware.sensors.lidar.virtual_mid360.blueprints:demo_virtual_mid360_pointlio",
