@@ -95,7 +95,7 @@ def test_lite6_model_config_selects_lite_robot_type() -> None:
 @pytest.mark.self_hosted
 def test_lite6_model_asset_has_lite_gripper() -> None:
     config = make_lite6_model_config(add_gripper=True)
-    model = validate_robot_model_config(config)
+    model = prepare_robot_model(config).description
 
     joint_names = {joint.name for joint in model.joints}
     assert {"joint1", "joint6", "gripper_fix", "joint_tcp"} <= joint_names
