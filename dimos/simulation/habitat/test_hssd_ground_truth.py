@@ -308,3 +308,15 @@ def test_main_writes_scene_json(dataset: HssdDataset, tmp_path: Path) -> None:
     assert view["detections"][0]["labels"] == ["drinkware", "Frosty mug"]
     assert "labels" not in view["detections"][4]
     assert view["detections"][4]["id"] == "wall_0"
+
+    flat = json.loads((out / "s1.top_down.json").read_text())
+    assert flat["projection"] == "top_down_xy"
+    assert flat["scene_id"] == "s1"
+    assert flat["count"] == 5
+    by_id = {d["id"]: d for d in flat["detections"]}
+    assert by_id["aaaa@0"]["center_xy"] == pytest.approx([2.0, -1.0])
+    assert by_id["aaaa@0"]["size_xy"] == pytest.approx([0.4, 0.2])
+    assert by_id["aaaa@0"]["labels"] == ["drinkware", "Frosty mug"]
+    assert by_id["wall_0"]["center_xy"] == pytest.approx([-0.05, -1.0])
+    assert by_id["wall_0"]["size_xy"] == pytest.approx([0.1, 2.0])
+    assert by_id["wall_0"]["theta"] == 0.0

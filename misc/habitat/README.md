@@ -32,6 +32,20 @@ by `dimos/simulation/habitat/hssd_ground_truth.py`; no simulator is involved.
 | HSSD scene 9 | 108736851_177263586 |
 | HSSD scene 10 | 108736884_177263634 |
 
+## Top-down view
+
+`ground_truth/hssd/<scene_id>.top_down.json` is the same scene flattened to the floor plane:
+the JSON view of a `vision_msgs.Detection2DArray` with one rectangle per box, `center_xy`
+and `size_xy` in meters in the same `world` frame (x forward, y left), `theta` always 0, and
+the same `id`, `label` and `labels`. Height is dropped; join by `id` with the 3D file to get
+it back. Boxes whose footprint spans at least 90% of the scene extent on both axes (a floor
+slab or roof) are left out. `ground_truth/hssd/<scene_id>.top_down.svg` is a reference
+drawing of that file, made with:
+
+```bash
+uv run python misc/habitat/render_top_down.py misc/habitat/ground_truth/hssd/*.top_down.json
+```
+
 Regenerate with the HSSD dataset installed (default `target/habitat/data/hssd-hab`;
 point `HSSD_DATASET_CONFIG` at another `hssd-hab.scene_dataset_config.json`):
 

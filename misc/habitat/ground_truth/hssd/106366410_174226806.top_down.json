@@ -1,0 +1,4860 @@
+{
+  "dataset": "hssd-hab",
+  "scene_id": "106366410_174226806",
+  "projection": "top_down_xy",
+  "frame_id": "world",
+  "timestamp": 0.0,
+  "count": 293,
+  "detections": [
+    {
+      "id": "1a83f76b3e1e0d00521c4cc2c791e94ae7af4f5a@0",
+      "label": "wardrobe",
+      "score": 1.0,
+      "center_xy": [
+        7.8594185,
+        2.5287095
+      ],
+      "size_xy": [
+        0.7327849999999998,
+        6.493915
+      ],
+      "theta": 0.0,
+      "labels": [
+        "wardrobe",
+        "SMA lacquered glass sliding door Wardrobe"
+      ]
+    },
+    {
+      "id": "1a83f76b3e1e0d00521c4cc2c791e94ae7af4f5a@1",
+      "label": "wardrobe",
+      "score": 1.0,
+      "center_xy": [
+        5.45148,
+        2.08783
+      ],
+      "size_xy": [
+        0.7327859999999999,
+        5.612156
+      ],
+      "theta": 0.0,
+      "labels": [
+        "wardrobe",
+        "SMA lacquered glass sliding door Wardrobe"
+      ]
+    },
+    {
+      "id": "1c094fa03158472435f319ff499aef6f7b9ff883@2",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        3.1988149999999997,
+        -4.916752499999999
+      ],
+      "size_xy": [
+        0.6625140000000003,
+        0.6673990000000005
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "plant"
+      ]
+    },
+    {
+      "id": "1c2d22ef7c8cb0f460d3a86a2b4439fad6c9eb9a@3",
+      "label": "printer",
+      "score": 1.0,
+      "center_xy": [
+        6.962474,
+        -1.24949
+      ],
+      "size_xy": [
+        0.3399739999999998,
+        0.4199980000000001
+      ],
+      "theta": 0.0,
+      "labels": [
+        "printer",
+        "HP OfficeJet 4355/EN 16MB A4 USB"
+      ]
+    },
+    {
+      "id": "1d56bfcf213afcbe75c62331cae2b410900de0d3@4",
+      "label": "Cascade Ceramic Tissue Box",
+      "score": 1.0,
+      "center_xy": [
+        6.292559,
+        5.6651
+      ],
+      "size_xy": [
+        0.15000000000000036,
+        0.15000000000000036
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "4f39018055469182e25789274a17987a2243dcd3@5",
+      "label": "RoundHouse Long Shelves",
+      "score": 1.0,
+      "center_xy": [
+        4.261756,
+        -0.6084285
+      ],
+      "size_xy": [
+        2.502758,
+        0.34427900000000006
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "364ff9bf3627be12a05817faa283538fc02de5ad@6",
+      "label": "treadmill",
+      "score": 1.0,
+      "center_xy": [
+        5.5665,
+        -7.0597505
+      ],
+      "size_xy": [
+        0.8000020000000001,
+        1.8999990000000002
+      ],
+      "theta": 0.0,
+      "labels": [
+        "treadmill",
+        "Life Fitness T9E Treadmill"
+      ]
+    },
+    {
+      "id": "5987a90f46b36e79028cc46a90fa39bc0b9cb2a3@7",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xy": [
+        -1.9887,
+        1.52949
+      ],
+      "size_xy": [
+        0.1065999999999998,
+        0.10497999999999985
+      ],
+      "theta": 0.0,
+      "labels": [
+        "drinkware",
+        "Ember Goblet (pair)"
+      ]
+    },
+    {
+      "id": "54a91a7fc2c81f09c41b18d363f110ae9c5596c4@8",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        6.5943195,
+        5.7195205
+      ],
+      "size_xy": [
+        0.05025099999999938,
+        0.05025100000000027
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "MOLTON BROWN WARMING EUCALYPTUS SHOWER GEL 300ML"
+      ]
+    },
+    {
+      "id": "ebe95e90df6cefd0e3af6dbc320b82323535a540@9",
+      "label": "Ikan tray M - antique white",
+      "score": 1.0,
+      "center_xy": [
+        2.69831,
+        6.165150000000001
+      ],
+      "size_xy": [
+        0.33545000000000025,
+        0.23636000000000035
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "74866c6d0cdfeda45f2da0ad289f7af86410d0cf@10",
+      "label": "washer_dryer",
+      "score": 1.0,
+      "center_xy": [
+        4.04598,
+        5.414909
+      ],
+      "size_xy": [
+        0.6699999999999999,
+        0.7456699999999996
+      ],
+      "theta": 0.0,
+      "labels": [
+        "washer_dryer",
+        "Hotpoint BS1400 Washing Machine, White"
+      ]
+    },
+    {
+      "id": "de016d31ad24004bf75eeb8c0107e966c626133f@11",
+      "label": "XBOX One",
+      "score": 1.0,
+      "center_xy": [
+        0.14853200000000003,
+        14.8192335
+      ],
+      "size_xy": [
+        0.341474,
+        0.2588190000000008
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "7dd5c8c5338cd639765262ab5bdf8ebb84c1c6dd@12",
+      "label": "Rodeo Musical Rocking Horse Wooden Toy",
+      "score": 1.0,
+      "center_xy": [
+        -1.4878385,
+        8.560041
+      ],
+      "size_xy": [
+        0.808865,
+        0.37318600000000046
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "7e5d517c0e402fc5133a808a26157694583502da@13",
+      "label": "Memo Pads",
+      "score": 1.0,
+      "center_xy": [
+        6.865819,
+        -1.7221085
+      ],
+      "size_xy": [
+        0.07310000000000016,
+        0.07954900000000009
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "bbf50f98977c8191c5998f0d4e582f78b2111c67@14",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        6.4966705000000005,
+        5.72837
+      ],
+      "size_xy": [
+        0.05446299999999926,
+        0.032564000000000703
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "MOLTON BROWN CASSIA ENERGY HAIR &amp; BODY WASH 200ML"
+      ]
+    },
+    {
+      "id": "c5cfee504a6981913ed99661a89fc226f2b8bfc2@15",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xy": [
+        -1.84265,
+        1.63043
+      ],
+      "size_xy": [
+        0.09689599999999987,
+        0.0968960000000001
+      ],
+      "theta": 0.0,
+      "labels": [
+        "drinkware",
+        "Waterford Crystal John Rocha Lume Red Wine Glass"
+      ]
+    },
+    {
+      "id": "c9dd11b6d8113a4f2d55fe6442f242e9f491e97f@16",
+      "label": "Kids car",
+      "score": 1.0,
+      "center_xy": [
+        -1.3854735,
+        9.267638999999999
+      ],
+      "size_xy": [
+        0.8352149999999999,
+        0.6371480000000016
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "3d293292d213c8f2ea43a5904193c24ec6f0d23e@17",
+      "label": "picture",
+      "score": 1.0,
+      "center_xy": [
+        3.8193095,
+        11.044979999999999
+      ],
+      "size_xy": [
+        0.050800999999999874,
+        1.1938000000000013
+      ],
+      "theta": 0.0,
+      "labels": [
+        "picture",
+        "PICTURE, LINEAR TEXTURES"
+      ]
+    },
+    {
+      "id": "345d3d2b0045fec71c7d31be7836b8001a56edf1@18",
+      "label": "SERVE oil and vinegar set",
+      "score": 1.0,
+      "center_xy": [
+        3.9937095000000005,
+        3.38718
+      ],
+      "size_xy": [
+        0.07352300000000023,
+        0.13164799999999977
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "84f3e455116910537b312718620493db2c6c5149@19",
+      "label": "Robin Shoe Cabinet",
+      "score": 1.0,
+      "center_xy": [
+        8.03194,
+        -4.2202
+      ],
+      "size_xy": [
+        0.38773200000000063,
+        0.6500000000000004
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "84f3e455116910537b312718620493db2c6c5149@20",
+      "label": "Robin Shoe Cabinet",
+      "score": 1.0,
+      "center_xy": [
+        8.03194,
+        -3.5702
+      ],
+      "size_xy": [
+        0.38773200000000063,
+        0.6499999999999999
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "e8a51eed69104c79ccc952d96f590e5f51034e38@21",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        5.9313985,
+        5.5087
+      ],
+      "size_xy": [
+        0.1100810000000001,
+        0.08304599999999951
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "Chanel Shower Gel"
+      ]
+    },
+    {
+      "id": "571e64a27135494960e739c85eb0027caa16a7be@22",
+      "label": "Aircon - Wall mounted",
+      "score": 1.0,
+      "center_xy": [
+        3.7095995,
+        13.87585
+      ],
+      "size_xy": [
+        0.27022100000000027,
+        1.4079899999999999
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "571e64a27135494960e739c85eb0027caa16a7be@23",
+      "label": "Aircon - Wall mounted",
+      "score": 1.0,
+      "center_xy": [
+        8.0906995,
+        -3.3289
+      ],
+      "size_xy": [
+        0.2702209999999994,
+        0.8300000000000001
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "571e64a27135494960e739c85eb0027caa16a7be@24",
+      "label": "Aircon - Wall mounted",
+      "score": 1.0,
+      "center_xy": [
+        2.58247,
+        -3.02499
+      ],
+      "size_xy": [
+        0.2702199999999997,
+        0.8300000000000001
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "a59e34f65be7226af0d42d41d8da31674415eeee@25",
+      "label": "Aircon - Ceiling mounted",
+      "score": 1.0,
+      "center_xy": [
+        6.609689,
+        0.50367
+      ],
+      "size_xy": [
+        0.5800000000000001,
+        0.58
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "d3aaaa4c5f6f4c0f8ac9acffa625b527bf1ddc89@26",
+      "label": "couch",
+      "score": 1.0,
+      "center_xy": [
+        -1.7285905000000001,
+        -6.51971
+      ],
+      "size_xy": [
+        0.751225,
+        1.5038099999999996
+      ],
+      "theta": 0.0,
+      "labels": [
+        "couch",
+        "Ivy 2 Str Grey"
+      ]
+    },
+    {
+      "id": "1babc21347ad1d49accb8c6df726aa9f85bdde93_part_1@27",
+      "label": "Ablage/rack",
+      "score": 1.0,
+      "center_xy": [
+        3.9470954999999996,
+        3.770393
+      ],
+      "size_xy": [
+        0.1588109999999996,
+        0.363588
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "1babc21347ad1d49accb8c6df726aa9f85bdde93_part_1@28",
+      "label": "Ablage/rack",
+      "score": 1.0,
+      "center_xy": [
+        3.9470975,
+        4.2225275
+      ],
+      "size_xy": [
+        0.15881100000000004,
+        0.3635889999999993
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "1babc21347ad1d49accb8c6df726aa9f85bdde93_part_1@29",
+      "label": "Ablage/rack",
+      "score": 1.0,
+      "center_xy": [
+        3.9470945000000004,
+        3.770393
+      ],
+      "size_xy": [
+        0.15881100000000048,
+        0.363588
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "1babc21347ad1d49accb8c6df726aa9f85bdde93_part_1@30",
+      "label": "Ablage/rack",
+      "score": 1.0,
+      "center_xy": [
+        3.9470965,
+        4.2225275
+      ],
+      "size_xy": [
+        0.1588109999999996,
+        0.3635889999999993
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "1babc21347ad1d49accb8c6df726aa9f85bdde93_part_5@31",
+      "label": "Ablage/rack",
+      "score": 1.0,
+      "center_xy": [
+        3.9355865,
+        3.7014115
+      ],
+      "size_xy": [
+        0.043851000000000084,
+        0.0661710000000002
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "1babc21347ad1d49accb8c6df726aa9f85bdde93_part_6@32",
+      "label": "Ablage/rack",
+      "score": 1.0,
+      "center_xy": [
+        3.9521145000000004,
+        3.6791465
+      ],
+      "size_xy": [
+        0.061104999999999965,
+        0.053539000000000225
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "1babc21347ad1d49accb8c6df726aa9f85bdde93_part_7@33",
+      "label": "Ablage/rack",
+      "score": 1.0,
+      "center_xy": [
+        3.9355865000000003,
+        3.6503164999999997
+      ],
+      "size_xy": [
+        0.07547099999999984,
+        0.04600300000000024
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "1babc21347ad1d49accb8c6df726aa9f85bdde93_part_8@34",
+      "label": "Ablage/rack",
+      "score": 1.0,
+      "center_xy": [
+        3.9404390000000005,
+        3.738814
+      ],
+      "size_xy": [
+        0.15682000000000018,
+        0.14344
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "1babc21347ad1d49accb8c6df726aa9f85bdde93_part_9@35",
+      "label": "Ablage/rack",
+      "score": 1.0,
+      "center_xy": [
+        3.9553754999999997,
+        3.8321639999999997
+      ],
+      "size_xy": [
+        0.07047900000000018,
+        0.057072000000000234
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "1babc21347ad1d49accb8c6df726aa9f85bdde93_part_10@36",
+      "label": "Ablage/rack",
+      "score": 1.0,
+      "center_xy": [
+        3.951531,
+        3.892281
+      ],
+      "size_xy": [
+        0.07816800000000024,
+        0.05707199999999979
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "641605b7969986b87e12fe2361ddd0d28ddfebb5@37",
+      "label": "Waschplatz/zone lavabo Villeroy & Boch Artis",
+      "score": 1.0,
+      "center_xy": [
+        2.969069,
+        3.807009
+      ],
+      "size_xy": [
+        1.1999999999999997,
+        0.415324
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "cc75c57d650ebbdbe15542f83666b417d24f9ae4@38",
+      "label": "toilet",
+      "score": 1.0,
+      "center_xy": [
+        3.1523554999999996,
+        -5.6038499999999996
+      ],
+      "size_xy": [
+        0.569493,
+        0.36978199999999983
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toilet",
+        "WC/Toilette Duravit ME by Starck "
+      ]
+    },
+    {
+      "id": "2497f6c429ad6112bd4c1f9a45164d960c742e0b@39",
+      "label": "WOODEN WINE CADDY",
+      "score": 1.0,
+      "center_xy": [
+        3.5009895,
+        12.530841500000001
+      ],
+      "size_xy": [
+        0.2397630000000004,
+        0.3995690000000014
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "1ff8117e1a03198882455c8f8131d01450749eac@40",
+      "label": "picture",
+      "score": 1.0,
+      "center_xy": [
+        8.200809499999998,
+        -1.9427295
+      ],
+      "size_xy": [
+        0.05000099999999996,
+        1.2680129999999998
+      ],
+      "theta": 0.0,
+      "labels": [
+        "picture",
+        "PICTURE, EVENING OUT"
+      ]
+    },
+    {
+      "id": "eac0f0b99f0473fea0b330049d7651d81aafd3f5@41",
+      "label": "picture",
+      "score": 1.0,
+      "center_xy": [
+        2.691852,
+        -6.4621005
+      ],
+      "size_xy": [
+        0.051455999999999946,
+        0.916741
+      ],
+      "theta": 0.0,
+      "labels": [
+        "picture",
+        "PICTURE, GREEN LAKE"
+      ]
+    },
+    {
+      "id": "3c0ad5f6f71315095857cff92555158156f95d01@42",
+      "label": "exercise_bike",
+      "score": 1.0,
+      "center_xy": [
+        6.6574595,
+        -7.3825695
+      ],
+      "size_xy": [
+        0.6070150000000005,
+        1.254353
+      ],
+      "theta": 0.0,
+      "labels": [
+        "exercise_bike",
+        "Assault Air Bike - Black _ LCF0002"
+      ]
+    },
+    {
+      "id": "c07d14d8277526628dd08d5e6ce557aaebe55492@43",
+      "label": "Home Design Interiors Magazine",
+      "score": 1.0,
+      "center_xy": [
+        2.9212499999999997,
+        1.722871
+      ],
+      "size_xy": [
+        0.30870799999999976,
+        0.2428300000000001
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "576f0a57271ccc62554b2603a48047854254119d@44",
+      "label": "tv",
+      "score": 1.0,
+      "center_xy": [
+        0.0751095,
+        14.992121000000001
+      ],
+      "size_xy": [
+        1.8221289999999999,
+        0.0869939999999989
+      ],
+      "theta": 0.0,
+      "labels": [
+        "tv",
+        "80'' Led TV"
+      ]
+    },
+    {
+      "id": "722866a9d51463b5c8e968e437fdfcc9e44d2d6f@45",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        0.87539,
+        -2.926913
+      ],
+      "size_xy": [
+        0.36343400000000003,
+        0.3641519999999998
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Alamo Ceiling Lamp Matte Gray"
+      ]
+    },
+    {
+      "id": "722866a9d51463b5c8e968e437fdfcc9e44d2d6f@46",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        -1.7533599999999998,
+        -2.8161535
+      ],
+      "size_xy": [
+        0.36343400000000003,
+        0.36415099999999967
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Alamo Ceiling Lamp Matte Gray"
+      ]
+    },
+    {
+      "id": "b1abf7722a2b5ddf82c254397a60d4869b60b180@47",
+      "label": "stool",
+      "score": 1.0,
+      "center_xy": [
+        2.11965,
+        1.72748
+      ],
+      "size_xy": [
+        0.4063999999999999,
+        0.4063999999999999
+      ],
+      "theta": 0.0,
+      "labels": [
+        "stool",
+        "Wood And Iron Stool With Black And Grey Geometric Design"
+      ]
+    },
+    {
+      "id": "b1abf7722a2b5ddf82c254397a60d4869b60b180@48",
+      "label": "stool",
+      "score": 1.0,
+      "center_xy": [
+        2.12645,
+        1.13836
+      ],
+      "size_xy": [
+        0.4064000000000001,
+        0.4064000000000001
+      ],
+      "theta": 0.0,
+      "labels": [
+        "stool",
+        "Wood And Iron Stool With Black And Grey Geometric Design"
+      ]
+    },
+    {
+      "id": "ea1565e02e6aeb63328999895bdc151f4e769b16@49",
+      "label": "Pet House, Grey",
+      "score": 1.0,
+      "center_xy": [
+        -1.4384000000000001,
+        7.63353
+      ],
+      "size_xy": [
+        0.6096000000000001,
+        0.6095999999999995
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "265b95037433ed097b550c434029af9fb4c0d907@50",
+      "label": "couch",
+      "score": 1.0,
+      "center_xy": [
+        0.015620000000000078,
+        11.000568999999999
+      ],
+      "size_xy": [
+        2.8195740000000002,
+        2.254454000000001
+      ],
+      "theta": 0.0,
+      "labels": [
+        "couch",
+        "Mags Soft Low Corner Sectional, Right, 311 Fog"
+      ]
+    },
+    {
+      "id": "6dd9e51b58072dbd08fbbdf95ce568aacc47ec59@51",
+      "label": "vase",
+      "score": 1.0,
+      "center_xy": [
+        3.072416,
+        6.1518405000000005
+      ],
+      "size_xy": [
+        0.15402200000000033,
+        0.15413499999999924
+      ],
+      "theta": 0.0,
+      "labels": [
+        "vase",
+        "Large goddess vase, White"
+      ]
+    },
+    {
+      "id": "37b75ac25a35a1c41a310fd74deab25e09e7fe5f@52",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        4.619009500000001,
+        -6.37365
+      ],
+      "size_xy": [
+        0.44973699999999983,
+        0.7781159999999998
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Dendrobium Orchid in Silver Vase"
+      ]
+    },
+    {
+      "id": "04de480a0fc7f11db643d9ff3cb266f08339179e@53",
+      "label": "FORMA CERAMIC SALT AND PEPPER PAIR",
+      "score": 1.0,
+      "center_xy": [
+        4.07477,
+        3.34136
+      ],
+      "size_xy": [
+        0.0886060000000004,
+        0.040000000000000036
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "01841f449f738c1e24fa15753d1fbc5fe0c6a92c@54",
+      "label": "fridge",
+      "score": 1.0,
+      "center_xy": [
+        2.7152000000000003,
+        -0.36595
+      ],
+      "size_xy": [
+        0.9104540000000001,
+        0.7045980000000001
+      ],
+      "theta": 0.0,
+      "labels": [
+        "fridge",
+        "Samsung Side By Side Fridge Freezer RSH1DBBP Black"
+      ]
+    },
+    {
+      "id": "01841f449f738c1e24fa15753d1fbc5fe0c6a92c@55",
+      "label": "fridge",
+      "score": 1.0,
+      "center_xy": [
+        1.80474,
+        -0.36595
+      ],
+      "size_xy": [
+        0.9104540000000001,
+        0.7045980000000001
+      ],
+      "theta": 0.0,
+      "labels": [
+        "fridge",
+        "Samsung Side By Side Fridge Freezer RSH1DBBP Black"
+      ]
+    },
+    {
+      "id": "1a37a31d819e3655556a25c7d36571d2833d79b0@56",
+      "label": "soap_dispenser",
+      "score": 1.0,
+      "center_xy": [
+        4.9378995,
+        1.08196
+      ],
+      "size_xy": [
+        0.07040500000000005,
+        0.06000000000000005
+      ],
+      "theta": 0.0,
+      "labels": [
+        "soap_dispenser",
+        "SOAP DISPENSER"
+      ]
+    },
+    {
+      "id": "212c762e23660aaf12b153f4ac9d3d9ff4c0f5ce@57",
+      "label": "bench",
+      "score": 1.0,
+      "center_xy": [
+        3.29564,
+        8.960560000000001
+      ],
+      "size_xy": [
+        1.09814,
+        0.34999999999999964
+      ],
+      "theta": 0.0,
+      "labels": [
+        "bench",
+        "Storage bench with wicker baskets"
+      ]
+    },
+    {
+      "id": "21cb0c6fe6bbe1c086536498748d555635c925a7@58",
+      "label": "trashcan",
+      "score": 1.0,
+      "center_xy": [
+        3.7989095,
+        3.82918
+      ],
+      "size_xy": [
+        0.4596770000000001,
+        0.459676
+      ],
+      "theta": 0.0,
+      "labels": [
+        "trashcan",
+        "Abaca &amp; Faux Leather Waste Bin"
+      ]
+    },
+    {
+      "id": "609b597b4243c36fbf721d25fea456b40e806519@59",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        6.644579500000001,
+        5.7195205
+      ],
+      "size_xy": [
+        0.05025100000000027,
+        0.05025100000000027
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "MOLTON BROWN INVIGORATING GINSENG SHOWER GEL 300ML"
+      ]
+    },
+    {
+      "id": "4353a69346f44085719048f890e5afbdd2ef6e31@60",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        2.1075545,
+        -7.9617615
+      ],
+      "size_xy": [
+        1.1762430000000001,
+        0.0433469999999998
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "4353a69346f44085719048f890e5afbdd2ef6e31@61",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        0.654023,
+        -7.9617615
+      ],
+      "size_xy": [
+        1.85153,
+        0.0433469999999998
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "4353a69346f44085719048f890e5afbdd2ef6e31@62",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        -1.1784265,
+        -7.941762
+      ],
+      "size_xy": [
+        1.8515309999999998,
+        0.04334799999999994
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "4353a69346f44085719048f890e5afbdd2ef6e31@63",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        -2.056212,
+        -7.0840235
+      ],
+      "size_xy": [
+        0.04334799999999994,
+        1.8515309999999996
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "4353a69346f44085719048f890e5afbdd2ef6e31@64",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        -2.056212,
+        -5.2719024999999995
+      ],
+      "size_xy": [
+        0.04334799999999994,
+        1.835261
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "4353a69346f44085719048f890e5afbdd2ef6e31@65",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        -2.056212,
+        -3.4407335000000003
+      ],
+      "size_xy": [
+        0.04334799999999994,
+        1.892211
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "97b54d82ec3e18ffa460e23aa2fd005cc0027179@66",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xy": [
+        2.2571025000000002,
+        -0.40241
+      ],
+      "size_xy": [
+        1.826679,
+        0.631682
+      ],
+      "theta": 0.0,
+      "labels": [
+        "cabinet",
+        "Echo Brickell Kitchen"
+      ]
+    },
+    {
+      "id": "329343e5c540027b4e4ee690129406925dcb1ef3@67",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        5.98137,
+        5.61875
+      ],
+      "size_xy": [
+        0.03972800000000021,
+        0.03972799999999932
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "MOLTON BROWN ENLIVENING TOKO BODY LOTION"
+      ]
+    },
+    {
+      "id": "74e6caca5364f598b9a17afa2aedf78c0e88c224@68",
+      "label": "Eva Solo Milk and Sugar Set",
+      "score": 1.0,
+      "center_xy": [
+        3.7135595,
+        -0.64051
+      ],
+      "size_xy": [
+        0.18960899999999992,
+        0.08735800000000005
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "7f4208d306cfb2f43162195c46f59058525d9933@69",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xy": [
+        -1.8939599999999999,
+        1.51844
+      ],
+      "size_xy": [
+        0.08287199999999983,
+        0.08287200000000006
+      ],
+      "theta": 0.0,
+      "labels": [
+        "drinkware",
+        "New World Mighty Ros\u00e9 Wine Glass (pair)"
+      ]
+    },
+    {
+      "id": "e0f3252bb31b826fcbe1be187b9a6c9463566d7e@70",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        6.4286895,
+        5.7039005
+      ],
+      "size_xy": [
+        0.08149500000000032,
+        0.08149499999999943
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "MARSEILLE OLIVE LIQUID SOAP 500ML"
+      ]
+    },
+    {
+      "id": "e3479ce73271171bdaa163968c50500719ed4d72@71",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xy": [
+        2.28974,
+        1.7583305
+      ],
+      "size_xy": [
+        0.08088000000000006,
+        0.11393500000000012
+      ],
+      "theta": 0.0,
+      "labels": [
+        "drinkware",
+        "Street Art - Know Your Rights Small Mug"
+      ]
+    },
+    {
+      "id": "dc34ac3ceaaf4ce057b1f3709ab162a3af4bb4a4@72",
+      "label": "chair",
+      "score": 1.0,
+      "center_xy": [
+        3.2589005,
+        11.809735
+      ],
+      "size_xy": [
+        1.0337229999999997,
+        1.1021779999999985
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chair",
+        "Directors Chair, black"
+      ]
+    },
+    {
+      "id": "dc34ac3ceaaf4ce057b1f3709ab162a3af4bb4a4@73",
+      "label": "chair",
+      "score": 1.0,
+      "center_xy": [
+        3.1680625,
+        10.244128499999999
+      ],
+      "size_xy": [
+        0.996499,
+        1.0899149999999995
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chair",
+        "Directors Chair, black"
+      ]
+    },
+    {
+      "id": "9c3f0936e883d4862f7f0a70e83cf6bad2fe23bd@74",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        6.998629,
+        5.7055495
+      ],
+      "size_xy": [
+        0.0704779999999996,
+        0.07816700000000054
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "Vita Base Shower Gel"
+      ]
+    },
+    {
+      "id": "ca14539a775c809106bacaf4d8e79407de8707c3@75",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        7.128362,
+        5.727088
+      ],
+      "size_xy": [
+        0.06297999999999959,
+        0.035198000000000285
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "Nivea Creme Soft"
+      ]
+    },
+    {
+      "id": "ca14539a775c809106bacaf4d8e79407de8707c3@76",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        7.065362,
+        5.727088
+      ],
+      "size_xy": [
+        0.06298000000000048,
+        0.035198000000000285
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "Nivea Creme Soft"
+      ]
+    },
+    {
+      "id": "021a0ba1300490e2e288221a21f4387ce626d1de@77",
+      "label": "bottle",
+      "score": 1.0,
+      "center_xy": [
+        3.5379895,
+        11.0515005
+      ],
+      "size_xy": [
+        0.08551300000000017,
+        0.08551300000000062
+      ],
+      "theta": 0.0,
+      "labels": [
+        "bottle",
+        "White wine bottle"
+      ]
+    },
+    {
+      "id": "ed86643dde6d762a7a002dd94e66c4b4da2d4298@78",
+      "label": "soap_dispenser",
+      "score": 1.0,
+      "center_xy": [
+        5.93338,
+        5.73376
+      ],
+      "size_xy": [
+        0.106738,
+        0.106738
+      ],
+      "theta": 0.0,
+      "labels": [
+        "soap_dispenser",
+        "Baliana Lotion Dispenser"
+      ]
+    },
+    {
+      "id": "6763357066e04779d623bfb86019ba284f781f40@79",
+      "label": "80LB Rogue Rubber Hex Dumbbell _ IP0039-2",
+      "score": 1.0,
+      "center_xy": [
+        8.047129,
+        -4.735129499999999
+      ],
+      "size_xy": [
+        0.3573619999999993,
+        0.3798529999999998
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "c3122f38ddbfa1b415aee6770c5f1b9db4d8479a@80",
+      "label": "35LB Rogue Urethane Dumbbell - Pair _ IP0661-35-2",
+      "score": 1.0,
+      "center_xy": [
+        8.070739,
+        -5.06916
+      ],
+      "size_xy": [
+        0.38605599999999995,
+        0.28820400000000035
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "eef2341f3bed67078f416269ea1b8a6252a21d45@81",
+      "label": "dishwasher",
+      "score": 1.0,
+      "center_xy": [
+        4.09098,
+        -0.4053695
+      ],
+      "size_xy": [
+        0.6005000000000003,
+        0.6378689999999999
+      ],
+      "theta": 0.0,
+      "labels": [
+        "dishwasher",
+        "Dishwasher"
+      ]
+    },
+    {
+      "id": "c37e1c6105bc43c44c14b8fb371b0d3c843ec313@82",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        4.8246395,
+        3.2962
+      ],
+      "size_xy": [
+        0.296913,
+        0.31359000000000004
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Interior Plant"
+      ]
+    },
+    {
+      "id": "c713e6ab7995e9707d9c618d274e9b84d57eb005@83",
+      "label": "bathtub",
+      "score": 1.0,
+      "center_xy": [
+        3.8452269999999995,
+        -7.493876
+      ],
+      "size_xy": [
+        1.7886099999999998,
+        1.0316799999999988
+      ],
+      "theta": 0.0,
+      "labels": [
+        "bathtub",
+        "Badewanne/baignoire, L/B/H 180/80/52 cm"
+      ]
+    },
+    {
+      "id": "b2a3170effd0ed0a47d335793daaf91d0599c295@84",
+      "label": "Toilette/toilette kreativ",
+      "score": 1.0,
+      "center_xy": [
+        4.6416,
+        3.96387
+      ],
+      "size_xy": [
+        0.6774119999999995,
+        0.7217380000000002
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "db8288398b2513371f31aff4e2e6271dd08476af@85",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        2.5077195000000003,
+        -5.8189205
+      ],
+      "size_xy": [
+        0.29691100000000015,
+        0.4873390000000004
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "HANDBLOWN CARVED GLASS VASE"
+      ]
+    },
+    {
+      "id": "5df3f374065c80dd37a15f2cd1a4ebdf2222c0e8@86",
+      "label": "Power Socket Double UK",
+      "score": 1.0,
+      "center_xy": [
+        4.7637175,
+        -5.3980084999999995
+      ],
+      "size_xy": [
+        0.1603349999999999,
+        0.2899990000000008
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5df3f374065c80dd37a15f2cd1a4ebdf2222c0e8@87",
+      "label": "Power Socket Double UK",
+      "score": 1.0,
+      "center_xy": [
+        0.9394185,
+        -2.574782
+      ],
+      "size_xy": [
+        0.2899990000000001,
+        0.16033399999999975
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5df3f374065c80dd37a15f2cd1a4ebdf2222c0e8@88",
+      "label": "Power Socket Double UK",
+      "score": 1.0,
+      "center_xy": [
+        -1.589871,
+        -2.564782
+      ],
+      "size_xy": [
+        0.29000000000000004,
+        0.1603340000000002
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "89181c03caf21d1d90ee760ed5ab3986f462f698@89",
+      "label": "table",
+      "score": 1.0,
+      "center_xy": [
+        -0.5871025,
+        3.973917
+      ],
+      "size_xy": [
+        1.172877,
+        3.075332
+      ],
+      "theta": 0.0,
+      "labels": [
+        "table",
+        "Daphne Glass Dining Table"
+      ]
+    },
+    {
+      "id": "5e5a5f3bac797d41019e16c379cede504780abd7@90",
+      "label": "chair",
+      "score": 1.0,
+      "center_xy": [
+        7.654994,
+        -2.11003
+      ],
+      "size_xy": [
+        0.6681699999999999,
+        0.572508
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chair",
+        "Kolding Vegan Leather Low Back Desk Chair, White"
+      ]
+    },
+    {
+      "id": "10fbb1b128e2609be03e6885809cf491b65a29ca@91",
+      "label": "chair",
+      "score": 1.0,
+      "center_xy": [
+        6.56897,
+        5.09143
+      ],
+      "size_xy": [
+        0.5721259999999999,
+        0.6234260000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chair",
+        "Madison Park Oda Rounded Back Dining Side Chair, Charcoal"
+      ]
+    },
+    {
+      "id": "f136b5e672caff760c6c478c876b4b63f30a5dde@92",
+      "label": "wall_lamp",
+      "score": 1.0,
+      "center_xy": [
+        3.7748975,
+        6.44323
+      ],
+      "size_xy": [
+        0.1396149999999996,
+        0.3557819999999996
+      ],
+      "theta": 0.0,
+      "labels": [
+        "wall_lamp",
+        "Lennon Sconce With White Shades"
+      ]
+    },
+    {
+      "id": "f136b5e672caff760c6c478c876b4b63f30a5dde@93",
+      "label": "wall_lamp",
+      "score": 1.0,
+      "center_xy": [
+        3.7748975,
+        8.8484695
+      ],
+      "size_xy": [
+        0.1396149999999996,
+        0.35578100000000035
+      ],
+      "theta": 0.0,
+      "labels": [
+        "wall_lamp",
+        "Lennon Sconce With White Shades"
+      ]
+    },
+    {
+      "id": "79cfc3d580ec17868ff9f6a06da00169981c2c55@94",
+      "label": "chair",
+      "score": 1.0,
+      "center_xy": [
+        -1.3635495,
+        2.9709405
+      ],
+      "size_xy": [
+        0.580597,
+        0.5207390000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chair",
+        "Amos Dining Side Chair"
+      ]
+    },
+    {
+      "id": "79cfc3d580ec17868ff9f6a06da00169981c2c55@95",
+      "label": "chair",
+      "score": 1.0,
+      "center_xy": [
+        -1.3709295,
+        3.63668
+      ],
+      "size_xy": [
+        0.580597,
+        0.52074
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chair",
+        "Amos Dining Side Chair"
+      ]
+    },
+    {
+      "id": "79cfc3d580ec17868ff9f6a06da00169981c2c55@96",
+      "label": "chair",
+      "score": 1.0,
+      "center_xy": [
+        -1.3772895,
+        4.26891
+      ],
+      "size_xy": [
+        0.580597,
+        0.52074
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chair",
+        "Amos Dining Side Chair"
+      ]
+    },
+    {
+      "id": "79cfc3d580ec17868ff9f6a06da00169981c2c55@97",
+      "label": "chair",
+      "score": 1.0,
+      "center_xy": [
+        -1.3772895,
+        4.90114
+      ],
+      "size_xy": [
+        0.580597,
+        0.52074
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chair",
+        "Amos Dining Side Chair"
+      ]
+    },
+    {
+      "id": "79cfc3d580ec17868ff9f6a06da00169981c2c55@98",
+      "label": "chair",
+      "score": 1.0,
+      "center_xy": [
+        -0.56127,
+        2.3186205
+      ],
+      "size_xy": [
+        0.52074,
+        0.580597
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chair",
+        "Amos Dining Side Chair"
+      ]
+    },
+    {
+      "id": "79cfc3d580ec17868ff9f6a06da00169981c2c55@99",
+      "label": "chair",
+      "score": 1.0,
+      "center_xy": [
+        0.1633195,
+        2.98003
+      ],
+      "size_xy": [
+        0.580597,
+        0.52074
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chair",
+        "Amos Dining Side Chair"
+      ]
+    },
+    {
+      "id": "79cfc3d580ec17868ff9f6a06da00169981c2c55@100",
+      "label": "chair",
+      "score": 1.0,
+      "center_xy": [
+        0.16495949999999998,
+        3.62911
+      ],
+      "size_xy": [
+        0.580597,
+        0.52074
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chair",
+        "Amos Dining Side Chair"
+      ]
+    },
+    {
+      "id": "79cfc3d580ec17868ff9f6a06da00169981c2c55@101",
+      "label": "chair",
+      "score": 1.0,
+      "center_xy": [
+        0.1627095,
+        4.28641
+      ],
+      "size_xy": [
+        0.580597,
+        0.52074
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chair",
+        "Amos Dining Side Chair"
+      ]
+    },
+    {
+      "id": "79cfc3d580ec17868ff9f6a06da00169981c2c55@102",
+      "label": "chair",
+      "score": 1.0,
+      "center_xy": [
+        0.1807595,
+        4.95108
+      ],
+      "size_xy": [
+        0.580597,
+        0.52074
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chair",
+        "Amos Dining Side Chair"
+      ]
+    },
+    {
+      "id": "79cfc3d580ec17868ff9f6a06da00169981c2c55@103",
+      "label": "chair",
+      "score": 1.0,
+      "center_xy": [
+        -0.54753,
+        5.59949
+      ],
+      "size_xy": [
+        0.52074,
+        0.5805980000000002
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chair",
+        "Amos Dining Side Chair"
+      ]
+    },
+    {
+      "id": "22c78acc789ce802af372af9dca938a1c08c5f16@104",
+      "label": "bottle",
+      "score": 1.0,
+      "center_xy": [
+        -1.9401605,
+        1.2291015
+      ],
+      "size_xy": [
+        0.0852710000000001,
+        0.08543900000000004
+      ],
+      "theta": 0.0,
+      "labels": [
+        "bottle",
+        "Natural Flair - Moet Chandon"
+      ]
+    },
+    {
+      "id": "xxxxed731722xceb4x4be0x8226x59294aacdf10@105",
+      "label": "bowl",
+      "score": 1.0,
+      "center_xy": [
+        -1.8957899999999999,
+        -0.51048
+      ],
+      "size_xy": [
+        0.19903999999999988,
+        0.19904
+      ],
+      "theta": 0.0,
+      "labels": [
+        "bowl",
+        "Large Dog Water Bowl"
+      ]
+    },
+    {
+      "id": "xxxxed731722xceb4x4be0x8226x59294aacdf10@106",
+      "label": "bowl",
+      "score": 1.0,
+      "center_xy": [
+        -1.8957899999999999,
+        -0.31144
+      ],
+      "size_xy": [
+        0.19903999999999988,
+        0.19904
+      ],
+      "theta": 0.0,
+      "labels": [
+        "bowl",
+        "Large Dog Water Bowl"
+      ]
+    },
+    {
+      "id": "xxxxed731722xceb4x4be0x8226x59294aacdf10@107",
+      "label": "bowl",
+      "score": 1.0,
+      "center_xy": [
+        -1.8834499999999998,
+        0.0451
+      ],
+      "size_xy": [
+        0.19903999999999988,
+        0.19904
+      ],
+      "theta": 0.0,
+      "labels": [
+        "bowl",
+        "Large Dog Water Bowl"
+      ]
+    },
+    {
+      "id": "xxxxed731722xceb4x4be0x8226x59294aacdf10@108",
+      "label": "bowl",
+      "score": 1.0,
+      "center_xy": [
+        -1.8834499999999998,
+        0.24414000000000002
+      ],
+      "size_xy": [
+        0.19903999999999988,
+        0.19904000000000002
+      ],
+      "theta": 0.0,
+      "labels": [
+        "bowl",
+        "Large Dog Water Bowl"
+      ]
+    },
+    {
+      "id": "8ac08422ca27a442ec61177d7419e94e36809719@109",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        3.5910865000000003,
+        6.1161275
+      ],
+      "size_xy": [
+        0.6572270000000002,
+        0.6565969999999997
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Grass Tin, Large"
+      ]
+    },
+    {
+      "id": "8f9440cad20bac4f3a17cef6a3b34879c75c26d5@110",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        2.3876,
+        6.1419605
+      ],
+      "size_xy": [
+        0.3160940000000001,
+        0.31906699999999955
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Red Tulip Water Garden"
+      ]
+    },
+    {
+      "id": "fd8e6858ced0ffa64b22da9b8e0c5932e706b24a@111",
+      "label": "Shoe Box Kd - Black",
+      "score": 1.0,
+      "center_xy": [
+        7.3180295,
+        0.14252
+      ],
+      "size_xy": [
+        0.324611,
+        0.402966
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "f8c471802c4fd0622b2367a4f2ae7c58652aece7@112",
+      "label": "Silver Globe, Dia. 13cm",
+      "score": 1.0,
+      "center_xy": [
+        6.809179,
+        -2.76846
+      ],
+      "size_xy": [
+        0.19067400000000045,
+        0.20506199999999986
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "fc71f5447c513b19a3c7218beb81ffdd47423173@113",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        3.8643995,
+        -7.960831
+      ],
+      "size_xy": [
+        1.9936290000000003,
+        0.23150399999999927
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Slatted Blinds"
+      ]
+    },
+    {
+      "id": "b835bfc799493093b94fa8966d9f22d6f513acfa@114",
+      "label": "mirror",
+      "score": 1.0,
+      "center_xy": [
+        6.5641099999999994,
+        5.7662405
+      ],
+      "size_xy": [
+        1.2242799999999994,
+        0.04318099999999969
+      ],
+      "theta": 0.0,
+      "labels": [
+        "mirror",
+        "HEIGHTS MIRROR"
+      ]
+    },
+    {
+      "id": "de123db78af8441c9abd5b45acb63fca224d493f@115",
+      "label": "WOOD WINE CRATE",
+      "score": 1.0,
+      "center_xy": [
+        3.73041,
+        12.503649500000002
+      ],
+      "size_xy": [
+        0.22860000000000014,
+        0.45713899999999974
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "62d5b81040a4546e5fda73df2e6a9648eb6ceb52@116",
+      "label": "table",
+      "score": 1.0,
+      "center_xy": [
+        6.57378,
+        5.5250699999999995
+      ],
+      "size_xy": [
+        1.5219579999999997,
+        0.5255219999999996
+      ],
+      "theta": 0.0,
+      "labels": [
+        "table",
+        "Adele 7 Dressing Table-Light Cream-Gold"
+      ]
+    },
+    {
+      "id": "d08e3e468ded4cf5d92e6f42c1eb56b37c9c360e@117",
+      "label": "soap_dispenser",
+      "score": 1.0,
+      "center_xy": [
+        4.8861229999999995,
+        1.15296
+      ],
+      "size_xy": [
+        0.0827940000000007,
+        0.08204600000000006
+      ],
+      "theta": 0.0,
+      "labels": [
+        "soap_dispenser",
+        "Archie Soap Dispenser"
+      ]
+    },
+    {
+      "id": "b7fcaf9b0e97c16c5db7a507f9929ef8599a2113@118",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xy": [
+        4.656750000000001,
+        0.7502800000000001
+      ],
+      "size_xy": [
+        0.6471159999999996,
+        1.8227039999999999
+      ],
+      "theta": 0.0,
+      "labels": [
+        "cabinet",
+        "Kitchen Wall cabinet"
+      ]
+    },
+    {
+      "id": "b7fcaf9b0e97c16c5db7a507f9929ef8599a2113@119",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xy": [
+        4.656750000000001,
+        2.55869
+      ],
+      "size_xy": [
+        0.6471159999999996,
+        1.788614
+      ],
+      "theta": 0.0,
+      "labels": [
+        "cabinet",
+        "Kitchen Wall cabinet"
+      ]
+    },
+    {
+      "id": "b7fcaf9b0e97c16c5db7a507f9929ef8599a2113@120",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xy": [
+        4.0859995,
+        3.1294399999999998
+      ],
+      "size_xy": [
+        1.7886129999999998,
+        0.647116
+      ],
+      "theta": 0.0,
+      "labels": [
+        "cabinet",
+        "Kitchen Wall cabinet"
+      ]
+    },
+    {
+      "id": "b7fcaf9b0e97c16c5db7a507f9929ef8599a2113@121",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xy": [
+        2.6942495,
+        3.1294399999999998
+      ],
+      "size_xy": [
+        1.788613,
+        0.647116
+      ],
+      "theta": 0.0,
+      "labels": [
+        "cabinet",
+        "Kitchen Wall cabinet"
+      ]
+    },
+    {
+      "id": "b7fcaf9b0e97c16c5db7a507f9929ef8599a2113@122",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xy": [
+        4.0859995,
+        -0.39468949999999997
+      ],
+      "size_xy": [
+        1.7886129999999998,
+        0.647115
+      ],
+      "theta": 0.0,
+      "labels": [
+        "cabinet",
+        "Kitchen Wall cabinet"
+      ]
+    },
+    {
+      "id": "def0e2f486f734a804a6b11ea6c45d91a475facd@123",
+      "label": "range_hood",
+      "score": 1.0,
+      "center_xy": [
+        3.4842,
+        3.21801
+      ],
+      "size_xy": [
+        0.5999999999999996,
+        0.46999999999999975
+      ],
+      "theta": 0.0,
+      "labels": [
+        "range_hood",
+        "AEG EFT60003X Cooker Hood"
+      ]
+    },
+    {
+      "id": "e99a85fea330ded959c456ac63824608c55c4a2b@124",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xy": [
+        -2.00773,
+        1.431587
+      ],
+      "size_xy": [
+        0.06854400000000016,
+        0.06858999999999993
+      ],
+      "theta": 0.0,
+      "labels": [
+        "drinkware",
+        "Champagne flutes"
+      ]
+    },
+    {
+      "id": "392798e1dadf0e543fb9fc66d550385b3611ab56@125",
+      "label": "DRESSED - MW21 set of four",
+      "score": 1.0,
+      "center_xy": [
+        2.840445,
+        3.4006999999999996
+      ],
+      "size_xy": [
+        0.4451459999999998,
+        0.10456200000000004
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "31af0878469759544453aa0414303d93f483f37e@126",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        6.7826795,
+        5.713198
+      ],
+      "size_xy": [
+        0.0630809999999995,
+        0.06292999999999971
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "AESOP Parsley Seed Facial Cleanser"
+      ]
+    },
+    {
+      "id": "14253175da7cf53afa64c928c14bd4b803178bc6@127",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        6.7270195,
+        5.7207799999999995
+      ],
+      "size_xy": [
+        0.048227000000000686,
+        0.04773599999999956
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "AESOP Sage & Cedar Scalp Treatment"
+      ]
+    },
+    {
+      "id": "9711bd0b0b601929c42018b07894ddc739e09e94@128",
+      "label": "AESOP Toiletries",
+      "score": 1.0,
+      "center_xy": [
+        6.8888295,
+        5.64955
+      ],
+      "size_xy": [
+        0.14921099999999932,
+        0.19022199999999945
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "a3b8a2003e4036f7ea2086dbdd0f381d2b4c8315@129",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        7.186615,
+        5.7480385
+      ],
+      "size_xy": [
+        0.05348400000000009,
+        0.07713899999999985
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "Shower Gel Thanglo"
+      ]
+    },
+    {
+      "id": "ea0200d78c2699f025cc8ec86930842e214bd6d2@130",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        4.8235399999999995,
+        -0.27982
+      ],
+      "size_xy": [
+        0.3028020000000007,
+        0.313614
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Interior Plant"
+      ]
+    },
+    {
+      "id": "4d6dcddccd57679336c7ac8753aecaf83b3fd5fa@131",
+      "label": "Waschplatz/zone lavabo Vanity Pathos 120 x 35 x 55.5 cm schwarz/noir",
+      "score": 1.0,
+      "center_xy": [
+        4.568547000000001,
+        -4.77369
+      ],
+      "size_xy": [
+        0.5506599999999997,
+        1.2000000000000002
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "4d6dcddccd57679336c7ac8753aecaf83b3fd5fa@132",
+      "label": "Waschplatz/zone lavabo Vanity Pathos 120 x 35 x 55.5 cm schwarz/noir",
+      "score": 1.0,
+      "center_xy": [
+        4.568547000000001,
+        -5.9736899999999995
+      ],
+      "size_xy": [
+        0.5506599999999997,
+        1.2000000000000002
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "9df21e4c08680b11af0501f324499f493365b61e@133",
+      "label": "Chancery Towel Ring, Rose Gold",
+      "score": 1.0,
+      "center_xy": [
+        1.9974880000000002,
+        4.15962
+      ],
+      "size_xy": [
+        0.09509600000000007,
+        0.1935639999999994
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "9df21e4c08680b11af0501f324499f493365b61e@134",
+      "label": "Chancery Towel Ring, Rose Gold",
+      "score": 1.0,
+      "center_xy": [
+        4.796332,
+        -4.03753
+      ],
+      "size_xy": [
+        0.09509600000000074,
+        0.1935640000000003
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "39443cc1873a0b4954ce7a2c357f296e98bf86a7@135",
+      "label": "counter",
+      "score": 1.0,
+      "center_xy": [
+        2.6141094999999996,
+        1.41441
+      ],
+      "size_xy": [
+        1.047437,
+        1.57436
+      ],
+      "theta": 0.0,
+      "labels": [
+        "counter",
+        "Island, Classic"
+      ]
+    },
+    {
+      "id": "823341ebc26f9f326b379a0d9500591cf85d68ff@136",
+      "label": "wall_lamp",
+      "score": 1.0,
+      "center_xy": [
+        3.765235,
+        11.00609
+      ],
+      "size_xy": [
+        0.1589179999999999,
+        0.41999999999999993
+      ],
+      "theta": 0.0,
+      "labels": [
+        "wall_lamp",
+        "Litho Picture Light, Steel"
+      ]
+    },
+    {
+      "id": "47f2e1e508235ae3c63f61efadf14f569171759f@137",
+      "label": "shoes",
+      "score": 1.0,
+      "center_xy": [
+        5.965533,
+        0.37232200000000004
+      ],
+      "size_xy": [
+        0.2954080000000001,
+        0.26783
+      ],
+      "theta": 0.0,
+      "labels": [
+        "shoes",
+        "Shoes - Boots"
+      ]
+    },
+    {
+      "id": "434be541829311c1e861a7526fd9ece25c2b072d@138",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        7.392784499999999,
+        -7.9654765
+      ],
+      "size_xy": [
+        1.6660689999999994,
+        0.03591899999999981
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "434be541829311c1e861a7526fd9ece25c2b072d@139",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        5.784243,
+        -7.9654765
+      ],
+      "size_xy": [
+        1.5806400000000007,
+        0.03591899999999981
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "434be541829311c1e861a7526fd9ece25c2b072d@140",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        -2.059926,
+        4.45852
+      ],
+      "size_xy": [
+        0.03591999999999995,
+        2.0024719999999996
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "434be541829311c1e861a7526fd9ece25c2b072d@141",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        -2.059926,
+        2.46711
+      ],
+      "size_xy": [
+        0.03591999999999995,
+        2.002472
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "434be541829311c1e861a7526fd9ece25c2b072d@142",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        -2.059926,
+        6.4584395
+      ],
+      "size_xy": [
+        0.03591999999999995,
+        2.002473
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "434be541829311c1e861a7526fd9ece25c2b072d@143",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        -2.059926,
+        8.4555405
+      ],
+      "size_xy": [
+        0.03591999999999995,
+        2.002473000000001
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "434be541829311c1e861a7526fd9ece25c2b072d@144",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        -2.059926,
+        10.41855
+      ],
+      "size_xy": [
+        0.03591999999999995,
+        2.002472000000001
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "434be541829311c1e861a7526fd9ece25c2b072d@145",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        -2.059926,
+        12.4071295
+      ],
+      "size_xy": [
+        0.03591999999999995,
+        2.0024729999999984
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "434be541829311c1e861a7526fd9ece25c2b072d@146",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        -2.0599265,
+        13.948293
+      ],
+      "size_xy": [
+        0.03591899999999981,
+        1.073550000000001
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "434be541829311c1e861a7526fd9ece25c2b072d@147",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        -2.059926,
+        0.47571
+      ],
+      "size_xy": [
+        0.03591999999999995,
+        2.002472
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "434be541829311c1e861a7526fd9ece25c2b072d@148",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xy": [
+        -2.0599265,
+        -1.607572
+      ],
+      "size_xy": [
+        0.03591899999999981,
+        1.4740920000000002
+      ],
+      "theta": 0.0,
+      "labels": [
+        "curtain",
+        "Roman Blinds"
+      ]
+    },
+    {
+      "id": "4552d971acc237a0c1f568d7093740bef1592fd1@149",
+      "label": "trashcan",
+      "score": 1.0,
+      "center_xy": [
+        3.32581,
+        0.93128
+      ],
+      "size_xy": [
+        0.3759540000000001,
+        0.40090800000000004
+      ],
+      "theta": 0.0,
+      "labels": [
+        "trashcan",
+        "38L Rectangular Pedal Bin"
+      ]
+    },
+    {
+      "id": "317294cbd71b7a56a3a38f6d5b912a19bf04ed81@150",
+      "label": "chest_of_drawers",
+      "score": 1.0,
+      "center_xy": [
+        3.0798995,
+        -6.16692
+      ],
+      "size_xy": [
+        0.42464900000000005,
+        0.4655199999999997
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chest_of_drawers",
+        "TRASH Bespoke Chest of Drawers"
+      ]
+    },
+    {
+      "id": "24dcf1f353b54d43bf12bcf17266f2685091318d@151",
+      "label": "Frosted pen pot",
+      "score": 1.0,
+      "center_xy": [
+        6.8619195,
+        -1.5611899999999999
+      ],
+      "size_xy": [
+        0.14577500000000043,
+        0.14900999999999986
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "47da03c52e0003488334f8dea02c926cbe66029c@152",
+      "label": "table",
+      "score": 1.0,
+      "center_xy": [
+        6.9975594999999995,
+        -2.11241
+      ],
+      "size_xy": [
+        0.6467009999999993,
+        1.5999999999999999
+      ],
+      "theta": 0.0,
+      "labels": [
+        "table",
+        "Portico High Table"
+      ]
+    },
+    {
+      "id": "26dcf95ab84ca558a39163e8d4843edd19a7e47c@153",
+      "label": "picture",
+      "score": 1.0,
+      "center_xy": [
+        2.92072,
+        5.760778999999999
+      ],
+      "size_xy": [
+        0.8064500000000003,
+        0.05410199999999943
+      ],
+      "theta": 0.0,
+      "labels": [
+        "picture",
+        "Balance Framed Print III"
+      ]
+    },
+    {
+      "id": "6362fc0c5cc9d89330af89a9c19783a1ea2b0ee8@154",
+      "label": "bed",
+      "score": 1.0,
+      "center_xy": [
+        -0.4405085,
+        -3.4696325000000003
+      ],
+      "size_xy": [
+        2.268355,
+        1.9500350000000002
+      ],
+      "theta": 0.0,
+      "labels": [
+        "bed",
+        "Britte California King Upholstered Headboard With Metal Bed Frame"
+      ]
+    },
+    {
+      "id": "983e167916e12d920189d565ee5a3efb8419dd3b@155",
+      "label": "table",
+      "score": 1.0,
+      "center_xy": [
+        2.7575000000000003,
+        6.157881
+      ],
+      "size_xy": [
+        1.2192000000000003,
+        0.4400919999999999
+      ],
+      "theta": 0.0,
+      "labels": [
+        "table",
+        "Martha Stewart Holls 48'' Console Table"
+      ]
+    },
+    {
+      "id": "8e211df77ce701b47ef83dc1f8841266e12b8942@156",
+      "label": "Power Socket Grounded",
+      "score": 1.0,
+      "center_xy": [
+        2.5725695,
+        -7.0744975
+      ],
+      "size_xy": [
+        0.2900309999999999,
+        0.1600109999999999
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "aa401a7ca198098ed9b730adcfdd69b74024a448@157",
+      "label": "Rubber Hex Dumbbell Pairs 2.5KG",
+      "score": 1.0,
+      "center_xy": [
+        7.7706695,
+        -5.041883
+      ],
+      "size_xy": [
+        0.2140789999999999,
+        0.233638
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "aa401a7ca198098ed9b730adcfdd69b74024a448@158",
+      "label": "Rubber Hex Dumbbell Pairs 2.5KG",
+      "score": 1.0,
+      "center_xy": [
+        7.76141,
+        -4.8082425
+      ],
+      "size_xy": [
+        0.21408000000000005,
+        0.23363700000000076
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "d92f26c58b92c75b976b5b95feb1bc0d1039e7b0@159",
+      "label": "table",
+      "score": 1.0,
+      "center_xy": [
+        0.52974,
+        12.4678605
+      ],
+      "size_xy": [
+        1.1940739999999999,
+        1.1718890000000002
+      ],
+      "theta": 0.0,
+      "labels": [
+        "table",
+        "47 Inch Metal + Brown Wood Live Edge Coffee Table"
+      ]
+    },
+    {
+      "id": "dc3ac0c3aa4a47cbcd5348e4a7d3fec88e925862@160",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        5.48255,
+        5.2871495
+      ],
+      "size_xy": [
+        0.7949120000000001,
+        0.7864869999999993
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Bayleaf Topiary in Pot"
+      ]
+    },
+    {
+      "id": "889ffbb4c8d12790d2e2e1f0d525577f0e525d7d@161",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        -0.6096305,
+        3.8460900000000002
+      ],
+      "size_xy": [
+        0.740979,
+        0.7994720000000002
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Delphinium Water Garden"
+      ]
+    },
+    {
+      "id": "72a9317c0c78fcd7ac2d8a89776e4dcdf5a16239@162",
+      "label": "floor_lamp",
+      "score": 1.0,
+      "center_xy": [
+        2.105,
+        14.6138565
+      ],
+      "size_xy": [
+        0.5305840000000002,
+        0.5322569999999995
+      ],
+      "theta": 0.0,
+      "labels": [
+        "floor_lamp",
+        "Surveyor's Floor Lamp"
+      ]
+    },
+    {
+      "id": "xxxx4182074fx5da9x4d19xac7dx30196c9cf450@163",
+      "label": "Lounge Silhouette Latte Medium Dog Bed",
+      "score": 1.0,
+      "center_xy": [
+        -1.7613,
+        13.116469
+      ],
+      "size_xy": [
+        0.6858,
+        0.8127999999999993
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "05424dff4ffe89ee53ea1a6c74d6ed24da66433a@164",
+      "label": "shoes",
+      "score": 1.0,
+      "center_xy": [
+        7.1747775,
+        -0.247846
+      ],
+      "size_xy": [
+        0.18963899999999967,
+        0.224058
+      ],
+      "theta": 0.0,
+      "labels": [
+        "shoes",
+        "Shoes - Stiletto"
+      ]
+    },
+    {
+      "id": "05d2b8c3e805112b21d05d42054c4a9288c7d130@165",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        0.48225799999999996,
+        12.577544
+      ],
+      "size_xy": [
+        0.263824,
+        0.2114799999999999
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Lotus flower arrangement"
+      ]
+    },
+    {
+      "id": "b23344ca2cd68c5c078df7d87d5caa7fef2c6024@166",
+      "label": "Tefal 4-in-1 Cooker, Electronic, RK70111",
+      "score": 1.0,
+      "center_xy": [
+        4.8288530000000005,
+        2.8694105
+      ],
+      "size_xy": [
+        0.2884859999999998,
+        0.27673900000000007
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "b6ec8f40a7e189e29dab623aeb9efac53de71809@167",
+      "label": "stool",
+      "score": 1.0,
+      "center_xy": [
+        2.620341,
+        13.036258499999999
+      ],
+      "size_xy": [
+        0.9252800000000003,
+        0.6833210000000012
+      ],
+      "theta": 0.0,
+      "labels": [
+        "stool",
+        "Piano stool with cushion"
+      ]
+    },
+    {
+      "id": "a298b94793fcfd8ec680c786d8eee884610455b1@168",
+      "label": "trashcan",
+      "score": 1.0,
+      "center_xy": [
+        8.07081,
+        -1.02325
+      ],
+      "size_xy": [
+        0.3099999999999996,
+        0.31000000000000005
+      ],
+      "theta": 0.0,
+      "labels": [
+        "trashcan",
+        "Essey Bin Bin Paper Bin"
+      ]
+    },
+    {
+      "id": "1eb36fba48eb1f378fcbebaf74f30e3dcc5021de@169",
+      "label": "bottle",
+      "score": 1.0,
+      "center_xy": [
+        -1.9401605,
+        1.1436614999999999
+      ],
+      "size_xy": [
+        0.0852710000000001,
+        0.08543899999999982
+      ],
+      "theta": 0.0,
+      "labels": [
+        "bottle",
+        "Club Lounge - Moet Chandon"
+      ]
+    },
+    {
+      "id": "1569d731e084976cdc7df28661717da5563ef057@170",
+      "label": "Headboard - double",
+      "score": 1.0,
+      "center_xy": [
+        -0.5310995000000001,
+        -2.5643435
+      ],
+      "size_xy": [
+        2.807963,
+        0.13946699999999979
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "ef2d675f57b17ed313d8594b9976938dc0cbc38b@171",
+      "label": "Black storage jars",
+      "score": 1.0,
+      "center_xy": [
+        4.1137695,
+        -0.67526
+      ],
+      "size_xy": [
+        0.37285499999999994,
+        0.11380999999999997
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "514731fa03071a52318224f7be986fd25864a47f@172",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xy": [
+        3.386519,
+        1.42864
+      ],
+      "size_xy": [
+        3.1731540000000003,
+        4.048726
+      ],
+      "theta": 0.0,
+      "labels": [
+        "cabinet",
+        "Kitchen Corner Unit"
+      ]
+    },
+    {
+      "id": "3ae355dbebacf0ccf273b4af46e0e640eeb4a87e@173",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xy": [
+        3.48115,
+        3.1340695
+      ],
+      "size_xy": [
+        0.6005000000000003,
+        0.6378689999999998
+      ],
+      "theta": 0.0,
+      "labels": [
+        "cabinet",
+        "Kitchen Oven"
+      ]
+    },
+    {
+      "id": "469e0161dadae2828e2c667345aee977dcaa931a@174",
+      "label": "Tactile Tableware",
+      "score": 1.0,
+      "center_xy": [
+        2.6583895,
+        1.8858080000000002
+      ],
+      "size_xy": [
+        0.253749,
+        0.2538100000000001
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "d44836372348cee4bb44eefe9cdc2459f78e0ca1@175",
+      "label": "Mobile Shoe Cabinet",
+      "score": 1.0,
+      "center_xy": [
+        7.034639,
+        -0.5390520000000001
+      ],
+      "size_xy": [
+        0.46999999999999975,
+        0.35839600000000005
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "357789b947326226e42d95fd00aefb13987023c3@176",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        7.128362,
+        5.727088
+      ],
+      "size_xy": [
+        0.06297999999999959,
+        0.035198000000000285
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "Niveo Duschgel"
+      ]
+    },
+    {
+      "id": "d50d6e37d649a5d0263a6698f3cd337df02af8cf@177",
+      "label": "toaster",
+      "score": 1.0,
+      "center_xy": [
+        4.8831,
+        2.4690195
+      ],
+      "size_xy": [
+        0.17999999999999972,
+        0.31999900000000014
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toaster",
+        "Bugatti Toaster"
+      ]
+    },
+    {
+      "id": "2e0db28b9c46cb6952229edcb996bccef7503931@178",
+      "label": "tray",
+      "score": 1.0,
+      "center_xy": [
+        4.04041,
+        3.303
+      ],
+      "size_xy": [
+        0.2999999999999998,
+        0.2999999999999998
+      ],
+      "theta": 0.0,
+      "labels": [
+        "tray",
+        "Passo Tray - Large"
+      ]
+    },
+    {
+      "id": "26a38271fb04e01cc4ae5f6cabad71f37a69231b@179",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        3.6039295,
+        9.507379499999999
+      ],
+      "size_xy": [
+        0.34734900000000035,
+        0.29803900000000105
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Potted Sansevieria"
+      ]
+    },
+    {
+      "id": "26a38271fb04e01cc4ae5f6cabad71f37a69231b@180",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        -1.8132000000000001,
+        -7.75958
+      ],
+      "size_xy": [
+        0.5820140000000003,
+        0.5003400000000005
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Potted Sansevieria"
+      ]
+    },
+    {
+      "id": "cc45171d0d70742f0730eeeda8ebffdbf956854f@181",
+      "label": "Rogue Gym Mat - 25 Piece Bundle_HM0001-25",
+      "score": 1.0,
+      "center_xy": [
+        7.358699,
+        -5.77951
+      ],
+      "size_xy": [
+        1.4727800000000002,
+        0.5411200000000003
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "4b1657c70ba522ca82a8cdfa1b19b8239141e9a4@182",
+      "label": "table",
+      "score": 1.0,
+      "center_xy": [
+        3.6605600000000003,
+        11.018339999999998
+      ],
+      "size_xy": [
+        0.36830000000000007,
+        0.4444999999999997
+      ],
+      "theta": 0.0,
+      "labels": [
+        "table",
+        "Black + Gold Accent Table"
+      ]
+    },
+    {
+      "id": "78218988eaa22d4e96fbf13517ec92f8897c5a2d@183",
+      "label": "Double switch",
+      "score": 1.0,
+      "center_xy": [
+        3.1747575,
+        6.1775105
+      ],
+      "size_xy": [
+        0.1600109999999999,
+        0.16026900000000044
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "78218988eaa22d4e96fbf13517ec92f8897c5a2d@184",
+      "label": "Double switch",
+      "score": 1.0,
+      "center_xy": [
+        2.947719,
+        -4.721192500000001
+      ],
+      "size_xy": [
+        0.16026799999999986,
+        0.1600109999999999
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "78218988eaa22d4e96fbf13517ec92f8897c5a2d@185",
+      "label": "Double switch",
+      "score": 1.0,
+      "center_xy": [
+        1.2251775,
+        -2.5747489999999997
+      ],
+      "size_xy": [
+        0.1600109999999999,
+        0.16026799999999986
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "fb70790459d37a146d65ec9e2ac5c0c73c2e19ac@186",
+      "label": "stand",
+      "score": 1.0,
+      "center_xy": [
+        0.08265250000000002,
+        14.7989365
+      ],
+      "size_xy": [
+        3.284009,
+        0.4733489999999989
+      ],
+      "theta": 0.0,
+      "labels": [
+        "stand",
+        "Sussex TV cabinet"
+      ]
+    },
+    {
+      "id": "9bcdc59d9733fe74cbdce4058d33a16933e2d41f@187",
+      "label": "wall_lamp",
+      "score": 1.0,
+      "center_xy": [
+        2.93537,
+        5.72785
+      ],
+      "size_xy": [
+        0.30000000000000027,
+        0.11996800000000007
+      ],
+      "theta": 0.0,
+      "labels": [
+        "wall_lamp",
+        "AquaVive halogeen verlichting 30cm"
+      ]
+    },
+    {
+      "id": "dd74cc3b1d87e5dfdaaf597a8a0e330f60e20d84@188",
+      "label": "Wellness Ball",
+      "score": 1.0,
+      "center_xy": [
+        7.7921499999999995,
+        -7.379681
+      ],
+      "size_xy": [
+        0.6514179999999996,
+        0.6509999999999998
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "dd74cc3b1d87e5dfdaaf597a8a0e330f60e20d84@189",
+      "label": "Wellness Ball",
+      "score": 1.0,
+      "center_xy": [
+        7.7921499999999995,
+        -6.728681
+      ],
+      "size_xy": [
+        0.6514179999999996,
+        0.6509999999999998
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "2efebdcc1ba9514b0deb0dfb05951341432bd26a@190",
+      "label": "APPLE iMac 5K 27\"",
+      "score": 1.0,
+      "center_xy": [
+        6.9075285,
+        -2.084321
+      ],
+      "size_xy": [
+        0.46663299999999985,
+        0.644868
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "ec5a7b51f7301d831b35da3e857ce1e189e34cce@191",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        2.14994,
+        3.8629995
+      ],
+      "size_xy": [
+        0.6999960000000003,
+        0.8200009999999995
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Pflanze/Plante"
+      ]
+    },
+    {
+      "id": "c26b16c8dfdba6600221a57542782292c15e983b@192",
+      "label": "shower",
+      "score": 1.0,
+      "center_xy": [
+        3.8585594999999997,
+        -2.9912305
+      ],
+      "size_xy": [
+        1.9819649999999998,
+        0.993233
+      ],
+      "theta": 0.0,
+      "labels": [
+        "shower",
+        "Dusche/douche New Classic "
+      ]
+    },
+    {
+      "id": "88cc870eaace923c89c47a1c3ffd3e48afdea16f@193",
+      "label": "table",
+      "score": 1.0,
+      "center_xy": [
+        -0.7644325000000001,
+        -6.4645095
+      ],
+      "size_xy": [
+        0.629855,
+        0.6299410000000005
+      ],
+      "theta": 0.0,
+      "labels": [
+        "table",
+        "Liv Faux Marble 36 Inch Round Coffee Table, White Top /Matte Gold Base"
+      ]
+    },
+    {
+      "id": "3c163391afeb4130eadacb6ef9b6e5930329a32b@194",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        2.0048035,
+        3.2387695
+      ],
+      "size_xy": [
+        0.19461300000000015,
+        0.19461299999999992
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Potted Faux Succulent White Pot 14\""
+      ]
+    },
+    {
+      "id": "7881343e4da076434318290742c1e19a08534c3e@195",
+      "label": "Black Metal + Glass Bar Cart",
+      "score": 1.0,
+      "center_xy": [
+        -1.894982,
+        1.47869
+      ],
+      "size_xy": [
+        0.41840199999999994,
+        0.755506
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "9fabba5db21e2aa71b41ca30c03e6dd1fada44d5@196",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        0.82499,
+        -0.29351
+      ],
+      "size_xy": [
+        0.8343700000000001,
+        0.849474
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Smilax Tree in Terazzo Pot"
+      ]
+    },
+    {
+      "id": "9fabba5db21e2aa71b41ca30c03e6dd1fada44d5@197",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        -1.85643,
+        14.625019
+      ],
+      "size_xy": [
+        0.8494739999999998,
+        0.8343699999999998
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Smilax Tree in Terazzo Pot"
+      ]
+    },
+    {
+      "id": "51198537321b39f1b6e9231d4d033092aebda962@198",
+      "label": "Gold\"s Gym Punch Bag, Black, H91.5cm",
+      "score": 1.0,
+      "center_xy": [
+        5.511867499999999,
+        -4.4644325
+      ],
+      "size_xy": [
+        0.35625700000000027,
+        0.35422499999999957
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "4422f9ad0526be63566db09a1af5e697ecb5a43a@199",
+      "label": "7-piece Knife Block Set",
+      "score": 1.0,
+      "center_xy": [
+        4.5377695,
+        3.4003405
+      ],
+      "size_xy": [
+        0.22092900000000082,
+        0.10531899999999972
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "094b1d3fc836b15f77f83b52ff01922b3c28b1f3@200",
+      "label": "Brown Wolf Dog Bed Bed",
+      "score": 1.0,
+      "center_xy": [
+        -1.7019099999999998,
+        -1.6269095
+      ],
+      "size_xy": [
+        0.804578,
+        0.848255
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "31f11762cd2a9b156589cce98a562016cf75a8be@201",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        5.9207595,
+        5.63964
+      ],
+      "size_xy": [
+        0.08149500000000032,
+        0.08149399999999929
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "LAIT CORPOREL OLIVE LAVANDE BODY LOTION"
+      ]
+    },
+    {
+      "id": "2dbd13061836569068a31af0417c100360060a63@202",
+      "label": "mirror",
+      "score": 1.0,
+      "center_xy": [
+        5.000951,
+        -5.869901
+      ],
+      "size_xy": [
+        0.014143999999999934,
+        3.8939
+      ],
+      "theta": 0.0,
+      "labels": [
+        "mirror",
+        "Wall Mirror"
+      ]
+    },
+    {
+      "id": "62cc51a43d548236440ebab41dec64f6eadd625b@203",
+      "label": "Libratone Loop Sound System",
+      "score": 1.0,
+      "center_xy": [
+        -1.18274,
+        14.811532
+      ],
+      "size_xy": [
+        0.349996,
+        0.10285200000000039
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "62cc51a43d548236440ebab41dec64f6eadd625b@204",
+      "label": "Libratone Loop Sound System",
+      "score": 1.0,
+      "center_xy": [
+        1.33827,
+        14.8127125
+      ],
+      "size_xy": [
+        0.349996,
+        0.10285299999999964
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "84e0cbb4a9b491d4317707dd8cfff68afb397dce@205",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xy": [
+        4.0753699999999995,
+        -0.42191
+      ],
+      "size_xy": [
+        1.809876,
+        0.592686
+      ],
+      "theta": 0.0,
+      "labels": [
+        "cabinet",
+        "Kitchen Base Unit"
+      ]
+    },
+    {
+      "id": "b4fe943e7f321b95bcaf0e1c3adca781ba1cace3@206",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        -0.6642600000000001,
+        3.8173494999999997
+      ],
+      "size_xy": [
+        0.85045,
+        0.8570629999999997
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Artemide Pirce Mini ceiling halo"
+      ]
+    },
+    {
+      "id": "5569775f4baa61461eb81749c0e21bfb186e12e3@207",
+      "label": "toiletry",
+      "score": 1.0,
+      "center_xy": [
+        6.6863105,
+        5.666083
+      ],
+      "size_xy": [
+        0.03312500000000007,
+        0.1572079999999998
+      ],
+      "theta": 0.0,
+      "labels": [
+        "toiletry",
+        "AESOP Control"
+      ]
+    },
+    {
+      "id": "08705ce22129b92cd98a3757e6cad950c2b15689@208",
+      "label": "Accessoire 3",
+      "score": 1.0,
+      "center_xy": [
+        6.061230500000001,
+        5.6673100000000005
+      ],
+      "size_xy": [
+        0.12000499999999992,
+        0.05736200000000036
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "3ac215af85d5423c555d75704ef89eae5d2b4d40@209",
+      "label": "mirror",
+      "score": 1.0,
+      "center_xy": [
+        2.7331304999999997,
+        5.998578
+      ],
+      "size_xy": [
+        1.238381,
+        0.12149799999999988
+      ],
+      "theta": 0.0,
+      "labels": [
+        "mirror",
+        "STELLA MIRROR"
+      ]
+    },
+    {
+      "id": "578827e4adbf4e0b25b443f20500e51ecc92282b@210",
+      "label": "picture",
+      "score": 1.0,
+      "center_xy": [
+        -0.5966199999999999,
+        -2.31921
+      ],
+      "size_xy": [
+        0.9144,
+        0.050799999999999734
+      ],
+      "theta": 0.0,
+      "labels": [
+        "picture",
+        "PICTURE, DISTANT ISLAND"
+      ]
+    },
+    {
+      "id": "80806f6db5840211f0aa6c4ed93a3180a70ffb4a@211",
+      "label": "stand",
+      "score": 1.0,
+      "center_xy": [
+        3.6612185000000004,
+        6.4939184999999995
+      ],
+      "size_xy": [
+        0.31649899999999986,
+        0.3599009999999998
+      ],
+      "theta": 0.0,
+      "labels": [
+        "stand",
+        "Tolix Umbrella Holder"
+      ]
+    },
+    {
+      "id": "7c4abfaad6caa34008cf4aac249adcba013ad51b@212",
+      "label": "book",
+      "score": 1.0,
+      "center_xy": [
+        7.09827,
+        -2.522122
+      ],
+      "size_xy": [
+        0.21331200000000017,
+        0.1399840000000001
+      ],
+      "theta": 0.0,
+      "labels": [
+        "book",
+        "The Lodge - A5 Leatherbook"
+      ]
+    },
+    {
+      "id": "5dd39208b6f9445636cde76e069f678c990c5f47@213",
+      "label": "Generalmusic introduces GEM GRP800 digital grand piano",
+      "score": 1.0,
+      "center_xy": [
+        2.8974719999999996,
+        13.923484
+      ],
+      "size_xy": [
+        1.678734,
+        2.029008000000001
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "6361984802efa59ed8b1b2bafc2ca9aa91d4fe8e@214",
+      "label": "bottle",
+      "score": 1.0,
+      "center_xy": [
+        -1.8862999999999999,
+        1.36832
+      ],
+      "size_xy": [
+        0.19300800000000007,
+        0.19300799999999985
+      ],
+      "theta": 0.0,
+      "labels": [
+        "bottle",
+        "Admiral's Decanter"
+      ]
+    },
+    {
+      "id": "62b08fe4e989f15d9672478194419f44749f5b19@215",
+      "label": "Sabatier V 5 Piece Knife Block Set",
+      "score": 1.0,
+      "center_xy": [
+        4.3088595000000005,
+        3.4142495000000004
+      ],
+      "size_xy": [
+        0.23690699999999953,
+        0.07749300000000003
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "9434ebf4ba8489f4ba751d2b67688d120f822d0c@216",
+      "label": "book",
+      "score": 1.0,
+      "center_xy": [
+        0.2213,
+        12.268830000000001
+      ],
+      "size_xy": [
+        0.26403,
+        0.28166000000000047
+      ],
+      "theta": 0.0,
+      "labels": [
+        "book",
+        "Book"
+      ]
+    },
+    {
+      "id": "ea914da3fb162d3fc9d32be28ebf215dc3743a74@217",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        2.5800695,
+        1.38426
+      ],
+      "size_xy": [
+        0.10000099999999978,
+        1.1
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "chrome glass ceiling pendant light"
+      ]
+    },
+    {
+      "id": "53e9a710ba3a592ddf55b3cd2b055003614c4b1c@218",
+      "label": "chest_of_drawers",
+      "score": 1.0,
+      "center_xy": [
+        0.96873,
+        -2.702412
+      ],
+      "size_xy": [
+        0.550114,
+        0.4155979999999997
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chest_of_drawers",
+        "Melrose High Gloss 2-Drawer Night Stand"
+      ]
+    },
+    {
+      "id": "53e9a710ba3a592ddf55b3cd2b055003614c4b1c@219",
+      "label": "chest_of_drawers",
+      "score": 1.0,
+      "center_xy": [
+        -1.8291400000000002,
+        -2.702412
+      ],
+      "size_xy": [
+        0.550114,
+        0.4155979999999997
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chest_of_drawers",
+        "Melrose High Gloss 2-Drawer Night Stand"
+      ]
+    },
+    {
+      "id": "95b8150d24f5b594a700fa80fa7ced0c21dadc51@220",
+      "label": "mirror",
+      "score": 1.0,
+      "center_xy": [
+        2.4851195,
+        -5.1786505
+      ],
+      "size_xy": [
+        0.46491099999999985,
+        0.4457570000000004
+      ],
+      "theta": 0.0,
+      "labels": [
+        "mirror",
+        "Timothy Mirror"
+      ]
+    },
+    {
+      "id": "b9d409dc9ea5660568acf09addbf1c259625c345@221",
+      "label": "coffee_maker",
+      "score": 1.0,
+      "center_xy": [
+        3.3616895,
+        -0.4246025
+      ],
+      "size_xy": [
+        0.382517,
+        0.587313
+      ],
+      "theta": 0.0,
+      "labels": [
+        "coffee_maker",
+        "Kaffee-Vollautomat"
+      ]
+    },
+    {
+      "id": "529306eb57506f3b52134f9d866bd32d61f27628@222",
+      "label": "washer_dryer",
+      "score": 1.0,
+      "center_xy": [
+        4.680641,
+        5.4773835
+      ],
+      "size_xy": [
+        0.5993280000000007,
+        0.6209009999999999
+      ],
+      "theta": 0.0,
+      "labels": [
+        "washer_dryer",
+        "Dryer and Washing Machine"
+      ]
+    },
+    {
+      "id": "8637547dcbdad6644369329ff84cbb4209cfa254@223",
+      "label": "HANDWOVEN JUTE LARGE BASKET",
+      "score": 1.0,
+      "center_xy": [
+        1.8951699999999998,
+        -7.8159065
+      ],
+      "size_xy": [
+        0.552684,
+        0.3875849999999996
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "89ba3ca85be9fdeec04468df9a4f75c17d91b01b@224",
+      "label": "chest_of_drawers",
+      "score": 1.0,
+      "center_xy": [
+        2.4781225,
+        -6.47075
+      ],
+      "size_xy": [
+        0.47892699999999966,
+        1.4223999999999997
+      ],
+      "theta": 0.0,
+      "labels": [
+        "chest_of_drawers",
+        "Alton II Dresser, White"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@225",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        4.46821,
+        5.19013
+      ],
+      "size_xy": [
+        0.16827999999999932,
+        0.1760900000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@226",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        2.41581,
+        4.18496
+      ],
+      "size_xy": [
+        0.1682800000000002,
+        0.1760900000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@227",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        2.4372100000000003,
+        5.18617
+      ],
+      "size_xy": [
+        0.16827999999999976,
+        0.1760900000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@228",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        4.481569,
+        4.2367
+      ],
+      "size_xy": [
+        0.1682800000000002,
+        0.1760900000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@229",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        4.0613589999999995,
+        2.6133699999999997
+      ],
+      "size_xy": [
+        0.1682800000000002,
+        0.17608999999999986
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@230",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        4.04332,
+        0.23559000000000002
+      ],
+      "size_xy": [
+        0.1682800000000002,
+        0.17609
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@231",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        -1.3946,
+        0.0036300000000000013
+      ],
+      "size_xy": [
+        0.16827999999999999,
+        0.17609000000000002
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@232",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        -1.4286400000000001,
+        3.1432700000000002
+      ],
+      "size_xy": [
+        0.16827999999999999,
+        0.17608999999999986
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@233",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        -1.43118,
+        5.98657
+      ],
+      "size_xy": [
+        0.16827999999999999,
+        0.1760899999999994
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@234",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        -1.5025400000000002,
+        13.61091
+      ],
+      "size_xy": [
+        0.16827999999999999,
+        0.1760900000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@235",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        -1.5153699999999999,
+        9.41386
+      ],
+      "size_xy": [
+        0.16827999999999999,
+        0.1760900000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@236",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        1.4158400000000002,
+        13.664660000000001
+      ],
+      "size_xy": [
+        0.16827999999999999,
+        0.1760900000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@237",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        2.66965,
+        7.70815
+      ],
+      "size_xy": [
+        0.16827999999999976,
+        0.1760900000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@238",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        1.5238200000000002,
+        9.512
+      ],
+      "size_xy": [
+        0.16827999999999999,
+        0.1760900000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@239",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        1.7158099999999998,
+        2.56129
+      ],
+      "size_xy": [
+        0.16827999999999999,
+        0.1760900000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@240",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        1.7158099999999998,
+        0.18935000000000002
+      ],
+      "size_xy": [
+        0.16827999999999999,
+        0.17609
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@241",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        -0.63088,
+        -1.6118999999999999
+      ],
+      "size_xy": [
+        0.16827999999999999,
+        0.17609000000000008
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@242",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        6.545,
+        -2.21277
+      ],
+      "size_xy": [
+        0.16827999999999932,
+        0.17608999999999986
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@243",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        6.572519,
+        2.51091
+      ],
+      "size_xy": [
+        0.3976899999999999,
+        2.2408599999999996
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@244",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        6.5527999999999995,
+        -5.98336
+      ],
+      "size_xy": [
+        0.3976899999999999,
+        2.2408599999999996
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@245",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        2.57971,
+        -1.56947
+      ],
+      "size_xy": [
+        0.1682800000000002,
+        0.17609000000000008
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@246",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        -1.7696299999999998,
+        -3.31477
+      ],
+      "size_xy": [
+        0.16827999999999999,
+        0.17608999999999986
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@247",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        -1.7089500000000002,
+        -7.18357
+      ],
+      "size_xy": [
+        0.16827999999999999,
+        0.1760899999999994
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@248",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        2.04105,
+        -7.2042
+      ],
+      "size_xy": [
+        0.16827999999999999,
+        0.1760900000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@249",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        2.06714,
+        -3.18661
+      ],
+      "size_xy": [
+        0.16827999999999976,
+        0.1760900000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@250",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        3.916909,
+        -6.89001
+      ],
+      "size_xy": [
+        0.1682800000000002,
+        0.1760900000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "22d9946ccbe5914e3c3c7b3a2ac1d532763b768d@251",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xy": [
+        3.91953,
+        -3.3998
+      ],
+      "size_xy": [
+        0.16827999999999976,
+        0.1760900000000003
+      ],
+      "theta": 0.0,
+      "labels": [
+        "ceiling_lamp",
+        "Led SILM Slim Ceiling Light"
+      ]
+    },
+    {
+      "id": "7542d824416c774ec0e59f22be44b6b72a20bf60@252",
+      "label": "Shia Rolling File Cabinet",
+      "score": 1.0,
+      "center_xy": [
+        6.968332500000001,
+        -1.1003500000000002
+      ],
+      "size_xy": [
+        0.5882449999999997,
+        0.42412000000000005
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "55cc6c146898e7fb1c2ea66ac86b04d6566ad1a5@253",
+      "label": "bottle",
+      "score": 1.0,
+      "center_xy": [
+        -1.9665499999999998,
+        1.65743
+      ],
+      "size_xy": [
+        0.15089399999999986,
+        0.15089400000000008
+      ],
+      "theta": 0.0,
+      "labels": [
+        "bottle",
+        "New World Colossal Carafe"
+      ]
+    },
+    {
+      "id": "xxxx82261fccxf2d8x4aacxbf4axb3a0a222dbad@254",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xy": [
+        3.62757,
+        10.91037
+      ],
+      "size_xy": [
+        0.09523599999999988,
+        0.09523599999999988
+      ],
+      "theta": 0.0,
+      "labels": [
+        "drinkware",
+        "Sip Red Wine Glass"
+      ]
+    },
+    {
+      "id": "xxxx82261fccxf2d8x4aacxbf4axb3a0a222dbad@255",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xy": [
+        3.64105,
+        11.1453
+      ],
+      "size_xy": [
+        0.09523599999999988,
+        0.09523599999999988
+      ],
+      "theta": 0.0,
+      "labels": [
+        "drinkware",
+        "Sip Red Wine Glass"
+      ]
+    },
+    {
+      "id": "3e8e6a9e8fdb5aa6fc1a4656d47c1f5697c3ecfc@256",
+      "label": "picture",
+      "score": 1.0,
+      "center_xy": [
+        3.2459135,
+        9.10574
+      ],
+      "size_xy": [
+        0.798699,
+        0.059639999999999915
+      ],
+      "theta": 0.0,
+      "labels": [
+        "picture",
+        "Landscape of the City II"
+      ]
+    },
+    {
+      "id": "91238b52cec5f006f7dd6a0c7ae462ec065b93a6@257",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        2.301021,
+        -7.5489795
+      ],
+      "size_xy": [
+        1.1860819999999999,
+        1.2291489999999996
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "5 1/2' Areca Palm"
+      ]
+    },
+    {
+      "id": "bb2b13ee4153749329236d5e94041e6acd1ba653@258",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xy": [
+        2.91649,
+        1.9802494999999998
+      ],
+      "size_xy": [
+        0.4426779999999999,
+        0.4426789999999998
+      ],
+      "theta": 0.0,
+      "labels": [
+        "potted_plant",
+        "Sunflowers in Tall Glass Vase"
+      ]
+    },
+    {
+      "id": "6250e13488dff1114596ae91796c8f99242bfd3e@259",
+      "label": "carpet",
+      "score": 1.0,
+      "center_xy": [
+        6.6214935,
+        2.49479
+      ],
+      "size_xy": [
+        1.332243,
+        1.956378
+      ],
+      "theta": 0.0,
+      "labels": [
+        "carpet",
+        "FLOKATI rug"
+      ]
+    },
+    {
+      "id": "5775-12@260",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        -1.1702395,
+        -8.08475
+      ],
+      "size_xy": [
+        1.8796950000000001,
+        0.08000000000000007
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-12@261",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        0.7013595,
+        -8.08475
+      ],
+      "size_xy": [
+        1.8796950000000001,
+        0.08000000000000007
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-13@262",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        2.1825495,
+        -8.08475
+      ],
+      "size_xy": [
+        1.096725,
+        0.08000000000000007
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "4381-0@263",
+      "label": "door",
+      "score": 1.0,
+      "center_xy": [
+        3.919709,
+        7.7132000000000005
+      ],
+      "size_xy": [
+        0.23000000000000043,
+        1.79
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-14@264",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        3.8636095,
+        -8.08475
+      ],
+      "size_xy": [
+        2.005725,
+        0.08000000000000007
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-15@265",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        5.8487605,
+        -8.08475
+      ],
+      "size_xy": [
+        1.7095350000000007,
+        0.08000000000000007
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-16@266",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        7.45509,
+        -8.08475
+      ],
+      "size_xy": [
+        1.5533639999999993,
+        0.08000000000000007
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-12@267",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        -3.4102995
+      ],
+      "size_xy": [
+        0.07999999999999963,
+        1.879695
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-12@268",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        -5.2760605
+      ],
+      "size_xy": [
+        0.07999999999999963,
+        1.879695
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-12@269",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        -7.0759705
+      ],
+      "size_xy": [
+        0.07999999999999963,
+        1.879694999999999
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-17@270",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        -1.5894895
+      ],
+      "size_xy": [
+        0.07999999999999963,
+        1.4948949999999999
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-12@271",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        6.0334695
+      ],
+      "size_xy": [
+        0.07999999999999963,
+        1.879695
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-12@272",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        0.4209805
+      ],
+      "size_xy": [
+        0.07999999999999963,
+        1.879695
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-12@273",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        2.2839895
+      ],
+      "size_xy": [
+        0.07999999999999963,
+        1.8796950000000001
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-12@274",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        4.1555195000000005
+      ],
+      "size_xy": [
+        0.07999999999999963,
+        1.8796950000000003
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-12@275",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        7.9043285
+      ],
+      "size_xy": [
+        0.07999999999999963,
+        1.879694999999999
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-12@276",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        13.4989195
+      ],
+      "size_xy": [
+        0.07999999999999963,
+        1.879695
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-12@277",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        11.621779499999999
+      ],
+      "size_xy": [
+        0.07999999999999963,
+        1.879695
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "5775-12@278",
+      "label": "window",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        9.744639500000002
+      ],
+      "size_xy": [
+        0.07999999999999963,
+        1.879695
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "wall_0.096",
+      "label": "wall_0.096",
+      "score": 1.0,
+      "center_xy": [
+        0.26919000000000004,
+        -8.08475
+      ],
+      "size_xy": [
+        5.04678,
+        0.15000000000000036
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "wall_10.084",
+      "label": "wall_10.084",
+      "score": 1.0,
+      "center_xy": [
+        6.647345,
+        -8.08475
+      ],
+      "size_xy": [
+        3.45693,
+        0.15000000000000036
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "wall_11.067",
+      "label": "wall_11.067",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        -5.289680000000001
+      ],
+      "size_xy": [
+        0.1499999999999999,
+        5.74014
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "wall_13.069",
+      "label": "wall_13.069",
+      "score": 1.0,
+      "center_xy": [
+        0.870255,
+        15.1106195
+      ],
+      "size_xy": [
+        6.24891,
+        0.1499990000000011
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "wall_16.055",
+      "label": "wall_16.055",
+      "score": 1.0,
+      "center_xy": [
+        4.48751,
+        5.86283
+      ],
+      "size_xy": [
+        1.1356000000000006,
+        0.15000000000000036
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "wall_17.065",
+      "label": "wall_17.065",
+      "score": 1.0,
+      "center_xy": [
+        6.71556,
+        5.86283
+      ],
+      "size_xy": [
+        3.320499999999999,
+        0.15000000000000036
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "wall_18.059",
+      "label": "wall_18.059",
+      "score": 1.0,
+      "center_xy": [
+        8.3008095,
+        -5.289680000000001
+      ],
+      "size_xy": [
+        0.1500009999999996,
+        5.74014
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "wall_19.067",
+      "label": "wall_19.067",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        -1.60643
+      ],
+      "size_xy": [
+        0.1499999999999999,
+        1.62636
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "wall_20.060",
+      "label": "wall_20.060",
+      "score": 1.0,
+      "center_xy": [
+        -2.1792,
+        7.1961845
+      ],
+      "size_xy": [
+        0.1499999999999999,
+        15.978869000000001
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "wall_23.059",
+      "label": "wall_23.059",
+      "score": 1.0,
+      "center_xy": [
+        8.3008095,
+        2.5722899999999997
+      ],
+      "size_xy": [
+        0.1500009999999996,
+        6.73108
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "wall_24.051",
+      "label": "wall_24.051",
+      "score": 1.0,
+      "center_xy": [
+        8.3008095,
+        -1.60643
+      ],
+      "size_xy": [
+        0.1500009999999996,
+        1.62636
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "wall_4.086",
+      "label": "wall_4.086",
+      "score": 1.0,
+      "center_xy": [
+        3.9197100000000002,
+        7.536695
+      ],
+      "size_xy": [
+        0.1499999999999999,
+        3.3477299999999994
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "wall_5.085",
+      "label": "wall_5.085",
+      "score": 1.0,
+      "center_xy": [
+        3.9197100000000002,
+        12.1980895
+      ],
+      "size_xy": [
+        0.1499999999999999,
+        5.975059000000002
+      ],
+      "theta": 0.0
+    },
+    {
+      "id": "wall_8.076",
+      "label": "wall_8.076",
+      "score": 1.0,
+      "center_xy": [
+        3.85573,
+        -8.0847505
+      ],
+      "size_xy": [
+        2.1262999999999996,
+        0.1500009999999996
+      ],
+      "theta": 0.0
+    }
+  ]
+}
