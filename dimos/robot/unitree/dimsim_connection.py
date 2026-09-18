@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
-import functools
+from contextlib import ExitStack
+import threading
 from typing import Any
+import uuid
 
 from reactivex import Observable, Subject
 
 from dimos.core.global_config import GlobalConfig
-from dimos.core.transport import PubSubTransport
-from dimos.core.transport_factory import make_transport
+from dimos.core.transport import LCMTransport, PubSubTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -29,7 +29,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.dimsim.dimsim_process import DimSimProcess
 from dimos.utils.logging_config import setup_logger
 
@@ -41,6 +40,10 @@ _FOV_DEG = 46
 
 
 class DimSimConnection:
+    """Private simulator LCM input; GO2Connection owns all public outputs."""
+
+    world_frame = "world"
+
     camera_info_static: CameraInfo = CameraInfo.from_fov(
         fov_deg=_FOV_DEG,
         width=_WIDTH,
@@ -50,39 +53,71 @@ class DimSimConnection:
     )
 
     def __init__(self, global_config: GlobalConfig) -> None:
-        self._dimsim_process: DimSimProcess = DimSimProcess(global_config)
-        self._odom_transport: PubSubTransport[PoseStamped] = make_transport("/odom", PoseStamped)
-        self._tf_transport: PubSubTransport[TFMessage] = make_transport("/tf", TFMessage)
-        self._unsubscribe_odom: Callable[[], None] | None = None
+        # A fresh administratively scoped multicast group isolates each simulator
+        # from public LCM topics without a bind/release port-allocation race.
+        group = uuid.uuid4().bytes
+        self.wire_url = f"udpm://239.{192 + group[0] % 64}.{group[1]}.{group[2]}:{global_config.dimsim_port}?ttl=0"
+        self._dimsim_process = DimSimProcess(global_config, lcm_url=self.wire_url)
+        self._cmd_transport: PubSubTransport[Twist] = LCMTransport(
+            "/cmd_vel", Twist, url=self.wire_url
+        )
+        self._odom: Subject[PoseStamped] = Subject()
+        self._video: Subject[Image] = Subject()
+        self._lidar: Subject[PointCloud2] = Subject()
+        self._lowstate: Subject[Any] = Subject()
+        self._inputs: list[tuple[PubSubTransport[Any], Subject[Any]]] = [
+            (LCMTransport("/odom", PoseStamped, url=self.wire_url), self.odom_stream()),
+            (LCMTransport("/color_image", Image, url=self.wire_url), self.video_stream()),
+            (LCMTransport("/lidar", PointCloud2, url=self.wire_url), self.lidar_stream()),
+        ]
+        self._resources: ExitStack | None = None
+        self._lifecycle_lock = threading.Lock()
+        self._command_lock = threading.Lock()
+        self._command_ready = False
 
     def start(self) -> None:
-        self._dimsim_process.start()
-        self._odom_transport.start()
-        self._unsubscribe_odom = self._odom_transport.subscribe(self._handle_odom)
+        with self._lifecycle_lock:
+            if self._resources is not None:
+                return
+            with ExitStack() as resources:
+                resources.callback(self._cmd_transport.stop)
+                self._cmd_transport.start()
+                for transport, subject in self._inputs:
+                    resources.callback(transport.stop)
+                    transport.start()
+                    resources.callback(transport.subscribe(subject.on_next))
+                # Stop the producer before detaching subscribers or closing LCM.
+                resources.callback(self._dimsim_process.stop)
+                self._dimsim_process.start()
+                self._resources = resources.pop_all()
+                with self._command_lock:
+                    self._command_ready = True
 
     def stop(self) -> None:
-        if self._unsubscribe_odom is not None:
-            self._unsubscribe_odom()
-        self._odom_transport.stop()
-        self._dimsim_process.stop()
+        with self._lifecycle_lock:
+            with self._command_lock:
+                self._command_ready = False
+            resources, self._resources = self._resources, None
+            if resources is not None:
+                resources.close()
 
-    @functools.cache
-    def lidar_stream(self) -> Observable[PointCloud2]:
-        return Subject()
+    def lidar_stream(self) -> Subject[PointCloud2]:
+        return self._lidar
 
-    @functools.cache
-    def odom_stream(self) -> Observable[PoseStamped]:
-        return Subject()
+    def odom_stream(self) -> Subject[PoseStamped]:
+        return self._odom
 
-    @functools.cache
-    def video_stream(self) -> Observable[Image]:
-        return Subject()
+    def video_stream(self) -> Subject[Image]:
+        return self._video
 
-    @functools.cache
     def lowstate_stream(self) -> Observable[Any]:
-        return Subject()
+        return self._lowstate
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
+        with self._command_lock:
+            if not self._command_ready:
+                return False
+            self._cmd_transport.publish(twist)
         return True
 
     def standup(self) -> bool:
@@ -98,8 +133,7 @@ class DimSimConnection:
         return True
 
     def stop_movement(self) -> None:
-        # No webrtc deadman timer in sim; the cmd_vel timeout covers it.
-        pass
+        self.move(Twist())
 
     def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
         return True
@@ -116,8 +150,14 @@ class DimSimConnection:
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
         return {}
 
-    def _handle_odom(self, msg: PoseStamped) -> None:
-        self._tf_transport.publish(TFMessage(*_odom_to_tf(msg)))
+    def odom_to_tf(self, odom: PoseStamped, prefix: str = "") -> list[Transform]:
+        transforms = _odom_to_tf(odom)
+        if prefix:
+            for transform in transforms:
+                if transform.frame_id != odom.frame_id:
+                    transform.frame_id = f"{prefix}/{transform.frame_id}"
+                transform.child_frame_id = f"{prefix}/{transform.child_frame_id}"
+        return transforms
 
 
 def _odom_to_tf(odom: PoseStamped) -> list[Transform]:

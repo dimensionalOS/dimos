@@ -16,7 +16,7 @@ import copy
 from enum import Enum
 from importlib import resources
 import sys
-from threading import Thread
+from threading import Event, Thread
 import time
 from typing import Any, Protocol
 
@@ -44,6 +44,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.dimsim_connection import DimSimConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
@@ -150,8 +151,6 @@ def make_connection(
 
         return MujocoConnection(cfg)
     elif connection_type == "dimsim":
-        from dimos.robot.unitree.dimsim_connection import DimSimConnection
-
         return DimSimConnection(cfg)
     elif connection_type == "webrtc":
         assert ip is not None, "IP address must be provided"
@@ -303,6 +302,7 @@ class GO2Connection(Module, Camera, Pointcloud):
             aes_128_key=self.config.aes_128_key,
             velocity_api=self.config.velocity_api,
         )
+        self._camera_info_stop = Event()
 
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static
@@ -316,12 +316,23 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     @rpc
     def start(self) -> None:
+        if (
+            isinstance(self.connection, DimSimConnection)
+            and self.config.odom_frame_id != self.connection.world_frame
+        ):
+            raise ValueError(
+                "DimSim odom_frame_id must be 'world': its point clouds are world-registered"
+            )
         super().start()
         if not hasattr(self, "connection"):
             return
-        self.connection.start()
+        # Hardware subscriptions need an established connection/event loop.
+        # DimSim subjects can be wired first, before its producer starts.
+        if not isinstance(self.connection, DimSimConnection):
+            self.connection.start()
 
         def onimage(image: Image) -> None:
+            image = copy.copy(image)
             image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
             self.color_image.publish(image)
 
@@ -333,6 +344,15 @@ class GO2Connection(Module, Camera, Pointcloud):
 
         if self.config.camera:
             self.register_disposable(self.connection.video_stream().subscribe(onimage))
+        if isinstance(self.connection, DimSimConnection):
+            try:
+                self.connection.start()
+            except BaseException:
+                self.stop()
+                raise
+
+        if self.config.camera:
+            self._camera_info_stop.clear()
             self._camera_info_thread = Thread(
                 target=self.publish_camera_info,
                 daemon=True,
@@ -353,6 +373,7 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     @rpc
     def stop(self) -> None:
+        self._camera_info_stop.set()
         # Best-effort steps: teardown must always reach the WebRTC disconnect.
         try:
             self.liedown()
@@ -397,17 +418,22 @@ class GO2Connection(Module, Camera, Pointcloud):
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
+        msg = copy.copy(msg)
         msg.frame_id = self.config.odom_frame_id
         if self.config.publish_tf:
-            transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
+            transforms = (
+                self.connection.odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
+                if isinstance(self.connection, DimSimConnection)
+                else self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
+            )
             self.tf.publish(TFMessage(*transforms))
         if self.odom.transport:
             self.odom.publish(msg)
 
     def publish_camera_info(self) -> None:
-        while True:
+        while not self._camera_info_stop.is_set():
             self.camera_info.publish(self.camera_info_static)
-            time.sleep(1.0)
+            self._camera_info_stop.wait(1.0)
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
