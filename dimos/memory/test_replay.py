@@ -24,6 +24,8 @@ from dimos.memory.store.base import StreamAccessor
 if TYPE_CHECKING:
     from dimos.memory.store.sqlite import SqliteStore
 
+pytestmark = pytest.mark.macos_ci
+
 
 def _populate(store: SqliteStore, name: str, timestamps: list[float]) -> None:
     """Append integer payloads at each given ts to a named stream."""
