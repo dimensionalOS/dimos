@@ -32,12 +32,16 @@ The module exposes `preflight_rollout`, `start_rollout`, `stop_rollout`, and
 motion-free inference warmup. It never submits a trajectory. Start requires a
 successful preflight and fresh observations. Existing attached controls
 (`dimos imitation rollout`) preflight on an explicit start request. In a Quest
-blueprint, A toggles a preflighted rollout. Backend changes take effect at launch.
+blueprint, A toggles a preflighted rollout. Pressing either middle-finger grip
+stops rollout; releasing it does not restart the policy. Release both grips
+before explicitly starting again. Backend changes take effect at launch.
 
 After start, inference and execution repeat automatically. Each submitted
 trajectory begins at the observed joint state and includes the configured
-execution horizon. The coordinator rejects a moved starting state; the runtime
-waits for a newer observation before trying again. Invalid outputs, stale inputs,
+execution horizon. Execution uses the existing shared `joint_trajectory` task and its start-position
+and velocity handling. A rejected start waits for a newer observation before retrying.
+Manual arm and gripper control have higher priority than either planner or policy
+trajectories, so manual takeover aborts the active trajectory. Invalid outputs, stale inputs,
 and other trajectory errors stop rollout and cancel its trajectory. Stop clears
 backend action state. Chunk acceptance logs include backend, inference time,
 executed steps, and action frequency.
@@ -50,9 +54,8 @@ executed steps, and action frequency.
 | ABC-DiT | `top`, `left`, `right`, 14-joint state, task; official resize/pad and normalization | Predict 30 actions, execute 15 at a 0.034-second period |
 
 Both adapters return absolute joint targets in hardware order, including
-grippers. LeRobot clips to its checkpoint action statistics. The coordinator
-continues to enforce hardware limits. Cartesian or delta actions require a
-different adapter contract and are unsupported here.
+grippers. LeRobot clips to its checkpoint action statistics. Cartesian or delta actions require a different adapter contract and are
+unsupported here.
 
 ABC uses the released default sequential inference scheme. RTC is not enabled.
 `fast_inference` enables the official BF16, compile, and CUDA-graph path; warmup

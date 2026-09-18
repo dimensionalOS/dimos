@@ -698,9 +698,10 @@ def test_grip_during_inference_discards_result_without_blocking_input(
     def predict(*args: Any, **kwargs: Any) -> NDArray[np.float32]:
         predicting.set()
         assert release_prediction.wait(timeout=2)
-        return _action_chunk()[None, :]
+        return _action_chunk()
 
-    mocker.patch.object(module, "_predict", side_effect=predict)
+    assert module._loaded_policy is not None
+    mocker.patch.object(module._loaded_policy, "predict", side_effect=predict)
     module.start_rollout()
     try:
         assert predicting.wait(timeout=1)

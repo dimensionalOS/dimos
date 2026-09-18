@@ -14,16 +14,20 @@
 
 """Dual-YAM policy rollout with three RGB views and optional Quest controls."""
 
+from dataclasses import replace
+
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-from dimos.control.coordinator import TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.transport import pSHMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
-from dimos.imitation.policy.module import POLICY_ROLLOUT_TASK_NAME, policy_module
+from dimos.imitation.policy.module import policy_module
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
+from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
+    DualOpenYamCoordinator,
+)
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
     dual_openyam_webxr_tasks,
     teleop_webxr_dual_openyam,
@@ -45,16 +49,19 @@ ABC_JOINT_NAMES = [
 
 def build_dual_openyam_rollout(*, quest_control: bool = False) -> Blueprint:
     """Keep hardware wiring fixed when selecting a backend through module config."""
-    policy_task = TaskConfig(
-        name=POLICY_ROLLOUT_TASK_NAME,
-        type="trajectory",
-        priority=5,
-        joint_names=list(DUAL_OPENYAM_JOINTS),
-        params={"start_position_tolerance": 0.05},
+    tasks = (
+        dual_openyam_webxr_tasks()
+        if quest_control
+        else [joint_trajectory_task(DUAL_OPENYAM_JOINTS)]
     )
+    # Policy chunks include grippers as well as arm joints.
+    tasks = [
+        replace(task, joint_names=list(DUAL_OPENYAM_JOINTS)) if task.type == "trajectory" else task
+        for task in tasks
+    ]
     coordinator = DualOpenYamCoordinator.blueprint(
         instance_name="ControlCoordinator",
-        tasks=dual_openyam_webxr_tasks(policy_task) if quest_control else [policy_task],
+        tasks=tasks,
     )
     robot = autoconnect(teleop_webxr_dual_openyam, coordinator) if quest_control else coordinator
     mapping = {"left_wrist_image": "left", "right_wrist_image": "right", "overhead_image": "top"}
