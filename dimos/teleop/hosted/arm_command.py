@@ -38,6 +38,7 @@ from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.controller_types import Hand
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 from dimos.teleop.webxr.module import WebXRTeleopConfig
+from dimos.utils.generic import finite_number
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -219,8 +220,8 @@ class ArmCommandModule(ArmTeleopModule):
             self._send_ack(nonce, False)
             return
         try:
-            self._set_translation_scale(float(msg["scale"]))
-        except (KeyError, TypeError, ValueError):
+            self._set_translation_scale(finite_number(msg.get("scale"), "scale"))
+        except ValueError:
             self._send_ack(nonce, False)
             return
         self._send_ack(nonce, True)

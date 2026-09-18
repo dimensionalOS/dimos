@@ -19,9 +19,9 @@ protocol as the teleop web client (join -> wait connected -> bridge-datachannel
 -> negotiated cmd_unreliable channel). The robot side is the exact transport
 object the teleop-hosted-go2-transport blueprint binds to cmd_vel.
 
-Needs live-broker credentials, so it only runs when all three are set:
+Needs live-broker credentials, so it only runs when both are set:
 
-    TELEOP_API_KEY        dtk_live_... (dashboard -> New Key)
+    TELEOP_API_KEY        dimos_sk_... (Dimensional console -> API keys -> Create key)
     TELEOP_OPERATOR_TOKEN Cognito ID token of the key's owner
 
 TELEOP_ROBOT_ID is optional (the broker derives identity from the key).

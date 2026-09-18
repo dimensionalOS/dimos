@@ -9,12 +9,14 @@ set -euo pipefail
 
 python setup.py build_ext --inplace
 
-# PyO3 Rust extension modules (separate distributions installed into the venv).
+# PyO3 Rust extension modules (separate distributions installed into the venv)
+# and the rust native-module binaries the livox e2e tests spawn from target/release.
 if command -v cargo &>/dev/null; then
   maturin develop --uv -m dimos/mapping/ray_tracing/rust/py/Cargo.toml
   maturin develop --uv -m dimos/navigation/nav_3d/mls_planner/rust/py/Cargo.toml
+  cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
 else
-  echo "warning: cargo not found; skipping Rust extension builds, their tests will skip." >&2
+  echo "warning: cargo not found; skipping Rust builds, their tests will skip or fail." >&2
   echo "         Install Rust via https://rustup.rs" >&2
 fi
 

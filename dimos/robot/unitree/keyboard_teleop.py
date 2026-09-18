@@ -91,7 +91,7 @@ class KeyboardTeleop(Module):
         angular_speed: float = DEFAULT_ANGULAR_SPEED,
         boost_multiplier: float = DEFAULT_BOOST_MULTIPLIER,
         slow_multiplier: float = DEFAULT_SLOW_MULTIPLIER,
-        publish_only_when_active: bool = False,
+        publish_only_when_active: bool = True,
         disable_movement: bool = False,
         **kwargs: Any,
     ) -> None:

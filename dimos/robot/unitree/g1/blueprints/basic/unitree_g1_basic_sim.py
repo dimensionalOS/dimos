@@ -16,6 +16,7 @@
 """Basic G1 sim stack: base sensors plus sim connection and planner."""
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_primitive_no_nav import (
     unitree_g1_primitive_no_nav,
@@ -26,4 +27,5 @@ unitree_g1_basic_sim = autoconnect(
     unitree_g1_primitive_no_nav,
     G1SimConnection.blueprint(),
     ReplanningAStarPlanner.blueprint(),
+    MovementManager.blueprint(),
 )

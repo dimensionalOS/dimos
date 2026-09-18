@@ -249,8 +249,16 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
 
   // Offers reap stale latest streams opportunistically, but an idle input
   // stops offering; this interval bounds an idle stream's lifetime to just
-  // under 2x the stale window.
-  const reapTimer = setInterval(() => registry.reapAll(Date.now()), LATEST_STALE_MS);
+  // under 2x the stale window. The forced GC is what actually ends a reaped
+  // stream on Deno 2.6.10: abort() never reaches QUIC, the
+  // stream's FIN goes out when its wrapper is finalized, and without a GC
+  // per tick the viewer's uni-stream credit comes back only when V8 happens
+  // to collect - seconds to tens of seconds of frozen video. gc() exists
+  // only under --v8-flags=--expose-gc (relay_run_cmd passes it).
+  const reapTimer = setInterval(() => {
+    registry.reapAll(Date.now());
+    (globalThis as { gc?: () => void }).gc?.();
+  }, LATEST_STALE_MS);
   // A pending reap must not keep the Deno process alive after shutdown().
   Deno.unrefTimer(reapTimer);
 
