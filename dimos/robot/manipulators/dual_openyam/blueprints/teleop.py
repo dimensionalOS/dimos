@@ -78,7 +78,7 @@ _dual_openyam_webxr_task = teleop_ik_task(
 )
 
 
-def dual_openyam_webxr_tasks(*additional: TaskConfig) -> list[TaskConfig]:
+def dual_openyam_webxr_tasks() -> list[TaskConfig]:
     """Compose existing WebXR tasks with additional coordinator tasks."""
     return [
         _dual_openyam_webxr_task,
@@ -97,7 +97,6 @@ def dual_openyam_webxr_tasks(*additional: TaskConfig) -> list[TaskConfig]:
             stream_bind={"gripper_command": "right_gripper_command"},
         ),
         dual_openyam_trajectory_task(priority=10),
-        *additional,
     ]
 
 

@@ -71,6 +71,7 @@ def test_quest_composition_retains_manual_tasks_above_policy_priority():
         atom for atom in blueprint.active_blueprints if atom.name == "ControlCoordinator"
     )
     tasks = coordinator.kwargs["tasks"]
-    policy = next(task for task in tasks if task.name == "policy_rollout")
+    policy = next(task for task in tasks if task.name == "joint_trajectory")
+    assert sum(task.type == "trajectory" for task in tasks) == 1
     assert policy.joint_names == list(DUAL_OPENYAM_JOINTS)
     assert all(task.priority > policy.priority for task in tasks if task.name != policy.name)

@@ -14,6 +14,7 @@
 
 """Shared execution contract, independent of model framework dependencies."""
 
+from threading import Event
 import time
 
 import numpy as np
@@ -31,6 +32,7 @@ from dimos.imitation.policy.module import policy_module
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.testing.waiting import wait_until
 
 
@@ -57,7 +59,7 @@ def runtime(mocker):
     factory = mocker.MagicMock(Backend=mocker.Mock(return_value=backend))
     mocker.patch.object(policy_runtime, "import_module", return_value=factory)
     control = mocker.MagicMock()
-    control.list_tasks.return_value = ["policy_rollout"]
+    control.list_tasks.return_value = ["joint_trajectory"]
     control.execute_trajectory.return_value = TrajectoryExecutionResult(
         TrajectoryExecutionStatus.ACCEPTED
     )
@@ -142,3 +144,64 @@ def test_download_failure_is_reported_by_preflight_without_motion(runtime, mocke
     load.return_value = backend
     provide_observations(module)
     assert module.preflight_rollout()["policy_ready"]
+
+
+@pytest.mark.parametrize("grip", ["left_grip", "right_grip"])
+def test_grip_takeover_stops_rollout_until_explicit_restart(runtime, grip):
+    module, backend, control = runtime
+    provide_observations(module)
+    assert module.preflight_rollout()["policy_ready"]
+    module.start_rollout()
+    wait_until(lambda: control.execute_trajectory.call_count > 0, timeout=1)
+    held = Buttons()
+    setattr(held, grip, True)
+
+    module._on_teleop_buttons(held)
+    wait_until(lambda: not module.rollout_status()["active"], timeout=1)
+    assert module.start_rollout()["active"] is False
+    assert "release" in module.rollout_status()["last_error"]
+    submissions = control.execute_trajectory.call_count
+    module._on_teleop_buttons(Buttons())
+    assert module.rollout_status()["active"] is False
+    assert control.execute_trajectory.call_count == submissions
+    provide_observations(module)
+    assert module.start_rollout()["active"] is True
+    module.stop_rollout()
+
+
+def test_grip_during_inference_discards_result_without_blocking_input(runtime, mocker):
+    module, backend, control = runtime
+    provide_observations(module)
+    assert module.preflight_rollout()["policy_ready"]
+    predicting = Event()
+    release_prediction = Event()
+
+    def predict(*args, **kwargs):
+        predicting.set()
+        assert release_prediction.wait(timeout=2)
+        return np.tile([0.2, 0.3], (30, 1)).astype(np.float32)
+
+    mocker.patch.object(backend, "predict", side_effect=predict)
+    module.start_rollout()
+    try:
+        assert predicting.wait(timeout=1)
+        held = Buttons()
+        held.right_grip = True
+        module._on_teleop_buttons(held)
+        module._on_teleop_buttons(Buttons())
+        assert module._stop_event.is_set()
+        control.execute_trajectory.assert_not_called()
+    finally:
+        release_prediction.set()
+        module.stop_rollout()
+    control.execute_trajectory.assert_not_called()
+    assert module.rollout_status()["active"] is False
+
+
+def test_stopping_inactive_policy_leaves_planner_trajectory_alone(runtime):
+    module, backend, control = runtime
+    module.stop_rollout()
+    held = Buttons()
+    held.right_grip = True
+    module._on_teleop_buttons(held)
+    control.cancel_trajectory.assert_not_called()

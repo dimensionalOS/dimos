@@ -122,6 +122,7 @@ def test_camera_ports_and_runtime_survive_a_fresh_process(tmp_path):
         "top_image",
         "coordinator_joint_state",
         "button_pressed",
+        "teleop_buttons",
     }
     payload = tmp_path / "blueprint.pkl"
     payload.write_bytes(pickle.dumps(blueprint))
@@ -141,7 +142,7 @@ def test_camera_ports_and_runtime_survive_a_fresh_process(tmp_path):
     )
     assert (
         result.stdout.strip()
-        == "button_pressed,coordinator_joint_state,left_image,right_image,top_image"
+        == "button_pressed,coordinator_joint_state,left_image,right_image,teleop_buttons,top_image"
     )
 
 
