@@ -16,9 +16,10 @@ How a map is built (`make_obstacle_map.py`):
 - Only boxes a robot meets 20 cm above the floor count. Carpets, mats and shoes are below
   that; ceiling lamps, windows, pictures, mirrors and tabletop items are above it. They
   are all free space.
-- Overlapping object footprints are wrapped into one rectangle (a dining table with its
-  chairs, a bed with its nightstand) while the wrapped rectangle stays at least half solid,
-  so a group never swallows open floor.
+- Object footprints that overlap or touch (within 5 cm) are wrapped into one rectangle
+  covering all of them: a dining table with its chairs, a bed with its nightstand, a run
+  of kitchen cabinets. Pass `--min-fill 0.5` to only wrap while the rectangle stays at
+  least half solid.
 - Walls stay as their own thin rectangles, so doorways remain open.
 
 ```bash

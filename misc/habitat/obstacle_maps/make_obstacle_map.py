@@ -15,9 +15,9 @@
 """Obstacle map for one scene: unlabeled rectangles from its 3D ground-truth JSON.
 
 Keeps only boxes a robot meets at the slice height (the box spans z = 0.2 m), so
-carpets, mats and anything mounted above the robot are free space. Overlapping
-object footprints are wrapped into one rectangle as long as that rectangle stays
-mostly solid; walls stay as their own thin rectangles so doorways remain open.
+carpets, mats and anything mounted above the robot are free space. Object
+footprints that overlap or touch are wrapped into one rectangle covering all of
+them; walls stay as their own thin rectangles so doorways remain open.
 
     uv run python misc/habitat/obstacle_maps/make_obstacle_map.py \\
         misc/habitat/ground_truth/hssd/102344193.json --out misc/habitat/obstacle_maps
@@ -34,8 +34,8 @@ from pathlib import Path
 Rect = list[float]  # [min_x, min_y, max_x, max_y] in meters
 
 SLICE_HEIGHT_M = 0.2  # robot height of interest
-MIN_FILL = 0.5  # a wrapped rectangle must be at least this solid
-TOUCH_EPS = 1e-4  # intersection area below this is touching, not overlapping
+MIN_FILL = 0.0  # optional: require a wrapped rectangle to be at least this solid
+TOUCH_M = 0.05  # footprints this close count as overlapping
 WALL_LABEL = "wall"
 PADDING_M = 1.0
 
@@ -44,8 +44,11 @@ def area(r: Rect) -> float:
     return max(0.0, r[2] - r[0]) * max(0.0, r[3] - r[1])
 
 
-def intersection(a: Rect, b: Rect) -> float:
-    return area([max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])])
+def overlaps(a: Rect, b: Rect) -> bool:
+    """True when the footprints overlap or come within TOUCH_M of each other."""
+    return max(a[0], b[0]) - TOUCH_M < min(a[2], b[2]) and max(a[1], b[1]) - TOUCH_M < min(
+        a[3], b[3]
+    )
 
 
 def union(a: Rect, b: Rect) -> Rect:
@@ -81,7 +84,7 @@ def footprints(view: dict, slice_height: float) -> tuple[list[Rect], list[Rect],
 
 
 def wrap(objects: list[Rect], min_fill: float) -> list[tuple[Rect, int]]:
-    """Merge overlapping footprints while the wrapping rectangle stays mostly solid."""
+    """Wrap overlapping or touching footprints into one rectangle covering all of them."""
     clusters: list[tuple[Rect, list[Rect]]] = []
     for r in objects:
         box, members = list(r), [r]
@@ -89,10 +92,10 @@ def wrap(objects: list[Rect], min_fill: float) -> list[tuple[Rect, int]]:
         while merged:
             merged = False
             for k, (cb, cm) in enumerate(clusters):
-                if intersection(box, cb) <= TOUCH_EPS:
+                if not overlaps(box, cb):
                     continue
                 ub = union(box, cb)
-                if union_area(members + cm) / area(ub) < min_fill:
+                if min_fill > 0 and union_area(members + cm) / area(ub) < min_fill:
                     continue
                 box, members = ub, members + cm
                 del clusters[k]
@@ -136,7 +139,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("source", type=Path, help="3D ground-truth JSON of one scene")
     parser.add_argument("--out", type=Path, default=Path(__file__).parent, help="output directory")
     parser.add_argument("--slice-height", type=float, default=SLICE_HEIGHT_M)
-    parser.add_argument("--min-fill", type=float, default=MIN_FILL)
+    parser.add_argument(
+        "--min-fill",
+        type=float,
+        default=MIN_FILL,
+        help="only wrap while the rectangle stays at least this solid (0 = always wrap)",
+    )
     args = parser.parse_args(argv)
 
     view = json.loads(args.source.read_text())
