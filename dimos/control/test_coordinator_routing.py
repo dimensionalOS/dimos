@@ -27,7 +27,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 import threading
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -48,8 +47,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.stream import In
 from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
-from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.hardware.spec import JointLimits
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -161,24 +158,8 @@ def _streaming_coordinator(make_coordinator):
             TaskConfig(name="vel1", type="velocity", joint_names=ARM_JOINTS),
         ]
     )
-    _add_arm_hardware(coordinator)
     coordinator.start()
     return coordinator, taps
-
-
-def _add_arm_hardware(coordinator: ControlCoordinator) -> None:
-    adapter = MagicMock(spec=ManipulatorAdapter)
-    adapter.get_limits.return_value = JointLimits(
-        position_lower=[-10.0] * len(ARM_JOINTS),
-        position_upper=[10.0] * len(ARM_JOINTS),
-        velocity_max=[10.0] * len(ARM_JOINTS),
-    )
-    component = HardwareComponent(
-        hardware_id="arm",
-        hardware_type=HardwareType.MANIPULATOR,
-        joints=ARM_JOINTS,
-    )
-    coordinator.add_hardware(adapter, component)
 
 
 class TestJointCommandRouting:
@@ -515,7 +496,6 @@ class TestTwistCardContract:
 
     def test_runtime_base_add_remove_toggles_twist_subscription(self, make_coordinator):
         coordinator, taps = make_coordinator()
-        _add_arm_hardware(coordinator)
         coordinator.start()
         assert not taps["twist_command"].subscribed
 
@@ -701,14 +681,10 @@ class TestCardRoutingContract:
 
     def test_runtime_add_task_with_type_activates_routing(self, make_coordinator):
         coordinator, taps = make_coordinator()
-        _add_arm_hardware(coordinator)
         coordinator.start()
         assert not taps["joint_command"].subscribed
 
-        task = JointTrajectoryTask(
-            JointTrajectoryTaskConfig(joint_names=ARM_JOINTS),
-            hardware=coordinator._hardware,
-        )
+        task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=ARM_JOINTS))
         assert coordinator.add_task(task, task_type="trajectory")
 
         assert taps["joint_command"].subscribed

@@ -71,8 +71,9 @@ The WebXR blueprint drives both arms through one bimanual IK task. Hold both
 controllers' middle-finger grips to engage it. Releasing either grip stops arm
 output and clears both controller references. Each index-finger trigger controls
 gripper opening on the same side while that hand's grip is held. Face buttons
-remain available for other controls. Planned trajectories run at a higher
-priority and preempt streaming teleoperation.
+remain available for other controls. Manual arm and gripper control
+have higher priority than planned or policy trajectories; taking control aborts
+the active trajectory.
 
 The Damiao adapter derives angular joint limits from the official robot model.
 It clamps encoder feedback up to `0.05 rad` beyond a limit; larger excursions

@@ -47,7 +47,6 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
-    from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
 
 logger = setup_logger()
 
@@ -60,7 +59,8 @@ def joint_trajectory_task(
     start_position_tolerance: float = 0.05,
     velocity_limits: Mapping[str, float] | None = None,
 ) -> TaskConfig:
-    """Build the coordinator's default named joint-trajectory task."""
+    """Build the coordinator's single canonical joint-trajectory task."""
+    # The coordinator imports this module to recognize the canonical JTT.
     from dimos.control.coordinator import TaskConfig
 
     params: dict[str, Any] = {"start_position_tolerance": start_position_tolerance}
@@ -83,8 +83,6 @@ class TrajectoryExecutionStatus(Enum):
     INVALID_TRAJECTORY = auto()
     START_STATE_UNAVAILABLE = auto()
     START_STATE_MISMATCH = auto()
-    POSITION_LIMITS_UNAVAILABLE = auto()
-    POSITION_LIMIT_VIOLATION = auto()
     ALREADY_EXECUTING = auto()
 
 
@@ -136,8 +134,6 @@ class JointTrajectoryTaskConfig:
 
     Attributes:
         joint_names: List of joint names this task controls
-        name: Task identity used for arbitration and preemption events. The
-            canonical planner task keeps the ``joint_trajectory`` default.
         priority: Priority for arbitration (higher wins)
         start_position_tolerance: Maximum difference between current joint
             position and the first trajectory point.
@@ -149,7 +145,6 @@ class JointTrajectoryTaskConfig:
         tuple[Annotated[str, Field(min_length=1)], ...],
         BeforeValidator(_to_joint_names),
     ] = Field(min_length=1)
-    name: Annotated[str, Field(min_length=1)] = JOINT_TRAJECTORY_TASK_NAME
     priority: int = Field(default=10, strict=True)
     start_position_tolerance: float = Field(
         default=0.05,
@@ -189,21 +184,16 @@ class JointTrajectoryTask(BaseControlTask):
         >>> task.execute(my_trajectory, current_positions)
     """
 
-    def __init__(
-        self,
-        config: JointTrajectoryTaskConfig,
-        hardware: Mapping[str, ConnectedHardware | ConnectedWholeBody],
-    ) -> None:
+    def __init__(self, config: JointTrajectoryTaskConfig) -> None:
         """Initialize trajectory task.
 
         Args:
             config: Task configuration
         """
-        self._name = config.name
+        self._name = JOINT_TRAJECTORY_TASK_NAME
         self._config = config
         self._joint_names = frozenset(config.joint_names)
         self._joint_names_list = list(config.joint_names)
-        self._hardware = tuple(hardware.values())
 
         # State machine
         self._state = TrajectoryState.IDLE
@@ -395,37 +385,6 @@ class JointTrajectoryTask(BaseControlTask):
             return False
         return True
 
-    def _position_limits(self, joint_names: Sequence[str]) -> dict[str, tuple[float, float]]:
-        """Resolve complete finite position limits in each adapter's joint order."""
-        resolved: dict[str, tuple[float, float]] = {}
-        for joint_name in joint_names:
-            owners = [hardware for hardware in self._hardware if joint_name in hardware.joint_names]
-            if len(owners) != 1:
-                raise ValueError(
-                    f"joint {joint_name!r} must belong to exactly one connected hardware component"
-                )
-            hardware = owners[0]
-            limits = hardware.get_limits()
-            if limits is None:
-                raise ValueError(f"hardware for joint {joint_name!r} does not declare limits")
-            index = hardware.joint_names.index(joint_name)
-            if len(limits.position_lower) != len(hardware.joint_names) or len(
-                limits.position_upper
-            ) != len(hardware.joint_names):
-                raise ValueError(f"hardware limits for joint {joint_name!r} have invalid width")
-            lower = limits.position_lower[index]
-            upper = limits.position_upper[index]
-            if (
-                lower is None
-                or upper is None
-                or not math.isfinite(lower)
-                or not math.isfinite(upper)
-                or lower >= upper
-            ):
-                raise ValueError(f"joint {joint_name!r} has no finite ordered position limits")
-            resolved[joint_name] = (lower, upper)
-        return resolved
-
     def execute(
         self,
         trajectory: JointTrajectory,
@@ -460,29 +419,17 @@ class JointTrajectoryTask(BaseControlTask):
                 "Trajectory structure or joints are invalid",
             )
 
-        try:
-            position_limits = self._position_limits(trajectory.joint_names)
-        except ValueError as exc:
-            return TrajectoryExecutionResult(
-                TrajectoryExecutionStatus.POSITION_LIMITS_UNAVAILABLE,
-                str(exc),
-            )
-        for point_index, point in enumerate(trajectory.points):
-            for joint_name, position in zip(trajectory.joint_names, point.positions, strict=True):
-                lower, upper = position_limits[joint_name]
-                if position < lower or position > upper:
-                    return TrajectoryExecutionResult(
-                        TrajectoryExecutionStatus.POSITION_LIMIT_VIOLATION,
-                        f"Trajectory point {point_index} for joint {joint_name!r} has position "
-                        f"{position}, outside [{lower}, {upper}]",
-                    )
-
+        first_positions = list(trajectory.points[0].positions)
+        anchored = False
         if len(trajectory.points) > 1:
-            for joint_name, planned_position in zip(
-                trajectory.joint_names,
-                trajectory.points[0].positions,
-                strict=True,
+            for index, (joint_name, planned_position) in enumerate(
+                zip(trajectory.joint_names, first_positions, strict=True)
             ):
+                commanded_position = self._commanded_positions.get(joint_name)
+                if commanded_position is not None:
+                    first_positions[index] = commanded_position
+                    anchored = True
+                    continue
                 current_position = current_positions.get(joint_name)
                 if current_position is None or not math.isfinite(current_position):
                     return TrajectoryExecutionResult(
@@ -497,12 +444,24 @@ class JointTrajectoryTask(BaseControlTask):
                         f"position by {error:.6f}",
                     )
 
+        if anchored:
+            trajectory = JointTrajectory(
+                joint_names=list(trajectory.joint_names),
+                points=[
+                    TrajectoryPoint(
+                        time_from_start=trajectory.points[0].time_from_start,
+                        positions=first_positions,
+                        velocities=list(trajectory.points[0].velocities),
+                    ),
+                    *trajectory.points[1:],
+                ],
+                timestamp=trajectory.timestamp,
+            )
+
         run = _TrajectoryRun(trajectory)
         for index, joint_name in enumerate(trajectory.joint_names):
-            self._motions.pop(joint_name, None)
-            self._commanded_positions.pop(joint_name, None)
             self._motions[joint_name] = (run, index)
-            if len(trajectory.points) > 1:
+            if len(trajectory.points) > 1 and joint_name not in self._commanded_positions:
                 self._commanded_positions[joint_name] = current_positions[joint_name]
         self._trajectory = trajectory
         self._last_duration = trajectory.duration
@@ -610,14 +569,16 @@ class JointTrajectoryTaskParams(BaseConfig):
 
 
 def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
+    if cfg.name != JOINT_TRAJECTORY_TASK_NAME:
+        raise ValueError(
+            f"trajectory task must be named {JOINT_TRAJECTORY_TASK_NAME!r}, got {cfg.name!r}"
+        )
     params = JointTrajectoryTaskParams.model_validate(cfg.params)
     return JointTrajectoryTask(
         JointTrajectoryTaskConfig(
             joint_names=cfg.joint_names,
-            name=cfg.name,
             priority=cfg.priority,
             start_position_tolerance=params.start_position_tolerance,
             velocity_limits=params.velocity_limits,
         ),
-        hardware=hardware,
     )

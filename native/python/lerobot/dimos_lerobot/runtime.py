@@ -35,7 +35,10 @@ from reactivex.disposable import Disposable
 import torch
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
+    TrajectoryExecutionStatus,
+)
 from dimos.core.core import rpc
 from dimos.imitation.policy.lerobot.module import (
     LeRobotPolicyModule,
@@ -96,6 +99,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         self._chunks_accepted = 0
         self._last_error = None
         self._active = False
+        self._manual_control = False
 
     @rpc
     def start(self) -> None:
@@ -105,6 +109,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             Disposable(self.coordinator_joint_state.subscribe(self._on_joint_state))
         )
         self.register_disposable(Disposable(self.button_pressed.subscribe(self._on_button_pressed)))
+        self.register_disposable(Disposable(self.teleop_buttons.subscribe(self._on_teleop_buttons)))
 
     @rpc
     def stop(self) -> None:
@@ -129,10 +134,9 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
 
         try:
             tasks = set(self._control.list_tasks())
-            if self.config.trajectory_task_name not in tasks:
+            if JOINT_TRAJECTORY_TASK_NAME not in tasks:
                 raise RuntimeError(
-                    "ControlCoordinator is missing configured rollout task "
-                    f"{self.config.trajectory_task_name!r}"
+                    f"ControlCoordinator is missing trajectory task {JOINT_TRAJECTORY_TASK_NAME!r}"
                 )
             if loaded_policy is None:
                 loaded_policy = self._load_policy()
@@ -157,6 +161,9 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
     @rpc
     def start_rollout(self) -> RolloutStatus:
         with self._lock:
+            if self._manual_control:
+                self._last_error = "release the controller grips before starting rollout"
+                return self._status_locked()
             if self._thread is not None and self._thread.is_alive():
                 self._last_error = "a policy rollout is already active"
                 return self._status_locked()
@@ -228,6 +235,13 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         with self._observation_changed:
             self._latest_joint_state = JointState(state)
             self._observation_changed.notify_all()
+
+    def _on_teleop_buttons(self, buttons: Buttons) -> None:
+        with self._observation_changed:
+            self._manual_control = buttons.left_grip or buttons.right_grip
+            if self._manual_control and self._active:
+                self._stop_event.set()
+                self._observation_changed.notify_all()
 
     def _on_button_pressed(self, buttons: Buttons) -> None:
         button = BUTTON_ALIASES.get(self.config.rollout_button, self.config.rollout_button)
@@ -422,10 +436,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                 actions = bounded_actions
                 if self._stop_event.is_set():
                     break
-                result = self._control.execute_trajectory(
-                    self._trajectory(state, actions),
-                    task_name=self.config.trajectory_task_name,
-                )
+                result = self._control.execute_trajectory(self._trajectory(state, actions))
                 if result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH:
                     self._wait_for_newer_joint_state(state_ts)
                     continue
@@ -514,11 +525,10 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
 
     def _cancel_trajectory(self) -> str | None:
         try:
-            result = self._control.cancel_trajectory(task_name=self.config.trajectory_task_name)
+            result = self._control.cancel_trajectory()
         except Exception as exc:
             logger.exception(
                 "Failed to cancel policy trajectory",
-                task_name=self.config.trajectory_task_name,
             )
             return f"Failed to cancel policy trajectory: {exc}"
         if result.safe:
@@ -527,7 +537,6 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         logger.error(
             "Policy trajectory cancellation was uncertain",
             error=message,
-            task_name=self.config.trajectory_task_name,
         )
         return message
 

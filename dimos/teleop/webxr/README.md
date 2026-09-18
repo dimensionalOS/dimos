@@ -62,8 +62,8 @@ dimos run teleop-webxr-openarm --left-can-port can1 --right-can-port can0
 
 The blueprint also includes `ManipulationModule` with the same bimanual model
 and Viser visualization. Its coordinator has a joint-trajectory task over both
-arms at priority 20; planned execution therefore preempts the priority-10
-teleoperation task through normal arbitration and clears the engagement state.
+arms at priority 10. Manual arm and gripper tasks run at priority 20, so
+manual takeover aborts any active planner or policy trajectory.
 
 ## Arm task bindings
 

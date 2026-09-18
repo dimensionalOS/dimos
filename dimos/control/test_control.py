@@ -82,11 +82,6 @@ def mock_adapter():
     adapter.write_joint_positions.return_value = True
     adapter.write_joint_velocities.return_value = True
     adapter.set_control_mode.return_value = True
-    adapter.get_limits.return_value = JointLimits(
-        position_lower=[-10.0] * 6,
-        position_upper=[10.0] * 6,
-        velocity_max=[10.0] * 6,
-    )
     return adapter
 
 
@@ -102,7 +97,7 @@ def connected_hardware(mock_adapter):
 
 
 @pytest.fixture
-def trajectory_task(connected_hardware):
+def trajectory_task():
     """Create a JointTrajectoryTask for testing."""
     config = JointTrajectoryTaskConfig(
         joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
@@ -113,24 +108,7 @@ def trajectory_task(connected_hardware):
             "arm/joint3": 1000.0,
         },
     )
-    return JointTrajectoryTask(config=config, hardware={"test_arm": connected_hardware})
-
-
-def make_trajectory_task(config: JointTrajectoryTaskConfig) -> JointTrajectoryTask:
-    adapter = MagicMock(spec=ManipulatorAdapter)
-    joint_count = len(config.joint_names)
-    adapter.get_limits.return_value = JointLimits(
-        position_lower=[-10.0] * joint_count,
-        position_upper=[10.0] * joint_count,
-        velocity_max=[10.0] * joint_count,
-    )
-    component = HardwareComponent(
-        hardware_id="trajectory_test",
-        hardware_type=HardwareType.MANIPULATOR,
-        joints=list(config.joint_names),
-    )
-    hardware = ConnectedHardware(adapter=adapter, component=component)
-    return JointTrajectoryTask(config=config, hardware={component.hardware_id: hardware})
+    return JointTrajectoryTask(config=config)
 
 
 @pytest.fixture
@@ -516,26 +494,16 @@ class TestControlCoordinatorLifecycle:
 
 
 class TestControlCoordinatorTrajectoryExecution:
-    def test_multiple_named_trajectory_tasks_are_registered(self, make_coordinator):
+    def test_trajectory_config_requires_canonical_name(self, make_coordinator):
         coordinator = make_coordinator()
-        canonical = coordinator._create_task_from_config(joint_trajectory_task(["arm/joint1"]))
-        policy = coordinator._create_task_from_config(
-            TaskConfig(
-                name="policy_rollout",
-                type="trajectory",
-                joint_names=["arm/joint1"],
-                priority=5,
-            )
+        config = TaskConfig(
+            name="other_name",
+            type="trajectory",
+            joint_names=["arm/joint1"],
         )
 
-        assert coordinator.add_task(canonical)
-        assert coordinator.add_task(policy)
-        assert canonical.name == JOINT_TRAJECTORY_TASK_NAME
-        assert isinstance(policy, JointTrajectoryTask)
-        assert policy.name == "policy_rollout"
-        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME) is canonical
-        assert coordinator.get_task("policy_rollout") is policy
-        assert policy.claim().priority == 5
+        with pytest.raises(ValueError, match="must be named 'joint_trajectory'"):
+            coordinator._create_task_from_config(config)
 
     def test_joint_trajectory_task_factory(self):
         config = joint_trajectory_task(
@@ -552,8 +520,8 @@ class TestControlCoordinatorTrajectoryExecution:
 
     def test_removing_trajectory_task_allows_replacement(self, make_coordinator):
         coordinator = make_coordinator()
-        first = make_trajectory_task(JointTrajectoryTaskConfig(joint_names=["arm/joint1"]))
-        second = make_trajectory_task(JointTrajectoryTaskConfig(joint_names=["arm/joint2"]))
+        first = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["arm/joint1"]))
+        second = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["arm/joint2"]))
         coordinator.add_task(first, task_type="trajectory")
 
         assert coordinator.remove_task(JOINT_TRAJECTORY_TASK_NAME)
@@ -587,33 +555,6 @@ class TestControlCoordinatorTrajectoryExecution:
         assert result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH
         assert "arm/joint1" in result.message
         assert not trajectory_task.is_active()
-
-    def test_execute_and_cancel_route_to_named_trajectory_task(
-        self,
-        make_coordinator,
-        connected_hardware,
-        trajectory_task,
-        simple_trajectory,
-    ):
-        coordinator = make_coordinator()
-        coordinator.add_hardware(connected_hardware.adapter, connected_hardware.component)
-        named = JointTrajectoryTask(
-            JointTrajectoryTaskConfig(
-                name="policy_rollout",
-                joint_names=simple_trajectory.joint_names,
-                velocity_limits={name: 1000.0 for name in simple_trajectory.joint_names},
-            ),
-            hardware=coordinator._hardware,
-        )
-        coordinator.add_task(trajectory_task, task_type="trajectory")
-        coordinator.add_task(named, task_type="trajectory")
-
-        result = coordinator.execute_trajectory(simple_trajectory, task_name="policy_rollout")
-        cancellation = coordinator.cancel_trajectory(task_name="policy_rollout")
-
-        assert result.status is TrajectoryExecutionStatus.ACCEPTED
-        assert cancellation.status is TrajectoryCancellationStatus.CANCELLED
-        assert trajectory_task.get_state() is TrajectoryState.IDLE
 
 
 class TestJointTrajectoryTask:
@@ -739,45 +680,6 @@ class TestJointTrajectoryTask:
 
         assert result.status is TrajectoryExecutionStatus.ACCEPTED
 
-    def test_execute_requires_complete_hardware_position_limits(self, simple_trajectory):
-        task = JointTrajectoryTask(
-            JointTrajectoryTaskConfig(joint_names=simple_trajectory.joint_names),
-            hardware={},
-        )
-
-        result = task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
-
-        assert result.status is TrajectoryExecutionStatus.POSITION_LIMITS_UNAVAILABLE
-        assert task.get_state() is TrajectoryState.IDLE
-
-    def test_position_limit_violation_rejects_atomically(self, trajectory_task, simple_trajectory):
-        assert (
-            trajectory_task.execute(
-                simple_trajectory, trajectory_start_positions(simple_trajectory)
-            ).status
-            is TrajectoryExecutionStatus.ACCEPTED
-        )
-        active = trajectory_task._trajectory
-        invalid = JointTrajectory(
-            joint_names=list(simple_trajectory.joint_names),
-            points=[
-                TrajectoryPoint(
-                    positions=[0.0, 0.0, 0.0],
-                    velocities=[0.0, 0.0, 0.0],
-                ),
-                TrajectoryPoint(
-                    positions=[20.0, 0.0, 0.0],
-                    velocities=[0.0, 0.0, 0.0],
-                    time_from_start=1.0,
-                ),
-            ],
-        )
-
-        result = trajectory_task.execute(invalid, {})
-
-        assert result.status is TrajectoryExecutionStatus.POSITION_LIMIT_VIOLATION
-        assert trajectory_task._trajectory is active
-
     @pytest.mark.parametrize(
         "trajectory",
         [
@@ -860,9 +762,7 @@ class TestJointTrajectoryTask:
             is None
         )
 
-    def test_replacement_preserves_other_joints_and_cancel_clears_active_trajectory(
-        self, trajectory_task
-    ):
+    def test_replacement_reset_and_cancel_clear_active_subset(self, trajectory_task):
         first = JointTrajectory(
             joint_names=["arm/joint1"],
             points=[
@@ -951,7 +851,7 @@ class TestJointTrajectoryTask:
         assert trajectory_task.get_state() == TrajectoryState.COMPLETED
 
     def test_one_point_stream_target_is_velocity_bounded(self):
-        task = make_trajectory_task(
+        task = JointTrajectoryTask(
             JointTrajectoryTaskConfig(
                 joint_names=["arm/joint1"],
                 velocity_limits={"arm/joint1": 0.5},
@@ -976,7 +876,7 @@ class TestJointTrajectoryTask:
     @pytest.mark.parametrize("limit", [0.0, -1.0, float("inf"), float("nan")])
     def test_velocity_limits_must_be_finite_and_positive(self, limit):
         with pytest.raises(ValueError, match="finite and positive"):
-            make_trajectory_task(
+            JointTrajectoryTask(
                 JointTrajectoryTaskConfig(
                     joint_names=["arm/joint1"],
                     velocity_limits={"arm/joint1": limit},
@@ -985,15 +885,15 @@ class TestJointTrajectoryTask:
 
     def test_velocity_limits_must_cover_every_joint(self):
         with pytest.raises(ValueError, match="every configured trajectory joint"):
-            make_trajectory_task(
+            JointTrajectoryTask(
                 JointTrajectoryTaskConfig(
                     joint_names=["arm/joint1", "arm/joint2"],
                     velocity_limits={"arm/joint1": 1.0},
                 )
             )
 
-    def test_replacement_validates_observed_anchor_and_replaces_same_joint_run(self):
-        task = make_trajectory_task(
+    def test_replacement_anchors_at_bounded_command_and_preserves_other_joints(self):
+        task = JointTrajectoryTask(
             JointTrajectoryTaskConfig(
                 joint_names=["arm/joint1", "arm/joint2"],
                 velocity_limits={"arm/joint1": 1.0, "arm/joint2": 1.0},
@@ -1004,27 +904,69 @@ class TestJointTrajectoryTask:
             joint_names=["arm/joint1"],
             points=[TrajectoryPoint(positions=[1.0])],
         )
+        other = JointTrajectory(
+            joint_names=["arm/joint2"],
+            points=[TrajectoryPoint(positions=[-1.0])],
+        )
         replacement = JointTrajectory(
             joint_names=["arm/joint1"],
-            points=[
-                TrajectoryPoint(positions=[0.0], velocities=[0.0]),
-                TrajectoryPoint(positions=[-1.0], velocities=[0.0], time_from_start=1.0),
-            ],
+            points=[TrajectoryPoint(positions=[-1.0])],
         )
 
         task.execute(first, {})
+        task.execute(other, {})
         before = task.compute(CoordinatorState(joints=state, t_now=1.0, dt=0.1))
         assert before is not None
-        assert before.positions == [pytest.approx(0.1)]
+        assert before.positions == [pytest.approx(0.1), pytest.approx(-0.1)]
 
-        assert (
-            task.execute(replacement, {"arm/joint1": 0.0}).status
-            is TrajectoryExecutionStatus.ACCEPTED
-        )
+        assert task.execute(replacement, {}).status is TrajectoryExecutionStatus.ACCEPTED
         after = task.compute(CoordinatorState(joints=state, t_now=1.1, dt=0.1))
         assert after is not None
-        assert after.joint_names == ["arm/joint1"]
-        assert after.positions == [pytest.approx(0.0)]
+        assert after.positions == [pytest.approx(0.0), pytest.approx(-0.2)]
+
+    def test_partial_replacement_status_includes_untouched_joint_run(self):
+        task = JointTrajectoryTask(
+            JointTrajectoryTaskConfig(
+                joint_names=["arm/joint1", "arm/joint2"],
+                velocity_limits={"arm/joint1": 1000.0, "arm/joint2": 1000.0},
+            )
+        )
+        state = JointStateSnapshot(joint_positions={"arm/joint1": 0.0, "arm/joint2": 0.0})
+        long_trajectory = JointTrajectory(
+            joint_names=["arm/joint1", "arm/joint2"],
+            points=[
+                TrajectoryPoint(positions=[0.0, 0.0], velocities=[0.0, 0.0]),
+                TrajectoryPoint(
+                    positions=[10.0, 10.0],
+                    velocities=[0.0, 0.0],
+                    time_from_start=10.0,
+                ),
+            ],
+        )
+        replacement = JointTrajectory(
+            joint_names=["arm/joint1"],
+            points=[
+                TrajectoryPoint(positions=[2.5], velocities=[0.0]),
+                TrajectoryPoint(positions=[3.5], velocities=[0.0], time_from_start=1.0),
+            ],
+        )
+
+        assert (
+            task.execute(long_trajectory, state.joint_positions).status
+            is TrajectoryExecutionStatus.ACCEPTED
+        )
+        task.compute(CoordinatorState(joints=state, t_now=10.0, dt=0.1))
+        task.compute(CoordinatorState(joints=state, t_now=12.5, dt=0.1))
+        assert task.execute(replacement, {}).status is TrajectoryExecutionStatus.ACCEPTED
+        task.compute(CoordinatorState(joints=state, t_now=12.5, dt=0.1))
+        task.compute(CoordinatorState(joints=state, t_now=13.5, dt=0.1))
+
+        status = task.get_status(13.5)
+
+        assert status.state is TrajectoryState.EXECUTING
+        assert status.progress == pytest.approx(0.35)
+        assert status.time_elapsed == pytest.approx(3.5)
+        assert status.time_remaining == pytest.approx(6.5)
 
     def test_cancel_trajectory(self, trajectory_task, simple_trajectory):
         trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
@@ -1242,7 +1184,7 @@ class TestTickLoop:
                 joints=joint_names,
             ),
         )
-        trajectory_task = make_trajectory_task(JointTrajectoryTaskConfig(joint_names=joint_names))
+        trajectory_task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=joint_names))
         gripper_task = GripperControlTask(
             "gripper",
             GripperControlTaskConfig(joint_names=["arm/gripper"]),
@@ -1272,41 +1214,6 @@ class TestTickLoop:
         tick_loop._tick()
 
         adapter.write_joint_positions.assert_called_once_with([0.0, 0.0, 0.75])
-
-    def test_expired_manual_gripper_command_releases_policy_gripper(self):
-        manual = GripperControlTask(
-            "openyam_gripper",
-            GripperControlTaskConfig(joint_names=["arm/gripper"], priority=20, hold_duration=0.1),
-            limits=[(0.0, 1.0)],
-        )
-        policy = GripperControlTask(
-            "policy_gripper",
-            GripperControlTaskConfig(joint_names=["arm/gripper"], priority=10, hold_duration=0.1),
-            limits=[(0.0, 1.0)],
-        )
-        tick_loop = TickLoop(
-            tick_rate=100.0,
-            hardware={},
-            hardware_lock=threading.Lock(),
-            tasks={manual.name: manual, policy.name: policy},
-            task_lock=threading.Lock(),
-            joint_to_hardware={},
-        )
-        assert manual.set_normalized([0.25], t_now=1.0)
-        assert policy.set_normalized([0.75], t_now=1.05)
-
-        commands, preemptions = tick_loop._arbitrate(
-            tick_loop._compute_all_tasks(CoordinatorState(joints=JointStateSnapshot(), t_now=1.05))
-        )
-        assert commands["arm/gripper"][2] == manual.name
-        assert preemptions == {policy.name: {"arm/gripper": manual.name}}
-
-        assert policy.set_normalized([0.75], t_now=1.11)
-        commands, preemptions = tick_loop._arbitrate(
-            tick_loop._compute_all_tasks(CoordinatorState(joints=JointStateSnapshot(), t_now=1.11))
-        )
-        assert commands["arm/gripper"][2] == policy.name
-        assert preemptions == {}
 
     def test_tick_loop_starts_and_stops(self, mock_adapter, wait_until):
         component = HardwareComponent(
@@ -1395,49 +1302,6 @@ class TestTickLoop:
             "Hardware arm rejected SERVO_POSITION command from control task"
         )
 
-    def test_applied_position_command_publishes_only_accepted_position_modes(self):
-        publish = MagicMock()
-        tick_loop = TickLoop(
-            tick_rate=100.0,
-            hardware={},
-            hardware_lock=threading.Lock(),
-            tasks={},
-            task_lock=threading.Lock(),
-            joint_to_hardware={},
-            publish_command_callback=publish,
-        )
-
-        tick_loop._publish_applied_position_command(
-            {
-                "arm": ({"arm/joint1": 0.25}, ControlMode.SERVO_POSITION),
-                "base": ({"base/wheel": 1.0}, ControlMode.VELOCITY),
-            },
-            timestamp=123.0,
-        )
-
-        message = publish.call_args.args[0]
-        assert message.ts == 123.0
-        assert message.name == ["arm/joint1"]
-        assert message.position == [0.25]
-
-    def test_rejected_hardware_command_is_not_returned_as_applied(self):
-        hardware = {"arm": MagicMock()}
-        hardware["arm"].write_command.return_value = False
-        tick_loop = TickLoop(
-            tick_rate=100.0,
-            hardware=hardware,
-            hardware_lock=threading.Lock(),
-            tasks={},
-            task_lock=threading.Lock(),
-            joint_to_hardware={"arm/joint1": "arm"},
-        )
-
-        accepted = tick_loop._write_all_hardware(
-            {"arm": ({"arm/joint1": 0.25}, ControlMode.SERVO_POSITION)}
-        )
-
-        assert accepted == {}
-
 
 class TestIntegration:
     def test_full_trajectory_execution(self, mock_adapter, wait_until):
@@ -1453,7 +1317,7 @@ class TestIntegration:
             joint_names=[f"arm/joint{i + 1}" for i in range(6)],
             priority=10,
         )
-        traj_task = make_trajectory_task(config=config)
+        traj_task = JointTrajectoryTask(config=config)
         tasks = {JOINT_TRAJECTORY_TASK_NAME: traj_task}
 
         joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}

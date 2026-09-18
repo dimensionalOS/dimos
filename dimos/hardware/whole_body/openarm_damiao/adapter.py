@@ -63,10 +63,11 @@ class OpenArmDamiaoAdapter(DamiaoWholeBodyAdapter):
     kinematic_joint_names = (*arm_joints["left_arm"], *arm_joints["right_arm"])
 
     def get_limits(self) -> JointLimits:
-        """Return URDF arm limits and both normalized gripper opening ranges."""
+        """Declare both grippers in their local normalized opening coordinate."""
+        arm_count = sum(len(joints) for joints in self.arm_joints.values())
         return JointLimits(
-            position_lower=[*[lower for lower, _ in self._arm_position_limits], 0.0, 0.0],
-            position_upper=[*[upper for _, upper in self._arm_position_limits], 1.0, 1.0],
+            position_lower=[*([None] * arm_count), 0.0, 0.0],
+            position_upper=[*([None] * arm_count), 1.0, 1.0],
             velocity_max=[None] * len(self.joint_names),
         )
 

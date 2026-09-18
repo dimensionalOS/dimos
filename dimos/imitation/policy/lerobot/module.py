@@ -37,8 +37,6 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.spec.utils import Spec
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 
-POLICY_ROLLOUT_TASK_NAME = "policy_rollout"
-
 
 class PolicyControlSpec(Spec, Protocol):
     """Coordinator operations used by policy rollout."""
@@ -46,10 +44,9 @@ class PolicyControlSpec(Spec, Protocol):
     def execute_trajectory(
         self,
         trajectory: JointTrajectory,
-        task_name: str,
     ) -> TrajectoryExecutionResult: ...
 
-    def cancel_trajectory(self, task_name: str) -> TrajectoryCancellationResult: ...
+    def cancel_trajectory(self) -> TrajectoryCancellationResult: ...
 
     def list_tasks(self) -> list[str]: ...
 
@@ -88,7 +85,6 @@ class LeRobotPolicyModuleConfig(IsolatedPythonModuleConfig):
     image_width: int = Field(default=640, gt=0)
     image_height: int = Field(default=480, gt=0)
     max_observation_age_s: float = Field(default=0.5, gt=0)
-    trajectory_task_name: str = POLICY_ROLLOUT_TASK_NAME
     rollout_button: str = "A"
 
     @field_validator("policy_path")
@@ -105,13 +101,6 @@ class LeRobotPolicyModuleConfig(IsolatedPythonModuleConfig):
         if len(set(joint_names)) != len(joint_names):
             raise ValueError("joint_names must not contain duplicates")
         return joint_names
-
-    @field_validator("trajectory_task_name")
-    @classmethod
-    def trajectory_task_name_must_not_be_blank(cls, name: str) -> str:
-        if not name.strip():
-            raise ValueError("trajectory_task_name must not be blank")
-        return name
 
     @field_validator("rollout_button")
     @classmethod
@@ -131,6 +120,7 @@ class LeRobotPolicyModule(IsolatedPythonModule):
     color_image: In[Image]
     coordinator_joint_state: In[JointState]
     button_pressed: In[Buttons]
+    teleop_buttons: In[Buttons]
 
     _control: PolicyControlSpec
 

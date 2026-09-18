@@ -12,12 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import MagicMock
-
 import pytest
 
-from dimos.control.components import HardwareComponent, HardwareType
-from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import (
     CoordinatorState,
     JointStateSnapshot,
@@ -27,35 +23,14 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTaskConfig,
     TrajectoryExecutionStatus,
 )
-from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.hardware.spec import JointLimits
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-
-
-def make_trajectory_task(joint_names: list[str]) -> JointTrajectoryTask:
-    adapter = MagicMock(spec=ManipulatorAdapter)
-    adapter.get_limits.return_value = JointLimits(
-        position_lower=[-10.0] * len(joint_names),
-        position_upper=[10.0] * len(joint_names),
-        velocity_max=[10.0] * len(joint_names),
-    )
-    component = HardwareComponent(
-        hardware_id="trajectory_test",
-        hardware_type=HardwareType.MANIPULATOR,
-        joints=joint_names,
-    )
-    hardware = ConnectedHardware(adapter=adapter, component=component)
-    return JointTrajectoryTask(
-        JointTrajectoryTaskConfig(joint_names=joint_names),
-        hardware={component.hardware_id: hardware},
-    )
 
 
 @pytest.mark.parametrize("single_point", [False, True])
 @pytest.mark.parametrize("preempted", [False, True])
 def test_jtt_does_not_pull_joint_back_after_another_task_moves_it(single_point, preempted):
-    task = make_trajectory_task(["joint"])
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]))
     state = CoordinatorState(
         joints=JointStateSnapshot(joint_positions={"joint": 0.0}), t_now=0.1, dt=0.1
     )
@@ -106,7 +81,7 @@ def test_jtt_does_not_pull_joint_back_after_another_task_moves_it(single_point, 
 
 
 def test_completed_joint_reanchors_while_other_joint_keeps_command_continuity():
-    task = make_trajectory_task(["finished", "running"])
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["finished", "running"]))
     measured = JointStateSnapshot(joint_positions={"finished": 0.0, "running": 0.0})
     initial = JointTrajectory(
         joint_names=["finished", "running"], points=[TrajectoryPoint(positions=[0.1, 1.0])]
@@ -140,7 +115,7 @@ def test_completed_joint_reanchors_while_other_joint_keeps_command_continuity():
     ],
 )
 def test_completed_trajectory_does_not_bypass_start_validation(positions, expected):
-    task = make_trajectory_task(["joint"])
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]))
     initial = JointTrajectory(joint_names=["joint"], points=[TrajectoryPoint(positions=[0.1])])
     assert task.execute(initial, {}).status is TrajectoryExecutionStatus.ACCEPTED
     task.compute(

@@ -125,9 +125,9 @@ def test_openarm_webxr_blueprint_has_one_bimanual_mock_task() -> None:
     }
     assert task.params["joint_velocity_limits_rad_s"] == expected_velocity_limits
     assert task.params["joint_command_filter_cutoff_hz"] == 5.0
-    assert task.priority == 10
+    assert task.priority == 20
     assert trajectory.joint_names == OPENARM_JOINTS
-    assert trajectory.priority == 20
+    assert trajectory.priority < task.priority
     assert manipulation_kwargs["kinematics"] == task.params["pink"]
     assert manipulation_kwargs["visualization"] == {"backend": "viser"}
     assert teleop_kwargs == {}

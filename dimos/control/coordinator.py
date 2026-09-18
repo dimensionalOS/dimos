@@ -49,7 +49,6 @@ from dimos.control.hardware_interface import (
 from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
 from dimos.control.tasks.trajectory_task.trajectory_task import (
-    JOINT_TRAJECTORY_TASK_NAME,
     JointTrajectoryTask,
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
@@ -151,8 +150,6 @@ class ControlCoordinator(Module):
 
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
-    # Output: Post-arbitration position commands accepted by hardware.
-    applied_joint_position_command: Out[JointState]
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
@@ -178,6 +175,7 @@ class ControlCoordinator(Module):
         # Registered tasks
         self._tasks: dict[TaskName, ControlTask] = {}
         self._task_lock = threading.Lock()
+        self._trajectory_task: JointTrajectoryTask | None = None
 
         # Card-declared stream routes, keyed by the port stream_bind resolved to:
         # port -> (task, bound handler, routing). Guarded by _task_lock; entries
@@ -438,36 +436,27 @@ class ControlCoordinator(Module):
             return positions
 
     @rpc
-    def execute_trajectory(
-        self,
-        trajectory: JointTrajectory,
-        task_name: str = JOINT_TRAJECTORY_TASK_NAME,
-    ) -> TrajectoryExecutionResult:
-        """Execute a trajectory through a named trajectory task."""
+    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
+        """Execute a trajectory through the coordinator's sole trajectory task."""
         current_positions = self.get_joint_positions()
         with self._task_lock:
-            task = self._tasks.get(task_name)
-            if not isinstance(task, JointTrajectoryTask):
+            if self._trajectory_task is None:
                 return TrajectoryExecutionResult(
                     TrajectoryExecutionStatus.NO_TRAJECTORY_TASK,
-                    f"Control coordinator has no trajectory task named {task_name!r}",
+                    "Control coordinator has no trajectory task",
                 )
-            return task.execute(trajectory, current_positions)
+            return self._trajectory_task.execute(trajectory, current_positions)
 
     @rpc
-    def cancel_trajectory(
-        self,
-        task_name: str = JOINT_TRAJECTORY_TASK_NAME,
-    ) -> TrajectoryCancellationResult:
-        """Cancel a named trajectory task."""
+    def cancel_trajectory(self) -> TrajectoryCancellationResult:
+        """Cancel the coordinator's sole trajectory task."""
         with self._task_lock:
-            task = self._tasks.get(task_name)
-            if not isinstance(task, JointTrajectoryTask):
+            if self._trajectory_task is None:
                 return TrajectoryCancellationResult(
                     TrajectoryCancellationStatus.NO_TRAJECTORY_TASK,
-                    f"Control coordinator has no trajectory task named {task_name!r}",
+                    "Control coordinator has no trajectory task",
                 )
-            return task.cancel()
+            return self._trajectory_task.cancel()
 
     @rpc
     def add_task(
@@ -492,11 +481,17 @@ class ControlCoordinator(Module):
             if task.name in self._tasks:
                 logger.warning(f"Task {task.name} already registered")
                 return False
+            if isinstance(task, JointTrajectoryTask):
+                if self._trajectory_task is not None:
+                    raise ValueError("ControlCoordinator supports exactly one JointTrajectoryTask")
+                self._trajectory_task = task
             if task_type is not None:
                 try:
                     self._register_routes(task, task_type, stream_bind)
                     self._task_commands[task.name] = self._commands_for(task_type)
                 except Exception:
+                    if task is self._trajectory_task:
+                        self._trajectory_task = None
                     raise
             else:
                 self._task_commands[task.name] = frozenset()
@@ -515,6 +510,8 @@ class ControlCoordinator(Module):
             for entries in self._routes.values():
                 entries[:] = [entry for entry in entries if entry[0] is not task]
             self._task_commands.pop(task_name, None)
+            if task is self._trajectory_task:
+                self._trajectory_task = None
             logger.info(f"Removed task {task_name}")
         self._sync_stream_subscriptions()
         return True
@@ -906,7 +903,6 @@ class ControlCoordinator(Module):
             task_lock=self._task_lock,
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
-            publish_command_callback=self.applied_joint_position_command.publish,
             publish_robot_callback=publish_robot_cb,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,

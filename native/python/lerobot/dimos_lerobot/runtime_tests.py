@@ -201,7 +201,7 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
         control.cancel_trajectory.return_value = TrajectoryCancellationResult(
             TrajectoryCancellationStatus.ALREADY_STOPPED
         )
-        control.list_tasks.return_value = ["policy_rollout"]
+        control.list_tasks.return_value = ["joint_trajectory"]
         mocker.patch.object(module, "_control", control, create=True)
         built.append(module)
         return module, control
@@ -254,7 +254,7 @@ def test_policy_predicts_and_executes_one_native_joint_chunk(make_runtime: Runti
 
     call = control.execute_trajectory.call_args_list[0]
     trajectory = call.args[0]
-    assert call.kwargs == {"task_name": "policy_rollout"}
+    assert call.kwargs == {}
     assert trajectory.joint_names == JOINTS
     assert [point.time_from_start for point in trajectory.points] == [0.0, 0.02, 0.04]
     np.testing.assert_allclose(trajectory.points[0].positions, positions)
@@ -383,7 +383,7 @@ def test_a_press_stops_worker_before_cancelling_its_trajectory(
 
     assert stop_finished.is_set()
     assert control.execute_trajectory.call_count == 1
-    control.cancel_trajectory.assert_called_with(task_name="policy_rollout")
+    control.cancel_trajectory.assert_called_with()
 
 
 def test_uncertain_cancellation_is_reported(make_runtime: RuntimeFactory) -> None:
@@ -425,7 +425,7 @@ def test_invalid_action_chunk_cancels_and_latches_rollout_off(
 
     wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
     assert message in (module.rollout_status()["last_error"] or "")
-    control.cancel_trajectory.assert_called_with(task_name="policy_rollout")
+    control.cancel_trajectory.assert_called_with()
 
 
 def test_trajectory_rejection_cancels_and_latches_rollout_off(
@@ -435,7 +435,7 @@ def test_trajectory_rejection_cancels_and_latches_rollout_off(
     module, control = make_runtime(policy)
     _provide_observation(module)
     control.execute_trajectory.return_value = TrajectoryExecutionResult(
-        TrajectoryExecutionStatus.POSITION_LIMIT_VIOLATION,
+        TrajectoryExecutionStatus.INVALID_TRAJECTORY,
         "outside hardware limits",
     )
 
@@ -444,7 +444,7 @@ def test_trajectory_rejection_cancels_and_latches_rollout_off(
 
     wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
     assert module.rollout_status()["last_error"] == "outside hardware limits"
-    control.cancel_trajectory.assert_called_with(task_name="policy_rollout")
+    control.cancel_trajectory.assert_called_with()
 
 
 @pytest.mark.parametrize(
@@ -561,7 +561,7 @@ def test_preflight_requires_the_configured_coordinator_task(
     status = module.preflight_rollout()
 
     assert status["policy_ready"] is False
-    assert "missing configured rollout task" in (status["last_error"] or "")
+    assert "missing trajectory task" in (status["last_error"] or "")
     assert policy.config_load_count == 0
 
 
@@ -657,3 +657,64 @@ def test_preflight_rejects_unavailable_cuda(
     assert status["policy_ready"] is False
     assert "CUDA is not available" in (status["last_error"] or "")
     control.execute_trajectory.assert_not_called()
+
+
+@pytest.mark.parametrize("grip", ["left_grip", "right_grip"])
+def test_grip_takeover_stops_rollout_until_explicit_restart(make_runtime, grip):
+    module, control = make_runtime(FakePolicy(_action_chunk()))
+    _provide_observation(module)
+    _preflight(module)
+    module.start_rollout()
+    wait_until(lambda: control.execute_trajectory.call_count > 0, timeout=1)
+    held = Buttons()
+    setattr(held, grip, True)
+
+    module._on_teleop_buttons(held)
+    wait_until(lambda: not module.rollout_status()["active"], timeout=1)
+    assert module.start_rollout()["active"] is False
+    assert "release" in module.rollout_status()["last_error"]
+    submissions = control.execute_trajectory.call_count
+    module._on_teleop_buttons(Buttons())
+    assert module.rollout_status()["active"] is False
+    assert control.execute_trajectory.call_count == submissions
+    _provide_observation(module)
+    assert module.start_rollout()["active"] is True
+    module.stop_rollout()
+
+
+def test_grip_during_inference_discards_result_without_blocking_input(make_runtime, mocker):
+    module, control = make_runtime(FakePolicy(_action_chunk()))
+    _provide_observation(module)
+    _preflight(module)
+    predicting = Event()
+    release_prediction = Event()
+
+    def predict(*args, **kwargs):
+        predicting.set()
+        assert release_prediction.wait(timeout=2)
+        return _action_chunk()[None, :]
+
+    mocker.patch.object(module, "_predict", side_effect=predict)
+    module.start_rollout()
+    try:
+        assert predicting.wait(timeout=1)
+        held = Buttons()
+        held.right_grip = True
+        module._on_teleop_buttons(held)
+        module._on_teleop_buttons(Buttons())
+        assert module._stop_event.is_set()
+        control.execute_trajectory.assert_not_called()
+    finally:
+        release_prediction.set()
+        module.stop_rollout()
+    control.execute_trajectory.assert_not_called()
+    assert module.rollout_status()["active"] is False
+
+
+def test_stopping_inactive_policy_leaves_planner_trajectory_alone(make_runtime):
+    module, control = make_runtime(FakePolicy(_action_chunk()))
+    module.stop_rollout()
+    held = Buttons()
+    held.right_grip = True
+    module._on_teleop_buttons(held)
+    control.cancel_trajectory.assert_not_called()

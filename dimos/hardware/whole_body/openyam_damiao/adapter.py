@@ -37,12 +37,11 @@ class OpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
     kinematic_joint_names = tuple(f"yam_joint{index}" for index in range(1, 7))
 
     def get_limits(self) -> JointLimits:
-        """Return URDF arm limits and the calibrated 0-1 gripper opening."""
-        lower = [limits[0] for limits in self._arm_position_limits]
-        upper = [limits[1] for limits in self._arm_position_limits]
+        """Declare the calibrated gripper opening in its local 0-1 coordinate."""
+        unknown = [None] * len(self.kinematic_joint_names)
         return JointLimits(
-            position_lower=[*lower, 0.0],
-            position_upper=[*upper, 1.0],
+            position_lower=[*unknown, 0.0],
+            position_upper=[*unknown, 1.0],
             velocity_max=[None] * len(self.joint_names),
         )
 

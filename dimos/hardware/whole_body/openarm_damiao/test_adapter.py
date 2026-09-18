@@ -78,17 +78,14 @@ def test_openarm_joint_order_matches_hardware_component(
     assert list(openarm_adapter.joint_names) == OPENARM_JOINTS
 
 
-def test_openarm_declares_loaded_arm_and_local_normalized_gripper_limits(
+def test_openarm_declares_local_normalized_gripper_limits(
     openarm_adapter: OpenArmDamiaoAdapter,
-    mocker: MockerFixture,
 ) -> None:
-    arm_count = OPENARM_DOF * 2
-    arm_limits = tuple((-float(i + 1), float(i + 2)) for i in range(arm_count))
-    mocker.patch.object(openarm_adapter, "_arm_position_limits", arm_limits)
     limits = openarm_adapter.get_limits()
 
-    assert limits.position_lower == [*[lower for lower, _ in arm_limits], 0.0, 0.0]
-    assert limits.position_upper == [*[upper for _, upper in arm_limits], 1.0, 1.0]
+    arm_count = OPENARM_DOF * 2
+    assert limits.position_lower == [*([None] * arm_count), 0.0, 0.0]
+    assert limits.position_upper == [*([None] * arm_count), 1.0, 1.0]
     assert limits.velocity_max == [None] * len(OPENARM_JOINTS)
 
 
@@ -100,7 +97,3 @@ def test_openarm_feedback_limits_match_urdf_joint_limits(
 
     assert tuple(str(name) for name in model.names[1:]) == openarm_adapter.kinematic_joint_names
     assert np.all(np.asarray(model.lowerPositionLimit) < np.asarray(model.upperPositionLimit))
-    openarm_adapter._load_kinematic_model()
-    limits = openarm_adapter.get_limits()
-    np.testing.assert_array_equal(limits.position_lower[:-2], model.lowerPositionLimit)
-    np.testing.assert_array_equal(limits.position_upper[:-2], model.upperPositionLimit)

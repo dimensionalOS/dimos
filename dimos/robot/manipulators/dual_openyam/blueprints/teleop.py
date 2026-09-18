@@ -56,7 +56,7 @@ _dual_openyam_webxr_task = teleop_ik_task(
     robot_model=_dual_openyam_webxr_model,
     name=DUAL_OPENYAM_WEBXR_TASK_NAME,
     joint_names=DUAL_OPENYAM_ARM_JOINTS,
-    priority=10,
+    priority=20,
     solver_type=DualOpenYamPinkPoseTargetSolver,
     bindings=[
         {
@@ -102,7 +102,7 @@ def build_dual_openyam_webxr(
                     priority=20,
                     stream_bind={"gripper_command": "right_gripper_command"},
                 ),
-                dual_openyam_trajectory_task(priority=20),
+                dual_openyam_trajectory_task(priority=10),
             ],
         ),
         ManipulationModule.blueprint(
