@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 import os
 import pickle
+from queue import Queue
 import threading
 from types import FunctionType
 from typing import Any, cast
@@ -352,6 +353,137 @@ def test_slow_send_does_not_block_other_calls(
     caller.start()
     assert answered.wait(1)
     assert results == ["hello"]
+
+
+@pytest.mark.parametrize("end", ["cancel", "stop"])
+def test_cancellation_waits_for_send_commitment(
+    end: str,
+    waiting_client: tuple[JsonRPC, Any],
+    mocker: MockerFixture,
+    request: pytest.FixtureRequest,
+) -> None:
+    transport, querier = waiting_client
+    querier.matching_status.matching = True
+    checked, release = threading.Event(), threading.Event()
+    cancelling, removed, cancelled = threading.Event(), threading.Event(), threading.Event()
+    caller = threading.current_thread()
+    lock = transport._pending_lock
+    pending_at_send: list[bool] = []
+
+    def release_pending_lock(*args: Any) -> None:
+        pending_removed = 1 not in transport._pending
+        lock.__exit__(*args)
+        if threading.current_thread() is caller:
+            return
+        if threading.current_thread() is canceller:
+            if pending_removed:
+                removed.set()
+        elif not checked.is_set():
+            checked.set()
+            assert release.wait(2)
+
+    class CheckedLock:
+        def __enter__(self) -> None:
+            lock.__enter__()
+
+        def __exit__(self, *args: Any) -> None:
+            release_pending_lock(*args)
+
+    mocker.patch.object(transport, "_pending_lock", CheckedLock())
+
+    def send(*args: Any, **kwargs: Any) -> None:
+        with lock:
+            pending_at_send.append(1 in transport._pending)
+
+    def cancel_call() -> None:
+        cancelling.set()
+        (cancel if end == "cancel" else transport.stop)()
+        cancelled.set()
+
+    querier.get.side_effect = send
+    callback = mocker.Mock()
+    canceller = threading.Thread(target=cancel_call)
+    cancel = transport.call_cb("echo", ([], {}), callback)
+    request.addfinalizer(lambda: canceller.join(2) if canceller.ident is not None else None)
+    request.addfinalizer(release.set)
+    assert checked.wait(1)
+    canceller.start()
+    assert cancelling.wait(1)
+    assert not removed.wait(0.1)
+    release.set()
+    assert cancelled.wait(1)
+    assert pending_at_send == [True]
+    querier.get.assert_called_once()
+    callback.assert_not_called()
+    assert not transport._pending
+
+
+@pytest.mark.parametrize("event", ["reply", "match"])
+@pytest.mark.parametrize("restart", [False, True])
+def test_stop_suppresses_pending_calls_while_waiting_for_a_send(
+    event: str,
+    restart: bool,
+    waiting_client: tuple[JsonRPC, Any],
+    mocker: MockerFixture,
+    request: pytest.FixtureRequest,
+) -> None:
+    transport, querier = waiting_client
+    session = transport.session
+    mocker.patch.object(transport, "_session_pool", mocker.Mock(acquire=lambda _: session))
+    querier.matching_status.matching = True
+    sending, release, stopped = threading.Event(), threading.Event(), threading.Event()
+    replies: Queue[tuple[threading.Thread, Callable[..., Any]]] = Queue()
+    listener_context = querier.declare_matching_listener.return_value
+
+    def listen(callback: Callable[..., Any]) -> Any:
+        if not querier.matching_status.matching:
+            replies.put((threading.current_thread(), callback))
+        return listener_context
+
+    def send(callback: Callable[..., Any], **kwargs: Any) -> None:
+        call_id = transport.decode(kwargs["payload"])["id"]
+        if call_id == 1:
+            sending.set()
+            assert release.wait(2)
+        else:
+            replies.put((threading.current_thread(), callback))
+
+    def stop() -> None:
+        transport.stop()
+        stopped.set()
+
+    querier.get.side_effect = send
+    querier.declare_matching_listener.side_effect = listen
+    callback = mocker.Mock()
+    transport.call_cb("echo", ([], {}), callback)
+    request.addfinalizer(release.set)
+    assert sending.wait(1)
+    querier.matching_status.matching = event == "reply"
+    transport.call_cb("echo", ([], {}), callback)
+    reply_worker, deliver_reply = replies.get(timeout=1)
+    stopper = threading.Thread(target=stop)
+    request.addfinalizer(lambda: stopper.join(2))
+    request.addfinalizer(release.set)
+    stopper.start()
+    wait_until(lambda: transport._session is None, timeout=1)
+    if restart:
+        transport.start()
+    assert transport._session is (session if restart else None)
+    if event == "reply":
+        reply = mocker.Mock(err=None)
+        reply.ok.payload.to_bytes.return_value = transport.encode(
+            {"jsonrpc": "2.0", "id": 2, "result": "late"}
+        )
+        deliver_reply(reply)
+    else:
+        deliver_reply(mocker.Mock(matching=True))
+    reply_worker.join(1)
+    assert not reply_worker.is_alive()
+    assert querier.get.call_count == (2 if event == "reply" else 1)
+    callback.assert_not_called()
+    release.set()
+    assert stopped.wait(1)
+    assert not transport._pending
 
 
 @pytest.mark.parametrize("fails", [False, True])

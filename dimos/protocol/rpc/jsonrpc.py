@@ -45,6 +45,7 @@ class JsonRPC(ZenohRPC):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._pending_lock = threading.RLock()
+        self._shutdown_generation = 0
 
     def __getstate__(self) -> dict[str, Any]:
         state: dict[str, Any] = super().__getstate__()  # type: ignore[no-untyped-call]
@@ -84,6 +85,7 @@ class JsonRPC(ZenohRPC):
         route = self._route(name)
         deadline = time.monotonic() + timeout
         messages: Queue[tuple[str, Any]] = Queue()
+        send_lock = threading.RLock()
         started = threading.Event()
         join_after_start = threading.Event()
         startup_owner = threading.current_thread()
@@ -126,18 +128,23 @@ class JsonRPC(ZenohRPC):
                             if time.monotonic() >= deadline or kind == "cancel":
                                 break
                             if kind == "match" and value and not sent:
-                                with self._pending_lock:
-                                    if call_id not in self._pending:
-                                        break
-                                    sent = True
-                                querier.get(
-                                    zenoh.handlers.Callback(
-                                        on_reply,
-                                        drop=lambda: messages.put(("end", None)),
-                                    ),
-                                    payload=payload,
-                                    encoding=self.encoding,
-                                )
+                                # Cancellation and send share only this call's lock.
+                                with send_lock:
+                                    with self._pending_lock:
+                                        if (
+                                            generation != self._shutdown_generation
+                                            or call_id not in self._pending
+                                        ):
+                                            break
+                                        sent = True
+                                    querier.get(
+                                        zenoh.handlers.Callback(
+                                            on_reply,
+                                            drop=lambda: messages.put(("end", None)),
+                                        ),
+                                        payload=payload,
+                                        encoding=self.encoding,
+                                    )
                             elif kind == "reply":
                                 result = response(value)
                                 break
@@ -152,13 +159,15 @@ class JsonRPC(ZenohRPC):
                 result = error
             with self._pending_lock:
                 callback = self._pending.pop(call_id, None)
+                if generation != self._shutdown_generation:
+                    callback = None
             if callback is not None:
                 if time.monotonic() >= deadline:
                     result = TimeoutError(f"RPC call to '{name}' timed out")
                 cb(result)
 
         def unsubscribe_callback() -> None:
-            with self._pending_lock:
+            with send_lock, self._pending_lock:
                 self._pending.pop(call_id, None)
             messages.put(("cancel", None))
             if threading.current_thread() is not worker:
@@ -172,6 +181,7 @@ class JsonRPC(ZenohRPC):
         worker = threading.Thread(target=run, daemon=True)
         with self._pending_lock:
             session = self.session
+            generation = self._shutdown_generation
             self._pending[call_id] = unsubscribe_callback
         # Thread startup can wait for scheduling; do not hold up other calls.
         try:
@@ -188,9 +198,9 @@ class JsonRPC(ZenohRPC):
 
     def stop(self) -> None:
         with self._pending_lock:
+            self._shutdown_generation += 1
             self._session = None
             callbacks = list(self._pending.values())
-            self._pending.clear()
         for cancel in callbacks:
             cancel()
         super().stop()
