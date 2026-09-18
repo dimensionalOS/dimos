@@ -1,0 +1,2147 @@
+{
+  "dataset": "hssd-hab",
+  "scene_id": "103997970_171031287",
+  "frame_id": "world",
+  "timestamp": 0.0,
+  "count": 90,
+  "detections": [
+    {
+      "id": "726a811656a2ef0ea1c8a51962841568039f2cdc@0",
+      "label": "Strata Runner",
+      "score": 1.0,
+      "center_xyz": [
+        5.7174700000000005,
+        4.71434,
+        0.005
+      ],
+      "size_xyz": [
+        0.7619979999999993,
+        2.438398,
+        0.01
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "0ad85902da0211d4439630d8f217340abdcfff2d@1",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        6.4494595,
+        5.2351605,
+        1.201266
+      ],
+      "size_xyz": [
+        0.5962149999999999,
+        2.3780990000000006,
+        2.402532
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "YOO OH Kitchen 250, EARTH"
+      ]
+    },
+    {
+      "id": "5f5be131893cc49b863460b5f4edc1b4f655ac0a@2",
+      "label": "Molten Disc Wall Art LG, Silver Leaf",
+      "score": 1.0,
+      "center_xyz": [
+        -1.5047335,
+        7.2189515,
+        1.7499919999999998
+      ],
+      "size_xyz": [
+        0.9848729999999999,
+        0.11945300000000003,
+        0.989358
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "28e92edd4e2a4fa365535b6ac7fede438cc4de1d@3",
+      "label": "stool",
+      "score": 1.0,
+      "center_xyz": [
+        2.3903195,
+        6.7383695,
+        0.2281235
+      ],
+      "size_xyz": [
+        0.8018929999999997,
+        0.8011029999999995,
+        0.456177
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "stool",
+        "Vivian Ottoman, Charcoal"
+      ]
+    },
+    {
+      "id": "3f9265b5b5e5abd5332ce66078e5eecbc3a9366d@4",
+      "label": "chest_of_drawers",
+      "score": 1.0,
+      "center_xyz": [
+        3.84122,
+        10.42821,
+        0.371475
+      ],
+      "size_xyz": [
+        0.7873999999999999,
+        0.39865999999999957,
+        0.74295
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chest_of_drawers",
+        "Black And Gold Modern 2 Door Chest"
+      ]
+    },
+    {
+      "id": "cdd46cec56a2f6218462dd9a2ae8cb55cfcb3dca@5",
+      "label": "candle",
+      "score": 1.0,
+      "center_xyz": [
+        -3.9525065,
+        5.50029,
+        1.337828
+      ],
+      "size_xyz": [
+        0.19070299999999962,
+        0.19071000000000016,
+        0.755484
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "candle",
+        "Med Spiral Wood Candlestick"
+      ]
+    },
+    {
+      "id": "b42c22f3523f5f99a962e313aa2290dd6d5f9053@6",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        -4.1553819999999995,
+        3.252877,
+        1.28125
+      ],
+      "size_xyz": [
+        0.02831799999999962,
+        0.3811979999999999,
+        0.48249999999999993
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Black and White Graphic XVI"
+      ]
+    },
+    {
+      "id": "1480f37810b55eb9a862a4b2453cc975d2839327@7",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        -4.1864799999999995,
+        9.60191,
+        1.749994
+      ],
+      "size_xyz": [
+        0.07458999999999971,
+        0.6734359999999988,
+        0.672326
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Gold Floral Fan"
+      ]
+    },
+    {
+      "id": "35880f4a551d6b1790f8ded9b23498f1da88575b@8",
+      "label": "fridge",
+      "score": 1.0,
+      "center_xyz": [
+        6.423019,
+        3.59611,
+        1.179999
+      ],
+      "size_xyz": [
+        0.6490960000000001,
+        0.8999999999999995,
+        2.359998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "fridge",
+        "KEW - Fridge"
+      ]
+    },
+    {
+      "id": "d71c1dcf721ac9b424b25ff44ab21ed0fd9d5c35@9",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        0.71441,
+        8.9387095,
+        1.52
+      ],
+      "size_xyz": [
+        0.8300000000000001,
+        0.24295299999999997,
+        2.0
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Royal System Shelving Unit A"
+      ]
+    },
+    {
+      "id": "2500232ac94847f7a9bab9e993b66b5fd1f29f89@10",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        -4.1578625,
+        3.847627,
+        1.69
+      ],
+      "size_xyz": [
+        0.034443000000000445,
+        0.5102359999999995,
+        0.6799999999999997
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Scott Dunwoodie - Hydrangea Framed Print, 68 x 51cm"
+      ]
+    },
+    {
+      "id": "52b86c8bfd1804c6bed56b1d51c0d95e2f6ae285@11",
+      "label": "baltic pillar candle, set of 2",
+      "score": 1.0,
+      "center_xyz": [
+        -3.26171,
+        10.579580499999999,
+        1.1348814999999999
+      ],
+      "size_xyz": [
+        0.20403800000000016,
+        0.09592499999999937,
+        0.34776299999999993
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "3bc422a67b6d413349125c8c5d7fe7eab1711757@12",
+      "label": "carpet",
+      "score": 1.0,
+      "center_xyz": [
+        -2.129528,
+        5.0159970000000005,
+        0.005
+      ],
+      "size_xyz": [
+        2.443332,
+        3.051348,
+        0.01
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "carpet",
+        "Chavez 8' x 10'' Handwoven Kilim Rug"
+      ]
+    },
+    {
+      "id": "6a2c92540e48a80091dc272f6da4b3a94dea5455@13",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        3.56398,
+        6.57746,
+        0.23837599999999998
+      ],
+      "size_xyz": [
+        0.2783059999999997,
+        0.2783059999999997,
+        0.476746
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Hammered Brass Drum End Table"
+      ]
+    },
+    {
+      "id": "e24449e3c2ce454a904c6a7011488632a6b1c875@14",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        6.7158195,
+        7.5553799999999995,
+        1.75
+      ],
+      "size_xyz": [
+        0.06350099999999959,
+        1.4223999999999997,
+        1.7271999999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Motion Abstracts 4 - Large"
+      ]
+    },
+    {
+      "id": "4d9190b21102af091661cb3272d0c76fd068daa8@15",
+      "label": "couch",
+      "score": 1.0,
+      "center_xyz": [
+        3.6656385,
+        4.99931,
+        0.3869905
+      ],
+      "size_xyz": [
+        0.9644429999999997,
+        2.3871100000000003,
+        0.773981
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "couch",
+        "Gold Channel Back Sofa"
+      ]
+    },
+    {
+      "id": "a17474ee5c21671b30a73d9203a763d901de6352@16",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        -4.15874,
+        3.29726,
+        2.0748595
+      ],
+      "size_xyz": [
+        0.022655999999999565,
+        0.41922999999999977,
+        0.6097149999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Morning Light"
+      ]
+    },
+    {
+      "id": "a741ae95ad2a109ef6f6f8781870def429815c12@17",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        6.135059,
+        9.8698785,
+        1.7500005
+      ],
+      "size_xyz": [
+        0.8445499999999999,
+        0.04446300000000036,
+        0.844551
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Quilted Star I"
+      ]
+    },
+    {
+      "id": "2a1e170b20e50380602e9f5feb67259ca8c49e15@18",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        -4.1807815,
+        6.2692049999999995,
+        1.7499985
+      ],
+      "size_xyz": [
+        0.02985499999999952,
+        0.6086,
+        0.7097950000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Sleeping Beauty IV"
+      ]
+    },
+    {
+      "id": "e7ecadfd54d74638d1de977ac7b04dfd1702d6af@19",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        0.6378699999999999,
+        3.5673880000000002,
+        1.8701115
+      ],
+      "size_xyz": [
+        0.070048,
+        0.7878839999999996,
+        1.040225
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Abstract Lines II"
+      ]
+    },
+    {
+      "id": "e7ecadfd54d74638d1de977ac7b04dfd1702d6af@20",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        0.621,
+        5.5924084999999994,
+        1.8701115
+      ],
+      "size_xyz": [
+        0.070048,
+        0.7878850000000002,
+        1.040225
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Abstract Lines II"
+      ]
+    },
+    {
+      "id": "6ece1a15f0f508aab2371808d58eefa8420cf725@21",
+      "label": "Rolled Up Towel",
+      "score": 1.0,
+      "center_xyz": [
+        -3.1887295,
+        10.52254,
+        1.604894
+      ],
+      "size_xyz": [
+        0.349901,
+        0.2100540000000013,
+        0.29811999999999994
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "0d65e4a8e88bbd6cba57f3ce115e0e85d54da9c3@22",
+      "label": "Statue",
+      "score": 1.0,
+      "center_xyz": [
+        4.087915499999999,
+        10.4456425,
+        1.045995
+      ],
+      "size_xyz": [
+        0.32671899999999976,
+        0.24301300000000126,
+        0.6043240000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "c45c5041510f985a31d71e21abd2214a36e53db2@23",
+      "label": "carpet",
+      "score": 1.0,
+      "center_xyz": [
+        -3.4090245,
+        8.253142,
+        0.005
+      ],
+      "size_xyz": [
+        0.5065330000000001,
+        0.801844,
+        0.01
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "carpet",
+        "Black Textured Stripe Bath Mat."
+      ]
+    },
+    {
+      "id": "027e92cebd21d094967fa5f266896148e91db402@24",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        -1.5098799999999999,
+        9.71801,
+        1.749975
+      ],
+      "size_xyz": [
+        0.02540000000000009,
+        1.4225999999999992,
+        1.4226
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Mesh Wall Art"
+      ]
+    },
+    {
+      "id": "7ebc7102e393afd998a6007c004357e787a74b88@25",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        -4.185563,
+        6.8747165,
+        1.28125
+      ],
+      "size_xyz": [
+        0.02831800000000051,
+        0.38119700000000023,
+        0.48249999999999993
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Black and White Graphic XIII"
+      ]
+    },
+    {
+      "id": "4d6dcddccd57679336c7ac8753aecaf83b3fd5fa@26",
+      "label": "Waschplatz/zone lavabo Vanity Pathos 120 x 35 x 55.5 cm schwarz/noir",
+      "score": 1.0,
+      "center_xyz": [
+        -3.93467,
+        8.2863775,
+        1.332665
+      ],
+      "size_xyz": [
+        0.5610439999999999,
+        1.2047549999999996,
+        1.5662099999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "19a8974d385a12a5a1f51c0c615fa5a52d65a50e@27",
+      "label": "mirror",
+      "score": 1.0,
+      "center_xyz": [
+        3.8496499999999996,
+        10.608640000000001,
+        1.75
+      ],
+      "size_xyz": [
+        0.9999999999999996,
+        0.037799999999998946,
+        1.5
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "mirror",
+        "Lyra Dresser Mirror"
+      ]
+    },
+    {
+      "id": "81ef70dbef87705b4e0e5051197da71c5e1bd4b4@28",
+      "label": "tv",
+      "score": 1.0,
+      "center_xyz": [
+        0.836435,
+        5.0137235,
+        1.4958995
+      ],
+      "size_xyz": [
+        0.04731799999999997,
+        1.3300850000000004,
+        0.6918690000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "tv",
+        "55'' Led TV"
+      ]
+    },
+    {
+      "id": "a6a7ccf24336ed52468d49ca3abc4a0329b55b77@29",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xyz": [
+        4.19205,
+        2.8947405,
+        1.437395
+      ],
+      "size_xyz": [
+        0.8488779999999996,
+        0.3219449999999999,
+        2.8714380000000004
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "curtain",
+        "Curtain"
+      ]
+    },
+    {
+      "id": "a6a7ccf24336ed52468d49ca3abc4a0329b55b77@30",
+      "label": "curtain",
+      "score": 1.0,
+      "center_xyz": [
+        1.8522210000000001,
+        2.9137605,
+        1.437395
+      ],
+      "size_xyz": [
+        0.848878,
+        0.32194500000000037,
+        2.8714380000000004
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "curtain",
+        "Curtain"
+      ]
+    },
+    {
+      "id": "ea233d6e83ef6d189dc92600b820430307b58cea@31",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        -2.47649,
+        10.47458,
+        1.6182015
+      ],
+      "size_xyz": [
+        0.19561000000000028,
+        0.19408199999999987,
+        0.2740530000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "Herbs, Basil"
+      ]
+    },
+    {
+      "id": "d2e2e98dd002a31d402bde12c44e824dfc751d49@32",
+      "label": "Small Horse Shoe Sculpture",
+      "score": 1.0,
+      "center_xyz": [
+        0.59404,
+        9.009376,
+        1.9310910000000001
+      ],
+      "size_xyz": [
+        0.30856599999999995,
+        0.10159999999999947,
+        0.3220360000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "d9c1f769e3706be6e0dcaf0acd8ddd0815297af6@33",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        5.10515,
+        9.866618500000001,
+        1.75
+      ],
+      "size_xyz": [
+        0.8191500000000005,
+        0.050983000000000445,
+        1.0668
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Water Tower"
+      ]
+    },
+    {
+      "id": "e5b9d327cc02b0632214bfe346b56e5fa5c586ca@34",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        5.248279500000001,
+        8.0987395,
+        2.460136
+      ],
+      "size_xyz": [
+        0.7005930000000005,
+        0.7005929999999996,
+        1.7397280000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Reese Shaded Pendant"
+      ]
+    },
+    {
+      "id": "aec527eef8ce07f9b14aa36e43f173d3c0369f6f@35",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        0.8087335,
+        6.3232535,
+        1.23
+      ],
+      "size_xyz": [
+        0.03019700000000003,
+        0.5971830000000002,
+        0.7999999999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Gold Foil Symbiotic"
+      ]
+    },
+    {
+      "id": "a622b0ad916c7703b9acc23584174a43137f3efb@36",
+      "label": "Dana White Canister, Small",
+      "score": 1.0,
+      "center_xyz": [
+        0.85024,
+        8.9582595,
+        1.4765695
+      ],
+      "size_xyz": [
+        0.20384800000000003,
+        0.20384699999999967,
+        0.254027
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "0bc0075df6300263a1be7a5363688dd42e091ee2@37",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        5.6742170000000005,
+        8.8506025,
+        0.5016605
+      ],
+      "size_xyz": [
+        0.5920739999999993,
+        0.5920749999999995,
+        1.004065
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "YNGVAR Bar stool, Anthracite"
+      ]
+    },
+    {
+      "id": "0bc0075df6300263a1be7a5363688dd42e091ee2@38",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        4.7374434999999995,
+        7.465702,
+        0.5016605
+      ],
+      "size_xyz": [
+        0.6329409999999998,
+        0.6329419999999999,
+        1.004065
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "YNGVAR Bar stool, Anthracite"
+      ]
+    },
+    {
+      "id": "0bc0075df6300263a1be7a5363688dd42e091ee2@39",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        4.673351500000001,
+        8.535868,
+        0.5016605
+      ],
+      "size_xyz": [
+        0.5950730000000002,
+        0.595072,
+        1.004065
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "YNGVAR Bar stool, Anthracite"
+      ]
+    },
+    {
+      "id": "0bc0075df6300263a1be7a5363688dd42e091ee2@40",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        5.7332505000000005,
+        7.3560935,
+        0.5016605
+      ],
+      "size_xyz": [
+        0.6105150000000004,
+        0.6105149999999995,
+        1.004065
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "YNGVAR Bar stool, Anthracite"
+      ]
+    },
+    {
+      "id": "6c528c80cfe176cc4aa7f0767424bc409e9bd6be@41",
+      "label": "bathtub",
+      "score": 1.0,
+      "center_xyz": [
+        -1.9886835,
+        9.787528,
+        0.3475505
+      ],
+      "size_xyz": [
+        0.7799849999999999,
+        1.6799660000000003,
+        0.695101
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "bathtub",
+        "Royce Morgan Akita Freestanding Bath"
+      ]
+    },
+    {
+      "id": "85575c26c7604b811bc959a4e3c5ec991765a589@42",
+      "label": "carpet",
+      "score": 1.0,
+      "center_xyz": [
+        2.2365015,
+        5.0401615,
+        0.0025
+      ],
+      "size_xyz": [
+        2.656215,
+        2.6213689999999996,
+        0.005
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "carpet",
+        "Creme Caramel Hide"
+      ]
+    },
+    {
+      "id": "6b9314134d9a82d75306f13750622f4fb8b6c22e@43",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        5.3029475,
+        8.085108,
+        0.3871785
+      ],
+      "size_xyz": [
+        1.600003,
+        1.5984240000000005,
+        0.774357
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Landers Dining Table, Walnut"
+      ]
+    },
+    {
+      "id": "a6c886810720eeb275e057630275b5f5693440b0@44",
+      "label": "bed",
+      "score": 1.0,
+      "center_xyz": [
+        -0.4885295,
+        4.5755835000000005,
+        0.6336055
+      ],
+      "size_xyz": [
+        2.187385,
+        1.922453,
+        1.267211
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "bed",
+        "Urban Lines Queen Metal Bed"
+      ]
+    },
+    {
+      "id": "71dc0202fcd0c3c8a29574530594cbd339347a63@45",
+      "label": "ProCasa Tre Papierhalter/Porte-papier/Portacarta",
+      "score": 1.0,
+      "center_xyz": [
+        -4.1621690000000005,
+        9.1579315,
+        1.7499855
+      ],
+      "size_xyz": [
+        0.11015799999999931,
+        0.16769700000000043,
+        0.17007899999999987
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "782a3b7e0f47cb04ae0a59258942fbb7598123fd@46",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        -1.904784,
+        5.3481594999999995,
+        0.320734
+      ],
+      "size_xyz": [
+        0.749044,
+        0.7320350000000007,
+        0.641766
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Matador Shearling Chair"
+      ]
+    },
+    {
+      "id": "782a3b7e0f47cb04ae0a59258942fbb7598123fd@47",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        -1.9067615,
+        3.8540005,
+        0.3207335
+      ],
+      "size_xyz": [
+        0.7723870000000002,
+        0.7662050000000002,
+        0.641767
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Matador Shearling Chair"
+      ]
+    },
+    {
+      "id": "1f2e2502feadd989b0e9a03c5e7eda0aac253f0c@48",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        0.8085935,
+        6.3391234999999995,
+        2.0700000000000003
+      ],
+      "size_xyz": [
+        0.03019700000000003,
+        0.5971830000000002,
+        0.8000000000000003
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Gold Foil Floral II"
+      ]
+    },
+    {
+      "id": "b79cbfbea68ef0394ffc9b8a7e87d6e9ceb6a05a@49",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        -4.1564975,
+        3.7955305,
+        0.8614489999999999
+      ],
+      "size_xyz": [
+        0.03589100000000034,
+        0.4630670000000001,
+        0.46289199999999997
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Camera"
+      ]
+    },
+    {
+      "id": "46c98ef1342702022042ee1dc44bdde19624e265@50",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        -3.9902465,
+        10.4180555,
+        0.9157225
+      ],
+      "size_xyz": [
+        0.8264690000000003,
+        0.8144729999999996,
+        1.831445
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "Bamboo Tree"
+      ]
+    },
+    {
+      "id": "475870f8089a1c7bf8186679ed82537d9fbcc587@51",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        -3.6562799999999998,
+        3.6072815,
+        0.996627
+      ],
+      "size_xyz": [
+        1.4981839999999997,
+        1.4818909999999996,
+        1.993254
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "plant"
+      ]
+    },
+    {
+      "id": "81edadb4fcaf4fa5fa0ba41c33802073ab5d92bc@52",
+      "label": "Deco Antler Skull, Aluminum",
+      "score": 1.0,
+      "center_xyz": [
+        3.1718495,
+        2.996189,
+        1.750028
+      ],
+      "size_xyz": [
+        0.6682790000000001,
+        0.19105000000000016,
+        0.606242
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "5cf09bd04dad3ded5492432460d45ee4eb51c13e@53",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        2.69466,
+        3.419657,
+        0.3179965
+      ],
+      "size_xyz": [
+        0.761164,
+        0.5582099999999999,
+        0.635993
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "ROSALIND END TABLE"
+      ]
+    },
+    {
+      "id": "7ff8c2d48e8d49e2f1504bc83d16ef933cd7163b@54",
+      "label": "toilet",
+      "score": 1.0,
+      "center_xyz": [
+        -3.8945619999999996,
+        9.577251,
+        0.4084825
+      ],
+      "size_xyz": [
+        0.6521459999999997,
+        0.3731480000000005,
+        0.816923
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "toilet",
+        "Cooke & Lewis Romeo Modern Close-Coupled Toilet with Soft Close Seat"
+      ]
+    },
+    {
+      "id": "b7cb814bf208d769ae2e1143b630ed80288c9e38@55",
+      "label": "picture_frame",
+      "score": 1.0,
+      "center_xyz": [
+        -3.2104299999999997,
+        10.54144,
+        2.159882
+      ],
+      "size_xyz": [
+        0.30654400000000015,
+        0.17228199999999916,
+        0.3209120000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture_frame",
+        "Meadow Photo Frame - 8x10 inches"
+      ]
+    },
+    {
+      "id": "b883b58bdd53fccec7153d88a98dea8e31158c64@56",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        -4.1432295,
+        6.29014,
+        0.8150000000000001
+      ],
+      "size_xyz": [
+        0.10514499999999938,
+        0.5908499999999997,
+        0.5900000000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "African Basket V"
+      ]
+    },
+    {
+      "id": "32a0a1818c04208ac457579c89c2276f2f7f85a4@57",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        -4.185563,
+        6.875067,
+        2.1212495000000002
+      ],
+      "size_xyz": [
+        0.02831800000000051,
+        0.38119800000000037,
+        0.48249900000000023
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Black and White Graphic IV"
+      ]
+    },
+    {
+      "id": "5bf43afca1520ee67529f9edc1565c871f6b43f0@58",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        -2.8763,
+        10.5025385,
+        0.95
+      ],
+      "size_xyz": [
+        1.2000000000000002,
+        0.25000100000000103,
+        0.020004000000000022
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Belfast Floating Shelf"
+      ]
+    },
+    {
+      "id": "5bf43afca1520ee67529f9edc1565c871f6b43f0@59",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        -2.86572,
+        10.5025385,
+        1.47
+      ],
+      "size_xyz": [
+        1.2000000000000002,
+        0.25000100000000103,
+        0.020004000000000133
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Belfast Floating Shelf"
+      ]
+    },
+    {
+      "id": "5bf43afca1520ee67529f9edc1565c871f6b43f0@60",
+      "label": "shelves",
+      "score": 1.0,
+      "center_xyz": [
+        -2.89602,
+        10.5025385,
+        1.9899999999999998
+      ],
+      "size_xyz": [
+        1.2000000000000002,
+        0.25000100000000103,
+        0.02000399999999991
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shelves",
+        "Belfast Floating Shelf"
+      ]
+    },
+    {
+      "id": "009f96f4bd369a2294a1b29538c52b14ec792a54@61",
+      "label": "mirror",
+      "score": 1.0,
+      "center_xyz": [
+        -4.163857,
+        4.9959050000000005,
+        1.7499995
+      ],
+      "size_xyz": [
+        0.047258000000000244,
+        1.1958159999999998,
+        0.897125
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "mirror",
+        "Erebus Buffet Mirror"
+      ]
+    },
+    {
+      "id": "f0d31b0988e86c312ee6b1c23715b2dd47c3d93b@62",
+      "label": "floor_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        1.1483595,
+        3.769434,
+        0.79019
+      ],
+      "size_xyz": [
+        0.41384699999999996,
+        0.32998800000000017,
+        1.58038
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "floor_lamp",
+        "Luna Floor Lamp"
+      ]
+    },
+    {
+      "id": "2643558f6dbe025d988cf3b0d96a14e362d380d4@63",
+      "label": "chest_of_drawers",
+      "score": 1.0,
+      "center_xyz": [
+        -3.9513185,
+        5.0153645000000004,
+        0.482524
+      ],
+      "size_xyz": [
+        0.4772730000000003,
+        1.6762889999999997,
+        0.965048
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chest_of_drawers",
+        "Pavilion Dresser by Nate Berkus and Jeremiah Brent"
+      ]
+    },
+    {
+      "id": "7ebbcee61f6f7b26bf9b346ac960fd0248fc2bdd@64",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        3.275489,
+        7.302177,
+        0.4484395
+      ],
+      "size_xyz": [
+        1.130744,
+        1.1367979999999998,
+        0.896879
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Revolve II Swivel Accent Chair"
+      ]
+    },
+    {
+      "id": "3aef5476fb1c9b2f3cae1b2ca8b33c1bae7ec1d2@65",
+      "label": "counter",
+      "score": 1.0,
+      "center_xyz": [
+        1.0242200000000001,
+        5.0086200000000005,
+        0.4318
+      ],
+      "size_xyz": [
+        0.420434,
+        1.6065499999999995,
+        0.8636
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "counter",
+        "Highland Buffet, Walnut"
+      ]
+    },
+    {
+      "id": "4af2c5ee1be2e81ae2dc092bf4450675f4b9a587@66",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        6.7283,
+        8.991617999999999,
+        1.75
+      ],
+      "size_xyz": [
+        0.03810000000000002,
+        1.2187959999999993,
+        1.2191999999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Ring Of Fire Art"
+      ]
+    },
+    {
+      "id": "bd8a1dc70062c8e7c8a33cb92ee86fbe6b015547@67",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        2.74101,
+        3.4988795,
+        1.021185
+      ],
+      "size_xyz": [
+        0.8538960000000002,
+        0.7167369999999997,
+        1.00237
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "Faux Potted Monstera Plant 29\""
+      ]
+    },
+    {
+      "id": "47ac569487f82e23b0a5d18057a6c6fc77610aa9@68",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        0.8305135,
+        3.7092535,
+        1.23
+      ],
+      "size_xyz": [
+        0.03019700000000003,
+        0.5971829999999998,
+        0.7999999999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Gold Foil Floral I"
+      ]
+    },
+    {
+      "id": "47ac569487f82e23b0a5d18057a6c6fc77610aa9@69",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        0.8304135,
+        3.7205935,
+        2.0700000000000003
+      ],
+      "size_xyz": [
+        0.03019700000000003,
+        0.5971830000000002,
+        0.8000000000000003
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Gold Foil Floral I"
+      ]
+    },
+    {
+      "id": "50c294cd4703c993b36e0874f67c241260de1e54@70",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        0.6293599999999999,
+        4.589798500000001,
+        1.8701115
+      ],
+      "size_xyz": [
+        0.070048,
+        0.7878850000000002,
+        1.040225
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Abstract Lines I"
+      ]
+    },
+    {
+      "id": "d530e76bb97f1eb61a8560d43f7595c6cc5b2d5e@71",
+      "label": "candle",
+      "score": 1.0,
+      "center_xyz": [
+        -4.0559864999999995,
+        5.6901399999999995,
+        1.413624
+      ],
+      "size_xyz": [
+        0.19070300000000007,
+        0.19071000000000016,
+        0.90814
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "candle",
+        "Large Spiral Wood Candlestick"
+      ]
+    },
+    {
+      "id": "201-2@72",
+      "label": "door",
+      "score": 1.0,
+      "center_xyz": [
+        2.7622999999999998,
+        10.702539999999999,
+        1.12
+      ],
+      "size_xyz": [
+        0.98,
+        0.22999999999999865,
+        2.2
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "3755-0@73",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        4.351379,
+        2.82555,
+        1.4500000000000002
+      ],
+      "size_xyz": [
+        1.0799999999999996,
+        0.07999999999999963,
+        1.5000000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "3755-0@74",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        -0.7940799999999999,
+        2.804308,
+        1.4500000000000002
+      ],
+      "size_xyz": [
+        1.080616,
+        0.08879400000000004,
+        1.5000000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "3755-0@75",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        -2.77331,
+        2.788187,
+        1.4500000000000002
+      ],
+      "size_xyz": [
+        1.080616,
+        0.08879400000000004,
+        1.5000000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "3755-0@76",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        1.9956895,
+        2.8217805,
+        1.4500000000000002
+      ],
+      "size_xyz": [
+        1.080307,
+        0.08424500000000013,
+        1.5000000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_0.041",
+      "label": "wall_0.041",
+      "score": 1.0,
+      "center_xyz": [
+        3.178795,
+        10.702541,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        2.8828300000000002,
+        0.14999999999999858,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_1.043",
+      "label": "wall_1.043",
+      "score": 1.0,
+      "center_xyz": [
+        4.54521,
+        10.334825,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.15000000000000036,
+        0.8854299999999995,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_10.036",
+      "label": "wall_10.036",
+      "score": 1.0,
+      "center_xyz": [
+        -2.8638434999999998,
+        10.702540500000001,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        3.033327,
+        0.14999899999999933,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_11.024",
+      "label": "wall_11.024",
+      "score": 1.0,
+      "center_xyz": [
+        -1.42218,
+        9.95636,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.1499999999999999,
+        1.64236,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_14.029",
+      "label": "wall_14.029",
+      "score": 1.0,
+      "center_xyz": [
+        -4.291456999999999,
+        9.0532275,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.1780999999999997,
+        3.448625,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_16.019",
+      "label": "wall_16.019",
+      "score": 1.0,
+      "center_xyz": [
+        -4.258122500000001,
+        5.0150904999999995,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.18731100000000023,
+        4.628899,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_2.044",
+      "label": "wall_2.044",
+      "score": 1.0,
+      "center_xyz": [
+        5.68389,
+        9.9671095,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        2.42736,
+        0.14999899999999933,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_3.041",
+      "label": "wall_3.041",
+      "score": 1.0,
+      "center_xyz": [
+        6.82257,
+        6.3963295,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.15000000000000036,
+        7.2915589999999995,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_4.037",
+      "label": "wall_4.037",
+      "score": 1.0,
+      "center_xyz": [
+        1.81238,
+        9.918860500000001,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.15000000000000013,
+        1.717359,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_5.037",
+      "label": "wall_5.037",
+      "score": 1.0,
+      "center_xyz": [
+        4.926545,
+        2.82555,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        3.94205,
+        0.1499999999999999,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_6.032",
+      "label": "wall_6.032",
+      "score": 1.0,
+      "center_xyz": [
+        -1.7810155,
+        2.7959585000000002,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        5.064393,
+        0.1906349999999999,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_8.036",
+      "label": "wall_8.036",
+      "score": 1.0,
+      "center_xyz": [
+        1.853192,
+        2.82122,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        2.2052440000000004,
+        0.15865799999999997,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_9.033",
+      "label": "wall_9.033",
+      "score": 1.0,
+      "center_xyz": [
+        0.23260000000000003,
+        9.1351805,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        3.3095600000000003,
+        0.14999899999999933,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  ]
+}
