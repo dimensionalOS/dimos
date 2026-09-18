@@ -354,7 +354,8 @@ jobs:
           cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
           uv run pytest -m native_e2e \
             dimos/hardware/sensors/lidar/livox/test_e2e.py \
-            dimos/robot/manipulators/openyam/blueprints/test_learning_collection_e2e.py --no-cov
+            dimos/robot/manipulators/openyam/blueprints/test_learning_collection_e2e.py \
+            dimos/imitation/test_datacollection_e2e.py --no-cov
 
   native:
     name: Native builds (C++ and Rust)

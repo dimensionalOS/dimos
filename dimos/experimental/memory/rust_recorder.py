@@ -85,13 +85,29 @@ RustRecordingStoreConfig: TypeAlias = Annotated[
 ]
 
 
-class NativeRecorderConfig(NativeModuleConfig):
-    """Shared native encoding and process settings for file and collection recorders.
+class RustRecorderConfig(NativeModuleConfig):
+    """Record connected streams to a Rust-backed SQLite or MCAP artifact.
 
     Python owns artifact lifecycle and stream registration. The native process
     receives only ``store``, ``encoding_threads``, and the internally resolved
     ``streams`` list over stdin.
     """
+
+    store: RustRecordingStoreConfig = Field(
+        default_factory=RustSqliteStoreConfig,
+        description="Record-only native storage backend and artifact path.",
+    )
+    on_existing: OnExisting = Field(
+        default=OnExisting.BACKUP,
+        exclude=True,
+        description="How Python prepares an artifact path that already exists.",
+    )
+    backup_keep_last: int = Field(
+        default=10,
+        ge=0,
+        exclude=True,
+        description="Maximum rotated artifacts retained when on_existing is backup.",
+    )
 
     executable: str = "result/bin/dimos-memory-recorder"
     build_command: str = "nix build -L .#dimos-memory-recorder"
@@ -121,54 +137,27 @@ class NativeRecorderConfig(NativeModuleConfig):
     _streams: list[RustStreamSpec] = PrivateAttr(default_factory=list)
 
     @model_validator(mode="after")
-    def _resolve_cwd(self) -> NativeRecorderConfig:
+    def _resolve_cwd(self) -> RustRecorderConfig:
         # Subclassed recorders share this native project, regardless of their source file.
         if not Path(self.cwd).is_absolute():
             self.cwd = str(Path(__file__).parent / self.cwd)
         return self
 
     @model_validator(mode="after")
-    def _stdin_only(self) -> NativeRecorderConfig:
+    def _stdin_only(self) -> RustRecorderConfig:
         if self.extra_args:
             raise ValueError("RustRecorder is stdin-only and does not accept extra_args")
         return self
 
-    def recording_store(self) -> RustRecordingStoreConfig:
-        """Resolve the concrete artifact written by the native process."""
-        raise NotImplementedError
-
     def to_config_dict(self) -> dict[str, Any]:
         return {
-            "store": self.recording_store().model_dump(),
+            "store": self.store.model_dump(),
             "encoding_threads": self.encoding_threads,
             "streams": [stream.model_dump() for stream in self._streams],
         }
 
 
-class RustRecorderConfig(NativeRecorderConfig):
-    """Native recording to an explicitly selected artifact file."""
-
-    store: RustRecordingStoreConfig = Field(
-        default_factory=RustSqliteStoreConfig,
-        description="Record-only native storage backend and artifact path.",
-    )
-    on_existing: OnExisting = Field(
-        default=OnExisting.BACKUP,
-        exclude=True,
-        description="How Python prepares an artifact path that already exists.",
-    )
-    backup_keep_last: int = Field(
-        default=10,
-        ge=0,
-        exclude=True,
-        description="Maximum rotated artifacts retained when on_existing is backup.",
-    )
-
-    def recording_store(self) -> RustRecordingStoreConfig:
-        return self.store
-
-
-class _NativeRecorder(NativeModule):
+class RustRecorder(NativeModule):
     """Experimentally record connected ``In`` ports to native SQLite or MCAP.
 
     This API is under active evaluation and may change without compatibility
@@ -188,7 +177,7 @@ class _NativeRecorder(NativeModule):
     supported yet.
     """
 
-    config: NativeRecorderConfig
+    config: RustRecorderConfig
     tf: In[TFMessage]
 
     @rpc
@@ -197,7 +186,7 @@ class _NativeRecorder(NativeModule):
             Module.start(self)
             logger.info(
                 "Replay mode active; native recorder disabled",
-                artifact_path=self.config.recording_store().path,
+                artifact_path=self.config.store.path,
             )
             return
 
@@ -278,35 +267,8 @@ class _NativeRecorder(NativeModule):
             )
 
     def _prepare_store(self, specs: list[RustStreamSpec]) -> None:
-        path = Path(self.config.recording_store().path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if self.config.recording_store().kind == "mcap":
-            return
-        with SqliteStore(path=str(path)) as store:
-            ports = self.inputs
-            for spec in specs:
-                tf_payload_type = f"{TFMessage.__module__}.{TFMessage.__qualname__}"
-                payload_type = (
-                    TFMessage if spec.payload_type == tf_payload_type else ports[spec.port].type
-                )
-                store.stream(spec.name, payload_type, codec=spec.codec)
-
-    def _argv(self, _topics: dict[str, str]) -> list[str]:
-        """Launch the stdin-only recorder without topic or configuration arguments."""
-        return [self.config.executable]
-
-
-class RustRecorder(_NativeRecorder):
-    """Record connected typed inputs to a SQLite or MCAP artifact file."""
-
-    config: RustRecorderConfig
-
-    def _prepare_store(self, specs: list[RustStreamSpec]) -> None:
-        path = Path(self.config.recording_store().path)
-        if (
-            self.config.recording_store().kind == "mcap"
-            and self.config.on_existing is OnExisting.APPEND
-        ):
+        path = Path(self.config.store.path)
+        if self.config.store.kind == "mcap" and self.config.on_existing is OnExisting.APPEND:
             raise ValueError("MCAP append is unsupported; choose overwrite, backup, or error")
         if path.exists():
             if self.config.on_existing is OnExisting.OVERWRITE:
@@ -323,11 +285,22 @@ class RustRecorder(_NativeRecorder):
                 raise FileExistsError(f"Recording already exists: {path}")
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        if self.config.recording_store().kind == "mcap":
+        if self.config.store.kind == "mcap":
             return
         if self.config.on_existing is OnExisting.APPEND:
             with SqliteStore(path=str(path)) as store:
                 existing = set(store.list_streams())
                 for name in {spec.name for spec in specs}.intersection(existing):
                     store.delete_stream(name)
-        super()._prepare_store(specs)
+        with SqliteStore(path=str(path)) as store:
+            ports = self.inputs
+            for spec in specs:
+                tf_payload_type = f"{TFMessage.__module__}.{TFMessage.__qualname__}"
+                payload_type = (
+                    TFMessage if spec.payload_type == tf_payload_type else ports[spec.port].type
+                )
+                store.stream(spec.name, payload_type, codec=spec.codec)
+
+    def _argv(self, _topics: dict[str, str]) -> list[str]:
+        """Launch the stdin-only recorder without topic or configuration arguments."""
+        return [self.config.executable]

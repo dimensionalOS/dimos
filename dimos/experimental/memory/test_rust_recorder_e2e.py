@@ -40,8 +40,8 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecordingStoreConfig,
     RustSqliteStoreConfig,
 )
-from dimos.imitation.collection.native_recorder import collection_recorder
 from dimos.imitation.collection.profile import CollectionFeature, CollectionProfile
+from dimos.imitation.collection.recorder import collection_recorder
 from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.core import SyncConfig
 from dimos.memory.codecs.lcm import LcmCodec
@@ -230,7 +230,7 @@ def _capture_native_artifact(
             profile=profile, recording=tmp_path / "session", format=store_kind
         ).active_blueprints[0]
         recorder = atom.module(**atom.kwargs, **kwargs)
-        artifact = Path(recorder.config.recording_store().path)
+        artifact = Path(recorder.config.store.path)
         recorder.status.transport = FakeTransport("dimos/collection_status")
     session_pool = ZenohSessionPool()
     channel_suffix = uuid.uuid4().hex[:8]

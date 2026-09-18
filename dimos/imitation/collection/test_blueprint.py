@@ -33,10 +33,22 @@ AGGREGATE = "coordinator_joint_state"
     "blueprint",
     [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
 )
-def test_collection_streams_are_poseless(blueprint: Blueprint) -> None:
-    recorder = next(atom for atom in blueprint.blueprints if atom.module is CollectionRecorder)
+def test_collection_uses_sqlite_without_tf(blueprint: Blueprint) -> None:
+    recorder = next(
+        atom for atom in blueprint.blueprints if issubclass(atom.module, CollectionRecorder)
+    )
 
-    assert recorder.kwargs["record_tf"] is False
+    assert recorder.kwargs["format"] == "sqlite"
+    schema = recorder.kwargs["recording_schema"]
+    assert schema.action["action"] == schema.observation["state"]
+    assert schema.observation["camera"].shape == (480, 848, 3)
+    assert schema.sync.rate_hz == 15
+    coordinator = next(
+        atom for atom in blueprint.active_blueprints if atom.name == "ControlCoordinator"
+    )
+    joints = [joint for hardware in coordinator.kwargs["hardware"] for joint in hardware.joints]
+    assert schema.observation["state"].names == joints
+    assert schema.observation["state"].shape == (len(joints),)
 
 
 @pytest.mark.parametrize(
@@ -44,7 +56,7 @@ def test_collection_streams_are_poseless(blueprint: Blueprint) -> None:
     [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
 )
 def test_collection_recorder_stops_after_producers(blueprint: Blueprint) -> None:
-    assert blueprint.active_blueprints[0].module is CollectionRecorder
+    assert issubclass(blueprint.active_blueprints[0].module, CollectionRecorder)
 
 
 @pytest.mark.parametrize(
@@ -86,5 +98,5 @@ def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
 
     # Plain name pairing on both ends, no remap in between. The coordinator
     # atom carries its explicit instance_name (the RPC lookup contract).
-    assert streams[("collectionrecorder", AGGREGATE)] == AGGREGATE
+    assert streams[("recorder", AGGREGATE)] == AGGREGATE
     assert streams[("ControlCoordinator", AGGREGATE)] == AGGREGATE

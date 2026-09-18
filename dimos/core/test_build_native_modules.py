@@ -200,7 +200,7 @@ def test_recorder_is_in_the_publish_manifest() -> None:
     recorder = next(
         module
         for module in _SCRIPT.discover()
-        if module.qualname == "dimos.experimental.memory.rust_recorder.NativeRecorderConfig"
+        if module.qualname == "dimos.experimental.memory.rust_recorder.RustRecorderConfig"
     )
     assert recorder.build_dir == "dimos/experimental/memory/rust"
     assert _SCRIPT._flake_ref_of(recorder) == ".#dimos-memory-recorder"

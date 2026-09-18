@@ -27,7 +27,7 @@ import pytest
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
-from dimos.imitation.collection.native_recorder import collection_recorder
+from dimos.imitation.collection.recorder import collection_recorder
 from dimos.imitation.dataprep.core import EpisodeExtractor, extract_episodes
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus

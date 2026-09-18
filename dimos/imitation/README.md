@@ -3,7 +3,9 @@
 Collection uses ordinary DimOS Blueprints. The graph owns robot hardware,
 cameras, transports, and runtime lifecycle. A `CollectionProfile` declares
 typed inputs and dataset projections; `collection_recorder(profile=...)`
-creates matching recorder ports before autoconnect.
+creates matching recorder ports before autoconnect. Import the factory from
+`dimos.imitation.collection.recorder`. `CollectionRecorder` extends `RustRecorder`
+with collection directory and schema preparation; both use the same Rust executable.
 
 Profiles have no separate registry. `dimos run` discovers Blueprints through the
 built-in registry or installed `dimos.blueprints` entry points. The Blueprint
@@ -28,6 +30,10 @@ Quest B starts/saves an episode; Y discards it. Python clients can use
 The recording is a new directory containing `schema.json` and
 `recording.mcap`, or `recording.db` with `--recorder.format sqlite`.
 Existing directories are rejected. Copy or move the complete directory.
+The inherited `store` settings must match the destination derived from `recording`
+and `format`; collection requires `on_existing=error` and does not rotate backups.
+The xArm and Piper collection blueprints also use this recorder, with timestamped
+session directories and SQLite payloads.
 Stopping the runtime leaves an active episode incomplete; export excludes
 incomplete and discarded episodes. Support the arms before shutdown.
 

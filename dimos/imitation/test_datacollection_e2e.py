@@ -16,17 +16,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import json
 from pathlib import Path
-from typing import Any
+import subprocess
+from typing import Any, cast
+import uuid
 
 import h5py
 import numpy as np
 import pytest
 
-from dimos.core.stream import Stream, Transport
-from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.core.global_config import global_config
+from dimos.core.transport import ZenohTransport
+from dimos.imitation.collection.profile import CollectionFeature, CollectionProfile
+from dimos.imitation.collection.recorder import collection_recorder
+from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.build import inspect_dataset, run_dataprep
 from dimos.imitation.dataprep.core import (
     DataPrepConfig,
@@ -43,44 +48,18 @@ from dimos.msgs.imitation_msgs.EpisodeStatus import (
     EpisodeStatus,
     RecordingState,
 )
+from dimos.msgs.protocol import DimosMsg
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic
 from dimos.utils.testing.waiting import wait_until
 
 pytestmark = [
+    pytest.mark.native_e2e,
     pytest.mark.skipif_macos,
     pytest.mark.skipif_aarch64,
     pytest.mark.skipif_no_turbojpeg,
 ]
-
-
-class _DirectTransport(Transport[Any]):
-    """Synchronous in-process transport used to exercise real port subscriptions."""
-
-    def __init__(self) -> None:
-        self._subscribers: list[Callable[[Any], Any]] = []
-
-    def start(self) -> None:
-        pass
-
-    def stop(self) -> None:
-        self._subscribers.clear()
-
-    def broadcast(self, selfstream: Stream[Any] | None, value: Any) -> None:
-        for callback in tuple(self._subscribers):
-            callback(value)
-
-    def subscribe(
-        self,
-        callback: Callable[[Any], Any],
-        selfstream: Stream[Any] | None = None,
-    ) -> Callable[[], None]:
-        self._subscribers.append(callback)
-
-        def unsubscribe() -> None:
-            self._subscribers.remove(callback)
-
-        return unsubscribe
 
 
 def _status(
@@ -136,26 +115,54 @@ def _dataprep_config(db_path: Path, output: OutputConfig) -> DataPrepConfig:
     )
 
 
-def _record_session(db_path: Path) -> None:
-    recorder = CollectionRecorder(
-        db_path=db_path,
-        record_tf=False,
-        poseless_streams=["color_image", "coordinator_joint_state", "status"],
+def _record_session(db_path: Path, executable: Path) -> dict[str, int]:
+    config = _dataprep_config(db_path, OutputConfig(path=db_path.parent / "unused"))
+    profile = CollectionProfile(
+        name="synthetic",
+        robot_type="synthetic",
+        observations={
+            name: CollectionFeature(
+                **feature.model_dump(),
+                message_type=Image if name == "camera" else JointState,
+            )
+            for name, feature in config.observation.items()
+        },
+        actions={
+            name: CollectionFeature(**feature.model_dump(), message_type=JointState)
+            for name, feature in config.action.items()
+        },
+        sync=config.sync,
+        quality=config.quality,
     )
+    atom = collection_recorder(
+        profile=profile, recording=db_path.parent, format="sqlite"
+    ).active_blueprints[0]
+    recorder = atom.module(**atom.kwargs, executable=str(executable))
+    topic_prefix = f"dimos/test/collection-export/{uuid.uuid4().hex}"
+    payload_types = {
+        "color_image": Image,
+        "coordinator_joint_state": JointState,
+        "status": EpisodeStatus,
+    }
     transports = {
-        "color_image": _DirectTransport(),
-        "coordinator_joint_state": _DirectTransport(),
-        "status": _DirectTransport(),
+        name: ZenohTransport(
+            Topic(f"{topic_prefix}/{name}", cast("type[DimosMsg]", kind), qos=QOS_NEVER_DROP)
+        )
+        for name, kind in payload_types.items()
     }
     for name, transport in transports.items():
         getattr(recorder, name).transport = transport
     counts = {name: 0 for name in transports}
 
+    def stream_count(name: str) -> int:
+        with SqliteStore(path=str(db_path), must_exist=True) as store:
+            return store.stream(name).count()
+
     def publish(name: str, message: Any) -> None:
         counts[name] += 1
-        transports[name].publish(message)
+        transports[name].broadcast(None, message)
         wait_until(
-            lambda: recorder.store.stream(name).count() == counts[name],
+            lambda: stream_count(name) == counts[name],
             timeout=5.0,
             interval=0.005,
             message=f"{name} message {counts[name]} was not recorded",
@@ -168,6 +175,15 @@ def _record_session(db_path: Path) -> None:
     ]
     try:
         recorder.start()
+        ready = _status(1.0, "init", "idle", 0, 0, "")
+        wait_until(
+            lambda: stream_count("status") > 0
+            or (transports["status"].broadcast(None, ready), False)[1],
+            timeout=10.0,
+            interval=0.1,
+            message="native collection status subscription did not become ready",
+        )
+        counts["status"] = stream_count("status")
         saved = 0
         discarded = 0
         for start_ts, task, success, base in episodes:
@@ -211,6 +227,9 @@ def _record_session(db_path: Path) -> None:
         publish("status", _status(112.0, "start", "recording", 2, 1, "interrupted"))
     finally:
         recorder.stop()
+        for transport in transports.values():
+            transport.stop()
+    return counts
 
 
 EXPECTED_STATE = np.asarray(
@@ -231,12 +250,20 @@ EXPECTED_ACTION = EXPECTED_STATE.copy()
 def recorded_session(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> tuple[Path, dict[float, np.ndarray[Any, Any]]]:
-    db_path = tmp_path_factory.mktemp("recorded-session") / "recording.db"
-    _record_session(db_path)
+    subprocess.run(
+        ["cargo", "build", "--locked", "-p", "dimos-memory-recorder"],
+        cwd=DIMOS_PROJECT_ROOT,
+        check=True,
+    )
+    executable = DIMOS_PROJECT_ROOT / "target" / "debug" / "dimos-memory-recorder"
+    db_path = tmp_path_factory.mktemp("recorded-session") / "session" / "recording.db"
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(global_config, "transport", "zenoh")
+        counts = _record_session(db_path, executable)
     with SqliteStore(path=str(db_path), must_exist=True) as store:
         assert store.stream("color_image").count() == 9
         assert store.stream("coordinator_joint_state").count() == 9
-        assert store.stream("status").count() == 7
+        assert store.stream("status").count() == counts["status"]
         episodes = extract_episodes(store, EpisodeExtractor(status_stream="status"))
         assert [
             (episode.start_ts, episode.end_ts, episode.success, episode.task_label)
@@ -268,8 +295,8 @@ def test_collection_to_hdf5_roundtrip(
     db_path, recorded_images = recorded_session
 
     hdf5_path = run_dataprep(
-        _dataprep_config(
-            db_path,
+        RecordingSchema.read(db_path.parent).dataprep_config(
+            db_path.parent,
             OutputConfig(
                 format="hdf5",
                 path=tmp_path / "dataset.hdf5",
