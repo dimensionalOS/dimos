@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1-specific Pink objective tuning for bimanual Quest teleoperation."""
+"""G1-specific Pink objective tuning for bimanual WebXR teleoperation."""
 
 from __future__ import annotations
 

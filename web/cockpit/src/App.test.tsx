@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ChannelStore, type Session, StatusStore } from "@dimos/sdk";
@@ -12,6 +12,7 @@ import type { View } from "./ui/StatusBar.tsx";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ROBOT = { id: "a", name: "A", model: "go2" };
+const ROBOT_B = { id: "b", name: "B", model: "go2" };
 
 const ODOM: ChannelSpec = {
   ch: "odom",
@@ -34,9 +35,29 @@ const IMAGE: ChannelSpec = {
   requiredScope: null,
 };
 
+// A *.lcm.v1 channel decodes from the schema in its params; one without a
+// usable schema has no decoder at all.
+const LCM_POSE: ChannelSpec = {
+  ...ODOM,
+  ch: "lcm_pose",
+  encoding: "geometry_msgs.PoseStamped.lcm.v1",
+  params: {
+    lcm: { type: "t.P", fp: "0011223344556677", structs: { "t.P": [["x", "double", null]] } },
+  },
+};
+const LCM_BROKEN: ChannelSpec = { ...ODOM, ch: "lcm_bad", encoding: "t.Q.lcm.v1" };
+
 function mf(channels: ChannelSpec[], panels: PanelSpec[] = []): Manifest {
   return { version: 1, channels, panels, layout: null, pages: [] };
 }
+
+const CAM: PanelSpec = {
+  id: "cam",
+  kind: "video",
+  title: "",
+  channels: ["color_image"],
+  params: {},
+};
 
 describe("App session states", () => {
   let container: HTMLElement;
@@ -44,6 +65,7 @@ describe("App session states", () => {
   let status: StatusStore;
   let channels: ChannelStore;
   let session: Session;
+  let watch: Session["watch"];
 
   beforeEach(() => {
     container = document.createElement("div");
@@ -51,10 +73,11 @@ describe("App session states", () => {
     root = createRoot(container);
     status = new StatusStore();
     channels = new ChannelStore();
+    watch = vi.fn((_id: string) => new Promise<Manifest>(() => {}));
     session = {
       status,
       store: channels,
-      watch: () => new Promise(() => {}),
+      watch,
       subscribe: () => () => {},
       publish: () => new Promise(() => {}),
       close: () => {},
@@ -76,6 +99,36 @@ describe("App session states", () => {
   const view = (v: View) => {
     act(() => container.querySelector<HTMLElement>(`[data-testid="view-${v}"]`)!.click());
   };
+  const picker = () => container.querySelector('[data-testid="robot-picker"]');
+  const pickEntries = () => container.querySelectorAll('[data-testid^="robot-pick-"]');
+  const pick = (id: string) => {
+    act(() => container.querySelector<HTMLElement>(`[data-testid="robot-pick-${id}"]`)!.click());
+  };
+  const switchButton = () => container.querySelector<HTMLElement>('[data-testid="switch-robot"]');
+  const panel = () => container.querySelector('[data-testid="panel-cam"]');
+
+  it("shows *.lcm.v1 rows from their manifest schema, not a registered decoder", () => {
+    act(() => {
+      status.update({ watchedRobot: ROBOT, robots: [ROBOT] });
+      status.update({ manifest: mf([LCM_POSE, LCM_BROKEN]) });
+      channels.ingest(
+        "lcm_pose",
+        { ch: "lcm_pose", seq: 3, ts: 0.3, delivery: "reliable" },
+        { x: 1.5 },
+        true,
+        "{x: 1.5}",
+      );
+      channels.publishUi();
+    });
+    view("channels");
+    expect(container.querySelector('[data-testid="ch-lcm_pose-seq"]')!.textContent).toBe("3");
+    expect(container.querySelector('[data-testid="ch-lcm_pose-value"]')!.textContent).toContain(
+      "{x: 1.5}",
+    );
+    expect(container.querySelector('[data-testid="ch-lcm_bad-value"]')!.textContent).toContain(
+      "no decoder for t.Q.lcm.v1",
+    );
+  });
 
   it("waits for a robot, shows its channels, and clears them when it leaves", () => {
     expect(container.textContent).toContain("Waiting for a robot");
@@ -216,7 +269,8 @@ describe("App session states", () => {
       );
     };
     const tab = (id: string) => {
-      act(() => container.querySelector<HTMLElement>(`[data-testid="tab-${id}"]`)!.click());
+      const testId = id === "overview" ? "tab-overview" : `tab-page-${id}`;
+      act(() => container.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!.click());
     };
     act(() => {
       status.update({
@@ -252,13 +306,15 @@ describe("App session states", () => {
     act(() => {
       status.update({ watchedRobot: ROBOT, robots: [ROBOT], manifest: mf([ODOM, IMAGE], [cam]) });
     });
-    const panel = () => container.querySelector('[data-testid="panel-cam"]');
     const row = () => container.querySelector('[data-testid="ch-odom-seq"]');
     const selected = (v: View) =>
       container.querySelector(`[data-testid="view-${v}"]`)!.getAttribute("aria-selected");
     expect(panel()).not.toBeNull();
     expect(row()).toBeNull();
     expect(selected("panels")).toBe("true");
+    // A lone robot is auto-watched: nothing to pick or switch to.
+    expect(picker()).toBeNull();
+    expect(switchButton()).toBeNull();
 
     view("channels");
     expect(selected("channels")).toBe("true");
@@ -275,9 +331,132 @@ describe("App session states", () => {
     expect(container.textContent).toContain("no panels");
   });
 
-  it("shows the multi-robot notice instead of channels", () => {
-    act(() => status.update({ robots: [ROBOT, { id: "b", name: "B", model: "go2" }] }));
-    expect(container.textContent).toContain("2 robots connected");
+  it("keeps the open page across a manifest epoch and drops it when it vanishes", () => {
+    const cam: PanelSpec = {
+      id: "cam",
+      kind: "video",
+      title: "Front camera",
+      channels: ["color_image"],
+      params: {},
+    };
+    const withPage: Manifest = { ...mf([ODOM, IMAGE], [cam]), pages: ["cam"] };
+    const tab = (id: string) => {
+      const testId = id === "overview" ? "tab-overview" : `tab-page-${id}`;
+      return container.querySelector(`[data-testid="${testId}"]`);
+    };
+    act(() => status.update({ watchedRobot: ROBOT, robots: [ROBOT], manifest: withPage }));
+    expect(tab("overview")!.getAttribute("aria-selected")).toBe("true");
+    act(() => (tab("cam") as HTMLElement).click());
+    expect(tab("cam")!.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector('[data-testid="panel-cam"]')).not.toBeNull();
+
+    // A robot restart (same manifest, new epoch) keeps the operator on the page.
+    act(() => status.update({ manifest: { ...withPage }, epoch: 1 }));
+    expect(tab("cam")!.getAttribute("aria-selected")).toBe("true");
+
+    // The page is gone from the new manifest: back to the grid, no strip.
+    act(() => status.update({ manifest: mf([ODOM, IMAGE], [cam]), epoch: 2 }));
+    expect(tab("cam")).toBeNull();
+    expect(container.querySelector('[data-testid="panel-cam"]')).not.toBeNull();
+
+    // Reintroducing the page does not resurrect the discarded selection.
+    act(() => status.update({ manifest: withPage, epoch: 3 }));
+    expect(tab("overview")!.getAttribute("aria-selected")).toBe("true");
+    expect(tab("cam")!.getAttribute("aria-selected")).toBe("false");
+    expect(container.querySelector('[data-testid="panel-cam"]')).toBeNull();
+  });
+
+  it("leaves the channels view when a page tab is picked", () => {
+    const cam: PanelSpec = {
+      id: "cam",
+      kind: "video",
+      title: "",
+      channels: ["color_image"],
+      params: {},
+    };
+    const selected = (id: string) =>
+      container.querySelector(`[data-testid="${id}"]`)!.getAttribute("aria-selected");
+    act(() => {
+      status.update({
+        watchedRobot: ROBOT,
+        robots: [ROBOT],
+        manifest: { ...mf([ODOM, IMAGE], [cam]), pages: ["cam"] },
+      });
+    });
+    view("channels");
+    expect(selected("tab-overview")).toBe("false");
+    expect(container.querySelector('[data-testid="ch-odom-seq"]')).not.toBeNull();
+
+    act(() => container.querySelector<HTMLElement>('[data-testid="tab-page-cam"]')!.click());
+    expect(selected("view-panels")).toBe("true");
+    expect(selected("tab-page-cam")).toBe("true");
+    expect(container.querySelector('[data-testid="ch-odom-seq"]')).toBeNull();
+    expect(container.querySelector('[data-testid="panel-cam"]')).not.toBeNull();
+  });
+
+  it("watches the operator's pick and waits if that robot disappears", () => {
+    act(() => status.update({ robots: [ROBOT, ROBOT_B] }));
+    expect(picker()).not.toBeNull();
+    expect(pickEntries()).toHaveLength(2);
+    expect(switchButton()).toBeNull();
+    expect(container.textContent).not.toContain("Waiting for a robot");
+
+    pick("b");
+    expect(watch).toHaveBeenCalledWith("b");
+    act(() => status.update({ watchedRobot: ROBOT_B }));
+    expect(picker()).toBeNull();
+    expect(container.textContent).toContain("Waiting for a robot");
+    expect(switchButton()).not.toBeNull();
+
+    act(() => status.update({ manifest: mf([ODOM, IMAGE], [CAM]) }));
+    expect(panel()).not.toBeNull();
+
+    act(() => {
+      status.update({ watchedRobot: null, robots: [ROBOT], manifest: null, epoch: 1 });
+    });
+    expect(picker()).toBeNull();
+    expect(switchButton()).toBeNull();
+    expect(container.textContent).toContain("Waiting for a robot");
+  });
+
+  it("reopens the picker on 'switch robot' with the watched robot marked", () => {
+    act(() => {
+      status.update({ watchedRobot: ROBOT, robots: [ROBOT, ROBOT_B], manifest: mf([ODOM], [CAM]) });
+    });
+    expect(picker()).toBeNull();
+    act(() => switchButton()!.click());
+    expect(picker()).not.toBeNull();
+    expect(panel()).toBeNull();
+    expect(switchButton()).toBeNull();
+    const current = (id: string) =>
+      container.querySelector(`[data-testid="robot-pick-${id}"]`)!.getAttribute("aria-current");
+    expect(current("a")).toBe("true");
+    expect(current("b")).toBe("false");
+
+    // The other robot: the old producer is dropped until its manifest lands.
+    pick("b");
+    expect(watch).toHaveBeenCalledWith("b");
+    act(() => status.update({ watchedRobot: ROBOT_B, manifest: null, epoch: 1 }));
+    expect(picker()).toBeNull();
+    expect(container.textContent).toContain("Waiting for a robot");
+    act(() => status.update({ manifest: mf([ODOM, IMAGE], [CAM]) }));
+    expect(panel()).not.toBeNull();
+    expect(switchButton()).not.toBeNull();
+  });
+
+  it("drops a stale switch request when the other robot leaves", () => {
+    act(() => {
+      status.update({ watchedRobot: ROBOT, robots: [ROBOT, ROBOT_B], manifest: mf([ODOM], [CAM]) });
+    });
+    act(() => switchButton()!.click());
+    expect(picker()).not.toBeNull();
+    act(() => status.update({ robots: [ROBOT] }));
+    expect(picker()).toBeNull();
+    expect(panel()).not.toBeNull();
+    // The other robot returning must not pop the picker over the layout.
+    act(() => status.update({ robots: [ROBOT, ROBOT_B] }));
+    expect(picker()).toBeNull();
+    expect(switchButton()).not.toBeNull();
   });
 
   it("shows the polite notice on an unsupported manifest version", () => {
@@ -296,5 +475,59 @@ describe("App session states", () => {
   it("shows the terminal failure reason", () => {
     act(() => status.update({ transport: { phase: "failed", reason: "protocol mismatch" } }));
     expect(container.textContent).toContain("Connection failed: protocol mismatch");
+  });
+
+  describe("relay auth", () => {
+    let reload: MockInstance<() => void>;
+
+    beforeEach(() => {
+      // happy-dom's reload navigates for real; the App only needs the call.
+      reload = vi.spyOn(location, "reload").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      reload.mockRestore();
+      localStorage.clear();
+    });
+
+    const authFailed = (reason: string) => {
+      act(() => status.update({ transport: { phase: "failed", reason, code: "auth_failed" } }));
+    };
+    const logOut = () => container.querySelector<HTMLElement>('[data-testid="log-out"]');
+
+    it("shows the token form for auth_failed with the relay's message", () => {
+      authFailed("missing viewer token");
+      expect(container.querySelector('[data-testid="token-message"]')?.textContent).toBe(
+        "missing viewer token",
+      );
+      expect(container.textContent).not.toContain("Connection failed");
+      expect(logOut()).toBeNull();
+    });
+
+    it("submitting the form stores the token and reloads", () => {
+      authFailed("invalid viewer token");
+      const input = container.querySelector<HTMLInputElement>('[data-testid="token-input"]')!;
+      act(() => {
+        // React tracks controlled inputs through the value setter; go around it.
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+          input,
+          "tok-en",
+        );
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      act(() => {
+        input.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      });
+      expect(localStorage.getItem("dimos.cockpit.token")).toBe("tok-en");
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it("offers 'log out' only with a stored token; it forgets the token and reloads", () => {
+      localStorage.setItem("dimos.cockpit.token", "tok-en");
+      act(() => root.render(<App session={session} />));
+      act(() => logOut()!.click());
+      expect(localStorage.getItem("dimos.cockpit.token")).toBeNull();
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
   });
 });

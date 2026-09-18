@@ -524,7 +524,7 @@ _coordinator = _G1GrootCoordinator.blueprint(
             },
         ),
         _arm_trajectory_task,
-        # Shared bimanual Quest task with G1-only model and objective tuning.
+        # Shared bimanual WebXR task with G1-only model and objective tuning.
         TaskConfig(
             name="teleop_g1",
             type="teleop_ik",

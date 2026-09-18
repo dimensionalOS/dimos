@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dual OpenYAM-specific Pink objective tuning for Quest teleoperation."""
+"""Dual OpenYAM-specific Pink objective tuning for WebXR teleoperation."""
 
 from __future__ import annotations
 

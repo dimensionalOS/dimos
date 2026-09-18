@@ -19,6 +19,8 @@ import {
   type RobotInfo,
   type RobotManifest,
 } from "@dimos/shared";
+import { parseAuthFile } from "./auth.ts";
+import { makeEphemeralCert } from "./cert.ts";
 import { startRelay } from "./server.ts";
 
 const ROBOT: RobotInfo = { id: "deno-bot", name: "Deno Bot", model: "test" };
@@ -42,7 +44,8 @@ const MANIFEST: RobotManifest = {
   layout: "color_image",
 };
 
-function certOpts(hashB64: string): WebTransportOptions {
+function certOpts(hashB64: string | undefined): WebTransportOptions {
+  if (hashB64 === undefined) throw new Error("the relay advertises no certificate hash");
   return {
     serverCertificateHashes: [{
       algorithm: "sha-256",
@@ -410,7 +413,7 @@ Deno.test({
   await t.step("/api/info matches the handle; no cockpit dist -> 404 with a hint", async () => {
     const info = await (await fetch(`${httpBase}/api/info`)).json();
     assertEquals(info, {
-      wtUrl: `${relay.wtUrl}/viewer`,
+      wtUrl: relay.wtUrl,
       certHash: relay.certHash,
       v: PROTOCOL_VERSION,
     });
@@ -1224,5 +1227,222 @@ Deno.test("startRelay rejects a bad served dir with a labeled error", async () =
     () => startRelay({ sdkDir: "/no/such/dir" }),
     Error,
     "sdkDir does not exist: /no/such/dir",
+  );
+});
+
+Deno.test("startRelay refuses a certificate without its key (and vice versa)", async () => {
+  const cert = await makeEphemeralCert();
+  await assertRejects(
+    () => startRelay({ port: 0, cert: cert.certPem }),
+    Error,
+    "--cert and --key must be given together",
+  );
+  await assertRejects(
+    () => startRelay({ port: 0, key: cert.keyPem }),
+    Error,
+    "--cert and --key must be given together",
+  );
+});
+
+Deno.test({
+  name: "a relay with --cert/--key serves HTTPS and QUIC on one port and advertises no hash",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  // The ephemeral generator stands in for a CA-issued certificate: the relay
+  // serves whatever PEM it is given, and the client trusts it as a root.
+  const cert = await makeEphemeralCert();
+  const relay = await startRelay({ port: 0, cert: cert.certPem, key: cert.keyPem });
+  // h2 on purpose: over TLS Deno.serve negotiates HTTP/2, where the request
+  // host comes from :authority rather than a Host header.
+  const client = Deno.createHttpClient({ caCerts: [cert.certPem], http1: false, http2: true });
+  try {
+    assertEquals(relay.certHash, undefined);
+    assertEquals(relay.quicPort, relay.httpPort);
+    const res = await fetch(`https://127.0.0.1:${relay.httpPort}/api/info`, { client });
+    const info = await res.json();
+    assertEquals(info, { wtUrl: `https://127.0.0.1:${relay.httpPort}`, v: PROTOCOL_VERSION });
+
+    // The QUIC listener serves the given certificate: pin its locally
+    // computed hash (the relay never advertised one) and complete a hello.
+    const viewer = new WebTransport(`${info.wtUrl}/viewer`, certOpts(cert.certHashB64));
+    await within(viewer.ready, "viewer connect");
+    const control = await within(viewer.createBidirectionalStream(), "control stream");
+    const writer = control.writable.getWriter();
+    const nextControl = controlQueue(control.readable);
+    await writer.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
+    assertEquals(await within(nextControl(), "welcome"), { t: "welcome", v: PROTOCOL_VERSION });
+    viewer.close();
+  } finally {
+    client.close();
+    await relay.shutdown();
+  }
+});
+
+// Auth (T12d): --auth-file gates both hellos and /api/stats.
+const ROBOT_KEY = "robot-key-0123456789abcdef";
+const VIEWER_TOKEN = "viewer-token-0123456789abcdef";
+const AUTH = parseAuthFile(JSON.stringify({
+  robots: { [ROBOT.id]: ROBOT_KEY, "other-bot": "other-key-0123456789abcdef" },
+  viewers: { paul: VIEWER_TOKEN },
+}));
+
+Deno.test({
+  name: "a relay with --auth-file checks robot keys, viewer tokens, and the stats bearer",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async (t) => {
+  const relay = await startRelay({ port: 0, auth: AUTH });
+  const httpBase = `http://127.0.0.1:${relay.httpPort}`;
+  try {
+    const robotHello = (token?: string): Msg => ({
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: ROBOT,
+      ...(token !== undefined ? { token } : {}),
+    });
+    const expectRobotReject = async (name: string, hello: Msg, message: string) => {
+      const wt = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+      await within(wt.ready, `${name} connect`);
+      const datagrams = datagramQueue(wt.datagrams.readable);
+      await sendRobotHello(wt, hello);
+      assertEquals(await within(datagrams(), `${name} error`), {
+        t: "error",
+        code: "auth_failed",
+        message,
+      });
+      await within(wt.closed.catch(() => {}), `${name} close`);
+    };
+
+    await t.step("robot hello: missing, wrong, and another id's key -> auth_failed", async () => {
+      await expectRobotReject("keyless", robotHello(), "missing robot key");
+      await expectRobotReject(
+        "wrong",
+        robotHello("wrong-key-0123456789abcdef"),
+        "invalid robot key",
+      );
+      await expectRobotReject(
+        "other",
+        robotHello("other-key-0123456789abcdef"),
+        "invalid robot key",
+      );
+    });
+
+    const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await t.step("robot hello with its own key -> welcome", async () => {
+      await within(robot.ready, "robot connect");
+      const datagrams = datagramQueue(robot.datagrams.readable);
+      await sendRobotHello(robot, robotHello(ROBOT_KEY));
+      assertEquals(await within(datagrams(), "welcome"), { t: "welcome", v: PROTOCOL_VERSION });
+    });
+
+    const viewerHello = async (
+      name: string,
+      token?: string,
+    ): Promise<{ wt: WebTransport; reply: Msg }> => {
+      const wt = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
+      await within(wt.ready, `${name} connect`);
+      const stream = await wt.createBidirectionalStream();
+      const writer = stream.writable.getWriter();
+      const next = controlQueue(stream.readable);
+      await writer.write(encodeControlFrame({
+        t: "hello",
+        v: PROTOCOL_VERSION,
+        role: "viewer",
+        ...(token !== undefined ? { token } : {}),
+      }));
+      return { wt, reply: await within(next(), `${name} reply`) };
+    };
+
+    await t.step("viewer hello: missing and wrong token -> auth_failed + close", async () => {
+      const missing = await viewerHello("tokenless");
+      assertEquals(missing.reply, {
+        t: "error",
+        code: "auth_failed",
+        message: "missing viewer token",
+      });
+      await within(missing.wt.closed.catch(() => {}), "tokenless close");
+      const wrong = await viewerHello("wrong", "wrong-token-0123456789abcdef");
+      assertEquals(wrong.reply, {
+        t: "error",
+        code: "auth_failed",
+        message: "invalid viewer token",
+      });
+      await within(wrong.wt.closed.catch(() => {}), "wrong close");
+    });
+
+    await t.step(
+      "viewer hello with a token -> welcome; /api/stats wants it as a bearer",
+      async () => {
+        const ok = await viewerHello("paul", VIEWER_TOKEN);
+        assertEquals(ok.reply, { t: "welcome", v: PROTOCOL_VERSION });
+
+        const denied = await fetch(`${httpBase}/api/stats`);
+        assertEquals(denied.status, 401);
+        assertEquals(denied.headers.get("www-authenticate"), "Bearer");
+        await denied.body?.cancel();
+        const robotKey = await fetch(`${httpBase}/api/stats`, {
+          headers: { authorization: `Bearer ${ROBOT_KEY}` },
+        });
+        assertEquals(robotKey.status, 401);
+        await robotKey.body?.cancel();
+        const res = await fetch(`${httpBase}/api/stats`, {
+          headers: { authorization: `Bearer ${VIEWER_TOKEN}` },
+        });
+        assertEquals(res.status, 200);
+        assertEquals(res.headers.get("access-control-allow-origin"), null);
+        const body = await res.text();
+        const stats = JSON.parse(body);
+        // Names, never tokens: the greeted viewer carries its auth-file name.
+        const named = (stats.perViewer as { name: string | null }[]).map((v) => v.name);
+        assertEquals(named.filter((name) => name !== null), ["paul"]);
+        assertEquals(body.includes(VIEWER_TOKEN) || body.includes(ROBOT_KEY), false);
+        // Discovery stays public: the token is the access boundary, not CORS.
+        const info = await fetch(`${httpBase}/api/info`);
+        assertEquals(info.status, 200);
+        assertEquals(info.headers.get("access-control-allow-origin"), "*");
+        await info.body?.cancel();
+        ok.wt.close();
+      },
+    );
+    robot.close();
+  } finally {
+    await relay.shutdown();
+  }
+});
+
+Deno.test({
+  name: "cert, key, and auth together bind a non-loopback host; any one missing does not",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const cert = await makeEphemeralCert();
+  await assertRejects(
+    () => startRelay({ host: "0.0.0.0", cert: cert.certPem, key: cert.keyPem }),
+    Error,
+    "host 0.0.0.0 is not loopback",
+  );
+  await assertRejects(
+    () => startRelay({ host: "0.0.0.0", auth: AUTH }),
+    Error,
+    "host 0.0.0.0 is not loopback",
+  );
+  const relay = await startRelay({
+    host: "0.0.0.0",
+    port: 0,
+    cert: cert.certPem,
+    key: cert.keyPem,
+    auth: AUTH,
+  });
+  await relay.shutdown();
+});
+
+Deno.test("--serve-dir is refused on a non-loopback host, unsafe override or not", async () => {
+  const serveDir = fileURLToPath(new URL("./testdata/fake_user_dir", import.meta.url));
+  await assertRejects(
+    () => startRelay({ host: "0.0.0.0", unsafeNonLoopback: true, serveDir }),
+    Error,
+    "--serve-dir is refused on non-loopback host 0.0.0.0",
   );
 });

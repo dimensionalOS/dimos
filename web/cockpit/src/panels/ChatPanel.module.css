@@ -1,5 +1,4 @@
 .chat {
-  background: #14171a;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -10,56 +9,60 @@
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 4px;
   min-height: 0;
   overflow-y: auto;
-  padding: 0.6rem;
+  padding: 8px;
 }
 
 .hint {
-  color: #8b949e;
-  padding: 0.5rem;
+  color: var(--fg-muted);
+  font-size: 12px;
+  padding: 8px;
 }
 
 .human,
 .ai,
 .system,
 .other {
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   display: flex;
   flex-direction: column;
-  font-size: 0.9rem;
-  gap: 0.15rem;
+  font-size: 12px;
+  gap: 2px;
   max-width: 85%;
-  padding: 0.35rem 0.6rem;
+  padding: 4px 8px;
 }
 
 .human {
   align-self: flex-end;
-  background: #1f4b8f;
-  color: #fff;
+  background: var(--accent-soft);
+  border: 1px solid rgba(34, 211, 238, 0.25);
+  border-bottom-right-radius: 3px;
 }
 
 .ai {
   align-self: flex-start;
-  background: #1b1f24;
-  border: 1px solid #30363d;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-bottom-left-radius: 3px;
 }
 
 .system {
   align-self: center;
-  color: #8b949e;
+  color: var(--fg-muted);
+  font-size: 11px;
   font-style: italic;
 }
 
 .other {
   align-self: flex-start;
-  border: 1px dashed #d29922;
+  border: 1px dashed var(--warn);
 }
 
 .roleTag {
-  color: #d29922;
-  font-size: 0.75rem;
+  color: var(--warn);
+  font-size: 10px;
 }
 
 .text {
@@ -69,89 +72,135 @@
 
 .time {
   align-self: flex-end;
-  color: #8b949e;
-  font-size: 0.7rem;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
 
 .toolLine {
   align-self: flex-start;
-  color: #8b949e;
-  font-family: monospace;
-  font-size: 0.8rem;
+  border-left: 2px solid var(--line-strong);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
   max-width: 100%;
   overflow: hidden;
-  padding: 0 0.4rem;
+  padding: 0 6px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .error {
-  color: #f85149;
-  font-size: 0.8rem;
-  padding: 0 0.6rem 0.3rem;
+  color: var(--danger);
+  font-size: 11px;
+  padding: 0 8px 4px;
 }
 
 .composer {
-  border-top: 1px solid #30363d;
+  border-top: 1px solid var(--line);
   display: flex;
-  gap: 0.4rem;
-  padding: 0.5rem 0.6rem;
+  gap: 6px;
+  padding: 6px 8px;
 }
 
 .input {
-  background: #0d1117;
-  border: 1px solid #30363d;
-  border-radius: 4px;
-  color: #d7dde3;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
   flex: 1;
-  font: inherit;
+  font-size: 12px;
   min-width: 0;
-  padding: 0.35rem 0.5rem;
+  padding: 4px 8px;
+  transition: border-color var(--dur), box-shadow var(--dur);
+}
+
+.input::placeholder {
+  color: var(--fg-faint);
+}
+
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  outline: none;
 }
 
 .send {
-  background: #2f81f7;
+  background: var(--accent);
   border: 0;
-  border-radius: 4px;
-  color: #fff;
+  border-radius: var(--radius-s);
+  color: var(--on-accent);
   cursor: pointer;
-  padding: 0.35rem 0.8rem;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  transition: opacity var(--dur);
 }
 
 .send:disabled {
   cursor: default;
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
 .mic {
-  background: #21262d;
-  border: 1px solid #30363d;
-  border-radius: 4px;
-  color: #d7dde3;
+  background: none;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-s);
+  color: var(--fg-muted);
   cursor: pointer;
-  font: inherit;
-  padding: 0.35rem 0.6rem;
+  font-size: 12px;
+  padding: 4px 8px;
   touch-action: none;
+  transition: background var(--dur), border-color var(--dur), color var(--dur);
   user-select: none;
+}
+
+.mic:hover:not(:disabled) {
+  color: var(--fg);
 }
 
 .mic:disabled {
   cursor: default;
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
 .mic[data-state="arming"],
 .mic[data-state="recording"] {
-  background: #8f1f2b;
-  border-color: #f85149;
-  color: #fff;
+  animation: recording 1s ease-in-out infinite;
+  background: rgba(255, 92, 92, 0.15);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .mic[data-state="sending"] {
-  border-color: #2f81f7;
-  color: #2f81f7;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mic[data-state="error"] {
+  border-color: var(--danger);
 }
 
 .thinking {
-  color: #2f81f7;
+  animation: thinking 1.4s ease-in-out infinite;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+@keyframes recording {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(255, 92, 92, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(255, 92, 92, 0);
+  }
+}
+
+@keyframes thinking {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }

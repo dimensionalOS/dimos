@@ -14,9 +14,12 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import json
 import os
 import pickle
+import threading
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -27,6 +30,8 @@ from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service import zenohservice
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohService, ZenohSessionPool
 
+_THREAD_TIMEOUT = 5.0
+
 
 @pytest.fixture()
 def session_pool():
@@ -34,6 +39,30 @@ def session_pool():
     pool = ZenohSessionPool()
     yield pool
     pool.close_all()
+
+
+@pytest.fixture()
+def pool_threads(session_pool, mocker):
+    """Join workers before restoring mocks or closing the pool."""
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        yield executor
+
+
+@pytest.fixture()
+def connect_wait(pool_threads, mocker):
+    entered = threading.Event()
+    release = threading.Event()
+    outcome = mocker.Mock()
+
+    def wait(session, config):
+        entered.set()
+        assert release.wait(timeout=_THREAD_TIMEOUT), "The test did not release the link wait"
+        outcome()
+
+    try:
+        yield SimpleNamespace(entered=entered, release=release, wait=wait, outcome=outcome)
+    finally:
+        release.set()
 
 
 class _RecordingLogger:
@@ -61,6 +90,7 @@ def recorded_logs(monkeypatch):
 
 def _acquire(monkeypatch, config: ZenohConfig) -> None:
     monkeypatch.setattr(zenohservice.zenoh, "open", lambda zconfig: object())
+    monkeypatch.setattr(zenohservice, "_await_connect", lambda session, config: None)
     ZenohSessionPool().acquire(config)
 
 
@@ -171,6 +201,125 @@ def test_two_services_share_session(session_pool) -> None:
     svc1.start()
     svc2.start()
     assert svc1.session is svc2.session
+
+
+def test_a_link_wait_does_not_block_another_pooled_session(
+    zenoh_defaults, session_pool, pool_threads, connect_wait, mocker
+):
+    ready_session = mocker.Mock(spec=zenoh.Session)
+    pending_session = mocker.Mock(spec=zenoh.Session)
+    mocker.patch.object(zenohservice.zenoh, "open", side_effect=[ready_session, pending_session])
+    ready_config = ZenohConfig()
+    assert session_pool.acquire(ready_config) is ready_session
+    mocker.patch.object(zenohservice, "_await_connect", side_effect=connect_wait.wait)
+
+    pending = pool_threads.submit(
+        session_pool.acquire, ZenohConfig(connect=["tcp/192.0.2.10:7447"])
+    )
+    assert connect_wait.entered.wait(timeout=_THREAD_TIMEOUT)
+    ready = pool_threads.submit(session_pool.acquire, ready_config)
+
+    assert ready.result(timeout=_THREAD_TIMEOUT) is ready_session
+    assert not pending.done()
+    connect_wait.release.set()
+    assert pending.result(timeout=_THREAD_TIMEOUT) is pending_session
+
+
+def test_concurrent_callers_share_one_link_wait(
+    zenoh_defaults, session_pool, pool_threads, connect_wait, mocker
+):
+    session = mocker.Mock(spec=zenoh.Session)
+    opened = mocker.patch.object(zenohservice.zenoh, "open", return_value=session)
+    waited = mocker.patch.object(zenohservice, "_await_connect", side_effect=connect_wait.wait)
+    config = ZenohConfig()
+    second_started = threading.Event()
+
+    def acquire_again():
+        second_started.set()
+        return session_pool.acquire(config)
+
+    first = pool_threads.submit(session_pool.acquire, config)
+    assert connect_wait.entered.wait(timeout=_THREAD_TIMEOUT)
+    second = pool_threads.submit(acquire_again)
+    assert second_started.wait(timeout=_THREAD_TIMEOUT)
+    # Python 3.10 raises its own class here, not the builtin TimeoutError.
+    with pytest.raises(FutureTimeoutError):
+        second.result(timeout=0.1)
+
+    connect_wait.release.set()
+    assert first.result(timeout=_THREAD_TIMEOUT) is session
+    assert second.result(timeout=_THREAD_TIMEOUT) is session
+    opened.assert_called_once()
+    waited.assert_called_once_with(session, config)
+
+
+@pytest.mark.parametrize("error_type", [zenoh.ZError, KeyboardInterrupt])
+def test_a_failed_link_wait_reaches_every_caller(
+    zenoh_defaults, session_pool, pool_threads, connect_wait, mocker, error_type
+):
+    session = mocker.Mock(spec=zenoh.Session)
+    mocker.patch.object(zenohservice.zenoh, "open", return_value=session)
+    waited = mocker.patch.object(zenohservice, "_await_connect", side_effect=connect_wait.wait)
+    error = error_type("link inspection failed")
+    connect_wait.outcome.side_effect = error
+    config = ZenohConfig()
+
+    first = pool_threads.submit(session_pool.acquire, config)
+    assert connect_wait.entered.wait(timeout=_THREAD_TIMEOUT)
+    second = pool_threads.submit(session_pool.acquire, config)
+    connect_wait.release.set()
+
+    assert first.exception(timeout=_THREAD_TIMEOUT) is error
+    assert second.exception(timeout=_THREAD_TIMEOUT) is error
+    waited.assert_called_once_with(session, config)
+
+
+@pytest.mark.parametrize(
+    "error", [None, zenoh.ZError("link inspection failed"), KeyboardInterrupt()]
+)
+def test_close_all_waits_for_link_initialization_even_when_it_fails(
+    zenoh_defaults, session_pool, pool_threads, connect_wait, mocker, error
+):
+    session = mocker.Mock(spec=zenoh.Session)
+    closed = threading.Event()
+    session.close.side_effect = closed.set
+    mocker.patch.object(zenohservice.zenoh, "open", return_value=session)
+    mocker.patch.object(zenohservice, "_await_connect", side_effect=connect_wait.wait)
+    connect_wait.outcome.side_effect = error
+    close_started = threading.Event()
+
+    def close_pool():
+        close_started.set()
+        session_pool.close_all()
+
+    acquire = pool_threads.submit(session_pool.acquire, ZenohConfig())
+    assert connect_wait.entered.wait(timeout=_THREAD_TIMEOUT)
+    close = pool_threads.submit(close_pool)
+    assert close_started.wait(timeout=_THREAD_TIMEOUT)
+    assert not closed.wait(timeout=0.1)
+
+    connect_wait.release.set()
+    assert acquire.exception(timeout=_THREAD_TIMEOUT) is error
+    close.result(timeout=_THREAD_TIMEOUT)
+    session.close.assert_called_once_with()
+
+
+def test_reopening_a_session_performs_a_fresh_link_wait(zenoh_defaults, session_pool, mocker):
+    first = mocker.Mock(spec=zenoh.Session)
+    reopened = mocker.Mock(spec=zenoh.Session)
+    mocker.patch.object(zenohservice.zenoh, "open", side_effect=[first, reopened])
+    waited = mocker.patch.object(zenohservice, "_await_connect")
+    config = ZenohConfig()
+
+    assert session_pool.acquire(config) is first
+    assert session_pool.acquire(config) is first
+    waited.assert_called_once_with(first, config)
+    session_pool.close_all()
+
+    assert session_pool.acquire(config) is reopened
+    assert session_pool.acquire(config) is reopened
+    assert waited.call_args_list == [mocker.call(first, config), mocker.call(reopened, config)]
+    first.close.assert_called_once_with()
 
 
 def test_acquire_after_fork_raises(session_pool, mocker) -> None:

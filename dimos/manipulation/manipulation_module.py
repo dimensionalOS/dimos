@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from enum import Enum
 import math
@@ -26,7 +27,7 @@ import traceback
 from typing import Any, Literal, TypeAlias
 
 import numpy as np
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.coordinator import ControlCoordinator
@@ -35,6 +36,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.manipulation.execution_manager import PlanExecutionManager
 from dimos.manipulation.manipulation_spec import (
+    UNCONFIRMED_STOP,
     CommandResult,
     CommandStatus,
     ExecutionResult,
@@ -93,6 +95,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -152,6 +155,11 @@ class ManipulationModuleConfig(ModuleConfig):
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
     floor_z: float | None = None
+    # Fixed mount edges published alongside the robot's own TF, for rigs bolted
+    # to a link the model already publishes -- an eye-in-hand camera, say. One
+    # publisher for the whole chain: a second module publishing the mount at its
+    # own rate leaves the two edges of one chain stamped up to a period apart.
+    static_transforms: list[Transform] = Field(default_factory=list)
     # Frame the voxel_map port's clouds must already be expressed in.
     world_frame: str = "world"
     # Edge length of a voxel_map cell (meters). Must match the mapper's
@@ -160,6 +168,43 @@ class ManipulationModuleConfig(ModuleConfig):
     default_speed_scale: float = Field(default=1.0, gt=0.0, le=1.0)
     linear_speed_scale: float = Field(default=0.5, gt=0.0, le=1.0)
     execution_timeout: float = Field(default=60.0, gt=0.0)
+    # Coordinator joint name -> model joint name, so a twist base's odometry
+    # joints (chassis/vx, ...) can feed the model's planar base joints.
+    joint_state_aliases: dict[str, str] = Field(default_factory=dict)
+    # Trajectory task -> the joints it drives. Empty means the joint trajectory
+    # task drives every model joint; joints no task is bound to are preview-only.
+    trajectory_tasks: dict[str, list[str]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_trajectory_tasks(self) -> ManipulationModuleConfig:
+        model_joints = set(self.model.joint_names)
+        owners: dict[str, str] = {}
+        for task, joints in self.trajectory_tasks.items():
+            if unknown := sorted(set(joints) - model_joints):
+                raise ValueError(
+                    f"trajectory_tasks['{task}'] joints are not model joints: {unknown}"
+                )
+            for joint in joints:
+                if joint in owners:
+                    raise ValueError(
+                        f"Joint '{joint}' is bound to both '{owners[joint]}' and '{task}'"
+                    )
+                owners[joint] = task
+        return self
+
+    @model_validator(mode="after")
+    def _validate_joint_state_aliases(self) -> ManipulationModuleConfig:
+        model_joints = set(self.model.joint_names)
+        if unknown := sorted(set(self.joint_state_aliases.values()) - model_joints):
+            raise ValueError(f"joint_state_aliases targets are not model joints: {unknown}")
+        if shadowed := sorted(set(self.joint_state_aliases) & model_joints):
+            raise ValueError(f"joint_state_aliases sources are model joints: {shadowed}")
+        # Two sources for one model joint: whichever lands later in a JointState
+        # message would win, so the same message could mean two different poses.
+        targets = Counter(self.joint_state_aliases.values())
+        if collided := sorted(name for name, count in targets.items() if count > 1):
+            raise ValueError(f"joint_state_aliases targets are not unique: {collided}")
+        return self
 
 
 class ManipulationModule(Module):
@@ -302,7 +347,8 @@ class ManipulationModule(Module):
             if self._world_monitor is None:
                 return
 
-            name_to_idx = {name: i for i, name in enumerate(msg.name)}
+            aliases = self.config.joint_state_aliases
+            name_to_idx = {aliases.get(name, name): i for i, name in enumerate(msg.name)}
             names = self.config.model.joint_names
             missing = [name for name in names if name not in name_to_idx]
             if missing:
@@ -347,6 +393,11 @@ class ManipulationModule(Module):
                         link_tf = Transform.from_pose(link_name, link_pose)
                         link_tf.frame_id = "world"
                         transforms.append(link_tf)
+
+                now = time.time()
+                for static in self.config.static_transforms:
+                    static.ts = now
+                    transforms.append(static)
 
                 if transforms:
                     self.tf.publish(TFMessage(*transforms))
@@ -436,6 +487,39 @@ class ManipulationModule(Module):
             result = ExecutionResult(ExecutionStatus.ABORTED, "Planning cancelled")
         self._apply_execution_result(result)
         return result
+
+    @rpc
+    def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None:
+        """Display the ranked proposals. The grasp module owns no visualizer."""
+        if self._world_monitor is not None:
+            self._world_monitor.show_grasp_proposals(candidates)
+
+    @rpc
+    def reset(self) -> CommandResult:
+        """Stop any motion and return to IDLE so new commands are accepted.
+
+        Execution can leave the module in FAULT, and planning only runs from
+        IDLE or COMPLETED, so without this a faulted module accepts nothing
+        further. cancel() does the work of stopping -- the trajectory, the
+        planning epoch, the pending plan and its preview; reset adds only the
+        return to IDLE with the error cleared, from whatever state the failure
+        left behind.
+
+        The exception is a stop the coordinator could not confirm. Clearing that
+        FAULT would discard the one signal saying the arm may still be moving,
+        and hand back a module that accepts a new motion into it.
+        """
+        result = self.cancel()
+        if result.status in UNCONFIRMED_STOP:
+            return CommandResult(CommandStatus.FAILED, result.message)
+        cancelled = result.status is not ExecutionStatus.NO_EXECUTION
+        with self._lock:
+            self._state = ManipulationState.IDLE
+            self._error_message = ""
+        return CommandResult(
+            CommandStatus.SUCCEEDED,
+            "Cancelled the active motion and reset to IDLE" if cancelled else "Reset to IDLE",
+        )
 
     def get_current_joints(self) -> list[float] | None:
         """Get the complete canonical model joint positions."""
@@ -966,8 +1050,6 @@ class ManipulationModule(Module):
             "joint_names": config.joint_names,
             "planning_groups": list(planning_groups),
             "base_link": config.base_link,
-            "max_velocity": config.max_velocity,
-            "max_acceleration": config.max_acceleration,
             "home_joints": config.home_joints,
             "pre_grasp_offset": config.pre_grasp_offset,
             "init_joints": list(self._init_joints.position)
@@ -1010,6 +1092,7 @@ class ManipulationModule(Module):
             joint_names=self.config.model.joint_names,
             coordinator=self._control_coordinator,
             default_timeout=self.config.execution_timeout,
+            bindings=self.config.trajectory_tasks,
         )
 
     @rpc
@@ -1026,13 +1109,14 @@ class ManipulationModule(Module):
                 return ExecutionResult(ExecutionStatus.NO_PLAN, "No pending plan")
             if plan_id is not None and target_plan.plan_id != plan_id:
                 return ExecutionResult(ExecutionStatus.REJECTED, "Pending plan was replaced")
-            planar_base = self.config.model.model.planar_base
-            if planar_base is not None and set(planar_base.joint_names) & set(
-                target_plan.trajectory.joint_names
-            ):
+            bound = {
+                joint for joints in self.config.trajectory_tasks.values() for joint in joints
+            } or set(self.config.model.joint_names)
+            unowned = sorted(set(target_plan.trajectory.joint_names) - bound)
+            if unowned:
                 message = (
-                    "Planar-base trajectories support planning and preview only; "
-                    "a feedback base controller is required for execution"
+                    f"No trajectory task is bound to {unowned}; those joints support planning "
+                    "and preview only"
                 )
                 self._error_message = message
                 return ExecutionResult(ExecutionStatus.REJECTED, message)
@@ -1327,6 +1411,7 @@ class ManipulationModule(Module):
                     "Shutdown could not confirm coordinator trajectory safety: %s",
                     cancellation.message,
                 )
+            execution_manager.close()
 
         # Stop TF thread
         if self._tf_thread is not None:

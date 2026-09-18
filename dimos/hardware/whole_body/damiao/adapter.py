@@ -131,11 +131,16 @@ class DamiaoWholeBodyAdapter(ABC):
         if sys.platform == "linux":
             return can_motor_control.SocketCanBus(device or f"can{index}")
         if sys.platform == "darwin":
-            selector = {"serial_number": device} if device is not None else {"index": index}
+            if device is not None:
+                return can_motor_control.GsUsbBus(
+                    vendor_id=self.gs_usb_vendor_id,
+                    product_id=self.gs_usb_product_id,
+                    serial_number=device,
+                )
             return can_motor_control.GsUsbBus(
                 vendor_id=self.gs_usb_vendor_id,
                 product_id=self.gs_usb_product_id,
-                **selector,
+                index=index,
             )
         raise RuntimeError(f"Damiao CAN transport is unsupported on {sys.platform}")
 

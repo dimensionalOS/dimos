@@ -46,7 +46,7 @@ export function manifest(
 }
 
 export const INFO: RelayInfo = {
-  wtUrl: "https://127.0.0.1:1/viewer",
+  wtUrl: "https://127.0.0.1:1",
   certHash: "aGFzaA==",
   v: PROTOCOL_VERSION,
 };

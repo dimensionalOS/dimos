@@ -15,6 +15,14 @@ export { createDecoderRegistry, DecoderRegistry } from "./decoders/index.ts";
 export type { Decoded, Decoder } from "./decoders/index.ts";
 export { type CostmapValue, inflateCostmap } from "./decoders/costmap.ts";
 export {
+  isLcmSchema,
+  lcmDecoder,
+  type LcmDecoderOptions,
+  type LcmSchema,
+  type LcmValue,
+  MAX_LCM_ARRAY_ELEMENTS,
+} from "./decoders/lcm.ts";
+export {
   PublishError,
   type PublishOutcome,
   type SessionError,

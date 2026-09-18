@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run a concrete Module subclass in an isolated sibling Python project."""
+"""Run a concrete Module subclass in an isolated repository Python project."""
 
 from __future__ import annotations
 
-import inspect
+from hashlib import sha256
 import os
 from pathlib import Path
 import pickle
@@ -26,11 +26,12 @@ import threading
 import time
 from typing import Any, ClassVar
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import CACHE_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.rpc_client import RPCClient
+from dimos.utils.data import get_project_root
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
 
@@ -38,15 +39,11 @@ logger = setup_logger()
 
 
 def isolated_python_run_command(project: Path, *command: str) -> list[str]:
-    """Run a command with the host DimOS available in an isolated project."""
+    """Run a project with dimOS from the shared source checkout."""
     args = ["uv", "run"]
     if (project / "uv.lock").is_file():
         args.append("--frozen")
-    if (DIMOS_PROJECT_ROOT / "pyproject.toml").is_file():
-        args.extend(("--with-editable", str(DIMOS_PROJECT_ROOT)))
-    else:
-        # Installed hosts intentionally accept the newest compatible DimOS.
-        args.extend(("--with", "dimos"))
+    args.extend(("--with-editable", str(get_project_root())))
     args.extend(command)
     if (project / "pixi.toml").is_file():
         return ["pixi", "run", "--executable", *args]
@@ -56,7 +53,7 @@ def isolated_python_run_command(project: Path, *command: str) -> list[str]:
 class IsolatedPythonModuleConfig(NativeModuleConfig):
     """Process settings for an isolated Python module."""
 
-    # Isolated Python modules resolve their real command from the sibling project.
+    # Isolated Python modules resolve their real command from the repository project.
     executable: str = "uv"
     startup_timeout: float = 30.0
     output_limit: int = 64 * 1024
@@ -73,13 +70,14 @@ class IsolatedPythonModule(NativeModule):
     """A host RPC contract implemented by an isolated Python subclass.
 
     Contract classes set :attr:`implementation` to an import reference in a
-    sibling ``python/`` project. Calls to RPCs introduced by the contract are
+    repository project selected by :attr:`project_dir`. Contract RPCs are
     forwarded to the concrete runtime subclass. Framework and lifecycle RPCs
     remain on the host facade.
     """
 
     config: IsolatedPythonModuleConfig
     implementation: ClassVar[str]
+    project_dir: ClassVar[str]
 
     _isolated_python_runtime: bool
     _runtime_client: RPCClient | None
@@ -109,12 +107,11 @@ class IsolatedPythonModule(NativeModule):
 
     @property
     def runtime_project(self) -> Path:
-        source = Path(inspect.getfile(type(self))).resolve()
-        project = source.parent / "python"
+        project = get_project_root() / self.project_dir
         if not project.is_dir():
             raise FileNotFoundError(
                 f"Isolated Python runtime project is missing: {project}; "
-                "create a sibling 'python/' directory"
+                "ensure the shared dimOS checkout contains this project"
             )
         if not (project / "pyproject.toml").is_file():
             raise FileNotFoundError(
@@ -122,17 +119,11 @@ class IsolatedPythonModule(NativeModule):
             )
         return project
 
-    def _uv_command(self, *args: str) -> list[str]:
-        command = ["uv", *args]
-        if (self.runtime_project / "pixi.toml").is_file():
-            return ["pixi", "run", "--executable", *command]
-        return command
-
     def _prepare_command(self) -> list[str]:
-        args = ["sync"]
-        if (self.runtime_project / "uv.lock").is_file():
-            args.append("--frozen")
-        return self._uv_command(*args)
+        # `uv run` syncs the declared project and builds the cached overlay that
+        # holds the shared checkout’s dimOS with its dependencies. Doing it here keeps the
+        # first install, which can take minutes, out of the startup timeout.
+        return isolated_python_run_command(self.runtime_project, "python", "-c", "pass")
 
     def _launch_command(self, handshake_fd: int) -> list[str]:
         return isolated_python_run_command(
@@ -157,14 +148,19 @@ class IsolatedPythonModule(NativeModule):
 
     def _runtime_env(self) -> dict[str, str]:
         env = dict(os.environ)
+        # The isolated project picks its own interpreter and venv; host pins
+        # (e.g. setup-uv exporting UV_PYTHON on CI matrix legs) must not leak in.
         env.pop("VIRTUAL_ENV", None)
+        env.pop("UV_PYTHON", None)
+        env.pop("UV_PROJECT_ENVIRONMENT", None)
+        project_key = sha256(str(self.runtime_project).encode()).hexdigest()[:16]
+        env["UV_PROJECT_ENVIRONMENT"] = str(CACHE_DIR / "isolated-python" / project_key / ".venv")
         env.update(self.config.extra_env)
         return env
 
     def _run_prepare(self) -> None:
-        command = self._prepare_command()
         result = subprocess.run(
-            command,
+            self._prepare_command(),
             cwd=self.runtime_project,
             env=self._runtime_env(),
             capture_output=True,

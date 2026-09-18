@@ -1,8 +1,8 @@
 .frame,
 .frameMax {
-  background: #14171a;
-  border: 1px solid #30363d;
-  border-radius: 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -13,7 +13,9 @@
 }
 
 .frameMax {
-  inset: 0.75rem;
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.6), 0 24px 64px rgba(0, 0, 0, 0.7);
+  inset: 8px;
   position: fixed;
   width: auto;
   z-index: 10;
@@ -21,55 +23,106 @@
 
 .head {
   align-items: center;
-  background: #1b1f24;
+  border-bottom: 1px solid var(--line);
   display: flex;
-  gap: 0.5rem;
+  flex: none;
+  gap: 8px;
+  height: 26px;
   justify-content: space-between;
-  padding: 0.3rem 0.6rem;
+  padding: 0 4px 0 10px;
 }
 
 .title {
-  font-weight: 600;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
 .controls {
   align-items: center;
   display: flex;
-  gap: 0.5rem;
+  flex: none;
+  gap: 6px;
 }
 
 .badge,
 .badgeStale {
-  color: #8b949e;
-  font-variant-numeric: tabular-nums;
+  align-items: center;
+  color: var(--fg-muted);
+  display: inline-flex;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  gap: 5px;
   white-space: nowrap;
 }
 
-.badgeStale {
-  color: #f85149;
+.badge::before,
+.badgeStale::before {
+  background: var(--fg-faint);
+  border-radius: 50%;
+  content: "";
+  height: 6px;
+  width: 6px;
+}
+
+.badge[data-state="live"]::before {
+  background: var(--ok);
+  box-shadow: 0 0 6px var(--ok);
+}
+
+.badgeStale[data-state="stale"] {
+  color: var(--warn);
+}
+
+.badgeStale[data-state="stale"]::before {
+  background: var(--warn);
+}
+
+.badgeStale[data-state="error"] {
+  color: var(--danger);
+}
+
+.badgeStale[data-state="error"]::before {
+  background: var(--danger);
 }
 
 .maxButton {
+  align-items: center;
   background: none;
-  border: 1px solid #30363d;
-  border-radius: 4px;
-  color: #8b949e;
+  border: none;
+  border-radius: var(--radius-s);
+  color: var(--fg-muted);
   cursor: pointer;
-  font-size: 12px;
-  line-height: 1;
-  padding: 0.1rem 0.35rem;
+  display: inline-flex;
+  height: 20px;
+  justify-content: center;
+  opacity: 0.4;
+  padding: 0;
+  transition: background var(--dur), color var(--dur), opacity var(--dur);
+  width: 20px;
+}
+
+.head:hover .maxButton,
+.maxButton:focus-visible,
+.frameMax .maxButton {
+  opacity: 1;
+}
+
+.maxButton:hover {
+  background: var(--bg-3);
+  color: var(--fg);
 }
 
 .body {
   align-items: center;
-  background: #000;
   display: flex;
   flex: 1;
   justify-content: center;
-  min-height: 120px;
   overflow: hidden;
   position: relative;
 }

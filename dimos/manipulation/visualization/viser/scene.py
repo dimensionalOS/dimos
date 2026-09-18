@@ -26,12 +26,14 @@ from typing import Any, Protocol, TypeAlias, cast
 import xml.etree.ElementTree as ET
 
 import numpy as np
+from numpy.typing import NDArray
 import trimesh
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import DEFAULT_OBSTACLE_RGBA, Obstacle
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.visualization.viser.animation import (
     PreviewAnimation,
@@ -43,6 +45,8 @@ from dimos.manipulation.visualization.viser.runtime import (
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
@@ -52,6 +56,8 @@ try:
         FrameHandle,
         GridHandle,
         MeshHandle,
+        PointCloudHandle,
+        SceneApi,
         TransformControlsEvent,
         TransformControlsHandle,
         ViserServer,
@@ -95,9 +101,25 @@ OBSTACLE_DEFAULT_RGBA = DEFAULT_OBSTACLE_RGBA
 OBSTACLE_FALLBACK_COLOR = (55, 190, 210)
 OBSTACLE_FALLBACK_OPACITY = 0.55
 OBSTACLE_PROXY_COLOR = (255, 45, 25)
+GRASP_PROPOSAL_NAMESPACE = "/manipulation/grasp-proposals"
+# Best rank green through worst orange, so the ordering reads at a glance.
+GRASP_PROPOSAL_BEST_COLOR = (60, 220, 60)
+GRASP_PROPOSAL_WORST_COLOR = (255, 160, 60)
+# Drawing every proposal of a hundred buries the ranking; the leaders are what
+# matters when you are deciding whether the generator is pointing anywhere sane.
+GRASP_PROPOSAL_DRAW_LIMIT = 20
+# The leaders are drawn thicker and labelled with their score.
+GRASP_PROPOSAL_EMPHASIS_COUNT = 3
+# Glyph geometry, in metres. Deliberately not the gripper: this marks where a
+# grasp points, and a jaw-shaped drawing sized by anything but the configured
+# sweep volume would be a claim about the hardware that nothing checks.
+GRASP_PROPOSAL_APPROACH_LENGTH = 0.05
+GRASP_PROPOSAL_CLOSING_HALF_WIDTH = 0.02
+GRASP_PROPOSAL_WIDTH = 1.5
+GRASP_PROPOSAL_EMPHASIS_WIDTH = 3.5
 
 
-class RobotDisplayMode(str, Enum):
+class RobotDisplayMode(str, Enum):  # TODO(PY311): switch to enum.StrEnum
     VISUAL = "visual"
     COLLISION = "collision"
     BOTH = "both"
@@ -139,6 +161,8 @@ class ViserManipulationScene:
         self._obstacles_visible = True
         self._obstacle_gui_handles: list[object] = []
         self._obstacle_warning_handle: Any | None = None
+        self._grasp_proposal_handles: list[Any] = []
+        self._grasp_proposals_visible = True
         self._closed = False
         self._ensure_obstacle_control()
         self._ensure_reference_grid()
@@ -219,6 +243,12 @@ class ViserManipulationScene:
                             self._obstacles_visible,
                         )
                     )
+                elif obstacle.obstacle_type == ObstacleType.OCTREE:
+                    handles.append(
+                        self._add_octree(
+                            scene, path, obstacle, color, position, wxyz, self._obstacles_visible
+                        )
+                    )
                 else:
                     raise ValueError(f"unsupported obstacle type: {obstacle.obstacle_type}")
             except Exception as error:
@@ -280,6 +310,111 @@ class ViserManipulationScene:
             for obstacle_id in list(self._obstacle_handles):
                 self.remove_vis_obstacle(obstacle_id)
 
+    def set_grasp_proposals_visible(self, visible: bool) -> None:
+        """Toggle the proposal markers without discarding their scene handles."""
+        with self._scene_lock:
+            if self._closed:
+                return
+            self._grasp_proposals_visible = bool(visible)
+            for handle in self._grasp_proposal_handles:
+                self._set_handle_visibility(handle, self._grasp_proposals_visible)
+
+    def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None:
+        """Draw the ranked proposals as pose glyphs, best first.
+
+        One line-segment node carries every glyph, plus a label per emphasised
+        leader. Scores are only meaningful against each other, so rank drives
+        the colour rather than the absolute value. An empty array clears.
+        """
+        with self._scene_lock:
+            if self._closed:
+                return
+            self.clear_grasp_proposals()
+            drawn = list(candidates.candidates[:GRASP_PROPOSAL_DRAW_LIMIT])
+            if not drawn:
+                return
+            emphasis = min(GRASP_PROPOSAL_EMPHASIS_COUNT, len(drawn))
+            handles: list[Any] = []
+            for start, stop, width in (
+                (emphasis, len(drawn), GRASP_PROPOSAL_WIDTH),
+                (0, emphasis, GRASP_PROPOSAL_EMPHASIS_WIDTH),
+            ):
+                if start >= stop:
+                    continue
+                segments, colors = self._grasp_proposal_segments(drawn, start, stop, len(drawn))
+                handles.append(
+                    self.server.scene.add_line_segments(
+                        f"{GRASP_PROPOSAL_NAMESPACE}/rank-{start}",
+                        points=segments,
+                        colors=colors,
+                        line_width=width,
+                        visible=self._grasp_proposals_visible,
+                    )
+                )
+            for rank in range(emphasis):
+                pose = drawn[rank].pose
+                handles.append(
+                    self.server.scene.add_label(
+                        f"{GRASP_PROPOSAL_NAMESPACE}/label-{rank}",
+                        f"#{rank} {drawn[rank].score:.3f}",
+                        position=(
+                            float(pose.position.x),
+                            float(pose.position.y),
+                            float(pose.position.z),
+                        ),
+                        visible=self._grasp_proposals_visible,
+                    )
+                )
+            self._grasp_proposal_handles = handles
+
+    def clear_grasp_proposals(self) -> None:
+        """Remove every proposal marker while retaining the viewer's toggle."""
+        with self._scene_lock:
+            for handle in self._grasp_proposal_handles:
+                self._remove_scene_handle(handle)
+            self._grasp_proposal_handles = []
+
+    @staticmethod
+    def _grasp_proposal_segments(
+        candidates: Sequence[GraspCandidate], start: int, stop: int, total: int
+    ) -> tuple[NDArray[np.float32], NDArray[np.uint8]]:
+        """Two segments per grasp: the approach axis, and the closing axis across it.
+
+        Both arrays are shaped the way ``add_line_segments`` requires: (N, 2, 3)
+        for the endpoints, and one colour per endpoint rather than per segment.
+        """
+        segments: list[NDArray[np.float32]] = []
+        colors: list[tuple[tuple[int, int, int], tuple[int, int, int]]] = []
+        local = np.array(
+            [
+                [0.0, 0.0, -GRASP_PROPOSAL_APPROACH_LENGTH],
+                [0.0, 0.0, 0.0],
+                [0.0, -GRASP_PROPOSAL_CLOSING_HALF_WIDTH, 0.0],
+                [0.0, GRASP_PROPOSAL_CLOSING_HALF_WIDTH, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        for rank in range(start, stop):
+            pose = candidates[rank].pose
+            rotation = np.asarray(pose.orientation.to_rotation_matrix(), dtype=np.float32)
+            origin = np.asarray(
+                [pose.position.x, pose.position.y, pose.position.z], dtype=np.float32
+            )
+            points = local @ rotation.T + origin
+            segments.append(points.reshape(2, 2, 3))
+            color = ViserManipulationScene._grasp_rank_color(rank, total)
+            colors.extend([(color, color)] * 2)
+        return (
+            np.concatenate(segments).astype(np.float32),
+            np.asarray(colors, dtype=np.uint8),
+        )
+
+    @staticmethod
+    def _grasp_rank_color(rank: int, total: int) -> tuple[int, int, int]:
+        t = 0.0 if total <= 1 else rank / (total - 1)
+        best, worst = GRASP_PROPOSAL_BEST_COLOR, GRASP_PROPOSAL_WORST_COLOR
+        return tuple(round(b + (w - b) * t) for b, w in zip(best, worst, strict=True))  # type: ignore[return-value]
+
     def show_obstacle_warning(self, message: str) -> None:
         """Expose a persistent renderer warning in the frontend when available."""
         with self._scene_lock:
@@ -298,8 +433,12 @@ class ViserManipulationScene:
             self._obstacle_gui_handles.append(folder)
             with folder:
                 handle = self.server.gui.add_checkbox("manipulation.obstacles", initial_value=True)
+                proposals = self.server.gui.add_checkbox(
+                    "manipulation.grasp-proposals", initial_value=True
+                )
             handle.on_update(lambda event: self.set_obstacles_visible(event.target.value))
-            self._obstacle_gui_handles.append(handle)
+            proposals.on_update(lambda event: self.set_grasp_proposals_visible(event.target.value))
+            self._obstacle_gui_handles.extend((handle, proposals))
         except (AttributeError, TypeError):
             self._obstacle_gui_handles.clear()
 
@@ -333,6 +472,37 @@ class ViserManipulationScene:
             round(float(color[1]) * 255),
             round(float(color[2]) * 255),
         ), float(color[3])
+
+    @staticmethod
+    def _add_octree(
+        scene: SceneApi,
+        path: str,
+        obstacle: Obstacle,
+        color: tuple[int, int, int],
+        position: tuple[float, float, float],
+        wxyz: tuple[float, float, float, float],
+        visible: bool,
+    ) -> PointCloudHandle:
+        """Draw the occupied cells as a point cloud sized to the cell edge.
+
+        A mapped workspace is tens of thousands of cells, so one box per cell
+        would stall the browser. Square points at the cell edge read as the same
+        grid and cost one scene node.
+        """
+        points = np.asarray(obstacle.points, dtype=np.float32).reshape(-1, 3)
+        if not len(points):
+            raise ValueError("octree obstacle carries no occupied cells")
+        colors = np.tile(np.asarray(color, dtype=np.uint8), (len(points), 1))
+        return scene.add_point_cloud(
+            path,
+            points=points,
+            colors=colors,
+            point_size=float(obstacle.octree_resolution or 0.05),
+            point_shape="square",
+            position=position,
+            wxyz=wxyz,
+            visible=visible,
+        )
 
     @staticmethod
     def _add_mesh(
@@ -397,8 +567,8 @@ class ViserManipulationScene:
         collision_scene = model.collision_scene
         return collision_scene is not None and bool(getattr(collision_scene, "geometry", True))
 
-    def _load_robot_model(self, config: RobotModelConfig) -> URDF:
-        description = self.loaded_robot_description(config)
+    def _load_robot_model(self, prepared: PreparedRobotModel) -> URDF:
+        description = self.loaded_robot_description(prepared)
         return URDF.load(
             BytesIO(description.xml.encode()),
             mesh_dir=str(description.source_path.parent),
@@ -417,13 +587,14 @@ class ViserManipulationScene:
         self._grid_visible = visible
         self._set_handle_visibility(self._grid_handle, visible)
 
-    def register_model(self, config: RobotModelConfig) -> None:
+    def register_model(self, prepared: PreparedRobotModel) -> None:
         """Register the one configured model."""
+        config = prepared.config
         if self._model_config is not None and self._model_config != config:
             raise ValueError("A different model is already registered")
         self._model_config = config
         if self._model is None:
-            self._model = self._load_robot_model(config)
+            self._model = self._load_robot_model(prepared)
         self._ensure_robot_urdfs(config)
 
     def set_target_active(self, active: bool) -> None:
@@ -729,9 +900,10 @@ class ViserManipulationScene:
                 mode in {RobotDisplayMode.COLLISION, RobotDisplayMode.BOTH},
             )
 
-    def loaded_robot_description(self, config: RobotModelConfig) -> LoadedRobotModel:
+    def loaded_robot_description(self, prepared: PreparedRobotModel) -> LoadedRobotModel:
+        config = prepared.config
         description = prepare_urdf_for_drake(
-            config.model.load(),
+            prepared.description,
             convert_meshes=bool(config.auto_convert_meshes),
         )
         description = self._strip_visualization_world_root_attachment(config, description)

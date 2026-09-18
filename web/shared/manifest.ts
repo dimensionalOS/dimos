@@ -6,7 +6,8 @@
 // The transport (protocol.ts) carries the manifest as one opaque record;
 // this module is the single owner of its structure and domain rules:
 // version gate, bounded unique ids, positive rates, panel/layout/pages
-// references that resolve, and kind-specific panel rules (video, map2d).
+// references that resolve, and kind-specific panel rules (video, map2d,
+// teleop, chat, stats).
 //
 // Manifest v1 is frozen. Additive changes (new panel kinds, new params)
 // ride the existing shape: unknown keys and kinds pass through validation.
@@ -433,6 +434,23 @@ export function parseManifest(value: unknown): Manifest {
         throw new ManifestError(
           "invalid_chat_panel",
           `chat panel ${panel.id} needs an audio.json.v1 reliable shared tx channel fourth`,
+        );
+      }
+    }
+    if (panel.kind === "stats") {
+      if (panel.channels.length !== 1) {
+        throw new ManifestError(
+          "invalid_stats_panel",
+          `stats panel ${panel.id} must bind exactly one channel`,
+        );
+      }
+      const stats = chIds.get(panel.channels[0])!;
+      if (
+        stats.encoding !== "stats.json.v1" || stats.delivery !== "latest" || dirOf(stats) !== "rx"
+      ) {
+        throw new ManifestError(
+          "invalid_stats_panel",
+          `stats panel ${panel.id} needs a stats.json.v1 latest rx channel`,
         );
       }
     }

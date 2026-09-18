@@ -96,6 +96,20 @@ def test_global_config_flag_applies_before_subcommand():
         global_config.update(transport=original)
 
 
+def test_show_config_masks_secrets():
+    # A config dump gets pasted into chats and bug reports: keys print as ***.
+    original = global_config.relay_key
+    try:
+        result = CliRunner().invoke(
+            main, ["--relay-key", "robot-key-0123456789abcdef", "show-config"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "relay_key: ***" in result.output
+        assert "robot-key-0123456789abcdef" not in result.output
+    finally:
+        global_config.update(relay_key=original)
+
+
 def test_run_composition_leaves_blueprint_alone_when_relay_disabled() -> None:
     class Config(ModuleConfig):
         pass
@@ -362,6 +376,24 @@ def test_qualified_global_relay_flag_is_applied_before_composition(
     assert result.exit_code == 0, result.output
     assert observed_relay_values == [(True, None)]
     assert stubbed_run["parsed_config"].global_config["local_relay"] is True
+
+
+def test_run_relay_ca_flag_is_applied_before_composition(
+    stubbed_run: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str | None] = []
+
+    def compose(blueprint: Any) -> Any:
+        observed.append(global_config.relay_ca)
+        return blueprint
+
+    monkeypatch.setattr(lifecycle, "_with_relay_bridge", compose)
+
+    result = CliRunner().invoke(main, ["run", "alpha", "--relay-ca", "/ca.pem"])
+
+    assert result.exit_code == 0, result.output
+    assert observed == ["/ca.pem"]
 
 
 def test_run_rejects_ambiguous_short_config_flag(stubbed_run: dict[str, Any]) -> None:

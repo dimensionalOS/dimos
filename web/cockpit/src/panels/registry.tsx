@@ -16,6 +16,7 @@ import { ChatPanel } from "./ChatPanel.tsx";
 import { MapPanel } from "./MapPanel.tsx";
 import styles from "./registry.module.css";
 import type { TeleopHooks } from "@dimos/sdk/internal/teleop";
+import { StatsPanel } from "./StatsPanel.tsx";
 import { TeleopPanel } from "./TeleopPanel.tsx";
 import { VideoPanel } from "./VideoPanel.tsx";
 
@@ -54,3 +55,4 @@ registerPanel("video", VideoPanel);
 registerPanel("map2d", MapPanel);
 registerPanel("teleop", TeleopPanel);
 registerPanel("chat", ChatPanel);
+registerPanel("stats", StatsPanel);

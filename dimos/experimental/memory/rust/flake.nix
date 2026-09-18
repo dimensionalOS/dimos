@@ -17,6 +17,10 @@
       "aarch64-darwin"
     ] (system: let
       pkgs = nixpkgs.legacyPackages.${system};
+      nativeDeps = [pkgs.cmake pkgs.nasm pkgs.pkg-config];
+      systemDeps =
+        [pkgs.sqlite pkgs.sqlite.dev]
+        ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [pkgs.libiconv];
       dimos-memory-recorder = pkgs.rustPlatform.buildRustPackage {
         pname = "dimos-memory-recorder";
         version = "0.1.0";
@@ -26,12 +30,16 @@
             ../../../../Cargo.lock
             ../../../../Cargo.toml
             ../../../../dimos/experimental/memory/rust
-            ../../../../dimos/hardware/sensors/lidar/virtual_mid360
-            ../../../../dimos/mapping/ray_tracing/rust
-            ../../../../dimos/navigation/nav_3d/mls_planner/rust
-            ../../../../examples/native-modules/rust
             ../../../../native/rust/dimos-module
             ../../../../native/rust/dimos-module-macros
+            ../../../../dimos/mapping/ray_tracing/rust
+            ../../../../dimos/mapping/ray_tracing/rust/py
+            ../../../../dimos/navigation/nav_3d/mls_planner/rust
+            ../../../../dimos/navigation/nav_3d/mls_planner/rust/py
+            ../../../../dimos/hardware/sensors/lidar/livox/rust
+            ../../../../dimos/hardware/sensors/lidar/pointlio/rust
+            ../../../../dimos/hardware/sensors/lidar/virtual_mid360
+            ../../../../examples/native-modules/rust
           ];
         };
 
@@ -39,6 +47,7 @@
           lockFile = ../../../../Cargo.lock;
           outputHashes = {
             "dimos-lcm-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
+            "pointlio-core-0.1.0" = "sha256-iC7nDbEipfi3cViK7fqKiy2hT9ENGi4Ge7L6Wt1W01Q=";
           };
         };
 
@@ -46,15 +55,8 @@
         cargoTestFlags = ["-p" "dimos-memory-recorder"];
         strictDeps = true;
 
-        nativeBuildInputs = [
-          pkgs.cmake
-          pkgs.nasm
-          pkgs.pkg-config
-        ];
-        buildInputs = [
-          pkgs.sqlite
-          pkgs.sqlite.dev
-        ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [pkgs.libiconv];
+        nativeBuildInputs = nativeDeps;
+        buildInputs = systemDeps;
 
         env.LIBSQLITE3_SYS_USE_PKG_CONFIG = "1";
 
@@ -68,6 +70,16 @@
       packages = {
         default = dimos-memory-recorder;
         inherit dimos-memory-recorder;
+      };
+
+      # Just the system deps and a toolchain. Deliberately not the package's
+      # build environment: that vendors the whole workspace lock, which would
+      # make `nix develop` (and so the cargo clippy hook) fail on any git
+      # dependency added anywhere in the workspace.
+      devShells.default = pkgs.mkShell {
+        nativeBuildInputs = nativeDeps ++ [pkgs.cargo pkgs.rustc pkgs.clippy pkgs.rustfmt];
+        buildInputs = systemDeps;
+        LIBSQLITE3_SYS_USE_PKG_CONFIG = "1";
       };
     });
 }

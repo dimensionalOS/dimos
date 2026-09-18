@@ -23,7 +23,7 @@ import math
 import time
 from typing import Any, Literal
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool
 import pytest
 
 from dimos.core.stream import Stream, Transport

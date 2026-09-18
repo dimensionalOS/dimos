@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { FrameHeader } from "@dimos/shared";
 import costmapFrames from "../../../shared/fixtures/costmap_frames.json";
+import lcmFrames from "../../../shared/fixtures/lcm_frames.json";
+import { spec } from "../testing/fakeRelay.ts";
 import {
   type CostmapValue,
   inflateCostmap,
   MAX_COSTMAP_DIM,
   MAX_COSTMAP_PAYLOAD_BYTES,
 } from "./costmap.ts";
-import { createDecoderRegistry } from "./index.ts";
+import { createDecoderRegistry, type Decoder } from "./index.ts";
 import { MAX_JPEG_DIM, MAX_JPEG_PAYLOAD_BYTES } from "./jpeg.ts";
 import { JSON_PREVIEW_MAX_CHARS, MAX_JSON_PAYLOAD_BYTES } from "./json.ts";
 
@@ -20,6 +22,16 @@ const registry = createDecoderRegistry();
 function b64ToBytes(b64: string): Uint8Array {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
+
+// The pose_stamped golden vector (Python-generated, see lcm.test.ts).
+const POSE = (lcmFrames as { vectors: { name: string; schema: unknown; payload_b64: string }[] })
+  .vectors[0];
+const poseSpec = () =>
+  spec({
+    ch: "lcm_pose",
+    encoding: "geometry_msgs.PoseStamped.lcm.v1",
+    params: { lcm: POSE.schema },
+  });
 
 /** Minimal scannable JPEG: SOI + SOF0 declaring w x h (no scan data). */
 function jpegBytes(w: number, h: number): Uint8Array {
@@ -45,6 +57,52 @@ describe("decoder registry", () => {
   it("returns undefined for unknown encodings (unsupported, not an error)", () => {
     expect(registry.get("h264.v1")).toBeUndefined();
     expect(registry.get(undefined)).toBeUndefined();
+  });
+
+  it("resolve() compiles *.lcm.v1 from params.lcm and caches per manifest record", () => {
+    expect(POSE.name).toBe("pose_stamped");
+    const s = poseSpec();
+    const decode = registry.resolve(s);
+    expect(decode).toBeDefined();
+    expect(registry.resolve(s)).toBe(decode);
+    expect(registry.resolve({ ...s })).not.toBe(decode); // a re-adopted manifest compiles anew
+    const decoded = decode!(b64ToBytes(POSE.payload_b64), HEADER);
+    const value = decoded.value as {
+      pose: { position: { x: number } };
+      header: { frame_id: string };
+    };
+    expect(value.pose.position.x).toBe(1.5);
+    expect(value.header.frame_id).toBe("map");
+    expect(decoded.preview).toContain("position: {x: 1.5, y: -2.5, z: 0.25}");
+    // get() alone knows nothing about the schema.
+    expect(registry.get(s.encoding)).toBeUndefined();
+  });
+
+  it("resolve() lets an exact registration beat the lcm family rule", () => {
+    const own = createDecoderRegistry();
+    const mine: Decoder = () => ({ value: "mine" });
+    own.register("geometry_msgs.PoseStamped.lcm.v1", mine);
+    expect(own.resolve(poseSpec())).toBe(mine);
+  });
+
+  it("resolve() is undefined, repeatably, for a missing or unusable schema", () => {
+    for (
+      const params of [
+        {},
+        { lcm: null },
+        { lcm: { type: "t.P", fp: "zz", structs: {} } },
+        { lcm: { type: "t.P", fp: "0011223344556677", structs: {} } },
+      ]
+    ) {
+      const s = spec({ ch: "x", encoding: "t.P.lcm.v1", params });
+      expect(registry.resolve(s)).toBeUndefined();
+      expect(registry.resolve(s)).toBeUndefined();
+    }
+  });
+
+  it("resolve() keeps get() semantics for json and unknown encodings", () => {
+    expect(registry.resolve(spec())).toBe(registry.get("pose.json.v1"));
+    expect(registry.resolve(spec({ encoding: "h264.v1" }))).toBeUndefined();
   });
 
   it("passes jpeg payloads through with dimensions scanned from the bytes", () => {

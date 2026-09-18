@@ -23,6 +23,53 @@ Using `--local-relay` spawns a relay on `http://127.0.0.1:7780` and bridges the 
 
 The local relay binds loopback and deliberately trusts local browser clients (wildcard CORS on the routes above), so a page from any local origin can connect without configuration. This is a local development mode, not the remote deployment story.
 
+## Relay started by hand
+
+`--local-relay` spawns the relay for you. Start one yourself to work on the relay without restarting the robot, or to share one relay between robots. Build the web dists once (and after changes under `web/`), then run the relay from `web/`:
+
+```bash
+cd web
+deno install --frozen
+deno task -r build
+deno task dev --cockpit-dir cockpit/dist --sdk-dir sdk/dist
+```
+
+Attach a robot with `--relay-url` and the relay's HTTP URL:
+
+```bash
+uv run dimos --replay run unitree-go2 --relay-url http://localhost:7780
+```
+
+The bridge discovers the WebTransport endpoint (an ephemeral QUIC port and certificate) through `/api/info` on every connect, like the browser does. Open `http://localhost:7780/` for the cockpit. Things to know:
+
+- Restart the relay whenever you like: the bridge and the page reconnect on their own.
+- A bridge killed without a clean close keeps its robot id registered until the relay's 30 s idle timeout. Restarting it inside that window waits the conflict out.
+- `--serve-dir` belongs to the relay here (`deno task dev --serve-dir DIR`). `dimos run --serve-dir` is rejected together with `--relay-url`.
+- A second robot on the same relay needs its own `--robot-id`. A synthetic one: `uv run python -m dimos.web.relay_bridge.demo_smoke --url http://localhost:7780`.
+- With several robots on the relay the cockpit lists them; pick one to watch it. "switch robot" in the status bar reopens the list.
+- Another machine requires a relay with TLS and auth (next section); pass `--relay-ca` to the robot for a private CA.
+
+## Relay with auth
+
+A relay that other machines reach needs `--cert PEM --key PEM` and `--auth-file auth.json` (`--unsafe-non-loopback` skips both, at your own risk). The file holds robot keys bound to robot ids and viewer tokens, 16 to 256 characters each and no secret twice (`openssl rand -hex 32`):
+
+```json
+{
+  "robots": { "go2-lab": "<key>" },
+  "viewers": { "paul": "<token>" }
+}
+```
+
+The robot sends its key in hello. Put it in the environment or `.env` as `RELAY_KEY` (the `--relay-key` flag works too, but shows in the process list):
+
+```bash
+RELAY_KEY=<key> uv run dimos run unitree-go2 --relay-url https://dimos-relay.example.com --robot-id go2-lab
+```
+
+The cockpit asks for the viewer token, keeps it in `localStorage`, and "log out" in the status bar forgets it. Your own page passes it to `connect({ url, token })`. `/api/stats` wants it as `Authorization: Bearer <token>` and drops its CORS header. A wrong key or token fails with `auth_failed` and neither client retries: fix the secret and restart. Edits to the file need a relay restart.
+
+To host one on a VM with Docker and a Let's Encrypt certificate, or on a LAN with mkcert, follow [Relay hosting](/docs/usage/relay_hosting.md).
+
 ## Your first page
 
 Create `ui/index.html`:
@@ -97,6 +144,8 @@ import { connect } from "http://127.0.0.1:7780/sdk.js";
 const session = connect({ url: "http://127.0.0.1:7780" });
 ```
 
+A relay with auth also takes the viewer token: `connect({ url, token })`.
+
 Inside the dimos repository you can also import the SDK source directly: `web/sdk` is the `@dimos/sdk` Deno workspace package, and `web/sdk/fixture/` is a small Vite consumer you can copy (`deno task fixture`). React bindings live on the `@dimos/sdk/react` subpath and read UI-tick snapshots through `useSyncExternalStore`:
 
 ```jsx
@@ -119,7 +168,7 @@ So far the page could only subscribe to the bridge's built-in channels (`odom`, 
 Channel(
     stream,                  # stream name, matched by autoconnect
     message_type,            # the stream's Python type
-    encoding="json.v1",      # wire encoding (see codecs below)
+    encoding=None,           # default: <msg_name>.lcm.v1 for dimOS messages, json.v1 otherwise
     delivery="reliable",     # or "latest"
     max_hz=10.0,             # encode-rate cap
 )
@@ -217,7 +266,8 @@ go2_web = autoconnect(
 How the pieces connect:
 
 - A `Channel` whose stream is not a built-in bridge port generates a bridge input port of that name and type. `autoconnect` then wires it like any other stream: `health` to `HealthMonitor.health`, `lidar` to the driver's `lidar: Out[PointCloud2]` already inside `unitree_go2`.
-- `Channel("health", Health)` uses the default `json.v1` encoding. It works for JSON scalars, lists, dicts, and plain dataclasses, and the browser decodes it without registration. Anything potentially large (dimOS/LCM messages, images, arrays, bytes) is rejected at authoring time and needs an explicit `@web_encoder`.
+- `Channel("health", Health)` uses `json.v1`, the default for JSON scalars, lists, dicts and plain dataclasses. The browser decodes it without registration.
+- A dimOS message type (`PoseStamped`, `Odometry`, `LaserScan`, ...) defaults to `<msg_name>.lcm.v1`, for example `geometry_msgs.PoseStamped.lcm.v1`: the frame is the message's `lcm_encode()` bytes and the manifest carries its LCM schema, so the browser decodes it to a plain object without registration. `Image` has no default (raw pixels): use `jpeg.v1` or an `@web_encoder`. Types without a `dimos_lcm` schema need an explicit encoding too. A bulk message costs its full size per frame (`PointCloud2` is 16 bytes per point) and the cockpit's channel table does not subscribe a schema with a variable-length array by itself (an SDK page subscribes explicitly), so set `max_hz`, or send less with an `@web_encoder` like `lidar.xy.v1` below.
 - An encoder returns `bytes`, an `EncodedPayload` (payload plus a small JSON meta mapping that rides the frame header), or `None` to skip a sample. The first parameter annotation declares the message type it supports, and the channel's type must match.
 - You can normally use `cockpit(layout=..., channels=[...])` to create a cockpit layout UI. But for a pure SDK access, leave "layout" out and just specify which channels you want to serve.
 - Encoding is lazy. A channel costs nothing until some viewer subscribes, and stops encoding when the last viewer leaves.
@@ -226,7 +276,7 @@ Caveat: because dimOS modules live on different processes, registered functions 
 
 ## Decoding custom encodings in the browser
 
-`json.v1` and any `*.json.vN` encoding decode automatically. `lidar.xy.v1` is opaque bytes to the SDK, so the page registers the matching decoder. `page/index.html`:
+`json.v1`, any `*.json.vN`, and any `*.lcm.v1` encoding decode automatically. `lidar.xy.v1` is opaque bytes to the SDK, so the page registers the matching decoder. `page/index.html`:
 
 ```html
 <!DOCTYPE html>
@@ -280,6 +330,7 @@ The page opens automatically: health updates once a second and the lidar scatter
 Decoder notes:
 
 - A decoder is `(payload: Uint8Array, header) => { value }`, looked up by the channel's manifest encoding. `header.meta` carries the encoder's `EncodedPayload` meta.
+- A `*.lcm.v1` value is a plain object with the LCM fields in wire order: nested structs as objects, `byte[]` and `int8_t[]` as `Uint8Array`/`Int8Array` views into the frame, other arrays as typed arrays, `int64_t` as `bigint`. A frame above 100k struct, string or boolean array elements is reported as oversized instead of decoded. A page that needs more registers `lcmDecoder(schema, { maxArrayElements })` from the SDK for that encoding.
 - Each session owns its registry (`connect({decoders})`), so two apps on one page cannot clobber each other. Registering a taken encoding throws unless you pass `{replace: true}`.
 - An encoding with no decoder is not an error. The channel still counts frames and renders as unsupported. A throwing decoder bumps `decodeErrors` and keeps the last good value.
 - Decoders run on the ingest path, so keep them synchronous and cheap. Heavy work (inflate, draw) belongs in the consumer.

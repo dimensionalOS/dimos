@@ -7,7 +7,7 @@ function ChannelRow(
   { spec, panels, store }: { spec: ChannelSpec; panels: PanelSpec[]; store: ChannelStore },
 ) {
   const { slot, stats } = useStoreChannel(store, spec.ch);
-  const supported = cockpitDecoders.get(spec.encoding) !== undefined;
+  const supported = cockpitDecoders.resolve(spec) !== undefined;
   const subscribed = channelSubscribable(spec, panels);
 
   let value;

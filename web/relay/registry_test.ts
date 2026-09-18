@@ -137,6 +137,7 @@ class FakeViewer implements ViewerPeer {
   readonly policies = new Map<string, ChannelPolicy>();
   readonly sink = new FakeSink();
   greeted = false;
+  name: string | null = null;
   pushed: Msg[] = [];
   replies: Msg[] = [];
 

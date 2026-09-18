@@ -29,7 +29,7 @@ from dimos.agents.web_human_input import WebInput
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic import unitree_go2_agentic
 from dimos.stream.audio.decode import ffmpeg_requirement
-from dimos.web.cockpit import Chat, Col, Map2D, Row, Teleop, Video, cockpit
+from dimos.web.cockpit import Chat, Col, Map2D, Row, Stats, Teleop, Video, cockpit
 
 unitree_go2_agentic_cockpit = (
     autoconnect(
@@ -38,14 +38,14 @@ unitree_go2_agentic_cockpit = (
             layout=Row(
                 Video("color_image", title="Front camera"),
                 Col(
-                    Map2D(costmap="global_costmap", pose="odom", title="Map"),
+                    Map2D(path="path", click="clicked_point", stop="stop_movement", title="Map"),
                     Teleop(title="Keyboard teleop"),
                     shares=[3, 1],
                 ),
                 Chat(title="Agent chat"),
                 shares=[2, 1, 1],
             ),
-            pages=[Video("color_image", title="Front camera")],
+            pages=[Video("color_image", title="Front camera"), Stats()],
         ),
         VoiceInput.blueprint(),
     )

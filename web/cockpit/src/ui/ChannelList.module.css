@@ -1,45 +1,66 @@
 .table {
-  border-collapse: collapse;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-collapse: separate;
+  border-radius: var(--radius);
+  border-spacing: 0;
   width: 100%;
 }
 
 .table th {
-  border-bottom: 1px solid #30363d;
-  color: #8b949e;
-  font-size: 12px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--fg-muted);
+  font-size: 11px;
   font-weight: 500;
-  padding: 0.3rem 0.75rem;
+  padding: 4px 8px;
+  position: sticky;
   text-align: left;
+  top: 0;
+  z-index: 1;
 }
 
 .table td {
-  border-bottom: 1px solid #21262d;
-  padding: 0.3rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  padding: 3px 8px;
   vertical-align: top;
 }
 
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table tbody tr:hover td {
+  background: var(--bg-2);
+}
+
 .ch {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .num {
-  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
   text-align: right;
   white-space: nowrap;
 }
 
 .muted {
-  color: #8b949e;
+  color: var(--fg-muted);
 }
 
 .value {
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
   overflow-wrap: anywhere;
 }
 
+.value code {
+  font-family: inherit;
+}
+
 .error {
-  color: #f85149;
-  font-size: 12px;
-  margin-right: 0.5rem;
+  color: var(--danger);
+  font-size: 11px;
+  margin-right: 6px;
 }
