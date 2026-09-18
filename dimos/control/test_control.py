@@ -58,7 +58,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
     joint_trajectory_task,
 )
-from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import In
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
@@ -343,7 +342,6 @@ class TestControlCoordinatorLifecycle:
 
         assert loop.call_args.kwargs["publish_command_callback"] is None
         assert "applied_joint_position_command" not in coordinator.outputs
-
 
     def test_start_subscribes_ee_twist_only_for_eef_twist_tasks(self, make_coordinator, mocker):
         mocker.patch("dimos.core.module.Module.start")
