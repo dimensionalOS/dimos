@@ -186,3 +186,8 @@ def test_edge_cases() -> None:
     assert joy3.axes == extreme_axes
 
     print("✓ Joy edge cases test passed")
+
+
+def test_joy_to_rerun_scalars() -> None:
+    scalars = Joy(axes=[0.5, -0.25, 1.0]).to_rerun()
+    assert scalars.scalars.as_arrow_array().to_pylist() == [0.5, -0.25, 1.0]

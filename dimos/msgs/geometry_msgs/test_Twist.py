@@ -16,7 +16,7 @@ from dimos_lcm.geometry_msgs import Twist as LCMTwist
 import numpy as np
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Twist import RERUN_SERIES_NAMES, Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
@@ -199,3 +199,10 @@ def test_twist_with_lists() -> None:
     tw2 = Twist(linear=np.array([4, 5, 6]), angular=np.array([0.4, 0.5, 0.6]))
     assert tw2.linear == Vector3(4, 5, 6)
     assert tw2.angular == Vector3(0.4, 0.5, 0.6)
+
+
+def test_twist_to_rerun_scalars() -> None:
+    scalars = Twist(linear=[1.0, 2.0, 3.0], angular=[0.1, 0.2, 0.3]).to_rerun()
+    values = scalars.scalars.as_arrow_array().to_pylist()
+    assert values == [1.0, 2.0, 0.3]
+    assert len(values) == len(RERUN_SERIES_NAMES)

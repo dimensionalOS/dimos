@@ -204,19 +204,22 @@ def recorded_rerun_config(dataset: str) -> dict[str, Any]:
 
 
 def rerun_layout(stream_types: dict[str, type]) -> Any:
-    """A Rerun blueprint showing every recorded stream: one 3D world view, one 2D view per image."""
+    """A Rerun blueprint showing every recorded stream: one 3D world view, one 2D view per image, one plot per twist or joy."""
     import rerun.blueprint as rrb
 
+    from dimos.msgs.geometry_msgs.Twist import Twist
     from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.msgs.sensor_msgs.Joy import Joy
 
     images = [
         rrb.Spatial2DView(origin=f"world/{n}", name=n)
         for n, t in stream_types.items()
         if issubclass(t, Image)
     ]
-    plots = [
-        rrb.TimeSeriesView(origin="plots/odom", name="odom"),
-        rrb.TimeSeriesView(origin="plots/cmd_vel", name="cmd_vel"),
+    plots = [rrb.TimeSeriesView(origin="plots/odom", name="odom")] + [
+        rrb.TimeSeriesView(origin=f"world/{n}", name=n)
+        for n, t in stream_types.items()
+        if issubclass(t, Twist | Joy)
     ]
     world = rrb.Spatial3DView(origin="world", name="3D")
     if not images:

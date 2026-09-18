@@ -14,12 +14,17 @@
 
 from __future__ import annotations
 
-from typing import Any, overload
+from typing import TYPE_CHECKING, Any, overload
 
 from dimos_lcm.geometry_msgs import Twist as LCMTwist
 
+if TYPE_CHECKING:
+    from rerun._baseclasses import Archetype
+
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
+
+RERUN_SERIES_NAMES = ("linear_x", "linear_y", "angular_z")
 
 
 class Twist(LCMTwist):  # type: ignore[misc]
@@ -119,6 +124,12 @@ class Twist(LCMTwist):  # type: ignore[misc]
             linear=self.linear + other.linear,
             angular=self.angular + other.angular,
         )
+
+    def to_rerun(self) -> Archetype:
+        """Convert to rerun Scalars, one series per ``RERUN_SERIES_NAMES`` entry."""
+        import rerun as rr
+
+        return rr.Scalars([self.linear.x, self.linear.y, self.angular.z])
 
     def __bool__(self) -> bool:
         """Boolean conversion for Twist.

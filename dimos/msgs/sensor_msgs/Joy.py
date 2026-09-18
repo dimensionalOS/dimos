@@ -15,11 +15,14 @@
 from __future__ import annotations
 
 import time
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from dimos_lcm.sensor_msgs import Joy as LCMJoy
 
 from dimos.types.timestamped import Timestamped
+
+if TYPE_CHECKING:
+    from rerun._baseclasses import Archetype
 
 # Types that can be converted to/from Joy
 JoyConvertable: TypeAlias = (
@@ -106,6 +109,12 @@ class Joy(Timestamped):
             axes=list(lcm_msg.axes) if lcm_msg.axes else [],
             buttons=list(lcm_msg.buttons) if lcm_msg.buttons else [],
         )
+
+    def to_rerun(self) -> Archetype:
+        """Convert to rerun Scalars, one series per axis."""
+        import rerun as rr
+
+        return rr.Scalars(self.axes)
 
     def __str__(self) -> str:
         return (

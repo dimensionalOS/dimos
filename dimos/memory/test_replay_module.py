@@ -128,6 +128,23 @@ def test_recorded_rerun_config_from_run_dir(tmp_path: Path) -> None:
     assert recorded_rerun_config(str(tmp_path / "20260910-135235-no-such-bp" / "m.db")) == {}
 
 
+def test_rerun_layout_plots_every_twist_and_joy_stream() -> None:
+    from dimos.memory.replay_module import rerun_layout
+    from dimos.msgs.geometry_msgs.Twist import Twist
+    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.msgs.sensor_msgs.Joy import Joy
+
+    layout = rerun_layout({"color_image": Image, "joystick": Joy, "cmd_vel": Twist})
+    column = layout.root_container.contents[0]
+    views = [(type(v).__name__, str(v.origin)) for v in column.contents]
+    assert views == [
+        ("Spatial2DView", "world/color_image"),
+        ("TimeSeriesView", "plots/odom"),
+        ("TimeSeriesView", "world/joystick"),
+        ("TimeSeriesView", "world/cmd_vel"),
+    ]
+
+
 def test_dataset_path_resolves_names_and_skips_the_default(recording: str) -> None:
     from dimos.memory.replay_module import dataset_path
 
