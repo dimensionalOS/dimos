@@ -392,23 +392,19 @@ fn wait_for_ack(cmd: &UdpSocket, device: SocketAddrV4, seq: u32, stop: &AtomicBo
 mod tests {
     use super::*;
     use crate::wire::{build_imu_samples, build_points_high, DataPacket, DataType, ImuSample};
+    use serial_test::file_serial;
     use std::collections::HashSet;
 
-    /// Distinct per test slot and per process, so parallel checkouts running
-    /// cargo test at once don't fight over loopback ports.
-    fn test_ports(slot: u16) -> Ports {
-        let base = 40000 + (std::process::id() % 1000) as u16 * 24 + slot * 8;
-        Ports {
-            cmd_data: base,
-            point_data: base + 1,
-            imu_data: base + 2,
-            host_cmd_data: base + 3,
-            host_point_data: base + 4,
-            host_imu_data: base + 5,
-            push_msg: base + 6,
-            host_push_msg: base + 7,
-        }
-    }
+    const TEST_PORTS: Ports = Ports {
+        cmd_data: 10000,
+        point_data: 10001,
+        imu_data: 10002,
+        host_cmd_data: 10003,
+        host_point_data: 10004,
+        host_imu_data: 10005,
+        push_msg: 10006,
+        host_push_msg: 10007,
+    };
 
     /// A minimal in-test device: ACK every param-set, then stream one point
     /// packet and one IMU packet once work mode is set.
@@ -494,8 +490,9 @@ mod tests {
     }
 
     #[test]
+    #[file_serial(livox_loopback)]
     fn handshake_and_stream_over_loopback() {
-        let ports = test_ports(0);
+        let ports = TEST_PORTS;
         let device = spawn_fake_device(ports);
 
         let stop = Arc::new(AtomicBool::new(false));
@@ -542,8 +539,9 @@ mod tests {
     }
 
     #[test]
+    #[file_serial(livox_loopback)]
     fn packets_from_unexpected_senders_are_ignored() {
-        let ports = test_ports(3);
+        let ports = TEST_PORTS;
         let stop = Arc::new(AtomicBool::new(false));
         // A dropped loopback datagram fails the test instead of hanging it.
         let watchdog = stop.clone();
@@ -596,8 +594,9 @@ mod tests {
     }
 
     #[test]
+    #[file_serial(livox_loopback)]
     fn recv_ends_on_stop() {
-        let ports = test_ports(1);
+        let ports = TEST_PORTS;
         let stop = Arc::new(AtomicBool::new(false));
         let mut source = LiveSource::start(
             LiveConfig {
@@ -617,8 +616,9 @@ mod tests {
     }
 
     #[test]
+    #[file_serial(livox_loopback)]
     fn rejected_handshake_fails_the_source() {
-        let ports = test_ports(2);
+        let ports = TEST_PORTS;
         let device = std::thread::spawn(move || {
             let cmd =
                 UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, ports.cmd_data)).unwrap();
