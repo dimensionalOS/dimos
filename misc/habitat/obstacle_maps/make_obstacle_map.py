@@ -17,7 +17,8 @@
 Keeps only boxes a robot meets at the slice height (the box spans z = 0.2 m), so
 carpets, mats and anything mounted above the robot are free space. Object
 footprints that overlap or touch are wrapped into one rectangle covering all of
-them; walls stay as their own thin rectangles so doorways remain open.
+them; wall pieces merge only while their union is still a thin strip, so corners
+never chain and doorways remain open.
 
     uv run python misc/habitat/obstacle_maps/make_obstacle_map.py \\
         misc/habitat/ground_truth/hssd/102344193.json --out misc/habitat/obstacle_maps
@@ -37,6 +38,7 @@ SLICE_HEIGHT_M = 0.2  # robot height of interest
 MIN_FILL = 0.0  # optional: require a wrapped rectangle to be at least this solid
 TOUCH_M = 0.05  # footprints this close count as overlapping
 WALL_LABEL = "wall"
+WALL_STRIP_MAX_M = 0.6  # wall pieces merge only while the union stays this thin
 PADDING_M = 1.0
 
 
@@ -105,6 +107,33 @@ def wrap(objects: list[Rect], min_fill: float) -> list[tuple[Rect, int]]:
     return [(b, len(m)) for b, m in clusters]
 
 
+def wrap_walls(walls: list[Rect], strip_max: float) -> list[Rect]:
+    """Merge overlapping wall pieces only while the union is still a strip.
+
+    Collinear pieces and stacked window frames fold into their wall; an L or T
+    junction would make a thick union and stays as two boxes, so corners never
+    chain around the building.
+    """
+    clusters: list[Rect] = []
+    for r in walls:
+        box = list(r)
+        merged = True
+        while merged:
+            merged = False
+            for k, cb in enumerate(clusters):
+                if not overlaps(box, cb):
+                    continue
+                ub = union(box, cb)
+                if min(ub[2] - ub[0], ub[3] - ub[1]) > strip_max:
+                    continue
+                box = ub
+                del clusters[k]
+                merged = True
+                break
+        clusters.append(box)
+    return clusters
+
+
 def svg(rects: list[Rect], width_px: int = 1000) -> str:
     lo_x, lo_y = min(r[0] for r in rects) - PADDING_M, min(r[1] for r in rects) - PADDING_M
     hi_x, hi_y = max(r[2] for r in rects) + PADDING_M, max(r[3] for r in rects) + PADDING_M
@@ -140,6 +169,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", type=Path, default=Path(__file__).parent, help="output directory")
     parser.add_argument("--slice-height", type=float, default=SLICE_HEIGHT_M)
     parser.add_argument(
+        "--wall-strip-max",
+        type=float,
+        default=WALL_STRIP_MAX_M,
+        help="merge wall pieces only while their union stays this thin (m)",
+    )
+    parser.add_argument(
         "--min-fill",
         type=float,
         default=MIN_FILL,
@@ -150,7 +185,10 @@ def main(argv: list[str] | None = None) -> None:
     view = json.loads(args.source.read_text())
     objects, walls, dropped = footprints(view, args.slice_height)
     wrapped = wrap(objects, args.min_fill)
-    rects = sorted([b for b, _ in wrapped] + walls, key=lambda b: (round(b[0], 3), round(b[1], 3)))
+    wall_boxes = wrap_walls(walls, args.wall_strip_max)
+    rects = sorted(
+        [b for b, _ in wrapped] + wall_boxes, key=lambda b: (round(b[0], 3), round(b[1], 3))
+    )
     out = {
         "dataset": view["dataset"],
         "scene_id": view["scene_id"],
@@ -171,7 +209,8 @@ def main(argv: list[str] | None = None) -> None:
     print(
         f"{view['scene_id']}: {len(view['detections'])} boxes, {sum(dropped.values())} below or above "
         f"{args.slice_height} m, {len(objects)} objects wrapped into {len(wrapped)} "
-        f"(groups {groups}), {len(walls)} walls -> {len(rects)} obstacles; wrote {stem}.json/.svg"
+        f"(groups {groups}), {len(walls)} wall pieces -> {len(wall_boxes)}; "
+        f"{len(rects)} obstacles; wrote {stem}.json/.svg"
     )
 
 

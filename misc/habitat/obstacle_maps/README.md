@@ -20,7 +20,9 @@ How a map is built (`make_obstacle_map.py`):
   covering all of them: a dining table with its chairs, a bed with its nightstand, a run
   of kitchen cabinets. Pass `--min-fill 0.5` to only wrap while the rectangle stays at
   least half solid.
-- Walls stay as their own thin rectangles, so doorways remain open.
+- Wall pieces merge only while their union stays a thin strip (0.6 m), which folds
+  junction duplicates and window frames into their wall; corners never chain and doorways
+  remain open.
 
 ```bash
 uv run python misc/habitat/obstacle_maps/make_obstacle_map.py \
