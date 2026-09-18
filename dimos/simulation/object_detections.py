@@ -14,6 +14,9 @@
 
 """Simulator-agnostic export of ground-truth boxes as ``Detection3DArray``.
 
+:func:`top_down` flattens such an array to a metric ``Detection2DArray``: each
+box's floor footprint as a rectangle in the same ``world`` frame, labels kept.
+
 Each simulator measures world-axis-aligned boxes in its own frame (DimSim in
 Three.js Y-up, Habitat in its Y-up world) and hands them here as
 :class:`GroundTruthBox` values plus an axis converter into the DimOS Z-up
@@ -36,18 +39,34 @@ import math
 from pathlib import Path
 from typing import Any, cast
 
-from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+from dimos_lcm.vision_msgs import (
+    BoundingBox2D,
+    BoundingBox3D,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+    Point2D,
+    Pose2D,
+)
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.vision_msgs.Detection2D import Detection2D
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 # Authored labels are ground truth, not classifier output.
 GROUND_TRUTH_SCORE = 1.0
+# A footprint spanning at least this fraction of the scene extent on both axes is a
+# floor slab, roof or similar shell rather than an object: left out of the top-down view.
+COVERING_FOOTPRINT_FRACTION = 0.9
+TOP_DOWN_PROJECTION = "top_down_xy"
 
 Point3 = tuple[float, float, float]
 # Maps a point from the simulator's world frame to the DimOS Z-up world frame.
@@ -154,6 +173,127 @@ def detection3d_array_to_dict(
         }
     )
     return view
+
+
+def top_down(
+    detections: Detection3DArray,
+    *,
+    covering_fraction: float | None = COVERING_FOOTPRINT_FRACTION,
+) -> Detection2DArray:
+    """Project every box to its floor footprint as a ``Detection2D`` in the same frame.
+
+    The boxes are world-axis-aligned, so the footprint is the rectangle with the
+    same x/y center and size and ``theta = 0``; ids, labels, scores and the header
+    carry over, the 3D center stays in each hypothesis pose, and only the height is
+    dropped. Boxes whose footprint spans at least ``covering_fraction`` of the
+    scene's extent on both axes (a floor slab, a roof) are left out and logged;
+    pass ``None`` to keep them. Raises ``ValueError`` for an oriented box.
+    """
+    source = detections.detections[: detections.detections_length]
+    dropped = set(covering_ids(source, covering_fraction))
+    if dropped:
+        logger.info("dropping scene-covering boxes from the top-down view", ids=sorted(dropped))
+    projected = [_to_detection2d(d) for d in source if d.id not in dropped]
+    return Detection2DArray(
+        detections_length=len(projected),
+        header=Header(detections.ts, detections.frame_id),
+        detections=projected,
+    )
+
+
+def covering_ids(detections: Sequence[Detection3D], fraction: float | None) -> list[str]:
+    """Ids of boxes spanning at least ``fraction`` of the joint XY extent on both axes."""
+    if fraction is None or len(detections) < 2:
+        return []
+    lo_x = min(d.bbox.center.position.x - d.bbox.size.x / 2 for d in detections)
+    hi_x = max(d.bbox.center.position.x + d.bbox.size.x / 2 for d in detections)
+    lo_y = min(d.bbox.center.position.y - d.bbox.size.y / 2 for d in detections)
+    hi_y = max(d.bbox.center.position.y + d.bbox.size.y / 2 for d in detections)
+    extent_x, extent_y = hi_x - lo_x, hi_y - lo_y
+    if extent_x <= 0 or extent_y <= 0:
+        return []
+    return [
+        d.id
+        for d in detections
+        if d.bbox.size.x >= fraction * extent_x and d.bbox.size.y >= fraction * extent_y
+    ]
+
+
+def write_detection2d_json(
+    detections: Detection2DArray,
+    path: str | Path,
+    *,
+    provenance: Mapping[str, Any] | None = None,
+) -> Path:
+    """Write the JSON view of a top-down ``Detection2DArray`` (see :func:`top_down`)."""
+    out = Path(path)
+    view = detection2d_array_to_dict(detections, provenance=provenance)
+    out.write_text(json.dumps(view, indent=2) + "\n")
+    return out
+
+
+def detection2d_array_to_dict(
+    detections: Detection2DArray, *, provenance: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    """Plain-data view of a top-down ``Detection2DArray``: metric XY rectangles with labels."""
+    view: dict[str, Any] = dict(provenance or {})
+    view.update(
+        {
+            "projection": TOP_DOWN_PROJECTION,
+            "frame_id": str(detections.header.frame_id),
+            "timestamp": detections.ts,
+            "count": detections.detections_length,
+            "detections": [
+                _detection2d_to_dict(d)
+                for d in detections.detections[: detections.detections_length]
+            ],
+        }
+    )
+    return view
+
+
+def _to_detection2d(detection: Detection3D) -> Detection2D:
+    q = detection.bbox.center.orientation
+    if (q.x, q.y, q.z, q.w) != (0.0, 0.0, 0.0, 1.0):
+        raise ValueError(f"box {detection.id!r} is oriented; only axis-aligned boxes project")
+    center, size = detection.bbox.center.position, detection.bbox.size
+    # Fresh copies throughout: nothing is shared with the 3D message.
+    return Detection2D(
+        results_length=detection.results_length,
+        header=Header(detection.ts, detection.frame_id),
+        results=[
+            ObjectHypothesisWithPose(
+                hypothesis=ObjectHypothesis(
+                    class_id=result.hypothesis.class_id, score=result.hypothesis.score
+                ),
+                pose=PoseWithCovariance(Pose(Vector3(center.x, center.y, center.z), Quaternion())),
+            )
+            for result in detection.results[: detection.results_length]
+        ],
+        bbox=BoundingBox2D(
+            center=Pose2D(position=Point2D(x=center.x, y=center.y), theta=0.0),
+            size_x=size.x,
+            size_y=size.y,
+        ),
+        id=detection.id,
+    )
+
+
+def _detection2d_to_dict(detection: Detection2D) -> dict[str, Any]:
+    hypotheses = [r.hypothesis for r in detection.results[: detection.results_length]]
+    first = hypotheses[0] if hypotheses else None
+    center = detection.bbox.center
+    entry: dict[str, Any] = {
+        "id": detection.id,
+        "label": first.class_id if first else "",
+        "score": first.score if first else 0.0,
+        "center_xy": [center.position.x, center.position.y],
+        "size_xy": [detection.bbox.size_x, detection.bbox.size_y],
+        "theta": center.theta,
+    }
+    if len(hypotheses) > 1:
+        entry["labels"] = [h.class_id for h in hypotheses]
+    return entry
 
 
 def _detection_to_dict(detection: Detection3D) -> dict[str, Any]:

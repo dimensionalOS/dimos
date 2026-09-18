@@ -1,6 +1,7 @@
 {
   "dataset": "hssd-hab",
   "scene_id": "104348463_171513588",
+  "projection": "top_down_xy",
   "frame_id": "world",
   "timestamp": 0.0,
   "count": 189,
@@ -9,22 +10,15 @@
       "id": "187e3f5029cc299eb960c47a38493fed66b3d127@0",
       "label": "trashcan",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         4.558636,
-        1.6921855,
-        0.445
+        1.6921855
       ],
-      "size_xyz": [
+      "size_xy": [
         0.3496839999999999,
-        0.360973,
-        0.89
+        0.360973
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "trashcan",
         "Brabantia 3litre Pedal Bin Fingerproof Matt Steel"
@@ -34,22 +28,15 @@
       "id": "676c0342a05177dfa24994339bc34d5058cb529e@1",
       "label": "alarm_clock",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         12.1880725,
-        7.71152,
-        0.847395
+        7.71152
       ],
-      "size_xyz": [
+      "size_xy": [
         0.07713900000000073,
-        0.0938099999999995,
-        0.14420999999999995
+        0.0938099999999995
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "alarm_clock",
         "Covent Garden Small Alarm Clock Black"
@@ -59,85 +46,57 @@
       "id": "e20a7e44504c3c98891d6d56d4af6bcc1ad66e22@2",
       "label": "Set of Tins - Black/White",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.5515599999999998,
-        3.8973465000000003,
-        1.1997615000000001
+        3.8973465000000003
       ],
-      "size_xyz": [
+      "size_xy": [
         0.11073,
-        0.24904899999999985,
-        0.17952299999999988
+        0.24904899999999985
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "345d3d2b0045fec71c7d31be7836b8001a56edf1@3",
       "label": "SERVE oil and vinegar set",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.3208215,
-        4.250354,
-        1.042711
+        4.250354
       ],
-      "size_xyz": [
+      "size_xy": [
         0.12145099999999998,
-        0.09711599999999976,
-        0.256622
+        0.09711599999999976
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "e3a8320821fdca44b43c3f2d9abeaa5a76de2505@4",
       "label": "Sabatier V 5 Piece Knife Block Set",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.50511,
-        4.1285419999999995,
-        1.085911
+        4.1285419999999995
       ],
-      "size_xyz": [
+      "size_xy": [
         0.21679800000000027,
-        0.1454399999999998,
-        0.34302200000000005
+        0.1454399999999998
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "1d438cf2a0be5706ffdbd1489fbfb27f712589a0@5",
       "label": "tv",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         8.7243435,
-        6.11931,
-        1.86354
+        6.11931
       ],
-      "size_xyz": [
+      "size_xy": [
         0.07618700000000089,
-        1.258286,
-        0.8029679999999999
+        1.258286
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "tv",
         "Flat TV"
@@ -147,22 +106,15 @@
       "id": "a50665eb9bf6c57860330bc8f492760001163607@6",
       "label": "mantel_clock",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         9.4696095,
-        11.5538685,
-        0.9571989999999999
+        11.5538685
       ],
-      "size_xyz": [
+      "size_xy": [
         0.1927329999999987,
-        0.07420700000000124,
-        0.254398
+        0.07420700000000124
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "mantel_clock",
         "Painted Metal Desk Clock"
@@ -172,43 +124,29 @@
       "id": "55e424e2841d3fa223a30ec90d0a66309a50bce4@7",
       "label": "6 PIECE SET NATURAL DECO BALLS",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         6.7739519999999995,
-        4.021974,
-        0.8703495
+        4.021974
       ],
-      "size_xyz": [
+      "size_xy": [
         0.3038459999999992,
-        0.2770680000000003,
-        0.10412099999999991
+        0.2770680000000003
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "2d1ab5502d369b889e1121b26cc50cad703dfd6f@8",
       "label": "shower",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         7.297594500000001,
-        4.9368,
-        1.054533
+        4.9368
       ],
-      "size_xyz": [
+      "size_xy": [
         1.5010190000000003,
-        1.0413879999999995,
-        2.110822
+        1.0413879999999995
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shower",
         "Dusche/douche Bodenschatz Creativa"
@@ -218,22 +156,15 @@
       "id": "40a4a40f8e33f115a9ae0e30518906f45d6d8d21@9",
       "label": "picture",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         12.419961,
-        6.694571,
-        2.073401
+        6.694571
       ],
-      "size_xyz": [
+      "size_xy": [
         0.026525999999998717,
-        0.5969999999999995,
-        0.8499999999999999
+        0.5969999999999995
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "picture",
         "Wendover Art # Copper Geometric II"
@@ -243,64 +174,43 @@
       "id": "85d82f97a6dead04cb9f4e6dfa47fb18b5e41272@10",
       "label": "Food Buffet Breakfast Coffee",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         7.1310365000000004,
-        12.0300425,
-        0.688474
+        12.0300425
       ],
-      "size_xyz": [
+      "size_xy": [
         0.23733100000000018,
-        0.2799030000000009,
-        0.15751800000000005
+        0.2799030000000009
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "0d599fe2dfa11502c10cb852a106f10c04c67eaf@11",
       "label": "Take Away Party Food Sushi",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         4.0115925,
-        3.340278,
-        0.941791
+        3.340278
       ],
-      "size_xyz": [
+      "size_xy": [
         0.3896309999999996,
-        0.49749200000000027,
-        0.054314000000000084
+        0.49749200000000027
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "7f6422612e9e1178756b249f33b915328a238f74@12",
       "label": "table",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.12607,
-        11.39256,
-        0.393728
+        11.39256
       ],
-      "size_xyz": [
+      "size_xy": [
         1.5234779999999999,
-        1.5234780000000008,
-        0.787456
+        1.5234780000000008
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "table",
         "Roma 60'' Round Bell'Arte Dining Table"
@@ -310,64 +220,43 @@
       "id": "e592563645ef06808e423b43b0fc1cda751be753@13",
       "label": "CAST RIBBED METAL FRAME, Antique Brass",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         7.5420894999999994,
-        4.0955984999999995,
-        0.9677659999999999
+        4.0955984999999995
       ],
-      "size_xyz": [
+      "size_xy": [
         0.41154699999999966,
-        0.2447849999999998,
-        0.295532
+        0.2447849999999998
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "e592563645ef06808e423b43b0fc1cda751be753@14",
       "label": "CAST RIBBED METAL FRAME, Antique Brass",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         8.8561215,
-        5.68277,
-        1.2889659999999998
+        5.68277
       ],
-      "size_xyz": [
+      "size_xy": [
         0.24478500000000025,
-        0.4115479999999998,
-        0.2955319999999999
+        0.4115479999999998
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "467413f215daba3f0a88b154b17ccd1fb7ecb48d@15",
       "label": "table",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         7.195209500000001,
-        4.06703,
-        0.958638
+        4.06703
       ],
-      "size_xyz": [
+      "size_xy": [
         1.146299,
-        0.36725200000000013,
-        1.926894
+        0.36725200000000013
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "table",
         "Black + Gold Vanity"
@@ -377,22 +266,15 @@
       "id": "a59b928aa3c41bdf8eb83d1442ceb97ced4b85a0@16",
       "label": "potted_plant",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.1500675,
-        11.4018515,
-        0.949318
+        11.4018515
       ],
-      "size_xyz": [
+      "size_xy": [
         0.4062089999999996,
-        0.4029769999999999,
-        0.3186359999999999
+        0.4029769999999999
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "potted_plant",
         "Green Hydrangea Watergarden"
@@ -402,22 +284,15 @@
       "id": "7f86d51f8a5f1e9c32ad7096cdfe205ea4ae9677@17",
       "label": "cushion",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         11.194638999999999,
-        6.40502,
-        0.8492995000000001
+        6.40502
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22065599999999996,
-        0.5090580000000005,
-        0.285087
+        0.5090580000000005
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cushion",
         "Marble Lumbar Pillow"
@@ -427,22 +302,15 @@
       "id": "0939dd554b37ffc7b61d1907df24ee5589bbafe4@18",
       "label": "toaster",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.6309494999999998,
-        3.1570229999999997,
-        1.1232435
+        3.1570229999999997
       ],
-      "size_xyz": [
+      "size_xy": [
         0.2740389999999999,
-        0.31211999999999973,
-        0.18988699999999992
+        0.31211999999999973
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "toaster",
         "Prestige Deco 2 Slice Toaster Red"
@@ -452,22 +320,15 @@
       "id": "713fd2f383ff0f09f30ce0749b8b5abda788a795@19",
       "label": "pot",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.5938655000000002,
-        4.823027,
-        1.0893855000000001
+        4.823027
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22647499999999998,
-        0.25664200000000026,
-        0.12693100000000013
+        0.25664200000000026
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "pot",
         "22cm round casserole pot"
@@ -477,43 +338,29 @@
       "id": "48f600fa99cd5eb41a636c23cfab5b26adcea928@20",
       "label": "KITCHEN AID ARTISAN MIXER RED",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.7783289999999998,
-        3.048898,
-        1.208141
+        3.048898
       ],
-      "size_xyz": [
+      "size_xy": [
         0.294948,
-        0.336074,
-        0.352082
+        0.336074
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "d6a04461b9855cd6fa6a6a234b30d2039a4d3848@21",
       "label": "cushion",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         4.87472,
-        6.988064,
-        0.5958125
+        6.988064
       ],
-      "size_xyz": [
+      "size_xy": [
         0.4469479999999999,
-        0.5398120000000004,
-        0.412981
+        0.5398120000000004
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cushion",
         "Hemp Cushion Cover Grass Green"
@@ -523,22 +370,15 @@
       "id": "a80b41ec9553244e2edb82c8565be7b495a5b60c@22",
       "label": "carpet",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         7.301069,
-        2.22703,
-        0.005
+        2.22703
       ],
-      "size_xyz": [
+      "size_xy": [
         0.8499999999999996,
-        1.46,
-        0.01
+        1.46
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "carpet",
         "Mirina Rug"
@@ -548,85 +388,57 @@
       "id": "fc34254f2aac6da46964ede7efc727a33a755919@23",
       "label": "Brabantia S- Line Kitchen Tool set",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         2.1359575,
-        2.3568305,
-        1.8951915
+        2.3568305
       ],
-      "size_xyz": [
+      "size_xy": [
         0.4755349999999998,
-        0.31860299999999997,
-        0.40186699999999975
+        0.31860299999999997
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "1df074225c1185d0dcf4963d4e7fb1efbb99138f@24",
       "label": "7 Inch Metal Wire Star Decor",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.3488205,
-        7.86795,
-        0.5108485
+        7.86795
       ],
-      "size_xyz": [
+      "size_xy": [
         0.19153899999999968,
-        0.19841799999999932,
-        0.16292099999999998
+        0.19841799999999932
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "1df074225c1185d0dcf4963d4e7fb1efbb99138f@25",
       "label": "7 Inch Metal Wire Star Decor",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         9.15349,
-        6.656839,
-        1.222049
+        6.656839
       ],
-      "size_xyz": [
+      "size_xy": [
         0.19860800000000012,
-        0.19023400000000024,
-        0.162922
+        0.19023400000000024
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "5819a4a0b8b640e6e3864c233563c64ab2bf41ad@26",
       "label": "chest_of_drawers",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         10.3142,
-        11.3856605,
-        0.4000005
+        11.3856605
       ],
-      "size_xyz": [
+      "size_xy": [
         2.6799999999999997,
-        0.7300009999999997,
-        0.800001
+        0.7300009999999997
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "chest_of_drawers",
         "Marrakesh Dressing Table"
@@ -636,22 +448,15 @@
       "id": "14a5d16e99eb93da52f1b528b272d15ac2e81fd7@27",
       "label": "wall_clock",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.273906,
-        5.5255695,
-        1.9237
+        5.5255695
       ],
-      "size_xyz": [
+      "size_xy": [
         0.016588000000000047,
-        0.35078499999999924,
-        0.35078200000000015
+        0.35078499999999924
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "wall_clock",
         "Popsicle Clock"
@@ -661,22 +466,15 @@
       "id": "0f0a109cb69b1f0a8785dd2f3dbd7e4cc4d53390@28",
       "label": "bench",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         5.9551415,
-        12.6351005,
-        0.4639035
+        12.6351005
       ],
-      "size_xyz": [
+      "size_xy": [
         1.6597369999999998,
-        0.5665310000000012,
-        0.927807
+        0.5665310000000012
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "bench",
         "Magnolia Home Dove Grey Hall Bench With Storage by Joanna Gaines"
@@ -686,22 +484,15 @@
       "id": "8994a2078b60a17205a34a19f8851ad81980aa97@29",
       "label": "chest_of_drawers",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         8.994929500000001,
-        6.1308,
-        0.5856755
+        6.1308
       ],
-      "size_xyz": [
+      "size_xy": [
         0.6087609999999994,
-        1.4230280000000004,
-        1.1111490000000002
+        1.4230280000000004
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "chest_of_drawers",
         "Celeste 4 Drawer Dresser"
@@ -711,22 +502,15 @@
       "id": "90bb99385fc88484cb62280e60b6ac330d801f62@30",
       "label": "chest_of_drawers",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         12.135784000000001,
-        4.849270000000001,
-        0.387351
+        4.849270000000001
       ],
-      "size_xyz": [
+      "size_xy": [
         0.5041700000000002,
-        0.7810499999999996,
-        0.7746999999999999
+        0.7810499999999996
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "chest_of_drawers",
         "Celeste Three Drawer Bedside Table"
@@ -736,22 +520,15 @@
       "id": "90bb99385fc88484cb62280e60b6ac330d801f62@31",
       "label": "chest_of_drawers",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         12.181326,
-        7.511376500000001,
-        0.387351
+        7.511376500000001
       ],
-      "size_xyz": [
+      "size_xy": [
         0.5079560000000001,
-        0.7837269999999998,
-        0.7746999999999999
+        0.7837269999999998
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "chest_of_drawers",
         "Celeste Three Drawer Bedside Table"
@@ -761,43 +538,29 @@
       "id": "6db67fd261e585d825ebcb992dbe9b731366f071@32",
       "label": "MATARO MARBLE AND BRASS TROUGH, White Carrara",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.40728,
-        7.470297,
-        0.4808
+        7.470297
       ],
-      "size_xyz": [
+      "size_xy": [
         0.60913,
-        0.6091299999999995,
-        0.10159999999999997
+        0.6091299999999995
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "1bd9d05915f7301af1005ee07d05c22757145089@33",
       "label": "carpet",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.54887,
-        7.91831,
-        0.00505
+        7.91831
       ],
-      "size_xyz": [
+      "size_xy": [
         2.779368,
-        4.020284,
-        0.01
+        4.020284
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "carpet",
         "LILLER\u00d6D Rug"
@@ -807,22 +570,15 @@
       "id": "f45a995da28588d8cc7fa62ccbb32e4c81ba7cf8@34",
       "label": "chair",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         10.31177,
-        10.992801,
-        0.5999994999999999
+        10.992801
       ],
-      "size_xyz": [
+      "size_xy": [
         0.7000000000000011,
-        0.6000000000000014,
-        1.199997
+        0.6000000000000014
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "chair",
         "Job Office Chair"
@@ -832,22 +588,15 @@
       "id": "77a9494c79e0cbc30ab49127f456c7d7f4a53e64@35",
       "label": "mobile_phone",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         12.0424535,
-        7.668988499999999,
-        0.777512
+        7.668988499999999
       ],
-      "size_xyz": [
+      "size_xy": [
         0.1546870000000009,
-        0.13770900000000008,
-        0.004958000000000018
+        0.13770900000000008
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "mobile_phone",
         "IPHONE"
@@ -857,64 +606,43 @@
       "id": "58a22e0f1ae932e93f8b046485e710e5626d650e@36",
       "label": "Waschplatz/zone lavabo Bodenschatz Creativa",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         8.266327,
-        6.6692115,
-        1.259635
+        6.6692115
       ],
-      "size_xyz": [
+      "size_xy": [
         0.4885099999999998,
-        2.131983,
-        1.6374119999999999
+        2.131983
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "be95ac1e56594b1d1fc9eb69c5883b2b4ab291f2@37",
       "label": "Blanket",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         10.5913805,
-        6.66279,
-        0.5704395
+        6.66279
       ],
-      "size_xyz": [
+      "size_xy": [
         0.7381089999999997,
-        0.63049,
-        0.45997299999999997
+        0.63049
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "e9c78bce74ccebc2c7299d799afa0950c5e4cd35@38",
       "label": "cushion",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         11.456301,
-        6.2835125000000005,
-        0.876353
+        6.2835125000000005
       ],
-      "size_xyz": [
+      "size_xy": [
         0.2226360000000014,
-        0.40639500000000073,
-        0.33515800000000007
+        0.40639500000000073
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cushion",
         "Cushion"
@@ -924,85 +652,57 @@
       "id": "392798e1dadf0e543fb9fc66d550385b3611ab56@39",
       "label": "DRESSED - MW21 set of four",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.50653,
-        3.4740955,
-        1.2179245
+        3.4740955
       ],
-      "size_xyz": [
+      "size_xy": [
         0.10456200000000004,
-        0.44514699999999996,
-        0.21584899999999996
+        0.44514699999999996
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "6a32e8cd075b7f10142074c12999e4d714f5a23a@40",
       "label": "Kitchen Roll Holder Made From Polished Stainless Steel With A Natural Sheesham Wood Base",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.2718594999999997,
-        2.52404,
-        0.1624995
+        2.52404
       ],
-      "size_xyz": [
+      "size_xy": [
         0.16312900000000008,
-        0.125,
-        0.324999
+        0.125
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "8b3fdfd70bee036c1a43240e51c8aa783bb5bdfc@41",
       "label": "Curzon Coat Stand",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         6.1836395,
-        1.5431,
-        0.8600035
+        1.5431
       ],
-      "size_xyz": [
+      "size_xy": [
         0.5699989999999993,
-        0.5700000000000001,
-        1.720007
+        0.5700000000000001
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "88c87a19b5e883787b5707d90545e25360594822@42",
       "label": "cabinet",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.6362415000000001,
-        4.04352,
-        0.549998
+        4.04352
       ],
-      "size_xyz": [
+      "size_xy": [
         0.6983550000000001,
-        2.0564060000000004,
-        1.099996
+        2.0564060000000004
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cabinet",
         "Wooden Kitchen Unit"
@@ -1012,64 +712,43 @@
       "id": "24dcf1f353b54d43bf12bcf17266f2685091318d@43",
       "label": "Frosted pen pot",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         9.798809,
-        11.5728195,
-        0.9554585
+        11.5728195
       ],
-      "size_xyz": [
+      "size_xy": [
         0.14901000000000053,
-        0.14577500000000043,
-        0.250915
+        0.14577500000000043
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "5200c51d14127a67f0cc45c5a2d89b40dea4275e@44",
       "label": "The Lodge - Rexel Letter Tray Bamboo",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         11.30498,
-        11.47944,
-        0.8675010000000001
+        11.47944
       ],
-      "size_xyz": [
+      "size_xy": [
         0.25,
-        0.3400920000000003,
-        0.07500000000000007
+        0.3400920000000003
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "4f395cb43c8a57bbefe42635faad2690e2bed097@45",
       "label": "cushion",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         11.144719,
-        5.97335,
-        0.8200000000000001
+        5.97335
       ],
-      "size_xyz": [
+      "size_xy": [
         0.3048000000000002,
-        0.3048000000000002,
-        0.20000000000000007
+        0.3048000000000002
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cushion",
         "Knot Pillow, Light Grey"
@@ -1079,22 +758,15 @@
       "id": "98438d0f228f941ef41aa69c551c54a93aa74ee1@46",
       "label": "table",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.4047315,
-        7.8467085,
-        0.099999
+        7.8467085
       ],
-      "size_xyz": [
+      "size_xy": [
         0.9144030000000001,
-        1.2870269999999993,
-        0.199998
+        1.2870269999999993
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "table",
         "2 Piece Glass And Wood Nesting Coffee Table"
@@ -1104,22 +776,15 @@
       "id": "42641b039e4028364b75ecf755c9ee15bd762df5@47",
       "label": "bed",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         11.338205,
-        6.163339499999999,
-        0.6836789999999999
+        6.163339499999999
       ],
-      "size_xyz": [
+      "size_xy": [
         2.189972000000001,
-        1.9150289999999996,
-        1.367356
+        1.9150289999999996
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "bed",
         "Queen Modern Wing Upholstered Bed, Ivory"
@@ -1129,22 +794,15 @@
       "id": "358d0e2a03f97b847c0f680fe9d7df06fc00e49a@48",
       "label": "carpet",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         10.333808999999999,
-        8.96111,
-        0.0025005
+        8.96111
       ],
-      "size_xyz": [
+      "size_xy": [
         2.7730580000000007,
-        1.828800000000001,
-        0.005001
+        1.828800000000001
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "carpet",
         "Alix Indoor/Outdoor 6' x 9' Rug"
@@ -1154,22 +812,15 @@
       "id": "cd1b52c5ef8ed6a07592b9810e79c153939c0260@49",
       "label": "potted_plant",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         9.1610745,
-        11.551071,
-        0.9743355
+        11.551071
       ],
-      "size_xyz": [
+      "size_xy": [
         0.18922900000000098,
-        0.18750200000000028,
-        0.2880949999999999
+        0.18750200000000028
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "potted_plant",
         "Vase with Flower"
@@ -1179,22 +830,15 @@
       "id": "9cbee54a4e7bc24a5b6a9764a92c1fee1fe7381b@50",
       "label": "candle",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.30971,
-        7.63053,
-        0.48696150000000005
+        7.63053
       ],
-      "size_xyz": [
+      "size_xy": [
         0.08320799999999995,
-        0.08320799999999995,
-        0.11392300000000005
+        0.08320799999999995
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "candle",
         "Rewined Manhattan Cocktail Candle"
@@ -1204,22 +848,15 @@
       "id": "d413be1b49919287e484dd5cb5658c56b05aebf5@51",
       "label": "book",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.5986684999999996,
-        7.97264,
-        0.452486
+        7.97264
       ],
-      "size_xyz": [
+      "size_xy": [
         0.415473,
-        0.3925060000000009,
-        0.04425199999999996
+        0.3925060000000009
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "book",
         "\"The Big Book Of Chic\" Book"
@@ -1229,22 +866,15 @@
       "id": "054a4edb60cf2145e98274ad3fcbfc212e6e2445@52",
       "label": "potted_plant",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.362401,
-        7.3312265,
-        0.5896025
+        7.3312265
       ],
-      "size_xyz": [
+      "size_xy": [
         0.21875,
-        0.24526899999999952,
-        0.09868100000000002
+        0.24526899999999952
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "potted_plant",
         "Faux Succulents In Low Round Pot"
@@ -1254,22 +884,15 @@
       "id": "e49f0397502cfd5d80e6a1b852e82f462e49e733@53",
       "label": "cushion",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         4.852568,
-        8.593741000000001,
-        0.5992355
+        8.593741000000001
       ],
-      "size_xyz": [
+      "size_xy": [
         0.4176099999999998,
-        0.47480999999999973,
-        0.407825
+        0.47480999999999973
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cushion",
         "Moss Stitch Knit Pillow, Sage Green"
@@ -1279,22 +902,15 @@
       "id": "fb1ea1c31768d05397cce1bdc3e6cf2655555dd4@54",
       "label": "table",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         7.07761,
-        12.0586695,
-        0.306357
+        12.0586695
       ],
-      "size_xyz": [
+      "size_xy": [
         0.6067780000000003,
-        0.6068189999999998,
-        0.6088739999999999
+        0.6068189999999998
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "table",
         "Talli Accent Table"
@@ -1304,22 +920,15 @@
       "id": "6bc1d5984d7a16d0342188edf662de3dae7a1a26@55",
       "label": "cushion",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         4.923686,
-        8.865423,
-        0.5983815
+        8.865423
       ],
-      "size_xyz": [
+      "size_xy": [
         0.43878400000000006,
-        0.4972500000000011,
-        0.412367
+        0.4972500000000011
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cushion",
         "Color Dash Pillow, Blue"
@@ -1329,22 +938,15 @@
       "id": "4eabd25d882465273f31beb507b5f508cd211c8d@56",
       "label": "cabinet",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         2.351221,
-        2.7361590000000002,
-        0.67743
+        2.7361590000000002
       ],
-      "size_xyz": [
+      "size_xy": [
         2.098462,
-        1.6271220000000002,
-        1.35486
+        1.6271220000000002
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cabinet",
         "Wooden Kitchen Unit"
@@ -1354,43 +956,29 @@
       "id": "c97ca28706efc6dfe77288e5955200ca61a3c6db@57",
       "label": "Olive Wood Salad Servers",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.239328,
-        3.948245,
-        0.9548235
+        3.948245
       ],
-      "size_xyz": [
+      "size_xy": [
         0.3103340000000001,
-        0.2518779999999996,
-        0.06964700000000001
+        0.2518779999999996
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "f219023b86de82c9e1e6bc946168ab9ccfe42bb2@58",
       "label": "cushion",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         11.4444525,
-        5.8527685,
-        0.9295754999999999
+        5.8527685
       ],
-      "size_xyz": [
+      "size_xy": [
         0.33590300000000006,
-        0.530913,
-        0.42861099999999996
+        0.530913
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cushion",
         "VT - pt, big square kussen, grijs"
@@ -1400,43 +988,29 @@
       "id": "61a131995f3686c7f108035db90bc6935c2a4157@59",
       "label": "Handtuchhaken Bodenschatz Creativa 70 cm",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         8.455999,
-        5.35398,
-        1.7500010000000001
+        5.35398
       ],
-      "size_xyz": [
+      "size_xy": [
         0.15840400000000088,
-        0.19696800000000003,
-        0.650352
+        0.19696800000000003
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "e8e0945e9f720d7b472986924483c661d172794c@60",
       "label": "chair",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         2.8255035,
-        11.98325,
-        0.469888
+        11.98325
       ],
-      "size_xyz": [
+      "size_xy": [
         0.7229450000000002,
-        0.7251100000000008,
-        0.939776
+        0.7251100000000008
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "chair",
         "Holen Chair"
@@ -1446,22 +1020,15 @@
       "id": "e8e0945e9f720d7b472986924483c661d172794c@61",
       "label": "chair",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.6457465,
-        11.832118999999999,
-        0.469888
+        11.832118999999999
       ],
-      "size_xyz": [
+      "size_xy": [
         0.7374210000000003,
-        0.7390139999999992,
-        0.939776
+        0.7390139999999992
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "chair",
         "Holen Chair"
@@ -1471,22 +1038,15 @@
       "id": "e8e0945e9f720d7b472986924483c661d172794c@62",
       "label": "chair",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.780216,
-        11.033819,
-        0.469888
+        11.033819
       ],
-      "size_xyz": [
+      "size_xy": [
         0.7312979999999998,
-        0.7309400000000004,
-        0.939776
+        0.7309400000000004
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "chair",
         "Holen Chair"
@@ -1496,22 +1056,15 @@
       "id": "e8e0945e9f720d7b472986924483c661d172794c@63",
       "label": "chair",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         2.985539,
-        10.6821405,
-        0.469888
+        10.6821405
       ],
-      "size_xyz": [
+      "size_xy": [
         0.6787680000000003,
-        0.6915330000000015,
-        0.939776
+        0.6915330000000015
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "chair",
         "Holen Chair"
@@ -1521,22 +1074,15 @@
       "id": "e8e0945e9f720d7b472986924483c661d172794c@64",
       "label": "chair",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         2.4407449999999997,
-        11.199398500000001,
-        0.469888
+        11.199398500000001
       ],
-      "size_xyz": [
+      "size_xy": [
         0.6923939999999997,
-        0.6782769999999996,
-        0.939776
+        0.6782769999999996
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "chair",
         "Holen Chair"
@@ -1546,22 +1092,15 @@
       "id": "4b431407f01d649c473711ff5e63f120fbb42862@65",
       "label": "picture",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         12.419961,
-        5.73221,
-        2.074511
+        5.73221
       ],
-      "size_xyz": [
+      "size_xy": [
         0.026525999999998717,
-        0.5970000000000004,
-        0.8500000000000001
+        0.5970000000000004
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "picture",
         "Wendover Art # Copper Geometric I"
@@ -1571,22 +1110,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_1@66",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.2858195000000001,
-        7.5028,
-        1.0525235
+        7.5028
       ],
-      "size_xyz": [
+      "size_xy": [
         0.04461699999999991,
-        1.2912359999999996,
-        0.8137169999999999
+        1.2912359999999996
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1596,22 +1128,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_2@67",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.5792575,
-        6.611575,
-        0.5640835
+        6.611575
       ],
-      "size_xyz": [
+      "size_xy": [
         0.30406500000000003,
-        0.23439999999999994,
-        0.04049500000000006
+        0.23439999999999994
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1621,22 +1146,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_3@68",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.621415,
-        6.673994,
-        0.5457909999999999
+        6.673994
       ],
-      "size_xyz": [
+      "size_xy": [
         0.3439779999999999,
-        0.3232419999999996,
-        0.05742199999999997
+        0.3232419999999996
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1646,22 +1164,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_3@69",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.5653575000000002,
-        6.579954000000001,
-        0.5563325
+        6.579954000000001
       ],
-      "size_xyz": [
+      "size_xy": [
         0.3375429999999999,
-        0.2953260000000002,
-        0.049967000000000095
+        0.2953260000000002
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1671,22 +1182,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_4@70",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.492708,
-        6.5763955,
-        0.554311
+        6.5763955
       ],
-      "size_xyz": [
+      "size_xy": [
         0.42849800000000005,
-        0.3235070000000002,
-        0.04326600000000003
+        0.3235070000000002
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1696,22 +1200,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_5@71",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.5114904999999998,
-        6.5733745,
-        0.5257685000000001
+        6.5733745
       ],
-      "size_xyz": [
+      "size_xy": [
         0.434477,
-        0.3498450000000002,
-        0.01887899999999998
+        0.3498450000000002
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1721,22 +1218,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_7@72",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.5006055,
-        6.578937,
-        0.539134
+        6.578937
       ],
-      "size_xyz": [
+      "size_xy": [
         0.43207700000000004,
-        0.33926999999999996,
-        0.02994999999999992
+        0.33926999999999996
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1746,22 +1236,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_8@73",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.371658,
-        8.823875000000001,
-        1.21845
+        8.823875000000001
       ],
-      "size_xyz": [
+      "size_xy": [
         0.23560800000000004,
-        0.46241999999999983,
-        0.25
+        0.46241999999999983
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1771,22 +1254,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_9@74",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.5879205,
-        9.4878785,
-        0.208889
+        9.4878785
       ],
-      "size_xyz": [
+      "size_xy": [
         0.364409,
-        0.463533,
-        0.25
+        0.463533
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1796,22 +1272,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_14@75",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3871785,
-        7.045426,
-        2.33148
+        7.045426
       ],
-      "size_xyz": [
+      "size_xy": [
         0.23560700000000012,
-        0.46241999999999983,
-        0.25
+        0.46241999999999983
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1821,22 +1290,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_14@76",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.391782,
-        6.517934,
-        2.33148
+        6.517934
       ],
-      "size_xyz": [
+      "size_xy": [
         0.23560800000000004,
-        0.46241999999999983,
-        0.25
+        0.46241999999999983
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1846,22 +1308,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_10@77",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.4401435,
-        8.8413805,
-        0.618339
+        8.8413805
       ],
-      "size_xyz": [
+      "size_xy": [
         0.13678100000000004,
-        0.35429900000000103,
-        0.20799999999999996
+        0.35429900000000103
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1871,22 +1326,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_11@78",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.4071105,
-        9.3340075,
-        0.6114200000000001
+        9.3340075
       ],
-      "size_xyz": [
+      "size_xy": [
         0.13186500000000012,
-        0.13045299999999926,
-        0.19000000000000006
+        0.13045299999999926
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1896,22 +1344,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_11@79",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.405451,
-        9.543951,
-        0.6114200000000001
+        9.543951
       ],
-      "size_xyz": [
+      "size_xy": [
         0.1227999999999998,
-        0.13832000000000022,
-        0.19000000000000006
+        0.13832000000000022
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1921,22 +1362,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_13@80",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.4096465,
-        8.799956,
-        2.309679
+        8.799956
       ],
-      "size_xyz": [
+      "size_xy": [
         0.297825,
-        0.2978260000000006,
-        0.242572
+        0.2978260000000006
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1946,22 +1380,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_50@81",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3525345,
-        8.969753,
-        1.7576605
+        8.969753
       ],
-      "size_xyz": [
+      "size_xy": [
         0.14422500000000005,
-        0.027143999999999835,
-        0.20548900000000003
+        0.027143999999999835
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1971,22 +1398,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_50@82",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.352905,
-        8.942773,
-        1.7576605
+        8.942773
       ],
-      "size_xyz": [
+      "size_xy": [
         0.1442239999999999,
-        0.027143999999999835,
-        0.20548900000000003
+        0.027143999999999835
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -1996,22 +1416,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_50@83",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3528205,
-        8.916214,
-        1.7576605
+        8.916214
       ],
-      "size_xyz": [
+      "size_xy": [
         0.14422500000000005,
-        0.027143999999999835,
-        0.20548900000000003
+        0.027143999999999835
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2021,22 +1434,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_27@84",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3736835,
-        7.445962,
-        1.8301245000000002
+        7.445962
       ],
-      "size_xyz": [
+      "size_xy": [
         0.26002100000000006,
-        0.06315199999999965,
-        0.35133499999999995
+        0.06315199999999965
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2046,22 +1452,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_27@85",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3731545,
-        7.506505000000001,
-        1.8301245000000002
+        7.506505000000001
       ],
-      "size_xyz": [
+      "size_xy": [
         0.26002100000000006,
-        0.06315199999999965,
-        0.35133499999999995
+        0.06315199999999965
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2071,22 +1470,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_27@86",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3726265,
-        7.5670485,
-        1.8301245000000002
+        7.5670485
       ],
-      "size_xyz": [
+      "size_xy": [
         0.26002100000000006,
-        0.06315299999999979,
-        0.35133499999999995
+        0.06315299999999979
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2096,22 +1488,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_27@87",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3720984999999999,
-        7.627592,
-        1.8301245000000002
+        7.627592
       ],
-      "size_xyz": [
+      "size_xy": [
         0.26002099999999984,
-        0.06315200000000054,
-        0.35133499999999995
+        0.06315200000000054
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2121,22 +1506,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_27@88",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3715695,
-        7.688135,
-        1.8301245000000002
+        7.688135
       ],
-      "size_xyz": [
+      "size_xy": [
         0.26002099999999984,
-        0.06315200000000054,
-        0.35133499999999995
+        0.06315200000000054
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2146,22 +1524,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_27@89",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3710415,
-        7.748678,
-        1.8301245000000002
+        7.748678
       ],
-      "size_xyz": [
+      "size_xy": [
         0.26002100000000006,
-        0.06315200000000054,
-        0.35133499999999995
+        0.06315200000000054
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2171,22 +1542,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_27@90",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3705129999999999,
-        7.8092215,
-        1.8301245000000002
+        7.8092215
       ],
-      "size_xyz": [
+      "size_xy": [
         0.26002000000000014,
-        0.06315300000000068,
-        0.35133499999999995
+        0.06315300000000068
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2196,22 +1560,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_27@91",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3699845,
-        7.8697645000000005,
-        1.8301245000000002
+        7.8697645000000005
       ],
-      "size_xyz": [
+      "size_xy": [
         0.26002100000000006,
-        0.06315300000000068,
-        0.35133499999999995
+        0.06315300000000068
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2221,22 +1578,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_27@92",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3694565,
-        7.9303075,
-        1.8301245000000002
+        7.9303075
       ],
-      "size_xyz": [
+      "size_xy": [
         0.26002100000000006,
-        0.06315300000000068,
-        0.35133499999999995
+        0.06315300000000068
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2246,22 +1596,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_27@93",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.368928,
-        7.990851,
-        1.8301245000000002
+        7.990851
       ],
-      "size_xyz": [
+      "size_xy": [
         0.26002000000000014,
-        0.06315200000000054,
-        0.35133499999999995
+        0.06315200000000054
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2271,22 +1614,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_27@94",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3683995,
-        8.051394,
-        1.8301245000000002
+        8.051394
       ],
-      "size_xyz": [
+      "size_xy": [
         0.26002100000000006,
-        0.06315199999999876,
-        0.35133499999999995
+        0.06315199999999876
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2296,22 +1632,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@95",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3849485000000001,
-        7.444037,
-        2.3565620000000003
+        7.444037
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133099999999994,
-        0.053755999999999915,
-        0.302006
+        0.053755999999999915
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2321,22 +1650,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@96",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3844935,
-        7.496152,
-        2.3565620000000003
+        7.496152
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133099999999994,
-        0.053755999999999915,
-        0.302006
+        0.053755999999999915
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2346,22 +1668,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@97",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.384039,
-        7.548267,
-        2.3565620000000003
+        7.548267
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133199999999986,
-        0.053755999999999915,
-        0.302006
+        0.053755999999999915
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2371,22 +1686,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@98",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.383584,
-        7.600383,
-        2.3565620000000003
+        7.600383
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133200000000008,
-        0.053755999999999915,
-        0.302006
+        0.053755999999999915
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2396,22 +1704,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@99",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3831289999999998,
-        7.6524975,
-        2.3565620000000003
+        7.6524975
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133200000000008,
-        0.05375500000000066,
-        0.302006
+        0.05375500000000066
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2421,22 +1722,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@100",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3826744999999998,
-        7.704613,
-        2.3565620000000003
+        7.704613
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133099999999994,
-        0.053755999999999915,
-        0.302006
+        0.053755999999999915
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2446,22 +1740,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@101",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3822195000000002,
-        7.756728,
-        2.3565620000000003
+        7.756728
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133099999999994,
-        0.053755999999999915,
-        0.302006
+        0.053755999999999915
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2471,22 +1758,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@102",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3817645,
-        7.8088435,
-        2.3565620000000003
+        7.8088435
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133099999999994,
-        0.05375500000000066,
-        0.302006
+        0.05375500000000066
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2496,22 +1776,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@103",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.38131,
-        7.860958500000001,
-        2.3565620000000003
+        7.860958500000001
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133199999999986,
-        0.053754999999999775,
-        0.302006
+        0.053754999999999775
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2521,22 +1794,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@104",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.380855,
-        7.913073499999999,
-        2.3565620000000003
+        7.913073499999999
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133200000000008,
-        0.053754999999999775,
-        0.302006
+        0.053754999999999775
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2546,22 +1812,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@105",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3804005,
-        7.9651885,
-        2.3565620000000003
+        7.9651885
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133099999999994,
-        0.05375500000000066,
-        0.302006
+        0.05375500000000066
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2571,22 +1830,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@106",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3615490000000001,
-        6.7497489999999996,
-        1.808223
+        6.7497489999999996
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133200000000008,
-        0.0537560000000008,
-        0.302006
+        0.0537560000000008
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2596,22 +1848,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@107",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.362004,
-        6.697634,
-        1.808223
+        6.697634
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133199999999986,
-        0.053755999999999915,
-        0.302006
+        0.053755999999999915
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2621,22 +1866,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@108",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3624585,
-        6.6455185,
-        1.808223
+        6.6455185
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133100000000017,
-        0.053754999999999775,
-        0.302006
+        0.053754999999999775
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2646,22 +1884,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@109",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3629134999999999,
-        6.5934035,
-        1.808223
+        6.5934035
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133099999999994,
-        0.05375500000000066,
-        0.302006
+        0.05375500000000066
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2671,22 +1902,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@110",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3633685,
-        6.5412885,
-        1.808223
+        6.5412885
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133100000000017,
-        0.053754999999999775,
-        0.302006
+        0.053754999999999775
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2696,22 +1920,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@111",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.363823,
-        6.489173,
-        1.808223
+        6.489173
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133199999999986,
-        0.053755999999999915,
-        0.302006
+        0.053755999999999915
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2721,22 +1938,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@112",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.364278,
-        6.437058,
-        1.808223
+        6.437058
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133200000000008,
-        0.053755999999999915,
-        0.302006
+        0.053755999999999915
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2746,22 +1956,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@113",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3647325000000001,
-        6.384943,
-        1.808223
+        6.384943
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133099999999994,
-        0.053755999999999915,
-        0.302006
+        0.053755999999999915
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2771,22 +1974,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@114",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3651875,
-        6.3328275000000005,
-        1.808223
+        6.3328275000000005
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133100000000017,
-        0.053754999999999775,
-        0.302006
+        0.053754999999999775
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2796,22 +1992,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@115",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3656424999999999,
-        6.280712,
-        1.808223
+        6.280712
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133099999999994,
-        0.053755999999999915,
-        0.302006
+        0.053755999999999915
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2821,22 +2010,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_16@116",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.366097,
-        6.228597,
-        1.808223
+        6.228597
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22133200000000008,
-        0.053755999999999915,
-        0.302006
+        0.053755999999999915
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2846,22 +2028,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_38@117",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3605654999999999,
-        6.8632995,
-        1.805209
+        6.8632995
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22241699999999986,
-        0.17652100000000015,
-        0.2956460000000001
+        0.17652100000000015
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2871,22 +2046,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_61@118",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3836265,
-        9.2446725,
-        1.800659
+        9.2446725
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22853100000000004,
-        0.11228900000000053,
-        0.2909679999999999
+        0.11228900000000053
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2896,22 +2064,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_56@119",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3740615,
-        8.8361405,
-        1.7672925
+        8.8361405
       ],
-      "size_xyz": [
+      "size_xy": [
         0.18078700000000003,
-        0.022626999999999953,
-        0.2242010000000001
+        0.022626999999999953
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2921,22 +2082,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_68@120",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.372492,
-        9.4202805,
-        1.1067475
+        9.4202805
       ],
-      "size_xyz": [
+      "size_xy": [
         0.24261599999999994,
-        0.30003699999999967,
-        0.027981000000000034
+        0.30003699999999967
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2946,22 +2100,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_60@121",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.349939,
-        9.304283999999999,
-        1.764932
+        9.304283999999999
       ],
-      "size_xyz": [
+      "size_xy": [
         0.19865200000000005,
-        0.07800400000000174,
-        0.21842000000000006
+        0.07800400000000174
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2971,22 +2118,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_55@122",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3576000000000001,
-        8.857443,
-        1.7649595
+        8.857443
       ],
-      "size_xyz": [
+      "size_xy": [
         0.15058400000000005,
-        0.02130599999999916,
-        0.22099899999999995
+        0.02130599999999916
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -2996,22 +2136,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_58@123",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.381755,
-        8.795637,
-        1.7550245
+        8.795637
       ],
-      "size_xyz": [
+      "size_xy": [
         0.19405800000000006,
-        0.024116000000001137,
-        0.19920500000000008
+        0.024116000000001137
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -3021,22 +2154,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_58@124",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3818375,
-        8.7731645,
-        1.7553025
+        8.7731645
       ],
-      "size_xyz": [
+      "size_xy": [
         0.19405899999999998,
-        0.024114999999998332,
-        0.19920500000000008
+        0.024114999999998332
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -3046,22 +2172,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_64@125",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3681095,
-        9.430344999999999,
-        1.186168
+        9.430344999999999
       ],
-      "size_xyz": [
+      "size_xy": [
         0.24939699999999987,
-        0.2555740000000011,
-        0.02742
+        0.2555740000000011
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -3071,22 +2190,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_64@126",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3674620000000002,
-        9.4228595,
-        1.1586945
+        9.4228595
       ],
-      "size_xyz": [
+      "size_xy": [
         0.24739,
-        0.25362499999999955,
-        0.027420999999999918
+        0.25362499999999955
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -3096,22 +2208,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_54@127",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3572425,
-        8.884753,
-        1.7547155
+        8.884753
       ],
-      "size_xyz": [
+      "size_xy": [
         0.14801700000000007,
-        0.03656000000000148,
-        0.19821500000000003
+        0.03656000000000148
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -3121,22 +2226,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_63@128",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.376968,
-        9.418415,
-        1.240251
+        9.418415
       ],
-      "size_xyz": [
+      "size_xy": [
         0.19597599999999993,
-        0.2535279999999993,
-        0.043126
+        0.2535279999999993
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -3146,22 +2244,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_65@129",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.373894,
-        9.435725,
-        1.20911
+        9.435725
       ],
-      "size_xyz": [
+      "size_xy": [
         0.1983839999999999,
-        0.2225280000000005,
-        0.018939999999999957
+        0.2225280000000005
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -3171,22 +2262,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_51@130",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3621685000000001,
-        8.991218499999999,
-        1.74582
+        8.991218499999999
       ],
-      "size_xyz": [
+      "size_xy": [
         0.16083499999999984,
-        0.01688900000000082,
-        0.18063399999999996
+        0.01688900000000082
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -3196,22 +2280,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_57@131",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.383292,
-        8.816006000000002,
-        1.7636129999999999
+        8.816006000000002
       ],
-      "size_xyz": [
+      "size_xy": [
         0.20157200000000008,
-        0.02149200000000029,
-        0.21819199999999994
+        0.02149200000000029
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -3221,22 +2298,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_67@132",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3699775,
-        9.418220999999999,
-        1.132809
+        9.418220999999999
       ],
-      "size_xyz": [
+      "size_xy": [
         0.24854500000000002,
-        0.2688800000000011,
-        0.024132000000000042
+        0.2688800000000011
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -3246,22 +2316,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_62@133",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.369672,
-        9.2825845,
-        1.7655085
+        9.2825845
       ],
-      "size_xyz": [
+      "size_xy": [
         0.19711599999999985,
-        0.07689099999999982,
-        0.21798099999999998
+        0.07689099999999982
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -3271,22 +2334,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_69@134",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3732190000000002,
-        8.663993000000001,
-        1.8297995
+        8.663993000000001
       ],
-      "size_xyz": [
+      "size_xy": [
         0.25721400000000005,
-        0.1936599999999995,
-        0.345383
+        0.1936599999999995
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -3296,22 +2352,15 @@
       "id": "4d6310a9ffa5b50e7dc45940cf724ba1fa3ffddd_part_70@135",
       "label": "shelves",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.5285475000000002,
-        7.984230999999999,
-        1.340592
+        7.984230999999999
       ],
-      "size_xyz": [
+      "size_xy": [
         0.605837,
-        3.706611999999999,
-        2.7112179999999997
+        3.706611999999999
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "shelves",
         "Coletta Bookcase"
@@ -3321,22 +2370,15 @@
       "id": "27c84f4429be559509312415f33adab9df3a5087@136",
       "label": "counter",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.67886,
-        3.6722799999999998,
-        0.4572
+        3.6722799999999998
       ],
-      "size_xyz": [
+      "size_xy": [
         1.7500799999999996,
-        1.5241380000000002,
-        0.9144
+        1.5241380000000002
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "counter",
         "Colette Kitchen Island"
@@ -3346,22 +2388,15 @@
       "id": "35230dedd6b3f035a602f7226fae2dcb61bf1e4a@137",
       "label": "fridge",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.638224,
-        1.924525,
-        1.1500025
+        1.924525
       ],
-      "size_xyz": [
+      "size_xy": [
         1.163774,
-        0.9940160000000002,
-        2.300005
+        0.9940160000000002
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "fridge",
         "American fridge freezer, small"
@@ -3371,85 +2406,57 @@
       "id": "2efebdcc1ba9514b0deb0dfb05951341432bd26a@138",
       "label": "APPLE iMac 5K 27\"",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         10.284227999999999,
-        11.4398105,
-        1.0850165
+        11.4398105
       ],
-      "size_xyz": [
+      "size_xy": [
         0.6448680000000007,
-        0.46663299999999985,
-        0.48885500000000004
+        0.46663299999999985
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "68a6193e3b67cedefb14ab590fc748bcc7955c5d@139",
       "label": "Toilette/toilette puristisch",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         6.8526295,
-        5.8260000000000005,
-        0.3839895
+        5.8260000000000005
       ],
-      "size_xyz": [
+      "size_xy": [
         0.6111889999999995,
-        0.7068780000000006,
-        0.549779
+        0.7068780000000006
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "7fb3100902d859575057623870a2ee4159a9428e@140",
       "label": "Swoop Black Marble Bookends Set Of 2",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         8.8338285,
-        6.5727205,
-        1.2663820000000001
+        6.5727205
       ],
-      "size_xyz": [
+      "size_xy": [
         0.19319299999999906,
-        0.4662070000000007,
-        0.250726
+        0.4662070000000007
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "46979d39dd98ffacb51e30784306180579eafd88@141",
       "label": "picture",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         6.389951,
-        4.86009,
-        1.749999
+        4.86009
       ],
-      "size_xyz": [
+      "size_xy": [
         0.0127000000000006,
-        0.5207000000000006,
-        0.6731000000000003
+        0.5207000000000006
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "picture",
         "Sage Silhouette I"
@@ -3459,22 +2466,15 @@
       "id": "46979d39dd98ffacb51e30784306180579eafd88@142",
       "label": "picture",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         6.389951,
-        5.801081,
-        1.749999
+        5.801081
       ],
-      "size_xyz": [
+      "size_xy": [
         0.0127000000000006,
-        0.5206999999999997,
-        0.6731000000000003
+        0.5206999999999997
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "picture",
         "Sage Silhouette I"
@@ -3484,22 +2484,15 @@
       "id": "95e25885545856fcd5dad5989967f44186d74df8@143",
       "label": "cushion",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         4.835773,
-        7.298931,
-        0.5923885
+        7.298931
       ],
-      "size_xyz": [
+      "size_xy": [
         0.4690479999999999,
-        0.5955760000000003,
-        0.400015
+        0.5955760000000003
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cushion",
         "ACCENT PILLOW 20X20, OLIVIA GREEN TRELLIS"
@@ -3509,22 +2502,15 @@
       "id": "54bbd167e0d08f75c787422a675088e7fdc87507@144",
       "label": "cushion",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.3100045,
-        5.8088335,
-        0.539617
+        5.8088335
       ],
-      "size_xyz": [
+      "size_xy": [
         0.6644049999999999,
-        0.2340270000000002,
-        0.28417999999999993
+        0.2340270000000002
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cushion",
         "ACCENT PILLOW 24X16, AUDREY APPLE GREEN"
@@ -3534,22 +2520,15 @@
       "id": "be1b0ef31886b4b2b42cf0bf1b7df548917c9943@145",
       "label": "cabinet",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         2.25627,
-        2.4793005,
-        1.93399
+        2.4793005
       ],
-      "size_xyz": [
+      "size_xy": [
         1.883958,
-        1.3293369999999998,
-        0.8405720000000001
+        1.3293369999999998
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cabinet",
         "Wooden Cupboard"
@@ -3559,22 +2538,15 @@
       "id": "917651b88d2d95bdb9d186328a36a94b1a1f3222@146",
       "label": "book",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         10.8534895,
-        11.2387305,
-        0.861391
+        11.2387305
       ],
-      "size_xyz": [
+      "size_xy": [
         0.22018100000000018,
-        0.291601,
-        0.06278000000000006
+        0.291601
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "book",
         "The Lodge - Rustic Leather Journal, A4"
@@ -3584,22 +2556,15 @@
       "id": "8ef5facc37a8478ea9999f70fe85e70370ceb0cb@147",
       "label": "couch",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         4.7824375,
-        7.9437365,
-        0.38999700000000004
+        7.9437365
       ],
-      "size_xyz": [
+      "size_xy": [
         0.8694709999999999,
-        2.5056089999999998,
-        0.779998
+        2.5056089999999998
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "couch",
         "GRADO MART Sofa, Light Grey"
@@ -3609,22 +2574,15 @@
       "id": "014f3ebc50361692497fe6439b2c112ed3e4ab25@148",
       "label": "chair",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.2762700000000002,
-        5.8636295,
-        0.31999900000000003
+        5.8636295
       ],
-      "size_xyz": [
+      "size_xy": [
         0.9200000000000004,
-        0.8299970000000005,
-        0.640002
+        0.8299970000000005
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "chair",
         "GRADO MART Armchair, Light Grey"
@@ -3634,22 +2592,15 @@
       "id": "4067df5c246f5cfa298939c935aaef5775284b34@149",
       "label": "stool",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         4.4908295,
-        3.96222,
-        0.405
+        3.96222
       ],
-      "size_xyz": [
+      "size_xy": [
         0.4668890000000001,
-        0.46688799999999997,
-        0.81
+        0.46688799999999997
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "stool",
         "Westwood Copper Bar Stool"
@@ -3659,22 +2610,15 @@
       "id": "4067df5c246f5cfa298939c935aaef5775284b34@150",
       "label": "stool",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         4.0684195,
-        4.2083705,
-        0.405
+        4.2083705
       ],
-      "size_xyz": [
+      "size_xy": [
         0.4668890000000001,
-        0.4668890000000001,
-        0.81
+        0.4668890000000001
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "stool",
         "Westwood Copper Bar Stool"
@@ -3684,22 +2628,15 @@
       "id": "4067df5c246f5cfa298939c935aaef5775284b34@151",
       "label": "stool",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.6189595,
-        4.4511199999999995,
-        0.405
+        4.4511199999999995
       ],
-      "size_xyz": [
+      "size_xy": [
         0.4668890000000001,
-        0.46688799999999997,
-        0.81
+        0.46688799999999997
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "stool",
         "Westwood Copper Bar Stool"
@@ -3709,22 +2646,15 @@
       "id": "7458255e2e6de219c0e9bb0c8b020f21eb94161a@152",
       "label": "cushion",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         11.7102185,
-        6.5089305,
-        0.93811
+        6.5089305
       ],
-      "size_xyz": [
+      "size_xy": [
         0.28971500000000106,
-        0.5086390000000005,
-        0.4555159999999999
+        0.5086390000000005
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cushion",
         "Diagonal Pleated Pillow, Putty"
@@ -3734,22 +2664,15 @@
       "id": "7f480b6bdcfe59cb35fa96ade8625c4921fbd84d@153",
       "label": "cushion",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         11.789119,
-        6.0017325,
-        0.9426995
+        6.0017325
       ],
-      "size_xyz": [
+      "size_xy": [
         0.2923159999999996,
-        0.5179209999999994,
-        0.4619969999999999
+        0.5179209999999994
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cushion",
         "Geometric Embellished Pillow"
@@ -3759,22 +2682,15 @@
       "id": "dbc51b634eba6fabcda98e914361de9d7764a671@154",
       "label": "cushion",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         11.408739,
-        6.67634,
-        0.9123889999999999
+        6.67634
       ],
-      "size_xyz": [
+      "size_xy": [
         0.3132439999999992,
-        0.5426039999999999,
-        0.400014
+        0.5426039999999999
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "theta": 0.0,
       "labels": [
         "cushion",
         "Embroidered Chevron Pillow, Natural/Taupe"
@@ -3784,715 +2700,477 @@
       "id": "3754-3@155",
       "label": "window",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.7206380000000001,
-        12.065281,
-        1.6
+        12.065281
       ],
-      "size_xyz": [
+      "size_xy": [
         1.3342900000000002,
-        1.8861419999999995,
-        1.8
+        1.8861419999999995
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "3754-2@156",
       "label": "window",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         4.61349,
-        12.99342,
-        1.6
+        12.99342
       ],
-      "size_xyz": [
+      "size_xy": [
         1.4939499999999994,
-        0.08000000000000007,
-        1.8
+        0.08000000000000007
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "3754-2@157",
       "label": "window",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         3.11756,
-        12.99342,
-        1.6
+        12.99342
       ],
-      "size_xyz": [
+      "size_xy": [
         1.49395,
-        0.08000000000000007,
-        1.8
+        0.08000000000000007
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "3754-2@158",
       "label": "window",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         6.17907,
-        12.99342,
-        1.6
+        12.99342
       ],
-      "size_xyz": [
+      "size_xy": [
         1.49395,
-        0.08000000000000007,
-        1.8
+        0.08000000000000007
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "3754-2@159",
       "label": "window",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         7.372157,
-        12.4946865,
-        1.6
+        12.4946865
       ],
-      "size_xyz": [
+      "size_xy": [
         1.1763699999999995,
-        1.0447009999999999,
-        1.8
+        1.0447009999999999
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "204-3@160",
       "label": "door",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         8.00164,
-        2.21349,
-        1.1700005
+        2.21349
       ],
-      "size_xyz": [
+      "size_xy": [
         0.23000000000000043,
-        1.1528500000000002,
-        2.2999989999999997
+        1.1528500000000002
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "3754-2@161",
       "label": "window",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         11.652959,
-        11.825659000000002,
-        1.600001
+        11.825659000000002
       ],
-      "size_xyz": [
+      "size_xy": [
         1.49395,
-        0.08000000000000007,
-        1.8000000000000003
+        0.08000000000000007
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "3754-2@162",
       "label": "window",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         10.182068999999998,
-        11.825659000000002,
-        1.6000005
+        11.825659000000002
       ],
-      "size_xyz": [
+      "size_xy": [
         1.49395,
-        0.08000000000000007,
-        1.7999990000000001
+        0.08000000000000007
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "3754-2@163",
       "label": "window",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         8.8452495,
-        11.825659000000002,
-        1.6000005
+        11.825659000000002
       ],
-      "size_xyz": [
+      "size_xy": [
         1.4939509999999991,
-        0.08000000000000007,
-        1.7999990000000001
+        0.08000000000000007
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_000",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.1695635000000002,
-        7.0947525,
-        1.4
+        7.0947525
       ],
-      "size_xyz": [
+      "size_xy": [
         0.24229100000000003,
-        8.411435,
-        2.8
+        8.411435
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_001",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.492944,
-        11.867029500000001,
-        1.4
+        11.867029500000001
       ],
-      "size_xyz": [
+      "size_xy": [
         0.889052,
-        1.2902010000000015,
-        2.8
+        1.2902010000000015
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_002",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         2.6061265000000002,
-        2.109172,
-        1.4
+        2.109172
       ],
-      "size_xyz": [
+      "size_xy": [
         2.928911,
-        1.5597259999999997,
-        2.8
+        1.5597259999999997
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_003",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.3704645,
-        7.617725999999999,
-        1.4
+        7.617725999999999
       ],
-      "size_xyz": [
+      "size_xy": [
         0.34304500000000004,
-        8.112234,
-        2.8
+        8.112234
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_004",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         1.9707940000000002,
-        12.2961315,
-        1.4
+        12.2961315
       ],
-      "size_xyz": [
+      "size_xy": [
         0.8576140000000001,
-        1.2445769999999996,
-        2.8
+        1.2445769999999996
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_005",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         2.0836925,
-        12.7243285,
-        1.4
+        12.7243285
       ],
-      "size_xyz": [
+      "size_xy": [
         0.29244500000000007,
-        0.424396999999999,
-        2.8
+        0.424396999999999
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_006",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         4.705358,
-        12.915243,
-        1.4
+        12.915243
       ],
-      "size_xyz": [
+      "size_xy": [
         4.950886,
-        0.3063520000000004,
-        2.8
+        0.3063520000000004
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_007",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         5.910051,
-        1.28433,
-        1.4
+        1.28433
       ],
-      "size_xyz": [
+      "size_xy": [
         4.172464,
-        0.1499999999999999,
-        2.8
+        0.1499999999999999
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_008",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         9.49013,
-        4.2388435,
-        1.4
+        4.2388435
       ],
-      "size_xyz": [
+      "size_xy": [
         6.186180000000001,
-        0.38941300000000023,
-        2.8
+        0.38941300000000023
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_009",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         6.53261,
-        6.06908,
-        1.4
+        6.06908
       ],
-      "size_xyz": [
+      "size_xy": [
         0.2711400000000008,
-        3.6368400000000003,
-        2.8
+        3.6368400000000003
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_010",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         7.171104,
-        12.5711315,
-        1.4
+        12.5711315
       ],
-      "size_xyz": [
+      "size_xy": [
         0.792726,
-        0.6945769999999989,
-        2.8
+        0.6945769999999989
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_011",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         7.582103999999999,
-        12.4104495,
-        1.4
+        12.4104495
       ],
-      "size_xyz": [
+      "size_xy": [
         0.8026059999999999,
-        0.7032349999999994,
-        2.8
+        0.7032349999999994
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_012",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         7.690884,
-        12.115706,
-        1.4
+        12.115706
       ],
-      "size_xyz": [
+      "size_xy": [
         0.24683600000000006,
-        0.2162740000000003,
-        2.8
+        0.2162740000000003
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_013",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         8.16669,
-        7.8501435,
-        1.4
+        7.8501435
       ],
-      "size_xyz": [
+      "size_xy": [
         1.03702,
-        0.2252869999999998,
-        2.8
+        0.2252869999999998
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_014",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         7.932122,
-        1.4231975000000001,
-        1.4
+        1.4231975000000001
       ],
-      "size_xyz": [
+      "size_xy": [
         0.2890359999999994,
-        0.427735,
-        2.8
+        0.427735
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_015",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         7.956288499999999,
-        11.737153,
-        1.4
+        11.737153
       ],
-      "size_xyz": [
+      "size_xy": [
         0.2839729999999996,
-        0.6433559999999989,
-        2.8
+        0.6433559999999989
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_016",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         10.1988865,
-        11.8867585,
-        1.4
+        11.8867585
       ],
-      "size_xyz": [
+      "size_xy": [
         4.768667000000001,
-        0.3325289999999992,
-        2.8
+        0.3325289999999992
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_017",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         8.0016405,
-        3.5229660000000003,
-        1.4
+        3.5229660000000003
       ],
-      "size_xyz": [
+      "size_xy": [
         0.14999899999999933,
-        1.4661019999999998,
-        2.8
+        1.4661019999999998
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_018",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         8.023375,
-        8.3770125,
-        1.4
+        8.3770125
       ],
-      "size_xyz": [
+      "size_xy": [
         0.1934679999999993,
-        1.1290250000000004,
-        2.8
+        1.1290250000000004
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_019",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         8.610199999999999,
-        6.06908,
-        1.4
+        6.06908
       ],
-      "size_xyz": [
+      "size_xy": [
         0.15000000000000036,
-        3.6368400000000003,
-        2.8
+        3.6368400000000003
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_020",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         12.551728,
-        6.371506,
-        1.4
+        6.371506
       ],
-      "size_xyz": [
+      "size_xy": [
         0.23701599999999878,
-        4.173378,
-        2.8
+        4.173378
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_021",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         13.1951745,
-        11.240245999999999,
-        1.4
+        11.240245999999999
       ],
-      "size_xyz": [
+      "size_xy": [
         1.5239089999999997,
-        0.3942679999999985,
-        2.8
+        0.3942679999999985
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_022",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         12.508220000000001,
-        11.613515,
-        1.4
+        11.613515
       ],
-      "size_xyz": [
+      "size_xy": [
         0.15000000000000036,
-        0.5742899999999995,
-        2.8
+        0.5742899999999995
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_023",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         13.2701745,
-        8.220044,
-        1.4
+        8.220044
       ],
-      "size_xyz": [
+      "size_xy": [
         1.3739089999999994,
-        0.236186,
-        2.8
+        0.236186
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     },
     {
       "id": "wall_024",
       "label": "wall",
       "score": 1.0,
-      "center_xyz": [
+      "center_xy": [
         13.882129500000001,
-        9.7552565,
-        1.4
+        9.7552565
       ],
-      "size_xyz": [
+      "size_xy": [
         0.14999899999999933,
-        3.306611,
-        2.8
+        3.306611
       ],
-      "orientation_xyzw": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ]
+      "theta": 0.0
     }
   ]
 }

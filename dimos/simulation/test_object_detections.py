@@ -17,13 +17,17 @@ from pathlib import Path
 
 import pytest
 
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.simulation.object_detections import (
     GroundTruthBox,
     Point3,
     boxes_to_detection3d_array,
+    detection2d_array_to_dict,
     detection3d_array_to_dict,
     read_detection3d_array,
     ros_box,
+    top_down,
+    write_detection2d_json,
     write_detection3d_array,
     write_detection3d_json,
 )
@@ -32,6 +36,10 @@ from dimos.simulation.object_detections import (
 def flip(x: float, y: float, z: float) -> Point3:
     """Habitat-style permutation with sign flips on two axes."""
     return (-z, -x, y)
+
+
+def same(x: float, y: float, z: float) -> Point3:
+    return (x, y, z)
 
 
 def _xyz(v: object) -> tuple[float, float, float]:
@@ -123,3 +131,101 @@ def test_binary_and_json_round_trip(tmp_path: Path) -> None:
     view = json.loads(text.read_text())
     assert view["scene_id"] == "s1"
     assert view["detections"][0]["center_xyz"] == [-4.5, -1.5, 3.0]
+
+
+LAMP = GroundTruthBox(id="lamp", labels=("lamp",), min=(0.0, 0.0, 0.0), max=(1.0, 1.0, 1.0))
+
+
+def test_top_down_projects_footprints_and_keeps_labels() -> None:
+    arr = boxes_to_detection3d_array([BOX, LAMP], to_ros=flip, frame_id="world", ts=2.5)
+
+    flat = top_down(arr)
+
+    assert isinstance(flat, Detection2DArray)
+    assert flat.detections_length == 2
+    assert flat.header.frame_id == "world"
+    assert flat.ts == 2.5
+    sofa, lamp = flat.detections
+    assert sofa.id == "sofa"
+    assert [r.hypothesis.class_id for r in sofa.results] == ["sofa", "Sectional sofa"]
+    assert [r.hypothesis.score for r in sofa.results] == [1.0, 1.0]
+    assert (sofa.bbox.center.position.x, sofa.bbox.center.position.y) == (-4.5, -1.5)
+    assert sofa.bbox.center.theta == 0.0
+    assert (sofa.bbox.size_x, sofa.bbox.size_y) == (3.0, 1.0)
+    # The 3D center survives in the hypothesis pose, so height is not lost entirely.
+    assert _xyz(sofa.results[0].pose.pose.position) == (-4.5, -1.5, 3.0)
+    assert (lamp.bbox.size_x, lamp.bbox.size_y) == (1.0, 1.0)
+
+    sofa.results[0].hypothesis.class_id = "changed"
+    lamp.bbox.size_x = 9.0
+    assert arr.detections[0].results[0].hypothesis.class_id == "sofa"
+    assert sofa.bbox.size_x == 3.0
+
+
+def test_top_down_drops_boxes_covering_the_scene() -> None:
+    floor = GroundTruthBox(
+        id="floor", labels=("floor",), min=(-10.0, -10.0, 0.0), max=(10.0, 10.0, 0.1)
+    )
+    roof = GroundTruthBox(id="roof", labels=("roof",), min=(-9.5, -9.5, 3.0), max=(9.5, 9.5, 3.2))
+    rug = GroundTruthBox(id="rug", labels=("rug",), min=(-5.0, -5.0, 0.0), max=(5.0, 5.0, 0.02))
+    arr = boxes_to_detection3d_array(
+        [floor, roof, rug, LAMP], to_ros=same, frame_id="world", ts=0.0
+    )
+
+    assert [d.id for d in top_down(arr).detections] == ["rug", "lamp"]
+    assert [d.id for d in top_down(arr, covering_fraction=None).detections] == [
+        "floor",
+        "roof",
+        "rug",
+        "lamp",
+    ]
+    # A lone box is never "covering": there is no scene around it to cover.
+    assert [
+        d.id
+        for d in top_down(
+            boxes_to_detection3d_array([floor], to_ros=same, frame_id="world", ts=0.0)
+        ).detections
+    ] == ["floor"]
+
+
+def test_top_down_rejects_oriented_boxes() -> None:
+    arr = boxes_to_detection3d_array([LAMP], to_ros=same, frame_id="world", ts=0.0)
+    arr.detections[0].bbox.center.orientation.z = 1.0
+    arr.detections[0].bbox.center.orientation.w = 0.0
+
+    with pytest.raises(ValueError, match="oriented"):
+        top_down(arr)
+
+
+def test_top_down_view_and_json_round_trip(tmp_path: Path) -> None:
+    flat = top_down(boxes_to_detection3d_array([BOX, LAMP], to_ros=flip, frame_id="world", ts=2.5))
+
+    view = detection2d_array_to_dict(flat, provenance={"dataset": "hssd-hab", "scene_id": "s1"})
+
+    assert list(view) == [
+        "dataset",
+        "scene_id",
+        "projection",
+        "frame_id",
+        "timestamp",
+        "count",
+        "detections",
+    ]
+    assert view["projection"] == "top_down_xy"
+    assert view["count"] == 2
+    assert view["detections"][0] == {
+        "id": "sofa",
+        "label": "sofa",
+        "score": 1.0,
+        "center_xy": [-4.5, -1.5],
+        "size_xy": [3.0, 1.0],
+        "theta": 0.0,
+        "labels": ["sofa", "Sectional sofa"],
+    }
+    assert "labels" not in view["detections"][1]
+
+    text = write_detection2d_json(flat, tmp_path / "flat.json", provenance={"scene_id": "s1"})
+    assert json.loads(text.read_text())["detections"][1]["center_xy"] == [-0.5, -0.5]
+    decoded = Detection2DArray.lcm_decode(flat.lcm_encode())
+    assert decoded.detections_length == 2
+    assert decoded.detections[0].bbox.size_x == 3.0

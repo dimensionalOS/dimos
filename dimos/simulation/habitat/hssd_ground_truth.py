@@ -16,8 +16,8 @@
 
 HSSD composes a scene from a stage mesh plus placed object assets
 (``scenes/<id>.scene_instance.json``). This module reads those files with
-trimesh, measures a tight world-axis-aligned box per placed object and per wall
-node of the stage, and exports them through
+trimesh, measures a tight world-axis-aligned box per placed object and per
+stage wall (the stage sliced 20 cm above the floor, so doorways stay open), and exports them through
 :mod:`dimos.simulation.object_detections` in the DimOS Z-up ``world`` frame, the
 frame the Habitat connection publishes odometry in. No simulator is needed.
 
@@ -39,12 +39,12 @@ from functools import cached_property
 import json
 import os
 from pathlib import Path
-import re
 from typing import Any, Literal, cast
 
 import numpy as np
 from numpy.typing import NDArray
 import trimesh
+from trimesh.intersections import mesh_plane
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
@@ -52,6 +52,8 @@ from dimos.simulation.object_detections import (
     GroundTruthBox,
     Point3,
     boxes_to_detection3d_array,
+    top_down,
+    write_detection2d_json,
     write_detection3d_json,
 )
 from dimos.utils.logging_config import setup_logger
@@ -81,9 +83,17 @@ HSSD_SCENE_IDS: tuple[str, ...] = (
     "108736851_177263586",
     "108736884_177263634",
 )
-# Stage nodes with "wall" or "wallTop" as a name token: wall_0.003, geometry_wall.102,
-# geometry_wallTop.124. Not "wallpaper" or "drywall".
-WALL_NAME_PATTERN = re.compile(r"(?:^|[-_. ])wall(?:top)?(?:[-_. ]|$)", re.IGNORECASE)
+# Walls are whatever stage geometry a robot meets this high above the floor: door
+# openings are empty there, headers above doors and windows are not walls.
+WALL_SLICE_HEIGHT_M = 0.2
+# Slice lines closer than this merge into one wall (a wall's two faces plus trim),
+# as long as the union stays wall-thin, which keeps L and T junctions apart.
+WALL_MERGE_TOLERANCE_M = 0.2
+WALL_MAX_THICKNESS_M = 0.4
+# Pieces that nearly coincide (stacked frames) merge even when thick.
+WALL_COINCIDENT_AREA_RATIO = 1.25
+WALL_MIN_LENGTH_M = 0.2
+WALL_LABEL = "wall"
 # Corners are rounded so regenerated files do not churn on float noise.
 CORNER_DECIMALS = 6
 
@@ -292,41 +302,113 @@ def object_boxes(
 
 
 def wall_boxes(stage: Any) -> list[GroundTruthBox]:
-    """One box per highest-level stage wall group, bounding its whole subtree.
+    """One box per wall segment, from a horizontal slice of the stage geometry.
 
-    HSSD stages group each wall as a ``wall_<n>`` node holding its faces and
-    trim (``geometry_wall*``, ``geometry_wallTop*``, colored panels). The two
-    top-level ``geometry_wall*`` leaves in every stage are merged leftovers of
-    the whole building, hundreds of disconnected quads, so leaf matches are
-    skipped. Node names double as ids; duplicates get a ``#n`` suffix. Walls are
-    returned sorted by id so the output does not depend on loader node order.
+    The stage is cut :data:`WALL_SLICE_HEIGHT_M` above its floor. Whatever is
+    solid there is wall (or a built-in mass); door openings are empty, so a wall
+    with a door becomes two segments with a gap a robot can pass through. The
+    cut lines are merged into thin segments and each segment is extruded from
+    the floor up to the top of the geometry standing in its footprint, so door
+    and window headers are not represented. Walls are ordered by footprint
+    position (ROS x, then y) and named ``wall_<k>`` with label ``wall``.
     """
-    boxes = []
-    seen: dict[str, int] = {}
-    children = stage.graph.transforms.children
-    stack = list(reversed(children.get(stage.graph.base_frame, [])))
-    while stack:
-        node = stack.pop()
-        is_group = bool(children.get(node))
-        if not WALL_NAME_PATTERN.search(node):
-            stack.extend(reversed(children.get(node, [])))
-            continue
-        if not is_group:
-            continue
-        vertices = subtree_vertices(stage, node)
-        if vertices.shape[0] == 0:
-            continue
-        count = seen.get(node, 0) + 1
-        seen[node] = count
-        boxes.append(
-            GroundTruthBox(
-                id=node if count == 1 else f"{node}#{count}",
-                labels=(node,),
-                min=_corner(vertices.min(axis=0)),
-                max=_corner(vertices.max(axis=0)),
-            )
+    floor_y = float(subtree_vertices(stage, stage.graph.base_frame)[:, 1].min())
+    plane = np.array([0.0, floor_y + WALL_SLICE_HEIGHT_M, 0.0])
+    cut: Any = mesh_plane
+    faces: list[tuple[Vertices, Vertices]] = []
+    standing: list[Vertices] = []
+    for node in stage.graph.nodes_geometry:
+        transform, geometry = stage.graph[node]
+        mesh = stage.geometry[geometry]
+        vertices = np.asarray(trimesh.transform_points(mesh.vertices, transform), dtype=np.float64)
+        world = trimesh.Trimesh(vertices=vertices, faces=mesh.faces, process=False)
+        lines = np.asarray(
+            cut(world, plane_normal=(0.0, 1.0, 0.0), plane_origin=plane), dtype=np.float64
         )
-    return sorted(boxes, key=lambda box: box.id)
+        if lines.size == 0:
+            continue
+        standing.append(vertices)
+        faces.extend((np.minimum(a, b), np.maximum(a, b)) for a, b in lines)
+    segments = [
+        (lo, hi)
+        for lo, hi in _merge_wall_faces(faces)
+        if max(hi[0] - lo[0], hi[2] - lo[2]) >= WALL_MIN_LENGTH_M
+    ]
+    # Habitat (x, y, z) -> ROS (-z, -x, y): order by the ROS min corner.
+    segments.sort(key=lambda seg: (round(-seg[1][2], 3), round(-seg[1][0], 3)))
+    points = np.vstack(standing) if standing else np.zeros((0, 3))
+    return [
+        GroundTruthBox(
+            id=f"wall_{index:03d}",
+            labels=(WALL_LABEL,),
+            min=_corner(np.array([lo[0], floor_y, lo[2]])),
+            max=_corner(np.array([hi[0], _top_within(points, lo, hi), hi[2]])),
+        )
+        for index, (lo, hi) in enumerate(segments)
+    ]
+
+
+def _top_within(points: Vertices, lo: Vertices, hi: Vertices) -> float:
+    """Highest vertex of the sliced geometry standing inside the footprint."""
+    tol = WALL_MERGE_TOLERANCE_M
+    inside = (
+        (points[:, 0] >= lo[0] - tol)
+        & (points[:, 0] <= hi[0] + tol)
+        & (points[:, 2] >= lo[2] - tol)
+        & (points[:, 2] <= hi[2] + tol)
+    )
+    return float(points[inside, 1].max())
+
+
+def _merge_wall_faces(faces: list[tuple[Vertices, Vertices]]) -> list[tuple[Vertices, Vertices]]:
+    """Union touching faces into wall segments.
+
+    Two footprints merge when they touch and the union is still wall-thin, or
+    when they nearly coincide; a thick union of distinct pieces (an L or T
+    junction) is never merged.
+    """
+    segments: list[tuple[Vertices, Vertices]] = []
+    for lo, hi in faces:
+        merged = True
+        while merged:
+            merged = False
+            for index, (seg_lo, seg_hi) in enumerate(segments):
+                if not _footprints_touch(lo, hi, seg_lo, seg_hi):
+                    continue
+                union_lo, union_hi = np.minimum(lo, seg_lo), np.maximum(hi, seg_hi)
+                thin = (
+                    min(union_hi[0] - union_lo[0], union_hi[2] - union_lo[2])
+                    <= WALL_MAX_THICKNESS_M
+                )
+                # Against the smaller piece: near-duplicates merge, but a chain of partial
+                # overlaps can never grow a segment step by step.
+                coincident = _footprint_area(
+                    union_lo, union_hi
+                ) <= WALL_COINCIDENT_AREA_RATIO * min(
+                    _footprint_area(lo, hi), _footprint_area(seg_lo, seg_hi)
+                )
+                if not (thin or coincident):
+                    continue
+                lo, hi = union_lo, union_hi
+                del segments[index]
+                merged = True
+                break
+        segments.append((lo, hi))
+    return segments
+
+
+def _footprint_area(lo: Vertices, hi: Vertices) -> float:
+    return float((hi[0] - lo[0]) * (hi[2] - lo[2]))
+
+
+def _footprints_touch(a_lo: Vertices, a_hi: Vertices, b_lo: Vertices, b_hi: Vertices) -> bool:
+    tol = WALL_MERGE_TOLERANCE_M
+    return bool(
+        a_lo[0] - tol <= b_hi[0]
+        and a_hi[0] + tol >= b_lo[0]
+        and a_lo[2] - tol <= b_hi[2]
+        and a_hi[2] + tol >= b_lo[2]
+    )
 
 
 def scene_boxes(
@@ -358,23 +440,27 @@ def export_scene(
     *,
     label_mode: LabelMode = DEFAULT_LABEL_MODE,
 ) -> Path:
-    """Write ``<out_dir>/<scene_id>.json``, the JSON view with dataset provenance."""
+    """Write ``<out_dir>/<scene_id>.json`` and its top-down ``<scene_id>.top_down.json``.
+
+    Both are JSON views with dataset provenance; the top-down file holds the
+    ``Detection2DArray`` from :func:`dimos.simulation.object_detections.top_down`.
+    """
     boxes = scene_boxes(dataset, scene_id, label_mode=label_mode)
     detections = boxes_to_detection3d_array(
         boxes.all, to_ros=habitat_to_ros, frame_id=HABITAT_WORLD_FRAME, ts=GROUND_TRUTH_TS
     )
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    path = write_detection3d_json(
-        detections,
-        out / f"{scene_id}.json",
-        provenance={"dataset": dataset.name, "scene_id": scene_id},
-    )
+    provenance = {"dataset": dataset.name, "scene_id": scene_id}
+    path = write_detection3d_json(detections, out / f"{scene_id}.json", provenance=provenance)
+    flat = top_down(detections)
+    write_detection2d_json(flat, out / f"{scene_id}.top_down.json", provenance=provenance)
     logger.info(
         "wrote HSSD ground truth",
         scene_id=scene_id,
         objects=len(boxes.objects),
         walls=len(boxes.walls),
+        top_down=flat.detections_length,
         path=str(path),
     )
     return path
