@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
 import time
 
 from pydantic import Field
@@ -47,9 +46,7 @@ def default_transform() -> Transform:
 class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
     transform: Transform | None = Field(default_factory=default_transform)
-    hardware: WebcamConfig | Callable[[], CameraHardware] | CameraHardware = Field(
-        default_factory=WebcamConfig
-    )
+    hardware: WebcamConfig = Field(default_factory=WebcamConfig)
     frequency: float = 0.0  # Hz, 0 means no limit
 
 
@@ -65,12 +62,7 @@ class CameraModule(Module, perception.Camera):
     def start(self) -> None:
         super().start()
 
-        if isinstance(self.config.hardware, WebcamConfig):
-            self.hardware = Webcam(**self.config.hardware.model_dump())
-        elif callable(self.config.hardware):
-            self.hardware = self.config.hardware()
-        else:
-            self.hardware = self.config.hardware
+        self.hardware = Webcam(**self.config.hardware.model_dump())
 
         stream = self.hardware.image_stream()
 

@@ -150,8 +150,6 @@ class ControlCoordinator(Module):
 
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
-    # Output: Post-arbitration position commands accepted by hardware.
-    applied_joint_position_command: Out[JointState]
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
@@ -897,6 +895,7 @@ class ControlCoordinator(Module):
         publish_robot_cb = (
             self._publish_robot_joint_state if self.config.publish_robot_joint_states else None
         )
+        command_port = self.outputs.get("applied_joint_position_command")
         self._tick_loop = TickLoop(
             tick_rate=self.config.tick_rate,
             hardware=self._hardware,
@@ -905,7 +904,7 @@ class ControlCoordinator(Module):
             task_lock=self._task_lock,
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
-            publish_command_callback=self.applied_joint_position_command.publish,
+            publish_command_callback=command_port.publish if command_port is not None else None,
             publish_robot_callback=publish_robot_cb,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,

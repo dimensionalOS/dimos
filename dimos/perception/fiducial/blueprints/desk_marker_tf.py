@@ -26,7 +26,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -43,13 +43,13 @@ DESK_MARKER_LENGTH_M = 0.05
 DEFAULT_DESK_CAMERA_INFO_YAML = Path(__file__).resolve().parent / "fixtures" / "camera_info.yaml"
 
 
-def create_desk_webcam(
+def create_desk_webcam_config(
     camera_info_yaml: str | Path = DEFAULT_DESK_CAMERA_INFO_YAML,
     camera_index: int = 0,
     fps: float = 15.0,
-) -> Webcam:
+) -> WebcamConfig:
     camera_info = create_desk_camera_info(camera_info_yaml)
-    return Webcam(
+    return WebcamConfig(
         camera_index=camera_index,
         width=camera_info.width,
         height=camera_info.height,
@@ -153,7 +153,7 @@ class DeskStaticTfModule(Module):
 desk_marker_tf = autoconnect(
     DeskStaticTfModule.blueprint(),
     CameraModule.blueprint(
-        hardware=create_desk_webcam,
+        hardware=create_desk_webcam_config(),
         transform=None,
     ),
     MarkerDetectionStreamModule.blueprint(

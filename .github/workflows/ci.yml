@@ -714,10 +714,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        id: tests
         run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       - name: Re-run the failing tests with maximum verbosity
-        if: failure() && steps.tests.outcome == 'failure'
+        if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
@@ -951,10 +950,9 @@ jobs:
         if: contains(matrix.markers, 'self_hosted')
         run: cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
       - name: Run tests
-        id: tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
-        if: failure() && steps.tests.outcome == 'failure'
+        if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
@@ -1101,12 +1099,11 @@ jobs:
         # The runner must have an Xorg server with NVIDIA GPU access running
         # on DISPLAY=:0 — dimsim's headless Chromium needs real WebGL for the
         # heavier scenes (`apt`). Software X via xvfb is not enough.
-        id: tests
         env:
           DISPLAY: ":0"
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m self_hosted_large
       - name: Re-run the failing tests with maximum verbosity
-        if: failure() && steps.tests.outcome == 'failure'
+        if: failure()
         env:
           COLOR: yes
           DISPLAY: ":0"

@@ -22,8 +22,9 @@ from typing import Any
 
 from mcap.writer import Writer as McapWriter
 import numpy as np
+import pytest
 
-from dimos.imitation.dataprep.build import inspect_recording, run_dataprep
+from dimos.imitation.dataprep.build import _open_recording, inspect_recording, run_dataprep
 from dimos.imitation.dataprep.core import (
     DataPrepConfig,
     FeatureSpec,
@@ -32,6 +33,8 @@ from dimos.imitation.dataprep.core import (
     SyncConfig,
 )
 from dimos.memory.codecs.jpeg import JpegCodec
+from dimos.memory.codecs.lcm import LcmCodec
+from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -213,3 +216,40 @@ def test_mcap_recording_inspects_and_produces_valid_samples(tmp_path: Path) -> N
     assert len(received) == 3
     np.testing.assert_array_equal(received[0].observation["observation.state"], [0.0, 1.0])
     np.testing.assert_array_equal(received[0].action["action"], [0.25, 1.25])
+
+
+@pytest.mark.parametrize("encoding", ["lcm", "lz4+lcm"])
+def test_recording_metadata_decodes_typed_messages(tmp_path: Path, encoding: str) -> None:
+    path = tmp_path / "recording.mcap"
+    message = JointState(ts=12.5, name=["arm/joint1"], position=[0.25])
+    codec = LcmCodec(JointState)
+    payload = Lz4Codec(codec).encode(message) if encoding == "lz4+lcm" else codec.encode(message)
+    with path.open("wb") as file:
+        writer = McapWriter(file)
+        writer.start()
+        channel = _register_channel(writer, "measured", JointState, encoding)
+        _write_message(writer, channel, 11.5, payload)
+        writer.finish()
+
+    with _open_recording(path) as store:
+        observation = store.stream("measured").first()
+        assert observation.ts == 11.5
+        assert observation.data.lcm_encode() == message.lcm_encode()
+
+
+def test_missing_message_package_reports_the_recorded_type(tmp_path: Path) -> None:
+    path = tmp_path / "recording.mcap"
+    with path.open("wb") as file:
+        writer = McapWriter(file)
+        writer.start()
+        channel = writer.register_channel(
+            topic="custom_state",
+            message_encoding="lcm",
+            schema_id=0,
+            metadata={"dimos.payload_type": "missing_recording_package.State"},
+        )
+        _write_message(writer, channel, 1.0, b"unused")
+        writer.finish()
+
+    with pytest.raises(ImportError, match="custom_state.*missing_recording_package.State"):
+        _open_recording(path)

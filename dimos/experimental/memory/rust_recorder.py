@@ -71,24 +71,12 @@ class RustSqliteStoreConfig(RustStoreConfig):
     kind: Literal["sqlite"] = "sqlite"
     path: str = "recording.db"
 
-    @model_validator(mode="after")
-    def _require_db_suffix(self) -> RustSqliteStoreConfig:
-        if Path(self.path).suffix != ".db":
-            raise ValueError("SQLite recording path must end in .db")
-        return self
-
 
 class RustMcapStoreConfig(RustStoreConfig):
     """Write storage-encoded observations to an indexed, compressed MCAP artifact."""
 
     kind: Literal["mcap"] = "mcap"
     path: str = "recording.mcap"
-
-    @model_validator(mode="after")
-    def _require_mcap_suffix(self) -> RustMcapStoreConfig:
-        if Path(self.path).suffix != ".mcap":
-            raise ValueError("MCAP recording path must end in .mcap")
-        return self
 
 
 RustRecordingStoreConfig: TypeAlias = Annotated[
@@ -106,10 +94,8 @@ class NativeRecorderConfig(NativeModuleConfig):
     """
 
     executable: str = "result/bin/dimos-memory-recorder"
-    build_command: str = (
-        "nix --extra-experimental-features 'nix-command flakes' build -L .#dimos-memory-recorder"
-    )
-    cwd: str = str(Path(__file__).with_name("rust"))
+    build_command: str = "nix build -L .#dimos-memory-recorder"
+    cwd: str = "rust"
     stdin_config: bool = True
 
     record_tf: bool = Field(
@@ -134,13 +120,12 @@ class NativeRecorderConfig(NativeModuleConfig):
     )
     _streams: list[RustStreamSpec] = PrivateAttr(default_factory=list)
 
-    @property
-    def streams(self) -> list[RustStreamSpec]:
-        return self._streams
-
-    @streams.setter
-    def streams(self, value: list[RustStreamSpec]) -> None:
-        self._streams = value
+    @model_validator(mode="after")
+    def _resolve_cwd(self) -> NativeRecorderConfig:
+        # Subclassed recorders share this native project, regardless of their source file.
+        if not Path(self.cwd).is_absolute():
+            self.cwd = str(Path(__file__).parent / self.cwd)
+        return self
 
     @model_validator(mode="after")
     def _stdin_only(self) -> NativeRecorderConfig:
@@ -156,7 +141,7 @@ class NativeRecorderConfig(NativeModuleConfig):
         return {
             "store": self.recording_store().model_dump(),
             "encoding_threads": self.encoding_threads,
-            "streams": [stream.model_dump() for stream in self.streams],
+            "streams": [stream.model_dump() for stream in self._streams],
         }
 
 
@@ -222,7 +207,7 @@ class _NativeRecorder(NativeModule):
             return
 
         self._prepare_store(specs)
-        self.config.streams = specs
+        self.config._streams = specs
         super().start()
 
     def _stream_specs(self) -> list[RustStreamSpec]:
@@ -264,7 +249,7 @@ class _NativeRecorder(NativeModule):
 
     def _collect_topics(self) -> dict[str, str]:
         topics = super()._collect_topics()
-        enabled_ports = {spec.port for spec in self.config.streams}
+        enabled_ports = {spec.port for spec in self.config._streams}
         return {port: topic for port, topic in topics.items() if port in enabled_ports}
 
     @staticmethod

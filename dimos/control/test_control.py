@@ -58,6 +58,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
     joint_trajectory_task,
 )
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import In
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
@@ -333,6 +334,31 @@ class _EEFTwistCoordinator(ControlCoordinator):
 
 
 class TestControlCoordinatorLifecycle:
+    def test_base_coordinator_starts_without_command_output(self, make_coordinator, mocker):
+        mocker.patch("dimos.core.module.Module.start")
+        loop = mocker.patch("dimos.control.coordinator.TickLoop")
+        coordinator = make_coordinator()
+
+        coordinator.start()
+
+        assert loop.call_args.kwargs["publish_command_callback"] is None
+        assert "applied_joint_position_command" not in coordinator.outputs
+
+    def test_teleop_coordinator_publishes_applied_commands(self, make_coordinator, mocker):
+        mocker.patch("dimos.core.module.Module.start")
+        loop = mocker.patch("dimos.control.coordinator.TickLoop")
+        coordinator = make_coordinator(cls=TeleopControlCoordinator)
+        received = []
+        unsubscribe = coordinator.applied_joint_position_command.subscribe(received.append)
+        try:
+            message = JointState(name=["arm/joint1"], position=[0.5])
+            coordinator.start()
+            loop.call_args.kwargs["publish_command_callback"](message)
+
+            assert received == [message]
+        finally:
+            unsubscribe()
+
     def test_start_subscribes_ee_twist_only_for_eef_twist_tasks(self, make_coordinator, mocker):
         mocker.patch("dimos.core.module.Module.start")
         mocker.patch("dimos.control.coordinator.TickLoop")

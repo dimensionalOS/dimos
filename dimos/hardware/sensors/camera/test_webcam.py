@@ -36,16 +36,6 @@ def test_camera_config_parses_nested_webcam_settings() -> None:
     assert config.hardware.camera_index == 2
 
 
-def test_camera_config_accepts_hardware_factory_and_instance() -> None:
-    webcam = Webcam(camera_index=2)
-
-    def factory() -> Webcam:
-        return webcam
-
-    assert CameraModuleConfig(hardware=factory).hardware is factory
-    assert CameraModuleConfig(hardware=webcam).hardware is webcam
-
-
 def test_camera_can_stop_before_start() -> None:
     camera = CameraModule()
 

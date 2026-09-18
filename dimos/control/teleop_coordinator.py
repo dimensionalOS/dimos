@@ -15,9 +15,10 @@
 """Control coordinator carrying spatial poses and keyboard end-effector twists."""
 
 from dimos.control.coordinator import ControlCoordinator
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.webxr.controller_types import Buttons
 
@@ -31,3 +32,5 @@ class TeleopControlCoordinator(ControlCoordinator):
     right_gripper_command: In[Float32]
     teleop_buttons: In[Buttons]
     ee_twist_command: In[TwistStamped]
+    # Post-arbitration position commands accepted by hardware, for collection.
+    applied_joint_position_command: Out[JointState]

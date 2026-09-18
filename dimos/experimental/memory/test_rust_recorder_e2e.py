@@ -258,7 +258,7 @@ def _capture_native_artifact(
     recorder.color_image.transport = FakeTransport(image_topic)  # type: ignore[assignment]
     specs = recorder._stream_specs()
     recorder._prepare_store(specs)
-    recorder.config.streams = specs
+    recorder.config._streams = specs
     launch = recorder._stdin_blob(recorder._collect_topics())
 
     env = {
@@ -420,7 +420,7 @@ def test_tf_records_over_zenoh_and_replays_through_python(
     recorder.tf.transport = FakeTransport(publisher.channel)  # type: ignore[assignment]
     specs = recorder._stream_specs()
     recorder._prepare_store(specs)
-    recorder.config.streams = specs
+    recorder.config._streams = specs
     launch = recorder._stdin_blob({"tf": publisher.channel})
 
     env = {

@@ -26,7 +26,9 @@ from collections.abc import Iterator
 from itertools import chain
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+from mcap.reader import make_reader
 
 from dimos.imitation.dataprep.core import (
     DataPrepConfig,
@@ -41,7 +43,10 @@ from dimos.imitation.dataprep.core import (
     inspect_episodes,
     iter_episode_samples,
 )
+from dimos.memory.codecs.base import codec_from_id
 from dimos.memory.store.base import Store
+from dimos.memory.store.mcap import McapStore, StreamCodec
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -51,14 +56,32 @@ def _open_recording(path: str | Path) -> Store:
     """Open a native collection artifact through its read-only Store interface."""
     source = Path(path)
     if source.suffix == ".db":
-        from dimos.memory.store.sqlite import SqliteStore
-
         return SqliteStore(path=str(source), must_exist=True)
     if source.suffix == ".mcap":
-        from dimos.memory.store.mcap import McapStore
-
-        return McapStore(path=str(source), decode_native=True)
+        return McapStore(path=str(source), codecs=_recording_codecs(source))
     raise ValueError(f"Unsupported recording {str(source)!r}: expected a .db or .mcap artifact")
+
+
+def _recording_codecs(path: Path) -> dict[str, StreamCodec]:
+    """Load native codecs from a trusted recording's message-type metadata."""
+    with path.open("rb") as file:
+        summary = make_reader(file).get_summary()
+    codecs: dict[str, StreamCodec] = {}
+    if summary is None:
+        return codecs
+    for channel in summary.channels.values():
+        payload_type = channel.metadata.get("dimos.payload_type")
+        if payload_type and channel.message_encoding in {"jpeg", "lcm", "lz4+lcm"}:
+            try:
+                codecs[channel.topic] = cast(
+                    "StreamCodec", codec_from_id(channel.message_encoding, payload_type)
+                )
+            except (ImportError, AttributeError) as exc:
+                raise ImportError(
+                    f"Cannot decode MCAP stream {channel.topic!r}: install the package "
+                    f"providing {payload_type!r} in the dataset reader environment"
+                ) from exc
+    return codecs
 
 
 def _write_dimos_meta(
