@@ -17,14 +17,14 @@
 from __future__ import annotations
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.transport import pSHMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.policy.lerobot.module import (
-    POLICY_ROLLOUT_TASK_NAME,
     LeRobotPolicyModule,
 )
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -55,11 +55,6 @@ def build_openyam_rollout(
     quest_control: bool = False,
 ) -> Blueprint:
     """Build an OpenYAM rollout; Quest control is an optional takeover layer."""
-    policy_task = TaskConfig(
-        name=POLICY_ROLLOUT_TASK_NAME,
-        joint_names=list(OPENYAM_JOINTS),
-        priority=10,
-    )
     policy = LeRobotPolicyModule.blueprint(
         instance_name="policy",
         **({"policy_path": checkpoint} if checkpoint is not None else {}),
@@ -70,7 +65,6 @@ def build_openyam_rollout(
         robot_type="openyam",
         image_width=_WRIST_WIDTH,
         image_height=_WRIST_HEIGHT,
-        trajectory_task_name=POLICY_ROLLOUT_TASK_NAME,
     )
     camera = CameraModule.blueprint(
         instance_name="WristCamera",
@@ -91,7 +85,7 @@ def build_openyam_rollout(
             TeleopControlCoordinator.blueprint(
                 instance_name="ControlCoordinator",
                 hardware=[OPENYAM_QUEST_HARDWARE],
-                tasks=openyam_quest_tasks(policy_task),
+                tasks=openyam_quest_tasks(),
             ),
             camera,
             ManipulationModule.blueprint(
@@ -111,7 +105,7 @@ def build_openyam_rollout(
             ControlCoordinator.blueprint(
                 instance_name="ControlCoordinator",
                 hardware=[openyam_hardware()],
-                tasks=[policy_task],
+                tasks=[joint_trajectory_task(OPENYAM_JOINTS)],
             ),
             camera,
         )

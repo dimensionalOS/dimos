@@ -122,8 +122,8 @@ _openyam_quest_task = teleop_ik_task(
 )
 
 
-def openyam_quest_tasks(*additional_tasks: TaskConfig) -> list[TaskConfig]:
-    """Build the canonical Quest control tasks, optionally extended by a stack."""
+def openyam_quest_tasks() -> list[TaskConfig]:
+    """Build the canonical Quest control tasks."""
     return [
         _openyam_quest_task,
         TaskConfig(
@@ -135,7 +135,6 @@ def openyam_quest_tasks(*additional_tasks: TaskConfig) -> list[TaskConfig]:
             stream_bind={"gripper_command": "right_gripper_command"},
         ),
         _trajectory_task(priority=10),
-        *additional_tasks,
     ]
 
 

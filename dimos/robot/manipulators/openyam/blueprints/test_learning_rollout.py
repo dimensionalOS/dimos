@@ -21,9 +21,9 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.imitation.policy.lerobot.module import (
-    POLICY_ROLLOUT_TASK_NAME,
     LeRobotPolicyModule,
 )
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.openyam.blueprints.learning_rollout import (
     build_openyam_rollout,
 )
@@ -41,7 +41,7 @@ def test_default_rollout_is_quest_free() -> None:
     blueprint = build_openyam_rollout(checkpoint="checkpoint", task="pick up block")
     modules = [atom.module for atom in blueprint.active_blueprints]
     coordinator = _module_kwargs(blueprint, ControlCoordinator)
-    policy = next(task for task in coordinator["tasks"] if task.name == POLICY_ROLLOUT_TASK_NAME)
+    policy = next(task for task in coordinator["tasks"] if task.name == JOINT_TRAJECTORY_TASK_NAME)
 
     assert ArmTeleopModule not in modules
     assert len(coordinator["tasks"]) == 1
@@ -54,7 +54,7 @@ def test_quest_rollout_adds_higher_priority_takeover() -> None:
         checkpoint="checkpoint", task="pick up block", quest_control=True
     )
     coordinator = _module_kwargs(blueprint, ControlCoordinator)
-    policy = next(task for task in coordinator["tasks"] if task.name == POLICY_ROLLOUT_TASK_NAME)
+    policy = next(task for task in coordinator["tasks"] if task.name == JOINT_TRAJECTORY_TASK_NAME)
     teleop = next(task for task in coordinator["tasks"] if task.name == "teleop_openyam")
     trajectory = next(
         task for task in coordinator["tasks"] if task.name == JOINT_TRAJECTORY_TASK_NAME
@@ -62,7 +62,15 @@ def test_quest_rollout_adds_higher_priority_takeover() -> None:
 
     assert policy.type == "trajectory"
     assert policy.joint_names == OPENYAM_JOINTS
-    assert policy.priority < teleop.priority < trajectory.priority
+    assert sum(task.type == "trajectory" for task in coordinator["tasks"]) == 1
+    assert trajectory is policy
+    assert trajectory.priority < teleop.priority
+    assert all(
+        task.priority > trajectory.priority
+        for task in coordinator["tasks"]
+        if task.type == "gripper"
+    )
+    assert ManipulationModule in [atom.module for atom in blueprint.active_blueprints]
 
 
 def test_rollout_uses_the_shared_learning_profile() -> None:
@@ -77,7 +85,6 @@ def test_rollout_uses_the_shared_learning_profile() -> None:
     assert policy["device"] == "cuda"
     assert policy["fps"] == 30.0
     assert policy["joint_names"] == list(OPENYAM_JOINTS)
-    assert policy["trajectory_task_name"] == POLICY_ROLLOUT_TASK_NAME
     assert camera["hardware"].fps == 30.0
     assert camera["hardware"].width == 640
     assert camera["hardware"].height == 480
