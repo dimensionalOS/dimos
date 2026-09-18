@@ -287,6 +287,7 @@ class UnitreeSkillContainer(Module):
             elif time.monotonic() - idle_since > settle:
                 return "Navigation was cancelled or failed"
             time.sleep(0.1)
+        self._navigation.cancel_goal()
         return "Navigation timed out"
 
     @skill

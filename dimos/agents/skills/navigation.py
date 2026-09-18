@@ -19,8 +19,8 @@ from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
+from dimos.agents.skills.navigation_stop import NavigationStopSkill
 from dimos.core.core import rpc
-from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.models.qwen.bbox import BBox
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -38,7 +38,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class NavigationSkillContainer(Module):
+class NavigationSkillContainer(NavigationStopSkill):
     _latest_image: Image | None = None
     _latest_odom: PoseStamped | None = None
     _skill_started: bool = False
@@ -249,20 +249,6 @@ class NavigationSkillContainer(Module):
 
         message = f"Found a location in the semantic map matching '{query}'."
         return self._navigate_to(goal_pose, message)
-
-    @skill
-    def stop_navigation(self) -> str:
-        """Immediatly stop moving."""
-
-        if not self._skill_started:
-            raise ValueError(f"{self} has not been started.")
-
-        self._cancel_goal_and_stop()
-
-        return "Stopped"
-
-    def _cancel_goal_and_stop(self) -> None:
-        self._navigation.cancel_goal()
 
     def _get_goal_pose_from_result(self, result: dict[str, Any]) -> PoseStamped | None:
         similarity = 1.0 - (result.get("distance") or 1)
