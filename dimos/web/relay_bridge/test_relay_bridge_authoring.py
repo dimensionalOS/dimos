@@ -30,17 +30,19 @@ from typing import Any
 from langchain_core.messages import AIMessage
 import numpy as np
 import pytest
+from reactivex.disposable import Disposable
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource_monitor.stats import ProcessStats, WorkerStats
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.web.cockpit import Channel, Chat, Stats, Video, cockpit
+from dimos.web.cockpit import Channel, Chat, Map2D, Stats, Video, cockpit
 from dimos.web.codecs import EncodedPayload, PublishContext, web_decoder, web_encoder
 from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
 from dimos.web.relay_bridge.audio_codec import AudioChunk
@@ -716,3 +718,91 @@ def test_publish_frame_with_unusable_meta_is_dropped(monkeypatch) -> None:
         assert module._pub_invalid == 8
     finally:
         stop_module(module)
+
+
+def _nav_path(*xy: tuple[float, float]) -> NavPath:
+    poses = [
+        PoseStamped(ts=1.0, position=[x, y, 0.0], orientation=[0.0, 0.0, 0.0, 1.0]) for x, y in xy
+    ]
+    return NavPath(ts=1.0, frame_id="world", poses=poses)
+
+
+@pytest.fixture
+def map_bridge(monkeypatch):
+    blueprint = cockpit(layout=Map2D(path="path", click="clicked_point", stop="stop_movement"))
+    module, clients = start_authored(
+        monkeypatch, blueprint, wire=("global_costmap", "odom", "path")
+    )
+    try:
+        yield module, clients
+    finally:
+        stop_module(module)
+
+
+def test_map2d_rejects_an_incompatible_path_encoder() -> None:
+    with pytest.raises(ValueError, match="conflicting requirements for stream 'path'"):
+        cockpit(
+            layout=Map2D(path="path"),
+            channels=[Channel("path", NavPath, encoding="path.rbm.v1", delivery="latest")],
+        )
+
+
+def test_builtin_channel_replays_when_explicitly_requested(monkeypatch) -> None:
+    blueprint = cockpit(
+        channels=[Channel("odom", PoseStamped, encoding="pose.json.v1", resend_on_subscribe=True)]
+    )
+    module, clients = start_authored(monkeypatch, blueprint, wire=("odom",))
+    try:
+        transport_of(module, "odom").publish(_NAV_PATH.poses[0])
+        push(module, clients[0], Subs(chs=["odom"], n=1))
+        assert wait_until(lambda: clients[0].frames)
+        ch, payload, delivery, meta = clients[0].frames[0]
+        assert (ch, delivery, meta) == ("odom", "reliable", None)
+        assert json.loads(payload) == {"x": 1.5, "y": -2.5, "z": 0.0, "yaw": 0.0, "ts": 1.0}
+    finally:
+        stop_module(module)
+
+
+def test_map2d_path_replays_and_paces(map_bridge) -> None:
+    module, clients = map_bridge
+    path = transport_of(module, "path")
+    offers = clients[0].writers["path"].offers
+    path.publish(_NAV_PATH)  # nobody watching; the cache keeps it
+    push(module, clients[0], Subs(chs=["path"], n=1))
+    assert wait_until(lambda: len(offers) == 1)
+    assert json.loads(offers[0][0]) == [[1.5, -2.5]]
+
+    # A planner burst must not leave the viewer stuck on the empty path.
+    path.publish(NavPath())
+    path.publish(_nav_path((0.25, 0.5), (1.0, 1.0), (1.75, 0.5)))
+    assert wait_until(lambda: len(offers) == 3)
+    assert [json.loads(payload) for payload, _ in offers[1:]] == [
+        [],
+        [[0.25, 0.5], [1.0, 1.0], [1.75, 0.5]],
+    ]
+
+
+def test_map2d_click_and_stop_publish(map_bridge) -> None:
+    module, clients = map_bridge
+    points: list[PointStamped] = []
+    stops: list[bool] = []
+    module.register_disposable(Disposable(module.clicked_point.subscribe(points.append)))
+    module.register_disposable(
+        Disposable(module.stop_movement.subscribe(lambda msg: stops.append(msg.data)))
+    )
+
+    click = json.dumps({"x": 1.5, "y": -2.25}).encode()
+    push(module, clients[0], _pub_frame(click, ch="clicked_point"))
+    assert wait_until(lambda: clients[0].control_frames)
+    assert isinstance(clients[0].control_frames[0], PubAck)
+    (point,) = points
+    assert (point.x, point.y, point.z, point.frame_id) == (1.5, -2.25, 0.0, "world")
+
+    push(module, clients[0], _pub_frame(b"true", ch="stop_movement", seq=2))
+    assert wait_until(lambda: stops == [True])
+
+    push(module, clients[0], _pub_frame(b'{"x": "1", "y": 2}', ch="clicked_point", seq=3))
+    assert wait_until(lambda: len(clients[0].control_frames) == 3)
+    nack = clients[0].control_frames[2]
+    assert isinstance(nack, PubNack) and nack.code == "decode_failed"
+    assert len(points) == 1

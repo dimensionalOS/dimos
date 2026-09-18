@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live smoke: real model, real LFS recordings. Self-hosted + API key.
+"""Live smoke: real model, real LFS recordings. Local only: never in CI.
+
+Costs real API credits, so it is gated like the other live-model e2e tests
+and only runs on a developer machine with ``OPENAI_API_KEY`` set.
 
 Runs only the ``numeric`` cases (odom + pointcloud str encodings) — the
 self-hosted ros-dev container has no libturbojpeg, so image-encoding cases
@@ -30,7 +33,7 @@ from dimos.evals.runner import EvalRunner, summarize
 from dimos.evals.suites.go2_smoke import SUITE
 from dimos.utils.data import get_data
 
-pytestmark = [pytest.mark.self_hosted, pytest.mark.skipif_no_openai]
+pytestmark = [pytest.mark.skipif_in_ci, pytest.mark.self_hosted, pytest.mark.skipif_no_openai]
 
 
 def test_question_answer_smoke(tmp_path: Path) -> None:

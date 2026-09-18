@@ -9,7 +9,7 @@ export GIT_LFS_SKIP_SMUDGE=1
 
 # system dependencies (docs/installation/ubuntu.md)
 sudo apt-get update
-sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev pre-commit
+sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg ffmpeg python3-dev pre-commit
 
 # uv
 curl -LsSf https://astral.sh/uv/install.sh | sh

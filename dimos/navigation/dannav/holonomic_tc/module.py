@@ -31,7 +31,7 @@ import time
 import traceback
 from typing import Any, Literal, TypeAlias
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool
 import numpy as np
 from reactivex import Subject
 from reactivex.disposable import Disposable

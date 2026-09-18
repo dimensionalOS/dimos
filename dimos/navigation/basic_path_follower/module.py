@@ -19,7 +19,7 @@ from threading import Event, RLock, Thread
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool
 import numpy as np
 from numpy.typing import NDArray
 from reactivex.disposable import Disposable

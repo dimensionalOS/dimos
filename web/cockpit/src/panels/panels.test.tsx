@@ -4,8 +4,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { FrameHeader, PanelSpec } from "@dimos/shared";
 import type { CostmapValue } from "@dimos/sdk";
-import { ChannelStore } from "@dimos/sdk";
+import { ChannelStore, PublishError } from "@dimos/sdk";
 import type { DrawHealth } from "../layout/PanelFrame.tsx";
+import { FakeSession } from "../testing/fakeSession.ts";
 import { MapPanel, startMapSink } from "./MapPanel.tsx";
 import { fitTransform, posePath } from "./mapRenderer.ts";
 import { ChatPanel } from "./ChatPanel.tsx";
@@ -371,6 +372,8 @@ describe("registry", () => {
 
 const MAP_CH = "global_costmap";
 const POSE_CH = "odom";
+const PATH_CH = "path";
+const CHS = { costmap: MAP_CH, pose: POSE_CH };
 
 function costmapValue(seq: number, w = 2, h = 2): CostmapValue {
   return { bytes: new Uint8Array([seq]), w, h, res: 0.5, origin: [0.25, -0.5, 0.0] };
@@ -385,6 +388,22 @@ function gridFrame(store: ChannelStore, seq: number, ts = seq): CostmapValue {
 function poseFrame(store: ChannelStore, seq: number): void {
   const value = { x: 0.5, y: 0.5, z: 0.1, yaw: 0.25, ts: seq };
   store.ingest(POSE_CH, { ch: POSE_CH, seq, ts: seq, delivery: "reliable" }, value, true);
+}
+
+function pathFrame(store: ChannelStore, seq: number, points: [number, number][]): void {
+  store.ingest(PATH_CH, { ch: PATH_CH, seq, ts: seq, delivery: "latest" }, points, true);
+}
+
+/** happy-dom has no layout; pin the on-screen rect the click handler reads. */
+function defineRect(canvas: HTMLCanvasElement, left: number, top: number, w: number, h: number) {
+  Object.defineProperty(canvas, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ left, top, width: w, height: h }),
+  });
+}
+
+function click(el: Element, clientX: number, clientY: number): void {
+  el.dispatchEvent(new MouseEvent("click", { clientX, clientY, bubbles: true }));
 }
 
 /** Inflate stub whose promises settle only when the test says so. */
@@ -418,6 +437,7 @@ describe("startMapSink", () => {
     lineTo: ReturnType<typeof vi.fn>;
     closePath: ReturnType<typeof vi.fn>;
     fill: ReturnType<typeof vi.fn>;
+    stroke: ReturnType<typeof vi.fn>;
   }
   let store: ChannelStore;
   let canvas: HTMLCanvasElement;
@@ -447,6 +467,7 @@ describe("startMapSink", () => {
         lineTo: vi.fn(),
         closePath: vi.fn(),
         fill: vi.fn(),
+        stroke: vi.fn(),
       };
       contexts.push(fake);
       return fake as unknown as CanvasRenderingContext2D;
@@ -463,7 +484,7 @@ describe("startMapSink", () => {
 
   it("inflates one grid at a time and skips straight to the newest", async () => {
     const { inflate, calls, settlers } = deferredInflate();
-    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    stop = startMapSink(store, CHS, canvas, health, { inflate, hidden: () => false });
 
     const first = gridFrame(store, 1);
     expect(calls).toEqual([first]);
@@ -488,7 +509,7 @@ describe("startMapSink", () => {
 
   it("redraws the pose from the cached bitmap without a new inflate", async () => {
     const { inflate, calls, settlers } = deferredInflate();
-    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    stop = startMapSink(store, CHS, canvas, health, { inflate, hidden: () => false });
     gridFrame(store, 1);
     settlers[0].resolve(new Uint8Array(4));
     await flush();
@@ -503,14 +524,14 @@ describe("startMapSink", () => {
 
   it("ignores pose frames until a grid has drawn", () => {
     const { inflate } = deferredInflate();
-    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    stop = startMapSink(store, CHS, canvas, health, { inflate, hidden: () => false });
     poseFrame(store, 1);
     expect(display().drawImage).not.toHaveBeenCalled();
   });
 
   it("counts inflate rejections and recovers on the next grid", async () => {
     const { inflate, settlers } = deferredInflate();
-    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    stop = startMapSink(store, CHS, canvas, health, { inflate, hidden: () => false });
     const stamp = health.lastDrawOkAtMs;
     gridFrame(store, 1);
     settlers[0].reject(new Error("corrupt zlib"));
@@ -526,7 +547,7 @@ describe("startMapSink", () => {
 
   it("skips a slot that is not a costmap value without spinning", () => {
     const { inflate, calls } = deferredInflate();
-    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    stop = startMapSink(store, CHS, canvas, health, { inflate, hidden: () => false });
     store.ingest(
       MAP_CH,
       { ch: MAP_CH, seq: 1, ts: 1, delivery: "latest" },
@@ -539,7 +560,7 @@ describe("startMapSink", () => {
   it("does not inflate while hidden and catches up on visibilitychange", async () => {
     const { inflate, calls, settlers } = deferredInflate();
     let hidden = true;
-    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => hidden });
+    stop = startMapSink(store, CHS, canvas, health, { inflate, hidden: () => hidden });
     gridFrame(store, 1);
     const newest = gridFrame(store, 2);
     expect(calls.length).toBe(0); // a backgrounded panel costs no inflate
@@ -556,7 +577,7 @@ describe("startMapSink", () => {
     const { inflate, calls, settlers } = deferredInflate();
     let resize: (() => void) | null = null;
     const dispose = vi.fn();
-    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, {
+    stop = startMapSink(store, CHS, canvas, health, {
       inflate,
       hidden: () => false,
       observeResize: (_el, cb) => {
@@ -582,7 +603,7 @@ describe("startMapSink", () => {
 
   it("stops inflating and drawing after cleanup", async () => {
     const { inflate, calls, settlers } = deferredInflate();
-    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    stop = startMapSink(store, CHS, canvas, health, { inflate, hidden: () => false });
     gridFrame(store, 1);
     stop();
     stop = null;
@@ -599,7 +620,7 @@ describe("startMapSink", () => {
 
   it("rotates the grid blit by -yaw and restores before the pose", async () => {
     const { inflate, settlers } = deferredInflate();
-    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    stop = startMapSink(store, CHS, canvas, health, { inflate, hidden: () => false });
     const value = { ...costmapValue(1), origin: [0.25, -0.5, 0.25] as [number, number, number] };
     store.ingest(MAP_CH, { ch: MAP_CH, seq: 1, ts: 1, delivery: "latest" }, value, true);
     settlers[0].resolve(new Uint8Array(4));
@@ -621,7 +642,7 @@ describe("startMapSink", () => {
 
   it("reuses the ImageData buffer across same-size grids", async () => {
     const { inflate, settlers } = deferredInflate();
-    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    stop = startMapSink(store, CHS, canvas, health, { inflate, hidden: () => false });
     gridFrame(store, 1);
     settlers[0].resolve(new Uint8Array(4));
     await flush();
@@ -641,7 +662,7 @@ describe("startMapSink", () => {
   it("sizes the backing store and pose marker by devicePixelRatio", async () => {
     vi.stubGlobal("devicePixelRatio", 2);
     const { inflate, settlers } = deferredInflate();
-    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    stop = startMapSink(store, CHS, canvas, health, { inflate, hidden: () => false });
     gridFrame(store, 1);
     settlers[0].resolve(new Uint8Array(4));
     await flush();
@@ -653,6 +674,63 @@ describe("startMapSink", () => {
     const [nx, ny] = display().moveTo.mock.calls[0];
     expect(nx).toBeCloseTo(ex, 9); // the sink passed its dpr to the marker
     expect(ny).toBeCloseTo(ey, 9);
+  });
+
+  it("draws the path under the pose and clears it on an empty path", async () => {
+    const { inflate, calls, settlers } = deferredInflate();
+    const opts = { ...CHS, path: PATH_CH };
+    stop = startMapSink(store, opts, canvas, health, { inflate, hidden: () => false });
+    gridFrame(store, 1);
+    settlers[0].resolve(new Uint8Array(4));
+    await flush();
+    poseFrame(store, 1);
+    expect(display().stroke).not.toHaveBeenCalled();
+
+    // The 1x1 m grid fits the 100x80 canvas at 80 px/m, letterboxed to
+    // x 10..90 with world y -0.5 on canvas row 80.
+    pathFrame(store, 1, [[0.5, -0.25], [0.75, 0], [1.0, 0.25]]);
+    expect(display().stroke).toHaveBeenCalledTimes(1);
+    expect(display().moveTo.mock.calls).toContainEqual([30, 60]);
+    expect(display().lineTo.mock.calls).toContainEqual([50, 40]);
+    expect(display().lineTo.mock.calls).toContainEqual([70, 20]);
+    // Under the pose: the stroke precedes this draw's triangle fill.
+    const fills = display().fill.mock.invocationCallOrder;
+    expect(display().stroke.mock.invocationCallOrder[0]).toBeLessThan(fills[fills.length - 1]);
+    expect(calls.length).toBe(1); // no re-inflate for an overlay
+
+    pathFrame(store, 2, []); // cancel/arrival: the overlay goes, the pose stays
+    expect(display().stroke).toHaveBeenCalledTimes(1);
+    expect(display().fill).toHaveBeenCalledTimes(3);
+  });
+
+  it("maps a click through the fitted transform at the device pixel ratio", async () => {
+    vi.stubGlobal("devicePixelRatio", 2);
+    const { inflate, settlers } = deferredInflate();
+    const clicks: [number, number][] = [];
+    const opts = { ...CHS, onClick: (x: number, y: number) => clicks.push([x, y]) };
+    stop = startMapSink(store, opts, canvas, health, { inflate, hidden: () => false });
+    defineRect(canvas, 10, 20, 100, 80);
+    click(canvas, 60, 60);
+    expect(clicks).toEqual([]); // no grid yet: no world frame
+
+    gridFrame(store, 1);
+    settlers[0].resolve(new Uint8Array(4));
+    await flush();
+    // The canvas centre is the centre of the fitted grid: world (0.75, 0).
+    click(canvas, 60, 60);
+    // CSS (10, 60) is backing-store (20, 120): the AABB's left edge, a
+    // quarter of the way up.
+    click(canvas, 20, 80);
+    expect(clicks.length).toBe(2);
+    expect(clicks[0][0]).toBeCloseTo(0.75, 9);
+    expect(clicks[0][1]).toBeCloseTo(0, 9);
+    expect(clicks[1][0]).toBeCloseTo(0.25, 9);
+    expect(clicks[1][1]).toBeCloseTo(-0.25, 9);
+
+    stop!();
+    stop = null;
+    click(canvas, 60, 60);
+    expect(clicks.length).toBe(2); // the listener left with the sink
   });
 });
 
@@ -790,5 +868,62 @@ describe("MapPanel", () => {
     );
     expect(container.textContent).toContain("no channel bound");
     expect(container.querySelector("canvas")).toBeNull();
+  });
+
+  const NAV_SPEC: PanelSpec = {
+    ...SPEC,
+    params: { path: PATH_CH, click: "clicked_point", stop: "stop_movement" },
+  };
+  const cancel = () => container.querySelector(`[data-testid="map2d-${MAP_CH}-cancel"]`);
+
+  it("publishes a click as {x, y} on the click channel and reports a rejection", async () => {
+    const session = new FakeSession();
+    act(() => root.render(<MapPanel spec={NAV_SPEC} store={store} session={session} />));
+    const canvas = container.querySelector("canvas")!;
+    defineRect(canvas, 0, 0, 100, 80);
+    await act(async () => {
+      realGridFrame(1, now / 1000);
+      await flush();
+    });
+    act(() => click(canvas, 50, 40)); // the centre of the fitted grid
+    expect(session.published).toEqual([["clicked_point", { x: 0.75, y: 0 }]]);
+    await act(async () => {});
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+
+    session.reject = new PublishError("rejected", "not_connected", "no session");
+    act(() => click(canvas, 50, 40));
+    await act(async () => {});
+    expect(container.querySelector('[role="alert"]')!.textContent).toBe(
+      "send failed: not_connected: no session",
+    );
+  });
+
+  it("shows the cancel button only while a path is active and publishes the stop", () => {
+    const session = new FakeSession();
+    act(() => root.render(<MapPanel spec={NAV_SPEC} store={store} session={session} />));
+    expect(cancel()).toBeNull();
+    act(() => {
+      pathFrame(store, 1, [[0.5, 0], [1.0, 0]]);
+      store.publishUi();
+    });
+    expect(cancel()).not.toBeNull();
+    act(() => (cancel() as HTMLButtonElement).click());
+    expect(session.published).toEqual([["stop_movement", true]]);
+
+    act(() => {
+      pathFrame(store, 2, []); // the planner cleared it: nothing left to cancel
+      store.publishUi();
+    });
+    expect(cancel()).toBeNull();
+  });
+
+  it("renders neither the cancel button nor the crosshair without a session", () => {
+    act(() => root.render(<MapPanel spec={NAV_SPEC} store={store} />));
+    act(() => {
+      pathFrame(store, 1, [[0.5, 0], [1.0, 0]]);
+      store.publishUi();
+    });
+    expect(cancel()).toBeNull();
+    expect(container.querySelector("canvas")!.className).not.toContain("clickable");
   });
 });
