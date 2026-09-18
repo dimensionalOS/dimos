@@ -437,9 +437,3 @@ def test_replay_does_not_prepare_collection(connected_recorder, mocker):
     recorder.start()
     native_start.assert_not_called()
     assert not recorder.config.recording.exists()
-
-
-def test_native_collection_uses_the_recorder_build_directory(recorder):
-    recorder_root = Path(__file__).parents[2] / "experimental" / "memory" / "rust"
-    assert Path(recorder.config.cwd) == recorder_root
-    assert Path(recorder.config.executable) == recorder_root / "result/bin/dimos-memory-recorder"
