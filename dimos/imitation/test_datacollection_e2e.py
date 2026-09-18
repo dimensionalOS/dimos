@@ -156,7 +156,10 @@ def _record_session(db_path: Path, executable: Path) -> dict[str, int]:
 
     def stream_count(name: str) -> int:
         with SqliteStore(path=str(db_path), must_exist=True) as store:
-            return store.stream(name).count()
+            stream = store.stream(name)
+            if name == "status":
+                return sum(obs.data.last_event != "init" for obs in stream.to_list())
+            return stream.count()
 
     def publish(name: str, message: Any) -> None:
         counts[name] += 1
@@ -176,14 +179,20 @@ def _record_session(db_path: Path, executable: Path) -> dict[str, int]:
     try:
         recorder.start()
         ready = _status(1.0, "init", "idle", 0, 0, "")
+
+        def received_probe() -> bool:
+            with SqliteStore(path=str(db_path), must_exist=True) as store:
+                if store.stream("status").count() > 0:
+                    return True
+            transports["status"].broadcast(None, ready)
+            return False
+
         wait_until(
-            lambda: stream_count("status") > 0
-            or (transports["status"].broadcast(None, ready), False)[1],
+            received_probe,
             timeout=10.0,
             interval=0.1,
             message="native collection status subscription did not become ready",
         )
-        counts["status"] = stream_count("status")
         saved = 0
         discarded = 0
         for start_ts, task, success, base in episodes:
@@ -263,7 +272,11 @@ def recorded_session(
     with SqliteStore(path=str(db_path), must_exist=True) as store:
         assert store.stream("color_image").count() == 9
         assert store.stream("coordinator_joint_state").count() == 9
-        assert store.stream("status").count() == counts["status"]
+        assert (
+            sum(obs.data.last_event != "init" for obs in store.stream("status").to_list())
+            == counts["status"]
+            == 7
+        )
         episodes = extract_episodes(store, EpisodeExtractor(status_stream="status"))
         assert [
             (episode.start_ts, episode.end_ts, episode.success, episode.task_label)
