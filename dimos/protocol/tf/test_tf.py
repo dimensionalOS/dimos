@@ -639,9 +639,10 @@ def _t(parent: str, child: str, x: float, ts: float) -> Transform:
     params=[
         "live",
         "stream_memory",
-        # sqlite-vec ships a 32-bit binary in the aarch64 wheel and fails to
-        # load on macOS CI (same guard as memory/conftest.py).
-        pytest.param("stream_sqlite", marks=[pytest.mark.skipif_aarch64, pytest.mark.skipif_macos]),
+        pytest.param(
+            "stream_sqlite",
+            marks=[pytest.mark.skipif_aarch64, pytest.mark.macos_ci],
+        ),
     ]
 )
 def make_tf(request, tmp_path):  # type: ignore[no-untyped-def]
