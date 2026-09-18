@@ -38,17 +38,14 @@ from dimos.manipulation.manipulation_module import (
     ManipulationState,
 )
 from dimos.manipulation.manipulation_spec import ExecutionStatus
-from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
-from dimos.robot.assets.model import RobotModel
-from dimos.utils.data import get_data
+from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
 
 pytestmark = pytest.mark.self_hosted
 
@@ -57,35 +54,8 @@ def _drake_available() -> bool:
     return importlib.util.find_spec("pydrake") is not None
 
 
-def _xarm_urdf_available() -> bool:
-    try:
-        desc_path = get_data("xarm_description")
-        model_path = desc_path / "urdf/xarm_device.urdf.xacro"
-        return model_path.exists()
-    except Exception:
-        return False
-
-
 def _get_xarm7_config() -> RobotModelConfig:
-    """Create XArm7 robot config for testing."""
-    desc_path = get_data("xarm_description")
-    return RobotModelConfig(
-        model=RobotModel.from_file(desc_path / "urdf/xarm_device.urdf.xacro"),
-        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
-        joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
-        base_link="link_base",
-        planning_groups=[
-            PlanningGroupDefinition(
-                name="manipulator",
-                joint_names=("joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"),
-                base_link="link_base",
-                tip_link="link7",
-            )
-        ],
-        package_paths={"xarm_description": desc_path},
-        xacro_args={"dof": "7", "limited": "true"},
-        auto_convert_meshes=True,
-    )
+    return make_xarm7_model_config(add_gripper=False)
 
 
 @pytest.fixture
@@ -142,7 +112,6 @@ def module(xarm7_config):
 
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
-@pytest.mark.skipif(not _xarm_urdf_available(), reason="XArm URDF not available")
 class TestManipulationModuleIntegration:
     """Integration tests for ManipulationModule with real Drake backend."""
 
@@ -252,7 +221,6 @@ class TestManipulationModuleIntegration:
 
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
-@pytest.mark.skipif(not _xarm_urdf_available(), reason="XArm URDF not available")
 class TestCoordinatorIntegration:
     """Test coordinator integration with mocked RPC client."""
 
