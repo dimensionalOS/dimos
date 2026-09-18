@@ -104,7 +104,7 @@ _openyam_webxr_task = teleop_ik_task(
     robot_model=_openyam_webxr_model,
     name=OPENYAM_WEBXR_TASK_NAME,
     joint_names=OPENYAM_ARM_JOINTS,
-    priority=10,
+    priority=20,
     solver_type=OpenYamPinkPoseTargetSolver,
     bindings=[
         {
@@ -136,7 +136,7 @@ teleop_webxr_openyam = autoconnect(
                 priority=20,
                 stream_bind={"gripper_command": "right_gripper_command"},
             ),
-            _trajectory_task(priority=20),
+            _trajectory_task(priority=10),
         ],
     ),
     ManipulationModule.blueprint(
@@ -158,9 +158,9 @@ keyboard_teleop_openyam_planner = autoconnect(
     coordinator(
         hardware=[_openyam_keyboard_planner_hw],
         tasks=[
-            _eef_twist_task(priority=10),
+            _eef_twist_task(priority=20),
             _gripper_task(),
-            _trajectory_task(priority=20),
+            _trajectory_task(priority=10),
         ],
     ),
 )

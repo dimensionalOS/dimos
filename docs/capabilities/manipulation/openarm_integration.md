@@ -68,10 +68,12 @@ both `--left-can-port` and `--right-can-port` selects the physical adapter.
 ## WebXR controls and safety
 
 The WebXR blueprint drives both arms through one bimanual IK task. Hold both
-controllers' primary buttons to engage it. Releasing either button stops arm
-output and clears both controller references. Each trigger publishes normalized
-opening to a dedicated gripper task on the same side. Planned trajectories run
-at a higher priority and preempt streaming teleoperation.
+controllers' middle-finger grips to engage it. Releasing either grip stops arm
+output and clears both controller references. Each index-finger trigger controls
+gripper opening on the same side while that hand's grip is held. Face buttons
+remain available for other controls. Manual arm and gripper control
+have higher priority than planned or policy trajectories; taking control aborts
+the active trajectory.
 
 The Damiao adapter derives angular joint limits from the official robot model.
 It clamps encoder feedback up to `0.05 rad` beyond a limit; larger excursions

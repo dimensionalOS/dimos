@@ -23,7 +23,9 @@ from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
     XARM7_SIM_PATH,
+    lite6_hardware,
     make_dual_xarm6_model_config,
+    make_lite6_model_config,
     make_xarm7_model_config,
     make_xarm_hardware,
     xarm6_hardware,
@@ -92,6 +94,29 @@ coordinator_xarm6 = autoconnect(
         tasks=[trajectory_task(_coordinator_xarm6_hw), _gripper_task()],
     ),
     *mujoco_if_sim(XARM6_SIM_PATH, len(_coordinator_xarm6_hw.joints)),
+)
+
+_coordinator_lite6_hw = lite6_hardware("arm", gripper=True)
+
+coordinator_lite6 = ControlCoordinator.blueprint(
+    hardware=[_coordinator_lite6_hw],
+    tasks=[trajectory_task(_coordinator_lite6_hw), _gripper_task()],
+)
+
+_lite6_hw = lite6_hardware("arm", gripper=True, mock_without_address=True)
+
+lite6_planner_coordinator = autoconnect(
+    planner(
+        model=make_lite6_model_config(
+            add_gripper=True,
+            gripper_hardware_id="arm",
+        ),
+        visualization={"backend": "viser"},
+    ),
+    coordinator(
+        hardware=[_lite6_hw],
+        tasks=[trajectory_task(_lite6_hw), _gripper_task()],
+    ),
 )
 
 _xarm7_left = xarm7_hardware(

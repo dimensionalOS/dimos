@@ -742,8 +742,7 @@ ignore = [
     "uv.lock",
     # an evolved planner: one generated rust file, not hand-edited source
     "dimos/navigation/local_planner/rust/src/planner.rs",
-    "native/python/example/uv.lock",
-    "native/python/graspgenx/uv.lock",
+    "*/uv.lock",
     "*/package-lock.json",
     "Cargo.lock",
     "*/Cargo.lock",
