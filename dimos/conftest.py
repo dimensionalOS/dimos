@@ -221,20 +221,36 @@ def pytest_configure(config):
         )
 
 
-@pytest.fixture(autouse=True)
-def _restore_global_config():
-    """Undo global_config mutations after every test.
-
-    A build from a parsed config resets the singleton to the parse's full
-    resolution. With a hermetic parse (environ={}) that reverts mcp_port to
-    its schema default, and every later test on the worker then binds the
-    port every other worker also defaults to.
-    """
+def _global_config_guard():
     from dimos.core.global_config import global_config
 
     snapshot = global_config.model_dump()
     yield
     global_config.update(**snapshot)
+
+
+# Undo global_config mutations when the scope that made them ends. Without
+# the class and module guards, a class-scoped fixture's
+# `global_config.update(viewer="none", n_workers=1)` stays in effect for
+# every later test in the session.
+#
+# A build from a parsed config resets the singleton to the parse's full
+# resolution. With a hermetic parse (environ={}) that reverts mcp_port to
+# its schema default, and every later test on the worker then binds the
+# port every other worker also defaults to.
+@pytest.fixture(autouse=True)
+def _restore_global_config():
+    yield from _global_config_guard()
+
+
+@pytest.fixture(autouse=True, scope="class")
+def _restore_global_config_class():
+    yield from _global_config_guard()
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _restore_global_config_module():
+    yield from _global_config_guard()
 
 
 @pytest.fixture(scope="session")
