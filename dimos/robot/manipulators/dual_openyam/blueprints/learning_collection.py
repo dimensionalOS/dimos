@@ -18,7 +18,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
-from dimos.imitation.collection.native_recorder import collection_recorder
+from dimos.imitation.collection.recorder import collection_recorder
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import build_dual_openyam_webxr
 from dimos.robot.manipulators.dual_openyam.learning import DUAL_OPENYAM_COLLECTION
