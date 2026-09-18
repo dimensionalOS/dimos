@@ -18,6 +18,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -119,3 +120,15 @@ def test_move_to_relative_turn_in_place() -> None:
     goal = _goal_pose(_pose(0, 0, 90), 0, 0, -90, relative=True)
     assert _xy(goal) == pytest.approx((0, 0))
     assert _yaw_deg(goal) == pytest.approx(0)
+
+
+def test_navigation_timeout_cancels_goal(mocker: MockerFixture) -> None:
+    module = UnitreeSkillContainer()
+    navigation = mocker.Mock()
+    mocker.patch.object(module, "_navigation", navigation, create=True)
+    mocker.patch("dimos.robot.unitree.unitree_skill_container.time.sleep")
+    try:
+        assert module._wait_for_goal(timeout=0) == "Navigation timed out"
+        navigation.cancel_goal.assert_called_once_with()
+    finally:
+        module.stop()
