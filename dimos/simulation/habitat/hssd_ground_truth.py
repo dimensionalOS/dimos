@@ -16,8 +16,8 @@
 
 HSSD composes a scene from a stage mesh plus placed object assets
 (``scenes/<id>.scene_instance.json``). This module reads those files with
-trimesh, measures a tight world-axis-aligned box per placed object and per wall
-node of the stage, and exports them through
+trimesh, measures a tight world-axis-aligned box per placed object and per
+stage wall, and exports them through
 :mod:`dimos.simulation.object_detections` in the DimOS Z-up ``world`` frame, the
 frame the Habitat connection publishes odometry in. No simulator is needed.
 
@@ -83,9 +83,20 @@ HSSD_SCENE_IDS: tuple[str, ...] = (
     "108736851_177263586",
     "108736884_177263634",
 )
-# Stage nodes with "wall" or "wallTop" as a name token: wall_0.003, geometry_wall.102,
-# geometry_wallTop.124. Not "wallpaper" or "drywall".
-WALL_NAME_PATTERN = re.compile(r"(?:^|[-_. ])wall(?:top)?(?:[-_. ]|$)", re.IGNORECASE)
+# Stage meshes holding wall top faces: geometry_wallTop.124, whether under a wall_<n>
+# group or merged into the stage's top-level leftovers. Not geometry_wall.* (bottom strips).
+WALL_TOP_PATTERN = re.compile(r"(?:^|[-_. ])walltop(?:[-_. ]|$)", re.IGNORECASE)
+# A top face is a flat quad at ceiling height; the same meshes also hold bottom strips.
+WALL_FLAT_MAX_M = 0.02
+WALL_TOP_MIN_HEIGHT_M = 1.0
+# Touching collinear faces merge into one wall as long as the union stays wall-thin,
+# which keeps perpendicular walls at L and T junctions apart.
+WALL_MERGE_TOLERANCE_M = 0.03
+WALL_MAX_THICKNESS_M = 0.4
+# Pieces that nearly coincide (stacked bay-window and frame tops) merge even when thick.
+WALL_COINCIDENT_AREA_RATIO = 1.25
+WALL_MIN_LENGTH_M = 0.2
+WALL_LABEL = "wall"
 # Corners are rounded so regenerated files do not churn on float noise.
 CORNER_DECIMALS = 6
 
@@ -294,41 +305,97 @@ def object_boxes(
 
 
 def wall_boxes(stage: Any) -> list[GroundTruthBox]:
-    """One box per highest-level stage wall group, bounding its whole subtree.
+    """One box per wall, from the stage's ceiling-height ``wallTop`` faces.
 
-    HSSD stages group each wall as a ``wall_<n>`` node holding its faces and
-    trim (``geometry_wall*``, ``geometry_wallTop*``, colored panels). The two
-    top-level ``geometry_wall*`` leaves in every stage are merged leftovers of
-    the whole building, hundreds of disconnected quads, so leaf matches are
-    skipped. Node names double as ids; duplicates get a ``#n`` suffix. Walls are
-    returned sorted by id so the output does not depend on loader node order.
+    HSSD stages carry the top face of every wall, exterior and interior, in
+    meshes named ``geometry_wallTop*``: some under ``wall_<n>`` groups, the rest
+    merged into one top-level mesh. Each face is a flat quad at ceiling height.
+    Touching collinear faces merge into one segment while the union stays thinner
+    than :data:`WALL_MAX_THICKNESS_M`, so perpendicular walls stay separate; each
+    segment is extruded down to the stage floor. Walls are ordered by footprint
+    position (ROS x, then y) and named ``wall_<k>`` with label ``wall``.
     """
-    boxes = []
-    seen: dict[str, int] = {}
-    children = stage.graph.transforms.children
-    stack = list(reversed(children.get(stage.graph.base_frame, [])))
-    while stack:
-        node = stack.pop()
-        is_group = bool(children.get(node))
-        if not WALL_NAME_PATTERN.search(node):
-            stack.extend(reversed(children.get(node, [])))
+    floor_y = float(subtree_vertices(stage, stage.graph.base_frame)[:, 1].min())
+    faces: list[tuple[Vertices, Vertices]] = []
+    for node in stage.graph.nodes_geometry:
+        if not WALL_TOP_PATTERN.search(node):
             continue
-        if not is_group:
-            continue
-        vertices = subtree_vertices(stage, node)
-        if vertices.shape[0] == 0:
-            continue
-        count = seen.get(node, 0) + 1
-        seen[node] = count
-        boxes.append(
-            GroundTruthBox(
-                id=node if count == 1 else f"{node}#{count}",
-                labels=(node,),
-                min=_corner(vertices.min(axis=0)),
-                max=_corner(vertices.max(axis=0)),
+        transform, geometry = stage.graph[node]
+        for piece in stage.geometry[geometry].split(only_watertight=False):
+            vertices = np.asarray(
+                trimesh.transform_points(piece.vertices, transform), dtype=np.float64
             )
+            lo, hi = vertices.min(axis=0), vertices.max(axis=0)
+            if hi[1] - lo[1] > WALL_FLAT_MAX_M or lo[1] < floor_y + WALL_TOP_MIN_HEIGHT_M:
+                continue
+            faces.append((lo, hi))
+    segments = [
+        (lo, hi)
+        for lo, hi in _merge_wall_faces(faces)
+        if max(hi[0] - lo[0], hi[2] - lo[2]) >= WALL_MIN_LENGTH_M
+    ]
+    # Habitat (x, y, z) -> ROS (-z, -x, y): order by the ROS min corner.
+    segments.sort(key=lambda seg: (round(-seg[1][2], 3), round(-seg[1][0], 3)))
+    return [
+        GroundTruthBox(
+            id=f"wall_{index:03d}",
+            labels=(WALL_LABEL,),
+            min=_corner(np.array([lo[0], floor_y, lo[2]])),
+            max=_corner(hi),
         )
-    return sorted(boxes, key=lambda box: box.id)
+        for index, (lo, hi) in enumerate(segments)
+    ]
+
+
+def _merge_wall_faces(faces: list[tuple[Vertices, Vertices]]) -> list[tuple[Vertices, Vertices]]:
+    """Union touching faces into wall segments.
+
+    Two footprints merge when they touch and the union is still wall-thin, or
+    when they nearly coincide; a thick union of distinct pieces (an L or T
+    junction) is never merged.
+    """
+    segments: list[tuple[Vertices, Vertices]] = []
+    for lo, hi in faces:
+        merged = True
+        while merged:
+            merged = False
+            for index, (seg_lo, seg_hi) in enumerate(segments):
+                if not _footprints_touch(lo, hi, seg_lo, seg_hi):
+                    continue
+                union_lo, union_hi = np.minimum(lo, seg_lo), np.maximum(hi, seg_hi)
+                thin = (
+                    min(union_hi[0] - union_lo[0], union_hi[2] - union_lo[2])
+                    <= WALL_MAX_THICKNESS_M
+                )
+                # Against the smaller piece: near-duplicates merge, but a chain of partial
+                # overlaps can never grow a segment step by step.
+                coincident = _footprint_area(
+                    union_lo, union_hi
+                ) <= WALL_COINCIDENT_AREA_RATIO * min(
+                    _footprint_area(lo, hi), _footprint_area(seg_lo, seg_hi)
+                )
+                if not (thin or coincident):
+                    continue
+                lo, hi = union_lo, union_hi
+                del segments[index]
+                merged = True
+                break
+        segments.append((lo, hi))
+    return segments
+
+
+def _footprint_area(lo: Vertices, hi: Vertices) -> float:
+    return float((hi[0] - lo[0]) * (hi[2] - lo[2]))
+
+
+def _footprints_touch(a_lo: Vertices, a_hi: Vertices, b_lo: Vertices, b_hi: Vertices) -> bool:
+    tol = WALL_MERGE_TOLERANCE_M
+    return bool(
+        a_lo[0] - tol <= b_hi[0]
+        and a_hi[0] + tol >= b_lo[0]
+        and a_lo[2] - tol <= b_hi[2]
+        and a_hi[2] + tol >= b_lo[2]
+    )
 
 
 def scene_boxes(

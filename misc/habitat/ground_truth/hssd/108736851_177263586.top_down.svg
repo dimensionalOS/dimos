@@ -90,32 +90,28 @@
 <line x1="-5.550" y1="-22" x2="11.009" y2="-22" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
 <text x="-5.373" y="-21.846" font-size="0.441" fill="#52514e">22</text>
 <line x1="-5.550" y1="-23" x2="11.009" y2="-23" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
-<rect x="-4.550" y="15.560" width="10.689" height="0.150" fill="#52514e"><title>wall_15.091</title></rect>
-<rect x="6.140" y="15.560" width="3.018" height="0.150" fill="#52514e"><title>wall_16.087</title></rect>
-<rect x="9.008" y="1.760" width="0.150" height="7.091" fill="#52514e"><title>wall_19.098</title></rect>
-<rect x="9.008" y="8.852" width="0.150" height="6.859" fill="#52514e"><title>wall_20.091</title></rect>
-<rect x="5.653" y="-10.360" width="4.356" height="0.150" fill="#52514e"><title>wall_27.080</title></rect>
-<rect x="9.083" y="1.685" width="0.927" height="0.150" fill="#52514e"><title>wall_28.090</title></rect>
-<rect x="9.859" y="-10.360" width="0.150" height="12.195" fill="#52514e"><title>wall_29.090</title></rect>
-<rect x="5.653" y="-15.537" width="0.150" height="5.327" fill="#52514e"><title>wall_30.081</title></rect>
-<rect x="-3.976" y="-15.537" width="0.150" height="5.327" fill="#52514e"><title>wall_31.066</title></rect>
-<rect x="5.653" y="-21.992" width="0.150" height="6.455" fill="#52514e"><title>wall_32.062</title></rect>
-<rect x="-0.592" y="-19.424" width="0.150" height="3.887" fill="#52514e"><title>wall_34.069</title></rect>
-<rect x="-0.517" y="-15.612" width="0.119" height="0.150" fill="#52514e"><title>wall_35.067</title></rect>
-<rect x="-3.976" y="-19.424" width="0.150" height="3.887" fill="#52514e"><title>wall_37.059</title></rect>
-<rect x="-3.976" y="-21.992" width="0.150" height="2.568" fill="#52514e"><title>wall_39.063</title></rect>
-<rect x="-4.550" y="10.898" width="0.150" height="4.813" fill="#52514e"><title>wall_4.123</title></rect>
-<rect x="-0.517" y="-19.499" width="0.119" height="0.150" fill="#52514e"><title>wall_40.056</title></rect>
-<rect x="-0.473" y="-19.424" width="0.150" height="3.887" fill="#52514e"><title>wall_41.060</title></rect>
-<rect x="-3.976" y="-21.992" width="3.578" height="0.150" fill="#52514e"><title>wall_43.054</title></rect>
-<rect x="-0.398" y="-21.992" width="6.201" height="0.150" fill="#52514e"><title>wall_44.050</title></rect>
-<rect x="-4.550" y="7.670" width="0.150" height="3.228" fill="#52514e"><title>wall_5.124</title></rect>
-<rect x="-4.550" y="0.946" width="3.952" height="0.150" fill="#52514e"><title>wall_50.044</title></rect>
-<rect x="-4.550" y="0.946" width="0.150" height="6.724" fill="#52514e"><title>wall_51.041</title></rect>
-<rect x="-0.749" y="-10.285" width="0.150" height="0.078" fill="#52514e"><title>wall_6.105</title></rect>
-<rect x="-3.976" y="-10.360" width="3.302" height="0.150" fill="#52514e"><title>wall_7.121</title></rect>
-<rect x="-0.674" y="-10.360" width="0.151" height="0.150" fill="#52514e"><title>wall_8.109</title></rect>
-<rect x="-0.672" y="-10.360" width="0.150" height="11.380" fill="#52514e"><title>wall_9.101</title></rect>
+<rect x="-4.550" y="15.560" width="13.707" height="0.150" fill="#52514e"><title>wall_000</title></rect>
+<rect x="-4.550" y="0.946" width="0.150" height="14.765" fill="#52514e"><title>wall_001</title></rect>
+<rect x="-4.550" y="0.946" width="3.952" height="0.150" fill="#52514e"><title>wall_002</title></rect>
+<rect x="-4.475" y="10.823" width="3.877" height="0.150" fill="#52514e"><title>wall_003</title></rect>
+<rect x="-4.475" y="7.595" width="3.877" height="0.150" fill="#52514e"><title>wall_004</title></rect>
+<rect x="-3.976" y="-21.992" width="0.150" height="11.782" fill="#52514e"><title>wall_005</title></rect>
+<rect x="-3.976" y="-10.360" width="3.302" height="0.150" fill="#52514e"><title>wall_006</title></rect>
+<rect x="-3.976" y="-21.992" width="9.779" height="0.298" fill="#52514e"><title>wall_007</title></rect>
+<rect x="-3.901" y="-15.635" width="9.703" height="0.173" fill="#52514e"><title>wall_008</title></rect>
+<rect x="-3.901" y="-19.499" width="3.503" height="0.150" fill="#52514e"><title>wall_009</title></rect>
+<rect x="-0.749" y="-10.360" width="0.239" height="21.333" fill="#52514e"><title>wall_010</title></rect>
+<rect x="-0.592" y="-21.917" width="0.269" height="6.380" fill="#52514e"><title>wall_011</title></rect>
+<rect x="-0.509" y="10.823" width="6.730" height="0.150" fill="#52514e"><title>wall_012</title></rect>
+<rect x="1.077" y="1.685" width="0.150" height="9.212" fill="#52514e"><title>wall_013</title></rect>
+<rect x="1.077" y="1.685" width="8.932" height="0.150" fill="#52514e"><title>wall_014</title></rect>
+<rect x="1.152" y="6.908" width="4.987" height="0.250" fill="#52514e"><title>wall_015</title></rect>
+<rect x="5.653" y="-21.694" width="0.150" height="11.485" fill="#52514e"><title>wall_016</title></rect>
+<rect x="5.653" y="-10.360" width="4.356" height="0.150" fill="#52514e"><title>wall_017</title></rect>
+<rect x="6.065" y="1.760" width="0.150" height="13.875" fill="#52514e"><title>wall_018</title></rect>
+<rect x="6.140" y="8.777" width="2.943" height="0.150" fill="#52514e"><title>wall_019</title></rect>
+<rect x="9.008" y="1.760" width="0.150" height="13.950" fill="#52514e"><title>wall_020</title></rect>
+<rect x="9.859" y="-10.360" width="0.150" height="12.195" fill="#52514e"><title>wall_021</title></rect>
 <rect x="-1.166" y="-13.745" width="0.324" height="0.321" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Emma Bridgewater Union Jack Rectangular Tin</title></rect>
 <rect x="4.440" y="-21.808" width="1.180" height="1.242" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Set of 2 Steel Trunks</title></rect>
 <rect x="3.127" y="3.816" width="0.567" height="1.246" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Set of 2 Steel Trunks</title></rect>
@@ -520,5 +516,5 @@
 <text x="0.329" y="-8.742" font-size="0.441" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.110">couch</text>
 <text x="4.415" y="8.103" font-size="0.441" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.110">carpet</text>
 <text x="3.739" y="13.282" font-size="0.441" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.110">carpet</text>
-<text x="-5.109" y="-22.286" font-size="0.573" fill="#0b0b0b">hssd-hab 108736851_177263586  268 objects, 26 walls  (meters, ROS world frame: x right, y up)</text>
+<text x="-5.109" y="-22.286" font-size="0.573" fill="#0b0b0b">hssd-hab 108736851_177263586  268 objects, 22 walls  (meters, ROS world frame: x right, y up)</text>
 </svg>

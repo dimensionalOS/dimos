@@ -49,17 +49,20 @@
 <line x1="-0.999" y1="-12" x2="13.950" y2="-12" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
 <text x="-0.933" y="-11.942" font-size="0.166" fill="#52514e">12</text>
 <line x1="-0.999" y1="-13" x2="13.950" y2="-13" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
-<rect x="6.128" y="-11.640" width="2.313" height="0.300" fill="#52514e"><title>wall_11.079</title></rect>
-<rect x="8.441" y="-11.640" width="4.509" height="0.300" fill="#52514e"><title>wall_12.069</title></rect>
-<rect x="12.650" y="-11.640" width="0.300" height="11.640" fill="#52514e"><title>wall_13.077</title></rect>
-<rect x="0.001" y="-11.640" width="0.300" height="4.817" fill="#52514e"><title>wall_14.072</title></rect>
-<rect x="0.001" y="-6.823" width="0.300" height="1.965" fill="#52514e"><title>wall_16.063</title></rect>
-<rect x="0.001" y="-4.858" width="0.300" height="4.858" fill="#52514e"><title>wall_17.073</title></rect>
-<rect x="0.001" y="-0.300" width="4.141" height="0.300" fill="#52514e"><title>wall_19.076</title></rect>
-<rect x="4.142" y="-0.300" width="1.986" height="0.300" fill="#52514e"><title>wall_21.067</title></rect>
-<rect x="6.128" y="-0.300" width="6.822" height="0.300" fill="#52514e"><title>wall_22.068</title></rect>
-<rect x="4.142" y="-11.640" width="1.986" height="0.300" fill="#52514e"><title>wall_6.083</title></rect>
-<rect x="0.001" y="-11.640" width="4.141" height="0.300" fill="#52514e"><title>wall_7.092</title></rect>
+<rect x="0.001" y="-0.300" width="12.949" height="0.300" fill="#52514e"><title>wall_000</title></rect>
+<rect x="0.001" y="-11.640" width="0.300" height="11.640" fill="#52514e"><title>wall_001</title></rect>
+<rect x="0.001" y="-11.640" width="12.949" height="0.300" fill="#52514e"><title>wall_002</title></rect>
+<rect x="0.151" y="-4.933" width="6.052" height="0.150" fill="#52514e"><title>wall_003</title></rect>
+<rect x="0.151" y="-6.898" width="3.847" height="0.150" fill="#52514e"><title>wall_004</title></rect>
+<rect x="3.998" y="-11.490" width="0.298" height="4.742" fill="#52514e"><title>wall_005</title></rect>
+<rect x="4.067" y="-4.858" width="0.150" height="4.708" fill="#52514e"><title>wall_006</title></rect>
+<rect x="4.142" y="-9.907" width="1.986" height="0.150" fill="#52514e"><title>wall_007</title></rect>
+<rect x="4.296" y="-6.898" width="1.907" height="0.150" fill="#52514e"><title>wall_008</title></rect>
+<rect x="6.053" y="-4.933" width="0.150" height="4.783" fill="#52514e"><title>wall_009</title></rect>
+<rect x="6.053" y="-11.490" width="0.150" height="4.742" fill="#52514e"><title>wall_010</title></rect>
+<rect x="6.128" y="-8.443" width="2.388" height="0.150" fill="#52514e"><title>wall_011</title></rect>
+<rect x="8.366" y="-11.490" width="0.150" height="3.197" fill="#52514e"><title>wall_012</title></rect>
+<rect x="12.650" y="-11.640" width="0.300" height="11.640" fill="#52514e"><title>wall_013</title></rect>
 <rect x="12.270" y="-6.245" width="0.379" height="1.328" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Casio CDP100ST Lightweight Digital Piano.</title></rect>
 <rect x="10.652" y="-9.672" width="0.130" height="0.173" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Playboy - Ice Bucket</title></rect>
 <rect x="4.045" y="-0.580" width="1.584" height="1.583" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Staircase</title></rect>
@@ -175,5 +178,5 @@
 <text x="4.407" y="-2.761" font-size="0.098" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.024">cabinet</text>
 <text x="4.407" y="-3.523" font-size="0.098" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.024">cabinet</text>
 <text x="1.063" y="-7.139" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.042">chest_of_drawers</text>
-<text x="-0.833" y="-12.374" font-size="0.216" fill="#0b0b0b">hssd-hab 107734110_175999914  64 objects, 11 walls  (meters, ROS world frame: x right, y up)</text>
+<text x="-0.833" y="-12.374" font-size="0.216" fill="#0b0b0b">hssd-hab 107734110_175999914  64 objects, 14 walls  (meters, ROS world frame: x right, y up)</text>
 </svg>

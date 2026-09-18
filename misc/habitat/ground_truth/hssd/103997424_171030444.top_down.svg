@@ -56,20 +56,15 @@
 <line x1="3.870" y1="-20" x2="17.248" y2="-20" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
 <text x="3.948" y="-19.932" font-size="0.195" fill="#52514e">20</text>
 <line x1="3.870" y1="-21" x2="17.248" y2="-21" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
-<rect x="4.870" y="-17.234" width="0.150" height="4.636" fill="#52514e"><title>wall_0.028</title></rect>
-<rect x="4.870" y="-19.698" width="0.150" height="2.464" fill="#52514e"><title>wall_1.029</title></rect>
-<rect x="10.867" y="-8.892" width="0.150" height="4.788" fill="#52514e"><title>wall_10.023</title></rect>
-<rect x="10.867" y="-12.598" width="0.150" height="3.706" fill="#52514e"><title>wall_13.020</title></rect>
-<rect x="4.870" y="-19.698" width="3.070" height="0.150" fill="#52514e"><title>wall_15.017</title></rect>
-<rect x="7.940" y="-19.698" width="3.002" height="0.150" fill="#52514e"><title>wall_17.016</title></rect>
-<rect x="10.942" y="-19.698" width="5.266" height="0.150" fill="#52514e"><title>wall_18.023</title></rect>
-<rect x="10.942" y="-12.673" width="5.266" height="0.150" fill="#52514e"><title>wall_19.023</title></rect>
-<rect x="4.870" y="-12.598" width="0.150" height="5.498" fill="#52514e"><title>wall_2.028</title></rect>
-<rect x="16.058" y="-19.698" width="0.150" height="7.175" fill="#52514e"><title>wall_20.018</title></rect>
-<rect x="4.870" y="-7.099" width="0.150" height="2.996" fill="#52514e"><title>wall_3.027</title></rect>
-<rect x="4.870" y="-4.254" width="1.246" height="0.150" fill="#52514e"><title>wall_4.024</title></rect>
-<rect x="6.115" y="-4.254" width="1.470" height="0.150" fill="#52514e"><title>wall_6.019</title></rect>
-<rect x="7.585" y="-4.254" width="3.431" height="0.150" fill="#52514e"><title>wall_8.021</title></rect>
+<rect x="4.870" y="-4.254" width="6.147" height="0.150" fill="#52514e"><title>wall_000</title></rect>
+<rect x="4.870" y="-19.698" width="0.150" height="15.595" fill="#52514e"><title>wall_001</title></rect>
+<rect x="4.870" y="-19.698" width="11.338" height="0.150" fill="#52514e"><title>wall_002</title></rect>
+<rect x="4.945" y="-7.174" width="2.641" height="0.150" fill="#52514e"><title>wall_003</title></rect>
+<rect x="7.510" y="-12.673" width="0.150" height="8.494" fill="#52514e"><title>wall_004</title></rect>
+<rect x="7.510" y="-12.673" width="8.697" height="0.150" fill="#52514e"><title>wall_005</title></rect>
+<rect x="7.585" y="-8.967" width="3.356" height="0.150" fill="#52514e"><title>wall_006</title></rect>
+<rect x="10.867" y="-19.623" width="0.150" height="15.520" fill="#52514e"><title>wall_007</title></rect>
+<rect x="16.058" y="-19.698" width="0.150" height="7.175" fill="#52514e"><title>wall_008</title></rect>
 <rect x="6.352" y="-5.149" width="0.206" height="0.244" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>book</title></rect>
 <rect x="7.207" y="-12.673" width="0.303" height="0.415" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>floor_lamp</title></rect>
 <rect x="9.396" y="-13.174" width="0.701" height="0.501" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>range_hood</title></rect>
@@ -309,5 +304,5 @@
 <text x="8.494" y="-12.858" font-size="0.195" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.049">cabinet</text>
 <text x="6.130" y="-4.887" font-size="0.195" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.049">table</text>
 <text x="9.796" y="-6.504" font-size="0.195" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.049">bed</text>
-<text x="4.065" y="-20.386" font-size="0.254" fill="#0b0b0b">hssd-hab 103997424_171030444  173 objects, 14 walls  (meters, ROS world frame: x right, y up)</text>
+<text x="4.065" y="-20.386" font-size="0.254" fill="#0b0b0b">hssd-hab 103997424_171030444  173 objects, 9 walls  (meters, ROS world frame: x right, y up)</text>
 </svg>

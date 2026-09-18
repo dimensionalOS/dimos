@@ -49,7 +49,7 @@ class Rect:
 
     @property
     def is_wall(self) -> bool:
-        return self.id == self.label
+        return self.label == "wall"
 
 
 def load(path: Path) -> tuple[dict[str, object], list[Rect]]:

@@ -27,7 +27,7 @@ from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.simulation.habitat import frames
 from dimos.simulation.habitat.hssd_ground_truth import (
     HSSD_DATASET_CONFIG_ENV,
-    WALL_NAME_PATTERN,
+    WALL_TOP_PATTERN,
     HssdDataset,
     LabelMode,
     habitat_to_ros,
@@ -50,31 +50,57 @@ def _box(name: str, lo: tuple[float, float, float], hi: tuple[float, float, floa
     return mesh
 
 
+def _quad(x0: float, x1: float, y: float, z0: float, z1: float) -> Any:
+    """A flat quad at height ``y`` spanning x0..x1 and z0..z1 (Habitat frame)."""
+    return trimesh.Trimesh(
+        vertices=[[x0, y, z0], [x1, y, z0], [x1, y, z1], [x0, y, z1]],
+        faces=[[0, 1, 2], [0, 2, 3]],
+        process=False,
+    )
+
+
 def _stage_glb(path: Path) -> None:
     scene: Any = trimesh.Scene()
+    # Merged top-level wallTop mesh: one 2 m wall split into two collinear pieces, a
+    # perpendicular 1.5 m wall touching its end, and a bottom strip that must be ignored.
+    merged_top = trimesh.util.concatenate(
+        [
+            _quad(0.0, 1.0, 2.7, 0.0, 0.1),
+            _quad(1.0, 2.0, 2.7, 0.0, 0.1),
+            _quad(1.95, 2.05, 2.7, 0.1, 1.6),
+            _quad(0.0, 2.0, 0.0, 0.0, 0.1),
+            # A bay-window block: two nearly coincident thick tops that must become one wall.
+            _quad(4.0, 4.8, 2.7, 0.0, 0.9),
+            _quad(4.02, 4.8, 2.7, 0.0, 0.92),
+        ]
+    )
+    scene.add_geometry(
+        merged_top, node_name="geometry_wallTop.146", geom_name="geometry_wallTop.146"
+    )
+    # Side face of the same wall: not a top face, never a wall on its own.
+    scene.add_geometry(
+        _box("geometry_wall.123", (0, 0, 0), (2, 2.7, 0.001)),
+        node_name="geometry_wall.123",
+        geom_name="geometry_wall.123",
+    )
+    # A grouped wall carries its own wallTop child.
     scene.graph.update(frame_to=WALL_PARENT, frame_from=scene.graph.base_frame, matrix=np.eye(4))
     scene.add_geometry(
-        _box("geometry_wall", (0, 0, 0), (2, 2.5, 0.1)),
-        node_name="geometry_wall",
-        geom_name="geometry_wall",
+        _quad(3.0, 3.1, 2.7, 0.0, 2.0),
+        node_name="geometry_wallTop.9",
+        geom_name="geometry_wallTop.9",
         parent_node_name=WALL_PARENT,
     )
     scene.add_geometry(
-        _box("geometry_wallTop", (0, 2.5, 0), (2, 2.7, 0.1)),
-        node_name="geometry_wallTop",
-        geom_name="geometry_wallTop",
+        _box("geometry_wall.9", (3, 0, 0), (3.1, 2.7, 2)),
+        node_name="geometry_wall.9",
+        geom_name="geometry_wall.9",
         parent_node_name=WALL_PARENT,
     )
     scene.add_geometry(
-        _box("geometry_#FFFFFF", (0.5, 0, 0), (1.5, 2.5, 0.05)),
-        node_name="geometry_#FFFFFF",
-        geom_name="geometry_#FFFFFF",
-        parent_node_name=WALL_PARENT,
-    )
-    scene.add_geometry(
-        _box("geometry_wall.5", (3, 0, 0), (3.1, 2.5, 2)),
-        node_name="geometry_wall.5",
-        geom_name="geometry_wall.5",
+        _box("geometry_floor", (-9, 0, -9), (9, 0.001, 9)),
+        node_name="geometry_floor",
+        geom_name="geometry_floor",
     )
     scene.add_geometry(
         _box("geometry_ceiling", (-9, 2.7, -9), (9, 2.8, 9)),
@@ -187,7 +213,10 @@ def test_objects_then_walls_with_exact_ros_boxes(dataset: HssdDataset) -> None:
         "aaaa@1",
         "bbbb_part_1@2",
         "cccc@3",
-        "wall_0",
+        "wall_000",
+        "wall_001",
+        "wall_002",
+        "wall_003",
     ]
     boxes = _view(detections)
     # aaaa@0: habitat x[0.9,1.1] y[0,0.6] z[-2.2,-1.8] -> ROS (-z,-x,y), corners re-sorted.
@@ -195,10 +224,14 @@ def test_objects_then_walls_with_exact_ros_boxes(dataset: HssdDataset) -> None:
     # aaaa@1: scaled x[-0.2,0.2], rotated 90 deg about Y so x<->z swap: habitat x[-0.2,0.2] z[-0.2,0.2].
     assert boxes["aaaa@1"] == ((0.0, 0.0, 0.3), (0.4, 0.4, 0.6))
     assert boxes["bbbb_part_1@2"] == ((-5.0, -5.0, 0.25), (1.0, 1.0, 0.5))
-    # wall_0 is the union of its three children: habitat x[0,2] y[0,2.7] z[0,0.1].
-    assert boxes["wall_0"] == ((-0.05, -1.0, 1.35), (0.1, 2.0, 2.7))
-    # Top-level wall leaves are merged leftovers in HSSD stages and are skipped.
-    assert "geometry_wall.5" not in boxes
+    # Walls come from the wallTop faces, extruded to the floor, ordered by ROS min corner:
+    # the grouped 2 m wall along z, the perpendicular 1.5 m wall, the bay-window block
+    # (two coincident thick pieces merged), then the split 2 m wall whose collinear
+    # pieces merged into one box.
+    assert boxes["wall_000"] == ((-1.0, -3.05, 1.35), (2.0, 0.1, 2.7))
+    assert boxes["wall_001"] == ((-0.85, -2.0, 1.35), (1.5, 0.1, 2.7))
+    assert boxes["wall_002"] == ((-0.46, -4.4, 1.35), (0.92, 0.8, 2.7))
+    assert boxes["wall_003"] == ((-0.05, -1.0, 1.35), (0.1, 2.0, 2.7))
     assert detections.frame_id == "world"
     assert detections.ts == 0.0
     for d in detections.detections:
@@ -246,30 +279,28 @@ def test_labels_reach_the_detections_and_walls_use_node_names(dataset: HssdDatas
 
     assert [r.hypothesis.class_id for r in by_id["aaaa@0"].results] == ["drinkware", "Frosty mug"]
     assert [r.hypothesis.class_id for r in by_id["cccc@3"].results] == ["cccc"]
-    assert [r.hypothesis.class_id for r in by_id["wall_0"].results] == ["wall_0"]
+    assert [r.hypothesis.class_id for r in by_id["wall_000"].results] == ["wall"]
+
+
+@pytest.mark.parametrize(
+    "name", ["geometry_wallTop.146", "geometry_wallTop", "WallTop_3", "geometry_walltop.9"]
+)
+def test_wall_top_pattern_accepts(name: str) -> None:
+    assert WALL_TOP_PATTERN.search(name)
 
 
 @pytest.mark.parametrize(
     "name",
     [
-        "wall_0",
-        "wall_29.002",
-        "geometry_wall",
-        "geometry_wallTop.146",
-        "wall-north",
-        "yard-wall-east",
-        "Wall",
+        "geometry_wall.123",
+        "wall_0.003",
+        "wallpaper",
+        "geometry_#8DB4D0.008",
+        "geometry_ceiling.005",
     ],
 )
-def test_wall_pattern_accepts(name: str) -> None:
-    assert WALL_NAME_PATTERN.search(name)
-
-
-@pytest.mark.parametrize(
-    "name", ["wallpaper", "drywall", "walls", "geometry_#8DB4D0.008", "geometry_ceiling.005"]
-)
-def test_wall_pattern_rejects(name: str) -> None:
-    assert not WALL_NAME_PATTERN.search(name)
+def test_wall_top_pattern_rejects(name: str) -> None:
+    assert not WALL_TOP_PATTERN.search(name)
 
 
 def test_habitat_to_ros_matches_frames_module() -> None:
@@ -304,19 +335,20 @@ def test_main_writes_scene_json(dataset: HssdDataset, tmp_path: Path) -> None:
     assert view["scene_id"] == "s1"
     assert view["frame_id"] == "world"
     assert view["timestamp"] == 0.0
-    assert view["count"] == 5
+    assert view["count"] == 8
     assert view["detections"][0]["labels"] == ["drinkware", "Frosty mug"]
     assert "labels" not in view["detections"][4]
-    assert view["detections"][4]["id"] == "wall_0"
+    assert view["detections"][4]["id"] == "wall_000"
+    assert view["detections"][4]["label"] == "wall"
 
     flat = json.loads((out / "s1.top_down.json").read_text())
     assert flat["projection"] == "top_down_xy"
     assert flat["scene_id"] == "s1"
-    assert flat["count"] == 5
+    assert flat["count"] == 8
     by_id = {d["id"]: d for d in flat["detections"]}
     assert by_id["aaaa@0"]["center_xy"] == pytest.approx([2.0, -1.0])
     assert by_id["aaaa@0"]["size_xy"] == pytest.approx([0.4, 0.2])
     assert by_id["aaaa@0"]["labels"] == ["drinkware", "Frosty mug"]
-    assert by_id["wall_0"]["center_xy"] == pytest.approx([-0.05, -1.0])
-    assert by_id["wall_0"]["size_xy"] == pytest.approx([0.1, 2.0])
-    assert by_id["wall_0"]["theta"] == 0.0
+    assert by_id["wall_003"]["center_xy"] == pytest.approx([-0.05, -1.0])
+    assert by_id["wall_003"]["size_xy"] == pytest.approx([0.1, 2.0])
+    assert by_id["wall_003"]["theta"] == 0.0

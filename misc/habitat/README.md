@@ -11,10 +11,11 @@ by `dimos/simulation/habitat/hssd_ground_truth.py`; no simulator is involved.
   Habitat `(x, y, z)` maps to ROS `(-z, -x, y)`.
 - Objects: `id` is `<template hash>@<index in scene_instance.json>`; `label` is the HSSD
   category and `labels` adds the product name, both from `semantics/objects.csv`.
-- Walls: the stage's `wall_<n>` groups (each holds one wall's faces and trim), boxed as
-  whole subtrees; `id` and `label` are the node name. Walls follow the objects. The two
-  top-level `geometry_wall*` meshes in every stage are merged leftovers of the whole
-  building and are skipped.
+- Walls: every ceiling-height `geometry_wallTop` face in the stage (exterior and interior,
+  grouped or merged) is a wall footprint; touching collinear faces merge into one segment,
+  perpendicular walls stay separate, and each segment is extruded down to the floor.
+  `label` is `wall`; `id` is `wall_<k>`, numbered by footprint position. Walls follow the
+  objects.
 - Boxes are world-axis-aligned and measured from mesh vertices, so they are tight for
   axis-aligned placements and loose for rotated objects and diagonal walls. Orientation is
   always the identity. `timestamp` is 0 because the scenes are static.
