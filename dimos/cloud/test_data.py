@@ -449,3 +449,22 @@ def test_matching_suffix_uploads_raw_and_unstamped(
     assert t.uploads[r["upload_id"]]["content_encoding"] is None
     out = cloud.pull(r["upload_id"], dest=db.parent / "artifact.back.lz4")
     assert out.read_bytes() == raw.read_bytes()
+
+
+def test_upload_reports_compression(env: tuple[CloudData, FakeTransport, Path]) -> None:
+    """The bar can only show compression if the backend reports it: a real total
+    through the compress phase, a checksum phase before upload, and the sizes in
+    the result so the CLI can leave a trace once the transient bar is gone."""
+    cloud, _, db = env
+    ticks: list[tuple[str, int, int]] = []
+    r = cloud.upload(db, progress=lambda ph, d, tot: ticks.append((ph, d, tot)))
+    raw = db.stat().st_size
+    comp = [t for t in ticks if t[0] == "compress"]
+    assert comp[0] == ("compress", 0, raw) and comp[-1] == ("compress", raw, raw)
+    phases = [t[0] for t in ticks]
+    assert phases.index("compress") < phases.index("checksum") < phases.index("upload")
+    chk = [t for t in ticks if t[0] == "checksum"]
+    assert chk[0][2] == chk[-1][1] == chk[-1][2] == r["wire_bytes"], "hashing has a real total"
+    assert r["raw_bytes"] == raw and 0 < r["wire_bytes"] and r["content_encoding"] == "lz4"
+    again = cloud.upload(db)
+    assert again["skipped"] and again["raw_bytes"] == raw and again["content_encoding"] == "lz4"

@@ -122,22 +122,25 @@ class MultipartBackend:
         manifest = _manifest(path)
         if bp := _blueprint(path):
             manifest = dict(manifest or {}, blueprint=bp)
+        raw = path.stat().st_size
         with self._staging(path) as tmp:
             # A file already carrying the codec's suffix uploads as-is; it must not be
             # stamped, or pull would decompress bytes we never compressed.
             compress = bool(self.codec_id) and path.suffix != codecs.suffix(self.codec_id)
             if compress:
-                _require_space(Path(tmp), path.stat().st_size)
+                _require_space(Path(tmp), raw)
                 artifact = Path(tmp) / (path.name + codecs.suffix(self.codec_id))
-                tick("compress", 0, 0)
-                codecs.compress(self.codec_id, path, artifact)
+                tick("compress", 0, raw)
+                codecs.compress(self.codec_id, path, artifact, functools.partial(tick, "compress"))
             else:
                 artifact = path
             size = artifact.stat().st_size
+            tick("checksum", 0, size)
+            sha = _sha256(artifact, functools.partial(tick, "checksum"))
             spec = dict(
                 filename=artifact.name,
                 size=size,
-                sha256=_sha256(artifact),
+                sha256=sha,
                 kind=kind,
                 content_encoding=self.codec_id if compress else None,
                 robot_id=robot_id,
@@ -145,8 +148,14 @@ class MultipartBackend:
                 part_size=part_size,
             )
             create = self.api.create(**spec)
+            # What the transient bar showed, kept for the line that outlives it.
+            facts = {
+                "raw_bytes": raw,
+                "wire_bytes": size,
+                "content_encoding": spec["content_encoding"],
+            }
             if create["state"] == "complete":
-                return {**create, "skipped": True}
+                return {**create, **facts, "skipped": True}
             uid = create["upload_id"]
             have = {p["part_number"] for p in self.status(uid)["parts"]}
             ps = create["part_size"]
@@ -181,7 +190,7 @@ class MultipartBackend:
                     tick("upload", done, size)
             parts = sorted(self.status(uid)["parts"], key=lambda p: p["part_number"])
             done = self.api.complete(uid, parts)
-            return {**done, "upload_id": uid, "skipped": False}
+            return {**done, **facts, "upload_id": uid, "skipped": False}
 
     def pull(
         self,
@@ -208,8 +217,8 @@ class MultipartBackend:
                 ),
                 "download",
             )
-            tick("verify", 0, 0)
-            if _sha256(raw) != d["sha256"]:
+            tick("verify", 0, raw.stat().st_size)
+            if _sha256(raw, functools.partial(tick, "verify")) != d["sha256"]:
                 raise RuntimeError("sha256 mismatch — refusing to keep the file")
             if wire:
                 tick("decompress", 0, 0)
@@ -410,12 +419,16 @@ def _blueprint(path: Path) -> str | None:
     return m.group(1) if m else None
 
 
-def _sha256(path: Path) -> str:
+def _sha256(path: Path, progress: Callable[[int, int], None] | None = None) -> str:
     with path.open("rb") as f:
-        if sys.version_info >= (3, 11):
+        if progress is None and sys.version_info >= (3, 11):
             return hashlib.file_digest(f, "sha256").hexdigest()
-        # TODO(PY311): drop this fallback for hashlib.file_digest.
-        digest = hashlib.sha256()
+        # The loop stays for progress reporting; for Python < 3.11 it is also the
+        # only path. Hashing a multi-GB artifact is seconds a bar should cover.
+        total, done, digest = path.stat().st_size, 0, hashlib.sha256()
         while chunk := f.read(2**20):
             digest.update(chunk)
+            done += len(chunk)
+            if progress:
+                progress(done, total)
         return digest.hexdigest()
