@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """Built-in web codecs (jpeg.v1, pose.json.v1, costmap.zlib.v1, text.json.v1,
-stats.json.v1).
+stats.json.v1, path.json.v1, point.json.v1, bool.json.v1).
 
 Registered into dimos.web.codecs at import time; relay_bridge_module imports
 this module so every bridge process (parent and worker) has the built-ins.
@@ -26,11 +26,15 @@ import json
 from typing import Any
 import zlib
 
+from dimos_lcm.std_msgs import Bool
 import numpy as np
 
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.utils.generic import finite_number
 from dimos.web.codecs import EncodedPayload, web_decoder, web_encoder
 
 # Custom jpeg channels authored without a quality param; the built-in
@@ -75,6 +79,29 @@ def encode_pose(msg: PoseStamped) -> bytes:
         "ts": msg.ts,
     }
     return json.dumps(pose, separators=(",", ":")).encode()
+
+
+@web_encoder("path.json.v1")
+def encode_path(msg: Path) -> bytes:
+    # Empty paths must reach the viewer to clear the overlay.
+    points = [[round(p.x, 3), round(p.y, 3)] for p in msg.poses]
+    return json.dumps(points, separators=(",", ":"), allow_nan=False).encode()
+
+
+@web_decoder("point.json.v1")
+def decode_point(msg: dict[str, Any]) -> PointStamped:
+    if not isinstance(msg, dict):
+        raise ValueError(f"point.json.v1 wants an object, got {type(msg).__name__}")
+    return PointStamped(
+        finite_number(msg.get("x"), "x"), finite_number(msg.get("y"), "y"), frame_id="world"
+    )
+
+
+@web_decoder("bool.json.v1")
+def decode_bool(msg: bool) -> Bool:
+    if not isinstance(msg, bool):
+        raise ValueError(f"bool.json.v1 wants a boolean, got {type(msg).__name__}")
+    return Bool(data=msg)
 
 
 # The historical costmap encoder's choice (websocket_vis/optimized_costmap.py);

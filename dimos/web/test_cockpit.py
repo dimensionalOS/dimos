@@ -20,11 +20,13 @@ import struct
 import subprocess
 import sys
 
+from dimos_lcm.std_msgs import Bool
 from langchain_core.messages import BaseMessage
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
@@ -44,7 +46,13 @@ from dimos.web.cockpit import (
 )
 from dimos.web.codecs import EncodedPayload, decode_json_v1, encode_json_v1, web_encoder
 from dimos.web.relay_bridge.audio_codec import AudioChunk, decode_audio_chunk
-from dimos.web.relay_bridge.builtin_codecs import decode_text, encode_stats
+from dimos.web.relay_bridge.builtin_codecs import (
+    decode_bool,
+    decode_point,
+    decode_text,
+    encode_path,
+    encode_stats,
+)
 from dimos.web.relay_bridge.chat_codec import encode_chat
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
 from dimos.web.relay_bridge.protocol import (
@@ -220,6 +228,7 @@ def test_pages_get_ids_after_the_grid() -> None:
         lambda: Video("color_image", quality=True),
         lambda: Map2D(costmap=""),
         lambda: Map2D(costmap_hz=-5.0),
+        lambda: Map2D(click=""),
         lambda: Teleop(stream=""),
         lambda: Teleop(max_linear=0),
         lambda: Teleop(boost=-2.0),
@@ -240,6 +249,7 @@ def test_pages_get_ids_after_the_grid() -> None:
         "video_quality_bool",
         "map2d_empty_costmap",
         "map2d_negative_rate",
+        "map2d_empty_click",
         "teleop_empty_stream",
         "teleop_zero_linear",
         "teleop_negative_boost",
@@ -318,6 +328,11 @@ def test_channel_publish_policy_rules() -> None:
     # Generic publish is reliable-only.
     with pytest.raises(ValueError, match="delivery='reliable'"):
         Channel("goal", dict, dir="tx", publish="shared", delivery="latest")
+    # Pacing and replay are bridge-side rx behaviours.
+    with pytest.raises(ValueError, match="paced applies to rx"):
+        Channel("goal", dict, dir="tx", publish="shared", paced=True)
+    with pytest.raises(ValueError, match="resend_on_subscribe applies to rx"):
+        Channel("goal", dict, dir="tx", publish="shared", resend_on_subscribe=True)
     # Scope uses the manifest id bound.
     with pytest.raises(ValueError, match="required_scope must be 1..64"):
         Channel("goal", dict, dir="tx", publish="shared", required_scope="")
@@ -525,6 +540,10 @@ def test_chat_panel_blueprint() -> None:
     # by hand are sampled like any channel.
     (atom,) = cockpit(channels=[Channel("agent", BaseMessage, encoding="chat.json.v1")]).blueprints
     assert not atom.kwargs["channels"][0].paced
+    (atom,) = cockpit(
+        channels=[Channel("agent", BaseMessage, encoding="chat.json.v1", paced=True)]
+    ).blueprints
+    assert atom.kwargs["channels"][0].paced
 
 
 def test_chat_panel_declarations_merge_or_conflict() -> None:
@@ -537,6 +556,50 @@ def test_chat_panel_declarations_merge_or_conflict() -> None:
     agent = next(c for c in atom.kwargs["manifest"]["channels"] if c["ch"] == "agent")
     assert agent["maxHz"] == 50.0
     assert next(s for s in atom.kwargs["channels"] if s.ch == "agent").paced
+
+
+def test_map2d_nav_channels_blueprint() -> None:
+    blueprint = cockpit(layout=Map2D(path="path", click="clicked_point", stop="stop_movement"))
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    assert [
+        (c["ch"], c["dir"], c["encoding"], c["delivery"], c["maxHz"], c["publish"])
+        for c in manifest["channels"]
+    ] == [
+        ("odom", "rx", "pose.json.v1", "reliable", 20.0, "none"),
+        ("global_costmap", "rx", "costmap.zlib.v1", "latest", 5.0, "none"),
+        ("path", "rx", "path.json.v1", "latest", 10.0, "none"),
+        ("clicked_point", "tx", "point.json.v1", "reliable", 5.0, "shared"),
+        ("stop_movement", "tx", "bool.json.v1", "reliable", 5.0, "shared"),
+    ]
+    (panel,) = manifest["panels"]
+    # The map2d slots stay costmap + pose; the nav streams ride the params.
+    assert panel["channels"] == ["global_costmap", "odom"]
+    assert panel["params"] == {"path": "path", "click": "clicked_point", "stop": "stop_movement"}
+    assert parse_manifest(manifest).model_dump() == manifest
+    # Generated ports autoconnect to the planner's by name + type.
+    ports = {(s.name, s.direction): s.type for s in atom.streams}
+    assert ports[("path", "in")] is Path
+    assert ports[("clicked_point", "out")] is PointStamped
+    assert ports[("stop_movement", "out")] is Bool
+    specs = {s.ch: s for s in atom.kwargs["channels"]}
+    assert specs["path"].encoder is encode_path
+    assert specs["path"].paced and specs["path"].resend_on_subscribe
+    assert specs["clicked_point"].decoder is decode_point
+    assert specs["stop_movement"].decoder is decode_bool
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert {s.ch: s.decoder for s in ratom.kwargs["channels"]}["clicked_point"] is decode_point
+
+
+def test_map2d_path_flags_survive_an_explicit_declaration() -> None:
+    (atom,) = cockpit(
+        layout=Map2D(path="path"),
+        channels=[Channel("path", Path, encoding="path.json.v1", delivery="latest", max_hz=20.0)],
+    ).blueprints
+    spec = next(s for s in atom.kwargs["channels"] if s.ch == "path")
+    assert spec.max_hz == 20.0
+    assert spec.paced and spec.resend_on_subscribe
 
 
 def test_stats_panel_blueprint() -> None:
