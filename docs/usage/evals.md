@@ -424,6 +424,62 @@ sensor streams and navigation streams supplied by the composed blueprint.
 The metadata's `point_cloud_source` describes how Habitat scans are generated
 (depth unprojection), not whether scan publication is enabled.
 
+## Navigation benchmark
+
+`dimos.evals.suites.habitat_nav` asks for a named object in a Habitat scene. Each scene
+file under `dimos/evals/suites/scenes/habitat/` holds the ground-truth boxes (published by
+`demo-objects`), a mapping `tour` and the cases: a fixed spawn and an end point beside the
+target, in the world frame. Before the task the environment drives the tour on `cmd_vel`, so
+the planner has a map of the scene (it plans only over observed surface, like on the robot);
+the task clock starts after it (`task_start_ts` in `habitat_episode.json`). Every arm gets
+`go to the <label> at (x, y)`; text is the only sensor. Goals are sent at the robot's own
+floor height: Habitat scenes have several levels and a goal at z = 0 snaps to furniture. The
+grade is computed from the recording by `dimos.evals.nav_metrics` and written as
+`nav_metrics.json` beside `memory.db`: reached (within `NAV_SUCCESS_RADIUS_M` of the end
+point), time to object (the run's duration when never reached), facing the target, bumps (a
+held command with no displacement), path length, straightness and turn reversals. `score` is
+0 unless reached.
+
+The same launch serves every arm. Pick the agent:
+
+```bash skip
+# the planner alone: the end point goes straight to /goal, done on /goal_reached
+dimos evals run dimos.evals.suites.habitat_nav --agent dimos.evals.agents.topic \
+  --set send=goal --set send_type=point --set done=goal_reached --set done_type=Bool
+# the TypeSafe reactive agent (needs TYPESAFE_API_KEY)
+dimos evals run dimos.evals.suites.habitat_nav --agent dimos.evals.agents.topic \
+  --set 'modules=["type-safe-agent"]' --set trace=TypeSafeAgent
+# a coding agent with dimOS: go_to / stop / finish tools, bash, any number of steps
+dimos evals run dimos.evals.suites.habitat_nav --agent dimos.evals.agents.dimcode --set model=gpt-6-astra
+# the same model without dimOS: world_state / cmd_vel / finished over the raw bridge
+dimos evals run dimos.evals.suites.habitat_nav --agent dimos.evals.agents.pi \
+  --set no_dimos=true --set provider=anthropic --set model=claude-fable-5-1
+```
+
+`TopicAgent` evaluates whatever is already running: it publishes the instruction on one
+topic and returns when another carries a truthy message; `trace=` names a module handle whose
+`set_trace_dir` records its model calls into the trajectory.
+
+With `video=True` on the environment a live case captures the viewer on a virtual display as
+`viewer.mp4` beside the recording (needs `Xvfb`, `ffmpeg` and `dimos-viewer`); `rrd=True` also
+saves everything the viewer receives as `viewer.rrd` (full-rate images and clouds, about 1 GB
+per minute).
+
+### Parallel cases
+
+A live case owns its host, so parallelism is one container per case:
+
+```bash skip
+docker build -f docker/eval/Dockerfile -t dimos-eval .
+dimos evals run dimos.evals.suites.habitat_nav --agent dimos.evals.agents.pi --set no_dimos=true \
+  --parallel 4 --container dimos-eval --repeat 3
+```
+
+Each job runs `dimos evals run ... --case <id>` with `XDG_STATE_HOME` under its own directory
+in the run dir, so recordings, traces and the child's run dir land in one place per trial; the
+parent merges `results.jsonl`. API keys pass through by name. `--repeat` without `--container`
+runs trials one after another on the host.
+
 ## Running
 
 - **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5]`

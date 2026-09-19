@@ -93,7 +93,7 @@ def test_objects_3d_relative_to_pose() -> None:
         "chair",
         "left",
         "mid",
-        2.0,
+        1.75,  # to the 0.5 m box's edge
     )
     assert obj["bearing_deg"] == 90.0
     assert state["unavailable"] == ["room"]
@@ -122,3 +122,56 @@ def test_pointcloud_sectors_in_robot_frame() -> None:
     assert s["right"] == {"clear_m": 2.0, "state": "clear"}
     assert s["behind"]["clear_m"] == 3.0
     assert s["left"]["clear_m"] == 5.0
+
+
+def test_goal_object_listed_beyond_the_nearest_cap() -> None:
+    dets = Detection3DArray(header=Header(1.0, "world"))
+    for i in range(25):
+        dets.detections.append(_det3d("cabinet", 1.0 + i * 0.1, 0.0).detections[0])
+    dets.detections.append(_det3d("chair", 40.0, 0.0).detections[0])
+    dets.detections_length = len(dets.detections)
+    state = build_world_state(
+        "go to the chair at (40.00, 0.00)",
+        _pose(0, 0, 0),
+        detections_3d=dets,
+        detections_2d=None,
+        lidar=None,
+        robot={},
+    )
+    labels = [o["label"] for o in state["objects"]]
+    assert len(labels) == 20 and labels[-1] == "chair"
+
+
+def test_goal_coordinates_pick_one_of_several_same_label_objects() -> None:
+    dets = _det3d("chair", 2.0, 0.0)
+    dets.detections.append(_det3d("chair", 40.0, 0.0).detections[0])
+    dets.detections.append(_det3d("table", 3.0, 0.0).detections[0])
+    dets.detections_length = 3
+    state = build_world_state(
+        "go to the chair at (40.00, 0.00)",
+        _pose(0, 0, 0),
+        detections_3d=dets,
+        detections_2d=None,
+        lidar=None,
+        robot={},
+    )
+    assert [(o["label"], o["distance_m"]) for o in state["objects"]] == [
+        ("table", 2.75),
+        ("chair", 39.75),
+    ]
+
+
+def test_body_frame_scan_is_not_transformed() -> None:
+    # Robot far from the world origin; a body-frame point 0.3 m ahead must still block ahead.
+    pts = np.array([[0.3, 0.0, 0.5], [0.0, -2.0, 0.5]])
+    state = build_world_state(
+        "go to the chair",
+        _pose(12.0, -7.0, 90),
+        detections_3d=None,
+        detections_2d=None,
+        lidar=PointCloud2.from_numpy(pts, frame_id="base_link"),
+        robot={},
+    )
+    s = state["room"]["sectors"]
+    assert s["ahead"] == {"clear_m": 0.3, "state": "blocked"}
+    assert s["right"]["clear_m"] == 2.0 and s["left"]["clear_m"] == 5.0

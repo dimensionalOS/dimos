@@ -149,6 +149,7 @@ class RunningEnvironment:
     streams: Sequence[Stream[Any, Any]]  # what the agent may look at. Dataset: the selection
     artifacts: Mapping[str, Path]  # files produced by the environment, by name
     raw_endpoint: str | None = None  # vendor-shaped robot topics for agents without dimOS
+    raw_topics: tuple[str, ...] = ()  # which of those topics the bridge serves
 
 
 @dataclass(frozen=True, kw_only=True)

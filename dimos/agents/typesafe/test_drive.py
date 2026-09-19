@@ -25,22 +25,28 @@ def _choice(label: str, *options: str, confidence: float = 0.9) -> Answer:
 
 
 def _answers(
-    x: str = "none", y: str = "none", yaw: str = "none", conf: float = 0.9, stop: float = 0.0
+    x: str = "none",
+    y: str = "none",
+    yaw: str = "none",
+    conf: float = 0.9,
+    stop: float = 0.0,
+    task: str = "continue",
 ) -> Answers:
     return {
         "drive.x": _choice(x, "forward", "none", "backward", confidence=conf),
         "drive.y": _choice(y, "left", "none", "right", confidence=conf),
         "drive.yaw": _choice(yaw, "turn_left", "none", "turn_right", confidence=conf),
         "stop": {"type": "noul", "noul": stop},
+        "task": _choice(task, "finished", "continue", confidence=conf),
     }
 
 
 def _decode(answers: Answers):  # type: ignore[no-untyped-def]
-    return decode(answers, min_confidence=0.5, stop_threshold=0.7)
+    return decode(answers, stop_threshold=0.7)
 
 
 def test_questions_one_choice_per_axis_plus_stop_and_target() -> None:
-    assert set(questions(())) == {"drive.x", "drive.y", "drive.yaw", "stop"}
+    assert set(questions(())) == {"drive.x", "drive.y", "drive.yaw", "stop", "task"}
     q = questions(("chair", "person"))
     assert q["target"]["type"] == "choice" and set(q["target"]["criteria"]) == {
         "chair",
@@ -60,14 +66,21 @@ def test_forward_and_strafe_compose() -> None:
     )
 
 
-def test_low_confidence_axis_is_zero() -> None:
+def test_low_confidence_pick_still_counts() -> None:
     d = _decode(_answers(x="forward", conf=0.3))
-    assert (d.x, d.labels[0], d.confidence) == (0.0, "none", 0.3)
+    assert (d.x, d.labels[0], d.confidence) == (1.0, "forward", 0.3)
 
 
 def test_stop_overrides_axes() -> None:
     d = _decode(_answers(x="forward", yaw="turn_right", stop=0.9))
     assert d.stop and d.is_zero
+
+
+def test_finished_stops_and_flags() -> None:
+    d = _decode(_answers(x="forward", task="finished"))
+    assert d.finished and d.stop and d.is_zero
+    assert _decode(_answers(x="forward", task="finished", conf=0.1)).finished  # the pick counts
+    assert not _decode(_answers(x="forward")).finished
 
 
 def test_target_decoded_and_none_dropped() -> None:

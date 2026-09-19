@@ -78,6 +78,8 @@ class SystemOne:
         self._timeout_s = timeout_s
         self._session = requests.Session()
         self._session.headers["Authorization"] = f"Bearer {api_key}"
+        self.last_usage: dict[str, int] = {}
+        self.last_model = ""
 
     def __call__(self, state: object, questions: Mapping[str, Question]) -> Answers:
         body = {"state": state, "model": self._model, "questions": questions}
@@ -88,7 +90,10 @@ class SystemOne:
                 continue
             if resp.status_code >= 400:
                 raise RuntimeError(f"TypeSafe {resp.status_code}: {resp.text[:300]}")
-            answers: Answers = resp.json()["answers"]
+            data = resp.json()
+            self.last_usage = data.get("usage") or {}
+            self.last_model = data.get("model", "")
+            answers: Answers = data["answers"]
             return answers
         raise AssertionError("unreachable")
 

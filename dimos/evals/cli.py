@@ -21,6 +21,7 @@ from collections.abc import Iterable
 import importlib
 import inspect
 import json
+from pathlib import Path
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -119,10 +120,20 @@ def run(
     ),
     tags: str = typer.Option("", help="Comma-separated tag filter"),
     limit: int = typer.Option(0, min=0, help="Run at most N cases"),
+    case: list[str] = typer.Option([], "--case", help="Run only these case IDs"),
+    parallel: int = typer.Option(1, min=1, help="Cases at once, one dimos each; needs --container"),
+    container: str = typer.Option("", help="Docker image that runs each case (docker/eval)"),
+    repeat: int = typer.Option(1, min=1, help="Trials per case"),
+    video: bool = typer.Option(False, "--video", help="Capture the viewer as viewer.mp4 per case"),
 ) -> None:
     from dimos.evals.runner import EvalRunner, summarize
 
-    cases = importlib.import_module(suite).SUITE
+    cases = [c for c in importlib.import_module(suite).SUITE if not case or c.id in case]
+    if video:
+        for c in cases:
+            if hasattr(c.environment.config, "video"):
+                c.environment.config.video = True
+        set_ = [*set_, "video=true"] if parallel > 1 or container or repeat > 1 else set_
     kwargs = agent_kwargs(set_)
     if allow is not None:
         if "allowed_tools" in kwargs:
@@ -135,14 +146,26 @@ def run(
         if "excluded_keywords" in kwargs:
             raise typer.BadParameter("Use --exclude or --set excluded_keywords, not both")
         kwargs["excluded_keywords"] = [w.strip() for w in exclude.split(",") if w.strip()]
-    runner = EvalRunner()
-    results = runner.run(
-        cases,
-        agent_class(agent)(**kwargs),
-        tags=frozenset(t for t in tags.split(",") if t) if tags else frozenset(),
-        limit=limit,
-        provenance=run_provenance({"kind": "suite_module", "value": suite}, agent, kwargs),
-    )
+    provenance = run_provenance({"kind": "suite_module", "value": suite}, agent, kwargs)
+    selected = frozenset(t for t in tags.split(",") if t) if tags else frozenset()
+    if parallel > 1 or container or repeat > 1:
+        if parallel > 1 and not container:
+            raise typer.BadParameter(
+                "parallel cases need --container: one dimos per host otherwise"
+            )
+        from dimos.evals.parallel import run_parallel
+
+        chosen = [c for c in cases if not selected or selected & c.tags][: limit or None]
+        run_dir, results = run_parallel(
+            suite, agent, set_, chosen,
+            parallel=parallel, container=container, repeat=repeat, manifest=provenance,
+        )  # fmt: skip
+    else:
+        runner = EvalRunner()
+        results = runner.run(
+            cases, agent_class(agent)(**kwargs), tags=selected, limit=limit, provenance=provenance
+        )
+        run_dir = runner.run_dir
 
     for r in results:
         status = "ERROR" if r.error else ("PASS" if r.passed else "fail")
@@ -151,8 +174,28 @@ def run(
     s = summarize(results)
     typer.echo(
         f"\n{s.n} cases | mean {s.mean_score:.2f} | pass {s.pass_rate:.0%} "
-        f"| errors {s.errors} | {s.duration_s:.0f}s | {runner.run_dir}"
+        f"| errors {s.errors} | {s.duration_s:.0f}s | {run_dir}"
     )
+
+
+@app.command("media")
+def media(
+    runs: list[str] = typer.Argument(help="Run directories with <case>/viewer.mp4"),
+    out: str = typer.Option("media", help="Output directory"),
+    grid: bool = typer.Option(False, "--grid", help="Also tile every case's videos, one per run"),
+) -> None:
+    """Caption each case video with its arm, case and score; optionally tile arms side by side."""
+    from dimos.evals.media import caption_runs, tile
+
+    captioned = caption_runs([Path(r) for r in runs], Path(out))
+    for path in captioned.values():
+        typer.echo(path)
+    if grid:
+        by_case: dict[str, list[Path]] = {}
+        for (case_id, _), path in captioned.items():
+            by_case.setdefault(case_id, []).append(path)
+        for case_id, paths in by_case.items():
+            typer.echo(tile(paths, Path(out) / f"{case_id}-grid.mp4"))
 
 
 @app.command("list")

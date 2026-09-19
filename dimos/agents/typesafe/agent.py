@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,7 @@ import threading
 import time
 from typing import Any, Generic, TypeVar
 
+from dimos_lcm.std_msgs import Bool
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.messages.base import BaseMessage
 from reactivex.disposable import Disposable
@@ -50,6 +52,16 @@ PUBLISH_HZ = 10.0
 # ponytail: fixed steering gains; make them config if a robot needs different ones.
 SLOW_WITHIN_M = 1.5
 TURN_FULL_AT_DEG = 45.0
+TASK = (
+    "You are a mobile robot in a room. Each tick you receive this JSON: `goal` (what to do), "
+    "`robot` (your position, heading and last motion), `objects` (things in the room with their "
+    "world position, size, `distance` from you to their nearest edge, and `bearing`), and "
+    "`room.sectors` (the nearest obstacle in each direction around you). Drive toward the object "
+    "named in `goal`, around obstacles. Coordinates in `goal` only say which object is meant; "
+    "you cannot stand on an object's centre, so never compare them with your own position. The "
+    "task is finished when that object's `distance` is touching, or near with the robot stopped "
+    "as close as it can get: then report finished."
+)
 
 
 def typesafe_api_key() -> str | None:
@@ -80,7 +92,6 @@ class TypeSafeAgentConfig(ModuleConfig):
     angular_speed: float = 0.8
     linear_accel: float = 0.8
     angular_accel: float = 1.6
-    min_confidence: float = 0.5
     stop_threshold: float = 0.7
     reached_m: float = 0.5
     give_up_s: float = 5.0  # goal clears after this long without motion
@@ -102,6 +113,7 @@ class TypeSafeAgent(Module):
     cmd_vel: Out[Twist]
     agent: Out[BaseMessage]
     agent_idle: Out[bool]
+    finished: Out[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -165,6 +177,8 @@ class TypeSafeAgent(Module):
     @rpc
     def set_goal(self, goal: str | None) -> None:
         goal = (goal or "").strip() or None
+        if goal:
+            goal = goal.splitlines()[-1].strip()  # a briefing may precede the goal
         with self._lock:
             self._goal = goal
             self._target = self._current = ZERO
@@ -179,6 +193,13 @@ class TypeSafeAgent(Module):
     @rpc
     def goal(self) -> str | None:
         return self._goal
+
+    @rpc
+    def set_trace_dir(self, path: str | None) -> None:
+        """One request/response pair per model call under *path*; None turns it off."""
+        with self._lock:
+            self.config.trace_dir = Path(path) if path is not None else None
+            self._seq = 0
 
     def _say(self, text: str) -> None:
         if text != self._last_message:
@@ -210,6 +231,7 @@ class TypeSafeAgent(Module):
         state = build_world_state(
             goal,
             pose,
+            task=TASK,
             detections_3d=det3d,
             detections_2d=det2d,
             lidar=self._lidar.get(stale),
@@ -218,11 +240,11 @@ class TypeSafeAgent(Module):
             lidar_band=self.config.lidar_band,
         )
         qs = questions(tuple(dict.fromkeys(o["label"] for o in state["objects"])))
+        started, t0 = time.time(), time.monotonic()
         answers = self._client(state, qs)
-        self._trace(state, qs, answers)
+        self._trace(state, qs, answers, started, time.monotonic() - t0)
         drive = decode(
             answers,
-            min_confidence=self.config.min_confidence,
             stop_threshold=self.config.stop_threshold,
         )
         self._steer(state, drive)
@@ -234,7 +256,7 @@ class TypeSafeAgent(Module):
         if target is not None and "distance_m" in target:
             dist, err = target["distance_m"], abs(target.get("bearing_deg", 0.0))
             if dist <= self.config.reached_m:
-                drive = Drive(0.0, 0.0, 0.0, True, drive.confidence, drive.labels, drive.target)
+                drive = replace(drive, x=0.0, y=0.0, yaw=0.0, stop=True)
             lin *= min(1.0, max(0.3, dist / SLOW_WITHIN_M))
             ang *= min(1.0, max(0.25, err / TURN_FULL_AT_DEG))
         self._set_target((drive.x * lin, drive.y * lin, drive.yaw * ang), immediate=drive.stop)
@@ -250,7 +272,11 @@ class TypeSafeAgent(Module):
         self._say(
             f"drive {'/'.join(drive.labels)} stop={drive.stop} target={drive.target} confidence={drive.confidence:.2f}"
         )
-        if gave_up:
+        if drive.finished:
+            self.finished.publish(Bool(True))
+            self.set_goal(None)
+            self._say(f"finished at the target {drive.target}")
+        elif gave_up:
             self.set_goal(None)
             self._say("goal reached or unreachable; stopped")
 
@@ -290,13 +316,32 @@ class TypeSafeAgent(Module):
                 )
             self._stop_event.wait(dt)
 
-    def _trace(self, state: WorldState, qs: dict[str, Question], answers: Answers) -> None:
-        if self.config.trace_dir is None:
+    def _trace(
+        self,
+        state: WorldState,
+        qs: dict[str, Question],
+        answers: Answers,
+        started_at: float,
+        latency_s: float,
+    ) -> None:
+        """Same layout as ``dimos.agents.llm_trace`` so eval adapters read both."""
+        if self.config.trace_dir is None or self._client is None:
             return
         d = Path(self.config.trace_dir)
         d.mkdir(parents=True, exist_ok=True)
         self._seq += 1
         (d / f"{self._seq}-request.json").write_text(
-            json.dumps({"body": {"state": state, "questions": qs}})
+            json.dumps({"started_at": started_at, "body": {"state": state, "questions": qs}})
         )
-        (d / f"{self._seq}-response.json").write_text(json.dumps({"body": {"answers": answers}}))
+        (d / f"{self._seq}-response.json").write_text(
+            json.dumps(
+                {
+                    "latency_s": latency_s,
+                    "body": {
+                        "model": self._client.last_model,
+                        "answers": answers,
+                        "usage": self._client.last_usage,
+                    },
+                }
+            )
+        )

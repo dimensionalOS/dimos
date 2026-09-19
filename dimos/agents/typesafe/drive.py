@@ -104,6 +104,24 @@ def questions(labels: tuple[str, ...]) -> dict[str, Question]:
                 "false": "the target is in `objects` with `distance` near, mid or far, and there is a clear direction to move; being near is not a reason to stop",
             },
         ),
+        "task": choice(
+            {
+                "question": "Is the task in `goal` complete, or should the robot keep going?",
+                "context": "Read `task`, `goal` and `objects`. `distance` is measured to the object's nearest edge.",
+            },
+            {
+                "finished": _opt(
+                    "the target named in `goal` is in `objects` with `distance` touching, or near while `robot.motion` is stopped: the robot is at the object and the task is done; the coordinates in `goal` are not a place to stand",
+                    "the target is mid or far, or near while still driving, or not in `objects`",
+                    ["chair ahead, touching", "table ahead, near, robot stopped"],
+                ),
+                "continue": _opt(
+                    "the target's `distance` is mid or far, or near while the robot is still driving, or the target is not yet in `objects`",
+                    "the robot is touching the target, or stopped near it",
+                    ["chair ahead_left, mid"],
+                ),
+            },
+        ),
     }
     if labels:
         qs["target"] = choice(
@@ -122,6 +140,7 @@ class Drive:
     confidence: float
     labels: tuple[str, str, str]
     target: str | None
+    finished: bool = False
 
     @property
     def is_zero(self) -> bool:
@@ -133,28 +152,35 @@ def _choice(answers: Answers, key: str) -> ChoiceAnswer | None:
     return a if a is not None and a["type"] == "choice" else None
 
 
-def decode(answers: Answers, *, min_confidence: float, stop_threshold: float) -> Drive:
-    stop_answer = answers.get("stop")
-    stop = (
-        stop_answer is not None
-        and stop_answer["type"] == "noul"
-        and stop_answer["noul"] >= stop_threshold
-    )
+def _noul(answers: Answers, key: str, threshold: float) -> bool:
+    a = answers.get(key)
+    return a is not None and a["type"] == "noul" and a["noul"] >= threshold
+
+
+def decode(answers: Answers, *, stop_threshold: float) -> Drive:
+    """Picks are taken as picked: confidence is reported, never a gate (it only measures
+    how far the other options trailed)."""
+    task = _choice(answers, "task")
+    finished = task is not None and task["choice"] == "finished"
+    stop = finished or _noul(answers, "stop", stop_threshold)
     vals: list[float] = []
     labels: list[str] = []
     confs: list[float] = []
     for axis, pos, _neg in AXES:
         a = _choice(answers, f"drive.{axis}")
         label, conf = (a["choice"], a["confidence"]) if a else ("none", 0.0)
-        if conf < min_confidence:
-            label = "none"
         vals.append(0.0 if stop or label == "none" else 1.0 if label == pos else -1.0)
         labels.append(label)
         confs.append(conf)
     t = _choice(answers, "target")
-    target = (
-        t["choice"] if t and t["choice"] != "none" and t["confidence"] >= min_confidence else None
-    )
+    target = t["choice"] if t and t["choice"] != "none" else None
     return Drive(
-        vals[0], vals[1], vals[2], stop, min(confs), (labels[0], labels[1], labels[2]), target
+        vals[0],
+        vals[1],
+        vals[2],
+        stop,
+        min(confs),
+        (labels[0], labels[1], labels[2]),
+        target,
+        finished,
     )

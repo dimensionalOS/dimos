@@ -22,11 +22,12 @@ runner never branches on the agent type.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -173,6 +174,7 @@ class EvalRunner(Configurable):
                 case.environment.settle(max(0.0, case.timeout_s - agent_duration_s))
             finally:
                 case.environment.stop()
+                _collect_media(case_dir, env.artifacts if "env" in locals() else {})
             if violation := forbidden_call(
                 trajectory, agent.config.excluded_keywords, str(case_dir)
             ):
@@ -258,6 +260,15 @@ class EvalRunner(Configurable):
         summary: dict[str, Any] = asdict(summarize(results))
         summary["manifest"] = "manifest.json"
         (self.run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+
+
+def _collect_media(case_dir: Path, artifacts: Mapping[str, Path]) -> None:
+    """Move the viewer capture and rrd next to the trajectory once the environment is down."""
+    for name in ("video", "viewer_rrd"):
+        path = artifacts.get(name)
+        if path is not None and path.exists():
+            shutil.move(str(path), case_dir / path.name)
+            artifacts[name] = case_dir / path.name  # type: ignore[index]
 
 
 def forbidden_call(trajectory: Trajectory, keywords: Sequence[str], *ignored: str) -> str:

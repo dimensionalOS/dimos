@@ -15,6 +15,7 @@ from collections.abc import Iterator, Mapping
 import threading
 import time
 
+from dimos_lcm.std_msgs import Bool
 from dimos_lcm.vision_msgs import (
     BoundingBox3D,
     Detection3D,
@@ -44,8 +45,9 @@ def _choice(label: str, *options: str) -> Answer:
     }
 
 
-def _answers(x: str = "none", stop: float = 0.0) -> Answers:
+def _answers(x: str = "none", stop: float = 0.0, task: str = "continue") -> Answers:
     return {
+        "task": _choice(task, "finished", "continue"),
         "target": _choice("chair", "chair", "none"),
         "drive.x": _choice(x, "forward", "none", "backward"),
         "drive.y": _choice("none", "left", "none", "right"),
@@ -84,6 +86,7 @@ def rig(monkeypatch: pytest.MonkeyPatch) -> Iterator[Rig]:
     )
     a.odom.transport = LCMTransport("/test_typesafe/odom", PoseStamped)
     a.cmd_vel.transport = LCMTransport("/test_typesafe/cmd_vel", Twist)
+    a.finished.transport = LCMTransport("/test_typesafe/finished", Bool)
     for name in (
         "odometry",
         "detections_3d",
@@ -153,6 +156,18 @@ def test_goal_drives_then_stops_and_clears(rig: Rig) -> None:
     fake.answers = _answers(stop=0.95)
     assert _wait(lambda: a.goal() is None)
     assert twists[-1].is_zero()
+
+
+def test_finished_answer_publishes_and_clears(rig: Rig) -> None:
+    a, fake, _ = rig
+    done: list[Bool] = []
+    a.finished.transport.subscribe(done.append)
+    fake.answers = _answers(x="forward", task="finished")
+    _scene(a, robot_x=2.8)
+    a.set_goal("briefing line\ngo to the chair")
+    assert a.goal() in (None, "go to the chair")
+    assert _wait(lambda: a.goal() is None)
+    assert _wait(lambda: bool(done)) and done[0].data is True
 
 
 def test_arrival_by_distance(rig: Rig) -> None:

@@ -11,10 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Publish fixed world-frame objects as Detection3DArray: a stand-in for a 3D detector."""
+"""Publish fixed world-frame objects as Detection3DArray: a stand-in for a 3D detector.
+
+``scene_json`` replaces ``objects`` with a ground-truth snapshot in the
+``detection3d_array_to_dict`` layout: ``{"detections": [{"label", "center_xyz", "size_xyz"}]}``.
+"""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+import re
 import threading
 import time
 from typing import Any
@@ -42,7 +49,23 @@ class DemoObjectsConfig(ModuleConfig):
     objects: list[tuple[str, float, float, float]] = Field(
         default_factory=lambda: [("chair", 1.2, 2.0, 0.4)]
     )
+    scene_json: Path | None = None
+    exclude: str = "^wall"  # labels matching this regex are not published (walls crowd the list)
+    size: tuple[float, float, float] = (0.5, 0.5, 0.9)  # for ``objects``, which carry none
     rate_hz: float = 2.0
+
+
+Object = tuple[str, tuple[float, float, float], tuple[float, float, float]]  # label, center, size
+
+
+def load_scene_objects(path: Path, exclude: str = "") -> list[Object]:
+    raw = json.loads(Path(path).expanduser().read_text())
+    skip = re.compile(exclude) if exclude else None
+    return [
+        (str(d["label"]), tuple(map(float, d["center_xyz"])), tuple(map(float, d["size_xyz"])))  # type: ignore[misc]
+        for d in raw["detections"]
+        if skip is None or not skip.search(str(d["label"]))
+    ]
 
 
 class DemoObjects(Module):
@@ -53,10 +76,16 @@ class DemoObjects(Module):
         super().__init__(**kwargs)
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._objects: list[Object] = []
 
     @rpc
     def start(self) -> None:
         super().start()
+        self._objects = (
+            load_scene_objects(self.config.scene_json, self.config.exclude)
+            if self.config.scene_json is not None
+            else [(label, (x, y, z), self.config.size) for label, x, y, z in self.config.objects]
+        )
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._publish_loop, name="DemoObjects", daemon=True)
         self._thread.start()
@@ -72,14 +101,14 @@ class DemoObjects(Module):
     def _message(self) -> Detection3DArray:
         now = time.time()
         dets = []
-        for label, x, y, z in self.config.objects:
+        for label, center, size in self._objects:
             d = Detection3D()
             d.header = Header(now, "world")
             d.results = [
                 ObjectHypothesisWithPose(hypothesis=ObjectHypothesis(class_id=label, score=0.95))
             ]
             d.results_length = 1
-            d.bbox = BoundingBox3D(center=Pose(position=(x, y, z)), size=Vector3(0.5, 0.5, 0.9))
+            d.bbox = BoundingBox3D(center=Pose(position=center), size=Vector3(*size))
             dets.append(d)
         return Detection3DArray(
             detections_length=len(dets), header=Header(now, "world"), detections=dets

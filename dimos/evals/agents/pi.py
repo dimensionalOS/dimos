@@ -51,6 +51,8 @@ from dimos.evals.constants import (
     RAW_MAX_CMD_S,
     RAW_MAX_LINEAR_MPS,
     RAW_README,
+    RAW_TOPIC_DOCS,
+    RAW_TOPICS,
 )
 from dimos.evals.environments.base import Environment
 from dimos.evals.types import (
@@ -73,6 +75,17 @@ def tool_listing(mcp_url: str) -> str:
         summary = str(t.get("description") or "").strip().partition("\n")[0]
         lines.append(f"- {t['name']}({args}): {summary}")
     return "\n".join(lines)
+
+
+def robot_readme(endpoint: str, topics: Sequence[str]) -> str:
+    """ROBOT.md for the raw bridge: the endpoint and one entry per served topic."""
+    served = "\n".join(RAW_TOPIC_DOCS[t] for t in RAW_TOPICS if t in topics)
+    return RAW_README.format(
+        endpoint=endpoint,
+        topics=served.format(
+            max_cmd_s=RAW_MAX_CMD_S, max_linear=RAW_MAX_LINEAR_MPS, max_angular=RAW_MAX_ANGULAR_RPS
+        ),
+    )
 
 
 def recording_file(streams: Sequence[Stream[Any, Any]], path: Path) -> Path:
@@ -277,15 +290,9 @@ class PiAdapter(Agent):
         files = dict(env.artifacts)
         files.pop("recording", None)  # a dimOS memory store; not readable without dimOS
         if env.raw_endpoint:
+            files.clear()  # the robot is the whole interface: no episode file, no viewer video
             readme = run_dir / "ROBOT.md"
-            readme.write_text(
-                RAW_README.format(
-                    endpoint=env.raw_endpoint,
-                    max_cmd_s=RAW_MAX_CMD_S,
-                    max_linear=RAW_MAX_LINEAR_MPS,
-                    max_angular=RAW_MAX_ANGULAR_RPS,
-                )
-            )
+            readme.write_text(robot_readme(env.raw_endpoint, env.raw_topics or RAW_TOPICS))
             files["robot"] = readme
         elif env.mcp_url:
             raise ValueError("no_dimos on a robot environment needs raw_bridge=True")

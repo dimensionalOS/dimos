@@ -96,7 +96,7 @@ def test_launch_and_cleanup(tmp_path, mocker):
         result = env.start(("speak-skill",))
         assert proc.simulator is None
         assert proc.global_args[0] == "--record-topics"
-        assert proc.global_args[-1] == "--record"
+        assert "--record" in proc.global_args
         from dimos.memory.tap import matching
 
         assert matching(
@@ -167,6 +167,7 @@ def test_explicit_spawn_uses_real_constructor(mocker, navigable):
     mocker.patch.dict("sys.modules", {"habitat_sim": hs})
     sim = hs.Simulator.return_value
     sim.pathfinder.is_navigable.return_value = navigable
+    sim.semantic_scene.objects = []
     config = dict(
         scene_id="example",
         scene_dataset_config="default",
