@@ -147,6 +147,7 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
             "world/pointlio_map": _render_map,
             "world/lidar": _render_map,
             "world/local_map": _render_map,
+            "world/local_map_fine": _render_map,
             "world/global_map": _render_map,
             # the local plan plus its body poses on world/path/body, coloured by the
             # stamped precision (green room, amber in the ramp, red at the floor)
@@ -383,7 +384,7 @@ go2_viewer = autoconnect(
             "topics": [
                 "tf",
                 "odometry",
-                "local_map",
+                "local_map_fine",
                 "path",
                 "planner_path",
                 "nodes",
@@ -396,7 +397,7 @@ go2_viewer = autoconnect(
                 "camera_info",
             ],
             # the map's own rate is the lidar's, more than a screen or a bad link needs
-            "max_hz": {"world/local_map": 4.0, "world/surface_map": 1.0},
+            "max_hz": {"world/local_map_fine": 4.0, "world/surface_map": 1.0},
         },
     ),
 ).global_config(
