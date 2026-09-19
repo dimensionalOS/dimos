@@ -27,6 +27,7 @@ from dimos.constants import STATE_DIR
 from dimos.experimental.isolated_python.module import (
     isolated_python_environment,
     isolated_python_run_command,
+    prepare_isolated_python,
 )
 from dimos.imitation.collection.prompts import CollectionSpeech
 from dimos.imitation.collection.recording import RecordingSchema
@@ -175,6 +176,7 @@ def visualize(
     env["HF_HUB_OFFLINE"] = "1"
     try:
         with cache_usage_guard():
+            prepare_isolated_python(project, env)
             result = subprocess.run(command, env=env, check=False)
     except OSError as exc:
         typer.echo(f"Visualization failed to launch uv: {exc}", err=True)
@@ -196,6 +198,9 @@ def train(ctx: typer.Context) -> None:
     command = isolated_python_run_command(
         project, "--project", str(project), "lerobot-train", *ctx.args
     )
-    result = subprocess.run(command, env=isolated_python_environment(project), check=False)
+    env = isolated_python_environment(project)
+    with cache_usage_guard():
+        prepare_isolated_python(project, env)
+        result = subprocess.run(command, env=env, check=False)
     if result.returncode:
         raise typer.Exit(result.returncode)

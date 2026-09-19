@@ -23,9 +23,22 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.dannav.local_planner.module import (
+    DanLocalPlanner,
     DanLocalPlannerConfig,
     _ReplanGate,
 )
+
+
+def test_cancel_publishes_empty_path_to_clear_follower_and_viewer(mocker):
+    planner = DanLocalPlanner()
+    try:
+        publish = mocker.patch.object(planner.path, "publish")
+        planner._on_goal(PointStamped(x=math.nan, y=math.nan, z=math.nan, frame_id="world"))
+        publish.assert_called_once()
+        assert publish.call_args.args[0].poses == []
+        assert publish.call_args.args[0].frame_id == "world"
+    finally:
+        planner.stop()
 
 
 def _path_from_points(points: list[tuple[float, float]]) -> Path:
