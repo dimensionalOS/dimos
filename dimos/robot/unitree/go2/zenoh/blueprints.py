@@ -218,9 +218,9 @@ ray_tracing_config = RayTracingVoxelMapConfig(
 ray_tracing_fine_config = ray_tracing_config.model_copy(
     update={"fine_divisor": 2, "emit_fine": True}
 )
-_local_planner_fine = LocalPlannerNative.blueprint(body_dilate_m=MOTION_BODY_DILATE_M).remappings(
-    [(LocalPlannerNative, "local_map", "local_map_fine")]
-)
+_local_planner_fine = LocalPlannerNative.blueprint(
+    body_dilate_m=MOTION_BODY_DILATE_M, pointcloud_resolution=voxel_size / 2
+).remappings([(LocalPlannerNative, "local_map", "local_map_fine")])
 
 go2_zenoh_raycaster = autoconnect(
     go2_zenoh_basic,

@@ -54,6 +54,7 @@ from dimos.navigation.local_planner.obstacles import (
 )
 from dimos.navigation.local_planner.profile import encode_precision
 from dimos.navigation.local_planner.search.base import PlannerEpisode
+from dimos.navigation.local_planner.search.se2 import VOXEL
 from dimos.navigation.tf_pose import TfPose
 from dimos.utils.logging_config import setup_logger
 
@@ -156,6 +157,8 @@ class LocalPlannerConfig(ModuleConfig):
     base_frame: str = "base_link"
     replan_hz: float = 5.0
     goal_lookahead_m: float = 5.0  # carrot arc along the global path
+    # The local map's voxel pitch (m); every lattice pitch scales off it (search/se2.py pitches).
+    pointcloud_resolution: float = VOXEL
     # What counts as an obstacle (obstacles.py); "body_band" reads the cloud against the surface the feet stand on.
     obstacle_model: str = "body_band"
     # Hold once the local map is this old: a dropped link must not leave us replanning on a frozen world.
@@ -191,7 +194,9 @@ class LocalPlanner(Module, spec.MapLocalPlanner):
         self._global_xy: NDArray[np.float64] | None = None
         self._emb = self.config.embodiment.dilated(by=self.config.body_dilate_m)
         self._model: ObstacleModel = load_model(self.config.obstacle_model, self._emb)
-        self._episode: PlannerEpisode = self.config.planner(self._emb)
+        self._episode: PlannerEpisode = self.config.planner(
+            self._emb, pointcloud_resolution=self.config.pointcloud_resolution
+        )
         self._stop_event = Event()
         self._thread: Thread | None = None
 

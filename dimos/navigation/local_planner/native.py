@@ -50,6 +50,7 @@ class LocalPlannerNativeConfig(NativeModuleConfig):
     body_dilate_m: float = _default("body_dilate_m")
     unseen_cost: float = _default("unseen_cost")
     resolution: float = RESOLUTION
+    pointcloud_resolution: float = _default("pointcloud_resolution")
     replan_hz: float = _default("replan_hz")
     goal_lookahead_m: float = _default("goal_lookahead_m")
     world_frame: str = _default("world_frame")

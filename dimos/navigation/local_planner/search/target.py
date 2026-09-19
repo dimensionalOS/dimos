@@ -27,19 +27,20 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.embodiment.base import Embodiment
 
 from .base import RESOLUTION, densify_states, pose_stamped, states_of
-from .se2 import COMMIT_MARGIN, PERIOD, SdfGrid, anchor, se2_search
+from .se2 import COMMIT_MARGIN, VOXEL, SdfGrid, anchor, pitches, se2_search
 
 PAD = 1.5
-# Free space around the working area, in whole lattice periods.
-GRID_PAD = 3 * PERIOD
 
 BUILD_CMD = "uv run maturin develop --uv --release --features python -m dimos/navigation/local_planner/rust/Cargo.toml"
 
 
 class TargetEpisode:
-    def __init__(self, emb: Embodiment, resolution: float) -> None:
+    def __init__(
+        self, emb: Embodiment, resolution: float, pointcloud_resolution: float = VOXEL
+    ) -> None:
         self._emb = emb
         self._res = resolution
+        self._fine, self._cell, self._period = pitches(pointcloud_resolution)
 
     def reset(self) -> None:
         pass
@@ -60,10 +61,11 @@ class TargetEpisode:
         xs = [pose.x, goal.x] + ([] if not len(band) else [band[:, 0].min(), band[:, 0].max()])
         ys = [pose.y, goal.y] + ([] if not len(band) else [band[:, 1].min(), band[:, 1].max()])
         # Anchored on the world lattice: a new return may add rows, never move a sample.
-        x0, y0 = anchor(min(xs) - PAD), anchor(min(ys) - PAD)
+        x0, y0 = anchor(min(xs) - PAD, self._period), anchor(min(ys) - PAD, self._period)
         x1, y1 = max(xs) + PAD, max(ys) + PAD
+        pad = 3 * self._period  # free space around the working area
         grid = SdfGrid.from_obstacles(
-            (x0 - GRID_PAD, y0 - GRID_PAD, x1 + GRID_PAD, y1 + GRID_PAD), band
+            (x0 - pad, y0 - pad, x1 + pad, y1 + pad), band, pitch=self._fine
         )
 
         states = se2_search(
@@ -73,6 +75,7 @@ class TargetEpisode:
             (goal.x, goal.y),
             self._emb,
             self._emb.precision,
+            cell=self._cell,
             incumbent=states_of(incumbent),
         )
         if states is None:
@@ -86,13 +89,16 @@ class TargetEpisode:
 class RustTargetEpisode:
     """The dimos_local_planner extension behind the episode protocol."""
 
-    def __init__(self, emb: Embodiment, resolution: float) -> None:
+    def __init__(
+        self, emb: Embodiment, resolution: float, pointcloud_resolution: float = VOXEL
+    ) -> None:
         import dimos_local_planner
 
         self._mod = dimos_local_planner
         # the body crosses as the same dict the native modules are configured with
         self._emb = emb.to_json()
         self._res = resolution
+        self._voxel = pointcloud_resolution
 
     def reset(self) -> None:
         pass
@@ -120,19 +126,30 @@ class RustTargetEpisode:
             if ground is None
             else np.ascontiguousarray(np.asarray(ground, dtype=np.float64).reshape(-1, 2)),
             unseen_cost,
+            self._voxel,
         )
         if out is None or not len(out):
             return Path(ts=0.0, frame_id="world", poses=[pose_stamped(pose.x, pose.y, pose.yaw)])
         return Path(ts=0.0, frame_id="world", poses=[pose_stamped(x, y, yaw) for x, y, yaw in out])
 
 
-def make_py(emb: Embodiment, resolution: float = RESOLUTION, **_: Any) -> TargetEpisode:
-    return TargetEpisode(emb, resolution)
+def make_py(
+    emb: Embodiment,
+    resolution: float = RESOLUTION,
+    pointcloud_resolution: float = VOXEL,
+    **_: Any,
+) -> TargetEpisode:
+    return TargetEpisode(emb, resolution, pointcloud_resolution)
 
 
-def make(emb: Embodiment, resolution: float = RESOLUTION, **_: Any) -> RustTargetEpisode:
+def make(
+    emb: Embodiment,
+    resolution: float = RESOLUTION,
+    pointcloud_resolution: float = VOXEL,
+    **_: Any,
+) -> RustTargetEpisode:
     try:
         import dimos_local_planner  # noqa: F401
     except ImportError as e:
         raise ImportError(f"dimos_local_planner is not built; run: {BUILD_CMD}") from e
-    return RustTargetEpisode(emb, resolution)
+    return RustTargetEpisode(emb, resolution, pointcloud_resolution)

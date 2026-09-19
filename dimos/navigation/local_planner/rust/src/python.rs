@@ -17,12 +17,12 @@ use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::planner::{plan_explored as plan_impl, Emb, COMMIT_MARGIN};
+use crate::planner::{plan_explored as plan_impl, Emb, COMMIT_MARGIN, VOXEL};
 
 /// One plan call; python owns every argument (`search/target.py`). `points`/`ground`
 /// are (N, 2) world xy, `emb` the `Embodiment` JSON, `incumbent` (M, 3); (M, 3) or None.
 #[pyfunction]
-#[pyo3(signature = (points, pose, goal, emb, resolution, incumbent=None, commit_margin=COMMIT_MARGIN, ground=None, unseen_cost=1.0))]
+#[pyo3(signature = (points, pose, goal, emb, resolution, incumbent=None, commit_margin=COMMIT_MARGIN, ground=None, unseen_cost=1.0, pointcloud_resolution=VOXEL))]
 // the argument list is the boundary; a struct would only move the names one hop
 #[allow(clippy::too_many_arguments)]
 fn plan<'py>(
@@ -36,6 +36,7 @@ fn plan<'py>(
     commit_margin: f64,
     ground: Option<PyReadonlyArray2<'py, f64>>,
     unseen_cost: f64,
+    pointcloud_resolution: f64,
 ) -> PyResult<Option<Bound<'py, PyArray2<f64>>>> {
     if points.shape()[1] != 2 {
         return Err(PyValueError::new_err(format!(
@@ -77,6 +78,7 @@ fn plan<'py>(
             goal,
             &emb,
             resolution,
+            pointcloud_resolution,
             inc.as_deref(),
             commit_margin,
         )

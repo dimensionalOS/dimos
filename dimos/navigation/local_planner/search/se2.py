@@ -43,6 +43,13 @@ FINE = 0.04  # VOXEL / 2
 CELL = 0.12  # 3 * FINE
 PERIOD = 0.24  # 2 * CELL == 3 * VOXEL == 6 * FINE
 
+
+def pitches(voxel: float = VOXEL) -> tuple[float, float, float]:
+    """(fine, cell, period) for a map at `voxel`; the constants above at the stock 0.08."""
+    fine = voxel / 2
+    return fine, 3 * fine, 6 * fine
+
+
 # How much cheaper a challenger must be to displace the published route, in
 # `path_cost` units; handed to the rust planner unchanged.
 COMMIT_MARGIN = 3.0
@@ -400,6 +407,6 @@ def se2_search(
         here = np.array([[start[0], start[1], start[2]]])
         return p if np.allclose(p[0], here[0]) else np.vstack([here, p])
 
-    fresh = path_cost(grid, priced(result), emb)
-    held = path_cost(grid, priced(route), emb)
+    fresh = path_cost(grid, priced(result), emb, grid.pitch)
+    held = path_cost(grid, priced(route), emb, grid.pitch)
     return result if fresh < held - commit_margin else route

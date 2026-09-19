@@ -21,25 +21,44 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::f64::consts::PI;
 
-/// Fine distance-field pitch: half the map's voxel.
-const FINE: f64 = 0.04; // VOXEL / 2
 const PAD: f64 = 1.5;
-/// Lattice pitch: three fine samples.
-const CELL: f64 = 0.12; // 3 * FINE
-/// Lattice, fine field and voxel grid are commensurate at this pitch; working
-/// areas snap to it in the world frame, so a far point never moves a sample.
-const PERIOD: f64 = 0.24; // 2 * CELL == 3 * VOXEL == 6 * FINE
-/// Free space kept around the working area, in whole periods.
-const GRID_PAD: f64 = 0.72; // 3 * PERIOD
 const YAW_BINS: usize = 16;
 const OFFSET_STEP: f64 = 0.05;
-/// Worst-case distance between the fine-grid snaps of two coincident points.
-const SNAP: f64 = FINE * std::f64::consts::SQRT_2;
 /// Side of the point-index bucket, in metres.
 const BUCKET: f64 = 0.2;
 
-/// Pitch at which a route is priced along its own arc. `se2.py::COST_STEP`.
-const COST_STEP: f64 = FINE;
+/// The stock map's voxel pitch, `se2.py::VOXEL`.
+pub const VOXEL: f64 = 0.08;
+
+/// Every pitch, scaled off the map's voxel (`se2.py::pitches`): the fine field is
+/// half a voxel, the lattice cell three fine samples, the period two cells (three
+/// voxels), so a working area snapped to the period never moves a sample.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Geom {
+    /// Fine distance-field pitch; a route is priced along its arc at it too.
+    pub fine: f64,
+    pub cell: f64,
+    pub period: f64,
+    /// Free space kept around the working area, three periods.
+    pub grid_pad: f64,
+    /// Worst-case distance between the fine-grid snaps of two coincident points.
+    pub snap: f64,
+}
+
+impl Geom {
+    pub const fn of(voxel: f64) -> Self {
+        let fine = voxel / 2.0;
+        let cell = 3.0 * fine;
+        let period = 2.0 * cell;
+        Self {
+            fine,
+            cell,
+            period,
+            grid_pad: 3.0 * period,
+            snap: fine * std::f64::consts::SQRT_2,
+        }
+    }
+}
 
 /// `se2.py::COMMIT_MARGIN`; tests only, python owns the number.
 pub const COMMIT_MARGIN: f64 = 3.0;
@@ -511,7 +530,8 @@ impl PointBuckets {
 }
 
 struct World {
-    /// Absolute fine-grid index of the field's origin; positions are `fkx * FINE`.
+    g: Geom,
+    /// Absolute fine-grid index of the field's origin; positions are `fkx * fine`.
     fkx: i64,
     fky: i64,
     nfx: usize,
@@ -546,8 +566,10 @@ impl World {
         if self.unseen.is_empty() {
             return 1.0;
         }
-        let i = ((x / CELL).round_even_i64() - self.kx).clamp(0, self.nlx as i64 - 1) as usize;
-        let j = ((y / CELL).round_even_i64() - self.ky).clamp(0, self.nly as i64 - 1) as usize;
+        let i =
+            ((x / self.g.cell).round_even_i64() - self.kx).clamp(0, self.nlx as i64 - 1) as usize;
+        let j =
+            ((y / self.g.cell).round_even_i64() - self.ky).clamp(0, self.nly as i64 - 1) as usize;
         self.unseen[i * self.nly + j]
     }
 
@@ -566,8 +588,8 @@ impl World {
         }
         let d = match &self.pts {
             Some(b) => b.nearest(
-                (self.fkx + i as i64) as f64 * FINE,
-                (self.fky + j as i64) as f64 * FINE,
+                (self.fkx + i as i64) as f64 * self.g.fine,
+                (self.fky + j as i64) as f64 * self.g.fine,
                 self.cap,
             ),
             None => f64::INFINITY,
@@ -590,8 +612,10 @@ impl World {
     /// Fine-field value at a world position, snapped on the absolute grid.
     #[inline]
     fn lookup(&mut self, px: f64, py: f64) -> f64 {
-        let i = ((px / FINE).round_even_i64() - self.fkx).clamp(0, self.nfx as i64 - 1) as usize;
-        let j = ((py / FINE).round_even_i64() - self.fky).clamp(0, self.nfy as i64 - 1) as usize;
+        let i =
+            ((px / self.g.fine).round_even_i64() - self.fkx).clamp(0, self.nfx as i64 - 1) as usize;
+        let j =
+            ((py / self.g.fine).round_even_i64() - self.fky).clamp(0, self.nfy as i64 - 1) as usize;
         let k = self.xpart(i) + Self::ypart(j);
         self.at(i, j, k)
     }
@@ -599,7 +623,7 @@ impl World {
 
 #[cfg(test)]
 fn build_world(points: &[[f64; 2]], pose: (f64, f64, f64), goal: (f64, f64), cap: f64) -> World {
-    build_world_explored(points, &[], 1.0, pose, goal, cap)
+    build_world_explored(points, &[], 1.0, pose, goal, cap, Geom::of(VOXEL))
 }
 
 /// `build_world` pricing lattice cells with no `ground` return under them or
@@ -611,7 +635,15 @@ fn build_world_explored(
     pose: (f64, f64, f64),
     goal: (f64, f64),
     cap: f64,
+    g: Geom,
 ) -> World {
+    let Geom {
+        fine,
+        cell,
+        period,
+        grid_pad,
+        ..
+    } = g;
     let band: Vec<(f64, f64)> = points.iter().map(|p| (p[0], p[1])).collect();
     // Working area over {pose, goal, cloud} padded by `PAD`, low corner snapped
     // onto the absolute lattice.
@@ -626,15 +658,15 @@ fn build_world_explored(
         y1 = y1.max(y);
     }
     let (px, py) = (
-        ((x0 - PAD) / PERIOD).floor() as i64,
-        ((y0 - PAD) / PERIOD).floor() as i64,
+        ((x0 - PAD) / period).floor() as i64,
+        ((y0 - PAD) / period).floor() as i64,
     );
-    let (x0, y0) = (px as f64 * PERIOD, py as f64 * PERIOD);
+    let (x0, y0) = (px as f64 * period, py as f64 * period);
     let (x1, y1) = (x1 + PAD, y1 + PAD);
-    let (fkx, fky) = ((px - 3) * 6, (py - 3) * 6); // GRID_PAD = 3 PERIODs = 18 fine
-    let (fx0, fy0) = (fkx as f64 * FINE, fky as f64 * FINE);
-    let nfx = arange_len(fx0, x1 + GRID_PAD, FINE);
-    let nfy = arange_len(fy0, y1 + GRID_PAD, FINE);
+    let (fkx, fky) = ((px - 3) * 6, (py - 3) * 6); // grid_pad = 3 periods = 18 fine
+    let (fx0, fy0) = (fkx as f64 * fine, fky as f64 * fine);
+    let nfx = arange_len(fx0, x1 + grid_pad, fine);
+    let nfy = arange_len(fy0, y1 + grid_pad, fine);
     let ncells = nfx * nfy;
     let (sdf, pts) = if band.is_empty() {
         (vec![f64::INFINITY; ncells], None)
@@ -642,17 +674,17 @@ fn build_world_explored(
         (vec![-1.0; ncells], Some(PointBuckets::new(&band)))
     };
     let (kx, ky) = (px * 2, py * 2);
-    let nlx = arange_len(x0, x1 + CELL, CELL);
-    let nly = arange_len(y0, y1 + CELL, CELL);
+    let nlx = arange_len(x0, x1 + cell, cell);
+    let nly = arange_len(y0, y1 + cell, cell);
     let unseen = if unseen_cost <= 1.0 {
         Vec::new()
     } else {
         let mut u = vec![unseen_cost; nlx * nly];
         // ponytail: one-cell dilation so a voxel-sparse floor does not flicker
         // holes into the explored set; a proper coverage estimate if it does.
-        for g in ground {
-            let i = (g[0] / CELL).round_even_i64() - kx;
-            let j = (g[1] / CELL).round_even_i64() - ky;
+        for p in ground {
+            let i = (p[0] / cell).round_even_i64() - kx;
+            let j = (p[1] / cell).round_even_i64() - ky;
             for di in -1..=1 {
                 for dj in -1..=1 {
                     let (a, b) = (i + di, j + dj);
@@ -665,6 +697,7 @@ fn build_world_explored(
         u
     };
     World {
+        g,
         fkx,
         fky,
         nfx,
@@ -782,6 +815,7 @@ impl<'a> Clear<'a> {
             }
         }
         let nfp = fps.offs.len();
+        let snap = w.g.snap;
         Clear {
             w,
             t: vec![0.0f64; YAW_BINS * nx * ny],
@@ -801,7 +835,7 @@ impl<'a> Clear<'a> {
             dy: vec![false; YAW_BINS * ny],
             margin,
             // Above `speed_clearance` a cell is not worth scanning.
-            certify: gov.speed_clearance + reach + SNAP,
+            certify: gov.speed_clearance + reach + snap,
             stand: fps.stand,
             gov,
         }
@@ -817,7 +851,7 @@ impl<'a> Clear<'a> {
             .iter_mut()
             .zip(&self.rot[base..base + self.noff])
         {
-            let fi = (((x + r.0) / FINE).round_even_i64() - fkx).clamp(0, hi) as usize;
+            let fi = (((x + r.0) / self.w.g.fine).round_even_i64() - fkx).clamp(0, hi) as usize;
             *d = (fi * nfy) as u32;
         }
         self.dx[rx] = true;
@@ -832,7 +866,7 @@ impl<'a> Clear<'a> {
             .iter_mut()
             .zip(&self.rot[base..base + self.noff])
         {
-            let fj = (((y + r.1) / FINE).round_even_i64() - fky).clamp(0, hi) as usize;
+            let fj = (((y + r.1) / self.w.g.fine).round_even_i64() - fky).clamp(0, hi) as usize;
             *d = World::ypart(fj) as u32;
         }
         self.dy[ry] = true;
@@ -972,7 +1006,7 @@ fn dark_len(w: &World, a: &[f64; 3], b: &[f64; 3]) -> f64 {
         return 0.0;
     }
     let len = (b[0] - a[0]).hypot(b[1] - a[1]);
-    let n = ((len / (0.5 * CELL)).ceil() as usize).max(1);
+    let n = ((len / (0.5 * w.g.cell)).ceil() as usize).max(1);
     let h = len / n as f64;
     (0..n)
         .filter(|&q| {
@@ -1017,12 +1051,13 @@ fn seg_free(w: &mut World, fps: &Fps, emb: &Emb, a: &[f64; 3], b: &[f64; 3], flo
 fn lattice_axes(w: &World) -> (Vec<f64>, Vec<f64>) {
     let (x0, y0, x1, y1) = w.bounds;
     let (kx, ky) = (w.kx, w.ky);
+    let cell = w.g.cell;
     (
-        (0..arange_len(x0, x1 + CELL, CELL))
-            .map(|i| (kx + i as i64) as f64 * CELL)
+        (0..arange_len(x0, x1 + cell, cell))
+            .map(|i| (kx + i as i64) as f64 * cell)
             .collect(),
-        (0..arange_len(y0, y1 + CELL, CELL))
-            .map(|j| (ky + j as i64) as f64 * CELL)
+        (0..arange_len(y0, y1 + cell, cell))
+            .map(|j| (ky + j as i64) as f64 * cell)
             .collect(),
     )
 }
@@ -1039,13 +1074,14 @@ fn se2_search_in(
     let offs = fps.union().to_vec();
     let stand_offs = fps.stand().to_vec();
     let (kx, ky) = (cl.w.kx, cl.w.ky);
+    let Geom { cell, snap, .. } = cl.w.g;
     let (nx, ny) = (cl.nx, cl.ny);
     let thetas = yaw_bins();
 
     let cell_of = |px: f64, py: f64| -> (usize, usize) {
         (
-            ((px / CELL).round_even_i64() - kx).clamp(0, nx as i64 - 1) as usize,
-            ((py / CELL).round_even_i64() - ky).clamp(0, ny as i64 - 1) as usize,
+            ((px / cell).round_even_i64() - kx).clamp(0, nx as i64 - 1) as usize,
+            ((py / cell).round_even_i64() - ky).clamp(0, ny as i64 - 1) as usize,
         )
     };
     let mut sb = 0;
@@ -1134,7 +1170,7 @@ fn se2_search_in(
                 di,
                 dj,
                 dk: di * ny as i64 + dj,
-                base: ((di * di + dj * dj) as f64).sqrt() * CELL,
+                base: ((di * di + dj * dj) as f64).sqrt() * cell,
                 mids,
             });
         }
@@ -1169,7 +1205,7 @@ fn se2_search_in(
         .iter()
         .map(|r| r[1].min(r[2]))
         .fold(emb.length.min(emb.width), f64::min);
-    let dense_moves = thinnest < CELL * std::f64::consts::SQRT_2;
+    let dense_moves = thinnest < cell * std::f64::consts::SQRT_2;
 
     // Heuristic: exact shortest path to the goal through a relaxed free space
     // (a disc of radius `r_in` fits, priced by an upper bound on clearance),
@@ -1242,7 +1278,7 @@ fn se2_search_in(
             if mul[kk] == 0.0 {
                 let (px, py) = (cl.gx[ni], cl.gy[nj]);
                 // Upper bound on the footprint's minimum clearance here in any yaw bin.
-                let mtop = cl.w.lookup(px, py) + 1.5 * SNAP;
+                let mtop = cl.w.lookup(px, py) + 1.5 * snap;
                 mul[kk] = if mtop - r_pass > margin {
                     cl.gov.tight(mtop - r_price)
                 } else {
@@ -1270,7 +1306,7 @@ fn se2_search_in(
         }
         let di = i as f64 - gi as f64;
         let dj = j as f64 - gj as f64;
-        (CELL * (di * di + dj * dj).sqrt()).max(tfin)
+        (cell * (di * di + dj * dj).sqrt()).max(tfin)
     };
 
     let n_states = YAW_BINS * nx * ny;
@@ -1445,7 +1481,7 @@ fn se2_search_in(
         dark[m] = dark[m - 1] + dark_len(w, &raw[m - 1], &raw[m]);
     }
     let chord_dark = |w: &World, j: usize, k: usize| -> bool {
-        dark_len(w, &raw[j], &raw[k]) <= dark[k] - dark[j] + CELL
+        dark_len(w, &raw[j], &raw[k]) <= dark[k] - dark[j] + cell
     };
     let mut keep = vec![raw.len() - 1];
     while *keep.last().unwrap() > 0 {
@@ -1511,9 +1547,9 @@ fn station_stride(res: f64) -> f64 {
 }
 
 /// Extra clearance the coarse tier needs: the swept station's worst excursion
-/// plus `SNAP` and the search's own 0.05 margin.
-fn sweep_slack(reach: f64) -> f64 {
-    2.0 * reach * (0.5 * MAX_STATION_YAW).sin() + SNAP + 0.05
+/// plus `snap` and the search's own 0.05 margin.
+fn sweep_slack(reach: f64, snap: f64) -> f64 {
+    2.0 * reach * (0.5 * MAX_STATION_YAW).sin() + snap + 0.05
 }
 
 /// Does every pose of this segment clear `slack`? Sampled at the denser tier.
@@ -1621,7 +1657,7 @@ fn path_cost(w: &mut World, offs: &[(f64, f64)], emb: &Emb, states: &[[f64; 3]])
         return total;
     }
     // Even sub-steps over the whole route, so an added vertex moves no sample.
-    let nk = ((length / COST_STEP).ceil() as usize).max(1);
+    let nk = ((length / w.g.fine).ceil() as usize).max(1);
     let h = length / nk as f64;
     let mut p = 0usize;
     for q in 0..nk {
@@ -1691,7 +1727,8 @@ fn committed(
         }
     }
     let end = *route.last().expect("len >= 2");
-    let cell = |v: f64| (v / CELL).round_even_i64();
+    let pitch = cl.w.g.cell;
+    let cell = |v: f64| (v / pitch).round_even_i64();
     // The goal moves between replans: carry the route on by chord, else by
     // search from the far end.
     let mut carried = false;
@@ -1738,7 +1775,7 @@ fn priced(pose: (f64, f64, f64), states: &[[f64; 3]]) -> Vec<[f64; 3]> {
 
 /// `incumbent` is the route already published; it is trimmed to `pose`,
 /// re-validated, carried to the goal, and kept unless the fresh search beats
-/// it by `commit_margin`.
+/// it by `commit_margin`. At the stock voxel; `plan_explored` takes the map's.
 pub fn plan(
     points: &[[f64; 2]],
     pose: (f64, f64, f64),
@@ -1756,6 +1793,7 @@ pub fn plan(
         goal,
         emb,
         resolution,
+        VOXEL,
         incumbent,
         commit_margin,
     )
@@ -1772,15 +1810,17 @@ pub fn plan_explored(
     goal: (f64, f64),
     emb: &Emb,
     resolution: f64,
+    voxel: f64,
     incumbent: Option<&[[f64; 3]]>,
     commit_margin: f64,
 ) -> Option<Vec<[f64; 3]>> {
+    let g = Geom::of(voxel);
     let fps = Fps::new(emb);
     let offs = fps.union().to_vec();
     let reach = reach_of(&offs);
     // Covers the certificate (`speed_clearance`) and the smoothing floor (`comfort`).
-    let cap = emb.comfort.max(emb.speed_clearance) + reach + SNAP;
-    let mut w = build_world_explored(points, ground, unseen_cost, pose, goal, cap);
+    let cap = emb.comfort.max(emb.speed_clearance) + reach + g.snap;
+    let mut w = build_world_explored(points, ground, unseen_cost, pose, goal, cap, g);
     let margin = emb.precision;
     // World from {pose, goal, cloud}, never the incumbent; one clearance table for both.
     let (fresh, held) = {
@@ -1816,13 +1856,54 @@ pub fn plan_explored(
         &offs,
         &states,
         resolution,
-        sweep_slack(reach),
+        sweep_slack(reach, g.snap),
     ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const G: Geom = Geom::of(VOXEL);
+
+    /// The pitches scale together, and a plan at half the voxel is the same route.
+    #[test]
+    fn geom_scales_with_the_voxel() {
+        let eq = |a: f64, b: f64| (a - b).abs() < 1e-12;
+        assert!(eq(G.fine, 0.04) && eq(G.cell, 0.12) && eq(G.period, 0.24) && eq(G.grid_pad, 0.72));
+        let h = Geom::of(0.04);
+        assert!(eq(h.fine, 0.02) && eq(h.cell, 0.06) && eq(h.period, 0.12));
+        let emb = Emb::fixture();
+        let pts = ring(2.0, 0.0, 0.45, 0.05);
+        let arc = |p: &[[f64; 3]]| -> f64 {
+            p.windows(2)
+                .map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]))
+                .sum()
+        };
+        let at = |voxel: f64| {
+            plan_explored(
+                &pts,
+                &[],
+                1.0,
+                (0.0, 0.0, 0.0),
+                (4.0, 0.0),
+                &emb,
+                0.1,
+                voxel,
+                None,
+                COMMIT_MARGIN,
+            )
+            .expect("route exists")
+        };
+        let (coarse, fine) = (at(VOXEL), at(0.04));
+        assert!(
+            (arc(&coarse) - arc(&fine)).abs() < 0.3,
+            "{} vs {}",
+            arc(&coarse),
+            arc(&fine)
+        );
+        assert!((fine.last().expect("route")[0] - 4.0).abs() < 0.2);
+    }
 
     /// Unexplored terrain is priced, not forbidden.
     #[test]
@@ -1851,6 +1932,7 @@ mod tests {
                 (4.0, 0.0),
                 &emb,
                 0.1,
+                VOXEL,
                 None,
                 COMMIT_MARGIN,
             )
@@ -1868,6 +1950,7 @@ mod tests {
             (4.0, 0.0),
             &emb,
             0.1,
+            VOXEL,
             None,
             COMMIT_MARGIN
         )
@@ -1989,9 +2072,9 @@ mod tests {
         for reach in [0.1f64, reach_of(Fps::new(&Emb::fixture()).union()), 0.9] {
             let excursion = 2.0 * reach * (0.5 * MAX_STATION_YAW).sin();
             assert!(
-                sweep_slack(reach) - excursion >= SNAP + 0.05 - 1e-12,
-                "slack {} leaves under SNAP+0.05 over excursion {excursion} at reach {reach}",
-                sweep_slack(reach)
+                sweep_slack(reach, G.snap) - excursion >= G.snap + 0.05 - 1e-12,
+                "slack {} leaves under snap+0.05 over excursion {excursion} at reach {reach}",
+                sweep_slack(reach, G.snap)
             );
         }
         // The per-waypoint step must add up to the window at every resolution.
@@ -2100,11 +2183,11 @@ mod tests {
         let emb = Emb::fixture();
         let fps = Fps::new(&emb);
         let pts = ring(2.0, 0.0, 0.6, 0.03);
-        let cap = emb.comfort.max(emb.speed_clearance) + reach_of(fps.union()) + SNAP;
+        let cap = emb.comfort.max(emb.speed_clearance) + reach_of(fps.union()) + G.snap;
         let mut w = build_world(&pts, (0.0, 0.0, 0.0), (4.0, 0.0), cap);
         let (x0, y0, x1, y1) = w.bounds;
-        let gx = arange(x0, x1 + CELL, CELL);
-        let gy = arange(y0, y1 + CELL, CELL);
+        let gx = arange(x0, x1 + G.cell, G.cell);
+        let gy = arange(y0, y1 + G.cell, G.cell);
         let (nx, ny) = (gx.len(), gy.len());
         let mut cl = Clear::new(&mut w, &fps, emb.precision, gx, gy, emb.governor());
         let (mut blocked, mut charged) = (0usize, 0usize);
@@ -2266,8 +2349,8 @@ mod tests {
         }
     }
 
-    /// A whole-`PERIOD` translation translates the route (not bit-exact:
-    /// `PERIOD` is not dyadic).
+    /// A whole-period translation translates the route (not bit-exact: the
+    /// period is not dyadic).
     #[test]
     fn a_whole_period_translation_translates_the_answer() {
         let emb = Emb::fixture();
@@ -2282,7 +2365,7 @@ mod tests {
             COMMIT_MARGIN,
         )
         .expect("route exists");
-        let d = 4.0 * PERIOD;
+        let d = 4.0 * G.period;
         let moved: Vec<[f64; 2]> = pts.iter().map(|p| [p[0] + d, p[1] + d]).collect();
         let got = plan(
             &moved,
@@ -2300,7 +2383,7 @@ mod tests {
                 .sum()
         };
         assert!(
-            (arc(&base) - arc(&got)).abs() < CELL,
+            (arc(&base) - arc(&got)).abs() < G.cell,
             "translation changed the route length: {} vs {}",
             arc(&base),
             arc(&got)
@@ -2312,7 +2395,7 @@ mod tests {
                 .map(|p| (q[0] - d - p[0]).hypot(q[1] - d - p[1]))
                 .fold(f64::INFINITY, f64::min);
             assert!(
-                near < CELL,
+                near < G.cell,
                 "translated pose {q:?} is {near:.3} m off the route"
             );
         }
@@ -2369,13 +2452,13 @@ mod tests {
         let fps = Fps::new(&emb);
         let pts = ring(2.0, 0.0, 0.6, 0.03);
         let offs = fps.union().to_vec();
-        let cap = emb.comfort.max(emb.speed_clearance) + reach_of(&offs) + SNAP;
+        let cap = emb.comfort.max(emb.speed_clearance) + reach_of(&offs) + G.snap;
         let mut w = build_world(&pts, (0.0, 0.0, 0.0), (4.0, 0.0), cap);
         // Reference field: no cap, so every cell holds its exact distance.
         let mut wref = build_world(&pts, (0.0, 0.0, 0.0), (4.0, 0.0), f64::INFINITY);
         let (x0, y0, x1, y1) = w.bounds;
-        let gx = arange(x0, x1 + CELL, CELL);
-        let gy = arange(y0, y1 + CELL, CELL);
+        let gx = arange(x0, x1 + G.cell, G.cell);
+        let gy = arange(y0, y1 + G.cell, G.cell);
         let (nx, ny) = (gx.len(), gy.len());
         let thetas = yaw_bins();
         let noff = offs.len();

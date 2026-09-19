@@ -47,6 +47,9 @@ pub struct Config {
     /// Plan discretisation (m); the python reads `planners/base.py RESOLUTION`.
     #[validate(range(exclusive_min = 0.0))]
     pub resolution: f64,
+    /// The local map's voxel pitch (m); every lattice pitch scales off it.
+    #[validate(range(exclusive_min = 0.0))]
+    pub pointcloud_resolution: f64,
     #[validate(range(exclusive_min = 0.0))]
     pub replan_hz: f64,
     /// Carrot arc along the global route.
@@ -287,6 +290,7 @@ pub fn plan_once(
         goal,
         emb,
         config.resolution,
+        config.pointcloud_resolution,
         incumbent,
         COMMIT_MARGIN,
     ) {
@@ -621,6 +625,7 @@ mod tests {
             body_dilate_m: 0.0,
             unseen_cost: 1.0,
             resolution: 0.1,
+            pointcloud_resolution: 0.08,
             replan_hz: 5.0,
             goal_lookahead_m: 5.0,
             world_frame: "odom".into(),
