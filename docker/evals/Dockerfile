@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
     libxkbcommon-x11-0 libnss3 libnspr4 libasound2t64 libatspi2.0-0 \
     libxfixes3 libdrm2 libx11-xcb1 libxext6 libxshmfence1 fonts-liberation \
-    iproute2 xvfb ffmpeg x11-utils \
+    iproute2 xvfb ffmpeg x11-utils libegl1 libgles2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Everything dimos caches or records lives under /cache and /state so a bind
@@ -104,6 +104,8 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     VIEWER=none \
     PYTHONUNBUFFERED=1
 
+# Headless EGL on the NVIDIA runtime: glvnd needs the vendor ICD to find libEGL_nvidia.
+RUN mkdir -p /usr/share/glvnd/egl_vendor.d && printf '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}\n' > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 RUN mkdir -p /state /config
 
 # `dimos evals run --docker` runs one eval per container through this entrypoint;
