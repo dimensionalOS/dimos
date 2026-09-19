@@ -353,6 +353,36 @@ The config is normally taken from .env or from environment variables. But you ca
 blueprint = ModuleA.blueprint().global_config(n_workers=8)
 ```
 
+## Sharing a module field across a blueprint
+
+`global_config` is the process (`GlobalConfig`: transport, workers, robot IP).
+`shared_config` is a *module* field, pinned on every module in the blueprint that
+declares it. Modules without the field are skipped; a field no module has is an error.
+
+```python session=blueprint-ex3
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.module import ModuleConfig
+
+class PlannerConfig(ModuleConfig):
+    embodiment: str = "go2"
+
+class Planner(Module):
+    config: PlannerConfig
+
+class Follower(Module):
+    config: PlannerConfig
+
+blueprint = autoconnect(Planner.blueprint(), Follower.blueprint()).shared_config(embodiment="g1")
+```
+
+It applies to the blueprint it is called on: an outer `shared_config` on a composed
+blueprint overrides an inner one, and a module autoconnected in afterwards is not
+touched. Users get the same fan-out at run time through the `shared` section, next to
+`g` and `transports`: `SHARED__EMBODIMENT=g1`, `--shared.embodiment=g1`, or
+`{"shared": {"embodiment": "g1"}}` in a config file. A module's own section
+(`PLANNER__EMBODIMENT`) beats `shared` from the same source. The bare `--embodiment`
+shorthand still resolves only when exactly one module has the field.
+
 ## Providing blueprint configuration to users
 
 `BlueprintConfigParser` discovers the configuration exposed by a blueprint,

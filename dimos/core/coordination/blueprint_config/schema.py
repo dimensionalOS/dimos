@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 import json
@@ -28,7 +29,7 @@ from dimos.core.coordination.blueprint_config.fields import (
     all_annotation_types,
     scalar_annotation_types,
 )
-from dimos.core.coordination.blueprints import BlueprintAtom, TransportSpec
+from dimos.core.coordination.blueprints import BlueprintAtom, TransportSpec, config_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,14 +47,26 @@ class TransportSchema:
 
 @dataclass(frozen=True, slots=True)
 class OptionTarget:
-    section: Literal["module", "global", "transport"]
+    # shared: one module field, set on every module declaring it (--shared.x, SHARED__X)
+    section: Literal["module", "global", "transport", "shared"]
     root: str
     path: tuple[str, ...]
     annotations: tuple[Any, ...]
 
     @property
-    def identity(self) -> tuple[str, str, tuple[str, ...]]:
+    def identity(self) -> TargetIdentity:
         return (self.section, self.root, self.path)
+
+    @property
+    def source_path(self) -> tuple[str, ...]:
+        """Where a value for this target sits in a source mapping (see `source_identity`)."""
+        if self.section == "global":
+            return ("g", *self.path)
+        if self.section == "transport":
+            return ("transports", self.root, *self.path)
+        if self.section == "shared":
+            return ("shared", *self.path)
+        return (self.root, *self.path)
 
     @property
     def qualified_name(self) -> str:
@@ -61,6 +74,8 @@ class OptionTarget:
             parts = ("g", *self.path)
         elif self.section == "transport":
             parts = ("transports", self.root, *self.path)
+        elif self.section == "shared":
+            parts = ("shared", *self.path)
         else:
             parts = (self.root, *self.path)
         return cli_path(parts)
@@ -93,6 +108,49 @@ class ParserSchema:
     transports: tuple[TransportSchema, ...]
     targets: tuple[OptionTarget, ...]
     aliases: Mapping[str, tuple[OptionTarget, ...]]
+
+
+TargetIdentity = tuple[str, str, tuple[str, ...]]
+
+
+def source_identity(path: tuple[str, ...]) -> TargetIdentity | None:
+    """The target a source-mapping path addresses; inverse of `OptionTarget.source_path`."""
+    root, *rest = path
+    if root == "g":
+        return ("global", "g", tuple(rest))
+    if root == "transports":
+        if len(rest) < 2:
+            return None
+        return ("transport", rest[0], tuple(rest[1:]))
+    if root == "shared":
+        return ("shared", "shared", tuple(rest))
+    return ("module", root, tuple(rest))
+
+
+def section_roots(schema: ParserSchema) -> dict[str, str]:
+    """Lowercased spellings of every section root a source may use, to the canonical one."""
+    roots = {"g": "g", "transports": "transports", "shared": "shared"}
+    for module in schema.modules:
+        roots[module.atom.name.lower()] = module.atom.name
+        roots[config_key(module.atom.name).lower()] = module.atom.name
+    return roots
+
+
+def shared_recipients(schema: ParserSchema, path: tuple[str, ...]) -> list[str]:
+    """Modules a shared value at `path` reaches: those declaring that leaf, or an
+    unenumerated field (opaque type) the path sits under."""
+    leaves: dict[str, set[tuple[str, ...]]] = defaultdict(set)
+    for target in schema.targets:
+        if target.section == "module":
+            leaves[target.root].add(target.path)
+    names = []
+    for module in schema.modules:
+        mine = leaves[module.atom.name]
+        if any(path[:n] in mine for n in range(1, len(path) + 1)):
+            names.append(module.atom.name)
+        elif path[0] in module.config_cls.model_fields and not any(p[0] == path[0] for p in mine):
+            names.append(module.atom.name)
+    return names
 
 
 def cli_path(parts: tuple[str, ...]) -> str:

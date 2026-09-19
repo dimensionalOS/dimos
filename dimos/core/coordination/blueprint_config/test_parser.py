@@ -20,10 +20,8 @@ from pydantic import BaseModel, Field
 import pytest
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
-from dimos.core.coordination.blueprint_config.parser import (
-    BlueprintConfigParser,
-    split_run_arguments,
-)
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprint_config.sources.cli import split_run_arguments
 from dimos.core.coordination.blueprints import TransportSpec, autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Stream, Transport
@@ -103,7 +101,8 @@ def test_ambiguous_shorthand_requires_deterministic_qualified_option() -> None:
 
     assert str(error.value) == (
         "Option --map-file is ambiguous. Use one of: "
-        "--primarymodule.map-file, --secondarymodule.map-file."
+        "--primarymodule.map-file, --secondarymodule.map-file, "
+        "or --shared.map-file to set every one."
     )
     parsed = parser.parse(["--secondarymodule.map-file=map"], environ={})
     assert parsed.module_kwargs("secondarymodule") == {"map_file": "map"}
@@ -553,3 +552,92 @@ def test_split_run_arguments_requires_leading_blueprint_names() -> None:
     )
     with pytest.raises(BlueprintConfigError, match="must precede"):
         split_run_arguments(("--map-file", "map"))
+
+
+def test_shared_section_fans_out_from_file_environment_and_cli(tmp_path: Path) -> None:
+    blueprint = autoconnect(PrimaryModule.blueprint(), SecondaryModule.blueprint())
+    parser = BlueprintConfigParser(blueprint)
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"shared":{"map_file":"file"}}')
+    parsed = parser.parse(config_path=config_path, environ={})
+    assert parsed.module_kwargs("primarymodule")["map_file"] == "file"
+    assert parsed.module_kwargs("secondarymodule")["map_file"] == "file"
+
+    parsed = parser.parse(environ={"SHARED__MAP_FILE": "env", "SHARED__SPEED": "3"})
+    assert parsed.module_kwargs("primarymodule") == {"map_file": "env", "speed": 3.0}
+    assert parsed.module_kwargs("secondarymodule") == {"map_file": "env"}
+
+    parsed = parser.parse(["--shared.map-file", "cli", "--shared.nested.mode", "x"], environ={})
+    assert parsed.module_kwargs("primarymodule") == {"map_file": "cli", "nested": {"mode": "x"}}
+    assert parsed.module_kwargs("secondarymodule") == {"map_file": "cli"}
+
+
+def test_module_section_beats_shared_within_one_source() -> None:
+    blueprint = autoconnect(PrimaryModule.blueprint(), SecondaryModule.blueprint())
+    parsed = BlueprintConfigParser(blueprint).parse(
+        environ={"SHARED__MAP_FILE": "shared", "PRIMARYMODULE__MAP_FILE": "mine"}
+    )
+    assert parsed.module_kwargs("primarymodule")["map_file"] == "mine"
+    assert parsed.module_kwargs("secondarymodule")["map_file"] == "shared"
+    # the CLI too, whatever the token order
+    parsed = BlueprintConfigParser(blueprint).parse(
+        ["--primarymodule.map-file", "mine", "--shared.map-file", "shared"], environ={}
+    )
+    assert parsed.module_kwargs("primarymodule")["map_file"] == "mine"
+    assert parsed.module_kwargs("secondarymodule")["map_file"] == "shared"
+
+
+def test_shared_unknown_field_is_rejected() -> None:
+    parser = BlueprintConfigParser(
+        autoconnect(PrimaryModule.blueprint(), SecondaryModule.blueprint())
+    )
+    with pytest.raises(BlueprintConfigError, match="Unknown shared option 'nobody'"):
+        parser.parse(environ={"SHARED__NOBODY": "1"})
+    with pytest.raises(BlueprintConfigError, match="Unknown blueprint configuration option"):
+        parser.parse(["--shared.nobody", "1"], environ={})
+
+
+def test_shared_is_hidden_from_help_and_named_by_the_ambiguity_error() -> None:
+    parser = BlueprintConfigParser(
+        autoconnect(PrimaryModule.blueprint(), SecondaryModule.blueprint())
+    )
+    help_text = parser.format_help()
+    assert "--shared." not in help_text
+    assert "--speed, --primarymodule.speed" in help_text
+    with pytest.raises(BlueprintConfigError, match="or --shared.map-file to set every one"):
+        parser.parse(["--map-file", "map"], environ={})
+
+
+def test_shared_nested_leaf_reaches_only_the_modules_declaring_it(tmp_path: Path) -> None:
+    class OtherNested(BaseModel):
+        depth: int = 1
+
+    class OtherConfig(ModuleConfig):
+        nested: OtherNested = Field(default_factory=OtherNested)
+
+    class OtherModule(Module):
+        config: OtherConfig
+
+    parser = BlueprintConfigParser(autoconnect(PrimaryModule.blueprint(), OtherModule.blueprint()))
+
+    parsed = parser.parse(environ={"SHARED__NESTED__MODE": "x"})
+    assert parsed.module_kwargs("primarymodule") == {"nested": {"mode": "x"}}
+    assert parsed.module_kwargs("othermodule") == {}
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"shared":{"nested":{"mode":"x","depth":2}}}')
+    parsed = parser.parse(config_path=config_path, environ={})
+    assert parsed.module_kwargs("primarymodule") == {"nested": {"mode": "x"}}
+    assert parsed.module_kwargs("othermodule") == {"nested": {"depth": 2}}
+
+    with pytest.raises(BlueprintConfigError, match="Unknown shared option 'nested.nope'"):
+        parser.parse(environ={"SHARED__NESTED__NOPE": "1"})
+
+
+def test_shared_is_a_reserved_instance_key() -> None:
+    class Shared(Module):
+        config: PrimaryConfig
+
+    with pytest.raises(BlueprintConfigError, match="instance-key collision.*'shared'"):
+        BlueprintConfigParser(Shared.blueprint()).parse(environ={})

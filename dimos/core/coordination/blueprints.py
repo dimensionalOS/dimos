@@ -228,6 +228,21 @@ class Blueprint:
             global_config_overrides=MappingProxyType({**self.global_config_overrides, **kwargs}),
         )
 
+    def shared_config(self, **kwargs: Any) -> "Blueprint":
+        """Pin a field on every module in this blueprint whose config declares it."""
+        from dimos.core.coordination.blueprint_config.fields import module_config_cls
+
+        atoms: list[BlueprintAtom] = []
+        hit: set[str] = set()
+        for atom in self.blueprints:
+            fields = module_config_cls(atom).model_fields
+            mine = {k: v for k, v in kwargs.items() if k in fields}
+            hit |= mine.keys()
+            atoms.append(replace(atom, kwargs={**atom.kwargs, **mine}) if mine else atom)
+        if missing := kwargs.keys() - hit:
+            raise ValueError(f"No module in this blueprint has config field(s) {sorted(missing)}")
+        return replace(self, blueprints=tuple(atoms))
+
     def remappings(
         self,
         remappings: Sequence[

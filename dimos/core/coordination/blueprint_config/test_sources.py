@@ -18,7 +18,7 @@ import pytest
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprint_config.sources import read_config_file
+from dimos.core.coordination.blueprint_config.sources.file import read_config_file
 from dimos.core.global_config import global_config as process_global_config
 from dimos.core.module import Module, ModuleConfig
 
@@ -50,7 +50,9 @@ def test_default_environment_reads_dotenv_at_environment_precedence(
     config_path = tmp_path / "config.json"
     config_path.write_text('{"g":{"robot_ip":"config"},"primarymodule":{"speed":2}}')
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("dimos.core.coordination.blueprint_config.sources.ENV_FILE", ".env")
+    monkeypatch.setattr(
+        "dimos.core.coordination.blueprint_config.sources.environment.ENV_FILE", ".env"
+    )
     monkeypatch.delenv("ROBOT_IP", raising=False)
 
     parsed = BlueprintConfigParser(PrimaryModule.blueprint()).parse(
