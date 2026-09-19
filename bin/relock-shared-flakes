@@ -195,11 +195,17 @@ def relock_flake(lock: Path) -> tuple[Path, bool, list[str]]:
             failures.append(_unpushed(lock, subdir))
             continue
         inputs[name]["locked"] = prefetch(_tarball(rev, subdir))["locked"]
+    before = lock.read_text()
     text = json.dumps(data, indent=2, sort_keys=True) + "\n"
-    changed = text != lock.read_text()
-    if changed:
+    if text != before:
         lock.write_text(text)
-    return lock, changed, failures
+        # the moved flake may declare inputs the old one did not; only nix can add those nodes
+        proc = subprocess.run(
+            ["nix", "flake", "lock"], cwd=lock.parent, capture_output=True, text=True, check=False
+        )
+        if proc.returncode != 0:
+            failures.append(f"{_rel(lock)}: nix flake lock\n{proc.stderr}")
+    return lock, lock.read_text() != before, failures
 
 
 # --- Cargo.lock: the rust modules' dimos-module dependency ----------------------
