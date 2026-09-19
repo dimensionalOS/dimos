@@ -13,12 +13,13 @@
 # limitations under the License.
 
 import subprocess
-import sys
 from unittest.mock import Mock
 
 from click.testing import Result
 import pytest
 from pytest_mock import MockerFixture
+
+can_motor_control = pytest.importorskip("can_motor_control")
 from typer.testing import CliRunner
 
 from dimos.cli.dimos import main
@@ -57,7 +58,7 @@ def test_list_linux_can_interfaces(mocker: MockerFixture) -> None:
 def test_list_macos_gs_usb_serials(mocker: MockerFixture) -> None:
     mocker.patch("dimos.cli.can.sys.platform", "darwin")
     list_gs_usb = mocker.patch.object(
-        sys.modules["can_motor_control"],
+        can_motor_control,
         "list_gs_usb_devices",
         create=True,
         return_value=[
@@ -78,7 +79,7 @@ def test_list_macos_gs_usb_serials(mocker: MockerFixture) -> None:
 def test_list_macos_warns_about_missing_serial(mocker: MockerFixture) -> None:
     mocker.patch("dimos.cli.can.sys.platform", "darwin")
     mocker.patch.object(
-        sys.modules["can_motor_control"],
+        can_motor_control,
         "list_gs_usb_devices",
         create=True,
         return_value=[Mock(index=0, serial_number=None)],
@@ -94,10 +95,10 @@ def test_list_macos_warns_about_missing_serial(mocker: MockerFixture) -> None:
 def test_list_macos_reports_discovery_error(mocker: MockerFixture) -> None:
     mocker.patch("dimos.cli.can.sys.platform", "darwin")
     mocker.patch.object(
-        sys.modules["can_motor_control"],
+        can_motor_control,
         "list_gs_usb_devices",
         create=True,
-        side_effect=sys.modules["can_motor_control"].TransportError("USB unavailable"),
+        side_effect=can_motor_control.TransportError("USB unavailable"),
     )
 
     result = _invoke_can(["list"])

@@ -110,10 +110,10 @@ impl LiveSource {
         } else {
             None
         };
-        let cmd = UdpSocket::bind(SocketAddrV4::new(
-            config.host_ip,
-            config.ports.host_cmd_data,
-        ))?;
+        let cmd = bind_shared(
+            SocketAddrV4::new(config.host_ip, config.ports.host_cmd_data),
+            None,
+        )?;
 
         threads.push(spawn_reader(
             "point",
@@ -171,15 +171,37 @@ impl Drop for LiveSource {
     }
 }
 
+/// Bind a UDP socket the way Livox SDK2 binds its own: with `SO_REUSEADDR`
+/// (and `SO_REUSEPORT`, which macOS needs before a wildcard bind will sit
+/// over a specific one). A vendor SDK2 process -- `livox_ros_driver2` on the
+/// Galaxea R1 -- holds the same host ports, and the kernel only lets two
+/// sockets share a port when both asked for it. A plain bind is refused with
+/// `EADDRINUSE`; the C++ Point-LIO module, which binds through SDK2, never
+/// was. Sharing the port is not sharing the lidar: whichever process last ran
+/// the handshake is the one the device streams to.
+fn bind_shared(addr: SocketAddrV4, recv_buffer: Option<usize>) -> io::Result<UdpSocket> {
+    let raw = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    raw.set_reuse_address(true)?;
+    raw.set_reuse_port(true)?;
+    if let Some(bytes) = recv_buffer {
+        if let Err(err) = raw.set_recv_buffer_size(bytes) {
+            tracing::warn!(
+                port = addr.port(),
+                "kernel refused the receive buffer request: {err}"
+            );
+        }
+    }
+    raw.bind(&std::net::SocketAddr::V4(addr).into())?;
+    Ok(raw.into())
+}
+
 /// Bind a data-plane receive socket, joining the multicast group when the
 /// device streams to one.
 fn data_socket(config: &LiveConfig, port: u16) -> io::Result<UdpSocket> {
-    let raw = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-    if let Err(err) = raw.set_recv_buffer_size(RECV_BUFFER_BYTES) {
-        tracing::warn!(port, "kernel refused the receive buffer request: {err}");
-    }
-    raw.bind(&std::net::SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port)).into())?;
-    let socket: UdpSocket = raw.into();
+    let socket = bind_shared(
+        SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port),
+        Some(RECV_BUFFER_BYTES),
+    )?;
     if let Some(group) = config.multicast_ip {
         socket.join_multicast_v4(&group, &config.host_ip)?;
     }
@@ -410,6 +432,25 @@ mod tests {
         }
     }
 
+    /// A local IPv4 address that is not 127.0.0.1, to send from as an
+    /// impostor. Linux has all of 127/8 on lo; macOS aliases only 127.0.0.1,
+    /// so fall back to the address the default route goes out of (a connect
+    /// on a UDP socket picks it without sending anything).
+    fn other_local_ip() -> Ipv4Addr {
+        let alias = Ipv4Addr::new(127, 0, 0, 2);
+        if UdpSocket::bind(SocketAddrV4::new(alias, 0)).is_ok() {
+            return alias;
+        }
+        let probe = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).unwrap();
+        probe
+            .connect(SocketAddrV4::new(Ipv4Addr::new(10, 255, 255, 255), 9))
+            .expect("no 127.0.0.2 alias and no default route: nowhere to forge from");
+        match probe.local_addr().unwrap() {
+            std::net::SocketAddr::V4(addr) if !addr.ip().is_loopback() => *addr.ip(),
+            addr => panic!("routed address {addr} is not a usable impostor"),
+        }
+    }
+
     /// A minimal in-test device: ACK every param-set, then stream one point
     /// packet and one IMU packet once work mode is set.
     fn spawn_fake_device(ports: Ports) -> std::thread::JoinHandle<Vec<u16>> {
@@ -581,7 +622,7 @@ mod tests {
             .build()
         };
         let target = SocketAddrV4::new(Ipv4Addr::LOCALHOST, ports.host_point_data);
-        let forged = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 2), 0)).unwrap();
+        let forged = UdpSocket::bind(SocketAddrV4::new(other_local_ip(), 0)).unwrap();
         forged.send_to(&packet(7), target).unwrap();
         std::thread::sleep(Duration::from_millis(100));
         let genuine = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
@@ -593,6 +634,50 @@ mod tests {
         let len = source.recv(&mut buf).expect("genuine packet delivered");
         let delivered = DataPacket::parse(&buf[..len]).unwrap();
         assert_eq!(delivered.timestamp_ns, 42);
+    }
+
+    /// Bind `addr` the way Livox SDK2 does: `SO_REUSEADDR` set (and
+    /// `SO_REUSEPORT`, which macOS needs for a wildcard bind to sit over a
+    /// specific one). A vendor SDK2 process is what holds our ports on a real
+    /// robot.
+    fn sdk2_style_bind(addr: SocketAddrV4) -> UdpSocket {
+        let raw = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+        raw.set_reuse_address(true).unwrap();
+        raw.set_reuse_port(true).unwrap();
+        raw.bind(&std::net::SocketAddr::V4(addr).into()).unwrap();
+        raw.into()
+    }
+
+    /// The vendor's `livox_ros_driver2` (Livox SDK2) binds every host port with
+    /// `SO_REUSEADDR`, and the C++ Point-LIO module coexists with it for that
+    /// reason. This source must bind the same way, or it is the one process on
+    /// the robot that gets `EADDRINUSE`.
+    #[test]
+    fn starts_while_an_sdk2_process_holds_the_host_ports() {
+        let ports = test_ports(6);
+        let loopback = Ipv4Addr::LOCALHOST;
+        let _held = [
+            sdk2_style_bind(SocketAddrV4::new(loopback, ports.host_cmd_data)),
+            sdk2_style_bind(SocketAddrV4::new(loopback, ports.host_point_data)),
+            sdk2_style_bind(SocketAddrV4::new(loopback, ports.host_imu_data)),
+        ];
+        let stop = Arc::new(AtomicBool::new(false));
+        let source = LiveSource::start(
+            LiveConfig {
+                host_ip: loopback,
+                lidar_ip: loopback,
+                multicast_ip: None,
+                enable_imu: true,
+                ports,
+            },
+            stop.clone(),
+        );
+        assert!(
+            source.is_ok(),
+            "must coexist with an SDK2 binder: {:?}",
+            source.err()
+        );
+        stop.store(true, Ordering::Relaxed);
     }
 
     #[test]
