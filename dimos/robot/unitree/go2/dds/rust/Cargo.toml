@@ -14,8 +14,8 @@ name = "go2_dds"
 path = "src/bin/go2_dds.rs"
 
 [dependencies]
-# Our fork: serdata leak fix, no SHM (UDP only).
-cyclonedds-rs = { git = "ssh://git@github.com/dimensionalOS/cyclonedds-rs.git", rev = "06e6a4b79293bc3d0cc7fd2a522b62ca148ef96a", default-features = false }
+# Our forks, vendored: the robot has no GitHub access. See vendor/*/Cargo.toml.
+cyclonedds-rs = { path = "vendor/cyclonedds-rs", default-features = false }
 dimos-module = { path = "../../../../../../native/rust/dimos-module" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 serde = { version = "1", features = ["derive"] }
@@ -52,10 +52,6 @@ joy = "sensor_msgs.Joy"
 lto = "thin"
 codegen-units = 1
 
-# Our cyclonedds-sys fork with bindgen bumped; see vendor/cyclonedds-sys/Cargo.toml.
-[patch.crates-io]
-cyclonedds-sys = { path = "vendor/cyclonedds-sys" }
-
 # Own lockfile, like the other native crates: not in the repo's top-level workspace.
 [workspace]
-exclude = ["vendor/cyclonedds-sys"]
+exclude = ["vendor/cyclonedds-sys", "vendor/cyclonedds-rs"]
