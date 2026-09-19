@@ -433,7 +433,6 @@ fn global_map_due(count_due: bool, stamp: f64, last_stamp: f64, max_interval_s: 
 }
 
 #[cfg(test)]
-
 mod tests {
     #[test]
     fn a_slow_input_cannot_stretch_the_global_map_without_bound() {
