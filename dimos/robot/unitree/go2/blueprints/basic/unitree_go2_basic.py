@@ -14,11 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.visualization.rerun.websocket_server import JOY_AXES
 from dimos.visualization.vis_module import vis_module
 
 
@@ -52,13 +54,29 @@ def _plot_odom(odom: Any) -> Any:
     ]
 
 
-def _plot_cmd_vel(t: Any) -> Any:
+_VELOCITY_AXES = ("linear_x", "linear_y", "angular_z")
+_VELOCITY_COLORS = [(80, 200, 120), (240, 170, 60), (90, 160, 255)]
+
+
+def _plot_twist(name: str, twist: Any) -> Any:
     import rerun as rr
 
-    return [
-        ("plots/cmd_vel/linear_x", rr.Scalars(t.linear.x)),
-        ("plots/cmd_vel/angular_z", rr.Scalars(t.angular.z)),
-    ]
+    return [(f"plots/{name}", rr.Scalars([twist.linear.x, twist.linear.y, twist.angular.z]))]
+
+
+def _plot_joystick(joy: Any) -> Any:
+    import rerun as rr
+
+    axes = dict(zip(JOY_AXES, joy.axes, strict=True))
+    return [("plots/joystick", rr.Scalars([axes[axis] for axis in _VELOCITY_AXES]))]
+
+
+def _velocity_series(rr: Any) -> Any:
+    return rr.SeriesLines(
+        names=list(_VELOCITY_AXES),
+        colors=_VELOCITY_COLORS,
+        interpolation_mode=rr.components.InterpolationMode.StepAfter,
+    )
 
 
 def _static_robot_body(rr: Any) -> list[Any]:
@@ -81,7 +99,10 @@ def _go2_rerun_blueprint() -> Any:
             rrb.Vertical(
                 rrb.Spatial2DView(origin="world/color_image", name="Camera"),
                 rrb.TimeSeriesView(origin="plots/odom", name="odom"),
+                rrb.TimeSeriesView(origin="plots/joystick", name="joystick"),
+                rrb.TimeSeriesView(origin="plots/tele_cmd_vel", name="tele_cmd_vel"),
                 rrb.TimeSeriesView(origin="plots/cmd_vel", name="cmd_vel"),
+                row_shares=[3, 1, 1, 1, 1],
             ),
             rrb.Spatial3DView(
                 origin="world",
@@ -111,7 +132,9 @@ rerun_config: dict[str, Any] = {
     "visual_override": {
         "world/camera_info": _convert_camera_info,
         "world/odom": _plot_odom,
-        "world/cmd_vel": _plot_cmd_vel,
+        "world/joystick": _plot_joystick,
+        "world/tele_cmd_vel": partial(_plot_twist, "tele_cmd_vel"),
+        "world/cmd_vel": partial(_plot_twist, "cmd_vel"),
         "world/global_map": _convert_global_map,
         "world/merged_map": _convert_global_map,
         "world/navigation_costmap": _convert_navigation_costmap,
@@ -126,6 +149,9 @@ rerun_config: dict[str, Any] = {
     # slapping a go2 shaped box on the base_link frame
     "static": {
         "world/robot_body": _static_robot_body,
+        "plots/joystick": _velocity_series,
+        "plots/tele_cmd_vel": _velocity_series,
+        "plots/cmd_vel": _velocity_series,
     },
 }
 
