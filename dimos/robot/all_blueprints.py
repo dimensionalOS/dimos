@@ -70,6 +70,7 @@ all_blueprints = {
     "dual-openyam-planner-coordinator": "dimos.robot.manipulators.dual_openyam.blueprints.basic:dual_openyam_planner_coordinator",
     "dual-xarm6-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:dual_xarm6_planner_coordinator",
     "go2-dds-basic": "dimos.robot.unitree.go2.zenoh.blueprints:go2_dds_basic",
+    "go2-dds-motion-pointlio": "dimos.robot.unitree.go2.zenoh.blueprints:go2_dds_motion_pointlio",
     "go2-viewer": "dimos.robot.unitree.go2.zenoh.blueprints:go2_viewer",
     "go2-zenoh-basic": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_basic",
     "go2-zenoh-motion": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_motion",

@@ -48,6 +48,8 @@ class GO2DDSConfig(NativeModuleConfig, Go2BaseConfig):
     iface: str = "eth0"
     domain_id: int = 0
     odom_topic: str = "rt/utlidar/robot_odom"
+    # Publish odometry's odom -> base_link edge on tf; off when another LIO owns odom.
+    odom_tf: bool = True
     lidar_topic: str = "rt/utlidar/cloud_deskewed"
     # Spin the head L1 up at start (park it otherwise) and stream its deskewed cloud.
     lidar_on: bool = True
