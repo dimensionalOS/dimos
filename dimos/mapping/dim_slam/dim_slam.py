@@ -17,7 +17,7 @@ number of odometry sources by an error-state Kalman filter, in one process."""
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -30,7 +30,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.nvidia_env import driver_env
+from dimos.utils.nvidia_env import driver_env, sdk_variant
 
 logger = setup_logger()
 
@@ -122,6 +122,8 @@ class SourceConfig(BaseModel):
 class DimSlamConfig(NativeModuleConfig):
     cwd: str | None = "rust"
     executable: str = "result/bin/dim_slam"
+    # A literal so bin/build-native-modules can read it: CI builds `default`, which needs
+    # no GPU. The variant this machine needs is chosen in model_post_init.
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=driver_env)
@@ -250,6 +252,11 @@ class DimSlamConfig(NativeModuleConfig):
                     "which fuses nothing; use a positive variance or drop the source"
                 )
         return self
+
+    def model_post_init(self, context: Any, /) -> None:
+        super().model_post_init(context)
+        if self.build_command == "nix build -L path:.":
+            self.build_command = f"nix build -L path:.#{sdk_variant()}"
 
 
 class DimSlam(NativeModule):
