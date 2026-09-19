@@ -290,7 +290,7 @@ class RelayClient:
 
         def retire_hello_stream() -> None:
             # In-flight check and reset in the same event-loop turn (the
-            # aioquic-safe reset rule, web/README.md bug 9); a delivered
+            # aioquic-safe reset rule, docs/web/protocol.md workaround 9); a delivered
             # stream is left alone so a reset cannot destroy a hello the
             # relay has yet to read.
             if hello_stream is not None and self._session.stream_in_flight(hello_stream):
@@ -544,7 +544,7 @@ class LatestChannelWriter:
                     if time.monotonic() - started > self.stale_after and not self._mailbox.empty():
                         # Stalled with a newer frame waiting: abandon this one.
                         # reset_if_in_flight rechecks membership in this same
-                        # event-loop turn (required, see web/README.md).
+                        # event-loop turn (required, see docs/web/protocol.md).
                         if session.reset_if_in_flight(stream_id):
                             self.resets += 1
                         break

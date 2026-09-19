@@ -14,7 +14,7 @@
 
 """aioquic session internals for the relay bridge.
 
-The quirks this module works around are documented in web/README.md: the v5
+The quirks this module works around are documented in docs/web/protocol.md: the v5
 robot hello rides an @control data frame on a one-shot bidi stream, the
 relay's handshake and teleop replies ride datagrams (the relay may never
 write on our bidi streams), subs snapshots arrive as @control frames on the
@@ -440,7 +440,7 @@ class SessionProtocol(QuicConnectionProtocol):
     def reset_if_in_flight(self, stream_id: int) -> bool:
         """Reset a stale stream. Membership check and reset happen in the same
         event-loop turn: aioquic's reset_stream() on a discarded id re-creates
-        the stream and rewinds the stream-id allocator (see web/README.md)."""
+        the stream and rewinds the stream-id allocator (see docs/web/protocol.md)."""
         if stream_id not in self._quic._streams:
             return False
         self._quic.reset_stream(stream_id, STALE_STREAM_ERROR_CODE)

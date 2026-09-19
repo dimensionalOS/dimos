@@ -150,8 +150,16 @@ def test_provenance_retains_numeric_output_limit() -> None:
     kwargs = {"model": "gpt-6-astra", "max_output_tokens": 4096}
     provenance = run_provenance({"kind": "suite_module"}, "dimos.evals.agents.pi", kwargs)
     assert provenance["agent"]["kwargs"] == kwargs
-    secret = {"max_output_tokens": "not-a-numeric-budget"}
-    assert run_provenance({}, "agent", secret)["agent"]["kwargs"] is None
+    kept = {"max_output_tokens": 1, "excluded_keywords": ["dimos"], "prompt_cache_key": "k"}
+    assert (
+        run_provenance({}, "agent", kept)["agent"]["kwargs"] is None
+    )  # "..._key" is a secret name
+    assert (
+        run_provenance({}, "agent", {"excluded_keywords": ["dimos"]})["agent"]["kwargs"] is not None
+    )
+    assert run_provenance({}, "agent", {"api_key": "sk-x"})["agent"]["kwargs"] is None
+    for camel in ("clientSecret", "accessToken", "myApiKey", "databasePassword"):
+        assert run_provenance({}, "agent", {camel: "x"})["agent"]["kwargs"] is None, camel
 
 
 @pytest.mark.parametrize("allowed,expected", [("bash, grep", ["bash", "grep"]), ("", [])])
@@ -207,3 +215,44 @@ def test_allow_cli_rejects_ambiguous_input(args: list[str], cli_out_dir: Path) -
     )
     assert result.exit_code == 2
     assert not cli_out_dir.exists()
+
+
+def test_exclude_cli_reaches_agent_lowercased(
+    monkeypatch: pytest.MonkeyPatch, cli_out_dir: Path
+) -> None:
+    seen: list[Agent] = []
+
+    class CapturedPi(PiAdapter):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            seen.append(self)
+
+    monkeypatch.setattr(cli, "agent_class", lambda _: CapturedPi)
+    monkeypatch.setattr(examples, "SUITE", [_case("case")])
+    result = CliRunner().invoke(
+        app,
+        [
+            "evals",
+            "run",
+            SUITE_MODULE,
+            "--agent",
+            "dimos.evals.agents.pi",
+            "--exclude",
+            "DimOS, dimensionalOS",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert seen[0].config.excluded_keywords == ("dimos", "dimensionalos")
+    manifest = json.loads(next(cli_out_dir.glob("run-*/manifest.json")).read_text())
+    assert manifest["agent"]["kwargs"]["excluded_keywords"] == ["DimOS", "dimensionalOS"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [["--exclude", "dimos", "--set", "excluded_keywords=[]"], ["--exclude", "dim os"]],
+)
+def test_exclude_cli_rejects_bad_input(args: list[str], cli_out_dir: Path) -> None:
+    result = CliRunner().invoke(
+        app, ["evals", "run", SUITE_MODULE, "--agent", "dimos.evals.agents.pi", *args]
+    )
+    assert result.exit_code != 0

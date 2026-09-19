@@ -15,19 +15,23 @@
 """Coupled WebXR teleoperation for the complete Dual OpenYAM entity."""
 
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
+from dimos.manipulation.visualization.config import ManipulationVisualizationConfig
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.robot.manipulators.common.blueprints import teleop_ik_task
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     DualOpenYamCoordinator,
     dual_openyam_trajectory_task,
 )
 from dimos.robot.manipulators.dual_openyam.config import (
-    DUAL_OPENYAM_ARM_JOINTS,
-    DUAL_OPENYAM_GRIPPER_JOINTS,
     dual_openyam_hardware,
     dual_openyam_model_config,
+)
+from dimos.robot.manipulators.dual_openyam.joints import (
+    DUAL_OPENYAM_ARM_JOINTS,
+    DUAL_OPENYAM_GRIPPER_JOINTS,
 )
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
@@ -52,7 +56,7 @@ _dual_openyam_webxr_task = teleop_ik_task(
     robot_model=_dual_openyam_webxr_model,
     name=DUAL_OPENYAM_WEBXR_TASK_NAME,
     joint_names=DUAL_OPENYAM_ARM_JOINTS,
-    priority=10,
+    priority=20,
     solver_type=DualOpenYamPinkPoseTargetSolver,
     bindings=[
         {
@@ -73,39 +77,47 @@ _dual_openyam_webxr_task = teleop_ik_task(
     },
 )
 
-teleop_webxr_dual_openyam = autoconnect(
-    ArmTeleopModule.blueprint(),
-    DualOpenYamCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        tasks=[
-            _dual_openyam_webxr_task,
-            TaskConfig(
-                name="left_arm_gripper",
-                type="gripper",
-                joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[0]],
-                priority=20,
-                stream_bind={"gripper_command": "left_gripper_command"},
-            ),
-            TaskConfig(
-                name="right_arm_gripper",
-                type="gripper",
-                joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[1]],
-                priority=20,
-                stream_bind={"gripper_command": "right_gripper_command"},
-            ),
-            dual_openyam_trajectory_task(priority=20),
-        ],
-    ),
-    ManipulationModule.blueprint(
-        model=_dual_openyam_webxr_model,
-        kinematics=_dual_openyam_webxr_pink,
-        visualization={"backend": "viser"},
-    ),
-).remappings(
-    [
-        (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-        (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
-        (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
-    ]
-)
+
+def build_dual_openyam_webxr(
+    *, visualization: ManipulationVisualizationConfig = ViserVisualizationConfig()
+) -> Blueprint:
+    """Compose dual-arm teleop with deployment-specific visualization."""
+    return autoconnect(
+        ArmTeleopModule.blueprint(),
+        DualOpenYamCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            tasks=[
+                _dual_openyam_webxr_task,
+                TaskConfig(
+                    name="left_arm_gripper",
+                    type="gripper",
+                    joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[0]],
+                    priority=20,
+                    stream_bind={"gripper_command": "left_gripper_command"},
+                ),
+                TaskConfig(
+                    name="right_arm_gripper",
+                    type="gripper",
+                    joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[1]],
+                    priority=20,
+                    stream_bind={"gripper_command": "right_gripper_command"},
+                ),
+                dual_openyam_trajectory_task(priority=10),
+            ],
+        ),
+        ManipulationModule.blueprint(
+            model=_dual_openyam_webxr_model,
+            kinematics=_dual_openyam_webxr_pink,
+            visualization=visualization,
+        ),
+    ).remappings(
+        [
+            (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+            (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
+            (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+            (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+        ]
+    )
+
+
+teleop_webxr_dual_openyam = autoconnect(build_dual_openyam_webxr())

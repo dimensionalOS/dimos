@@ -2,7 +2,7 @@
 // the raw-QUIC data stream loop. Sessions own transport quirks; all routing
 // and subscription policy lives in registry.ts.
 //
-// Leg asymmetry, forced by upstream bugs (see web/README.md):
+// Leg asymmetry, forced by upstream bugs (see docs/web/protocol.md):
 // - Robot (aioquic): robot->relay hello rides an @control data frame on a
 //   one-shot bidi stream (v5); relay->robot handshake and teleop control
 //   (welcome, errors, pong, teleop) rides datagrams, while subs snapshots

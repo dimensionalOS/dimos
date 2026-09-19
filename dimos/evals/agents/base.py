@@ -17,11 +17,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import os
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING, Any
 
-from pydantic import field_validator
+from pydantic import Field, field_validator, model_validator
+from typing_extensions import Self
 
+from dimos.evals.constants import MAX_TOOL_SECONDS, NO_DIMOS_KEYWORDS
 from dimos.evals.types import RunningEnvironment, Trajectory
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
@@ -29,9 +33,43 @@ if TYPE_CHECKING:
     from dimos.evals.environments.base import Environment
 
 
+def strip_dimos(env: dict[str, str]) -> dict[str, str]:
+    """A process environment with no DIMOS_* variables and no PATH entry that ships dimOS."""
+    env = {k: v for k, v in env.items() if not k.startswith("DIMOS_")}
+    env["PATH"] = os.pathsep.join(
+        d for d in env.get("PATH", "").split(os.pathsep) if not _ships_dimos(d)
+    )
+    return env
+
+
+def _ships_dimos(directory: str) -> bool:
+    d = Path(directory)
+    return (d / "dimos").exists() or "dimos" in d.parts
+
+
 class AgentConfig(BaseConfig):
     modules: tuple[str, ...] = ()
     allowed_tools: tuple[str, ...] | None = None
+    # Tool calls whose arguments mention any of these (case-insensitive, whole token) are denied.
+    excluded_keywords: tuple[str, ...] = ()
+    # Cap on one bash call's runtime, seconds; the model's own timeout is clamped to it.
+    max_tool_seconds: float | None = Field(default=MAX_TOOL_SECONDS, gt=0)
+    # Robot or data handed over without dimOS; excluded_keywords defaults to dimOS's names.
+    no_dimos: bool = False
+
+    @field_validator("excluded_keywords")
+    @classmethod
+    def validate_excluded_keywords(cls, words: tuple[str, ...]) -> tuple[str, ...]:
+        cleaned = tuple(w.strip().lower() for w in words)
+        if any(not w or not re.fullmatch(r"[a-z0-9_.-]+", w) for w in cleaned):
+            raise ValueError("excluded_keywords must be nonempty words (letters, digits, _ . -)")
+        return cleaned
+
+    @model_validator(mode="after")
+    def _no_dimos_defaults(self) -> Self:
+        if self.no_dimos and not self.excluded_keywords:
+            object.__setattr__(self, "excluded_keywords", NO_DIMOS_KEYWORDS)
+        return self
 
     @field_validator("allowed_tools")
     @classmethod
@@ -48,10 +86,15 @@ class ModelAgentConfig(AgentConfig):
 
 
 class Agent(Configurable, ABC):
-    """Run an instruction independently of the case and its grader.
+    """The thing under evaluation, behind one interface.
 
-    ``modules`` names the blueprints the environment launches for this agent.
-    An empty sequence uses only what the environment already provides.
+    A subclass adapts one way of answering a case: a coding harness plus a model
+    (Pi, dimcode), dimOS's own agent loop (the MCP client), or a single model call
+    with no tools (question/answer, blind). The runner gives it the case prompt and
+    a running environment and gets back a trajectory; grading happens elsewhere.
+
+    ``config.modules`` names extra blueprints the environment launches for this
+    agent; empty means only what the environment already provides.
     """
 
     config: AgentConfig

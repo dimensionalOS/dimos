@@ -179,26 +179,27 @@ def provider(
 class NativeHarness:
     adapter: type[PiAdapter]
     cli: str
-    sandbox: bool
     root: Path
     environment: RunningEnvironment
 
     @property
     def workspace(self) -> Path:
-        return self.root / "workspace" if self.sandbox else self.root
+        return self.root
 
     def path(self, name: str) -> str:
-        return str(Path("/workspace") / name if self.sandbox else self.root / name)
+        return str(self.root / name)
 
-    def agent(self, provider: ScriptedProvider, allowed: tuple[str, ...] | None) -> PiAdapter:
+    def agent(
+        self, provider: ScriptedProvider, allowed: tuple[str, ...] | None, **overrides: Any
+    ) -> PiAdapter:
         return self.adapter(
             cli=self.cli,
-            sandbox=self.sandbox,
             allowed_tools=allowed,
             provider=provider.name,
             model=provider.model,
             max_steps=10,
             max_output_tokens=1024,
+            **overrides,
         )
 
     def run(self, agent: PiAdapter) -> Trajectory:
@@ -207,15 +208,12 @@ class NativeHarness:
         )
 
 
-@pytest.fixture(params=["pi", "dimcode", "sandbox"])
+@pytest.fixture(params=["pi", "dimcode"])
 def harness(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[NativeHarness]:
     name = str(request.param)
-    cli_name = "dimcode" if name == "dimcode" else "pi"
-    executable = shutil.which(os.environ.get(f"EVAL_{cli_name.upper()}_CLI", cli_name))
+    executable = shutil.which(os.environ.get(f"EVAL_{name.upper()}_CLI", name))
     if executable is None:
-        pytest.skip(f"requires installed {cli_name}")
-    if name == "sandbox" and not Path("/usr/bin/bwrap").exists():
-        pytest.skip("requires bubblewrap")
+        pytest.skip(f"requires installed {name}")
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     with SqliteStore(path=tmp_path / "source.db") as store:
@@ -224,7 +222,6 @@ def harness(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[NativeHa
         yield NativeHarness(
             DimcodeAdapter if name == "dimcode" else PiAdapter,
             executable,
-            name == "sandbox",
             run_dir,
             RunningEnvironment(mcp_url="", streams=(stream,), artifacts={}),
         )

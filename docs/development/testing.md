@@ -189,6 +189,7 @@ pytest -s dimos/path/to/tool_file.py
 We have a few markers in use now.
 
 * `self_hosted`: used to mark tests that need the self-hosted runner (LFS, ROS, CUDA, heavy deps).
+* `web_browser`: the Playwright tests of the cockpit and the web SDK in `dimos/e2e_tests/` (see [Development](/docs/web/development.md#tests)).
 * `mujoco`: tests which use `MuJoCo`. These are very slow and don't work in CI currently.
 
 If a test needs to be skipped for some reason, please use on of these markers, or add another one.

@@ -321,6 +321,7 @@ if __name__ == "__main__":
 - [Data Streams](docs/usage/data_streams/index.md)
 - [Configuration](docs/usage/configuration.md)
 - [Visualization](docs/usage/visualization.md)
+- [Web](docs/web/index.md): cockpit, web SDK, relay
 
 ## Demos
 

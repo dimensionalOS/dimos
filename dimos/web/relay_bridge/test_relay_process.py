@@ -64,6 +64,7 @@ def _make_fake_sdk_dist(root: Path) -> Path:
 def test_relay_run_cmd_dir_flags() -> None:
     cmd = relay_run_cmd("deno", Path("/web"), "--port", "0")
     assert "--node-modules-dir=none" in cmd
+    assert "--v8-flags=--expose-gc" in cmd  # the relay's per-tick GC needs it
     assert "--allow-read=/web" in cmd
     assert "--cockpit-dir" not in cmd
 

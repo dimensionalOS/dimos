@@ -31,7 +31,10 @@ Each teleop module embeds a `RobotWebInterface` (FastAPI + uvicorn) that:
 Base WebXR teleop module. Gets controller data via WebSocket, computes output poses, and publishes them. Default engage: hold primary button (X/A). Subclass to customize.
 
 ### ArmTeleopModule
-Toggle-based engage — press primary button once to engage, press again to disengage.
+Publishes controller poses and buttons to `TeleopIKTask`. Hold the middle-finger
+grip to engage arm control; release it to disengage. Bimanual control requires
+both grips held, and releasing either grip disengages both arms. The
+index-finger trigger controls gripper opening while that hand's grip is held.
 
 ### TwistTeleopModule
 Outputs TwistStamped (linear + angular velocity) instead of PoseStamped.

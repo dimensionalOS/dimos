@@ -738,8 +738,7 @@ exclude_also = [
 max_size_kb = 75
 ignore = [
     "uv.lock",
-    "native/python/example/uv.lock",
-    "native/python/graspgenx/uv.lock",
+    "*/uv.lock",
     "*/package-lock.json",
     "Cargo.lock",
     "*/Cargo.lock",

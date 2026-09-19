@@ -2,7 +2,7 @@
 // Mirrored in Python at dimos/web/relay_bridge/protocol.py and pinned by the
 // golden vectors in ./fixtures/ (tested from both deno test and pytest).
 //
-// Framing (see web/README.md for the upstream-bug rationale):
+// Framing (see docs/web/protocol.md for the upstream-bug rationale):
 // - Control stream frame: u32-LE length | UTF-8 JSON.
 // - Datagram: raw UTF-8 JSON, no length prefix.
 // - Data frame: u32-LE headerLen | u32-LE payloadLen | header JSON | payload.

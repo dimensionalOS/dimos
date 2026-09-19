@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import socket
 import sys
+import time
 
 from pydantic import JsonValue
 import pytest
@@ -84,6 +85,7 @@ def serve_gateway() -> None:
                         send({"type": "event", "event": "not-an-event"})
                         break
                     send({"type": "event", "event": {"type": "idle"}})
+                    time.sleep(0.05)  # a slow gateway acks after the adapter has seen idle
                 send({"type": "response", "id": packet.id, "data": None})
 
 
@@ -109,6 +111,11 @@ def test_gateway_failure_preserves_completed_steps(tmp_path: Path, mode: str) ->
     assert result.final_metrics.total_cost_usd == 0.1
     assert result.extra.ended_by == ("answer" if mode == "answer" else "error")
     assert not agent._runtime_dir.exists()
+
+
+def test_dimcode_rejects_no_dimos() -> None:
+    with pytest.raises(ValueError, match="dimcode is dimOS"):
+        DimcodeAdapter(no_dimos=True, model="gpt-6-astra")
 
 
 def test_gateway_socket_survives_a_deep_cache_dir(

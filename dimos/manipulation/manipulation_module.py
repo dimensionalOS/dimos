@@ -1162,7 +1162,18 @@ class ManipulationModule(Module):
         with self._lock:
             self._last_plan = plan
             self._state = ManipulationState.COMPLETED
-        return self.execute(blocking=False, plan_id=plan.plan_id).status is ExecutionStatus.ACCEPTED
+        logger.info("Viser plan execution requested", plan_id=plan.plan_id)
+        result = self.execute(blocking=False, plan_id=plan.plan_id)
+        if result.status is not ExecutionStatus.ACCEPTED:
+            logger.warning(
+                "Viser plan execution rejected",
+                plan_id=plan.plan_id,
+                status=result.status.name,
+                reason=result.message,
+            )
+            return False
+        logger.info("Viser plan execution accepted", plan_id=plan.plan_id)
+        return True
 
     @property
     def world_monitor(self) -> WorldMonitor | None:

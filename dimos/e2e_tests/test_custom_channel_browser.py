@@ -58,7 +58,7 @@ PATH_MSG = Path(
 )
 
 
-# The codec pair documented in web/README.md: little-endian float32 (x, y)
+# The codec pair documented in docs/web/bridge.md: little-endian float32 (x, y)
 # pairs, meta.n = point count; web/examples/custom-path decodes it.
 @web_encoder("path.points.v1")
 def encode_path_points(msg: Path) -> EncodedPayload:

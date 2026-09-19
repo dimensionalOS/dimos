@@ -1,0 +1,12 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 684.387 312.48" data-pikchr-date="20260403102956">
+<path d="M18.3,301.68L320.1,301.68A7.5 7.5 0 0 0 327.6 294.18L327.6,71.58A7.5 7.5 0 0 0 320.1 64.08L18.3,64.08A7.5 7.5 0 0 0 10.8 71.58L10.8,294.18A7.5 7.5 0 0 0 18.3 301.68Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="169.2" y="182.88" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Video</text>
+<path d="M337.907,236.88L481.307,236.88A7.5 7.5 0 0 0 488.807 229.38L488.807,71.58A7.5 7.5 0 0 0 481.307 64.08L337.907,64.08A7.5 7.5 0 0 0 330.407 71.58L330.407,229.38A7.5 7.5 0 0 0 337.907 236.88Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="409.607" y="150.48" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Map2D</text>
+<path d="M337.907,297.287L481.307,297.287A7.5 7.5 0 0 0 488.807 289.787L488.807,247.187A7.5 7.5 0 0 0 481.307 239.687L337.907,239.687A7.5 7.5 0 0 0 330.407 247.187L330.407,289.787A7.5 7.5 0 0 0 337.907 297.287Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="409.607" y="268.487" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Teleop</text>
+<path d="M10.8,46.8L488.807,46.8"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="249.803" y="25.92" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Row shares=[2, 1]</text>
+<path d="M506.087,64.08L506.087,297.287"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="594.157" y="180.683" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Col shares=[3, 1]</text>
+</svg>

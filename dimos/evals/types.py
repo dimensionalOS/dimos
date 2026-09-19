@@ -117,6 +117,7 @@ EndedBy = Literal["answer", "max_steps", "timeout", "error"]
 class RunExtra:
     ended_by: EndedBy
     error: str = ""
+    blocked_calls: int = 0  # tool calls denied by the keyword guard
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -147,6 +148,7 @@ class RunningEnvironment:
     mcp_url: str  # "" when there is no robot
     streams: Sequence[Stream[Any, Any]]  # what the agent may look at. Dataset: the selection
     artifacts: Mapping[str, Path]  # files produced by the environment, by name
+    raw_endpoint: str | None = None  # vendor-shaped robot topics for agents without dimOS
 
 
 @dataclass(frozen=True, kw_only=True)

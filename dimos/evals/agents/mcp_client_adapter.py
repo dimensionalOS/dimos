@@ -77,6 +77,11 @@ class McpClientAdapter(Agent):
     uses the agent already supplied by the environment.
     """
 
+    def validate_tools(self) -> None:
+        if self.config.no_dimos:
+            raise ValueError("McpClientAdapter is dimOS's own agent")
+        super().validate_tools()
+
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
         """The shipped agent can call every tool its MCP server exposes."""
         return environment_tools

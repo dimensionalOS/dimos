@@ -31,11 +31,9 @@ from typing import IO, TYPE_CHECKING, Any, ClassVar
 from pydantic import Field, JsonValue, TypeAdapter
 
 from dimos.core.coordination.process_lifecycle import kill_run_processes
-from dimos.evals.agents.base import Agent, ModelAgentConfig
-from dimos.evals.agents.lib import sandbox
+from dimos.evals.agents.base import Agent, ModelAgentConfig, strip_dimos
 from dimos.evals.agents.lib.model_trace_proxy import model_trace_proxy
 from dimos.evals.agents.lib.pi_config import (
-    PROVIDERS,
     Provider,
     RunPaths,
     RuntimeConfig,
@@ -43,7 +41,17 @@ from dimos.evals.agents.lib.pi_config import (
     ToolPolicyState,
 )
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
+from dimos.evals.agents.lib.plain_recording import plain_recording
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
+from dimos.evals.constants import (
+    NO_DIMOS_GUIDANCE,
+    PASSTHROUGH_ENV,
+    PROVIDERS,
+    RAW_MAX_ANGULAR_RPS,
+    RAW_MAX_CMD_S,
+    RAW_MAX_LINEAR_MPS,
+    RAW_README,
+)
 from dimos.evals.environments.base import Environment
 from dimos.evals.types import (
     EndedBy,
@@ -128,14 +136,9 @@ class PiAdapterConfig(ModelAgentConfig):
     # Explain recording access and robot tools. Disable if a skill teaches these.
     builtin_guidance: bool = True
 
-    # Isolate supported tools from DimOS, host files, credentials and network.
-    sandbox: bool = False
     # Host variables the Pi process may inherit; the provider key is added by name and
-    # DIMOS_* variables pass through outside the sandbox. Everything else stays on the host.
-    passthrough_env: tuple[str, ...] = (
-        "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR",
-        "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR",
-    )  # fmt: skip
+    # DIMOS_* variables pass through unless no_dimos. Everything else stays on the host.
+    passthrough_env: tuple[str, ...] = PASSTHROUGH_ENV
 
     # Reasoning level passed to Pi's --thinking flag.
     thinking: Thinking = "medium"
@@ -174,26 +177,20 @@ class PiAdapter(Agent):
             unknown = set(self.selected_tools) - set(self.tool_names)
             if unknown:
                 raise ValueError(f"Unknown Pi tools: {sorted(unknown)}")
-        if self.config.sandbox and (
-            set(self.selected_tools) - {"bash", "grep"} or self.config.skills or self.config.modules
-        ):
-            raise ValueError("The sandbox supports only bash/grep tools, no skills or modules")
+        if self.config.no_dimos and (self.config.modules or self.config.skills):
+            raise ValueError("no_dimos cannot add dimOS modules or Pi skills")
 
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
         """Pi's native tools plus robot tools exposed through its bash tool."""
         indirect = (
-            environment_tools if "bash" in self.selected_tools and not self.config.sandbox else ()
+            environment_tools if "bash" in self.selected_tools and not self.config.no_dimos else ()
         )
         return (*self.selected_tools, *indirect)
 
     def preflight(self, environment: Environment) -> None:
         self.validate_tools()
-        if self.config.sandbox:
-            if environment.has_robot:
-                raise ValueError(
-                    "The sandbox supports recordings; live tasks need a vendor SDK bridge"
-                )
-            sandbox.preflight()
+        if self.config.no_dimos and environment.has_robot and not environment.provides_raw_robot:
+            raise ValueError("no_dimos on a robot environment needs raw_bridge=True")
         missing = [p for p in self.config.skills if not Path(p).expanduser().resolve().exists()]
         if missing:
             raise RuntimeError(f"Pi skill paths do not exist: {missing}")
@@ -203,9 +200,10 @@ class PiAdapter(Agent):
             )
         if not os.environ.get(self._key_env):
             raise RuntimeError(f"{type(self).__name__} needs {self._key_env}")
-        if environment.has_robot and self.robot_via_bash and "bash" not in self.selected_tools:
+        via_cli = environment.has_robot and self.robot_via_bash and not self.config.no_dimos
+        if via_cli and "bash" not in self.selected_tools:
             raise RuntimeError("Pi reaches the robot through its bash tool, which is not enabled")
-        if environment.has_robot and self.robot_via_bash and shutil.which("dimos") is None:
+        if via_cli and shutil.which("dimos") is None:
             raise RuntimeError("Pi reaches the robot through the dimos CLI, which is not on PATH")
 
     def run(
@@ -231,23 +229,30 @@ class PiAdapter(Agent):
             except Exception as exc:
                 ended_by = "error"
                 events.error = str(exc)
+        blocked = self._blocked_calls(paths)
         if limit_reached.exists():
-            return events.trajectory.build("max_steps")
+            return events.trajectory.build("max_steps", blocked_calls=blocked)
         if events.error and ended_by not in ("timeout", "max_steps"):
-            return events.trajectory.build("error", error=events.error)
-        return events.trajectory.build(ended_by)
+            return events.trajectory.build("error", error=events.error, blocked_calls=blocked)
+        return events.trajectory.build(ended_by, blocked_calls=blocked)
+
+    def _blocked_calls(self, paths: RunPaths) -> int:
+        ready = paths.config / "extensions/runtime-ready.json"
+        return (
+            ToolPolicyState.model_validate_json(ready.read_text()).blocked if ready.is_file() else 0
+        )
 
     def _prepare_case(self, env: RunningEnvironment, run_dir: Path) -> str:
-        if self.config.sandbox:
-            files = sandbox.prepare_files(env, run_dir)
+        if self.config.no_dimos:
+            files = self._no_dimos_files(env, run_dir)
         else:
             files = dict(env.artifacts)
             if env.streams:
                 files["recording"] = recording_file(env.streams, run_dir / "recording.db")
         parts = [self.config.system_prompt, self.config.instructions]
         parts.append("Files:\n" + "\n".join(f"- {name}: {path}" for name, path in files.items()))
-        if self.config.sandbox:
-            parts.append(sandbox.GUIDANCE)
+        if self.config.no_dimos:
+            parts.append(NO_DIMOS_GUIDANCE)
         elif self.config.builtin_guidance and "recording" in files:
             parts.append(
                 "The recording is a dimos memory store (sqlite). In Python:\n"
@@ -256,7 +261,7 @@ class PiAdapter(Agent):
                 "store.streams.<name> is a stream, .last().data its latest message; iterating "
                 "a stream yields observations with .ts and .data. Inspect with dir() and help()."
             )
-        if env.mcp_url:
+        if env.mcp_url and not self.config.no_dimos:
             if self.config.builtin_guidance:
                 parts.append(
                     "The robot is live. Call one of its tools from bash as\n"
@@ -266,6 +271,27 @@ class PiAdapter(Agent):
         prompt = "\n\n".join(p for p in parts if p)
         (run_dir / "system-prompt.txt").write_text(prompt)
         return prompt
+
+    def _no_dimos_files(self, env: RunningEnvironment, run_dir: Path) -> dict[str, Path]:
+        """ROBOT.md for a robot; the selected observations as plain files for a dataset."""
+        files = dict(env.artifacts)
+        files.pop("recording", None)  # a dimOS memory store; not readable without dimOS
+        if env.raw_endpoint:
+            readme = run_dir / "ROBOT.md"
+            readme.write_text(
+                RAW_README.format(
+                    endpoint=env.raw_endpoint,
+                    max_cmd_s=RAW_MAX_CMD_S,
+                    max_linear=RAW_MAX_LINEAR_MPS,
+                    max_angular=RAW_MAX_ANGULAR_RPS,
+                )
+            )
+            files["robot"] = readme
+        elif env.mcp_url:
+            raise ValueError("no_dimos on a robot environment needs raw_bridge=True")
+        if env.streams:
+            files["observations"] = plain_recording(env.streams, run_dir / "input")
+        return files
 
     def _build_pi_command(self, inputs: str, system_prompt: str, paths: RunPaths) -> list[str]:
         # Absolute before Pi changes to the run dir; --no-skills disables only
@@ -277,21 +303,14 @@ class PiAdapter(Agent):
             ["--tools", ",".join(self.selected_tools)] if self.selected_tools else ["--no-tools"]
         )
         policy = ["--extension", str(paths.config / "extensions/runtime.js")]
-        images: list[str] = []
-        if self.config.sandbox:
-            tool_args = [
-                "--no-builtin-tools",
-                "--extension",
-                str(sandbox.extension(paths.workspace, self.selected_tools)),
-            ]
-            images = [f"@{path}" for path in sorted((paths.workspace / "input").glob("*.png"))]
         return [
-            self.config.cli, "--mode", "json", "--model", f"{self.config.provider}/{self.config.model}",
+            shutil.which(self.config.cli) or self.config.cli,  # no_dimos strips PATH dirs
+            "--mode", "json", "--model", f"{self.config.provider}/{self.config.model}",
             "--thinking", self.config.thinking, "--session-dir", str(paths.workspace / "pi-session"),
             *tool_args, *policy,
             "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
             "--no-context-files", "--no-approve", *skills,
-            "--append-system-prompt", system_prompt, inputs, *images,
+            "--append-system-prompt", system_prompt, inputs,
         ]  # fmt: skip
 
     @property
@@ -309,6 +328,9 @@ class PiAdapter(Agent):
             key_env=self._key_env,
             allowed_tools=self.config.allowed_tools,
             max_output_tokens=self.config.max_output_tokens,
+            excluded_keywords=self.config.excluded_keywords,
+            ignored_paths=(str(paths.workspace), str(paths.config)),
+            max_tool_seconds=self.config.max_tool_seconds,
         )
         extensions = paths.config / "extensions"
         extensions.mkdir(parents=True, exist_ok=True)
@@ -328,12 +350,14 @@ class PiAdapter(Agent):
 
     def _build_process_env(self, paths: RunPaths) -> dict[str, str]:
         keep = {*self.config.passthrough_env, self._key_env}
-        dimos_vars = not self.config.sandbox
+        dimos_vars = not self.config.no_dimos
         env = {
             k: v
             for k, v in os.environ.items()
             if k in keep or (dimos_vars and k.startswith("DIMOS_"))
         }
+        if self.config.no_dimos:
+            env = strip_dimos(env)
         env["DIMOS_EVAL_RUN_ID"] = str(paths.workspace)
         return env
 
@@ -343,8 +367,6 @@ class PiAdapter(Agent):
         assert proc.stdout is not None
         yield from read_pi_events(proc.stdout, deadline)
         self._check_tools_ready(paths)
-        if self.config.sandbox and not (paths.workspace / "sandbox-ready").is_file():
-            raise RuntimeError("Sandbox extension failed to load; see pi-stderr.txt")
 
     def _run_pi_process(
         self, command: list[str], paths: RunPaths, events: PiToAtif, timeout_s: float

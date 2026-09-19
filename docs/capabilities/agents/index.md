@@ -13,7 +13,7 @@ fill = none
 boxrad = 5px
 
 Input: box "humancli / WebInput" "dimos agent-send" fit wid 170% ht 170%
-arrow right 0.6in "human_input" above "In[str]" below
+arrow right 0.85in "human_input" above "In[str]" below
 Agent: box "McpClient" "LangGraph + LLM" fit wid 170% ht 170%
 Skills: box "@skill methods" "on any Module" fit wid 170% ht 170% \
     with .w at (Agent.e.x + 0.9in, Agent.e.y)

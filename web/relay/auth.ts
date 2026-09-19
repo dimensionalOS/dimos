@@ -80,7 +80,7 @@ function section(data: Record<string, unknown>, key: "robots" | "viewers"): Map<
 }
 
 /** Parses and validates the auth file text (see the file's shape in
- * web/README.md). A JSON error is reported without V8's message, which
+ * docs/web/relay.md). A JSON error is reported without V8's message, which
  * quotes file text. */
 export function parseAuthFile(text: string): Auth {
   let data: unknown;
