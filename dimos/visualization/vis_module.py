@@ -31,7 +31,8 @@ def vis_module(
 
     Bundles the Rerun viewer module together with
     the ``WebsocketVisModule`` and ``RerunWebSocketServer`` so that the web
-    dashboard and remote viewer connections work out of the box.
+    dashboard and remote viewer connections work out of the box. ``none`` is an
+    empty bundle: a robot-side stack nobody looks at serves nothing.
 
     Example usage::
 
@@ -69,7 +70,7 @@ def vis_module(
                 WebsocketVisModule.blueprint(),
             )
         case "none":
-            bundle = autoconnect(WebsocketVisModule.blueprint())
+            bundle = autoconnect()
         case _:
             valid = ", ".join(get_args(ViewerBackend))
             raise ValueError(f"Unknown viewer_backend {viewer_backend!r}. Expected one of: {valid}")
