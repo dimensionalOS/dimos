@@ -16,6 +16,7 @@
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.hardware.sensors.camera.depth_cloud.module import StereoCloud
+from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
@@ -33,7 +34,7 @@ from dimos.robot.galaxea.r1pro.lio import (
     ODOM_FRAME,
     R1ProLioMountTf,
     R1ProLioOdomPose,
-    R1ProPointLio,
+    R1ProMid360,
 )
 from dimos.robot.galaxea.r1pro.replay import R1ProReplay
 
@@ -48,7 +49,8 @@ def test_base_link_has_one_parent_and_it_is_pointlio() -> None:
     assert atoms[R1ProConnection].kwargs["publish_odom"] is False
     # Point-LIO publishes odom -> lidar_pointlio_link, and the mount tf hangs
     # base_link under it: exactly one path from odom to base_link.
-    assert atoms[R1ProPointLio].kwargs == {"frame_id": ODOM_FRAME, "sensor_frame_id": LIDAR_FRAME}
+    assert atoms[PointLioRust].kwargs == {"frame_id": ODOM_FRAME, "sensor_frame_id": LIDAR_FRAME}
+    assert atoms[R1ProMid360].kwargs == {"frame_id": LIDAR_FRAME}
     assert R1ProLioMountTf in atoms
     # And the planners read Point-LIO's pose under the name they always did.
     remaps = r1pro_nav_lio.remapping_map
@@ -62,7 +64,8 @@ def test_both_clouds_land_on_the_lidar_bus_and_the_head_is_cut_to_the_lidars_bli
     atoms = _atoms(r1pro_nav_lio)
     remaps = r1pro_nav_lio.remapping_map
     key = r1pro_nav_lio._instance_key
-    assert remaps[(key(R1ProPointLio), "lidar")] == "lidar"
+    assert remaps[(key(R1ProMid360), "lidar")] == "lidar_raw"
+    assert remaps[(key(PointLioRust), "lidar")] == "lidar"
     assert remaps[(key(StereoCloud), "cloud")] == "lidar"
     stereo = atoms[StereoCloud].kwargs
     assert stereo["min_height_m"] == HEAD_CLOUD_MIN_HEIGHT_M
@@ -106,7 +109,8 @@ def test_every_remapping_names_a_real_port_and_the_config_parses() -> None:
 def test_replay_stands_in_for_the_robot_with_the_same_downstream() -> None:
     live, replay = _atoms(r1pro_nav_lio), _atoms(r1pro_nav_lio_replay)
     assert R1ProReplay in replay and R1ProConnection not in replay
-    assert R1ProPointLio not in replay, "the recording carries Point-LIO's pose and tf"
+    assert PointLioRust not in replay, "the recording carries Point-LIO's pose and tf"
+    assert R1ProMid360 not in replay
     for module in (
         StereoCloud,
         RayTracingVoxelMap,

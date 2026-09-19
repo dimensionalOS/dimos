@@ -31,9 +31,10 @@ Point-LIO's lidar and odometry, tf)::
 
     dimos run r1pro-nav-lio-replay --dataset <recording>
 
-Run on ``lcm``: the C++ estimator's cloud does not register in the Rust voxel
-map over zenoh (see the R1 README). Point-LIO and the stereo matcher are
-native binaries built on first run.
+Run on ``lcm``: the C++ estimator's cloud did not register in the Rust voxel
+map over zenoh, and the Rust estimator has not been tried there (see the R1
+README). The Mid-360 driver, Point-LIO and the stereo matcher are native
+binaries built on first run.
 """
 
 from __future__ import annotations
