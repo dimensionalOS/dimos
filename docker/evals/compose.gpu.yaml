@@ -1,0 +1,13 @@
+# Overlay for hardware WebGL: the host runs one Xorg on the GPU (DISPLAY=:0 by
+# default) and every worker renders through its socket, as the self-hosted CI
+# runner does. Usage:
+#   docker compose -f docker/evals/compose.yaml -f docker/evals/compose.gpu.yaml up -d --scale worker=6
+services:
+  worker:
+    gpus: all
+    environment:
+      DIMSIM_RENDER: gpu
+      DISPLAY: ${DISPLAY:-:0}
+      NVIDIA_DRIVER_CAPABILITIES: all
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix

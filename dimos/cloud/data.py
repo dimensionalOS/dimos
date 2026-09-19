@@ -405,8 +405,8 @@ def _tag(row: dict[str, Any]) -> str:
 
 
 def _blueprint(path: Path) -> str | None:
-    """Run dirs are named <stamp>-<blueprint> (generate_run_id)."""
-    m = re.fullmatch(r"\d{8}-\d{6}-(.+)", path.parent.name)
+    """Run dirs are named <stamp>-<blueprint>[-<4 hex>] (generate_run_id)."""
+    m = re.fullmatch(r"\d{8}-\d{6}-(.+?)(?:-[0-9a-f]{4})?", path.parent.name)
     return m.group(1) if m else None
 
 
