@@ -39,6 +39,7 @@ from dimos.control.task import (
     JointStateSnapshot,
     ResourceClaim,
 )
+from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
@@ -47,7 +48,6 @@ if TYPE_CHECKING:
 
     from dimos.control.components import HardwareId, JointName, JointState as JointReading, TaskName
     from dimos.control.hardware_interface import ConnectedHardware
-    from dimos.hardware.manipulators.spec import ControlMode
     from dimos.hardware.whole_body.spec import IMUState
 
 logger = setup_logger()
@@ -96,6 +96,7 @@ class TickLoop:
         task_lock: threading.Lock,
         joint_to_hardware: dict[JointName, HardwareId],
         publish_callback: Callable[[JointState], None] | None = None,
+        publish_command_callback: Callable[[JointState], None] | None = None,
         publish_robot_callback: Callable[[HardwareId, JointState], None] | None = None,
         frame_id: str = "coordinator",
         log_ticks: bool = False,
@@ -107,6 +108,7 @@ class TickLoop:
         self._task_lock = task_lock
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
+        self._publish_command_callback = publish_command_callback
         self._publish_robot_callback = publish_robot_callback
         self._frame_id = frame_id
         self._log_ticks = log_ticks
@@ -189,7 +191,7 @@ class TickLoop:
 
         hw_commands = self._route_to_hardware(joint_commands)
 
-        self._write_all_hardware(hw_commands)
+        self._write_all_hardware(hw_commands, joint_states.timestamp)
 
         if self._publish_callback:
             self._publish_joint_state(joint_states)
@@ -407,9 +409,12 @@ class TickLoop:
     def _write_all_hardware(
         self,
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
+        timestamp: float,
     ) -> None:
-        """Write commands to all hardware interfaces."""
+        """Write commands and publish accepted position updates outside the hardware lock."""
         hardware = self._hardware
+        names: list[str] = []
+        values: list[float] = []
         with self._hardware_lock:
             for hw_id, (positions, mode) in hw_commands.items():
                 if hw_id in hardware:
@@ -421,8 +426,23 @@ class TickLoop:
                             logger.error(
                                 f"Hardware {hw_id} rejected {mode.name} command from control task"
                             )
+                        elif mode in (ControlMode.POSITION, ControlMode.SERVO_POSITION):
+                            names.extend(positions)
+                            values.extend(positions.values())
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
+        if not names or self._publish_command_callback is None:
+            return
+        self._publish_command_callback(
+            JointState(
+                ts=timestamp,
+                frame_id=self._frame_id,
+                name=names,
+                position=values,
+                velocity=[],
+                effort=[],
+            )
+        )
 
     def _publish_joint_state(self, snapshot: JointStateSnapshot) -> None:
         """Publish aggregated JointState for external consumers."""

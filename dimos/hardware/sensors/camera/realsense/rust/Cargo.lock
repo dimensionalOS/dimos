@@ -542,7 +542,7 @@ dependencies = [
 [[package]]
 name = "dimos-lcm"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#04d78e8622500244123ba9cefa4c51b4cb454549"
+source = "git+https://github.com/dimensionalOS/dimos-lcm.git?rev=dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5#dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5"
 dependencies = [
  "byteorder",
  "socket2 0.5.10",
@@ -555,7 +555,7 @@ version = "0.1.0"
 dependencies = [
  "dimos-lcm",
  "dimos-module-macros",
- "lcm-msgs",
+ "lcm-msgs 0.1.0 (git+https://github.com/dimensionalOS/dimos-lcm.git?rev=dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5)",
  "nalgebra",
  "rayon",
  "serde",
@@ -583,7 +583,7 @@ name = "dimos-realsense"
 version = "0.1.0"
 dependencies = [
  "dimos-module",
- "lcm-msgs",
+ "lcm-msgs 0.1.0 (git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen)",
  "pkg-config",
  "realsense-rust",
  "realsense-sys",
@@ -1359,6 +1359,14 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 name = "lcm-msgs"
 version = "0.1.0"
 source = "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#04d78e8622500244123ba9cefa4c51b4cb454549"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
+name = "lcm-msgs"
+version = "0.1.0"
+source = "git+https://github.com/dimensionalOS/dimos-lcm.git?rev=dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5#dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5"
 dependencies = [
  "byteorder",
 ]

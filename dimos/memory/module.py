@@ -445,9 +445,14 @@ class Recorder(MemoryModule):
         return getattr(msg, "ts", None) or time.time()
 
     async def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
-        """Pose to anchor *msg* with. Dispatches to the stream's (async)
-        ``@pose_setter_for`` if one is defined, else falls back to a
-        ``world <- frame_id`` tf lookup."""
+        """Pose to anchor *msg* with.
+
+        Poseless streams skip pose setters and tf resolution. Other streams
+        dispatch to their async ``@pose_setter_for`` when defined, then fall
+        back to a ``world <- frame_id`` tf lookup.
+        """
+        if name in self.config.poseless_streams:
+            return None
         setter = self._pose_setters.get(name)
         if setter is not None:
             return cast("Pose | None", await setter(msg))
