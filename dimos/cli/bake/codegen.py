@@ -83,9 +83,8 @@ fn main() {{
 """
 
 
-DIMOS_MODULE_DEP = (
-    'dimos-module = { git = "https://github.com/dimensionalOS/dimos", branch = "main" }'
-)
+def _dimos_module_dep(root: Path) -> str:
+    return f'dimos-module = {{ path = "{root / "native/rust/dimos-module"}" }}'
 
 
 def crate_dir(host: str, root: Path | None = None) -> Path:
@@ -94,7 +93,7 @@ def crate_dir(host: str, root: Path | None = None) -> Path:
 
 
 def _dependencies(modules: Sequence[RegisteredModule], root: Path) -> str:
-    lines = [DIMOS_MODULE_DEP]
+    lines = [_dimos_module_dep(root)]
     # Keyed by crate: one crate can register several module ids, and a repeated
     # crate name is a duplicate key cargo refuses to parse.
     for crate_name, crate_path in dict.fromkeys((m.crate_name, m.crate_dir) for m in modules):
