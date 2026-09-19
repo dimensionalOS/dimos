@@ -137,6 +137,8 @@ class Sim(Environment):
             proc = DimosCliCall()
             self.configure_launch(proc)
             proc.extra_env.update(self.config.extra_env)
+            # Rerun's server buffer defaults to a share of host RAM; an eval needs none of it.
+            proc.extra_env.setdefault("RERUNBRIDGEMODULE__MEMORY_LIMIT", "1GB")
             proc.global_args += ["--record", "--rerun-open", "none"]  # the bridge still serves gRPC
             disabled = [arg for name in self.config.disable for arg in ("--disable", name)]
             bridge = ["raw-robot-bridge"] if self.config.raw_bridge else []
