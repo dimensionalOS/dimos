@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 from dimos_lcm.nav_msgs import Odometry as LCMOdometry
 import numpy as np
 
+from dimos.experimental.agent_encode import odometry as agent_encoding
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
@@ -144,6 +145,12 @@ class Odometry(Timestamped):
                 self.orientation.w,
             ],
         )
+
+    AGENT_ENCODE_LEGEND = agent_encoding.LEGEND
+
+    def agent_encode(self) -> dict[str, Any]:
+        """Describe native-frame pose and twist for an agent, with explicit units."""
+        return agent_encoding.encode(self)
 
     # -- Serialization --
 
