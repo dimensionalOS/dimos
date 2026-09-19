@@ -34,10 +34,13 @@ job() {  # one (arm, scene) container, foreground; marker on a clean exit
   arm=$1; scene=$2; timeout=$3; log=$EVAL_RUNS_DIR/nav-logs/$arm--$scene.log
   [ -f "$EVAL_RUNS_DIR/nav-done/$arm--$scene" ] && return 0
   echo "$(date +%FT%T) START $arm $scene"
-  docker compose run --rm --name "nav-$arm-$scene-$$" -e DIMOS_ZENOH_SHM=0 -e CI=1 -e PYTEST_VERSION=1 \
+  name="nav-$arm-$scene-$$"
+  # A scene is at most 8 cases; a container past 2 h is wedged (a runner that never noticed its sim died).
+  timeout --foreground 7200 docker compose run --rm --name "$name" -e DIMOS_ZENOH_SHM=0 -e CI=1 -e PYTEST_VERSION=1 \
     -e "DIMOS_EVAL_TIMEOUT_S=$timeout" $NAV_VOLUMES worker \
     dimos evals run dimos.evals.suites.habitat_nav --tags "$scene" --video $(cat "$EVAL_RUNS_DIR/nav-args/$arm") > "$log" 2>&1
-  rc=$?; run=$(grep -a -o "/state/[^ ]*run-[^ ]*" "$log" | tail -1)
+  rc=$?; [ "$rc" = 124 ] && docker rm -f "$name" >/dev/null 2>&1
+  run=$(grep -a -o "/state/[^ ]*run-[^ ]*" "$log" | tail -1)
   echo "$(date +%FT%T) DONE $arm $scene rc=$rc $run"
   [ "$rc" = 0 ] && [ -n "$run" ] && echo "$run" > "$EVAL_RUNS_DIR/nav-done/$arm--$scene"
 }
