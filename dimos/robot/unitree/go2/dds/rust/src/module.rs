@@ -78,10 +78,8 @@ pub struct Config {
     /// The interface CycloneDDS binds: the Go2's own eth0, or the Jetson's Go2 link.
     pub iface: String,
     pub domain_id: u32,
-    pub odom_topic: String,
-    /// Publish odometry's `odom -> base_link` edge on tf.
-    pub odom_tf: bool,
-    pub lidar_topic: String,
+    /// The frame the live odometry moves; the odom tf edge is ours only for base_link.
+    pub tf_root: String,
     /// Spin the head L1 up at start (park it otherwise) and stream its deskewed cloud.
     pub lidar_on: bool,
     /// Also the undeskewed sensor-frame cloud and the L1's own IMU.
@@ -615,10 +613,10 @@ impl DdsLoop {
     fn run(self, cmd_rx: Receiver<Cmd>) {
         let c = &self.config;
         let p = runtime::participant(&c.iface, c.domain_id);
-        let odom_reader = runtime::make_reader::<types::Odometry>(&p, &c.odom_topic);
+        let odom_reader = runtime::make_reader::<types::Odometry>(&p, topics::ROBOT_ODOM);
         let cloud_reader = c
             .lidar_on
-            .then(|| runtime::make_reader::<types::PointCloud2>(&p, &c.lidar_topic));
+            .then(|| runtime::make_reader::<types::PointCloud2>(&p, topics::CLOUD_DESKEWED));
         let raw_readers = (c.lidar_on && c.lidar_raw_on).then(|| {
             (
                 runtime::make_reader::<types::PointCloud2>(&p, topics::CLOUD),
@@ -644,7 +642,7 @@ impl DdsLoop {
         });
         std::thread::sleep(DISCOVERY_SETTLE);
         set_lidar(&mut switch, c.lidar_on);
-        info!(iface = %c.iface, odom = %c.odom_topic, lidar = %c.lidar_topic, "dds up");
+        info!(iface = %c.iface, tf_root = %c.tf_root, "dds up");
 
         let mut odom_buf = SampleBuffer::<types::Odometry>::new(64);
         let mut cloud_buf = SampleBuffer::<types::PointCloud2>::new(8);
@@ -701,7 +699,7 @@ impl DdsLoop {
             for s in odom_buf.iter().take(n) {
                 let (odom, edge) = odometry(s, now_secs());
                 let _ = self.handle.block_on(self.odometry.publish(&odom));
-                if c.odom_tf {
+                if c.tf_root == BODY_FRAME {
                     let _ = self.handle.block_on(self.tf.publish(&[edge]));
                 }
             }

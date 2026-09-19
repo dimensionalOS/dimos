@@ -47,10 +47,6 @@ class GO2DDSConfig(NativeModuleConfig, Go2BaseConfig):
     # eth0 on the Go2 itself, the Go2 link on the Jetson.
     iface: str = "eth0"
     domain_id: int = 0
-    odom_topic: str = "rt/utlidar/robot_odom"
-    # Publish odometry's odom -> base_link edge on tf; off when another LIO owns odom.
-    odom_tf: bool = True
-    lidar_topic: str = "rt/utlidar/cloud_deskewed"
     # Spin the head L1 up at start (park it otherwise) and stream its deskewed cloud.
     lidar_on: bool = True
     # Also the undeskewed sensor-frame cloud and the L1's own IMU.
@@ -69,7 +65,7 @@ class GO2DDSConfig(NativeModuleConfig, Go2BaseConfig):
 
     def _ignore_fields(self) -> set[str]:
         # The rust struct rejects the python-only mount and camera fields.
-        return super()._ignore_fields() | set(Go2BaseConfig.model_fields)
+        return super()._ignore_fields() | set(Go2BaseConfig.model_fields) - {"tf_root"}
 
 
 class GO2DDS(NativeModule, Go2Base):

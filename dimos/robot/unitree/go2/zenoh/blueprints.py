@@ -312,11 +312,10 @@ go2_zenoh_motion_pointlio = autoconnect(
 # `go2-zenoh-motion-pointlio` with GO2DDS as the robot side, no go2web bridge anywhere.
 # Its native process is the zenoh router (the Go2 forwards 7447 to the Jetson, so the
 # viewer still dials go22); every other process dials it on loopback. The head L1 stays
-# off and Point-LIO owns odom, so GO2DDS publishes no lidar, odometry or odom tf.
+# off and Point-LIO owns odom, so GO2DDS publishes no lidar, odometry or odom tf edge.
 _go2_dds_pointlio = GO2DDS.blueprint(
     iface="enP8p1s0",
     lidar_on=False,
-    odom_tf=False,
     tf_root="mid360_link",
     session=ZenohConfig(mode="router", listen=["tcp/0.0.0.0:7447"], connect=[]),
 ).remappings([(GO2DDS, "odometry", "go2_odometry_unused"), (GO2DDS, "lidar", "go2_lidar_unused")])
