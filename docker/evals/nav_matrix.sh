@@ -13,8 +13,9 @@ export EVALS_IMAGE=${EVALS_IMAGE:-dimensional/evals:nav}
 export COMPOSE_FILE=${COMPOSE_FILE:-docker/evals/compose.yaml:docker/evals/compose.gpu.yaml:docker/evals/compose.habitat-data.yaml}
 export HABITAT_DATA_DIR=${HABITAT_DATA_DIR:-/data/habitat} EVAL_RUNS_DIR=${EVAL_RUNS_DIR:-$HOME/eval-runs}
 export DIMOS_TRANSPORT=zenoh RERUN_SAVE=0
-# The HSSD ground truth (PR 4214) is not in the image; mount it from this checkout. NAV_VOLUMES adds more.
-export NAV_VOLUMES="-v $PWD/misc/habitat/ground_truth:/app/misc/habitat/ground_truth:ro ${NAV_VOLUMES:-}"
+# The HSSD ground truth (PR 4214) is not in the image; mount it from NAV_GROUND_TRUTH (default: this
+# checkout; use a copy outside git, a reset under a live bind mount empties it for running containers).
+export NAV_VOLUMES="-v ${NAV_GROUND_TRUTH:-$PWD/misc/habitat/ground_truth}:/app/misc/habitat/ground_truth:ro ${NAV_VOLUMES:-}"
 declare -A ARGS=(
   [dimos-planner]="--agent dimos.evals.agents.topic --set send=goal --set send_type=point --set done=goal_reached --set done_type=Bool --set done_when_still=true"
   [typesafe]="--agent dimos.evals.agents.topic --set modules=[\"type-safe-agent\"] --set trace=TypeSafeAgent"
