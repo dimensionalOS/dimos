@@ -107,6 +107,8 @@ all_blueprints = {
     "r1pro-coordinator": "dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator:r1pro_coordinator",
     "r1pro-manipulation": "dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_manipulation:r1pro_manipulation",
     "r1pro-nav": "dimos.robot.galaxea.r1pro.blueprints.navigation.r1pro_nav:r1pro_nav",
+    "r1pro-nav-lio": "dimos.robot.galaxea.r1pro.blueprints.navigation.r1pro_nav_lio:r1pro_nav_lio",
+    "r1pro-nav-lio-replay": "dimos.robot.galaxea.r1pro.blueprints.navigation.r1pro_nav_lio:r1pro_nav_lio_replay",
     "r1pro-planar-preview": "dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_planar_preview:r1pro_planar_preview",
     "r1pro-pointlio": "dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_pointlio:r1pro_pointlio",
     "r1pro-recorder": "dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_recorder:r1pro_recorder",
