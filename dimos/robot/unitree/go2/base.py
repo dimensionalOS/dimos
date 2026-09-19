@@ -26,7 +26,7 @@ import asyncio
 import math
 import threading
 import time
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator
 from reactivex.disposable import Disposable
@@ -57,6 +57,9 @@ class Go2BaseConfig(StaticTfPublisherConfig):
     # yaw) tuple or a name from MID360_MOUNT_PRESETS.
     mid360_mount: tuple[float, float, float] | str = MID360_MOUNT_PRESETS["SF"]
     camera_info_hz: float = Field(default=1.0, gt=0.0)
+    # The frame the live odometry moves; the mount edges above it are inverted so it
+    # never gets two parents.
+    tf_root: Literal["base_link", "mid360_link"] = "base_link"
 
     @field_validator("mid360_mount", mode="before")
     @classmethod
@@ -199,8 +202,10 @@ class Go2Base(StaticTfPublisher):
         return {t.child_frame_id: t for t in (base_to_camera, camera_to_mid360, camera_to_optical)}
 
     def transforms(self) -> list[Transform]:
-        """Rooted at base_link, the frame the robot's own odometry moves."""
-        return list(self.mount_edges().values())
+        edges = self.mount_edges()
+        if self.config.tf_root == "mid360_link":
+            return [-edges["mid360_link"], -edges["front_camera"], edges["camera_optical"]]
+        return list(edges.values())
 
     async def _publish_camera_info(self) -> None:
         period = 1.0 / self.config.camera_info_hz

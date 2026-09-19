@@ -31,6 +31,8 @@ failure can be bisected by dropping down a level:
 - ``go2-viewer``: the rerun half alone, as a zenoh client of the robot's router.
 - ``go2-dds-basic``: ``go2-zenoh-basic`` with :class:`GO2DDS` in place of the bridge, for the
   Jetson (or the Go2 itself) talking DDS to the robot directly.
+- ``go2-dds-motion-pointlio``: ``go2-zenoh-motion-pointlio`` over DDS, GO2DDS being the
+  zenoh router the viewer dials.
 """
 
 import os
@@ -51,6 +53,7 @@ from dimos.navigation.local_planner.viz import motion_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
 from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
+from dimos.protocol.service.zenohservice import ZenohConfig
 from dimos.robot.unitree.go2.constants import (
     BASE_LINK_HEIGHT,
     ROBOT_HEIGHT,
@@ -301,6 +304,48 @@ go2_zenoh_motion_pointlio = autoconnect(
     transport="zenoh",
     # the Go2's router, on its own eth0 across the Jetson link
     zenoh_connect="tcp/192.168.123.161:7447",
+    n_workers=11,
+    robot_model="unitree_go2",
+)
+
+
+# `go2-zenoh-motion-pointlio` with GO2DDS as the robot side, no go2web bridge anywhere.
+# Its native process is the zenoh router (the Go2 forwards 7447 to the Jetson, so the
+# viewer still dials go22); every other process dials it on loopback. The head L1 stays
+# off and Point-LIO owns odom, so GO2DDS publishes no lidar, odometry or odom tf.
+_go2_dds_pointlio = GO2DDS.blueprint(
+    iface="enP8p1s0",
+    lidar_on=False,
+    odom_tf=False,
+    tf_root="mid360_link",
+    session=ZenohConfig(mode="router", listen=["tcp/0.0.0.0:7447"], connect=[]),
+).remappings([(GO2DDS, "odometry", "go2_odometry_unused"), (GO2DDS, "lidar", "go2_lidar_unused")])
+
+go2_dds_motion_pointlio = autoconnect(
+    vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config=_rerun_config(
+            {
+                "world/pointlio_map": None,
+                "world/lidar": None,
+                "world/lidar_raw": None,
+                "world/region_bounds": None,
+            }
+        ),
+    ),
+    _go2_dds_pointlio,
+    MovementManager.blueprint(),
+    RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
+    _mls_planner_motion.remappings([(MLSPlannerNative, "path", "planner_path")]),
+    LocalPlannerNative.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),
+    TrajectoryFollowerNative.blueprint(),
+    mid360_for_pointlio(lidar_ip="192.168.123.157", host_ip="192.168.123.5"),
+    PointLioRust.blueprint(),
+).global_config(
+    transport="zenoh",
+    zenoh_connect="tcp/127.0.0.1:7447",
+    # the router is a native process; the peers keep dialing until it is up
+    zenoh_connect_timeout=15.0,
     n_workers=11,
     robot_model="unitree_go2",
 )

@@ -22,6 +22,8 @@ is what puts them on the graph. On top of :class:`Go2Base` this adds the
 
 from __future__ import annotations
 
+from typing import Literal
+
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -37,7 +39,8 @@ logger = setup_logger()
 
 
 class GO2ZenohConfig(Go2BaseConfig):
-    pass
+    # Point-LIO owns mid360_link.
+    tf_root: Literal["base_link", "mid360_link"] = "mid360_link"
 
 
 class GO2Zenoh(Go2Base):
@@ -64,16 +67,6 @@ class GO2Zenoh(Go2Base):
     def stop(self) -> None:
         self.liedown()
         super().stop()
-
-    def transforms(self) -> list[Transform]:
-        """The mount tree, rooted at mid360_link because Point-LIO owns that frame.
-
-        Measured outward from the body, but odom -> mid360_link is the only live edge, so
-        the two edges above the lidar are inverted, otherwise mid360_link has two parents
-        and the body snaps between them at 35 Hz.
-        """
-        edges = self.mount_edges()
-        return [-edges["mid360_link"], -edges["front_camera"], edges["camera_optical"]]
 
     # The bridge knows sport verbs, api ids and the L1 switch only.
     def _unsupported(self, name: str) -> None:
