@@ -34,6 +34,9 @@
         zenohc = zenoh.packages.${system}.zenoh-c;
         zenohcpp = zenoh.packages.${system}.zenoh-cpp;
       in {
+        # Nothing to lint and no tests here yet; declared so the gate sees the flake.
+        checks.lint = pkgs.runCommand "dimos-native-module-examples-cpp-lint" { } "mkdir $out";
+        checks.tests = pkgs.runCommand "dimos-native-module-examples-cpp-tests" { } "mkdir $out";
         packages.dimos-native-module-examples-cpp = pkgs.stdenv.mkDerivation {
           pname = "dimos-native-ping-pong";
           version = "0.1.0";

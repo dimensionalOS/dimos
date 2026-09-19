@@ -551,28 +551,28 @@ def flake_dirs() -> list[str]:
     return sorted(str(PurePosixPath(path).parent) for path in tracked if "/" in path)
 
 
-def _checks_of(build_dir: str) -> frozenset[str]:
-    """The names under `checks.<system>` this flake declares, empty if it has none.
+def _checks_of(build_dir: str) -> frozenset[str] | None:
+    """The names under `checks.<system>`, or None if the flake does not build on this system.
 
     `path:.#checks.<system>` cannot express this on its own: nix exits non-zero both for
-    a flake that simply has no such attribute (5 of the module flakes declare no `checks`
-    at all) and for one that fails to evaluate, so the old "non-zero means no checks" read
-    let an invalid flake, a broken lock input or a crate that will not evaluate report as
-    "declares no lint check" and pass the gate without running it. `or {}` makes the
-    expression total over the missing attribute instead, which leaves a non-zero exit
-    meaning only what it should — evaluation genuinely failed — so we raise.
+    a flake that has no such attribute and for one that fails to evaluate, so the old
+    "non-zero means no checks" read let an invalid flake, a broken lock input or a crate
+    that will not evaluate report as "declares no lint check" and pass the gate without
+    running it. `or {}` makes the expression total over the missing attribute instead,
+    which leaves a non-zero exit meaning only what it should — evaluation genuinely
+    failed — so we raise. A system the flake names nowhere is the one legitimate skip.
     """
     directory = REPO_ROOT / build_dir
     system = current_system()
+    expr = f"""
+      let flake = builtins.getFlake "path:{directory}";
+          has = output: builtins.hasAttr "{system}" (flake.${{output}} or {{}});
+      in if has "checks" || has "packages" || has "devShells"
+         then builtins.attrNames ((flake.checks or {{}})."{system}" or {{}})
+         else null
+    """
     proc = subprocess.run(
-        [
-            "nix",
-            "eval",
-            "--impure",
-            "--json",
-            "--expr",
-            f'builtins.attrNames (((builtins.getFlake "path:{directory}").checks or {{}})."{system}" or {{}})',
-        ],
+        ["nix", "eval", "--impure", "--json", "--expr", expr],
         cwd=str(directory),
         capture_output=True,
         text=True,
@@ -584,17 +584,24 @@ def _checks_of(build_dir: str) -> frozenset[str]:
             f"evaluating checks.{system} in {build_dir} exited {proc.returncode}\n{body}"
         )
     try:
-        return frozenset(json.loads(proc.stdout))
+        names = json.loads(proc.stdout)
     except json.JSONDecodeError as error:
         raise RuntimeError(
             f"checks.{system} in {build_dir} did not evaluate to a list\n{body}"
         ) from error
+    return None if names is None else frozenset(names)
 
 
 def check_one(build_dir: str, check: str) -> tuple[str, bool, str]:
-    """Build one flake's `checks.<system>.<check>`, skipping flakes that lack it."""
-    if check not in _checks_of(build_dir):
-        return build_dir, False, f"SKIP:  {build_dir} declares no {check} check"
+    """Build one flake's `checks.<system>.<check>`; a flake without it fails the gate."""
+    names = _checks_of(build_dir)
+    if names is None:
+        return build_dir, False, f"SKIP:  {build_dir} does not build on {current_system()}"
+    if check not in names:
+        raise RuntimeError(
+            f"{build_dir} declares no {check} check: every flake declares checks.<system>.lint"
+            " and checks.<system>.tests, a no-op when there is nothing to run"
+        )
     attr = f"path:.#checks.{current_system()}.{check}"
     _log(f"START: {check} {build_dir}: {attr}")
     proc = subprocess.run(

@@ -460,27 +460,6 @@ jobs:
       - name: Test
         run: ctest --test-dir build/native-cpp --output-on-failure
 
-      - name: List C++ native modules
-        id: find-modules
-        run: |
-          modules=$(git ls-files '*/flake.nix' \
-            | sed 's|/flake.nix$||' \
-            | grep -v '^native/' \
-            | while read -r dir; do
-                [ -f "$dir/CMakeLists.txt" ] && echo "$dir"
-              done \
-            | sort)
-          if [ -z "$modules" ]; then
-            echo "::error::No C++ native modules found - the discovery glob is wrong"
-            exit 1
-          fi
-          echo "Found C++ native modules:"
-          echo "$modules"
-          {
-            echo "modules<<EOF"
-            echo "$modules"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
       - name: Free runner disk space
         uses: BRAINSia/free-disk-space@v2.1.3
       - name: Install Nix
@@ -500,17 +479,6 @@ jobs:
         env:
           BUILD_WORKERS: "4"
         run: python3 bin/build-native-modules --tests
-      - name: Test C++ native modules
-        env:
-          MODULES: ${{ steps.find-modules.outputs.modules }}
-        run: |
-          for module in $MODULES; do
-            if grep -qE 'enable_testing|add_test' "$module/CMakeLists.txt"; then
-              echo "::group::ctest $module"
-              (cd "$module" && ctest --test-dir build --output-on-failure)
-              echo "::endgroup::"
-            fi
-          done
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
         with:
