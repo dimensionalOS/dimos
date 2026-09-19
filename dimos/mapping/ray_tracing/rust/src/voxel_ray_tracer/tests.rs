@@ -29,10 +29,12 @@ fn basic_config() -> Config {
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
+        global_max_interval_s: 0.0,
         region_percentile: 95.0,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
         worker_threads: 4,
+        max_cloud_rate_hz: 0.0,
     }
 }
 
@@ -303,10 +305,12 @@ fn ground_clipping_single_ray() {
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
+        global_max_interval_s: 0.0,
         region_percentile: 95.0,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
         worker_threads: 4,
+        max_cloud_rate_hz: 0.0,
     };
     // Build the floor over a y band so it is a 2d plane, not a wire.
     let max_x = 25.0_f32;
@@ -460,10 +464,12 @@ fn stair_clipping_ray_fan() {
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
+        global_max_interval_s: 0.0,
         region_percentile: 95.0,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
         worker_threads: 4,
+        max_cloud_rate_hz: 0.0,
     };
 
     // Staircase
@@ -539,10 +545,12 @@ fn landing_floor_ray_fan() {
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
+        global_max_interval_s: 0.0,
         region_percentile: 95.0,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
         worker_threads: 4,
+        max_cloud_rate_hz: 0.0,
     };
 
     // Flat floor from the sensor out to a vertical wall.
@@ -606,10 +614,12 @@ fn landing_grazed_from_below() {
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
+        global_max_interval_s: 0.0,
         region_percentile: 95.0,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
         worker_threads: 4,
+        max_cloud_rate_hz: 0.0,
     };
 
     // Staircase topped by a flat landing and a back wall.
@@ -742,10 +752,12 @@ fn grazing_ray_spares_planar_floor() {
         support_min: 0,
         emit_every: 1,
         global_emit_every: 1,
+        global_max_interval_s: 0.0,
         region_percentile: 95.0,
         world_frame: "world".to_string(),
         tf_match_tolerance_s: 0.1,
         worker_threads: 4,
+        max_cloud_rate_hz: 0.0,
     };
     let (mut map, _) = build_surface(&floor, voxel_size, cfg.max_health);
     let row: Vec<VoxelKey> = map
