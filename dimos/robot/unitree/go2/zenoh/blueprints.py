@@ -29,6 +29,8 @@ failure can be bisected by dropping down a level:
 - ``go2-zenoh-motion-pointlio``: ``go2-zenoh-motion`` running its own ``PointLioRust``,
   for when the MID-360 hangs off this box rather than the robot.
 - ``go2-viewer``: the rerun half alone, as a zenoh client of the robot's router.
+- ``go2-dds-basic``: ``go2-zenoh-basic`` with :class:`GO2DDS` in place of the bridge, for the
+  Jetson (or the Go2 itself) talking DDS to the robot directly.
 """
 
 import os
@@ -55,6 +57,7 @@ from dimos.robot.unitree.go2.constants import (
     ROBOT_LENGTH,
     ROBOT_WIDTH,
 )
+from dimos.robot.unitree.go2.dds.module import GO2DDS
 from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh
 from dimos.visualization.vis_module import vis_module
 
@@ -156,6 +159,17 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
 go2_zenoh_basic = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config()),
     GO2Zenoh.blueprint(),
+    MovementManager.blueprint(),
+).global_config(transport="zenoh", n_workers=4, robot_model="unitree_go2")
+
+# The same layer over DDS: the native module is the robot side, so this runs on the box
+# that has the Go2 on a wire. No pointlio_map: the L1 cloud arrives already in `odom`.
+go2_dds_basic = autoconnect(
+    vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config=_rerun_config({"world/pointlio_map": None}),
+    ),
+    GO2DDS.blueprint(),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=4, robot_model="unitree_go2")
 
