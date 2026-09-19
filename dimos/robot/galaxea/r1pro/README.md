@@ -108,15 +108,13 @@ cd ~/galaxea-dimos/install/startup_config/share/startup_config/script/boot/modul
 tmux send-keys -t hdas './start_livox_lidar.sh' Enter
 ```
 
-**Network.** The driver needs the lidar's IP and the host NIC it pushes to. On
-an R1 they are read from the vendor's own
-`~/galaxea-dimos/install/livox_ros_driver2/share/livox_ros_driver2/config/MID360_config.json`
-(override the location with `DIMOS_R1_MID360_CONFIG`), or set
-`DIMOS_MID360_LIDAR_IP` / `DIMOS_MID360_HOST_IP` to skip the file. The
-blueprint refuses to start, naming the file and the variables, when neither
-can answer, or when no local interface sits on the lidar's subnet. The vendor
-driver holds the same host ports (56101, 56201, ...); both bind them with
-`SO_REUSEADDR`, and the device streams to whichever asked last.
+**Network.** The driver needs the lidar's IP and the host NIC it pushes to:
+`R1PRO_CHASSIS_LIDAR_IP` / `R1PRO_CHASSIS_LIDAR_HOST_IP` in
+`dimos/robot/galaxea/r1pro/config.py`, the same addresses as the vendor's
+`MID360_config.json`; `--mid360.lidar_ip` / `--mid360.host_ip` override them.
+The blueprint refuses to start when no local interface sits on the lidar's
+subnet. The vendor driver holds the same host ports (56101, 56201, ...); both
+bind them with `SO_REUSEADDR`, and the device streams to whichever asked last.
 
 **Time.** A Mid-360 with no time source stamps its packets with its own
 uptime. The estimator carries its output onto the host's clock from packet

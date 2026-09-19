@@ -103,13 +103,17 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
+from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
+from dimos.robot.galaxea.r1pro.config import (
+    R1PRO_CHASSIS_LIDAR_HOST_IP,
+    R1PRO_CHASSIS_LIDAR_IP,
+)
 from dimos.robot.galaxea.r1pro.lio import (
     LIDAR_FRAME,
     ODOM_FRAME,
     R1ProLioMountTf,
-    R1ProMid360,
 )
 from dimos.visualization.vis_module import vis_module
 
@@ -156,7 +160,11 @@ def _sensors(*, color_publish_hz: float, enable_wrist_color: bool | None = None)
             enable_wrist_color=enable_wrist_color,
         ),
         R1ProLioMountTf.blueprint(),
-        R1ProMid360.blueprint(frame_id=LIDAR_FRAME),
+        Mid360.blueprint(
+            frame_id=LIDAR_FRAME,
+            lidar_ip=R1PRO_CHASSIS_LIDAR_IP,
+            host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
+        ),
         PointLioRust.blueprint(
             sensor_frame_id=LIDAR_FRAME,
             frame_id=ODOM_FRAME,
@@ -176,7 +184,7 @@ def _sensors(*, color_publish_hz: float, enable_wrist_color: bool | None = None)
             # recording interleaves them with no way to tell which row came
             # from which. Renamed, the recording has both and they stay apart.
             # The driver's raw sweep is a third copy, for the estimator only.
-            (R1ProMid360, "lidar", "lidar_raw"),
+            (Mid360, "lidar", "lidar_raw"),
             (PointLioRust, "lidar", "pointlio_lidar"),
             (PointLioRust, "odometry", "pointlio_odometry"),
         ]
