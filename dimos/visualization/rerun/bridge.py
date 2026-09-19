@@ -47,7 +47,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.protocol.service.lcmservice import autoconf
@@ -221,6 +221,10 @@ class Config(ModuleConfig):
     visual_override: dict[Glob | str, VisualOverride | None] = field(default_factory=dict)
     static: dict[str, Callable[[Any], Any]] = field(default_factory=dict)
     max_hz: dict[str, float] = field(default_factory=dict)
+
+    # Topic names without the `dimos/` prefix; empty means every topic.
+    # On zenoh an unlisted topic never crosses the link, unlike `visual_override: None`.
+    topics: list[str] = field(default_factory=list)
 
     entity_prefix: str = "world"
     # Length of the triads to draw
@@ -476,8 +480,7 @@ class RerunBridgeModule(Module):
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")
             if hasattr(pubsub, "start"):
                 pubsub.start()
-            unsub = pubsub.subscribe_all(self._on_message)
-            self.register_disposable(Disposable(unsub))
+            self.register_disposable(Disposable(self._subscribe(pubsub)))
 
         # Add pubsub stop as disposable
         for pubsub in pubsubs:
@@ -485,6 +488,34 @@ class RerunBridgeModule(Module):
                 self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
 
         self._log_static()
+
+    def _subscribe(self, pubsub: SubscribeAllCapable[Any, Any]) -> Callable[[], None]:
+        """Subscribe to the named topics, or to everything when none are named.
+
+        A zenoh key is `dimos/<topic>/<Type>`, so one wildcard per name needs no type; LCM cannot do this.
+        """
+        if not self.config.topics:
+            return pubsub.subscribe_all(self._on_message)
+
+        if not isinstance(pubsub, Zenoh):
+            logger.warning(
+                f"{pubsub.__class__.__name__} cannot subscribe per topic; "
+                f"listening to everything and ignoring topics={self.config.topics}"
+            )
+            return pubsub.subscribe_all(self._on_message)
+
+        # a pattern over the type segment, not the concrete Topic LCMTopicProto asks for
+        unsubs = [
+            pubsub.subscribe(ZenohTopic(f"dimos/{name.strip('/')}/*"), self._on_message)  # type: ignore[arg-type]
+            for name in self.config.topics
+        ]
+        logger.info(f"bridge subscribed to {len(unsubs)} topics: {', '.join(self.config.topics)}")
+
+        def unsubscribe() -> None:
+            for unsub in unsubs:
+                unsub()
+
+        return unsubscribe
 
     def _log_connect_hints(self, grpc_port: int) -> None:
         """Log CLI commands for connecting a viewer to this bridge."""

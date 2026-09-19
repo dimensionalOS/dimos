@@ -34,11 +34,11 @@ from dimos.mapping.dim_slam.dim_slam import (
     SourceConfig,
 )
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
-from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
+from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
+from dimos.navigation.experimental.dannav.local_planner.module import DanLocalPlanner
+from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
+from dimos.navigation.global_planner.mls_planner.start_relay import StartRelay
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
 from dimos.robot.diy.alfred.config import ALFRED, ALFRED_URDF
 from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
 from dimos.visualization.vis_module import vis_module

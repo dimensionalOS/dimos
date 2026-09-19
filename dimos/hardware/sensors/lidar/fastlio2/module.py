@@ -24,7 +24,6 @@ stdin JSON.
 
 from __future__ import annotations
 
-import os
 import time
 from typing import TYPE_CHECKING
 
@@ -63,10 +62,9 @@ class FastLio2Config(NativeModuleConfig):
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
     # Livox SDK hardware config. lidar_ip required; host_ip optional (auto-derived
-    # from lidar_ip's subnet). Both fall back to DIMOS_FASTLIO_LIDAR_IP /
-    # DIMOS_FASTLIO_HOST_IP.
-    host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_FASTLIO_HOST_IP"))
-    lidar_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_FASTLIO_LIDAR_IP"))
+    # from lidar_ip's subnet).
+    host_ip: str | None = None
+    lidar_ip: str | None = None
     frequency: float = 10.0
 
     # Odometry is published as frame_id (fixed) -> sensor_frame_id (moving sensor),
@@ -162,7 +160,7 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry):
         if not lidar_ip:
             raise RuntimeError(
                 "FastLio2: lidar_ip not set — it's network-specific. Set it in the config "
-                "or via the DIMOS_FASTLIO_LIDAR_IP env var."
+                "or FASTLIO2__LIDAR_IP in the environment."
             )
         # host_ip optional: derive the local NIC on lidar_ip's /24 when unset or
         # not one of our IPs (shared with the Mid360 driver).

@@ -85,7 +85,7 @@ class GlobalConfig(BaseSettings):
     zenoh_multicast: bool = True
     # Multicast group scouting joins, e.g. 224.0.0.224:7446. Empty takes zenoh's
     # own. Moving it walks a session onto a private discovery bus, which is how
-    # parallel sessions on one machine stay apart -- LCM_DEFAULT_URL's analog.
+    # parallel sessions on one machine stay apart (LCM_DEFAULT_URL's analog).
     zenoh_scout_addr: str = ""
     # Whether peers propagate the peers they already know over established links.
     # Unlike multicast scouting this reaches nothing new on the LAN, and zenoh
@@ -94,6 +94,8 @@ class GlobalConfig(BaseSettings):
     # Seconds ZenohService.start() blocks for the configured connect endpoints to
     # link before giving up and continuing. 0 disables the wait.
     zenoh_connect_timeout: float = Field(default=1.0, ge=0, le=86400)
+    # Off: share a zenoh bus with a stack that already owns the Coordinator name.
+    serve_coordinator_rpc: bool = True
     viewer: ViewerBackend = "rerun"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB

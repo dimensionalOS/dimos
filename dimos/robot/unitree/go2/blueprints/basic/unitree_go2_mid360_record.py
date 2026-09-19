@@ -20,11 +20,11 @@ and the front camera are recorded into a memory db. The Go2/Mid-360 mount frames
 published continuously onto tf so they're captured in the recording. Raw Livox capture
 is opt-in: set ``RECORD_PCAP=1`` to also record a .pcap of the Mid-360 UDP stream.
 
-The lidar IPs come from each module's own config (``DIMOS_MID360_LIDAR_IP`` for the
-Mid-360 / pcap capture, ``DIMOS_POINTLIO_LIDAR_IP`` for Point-LIO). Run it for a
+The lidar IPs are each module's own config, set in the blueprint or from the
+environment as ``MID360__LIDAR_IP`` / ``POINTLIO__LIDAR_IP``. Run it for a
 timestamped ``recordings/`` folder::
 
-    export DIMOS_MID360_LIDAR_IP=192.168.1.171 DIMOS_POINTLIO_LIDAR_IP=192.168.1.171
+    export MID360__LIDAR_IP=192.168.1.171 POINTLIO__LIDAR_IP=192.168.1.171
     uv run python dimos/robot/unitree/go2/blueprints/basic/unitree_go2_mid360_record.py
 """
 
