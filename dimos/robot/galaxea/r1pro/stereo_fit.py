@@ -163,7 +163,7 @@ def transform_points(points: Any, transform: Any) -> np.ndarray:
     matrix = rotation_matrix(transform.rotation)
     translation = transform.translation
     offset = np.array([translation.x, translation.y, translation.z], dtype=np.float64)
-    return array @ matrix.T + offset
+    return np.asarray(array @ matrix.T + offset)
 
 
 def rotate_direction(direction: Point, transform: Any) -> Point:
@@ -210,7 +210,7 @@ def plane_distance(plane: Plane, points: Any) -> np.ndarray:
     """Signed distance from each point to *plane*; the normal is already unit."""
     a, b, c, d = plane
     array = np.asarray(points, dtype=np.float64).reshape(-1, 3)
-    return array @ np.array([a, b, c]) + d
+    return np.asarray(array @ np.array([a, b, c]) + d)
 
 
 @dataclass(frozen=True)
@@ -301,12 +301,12 @@ def bearing_bins(points: np.ndarray, bin_rad: float) -> np.ndarray:
     array = np.asarray(points, dtype=np.float64).reshape(-1, 3)
     azimuth = np.arctan2(array[:, 1], array[:, 0])
     elevation = np.arctan2(array[:, 2], np.hypot(array[:, 0], array[:, 1]))
-    return np.floor(np.column_stack([azimuth, elevation]) / bin_rad).astype(np.int64)
+    return np.asarray(np.floor(np.column_stack([azimuth, elevation]) / bin_rad).astype(np.int64))
 
 
 def _bin_keys(bins: np.ndarray) -> np.ndarray:
     """Fold (azimuth, elevation) bin pairs into one integer per point."""
-    return bins[:, 0] * 1_000_003 + bins[:, 1]
+    return np.asarray(bins[:, 0] * 1_000_003 + bins[:, 1])
 
 
 def measure(

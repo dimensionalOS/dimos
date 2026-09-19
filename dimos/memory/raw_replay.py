@@ -50,7 +50,8 @@ def _load_payload_type(module_path: str) -> type[Any]:
     module_name, _, class_name = module_path.rpartition(".")
     if not module_name:
         raise ValueError(f"cannot read a payload type out of {module_path!r}")
-    return getattr(importlib.import_module(module_name), class_name)
+    payload_type: type[Any] = getattr(importlib.import_module(module_name), class_name)
+    return payload_type
 
 
 @dataclass(frozen=True)

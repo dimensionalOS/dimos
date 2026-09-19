@@ -1009,7 +1009,7 @@ def convert_loop(
             break
         t0 = time.perf_counter()
         try:
-            converted = ros_to_dimos(msg, dimos_type)
+            converted: Any = ros_to_dimos(msg, dimos_type)
             if frame_id:
                 converted.frame_id = frame_id
             out.publish(converted)

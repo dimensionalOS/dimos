@@ -36,9 +36,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic_core import ErrorDetails
 
 from dimos.utils.logging_config import setup_logger
 
@@ -160,7 +160,7 @@ def write_stereo_calibration(path: Path | str, calibration: R1StereoCalibration)
     return target
 
 
-def _field_path(error: dict[str, Any]) -> str:
+def _field_path(error: ErrorDetails) -> str:
     return ".".join(str(part) for part in error["loc"]) or "<root>"
 
 
