@@ -20,6 +20,31 @@ one; `docker stop <name>` abandons one. Nothing in `dimos/evals` changes for
 this: the container runs the stock `EvalRunner`, which boots a dimos plus
 DimSim per case, runs the agent, records, and tears them down again.
 
+## Using it on your branch
+
+Nothing here depends on a particular suite or agent. On a branch based on a
+main that has this, it is already there. Before that, take its commits:
+
+```bash
+git fetch origin ruthwik/feat/docker-evals && git cherry-pick origin/main..origin/ruthwik/feat/docker-evals
+```
+
+The one file an evals branch is likely to touch as well is
+`dimos/evals/cli.py`, where this adds the `--docker` option to `run`; keep
+both sets of options if it conflicts.
+
+On the instance, the image is a snapshot of the checkout, so each branch
+needs its own build. Tag it and point `EVALS_IMAGE` at it, so a rebuild for
+one branch never replaces the image another person's eval is running on:
+
+```bash
+docker build -f docker/evals/Dockerfile -t dimensional/evals:my-branch .
+export EVALS_IMAGE=dimensional/evals:my-branch
+```
+
+Rebuild after code changes; the dependency layer is cached unless the lock
+file moved, so that is minutes, not the first build's half hour.
+
 ## What a run leaves behind
 
 Everything a container writes lands on the host under `EVAL_RUNS_DIR`
