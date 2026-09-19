@@ -21,6 +21,7 @@
 //! stereo matching has to happen here. The two modules share
 //! [`crate::unproject`], which is the back half of both paths.
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use dimos_module::{native_config, warn_throttled, Input, Module, Output};
@@ -209,8 +210,8 @@ pub struct StereoCloud {
     #[config]
     config: Config,
 
-    latest_left: Option<CompressedImage>,
-    latest_right: Option<CompressedImage>,
+    pending_left: VecDeque<CompressedImage>,
+    pending_right: VecDeque<CompressedImage>,
     left_camera: Option<CameraInfo>,
     right_camera: Option<CameraInfo>,
 
@@ -244,49 +245,77 @@ impl StereoCloud {
     }
 
     async fn on_left_info(&mut self, msg: CameraInfo) {
+        if !same_intrinsics(self.left_camera.as_ref(), &msg) {
+            self.rectify = None;
+        }
         self.left_camera = Some(msg);
-        self.rectify = None;
     }
 
     async fn on_right_info(&mut self, msg: CameraInfo) {
+        if !same_intrinsics(self.right_camera.as_ref(), &msg) {
+            self.rectify = None;
+        }
         self.right_camera = Some(msg);
-        self.rectify = None;
     }
 
     async fn on_left(&mut self, msg: CompressedImage) {
-        if self.latest_left.replace(msg).is_some() {
-            self.frames_dropped_unpaired += 1;
-        }
+        Self::hold(
+            &mut self.pending_left,
+            msg,
+            &mut self.frames_dropped_unpaired,
+        );
         self.try_pair().await;
     }
 
     async fn on_right(&mut self, msg: CompressedImage) {
-        if self.latest_right.replace(msg).is_some() {
-            self.frames_dropped_unpaired += 1;
-        }
+        Self::hold(
+            &mut self.pending_right,
+            msg,
+            &mut self.frames_dropped_unpaired,
+        );
         self.try_pair().await;
     }
 
-    /// Emit a cloud when the two held frames are close enough in time.
+    /// Keep the last few frames of an eye, not just the newest one.
     ///
-    /// Both frames are consumed on a successful pair, so one camera running
-    /// fast cannot pair its newest frame against the same stale partner over
-    /// and over and publish a stream of near-duplicate clouds.
-    async fn try_pair(&mut self) {
-        let (Some(left), Some(right)) = (self.latest_left.as_ref(), self.latest_right.as_ref())
-        else {
-            return;
-        };
-        let skew = (stamp_seconds(&left.header) - stamp_seconds(&right.header)).abs();
-        if skew > self.config.max_pair_skew_s {
-            return;
+    /// The two eyes free-run and arrive on two streams, so a left frame's
+    /// partner is often still in flight when the next left lands. Holding one
+    /// frame per eye then evicts it unpaired -- on a replay that dropped four
+    /// frames in five. A short queue lets a frame wait for its partner.
+    fn hold(pending: &mut VecDeque<CompressedImage>, msg: CompressedImage, dropped: &mut u64) {
+        pending.push_back(msg);
+        while pending.len() > PAIR_QUEUE {
+            pending.pop_front();
+            *dropped += 1;
         }
-        let Some(left) = self.latest_left.take() else {
+    }
+
+    /// Emit a cloud for the closest-stamped pair within the skew, if any.
+    ///
+    /// Both frames are consumed on a successful pair, and everything older
+    /// than either of them is dropped: a frame older than a pair that has
+    /// already been matched can only ever pair with something staler still,
+    /// and one camera running fast must not pair its newest frame against
+    /// the same stale partner over and over.
+    async fn try_pair(&mut self) {
+        let Some((i, j)) = closest_pair(
+            &self.pending_left,
+            &self.pending_right,
+            self.config.max_pair_skew_s,
+        ) else {
             return;
         };
-        let Some(right) = self.latest_right.take() else {
-            return;
-        };
+        let left = self
+            .pending_left
+            .remove(i)
+            .expect("indexed within the queue");
+        let right = self
+            .pending_right
+            .remove(j)
+            .expect("indexed within the queue");
+        self.frames_dropped_unpaired += (i + j) as u64;
+        self.pending_left.drain(..i);
+        self.pending_right.drain(..j);
         self.process(left, right).await;
     }
 
@@ -481,6 +510,42 @@ pub fn parse_denoise_or_none(text: &str) -> Chain {
             Chain(Vec::new())
         }
     }
+}
+
+/// Frames an eye may hold while waiting for its partner. At 30 Hz that is a
+/// quarter of a second of reordering, far more than the transport does.
+const PAIR_QUEUE: usize = 8;
+
+/// The rectification is built from these and nothing else, so a CameraInfo
+/// that repeats them -- the robot republishes its calibration at a fixed rate
+/// -- is not a reason to rebuild it.
+fn same_intrinsics(held: Option<&CameraInfo>, incoming: &CameraInfo) -> bool {
+    held.is_some_and(|h| {
+        h.width == incoming.width
+            && h.height == incoming.height
+            && h.K == incoming.K
+            && h.D == incoming.D
+            && h.distortion_model == incoming.distortion_model
+    })
+}
+
+/// The left and right queue positions of the closest-stamped pair within
+/// `max_skew_s`, or None when no two frames are close enough.
+fn closest_pair(
+    left: &VecDeque<CompressedImage>,
+    right: &VecDeque<CompressedImage>,
+    max_skew_s: f64,
+) -> Option<(usize, usize)> {
+    let mut best: Option<(usize, usize, f64)> = None;
+    for (i, l) in left.iter().enumerate() {
+        for (j, r) in right.iter().enumerate() {
+            let skew = (stamp_seconds(&l.header) - stamp_seconds(&r.header)).abs();
+            if skew <= max_skew_s && best.is_none_or(|(_, _, s)| skew < s) {
+                best = Some((i, j, skew));
+            }
+        }
+    }
+    best.map(|(i, j, _)| (i, j))
 }
 
 /// Header stamp as float seconds.
@@ -995,5 +1060,46 @@ mod tests {
             (parallel.right.coords()[index] - turned.right.coords()[index]).abs() > 1.0,
             "the right eye's map did not move with the configured yaw"
         );
+    }
+
+    fn stamped(seconds: f64) -> CompressedImage {
+        let mut image = CompressedImage::default();
+        image.header.stamp.sec = seconds.floor() as i32;
+        image.header.stamp.nsec = ((seconds - seconds.floor()) * 1e9).round() as i32;
+        image
+    }
+
+    /// The case the single-slot pairing dropped four frames in five on: the
+    /// next left arrives before the right that belongs to the previous one.
+    #[test]
+    fn a_frame_waits_for_its_partner_instead_of_being_evicted() {
+        let left: VecDeque<_> = [stamped(1.000), stamped(1.033)].into();
+        let right: VecDeque<_> = [stamped(1.001)].into();
+        assert_eq!(closest_pair(&left, &right, 0.05), Some((0, 0)));
+    }
+
+    #[test]
+    fn the_closest_stamps_pair_not_the_newest_frames() {
+        let left: VecDeque<_> = [stamped(1.000), stamped(1.033), stamped(1.066)].into();
+        let right: VecDeque<_> = [stamped(1.030), stamped(1.070)].into();
+        assert_eq!(closest_pair(&left, &right, 0.05), Some((1, 0)));
+    }
+
+    #[test]
+    fn nothing_pairs_across_more_than_the_skew() {
+        let left: VecDeque<_> = [stamped(1.000)].into();
+        let right: VecDeque<_> = [stamped(1.100)].into();
+        assert_eq!(closest_pair(&left, &right, 0.05), None);
+        assert_eq!(closest_pair(&left, &right, 0.15), Some((0, 0)));
+    }
+
+    #[test]
+    fn a_repeated_camera_info_is_not_a_new_calibration() {
+        let a = info(640, 480, 500.0, 5);
+        let mut b = info(640, 480, 500.0, 5);
+        assert!(same_intrinsics(Some(&a), &b));
+        assert!(!same_intrinsics(None, &b));
+        b.K[0] += 1.0;
+        assert!(!same_intrinsics(Some(&a), &b));
     }
 }
