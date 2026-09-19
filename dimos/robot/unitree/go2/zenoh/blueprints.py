@@ -213,6 +213,15 @@ ray_tracing_config = RayTracingVoxelMapConfig(
     support_min=4,
 )
 
+# The motion stacks also publish the fine layer at the planner's own field pitch
+# (voxel / 2 = FINE in local_planner/search/se2.py); the local planner reads that one.
+ray_tracing_fine_config = ray_tracing_config.model_copy(
+    update={"fine_divisor": 2, "emit_fine": True}
+)
+_local_planner_fine = LocalPlannerNative.blueprint(body_dilate_m=MOTION_BODY_DILATE_M).remappings(
+    [(LocalPlannerNative, "local_map", "local_map_fine")]
+)
+
 go2_zenoh_raycaster = autoconnect(
     go2_zenoh_basic,
     _raytraced_vis,
@@ -257,10 +266,12 @@ _mls_planner_motion = MLSPlannerNative.blueprint(
 # odometry: the mount is a lever arm. Private: no follower, so the registry must not offer it.
 _go2_zenoh_motion_base = autoconnect(
     go2_zenoh_raycaster,
+    # last duplicate wins: the motion stacks' raycaster also emits the fine layer
+    RayTracingVoxelMap.blueprint(**ray_tracing_fine_config.model_dump(exclude_unset=True)),
     _mls_planner_motion.remappings([(MLSPlannerNative, "path", "planner_path")]),
     # body_band (default) rides the base's known height above the floor, so the map's z
     # origin is never guessed (local_planner/obstacles.py)
-    LocalPlannerNative.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),
+    _local_planner_fine,
     MovementManager.blueprint(),
 )
 
@@ -341,9 +352,9 @@ go2_dds_motion_pointlio = autoconnect(
     ),
     _go2_dds_pointlio,
     MovementManager.blueprint(),
-    RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
+    RayTracingVoxelMap.blueprint(**ray_tracing_fine_config.model_dump(exclude_unset=True)),
     _mls_planner_motion.remappings([(MLSPlannerNative, "path", "planner_path")]),
-    LocalPlannerNative.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),
+    _local_planner_fine,
     TrajectoryFollowerNative.blueprint(),
     mid360_for_pointlio(lidar_ip="192.168.123.157", host_ip="192.168.123.5"),
     PointLioRust.blueprint(),
