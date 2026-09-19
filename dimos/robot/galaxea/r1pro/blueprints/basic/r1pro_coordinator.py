@@ -34,17 +34,9 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnection
+from dimos.robot.galaxea.r1pro.topics import R1PRO_TOPICS, Topic
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -143,17 +135,12 @@ def r1pro_visualization() -> Blueprint:
     raise ValueError(f"Unsupported viewer: {global_config.viewer}")
 
 
-def _zenoh_transport(
-    topic: str,
-    msg_type: type,
-    *,
-    latest_wins: bool = False,
-) -> TransportSpec:
+def _zenoh_transport(topic: Topic) -> TransportSpec:
     return ZenohTransport.spec(
         ZenohTopic(
-            f"dimos/{topic.lstrip('/')}",
-            msg_type,
-            qos=QOS_LATEST_WINS if latest_wins else None,
+            f"dimos/{topic.path.lstrip('/')}",
+            topic.msg_type,
+            qos=QOS_LATEST_WINS if topic.latest_wins else None,
         )
     )
 
@@ -161,19 +148,29 @@ def _zenoh_transport(
 def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
+    color_publish_hz: float | None = None,
     publish_odom: bool | None = None,
+    enable_wrist_color: bool | None = None,
 ) -> Blueprint:
     """R1ProConnection and ControlCoordinator.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
     velocity); transports and remappings stay identical either way.
 
+    ``color_publish_hz`` overrides the camera rate cap, which now defaults to the
+    rate the cameras actually publish at. Turn it down for a run that needs the
+    Orin's CPU elsewhere and does not need every frame.
+
+    ``enable_wrist_color=False`` drops the two wrist cameras. They are JPEG at
+    ~28 Hz each and every frame costs a decode on the Orin whether or not
+    anything reads it, which a navigation run does not.
+
     ``publish_odom=False`` drops the connection's wheel odometry -- both the
     ``odom`` stream and the ``odom -> base_link`` edge it puts on tf -- for a run
     that gets that edge from somewhere better. Nothing else about the tf tree
     changes: the torso joint chain, and with it the head camera's pose, is
     published off joint feedback and is unaffected. See
-    :mod:`dimos.robot.galaxea.r1pro.lio`.
+    :mod:`dimos.robot.galaxea.r1pro.lio_mount_tf`.
     """
     resolved_tasks = (
         list(tasks)
@@ -192,7 +189,11 @@ def r1pro_control(
     return (
         autoconnect(
             R1ProConnection.blueprint(
+                **({} if color_publish_hz is None else {"color_publish_hz": color_publish_hz}),
                 **({} if publish_odom is None else {"publish_odom": publish_odom}),
+                **(
+                    {} if enable_wrist_color is None else {"enable_wrist_color": enable_wrist_color}
+                ),
             ),
             ControlCoordinator.blueprint(
                 tick_rate=100,
@@ -222,51 +223,8 @@ def r1pro_control(
         )
         .transports(
             {
-                # WholeBody bridge (hw_id="r1pro"). TransportWholeBodyAdapter
-                # builds /{hw}/motor_states|imu|motor_command itself, so these
-                # three topics are fixed by hardware_id, not a naming choice.
-                # Only one IMU goes to /r1pro/imu.
-                ("motor_states", JointState): _zenoh_transport("/r1pro/motor_states", JointState),
-                ("imu_chassis", Imu): _zenoh_transport("/r1pro/imu", Imu),
-                ("imu_torso", Imu): _zenoh_transport("/imu_torso", Imu),
-                ("motor_command", MotorCommandArray): _zenoh_transport(
-                    "/r1pro/motor_command", MotorCommandArray
-                ),
-                # Twist bridge (hw_id="chassis").
-                ("chassis_cmd_vel", Twist): _zenoh_transport("/chassis/cmd_vel", Twist),
-                ("chassis_odom", PoseStamped): _zenoh_transport("/chassis/odom", PoseStamped),
-                # Wheel odometry (pose + twist) for navigation consumers.
-                ("odometry", Odometry): _zenoh_transport("/odometry", Odometry),
-                # Public Twist bus: any module's cmd_vel Out drives the
-                # coordinator's twist_command In.
-                ("cmd_vel", Twist): _zenoh_transport("/cmd_vel", Twist),
-                ("twist_command", Twist): _zenoh_transport("/cmd_vel", Twist),
-                # Sensor pass-throughs.
-                ("head_left_color", CompressedImage): _zenoh_transport(
-                    "/head_left_color", CompressedImage, latest_wins=True
-                ),
-                ("head_right_color", CompressedImage): _zenoh_transport(
-                    "/head_right_color", CompressedImage, latest_wins=True
-                ),
-                ("head_depth", Image): _zenoh_transport("/head_depth", Image, latest_wins=True),
-                ("lidar", PointCloud2): _zenoh_transport("/lidar", PointCloud2, latest_wins=True),
-                ("wrist_left_color", CompressedImage): _zenoh_transport(
-                    "/wrist_left_color", CompressedImage, latest_wins=True
-                ),
-                ("wrist_left_depth", Image): _zenoh_transport(
-                    "/wrist_left_depth", Image, latest_wins=True
-                ),
-                ("wrist_right_color", CompressedImage): _zenoh_transport(
-                    "/wrist_right_color", CompressedImage, latest_wins=True
-                ),
-                ("wrist_right_depth", Image): _zenoh_transport(
-                    "/wrist_right_depth", Image, latest_wins=True
-                ),
-                # ControlCoordinator outs.
-                ("coordinator_joint_state", JointState): _zenoh_transport(
-                    "/coordinator/joint_state", JointState
-                ),
-                ("joint_command", JointState): _zenoh_transport("/r1pro/joint_command", JointState),
+                (port_name, topic.msg_type): _zenoh_transport(topic)
+                for port_name, topic in R1PRO_TOPICS.items()
             }
         )
         .global_config(transport="zenoh")
