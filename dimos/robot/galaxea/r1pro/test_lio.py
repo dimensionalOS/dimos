@@ -14,17 +14,19 @@
 
 """The R1 hung off Point-LIO: the mount tree, the pose projection, the network."""
 
-import json
-from pathlib import Path
-
 import pytest
 
+from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_pointlio import r1pro_pointlio
+from dimos.robot.galaxea.r1pro.config import (
+    R1PRO_CHASSIS_LIDAR_HOST_IP,
+    R1PRO_CHASSIS_LIDAR_IP,
+)
 from dimos.robot.galaxea.r1pro.connection import LIDAR_MOUNT_XYZ, R1ProConnection
 from dimos.robot.galaxea.r1pro.lio import (
     BASE_FRAME,
@@ -32,10 +34,8 @@ from dimos.robot.galaxea.r1pro.lio import (
     LIDAR_FRAME,
     R1ProLioMountTf,
     R1ProLioOdomPose,
-    R1ProMid360,
     mount_transforms,
 )
-from dimos.robot.galaxea.r1pro.vendor_lidar import ENV_CONFIG_PATH
 
 
 @pytest.fixture()
@@ -112,62 +112,19 @@ def test_blueprint_hangs_the_robot_off_pointlio_alone() -> None:
     assert atoms[R1ProConnection].kwargs["publish_odom"] is False
     assert R1ProLioMountTf in atoms
     assert atoms[PointLioRust].kwargs["sensor_frame_id"] == LIDAR_FRAME
-    assert atoms[R1ProMid360].kwargs["frame_id"] == LIDAR_FRAME
+    assert atoms[Mid360].kwargs == {
+        "frame_id": LIDAR_FRAME,
+        "lidar_ip": R1PRO_CHASSIS_LIDAR_IP,
+        "host_ip": R1PRO_CHASSIS_LIDAR_HOST_IP,
+    }
 
     remaps = r1pro_pointlio.remapping_map
     key = r1pro_pointlio._instance_key
     # The driver's raw sweep is only for the estimator; the estimator's cloud
     # is the only copy of the chassis scan that reaches the bus.
-    assert remaps[(key(R1ProMid360), "lidar")] == "lidar_raw"
+    assert remaps[(key(Mid360), "lidar")] == "lidar_raw"
     assert remaps[(key(PointLioRust), "lidar")] == "lidar"
     assert remaps[(key(PointLioRust), "odometry")] == "pointlio_odometry"
     assert remaps[(key(R1ProLioOdomPose), "odometry")] == "pointlio_odometry"
     # The name the planners already read.
     assert remaps[(key(R1ProLioOdomPose), "pose")] == "chassis_odom"
-
-
-def test_network_from_the_vendor_file_when_nothing_else_says(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, built
-) -> None:
-    vendor = tmp_path / "MID360_config.json"
-    vendor.write_text(
-        json.dumps(
-            {
-                "MID360": {"host_net_info": {"cmd_data_ip": "192.168.2.150"}},
-                "lidar_configs": [{"ip": "192.168.2.100"}],
-            }
-        )
-    )
-    monkeypatch.setenv(ENV_CONFIG_PATH, str(vendor))
-    monkeypatch.delenv("DIMOS_MID360_LIDAR_IP", raising=False)
-    monkeypatch.delenv("DIMOS_MID360_HOST_IP", raising=False)
-
-    module = built(R1ProMid360)
-    module._resolve_vendor_network()
-
-    assert module.config.lidar_ip == "192.168.2.100"
-    assert module.config.host_ip == "192.168.2.150"
-
-
-def test_explicit_addresses_win_over_the_vendor_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, built
-) -> None:
-    monkeypatch.setenv(ENV_CONFIG_PATH, str(tmp_path / "does-not-exist.json"))
-    module = built(R1ProMid360, lidar_ip="10.0.0.9", host_ip="10.0.0.1")
-    module._resolve_vendor_network()
-    assert (module.config.lidar_ip, module.config.host_ip) == ("10.0.0.9", "10.0.0.1")
-
-
-def test_unknown_address_fails_naming_the_file_and_the_variables(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, built
-) -> None:
-    missing = tmp_path / "MID360_config.json"
-    monkeypatch.setenv(ENV_CONFIG_PATH, str(missing))
-    monkeypatch.delenv("DIMOS_MID360_LIDAR_IP", raising=False)
-    module = built(R1ProMid360)
-    with pytest.raises(RuntimeError) as error:
-        module._resolve_vendor_network()
-    message = str(error.value)
-    assert str(missing) in message
-    assert "DIMOS_MID360_LIDAR_IP" in message
-    assert ENV_CONFIG_PATH in message
