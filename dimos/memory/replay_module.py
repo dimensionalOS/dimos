@@ -28,6 +28,8 @@ import re
 import sys
 from typing import TYPE_CHECKING, Any
 
+from reactivex import interval
+
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
@@ -71,12 +73,21 @@ def dataset_path(name: str, *, explicit: bool = True) -> str:
         return ""
 
 
+def _wire_type(t: type) -> type:
+    """The class that owns *t*'s ``msg_name``: the type a port must declare so a consumer
+    of the base message shares its topic (unitree ``Odometry`` -> ``PoseStamped``)."""
+    for cls in t.__mro__:
+        if "msg_name" in vars(cls):
+            return cls
+    return t
+
+
 def stream_types_of(dataset: str) -> dict[str, type]:
-    """Stream name -> payload type for every stream in *dataset*."""
+    """Stream name -> port type for every stream in *dataset*."""
     store = open_dataset(dataset)
     store.start()
     try:
-        return stream_payload_types(store)
+        return {n: _wire_type(t) for n, t in stream_payload_types(store).items()}
     finally:
         store.stop()
 
@@ -108,10 +119,8 @@ class ReplayModule(Module):
         types = stream_types_of(self.config.dataset)
         existing = self.outputs
         for name in _port_names(self.config.topics, types):
-            if name in existing:
-                continue
-            _reject_clash(name, self)
-            setattr(self, name, Out(types[name], name, self))
+            if name not in existing:
+                setattr(self, name, Out(types[name], name, self))
 
     @rpc
     def start(self) -> None:
@@ -135,9 +144,17 @@ class ReplayModule(Module):
         replay.pin_anchor()
         port: Out[DimosMsg]
         for name, port in self.outputs.items():
-            timed: Observable[DimosMsg] = streams[name].observable()
+            stream = streams[name]
+            timed: Observable[DimosMsg] = stream.observable()
             logger.info("Replaying %s -> %s", name, port)
             self.register_disposable(timed.subscribe(port.publish))
+            if stream.count() > 1 and stream.first_ts() == stream.last_ts():
+                # Every row carries one timestamp (camera_info recorded from a constant),
+                # so the timed replay emits them all at once. Keep republishing the
+                # value at 1 Hz so subscribers that join later still get it.
+                self.register_disposable(
+                    interval(1.0).subscribe(partial(_republish, port, stream.first()))
+                )
 
     @rpc
     def stop(self) -> None:
@@ -147,14 +164,21 @@ class ReplayModule(Module):
             self._store = None
 
 
+def _republish(port: Out[Any], msg: Any, _tick: int) -> None:
+    port.publish(msg)
+
+
 def _port_names(topics: str, types: dict[str, type]) -> list[str]:
     check_topics(topics, types)
-    return sorted(matching(topics, types))
-
-
-def _reject_clash(name: str, owner: Any) -> None:
-    if hasattr(owner, name):
-        raise ValueError(f"recorded stream {name!r} clashes with a ReplayModule attribute")
+    names = []
+    for n in sorted(matching(topics, types)):
+        if hasattr(ReplayModule, n):
+            logger.warning(
+                "Skipping recorded stream %r: it clashes with a ReplayModule attribute", n
+            )
+            continue
+        names.append(n)
+    return names
 
 
 def replay_module(dataset: str, topics: str = "*", name: str = "Replay") -> type[ReplayModule]:
@@ -167,7 +191,6 @@ def replay_module(dataset: str, topics: str = "*", name: str = "Replay") -> type
     if dataset:
         types = stream_types_of(dataset)
         for n in _port_names(topics, types):
-            _reject_clash(n, ReplayModule)
             ports[n] = Out[types[n]]  # type: ignore[valid-type]
     caller = sys._getframe(1).f_globals.get("__name__", __name__)
     namespace = {

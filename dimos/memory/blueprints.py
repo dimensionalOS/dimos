@@ -20,6 +20,7 @@ The ports are read from it when this module is imported by ``dimos run replay``.
 them from ``dataset``.
 """
 
+import os
 import sys
 from typing import Any
 
@@ -38,6 +39,11 @@ from dimos.visualization.vis_module import vis_module
 # the module anywhere else (blueprint registry, tests, forkserver workers) must not touch a
 # database or pull from LFS; workers get the resolved path through the blueprint kwargs.
 _DATASET = dataset_path(global_config.replay_db, explicit="replay" in sys.argv[1:])
+if _DATASET:
+    # Workers import this module with the default global config (CLI overrides are applied
+    # after the fork), so they would build the ports from `go2_short`; the environment is
+    # what crosses the fork.
+    os.environ["REPLAY_DB"] = _DATASET
 
 Replay = replay_module(_DATASET)
 

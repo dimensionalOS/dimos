@@ -79,16 +79,67 @@ def test_topic_filter_reaches_the_instance(recording: str) -> None:
     module.stop()
 
 
-def test_stream_named_like_a_module_attribute_is_rejected(tmp_path: Path) -> None:
+def test_stream_named_like_a_module_attribute_is_skipped(
+    tmp_path: Path,
+) -> None:
+    import structlog
+
     path = tmp_path / "memory.db"
     store = SqliteStore(path=str(path))
     store.start()
     store.stream("start", PoseStamped).append(PoseStamped(ts=1.0), ts=1.0)
+    store.stream("odom", PoseStamped).append(PoseStamped(ts=1.0), ts=1.0)
     store.stop()
-    with pytest.raises(ValueError, match="'start' clashes"):
-        replay_module(str(path))
-    with pytest.raises(ValueError, match="'start' clashes"):
-        replay_module("")(dataset=str(path))
+    with structlog.testing.capture_logs() as logs:
+        assert list(replay_module(str(path)).__annotations__) == ["odom"]
+        module = replay_module("")(dataset=str(path))
+    assert sorted(module.outputs) == ["odom"]
+    module.stop()
+    assert [e["event"] for e in logs].count(
+        "Skipping recorded stream 'start': it clashes with a ReplayModule attribute"
+    ) == 2
+
+
+def test_subclass_payload_gets_the_base_port_type(tmp_path: Path) -> None:
+    """A recorded unitree Odometry is a PoseStamped on the wire; the port must say so or a
+    PoseStamped consumer of the same name lands on a different topic."""
+    from dimos.robot.unitree.type.odometry import Odometry
+
+    path = tmp_path / "memory.db"
+    store = SqliteStore(path=str(path))
+    store.start()
+    store.stream("odom", Odometry).append(Odometry(ts=1.0), ts=1.0)
+    store.stop()
+    assert replay_module(str(path)).__annotations__ == {"odom": Out[PoseStamped]}
+
+
+def test_single_timestamp_stream_is_republished(tmp_path: Path) -> None:
+    path = tmp_path / "memory.db"
+    store = SqliteStore(path=str(path))
+    store.start()
+    info = store.stream("camera_info", PoseStamped)
+    for _ in range(3):
+        info.append(PoseStamped(ts=1.0), ts=1.0)
+    store.stream("odom", PoseStamped).append(PoseStamped(ts=1.0), ts=1.0)
+    store.stop()
+    module = replay_module(str(path))(dataset=str(path))
+    got: dict[str, int] = {"camera_info": 0, "odom": 0}
+
+    def count(name: str) -> Any:
+        def on_next(_m: Any) -> None:
+            got[name] += 1
+
+        return on_next
+
+    for name in got:
+        module.outputs[name].subscribe(count(name))
+    module.start()
+    deadline = time.time() + 5
+    while time.time() < deadline and got["camera_info"] < 5:
+        time.sleep(0.05)
+    module.stop()
+    assert got["camera_info"] >= 5  # 3 recorded + at least 2 republishes
+    assert got["odom"] == 1
 
 
 def test_slow_first_decode_does_not_skip_other_streams(

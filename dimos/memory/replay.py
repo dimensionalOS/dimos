@@ -187,6 +187,12 @@ class ReplayStream(Generic[T]):
         except LookupError:
             return None
 
+    def last_ts(self) -> float | None:
+        try:
+            return float(self._base_stream().last().ts)
+        except LookupError:
+            return None
+
     def count(self) -> int:
         return int(self._base_stream().count())
 
