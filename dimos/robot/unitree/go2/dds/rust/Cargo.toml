@@ -40,13 +40,19 @@ tf = "tf2_msgs.TFMessage"
 odometry = "nav_msgs.Odometry"
 lidar = "sensor_msgs.PointCloud2"
 video = "foxglove_msgs.CompressedVideo"
+image = "sensor_msgs.CompressedImage"
+lidar_raw = "sensor_msgs.PointCloud2"
+lidar_imu = "sensor_msgs.Imu"
+joint_state = "sensor_msgs.JointState"
+imu = "sensor_msgs.Imu"
+battery = "sensor_msgs.BatteryState"
+joy = "sensor_msgs.Joy"
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
 
-# Our cyclonedds-sys fork (no-SHM wrapper, static-link patch) with bindgen bumped so it
-# builds against the libclang the dev shell has; see vendor/cyclonedds-sys/Cargo.toml.
+# Our cyclonedds-sys fork with bindgen bumped; see vendor/cyclonedds-sys/Cargo.toml.
 [patch.crates-io]
 cyclonedds-sys = { path = "vendor/cyclonedds-sys" }
 

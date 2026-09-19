@@ -15,10 +15,25 @@
 //! Topic names and sport api ids for the Go2 (unitree_sdk2 vocabulary).
 
 pub const CLOUD_DESKEWED: &str = "rt/utlidar/cloud_deskewed";
+pub const CLOUD: &str = "rt/utlidar/cloud";
+pub const IMU: &str = "rt/utlidar/imu";
+pub const LOWSTATE: &str = "rt/lowstate";
 pub const ROBOT_ODOM: &str = "rt/utlidar/robot_odom";
+pub const WIRELESS_CONTROLLER: &str = "rt/wirelesscontroller";
 pub const SPORT_REQUEST: &str = "rt/api/sport/request";
+pub const VUI_REQUEST: &str = "rt/api/vui/request";
+pub const OBSTACLES_AVOID_REQUEST: &str = "rt/api/obstacles_avoid/request";
+/// Obstacle avoidance on/off: api 1001, param `{"enable":0|1}`.
+pub const OBSTACLE_AVOID_ENABLE: i64 = 1001;
 /// Head L1 on/off, a `String_` "ON"/"OFF".
 pub const LIDAR_SWITCH: &str = "rt/utlidar/switch";
+pub const VIDEOHUB_REQUEST: &str = "rt/api/videohub/request";
+pub const VIDEOHUB_RESPONSE: &str = "rt/api/videohub/response";
+
+/// Videohub api ids: `VideoClient.GetImageSample()`, the reply's `binary` is a JPEG.
+pub mod video {
+    pub const GET_IMAGE_SAMPLE: i64 = 1001;
+}
 
 /// Sport-mode api ids (`unitree_sdk2py` go2/sport/sport_api.py).
 pub mod sport {
@@ -42,6 +57,16 @@ pub mod sport {
     pub const FRONT_POUNCE: i64 = 1032;
     pub const WIGGLE_HIPS: i64 = 1033;
     pub const HEART: i64 = 1036;
+    pub const SWITCH_JOYSTICK: i64 = 1027;
+    pub const RAGE_MODE: i64 = 2059;
+}
+
+/// VUI api ids (`unitree_sdk2py` go2/vui/vui_api.py; SET_LED from the on-robot `go2` CLI).
+pub mod vui {
+    pub const SET_VOLUME: i64 = 1003;
+    pub const SET_BRIGHTNESS: i64 = 1005;
+    pub const SET_LED: i64 = 1007;
+    pub const LEVEL_MAX: i64 = 10;
 }
 
 /// The `command` port vocabulary, shared with go2web and `Go2Base` in python.

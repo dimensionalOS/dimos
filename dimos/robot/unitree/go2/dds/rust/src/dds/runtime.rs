@@ -23,8 +23,7 @@ use std::time::{Duration, Instant};
 /// A boot-time interface race is worth retrying through; an off-robot run is not.
 const PARTICIPANT_RETRY_FOR: Duration = Duration::from_secs(30);
 
-/// Create the participant, pinned to `iface` through an inline CycloneDDS config.
-/// An explicit `CYCLONEDDS_URI` in the environment wins.
+/// The participant, pinned to `iface` unless `CYCLONEDDS_URI` is already set.
 pub fn participant(iface: &str, domain_id: u32) -> DdsParticipant {
     if std::env::var_os("CYCLONEDDS_URI").is_none() {
         let xml = format!(

@@ -79,8 +79,8 @@ class Go2Base(StaticTfPublisher):
 
     # Consumed on the robot side, never published here.
     cmd_vel: In[Twist]
-    # Action verbs ("sit", "hello", ...) or a bare sport api id. The rpcs below publish
-    # onto it; nothing else in the graph does.
+    # One verb per message: "sit", "1016", "lidar on", "led red"; the table is the rust
+    # `module::parse_verb`. Only the rpcs below publish onto it.
     command: In[String]
     odometry: Out[Odometry]
     lidar: Out[PointCloud2]
@@ -95,8 +95,7 @@ class Go2Base(StaticTfPublisher):
     def start(self) -> None:
         super().start()
         self.spawn(self._publish_camera_info())
-        # Off the calling thread so start() returns; verbs sent before the transport
-        # matches our publisher against the robot side are dropped.
+        # Deferred: a verb sent before the transport matches the robot side is dropped.
         timer = threading.Timer(5.0, self._startup_pose)
         timer.daemon = True
         timer.start()
@@ -140,9 +139,42 @@ class Go2Base(StaticTfPublisher):
         self.send_command("jump")
 
     @rpc
+    def stop_movement(self) -> None:
+        self.sport_command(1003)
+
+    @rpc
     def set_lidar(self, enabled: bool) -> None:
         """The head L1 on or off."""
         self.send_command("lidar on" if enabled else "lidar off")
+
+    @rpc
+    def set_obstacle_avoidance(self, enabled: bool = True) -> None:
+        """Toggle the onboard obstacle avoidance."""
+        self.send_command(f"obstacle-avoidance {'on' if enabled else 'off'}")
+
+    @rpc
+    def set_rage_mode(self, enable: bool) -> None:
+        self.send_command(f"rage {'on' if enable else 'off'}")
+
+    @rpc
+    def switch_joystick(self, enable: bool = True) -> None:
+        """Firmware joystick listening on/off."""
+        self.send_command(f"joystick {'on' if enable else 'off'}")
+
+    @rpc
+    def set_light(self, level: int) -> None:
+        """Head LED panel brightness, 0..10."""
+        self.send_command(f"brightness {level}")
+
+    @rpc
+    def set_led(self, color: str) -> None:
+        """Head LED colour name, "off" to darken."""
+        self.send_command(f"led {color}")
+
+    @rpc
+    def set_volume(self, level: int) -> None:
+        """Speaker volume, 0..10."""
+        self.send_command(f"volume {level}")
 
     def mount_edges(self) -> dict[str, Transform]:
         """The mount tree by child frame, measured outward from base_link."""
