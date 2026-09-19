@@ -79,6 +79,8 @@ pub struct Config {
     pub iface: String,
     pub domain_id: u32,
     pub odom_topic: String,
+    /// Publish odometry's `odom -> base_link` edge on tf.
+    pub odom_tf: bool,
     pub lidar_topic: String,
     /// Spin the head L1 up at start (park it otherwise) and stream its deskewed cloud.
     pub lidar_on: bool,
@@ -699,7 +701,9 @@ impl DdsLoop {
             for s in odom_buf.iter().take(n) {
                 let (odom, edge) = odometry(s, now_secs());
                 let _ = self.handle.block_on(self.odometry.publish(&odom));
-                let _ = self.handle.block_on(self.tf.publish(&[edge]));
+                if c.odom_tf {
+                    let _ = self.handle.block_on(self.tf.publish(&[edge]));
+                }
             }
             if let Some(reader) = &cloud_reader {
                 let n = reader.take_now(&mut cloud_buf).unwrap_or(0);
