@@ -198,6 +198,22 @@ def test_io_port_topic_reaches_the_native_process() -> None:
                 transport.stop()
 
 
+def test_python_ports_stay_with_the_wrapper() -> None:
+    """A port the wrapper publishes itself is not a topic the native process sees."""
+    module = StubNativeModule(executable=_ECHO, python_ports=frozenset({"pointcloud"}))
+    transports = [LCMTransport("/pc", PointCloud2), LCMTransport("/cmd_vel", Twist)]
+    try:
+        module.set_transport("pointcloud", transports[0])
+        module.set_transport("cmd_vel", transports[1])
+
+        assert module._collect_topics() == {"cmd_vel": "/cmd_vel#geometry_msgs.Twist"}
+    finally:
+        module.stop()
+        for transport in transports:
+            with contextlib.suppress(Exception):
+                transport.stop()
+
+
 def test_tf_topic_comes_from_the_declared_port_only() -> None:
     """No tf port declared means no tf topic, rather than a silently injected one."""
     module = StubNativeModule(executable=_ECHO)
