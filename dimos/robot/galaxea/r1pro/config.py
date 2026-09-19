@@ -152,3 +152,27 @@ def make_r1pro_planar_model_config() -> RobotModelConfig:
         collision_exclusion_pairs=list(R1PRO_COLLISION_EXCLUSIONS),
         home_joints=[0.0] * len(R1PRO_PLANNING_JOINTS),
     )
+
+
+# Head stereo calibration: where the rig's fitted numbers live. The loader
+# itself is in ``stereo_calibration.py``; these are the two names a blueprint
+# or a README needs without importing it.
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dimos.robot.galaxea.r1pro.stereo_calibration import R1StereoCalibration
+
+R1PRO_STEREO_CALIBRATION_ENV = "DIMOS_R1_STEREO_CALIBRATION"
+R1PRO_STEREO_CALIBRATION_DEFAULT_PATH = "~/.dimos/r1pro/calibration.json"
+
+
+def stereo_calibration() -> R1StereoCalibration:
+    """The head's stereo calibration for this machine.
+
+    Reads ``$DIMOS_R1_STEREO_CALIBRATION``, then the default path, and falls
+    back to the committed rig numbers when neither exists. Imported lazily so
+    importing this module stays free of file and environment reads.
+    """
+    from dimos.robot.galaxea.r1pro.stereo_calibration import load_stereo_calibration
+
+    return load_stereo_calibration()
