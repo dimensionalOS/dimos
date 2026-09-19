@@ -139,8 +139,10 @@ def test_network_from_the_vendor_file_when_nothing_else_says(
         )
     )
     monkeypatch.setenv(ENV_CONFIG_PATH, str(vendor))
+    monkeypatch.delenv("DIMOS_MID360_LIDAR_IP", raising=False)
+    monkeypatch.delenv("DIMOS_MID360_HOST_IP", raising=False)
 
-    module = built(R1ProMid360, lidar_ip=None, host_ip=None)
+    module = built(R1ProMid360)
     module._resolve_vendor_network()
 
     assert module.config.lidar_ip == "192.168.2.100"
@@ -161,7 +163,8 @@ def test_unknown_address_fails_naming_the_file_and_the_variables(
 ) -> None:
     missing = tmp_path / "MID360_config.json"
     monkeypatch.setenv(ENV_CONFIG_PATH, str(missing))
-    module = built(R1ProMid360, lidar_ip=None, host_ip=None)
+    monkeypatch.delenv("DIMOS_MID360_LIDAR_IP", raising=False)
+    module = built(R1ProMid360)
     with pytest.raises(RuntimeError) as error:
         module._resolve_vendor_network()
     message = str(error.value)
