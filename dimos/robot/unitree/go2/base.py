@@ -58,7 +58,7 @@ class Go2BaseConfig(StaticTfPublisherConfig):
     mid360_mount: tuple[float, float, float] | str = MID360_MOUNT_PRESETS["SF"]
     camera_info_hz: float = Field(default=1.0, gt=0.0)
     # The frame the live odometry moves; the mount edges above it are inverted so it
-    # never gets two parents.
+    # never gets two parents. GO2DDS publishes its own odom edge only for base_link.
     tf_root: Literal["base_link", "mid360_link"] = "base_link"
 
     @field_validator("mid360_mount", mode="before")

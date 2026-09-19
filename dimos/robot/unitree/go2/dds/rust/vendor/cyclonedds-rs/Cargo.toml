@@ -1,0 +1,32 @@
+# Vendored from dimensionalOS/cyclonedds-rs @ 06e6a4b (serdata leak fix, no SHM), dev-deps
+# dropped: the robot has no GitHub access.
+[package]
+name = "cyclonedds-rs"
+version = "0.6.4"
+authors = ["Sojan James <Sojan.James@gmail.com>"]
+edition = "2018"
+description = "Safe Rust bindings for cyclonedds"
+license-file = "LICENSE"
+homepage = "https://github.com/sjames/cyclonedds-rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cyclonedds-sys = { path = "../cyclonedds-sys" }
+cdr = "0.2.4"
+serde = "1"
+serde_derive = "1"
+murmur3 = "0.5.1"
+
+thiserror = "1"
+rc-box = "1.2"
+
+[features]
+shm = []
+# Off by default, matching our cyclonedds-sys fork: the Iceoryx zero-copy headers
+# need iceoryx_binding_c, which a plain CycloneDDS build does not ship, so bindgen
+# fails on them. Opt back in with --features shm against an Iceoryx-enabled
+# CycloneDDS (and a RouDi daemon at runtime).
+default = []
+
+[workspace]
