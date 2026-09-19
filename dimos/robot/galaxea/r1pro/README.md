@@ -50,7 +50,27 @@ dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
 dimos run r1pro-pointlio --g.transport lcm   # coordinator + Point-LIO on the chassis lidar
+dimos run r1pro-stereo --g.transport lcm     # + head stereo depth at camera rate
+dimos run r1pro-nav-lio --g.transport lcm    # + 3D nav on Point-LIO: ray-traced voxel map + MLS planner
+dimos run r1pro-nav-lio-replay --dataset <recording>   # the same stack driven from a recording
 ```
+
+## Navigation on Point-LIO
+
+`r1pro-nav-lio` is the 3D navigation stack placed by lidar-inertial odometry:
+Point-LIO's deskewed scan and the head's stereo depth feed one ray-traced
+voxel map, the MLS planner plans a 3D path over it, and the holonomic local
+planner and controller drive it. The head's cloud is cut to the band the
+lidar cannot see -- from a little below the floor to just above the lidar's
+plane (`HEAD_CLOUD_MIN_HEIGHT_M`/`HEAD_CLOUD_MAX_HEIGHT_M` in
+`r1pro_nav_lio.py`): the Mid-360 sees 7 degrees below its plane, so the floor
+only enters its view 2.4 m out, and everything above that plane it measures
+better than stereo does.
+
+Run it on `lcm` (see below). Point-LIO, the stereo matcher, the voxel map and
+the MLS planner are native binaries built on first run. `r1pro-nav-lio-replay
+--dataset <recording>` drives the same stack from a recording made with
+`r1pro-recorder`.
 
 ## Point-LIO on the chassis lidar
 
