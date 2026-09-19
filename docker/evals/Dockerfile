@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
     libxkbcommon-x11-0 libnss3 libnspr4 libasound2t64 libatspi2.0-0 \
     libxfixes3 libdrm2 libx11-xcb1 libxext6 libxshmfence1 fonts-liberation \
-    iproute2 xvfb ffmpeg x11-utils libegl1 libgles2 \
+    iproute2 xvfb ffmpeg x11-utils libegl1 libgles2 mesa-vulkan-drivers \
     && rm -rf /var/lib/apt/lists/*
 
 # Everything dimos caches or records lives under /cache and /state so a bind
@@ -105,6 +105,8 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1
 
 # Headless EGL on the NVIDIA runtime: glvnd needs the vendor ICD to find libEGL_nvidia.
+# The viewer (wgpu) needs a Vulkan ICD: NVIDIA's through the runtime, lavapipe otherwise.
+RUN mkdir -p /etc/vulkan/icd.d && printf '{"file_format_version":"1.0.0","ICD":{"library_path":"libGLX_nvidia.so.0","api_version":"1.3.0"}}\n' > /etc/vulkan/icd.d/nvidia_icd.json
 RUN mkdir -p /usr/share/glvnd/egl_vendor.d && printf '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}\n' > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 RUN mkdir -p /state /config
 
