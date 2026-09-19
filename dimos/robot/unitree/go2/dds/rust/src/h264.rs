@@ -28,8 +28,7 @@ pub struct AccessUnit {
     pub keyframe: bool,
 }
 
-/// Maps RTP 90 kHz timestamps to unix nanoseconds: anchored at the first frame's
-/// receive time, then following the encoder clock so inter-frame spacing survives.
+/// RTP 90 kHz timestamps as unix nanoseconds, anchored at the first frame's receive time.
 #[derive(Default)]
 pub struct RtpClock {
     anchor: Option<(u64, u32)>,
@@ -52,9 +51,8 @@ impl RtpClock {
     }
 }
 
-/// Feed packets in arrival order, get an `AccessUnit` whenever the marker bit closes a
-/// frame. Nothing is emitted before the first keyframe, and cached SPS/PPS are replayed
-/// in front of every IDR, so any output stream starts decodable.
+/// Packets in, an `AccessUnit` out per marker bit. Silent until the first keyframe, and
+/// SPS/PPS replayed before every IDR, so the output always starts decodable.
 #[derive(Default)]
 pub struct Depacketizer {
     au: Vec<u8>,
