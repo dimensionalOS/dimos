@@ -370,15 +370,7 @@ def _flake_refs(flake: Path) -> tuple[set[str], set[str]]:
 
 
 def _collect_input_paths(module: DiscoveredModule) -> set[str]:
-    """Repo paths whose content can reach this module's derivation.
-
-    Every native module is now a self-contained flake built with
-    `nix build path:.#<package>` from its own directory, and the only thing it may
-    reach outside that directory is a remote input pinned in its own `flake.lock`.
-    So the module directory *is* the input set, and the walk below exists only to
-    enforce that: any path literal or `path:` input escaping the directory would
-    make content outside it reach the derivation without the hash noticing.
-    """
+    """Repo paths whose content can reach this module's derivation."""
     paths = {module.build_dir}
     if not _is_local_flake(module):
         return paths
@@ -560,27 +552,43 @@ def flake_dirs() -> list[str]:
 
 
 def _checks_of(build_dir: str) -> frozenset[str]:
-    """The names under `checks.<system>` this flake declares, empty if it has none."""
+    """The names under `checks.<system>` this flake declares, empty if it has none.
+
+    `path:.#checks.<system>` cannot express this on its own: nix exits non-zero both for
+    a flake that simply has no such attribute (5 of the module flakes declare no `checks`
+    at all) and for one that fails to evaluate, so the old "non-zero means no checks" read
+    let an invalid flake, a broken lock input or a crate that will not evaluate report as
+    "declares no lint check" and pass the gate without running it. `or {}` makes the
+    expression total over the missing attribute instead, which leaves a non-zero exit
+    meaning only what it should — evaluation genuinely failed — so we raise.
+    """
+    directory = REPO_ROOT / build_dir
+    system = current_system()
     proc = subprocess.run(
         [
             "nix",
             "eval",
+            "--impure",
             "--json",
-            f"path:.#checks.{current_system()}",
-            "--apply",
-            "builtins.attrNames",
+            "--expr",
+            f'builtins.attrNames (((builtins.getFlake "path:{directory}").checks or {{}})."{system}" or {{}})',
         ],
-        cwd=str(REPO_ROOT / build_dir),
+        cwd=str(directory),
         capture_output=True,
         text=True,
         check=False,
     )
+    body = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode != 0:
-        return frozenset()
+        raise RuntimeError(
+            f"evaluating checks.{system} in {build_dir} exited {proc.returncode}\n{body}"
+        )
     try:
         return frozenset(json.loads(proc.stdout))
-    except json.JSONDecodeError:
-        return frozenset()
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            f"checks.{system} in {build_dir} did not evaluate to a list\n{body}"
+        ) from error
 
 
 def check_one(build_dir: str, check: str) -> tuple[str, bool, str]:
