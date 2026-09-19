@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 import json
@@ -135,9 +136,21 @@ def section_roots(schema: ParserSchema) -> dict[str, str]:
     return roots
 
 
-def modules_with_field(schema: ParserSchema, field: str) -> list[str]:
-    """Names of the modules whose config declares the top-level field."""
-    return [m.atom.name for m in schema.modules if field in m.config_cls.model_fields]
+def shared_recipients(schema: ParserSchema, path: tuple[str, ...]) -> list[str]:
+    """Modules a shared value at `path` reaches: those declaring that leaf, or an
+    unenumerated field (opaque type) the path sits under."""
+    leaves: dict[str, set[tuple[str, ...]]] = defaultdict(set)
+    for target in schema.targets:
+        if target.section == "module":
+            leaves[target.root].add(target.path)
+    names = []
+    for module in schema.modules:
+        mine = leaves[module.atom.name]
+        if any(path[:n] in mine for n in range(1, len(path) + 1)):
+            names.append(module.atom.name)
+        elif path[0] in module.config_cls.model_fields and not any(p[0] == path[0] for p in mine):
+            names.append(module.atom.name)
+    return names
 
 
 def cli_path(parts: tuple[str, ...]) -> str:

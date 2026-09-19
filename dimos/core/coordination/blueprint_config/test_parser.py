@@ -607,3 +607,37 @@ def test_shared_is_hidden_from_help_and_named_by_the_ambiguity_error() -> None:
     assert "--speed, --primarymodule.speed" in help_text
     with pytest.raises(BlueprintConfigError, match="or --shared.map-file to set every one"):
         parser.parse(["--map-file", "map"], environ={})
+
+
+def test_shared_nested_leaf_reaches_only_the_modules_declaring_it(tmp_path: Path) -> None:
+    class OtherNested(BaseModel):
+        depth: int = 1
+
+    class OtherConfig(ModuleConfig):
+        nested: OtherNested = Field(default_factory=OtherNested)
+
+    class OtherModule(Module):
+        config: OtherConfig
+
+    parser = BlueprintConfigParser(autoconnect(PrimaryModule.blueprint(), OtherModule.blueprint()))
+
+    parsed = parser.parse(environ={"SHARED__NESTED__MODE": "x"})
+    assert parsed.module_kwargs("primarymodule") == {"nested": {"mode": "x"}}
+    assert parsed.module_kwargs("othermodule") == {}
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"shared":{"nested":{"mode":"x","depth":2}}}')
+    parsed = parser.parse(config_path=config_path, environ={})
+    assert parsed.module_kwargs("primarymodule") == {"nested": {"mode": "x"}}
+    assert parsed.module_kwargs("othermodule") == {"nested": {"depth": 2}}
+
+    with pytest.raises(BlueprintConfigError, match="Unknown shared option 'nested.nope'"):
+        parser.parse(environ={"SHARED__NESTED__NOPE": "1"})
+
+
+def test_shared_is_a_reserved_instance_key() -> None:
+    class Shared(Module):
+        config: PrimaryConfig
+
+    with pytest.raises(BlueprintConfigError, match="instance-key collision.*'shared'"):
+        BlueprintConfigParser(Shared.blueprint()).parse(environ={})

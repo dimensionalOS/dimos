@@ -381,7 +381,9 @@ class BlueprintConfigParser:
         for module in schema.modules:
             roots[config_key(module.atom.name)].append(module.atom.name)
         conflicts = {key: names for key, names in roots.items() if len(names) > 1}
-        reserved = {key: names for key, names in roots.items() if key in {"g", "transports"}}
+        reserved = {
+            key: names for key, names in roots.items() if key in {"g", "transports", "shared"}
+        }
         if conflicts or reserved:
             details = []
             for key, names in sorted({**conflicts, **reserved}.items()):

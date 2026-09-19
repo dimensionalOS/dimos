@@ -16,17 +16,34 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 import difflib
 from typing import Any
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.schema import (
     ParserSchema,
-    modules_with_field,
+    cli_path,
     section_roots,
+    shared_recipients,
 )
-from dimos.core.coordination.blueprint_config.values import deep_merge, normalize_mapping_keys
+from dimos.core.coordination.blueprint_config.values import (
+    deep_merge,
+    deep_set,
+    normalize_mapping_keys,
+)
+
+
+def _leaves(
+    values: Mapping[str, Any], prefix: tuple[str, ...] = ()
+) -> Iterator[tuple[tuple[str, ...], Any]]:
+    """Every non-mapping value in a nested mapping, with its path."""
+    for key, value in values.items():
+        path = (*prefix, key)
+        if isinstance(value, Mapping) and value:
+            yield from _leaves(value, path)
+        else:
+            yield path, value
 
 
 def merge_root_source(
@@ -59,14 +76,15 @@ def merge_root_source(
         elif root == "transports":
             deep_merge(transport_values, normalized)
         elif root == "shared":
-            for key, value in normalized.items():
-                names = modules_with_field(schema, key)
+            for path, value in _leaves(normalized):
+                names = shared_recipients(schema, path)
                 if not names:
                     raise BlueprintConfigError(
-                        f"Unknown shared option {key!r} in {source}: no module has that field."
+                        f"Unknown shared option {cli_path(path)!r} in {source}: "
+                        "no module has that field."
                     )
                 for name in names:
-                    deep_merge(module_values[name], {key: value})
+                    deep_set(module_values[name], path, value)
         elif root in roots:
             deep_merge(module_values[roots[root]], normalized)
         else:
