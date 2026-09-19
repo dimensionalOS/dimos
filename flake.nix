@@ -203,8 +203,6 @@
           # wheel-tag validation.
           export PYTHONPATH="$(printf '%s' "$PYTHONPATH" | tr ':' '\n' | grep -v '/python3\.13/' | paste -sd:)"
           export CYCLONEDDS_HOME="${pkgs.cyclonedds}"
-          # bindgen (cyclonedds-sys under go2/dds/rust) dlopens libclang.
-          export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
           export CMAKE_PREFIX_PATH="${pkgs.cyclonedds}:$CMAKE_PREFIX_PATH"
           # CC, CFLAGS, and LDFLAGS are bascially all for `pip install pyaudio`
           export CFLAGS="$(pkg-config --cflags portaudio-2.0) $CFLAGS"

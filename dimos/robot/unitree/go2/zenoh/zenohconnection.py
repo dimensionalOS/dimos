@@ -31,6 +31,9 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.go2.base import Go2Base, Go2BaseConfig
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class GO2ZenohConfig(Go2BaseConfig):
@@ -71,6 +74,34 @@ class GO2Zenoh(Go2Base):
         """
         edges = self.mount_edges()
         return [-edges["mid360_link"], -edges["front_camera"], edges["camera_optical"]]
+
+    # The bridge knows sport verbs, api ids and the L1 switch only.
+    def _unsupported(self, name: str) -> None:
+        logger.warning("%s is not a go2web bridge verb; use GO2DDS", name)
+
+    @rpc
+    def set_obstacle_avoidance(self, enabled: bool = True) -> None:
+        self._unsupported("set_obstacle_avoidance")
+
+    @rpc
+    def set_rage_mode(self, enable: bool) -> None:
+        self._unsupported("set_rage_mode")
+
+    @rpc
+    def switch_joystick(self, enable: bool = True) -> None:
+        self._unsupported("switch_joystick")
+
+    @rpc
+    def set_light(self, level: int) -> None:
+        self._unsupported("set_light")
+
+    @rpc
+    def set_led(self, color: str) -> None:
+        self._unsupported("set_led")
+
+    @rpc
+    def set_volume(self, level: int) -> None:
+        self._unsupported("set_volume")
 
     def _publish_tf(self, odom: Odometry) -> None:
         """The one moving edge, odom -> mid360_link; the bridge publishes no tf."""

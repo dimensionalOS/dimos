@@ -148,6 +148,128 @@ pub struct PointCloud2 {
 }
 ros2_topic_type!(PointCloud2, "sensor_msgs::msg::dds_::PointCloud2_");
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct Imu {
+    pub header: Header,
+    pub orientation: Quaternion,
+    pub orientation_covariance: [f64; 9],
+    pub angular_velocity: Vector3,
+    pub angular_velocity_covariance: [f64; 9],
+    pub linear_acceleration: Vector3,
+    pub linear_acceleration_covariance: [f64; 9],
+}
+ros2_topic_type!(Imu, "sensor_msgs::msg::dds_::Imu_");
+
+/// Quaternion is `[w, x, y, z]`, rpy in radians.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct IMUState {
+    pub quaternion: [f32; 4],
+    pub gyroscope: [f32; 3],
+    pub accelerometer: [f32; 3],
+    pub rpy: [f32; 3],
+    pub temperature: u8,
+}
+
+/// `current` in mA, `cell_vol` in mV, ntc temperatures in C.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct BmsState {
+    pub version_high: u8,
+    pub version_low: u8,
+    pub status: u8,
+    pub soc: u8,
+    pub current: i32,
+    pub cycle: u16,
+    pub bq_ntc: [u8; 2],
+    pub mcu_ntc: [u8; 2],
+    pub cell_vol: [u16; 15],
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct MotorState {
+    pub mode: u8,
+    pub q: f32,
+    pub dq: f32,
+    pub ddq: f32,
+    pub tau_est: f32,
+    pub q_raw: f32,
+    pub dq_raw: f32,
+    pub ddq_raw: f32,
+    pub temperature: u8,
+    pub lost: u32,
+    pub reserve: [u32; 2],
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LowState {
+    pub head: [u8; 2],
+    pub level_flag: u8,
+    pub frame_reserve: u8,
+    pub sn: [u32; 2],
+    pub version: [u32; 2],
+    pub bandwidth: u16,
+    pub imu_state: IMUState,
+    pub motor_state: [MotorState; 20],
+    pub bms_state: BmsState,
+    pub foot_force: [i16; 4],
+    pub foot_force_est: [i16; 4],
+    pub tick: u32,
+    #[serde(with = "BigArray")]
+    pub wireless_remote: [u8; 40],
+    pub bit_flag: u8,
+    pub adc_reel: f32,
+    pub temperature_ntc1: u8,
+    pub temperature_ntc2: u8,
+    pub power_v: f32,
+    pub power_a: f32,
+    pub fan_frequency: [u16; 4],
+    pub reserve: u32,
+    pub crc: u32,
+}
+ros2_topic_type!(LowState, "unitree_go::msg::dds_::LowState_");
+
+impl Default for LowState {
+    fn default() -> Self {
+        Self {
+            head: [0; 2],
+            level_flag: 0,
+            frame_reserve: 0,
+            sn: [0; 2],
+            version: [0; 2],
+            bandwidth: 0,
+            imu_state: IMUState::default(),
+            motor_state: Default::default(),
+            bms_state: BmsState::default(),
+            foot_force: [0; 4],
+            foot_force_est: [0; 4],
+            tick: 0,
+            wireless_remote: [0; 40],
+            bit_flag: 0,
+            adc_reel: 0.0,
+            temperature_ntc1: 0,
+            temperature_ntc2: 0,
+            power_v: 0.0,
+            power_a: 0.0,
+            fan_frequency: [0; 4],
+            reserve: 0,
+            crc: 0,
+        }
+    }
+}
+
+/// The remote's sticks in [-1, 1] and a 16-bit button mask.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct WirelessController {
+    pub lx: f32,
+    pub ly: f32,
+    pub rx: f32,
+    pub ry: f32,
+    pub keys: u16,
+}
+ros2_topic_type!(
+    WirelessController,
+    "unitree_go::msg::dds_::WirelessController_"
+);
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct RequestIdentity {
     pub id: i64,
@@ -194,6 +316,26 @@ impl Request {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ResponseStatus {
+    pub code: i32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ResponseHeader {
+    pub identity: RequestIdentity,
+    pub status: ResponseStatus,
+}
+
+/// `unitree_api::Response_`, the RPC reply.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct Response {
+    pub header: ResponseHeader,
+    pub data: String,
+    pub binary: Vec<u8>,
+}
+ros2_topic_type!(Response, "unitree_api::msg::dds_::Response_");
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +350,10 @@ mod tests {
     fn cdr_roundtrips() {
         roundtrip(&Request::new(1004, "{}"));
         roundtrip(&StdString { data: "ON".into() });
+        roundtrip(&Response::default());
+        roundtrip(&LowState::default());
+        roundtrip(&WirelessController::default());
+        roundtrip(&Imu::default());
         roundtrip(&Odometry::default());
         roundtrip(&PointCloud2 {
             point_step: 16,
