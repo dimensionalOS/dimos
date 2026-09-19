@@ -265,9 +265,6 @@ def _run(recording: Path, binary: Path, *extra: str, out: Path | None = None) ->
     )
 
 
-# --- the fit ------------------------------------------------------------------
-
-
 def test_fits_the_angles_and_writes_the_calibration(tmp_path: Path, matcher: Path, capsys):
     recording = build_recording(tmp_path / "memory.db")
     out = tmp_path / "calibration.json"
@@ -308,9 +305,6 @@ def test_verbose_reports_each_trial(tmp_path: Path, matcher: Path, capsys):
     assert "--- right_yaw_rad ---" in err
     assert "lidar floor points" in err
     assert "usable pairs" in err
-
-
-# --- the refusals -------------------------------------------------------------
 
 
 def _refusal(capsys) -> str:
@@ -472,9 +466,6 @@ def test_every_exit_code_is_distinct_and_documented():
     assert 0 not in codes.values() and 1 not in codes.values() and 2 not in codes.values()
     for value in codes.values():
         assert f"\n{value:<8}" in calibrate_stereo.__doc__
-
-
-# --- pieces -------------------------------------------------------------------
 
 
 def test_negative_sweep_bounds_survive_argparse():

@@ -168,9 +168,6 @@ class Verdict:
     out: Path
 
 
-# --- sufficiency --------------------------------------------------------------
-
-
 def resolve_recording(argument: str) -> Path:
     """The ``.db`` file: the argument itself, or ``memory.db`` inside a directory."""
     path = Path(argument).expanduser()
@@ -440,9 +437,6 @@ def check_floor(kept: Sequence[Instant], chosen: int) -> None:
         f"at least {needed}. Point the camera so the floor 1-6 m ahead is in view: record "
         "in an open area facing away from walls, with the head level, and drive slowly.",
     )
-
-
-# --- the fit ------------------------------------------------------------------
 
 
 def write_calibration_file(

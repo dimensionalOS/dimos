@@ -89,9 +89,6 @@ MAX_FLOOR_TILT_RAD = math.radians(20.0)
 _PLANE_RANK_TOLERANCE = 1e-6
 
 
-# --- sweeps -------------------------------------------------------------------
-
-
 def parse_sweep(text: str) -> list[float]:
     """``lo:hi:step`` or a comma-separated list, in radians.
 
@@ -136,9 +133,6 @@ def spread(span: tuple[float, float], count: int) -> list[float]:
     return [lo + step * i for i in range(count)]
 
 
-# --- frames -------------------------------------------------------------------
-
-
 def rotation_matrix(rotation: Any) -> np.ndarray:
     """A 3x3 matrix from anything with unit-quaternion ``x, y, z, w`` fields."""
     x, y, z, w = rotation.x, rotation.y, rotation.z, rotation.w
@@ -176,9 +170,6 @@ def yaw_of(rotation: Any) -> float:
     """Heading about +z, in radians, from a unit quaternion."""
     x, y, z, w = rotation.x, rotation.y, rotation.z, rotation.w
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
-
-
-# --- the floor ----------------------------------------------------------------
 
 
 def fit_plane(points: Any) -> Plane | None:
@@ -273,9 +264,6 @@ def find_floor(
     if final.sum() < min_points:
         return None
     return Floor(plane=refit, points=array[final], other=array[~final])
-
-
-# --- the score ----------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -375,9 +363,6 @@ def measure(
     )
 
 
-# --- the matcher --------------------------------------------------------------
-
-
 def write_calibration(path: Path, left_info: Any, right_info: Any) -> Path:
     """Write both eyes' intrinsics in the form ``stereo_offline`` reads.
 
@@ -457,9 +442,6 @@ def run_matcher(
         if token.startswith("valid="):
             matched = int(token.removeprefix("valid=").split("/")[0])
     return read_cloud_bin(Path(f"{prefix}_cloud.bin")), matched
-
-
-# --- instants and trials ------------------------------------------------------
 
 
 @dataclass(frozen=True)

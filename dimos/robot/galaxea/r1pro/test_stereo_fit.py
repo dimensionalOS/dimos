@@ -75,9 +75,6 @@ def synthetic_floor() -> Floor:
     return found
 
 
-# --- sweeps -------------------------------------------------------------------
-
-
 def test_parse_sweep_range_is_inclusive_and_rounded():
     assert parse_sweep("-0.01:0.01:0.005") == [-0.01, -0.005, 0.0, 0.005, 0.01]
     # lo + step * i must not come out as 0.012500000000000002: it ends up in
@@ -101,9 +98,6 @@ def test_spread_skips_the_ends_and_keeps_the_count():
     assert stamps[0] == pytest.approx(5.0)
     assert stamps[-1] == pytest.approx(95.0)
     assert spread((0.0, 100.0), 1) == [50.0]
-
-
-# --- frames -------------------------------------------------------------------
 
 
 def _transform(*, translation=(0.0, 0.0, 0.0), rpy=(0.0, 0.0, 0.0)) -> Transform:
@@ -141,9 +135,6 @@ def test_rotate_direction_ignores_translation():
 def test_yaw_of_reads_the_heading_back():
     for yaw in (-2.0, -0.3, 0.0, 0.7, 2.9):
         assert yaw_of(Quaternion.from_euler(Vector3(0.0, 0.0, yaw))) == pytest.approx(yaw)
-
-
-# --- the floor ----------------------------------------------------------------
 
 
 def test_fit_plane_recovers_a_tilted_plane_through_noise():
@@ -196,9 +187,6 @@ def test_find_floor_rejects_a_zero_up():
         find_floor(floor_grid(), up=(0.0, 0.0, 0.0))
 
 
-# --- the score ----------------------------------------------------------------
-
-
 def test_measure_scores_a_perfect_cloud_as_zero_error_and_high_recall():
     floor = synthetic_floor()
     score = measure(floor_grid(spacing=0.05), floor)
@@ -240,9 +228,6 @@ def test_measure_with_nothing_recovered():
     assert empty.recovered == 0 and empty.recall == 0.0 and empty.wanted > 0
     elsewhere = measure(np.array([[0.0, -5.0, 1.0]]), floor)
     assert elsewhere.recovered == 0
-
-
-# --- the matcher --------------------------------------------------------------
 
 
 def _camera_info(**overrides) -> CameraInfo:
@@ -327,8 +312,6 @@ def test_run_matcher_raises_with_the_binary_stderr(tmp_path: Path):
             rotation={},
         )
 
-
-# --- trials and the sweep -----------------------------------------------------
 
 TRUE = {"right_roll_rad": -0.0025, "right_pitch_rad": 0.00375, "right_yaw_rad": -0.0125}
 
