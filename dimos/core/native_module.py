@@ -137,6 +137,8 @@ class NativeModuleConfig(ModuleConfig):
 
     cli_exclude: frozenset[str] = frozenset()
     cli_name_override: dict[str, str] = Field(default_factory=dict)
+    # Ports the python wrapper publishes itself; the native process never sees them.
+    python_ports: frozenset[str] = frozenset()
 
     # Native config structs reject unknown fields, so a base field only crosses
     # the boundary if that module's native struct declares it.
@@ -526,6 +528,8 @@ class NativeModule(Module):
     def _collect_topics(self) -> dict[str, str]:
         topics: dict[str, str] = {}
         for name in list(self.inputs) + list(self.outputs) + list(self.ios):
+            if name in self.config.python_ports:
+                continue
             stream = getattr(self, name, None)
             if stream is None:
                 continue
@@ -541,6 +545,8 @@ class NativeModule(Module):
         """Publisher QoS per published channel, keyed by channel."""
         qos_map: dict[str, dict[str, str]] = {}
         for name in list(self.outputs) + list(self.ios):
+            if name in self.config.python_ports:
+                continue
             stream = getattr(self, name, None)
             if stream is None:
                 continue

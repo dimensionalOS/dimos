@@ -42,6 +42,8 @@ class GO2DDSConfig(NativeModuleConfig, Go2BaseConfig):
     executable: str = "target/release/go2_dds"
     build_command: str | None = "nix develop path:nix -c cargo build --release"
     stdin_config: bool = True
+    # Go2Base publishes the intrinsics; the mount tree rides tf, which rust claims.
+    python_ports: frozenset[str] = frozenset({"camera_info"})
 
     # Every field below crosses to the rust `Config` verbatim (test_module.py).
     # eth0 on the Go2 itself, the Go2 link on the Jetson.
