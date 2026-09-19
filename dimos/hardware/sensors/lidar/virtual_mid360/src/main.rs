@@ -18,10 +18,15 @@
 // binds lidar_ip and sends UDP, so it works wherever the host_ip/lidar_ip are
 // reachable — IPs aliased on an interface (host ns, incl. macOS lo0) or a netns.
 
-use dimos_livox::pcap::PcapReader;
-use dimos_livox::wire::{
-    self, AsyncControlAck, ControlFrame, DetectionAck, InternalInfoAck, KeyValue,
-};
+#[allow(dead_code)]
+pub mod pcap;
+#[allow(dead_code)]
+pub mod pipeline;
+#[allow(dead_code)]
+pub mod wire;
+
+use crate::pcap::PcapReader;
+use crate::wire::{AsyncControlAck, ControlFrame, DetectionAck, InternalInfoAck, KeyValue};
 use dimos_module::{native_config, run_with_transport, Module};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};

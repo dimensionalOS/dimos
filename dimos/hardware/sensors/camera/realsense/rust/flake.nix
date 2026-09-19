@@ -1,17 +1,70 @@
 {
-  description = "librealsense for the dimos RealSense native module";
+  description = "RealSense camera native module for dimos";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nix-filter.url = "github:numtide/nix-filter";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
+    crate2nix.url = "github:nix-community/crate2nix";
+    crate2nix.inputs.nixpkgs.follows = "nixpkgs";
+  };
 
-  outputs = { self, nixpkgs }:
-    let
-      systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
-      forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
-    in {
-      # Also works when NativeModule builds from a regular Python environment.
-      # Use the Nix compiler/linker so libc matches the camera libraries.
-      devShells = forAll (pkgs: {
-        default = pkgs.mkShell { packages = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.librealsense pkgs.pkg-config ]; };
+  outputs = { self, nix-filter, nixpkgs, flake-utils, crate2nix }:
+    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (system:
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
+        name = "dimos-realsense";
+
+        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
+
+        needsLibrealsense = _: {
+          buildInputs = [ pkgs.librealsense ];
+          nativeBuildInputs = [ pkgs.pkg-config ];
+        };
+        sysOverrides = {
+          realsense-sys = needsLibrealsense;
+          dimos-realsense = needsLibrealsense;
+        };
+
+        ours = [ name "dimos-module" "dimos-module-macros" ];
+        callWith = mode: import generated {
+          inherit pkgs;
+          buildRustCrateForPkgs = cratePkgs:
+            let build = cratePkgs.buildRustCrate.override {
+                  defaultCrateOverrides = cratePkgs.defaultCrateOverrides // sysOverrides;
+                };
+            in crate: build (crate // pkgs.lib.optionalAttrs
+              (mode != null && builtins.elem crate.crateName ours)
+              ({
+                release = false;
+                extraRustcOpts = (crate.extraRustcOpts or [ ]) ++ [ "-C" "debuginfo=0" ];
+              } // pkgs.lib.optionalAttrs (mode == "lint") {
+                useClippy = true;
+                capLints = "forbid";
+                extraRustcOpts =
+                  (crate.extraRustcOpts or [ ]) ++ [ "-D" "warnings" "-C" "debuginfo=0" ];
+              }));
+        };
+        buildOf = called:
+          if called ? rootCrate then called.rootCrate.build
+          else called.workspaceMembers.${name}.build;
+      in {
+        packages.default = buildOf (callWith null);
+        packages.${name} = self.packages.${system}.default;
+        packages.lint = (buildOf (callWith "lint")).override {
+          runTests = true;
+          testCrateFlags = [ "--list" ];
+        };
+        checks.lint = self.packages.${system}.lint;
+
+        packages.tests = (buildOf (callWith "test")).override { runTests = true; };
+        checks.tests = self.packages.${system}.tests;
+
+        devShells.default = pkgs.mkShell {
+          packages = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.rustfmt
+                       pkgs.librealsense pkgs.pkg-config ];
+        };
       });
-    };
 }

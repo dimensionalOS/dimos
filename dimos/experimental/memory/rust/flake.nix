@@ -1,85 +1,77 @@
 {
-  description = "DimOS Rust native modules";
+  description = "Memory recorder native module for dimos";
 
   inputs = {
+    nix-filter.url = "github:numtide/nix-filter";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    crate2nix.url = "github:nix-community/crate2nix";
+    crate2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = {
-    self,
-    nixpkgs,
-    flake-utils,
-  }:
-    flake-utils.lib.eachSystem [
-      "x86_64-linux"
-      "aarch64-linux"
-      "aarch64-darwin"
-    ] (system: let
-      pkgs = nixpkgs.legacyPackages.${system};
-      nativeDeps = [pkgs.cmake pkgs.nasm pkgs.pkg-config];
-      systemDeps =
-        [pkgs.sqlite pkgs.sqlite.dev]
-        ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [pkgs.libiconv];
-      dimos-memory-recorder = pkgs.rustPlatform.buildRustPackage {
-        pname = "dimos-memory-recorder";
-        version = "0.1.0";
-        src = pkgs.lib.fileset.toSource {
-          root = ../../../..;
-          fileset = pkgs.lib.fileset.unions [
-            ../../../../Cargo.lock
-            ../../../../Cargo.toml
-            ../../../../dimos/experimental/memory/rust
-            ../../../../native/rust/dimos-module
-            ../../../../native/rust/dimos-module-macros
-            ../../../../dimos/mapping/ray_tracing/rust
-            ../../../../dimos/mapping/ray_tracing/rust/py
-            ../../../../dimos/navigation/nav_3d/mls_planner/rust
-            ../../../../dimos/navigation/nav_3d/mls_planner/rust/py
-            ../../../../dimos/hardware/sensors/lidar/livox/rust
-            ../../../../dimos/hardware/sensors/lidar/pointlio/rust
-            ../../../../dimos/hardware/sensors/lidar/virtual_mid360
-            ../../../../examples/native-modules/rust
-          ];
-        };
+  outputs = { self, nix-filter, nixpkgs, flake-utils, crate2nix }:
+    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
+        name = "dimos-memory-recorder";
 
-        cargoLock = {
-          lockFile = ../../../../Cargo.lock;
-          outputHashes = {
-            "dimos-lcm-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
-            "pointlio-core-0.1.0" = "sha256-iC7nDbEipfi3cViK7fqKiy2hT9ENGi4Ge7L6Wt1W01Q=";
+        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
+
+        sysOverrides = {
+          libsqlite3-sys = _: {
+            buildInputs = [ pkgs.sqlite ];
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            LIBSQLITE3_SYS_USE_PKG_CONFIG = "1";
+          };
+          turbojpeg-sys = _: {
+            nativeBuildInputs = [ pkgs.cmake pkgs.nasm ];
+            dontUseCmakeConfigure = true;
           };
         };
 
-        cargoBuildFlags = ["-p" "dimos-memory-recorder"];
-        cargoTestFlags = ["-p" "dimos-memory-recorder"];
-        strictDeps = true;
-
-        nativeBuildInputs = nativeDeps;
-        buildInputs = systemDeps;
-
-        env.LIBSQLITE3_SYS_USE_PKG_CONFIG = "1";
-
-        meta = {
-          description = "Experimental native Memory2 SQLite and MCAP recorder";
-          mainProgram = "dimos-memory-recorder";
-          platforms = pkgs.lib.platforms.unix;
+        ours = [ name "dimos-module" "dimos-module-macros" ];
+        callWith = mode: import generated {
+          inherit pkgs;
+          buildRustCrateForPkgs = cratePkgs:
+            let build = cratePkgs.buildRustCrate.override {
+                  defaultCrateOverrides = cratePkgs.defaultCrateOverrides // sysOverrides;
+                };
+            in crate: build (crate // pkgs.lib.optionalAttrs
+              (mode != null && builtins.elem crate.crateName ours)
+              ({
+                release = false;
+                extraRustcOpts = (crate.extraRustcOpts or [ ]) ++ [ "-C" "debuginfo=0" ];
+              } // pkgs.lib.optionalAttrs (mode == "lint") {
+                useClippy = true;
+                capLints = "forbid";
+                extraRustcOpts =
+                  (crate.extraRustcOpts or [ ]) ++ [ "-D" "warnings" "-C" "debuginfo=0" ];
+              }));
         };
-      };
-    in {
-      packages = {
-        default = dimos-memory-recorder;
-        inherit dimos-memory-recorder;
-      };
+        buildOf = called:
+          if called ? rootCrate then called.rootCrate.build
+          else called.workspaceMembers.${name}.build;
 
-      # Just the system deps and a toolchain. Deliberately not the package's
-      # build environment: that vendors the whole workspace lock, which would
-      # make `nix develop` (and so the cargo clippy hook) fail on any git
-      # dependency added anywhere in the workspace.
-      devShells.default = pkgs.mkShell {
-        nativeBuildInputs = nativeDeps ++ [pkgs.cargo pkgs.rustc pkgs.clippy pkgs.rustfmt];
-        buildInputs = systemDeps;
-        LIBSQLITE3_SYS_USE_PKG_CONFIG = "1";
-      };
-    });
+        rustTools = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.rustfmt ];
+      in {
+        packages.default = buildOf (callWith null);
+        packages.${name} = self.packages.${system}.default;
+        packages.lint = (buildOf (callWith "lint")).override {
+          runTests = true;
+          testCrateFlags = [ "--list" ];
+        };
+        checks.lint = self.packages.${system}.lint;
+
+        packages.tests = (buildOf (callWith "test")).override { runTests = true; };
+        checks.tests = self.packages.${system}.tests;
+
+        devShells.default = pkgs.mkShell {
+          packages = rustTools
+            ++ [ pkgs.cmake pkgs.nasm pkgs.pkg-config pkgs.sqlite pkgs.sqlite.dev ]
+            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.libiconv ];
+          LIBSQLITE3_SYS_USE_PKG_CONFIG = "1";
+        };
+      });
 }

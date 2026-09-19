@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Find, build and test the PyO3 extension modules in this repository.
+
+A PyO3 extension is the one rust artefact nix does not produce for us: pytest
+imports the compiled `.so`, and it must match the interpreter uv resolved, not
+nixpkgs'. So maturin builds these into the active virtualenv.
+
+Discovery is by content, never by path. An extension is any tracked
+`pyproject.toml` whose build backend is maturin; its `[tool.maturin] module-name`
+is the name python imports. The tests that need one are the test files naming
+that module, found by grep -- adding a binding or a test for one needs no edit
+here or in CI.
+
+  --list     print `<manifest> <module-name>` per extension
+  --build    maturin develop each one into the active virtualenv, then import it
+  --test     run the test files that import any of them
+"""
+
+import argparse
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+import tomllib
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _tracked(pattern: str) -> list[str]:
+    return subprocess.run(
+        ["git", "ls-files", pattern],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+
+
+def extensions() -> list[tuple[Path, str]]:
+    """(Cargo manifest, python module name) for every maturin-built crate."""
+    found = []
+    for path in _tracked("*pyproject.toml"):
+        try:
+            config = tomllib.loads((REPO_ROOT / path).read_text())
+        except tomllib.TOMLDecodeError:
+            continue
+        if config.get("build-system", {}).get("build-backend") != "maturin":
+            continue
+        directory = (REPO_ROOT / path).parent
+        module = config.get("tool", {}).get("maturin", {}).get("module-name")
+        if not module:
+            sys.exit(f"{path}: a maturin build needs [tool.maturin] module-name")
+        found.append((directory / "Cargo.toml", module))
+    return sorted(found)
+
+
+def tests_importing(modules: list[str]) -> list[str]:
+    naming = re.compile(r"\b(" + "|".join(re.escape(m) for m in modules) + r")\b")
+    return sorted(
+        path
+        for path in _tracked("dimos")
+        if Path(path).name.startswith("test_")
+        and path.endswith(".py")
+        and naming.search((REPO_ROOT / path).read_text())
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--list", action="store_true")
+    mode.add_argument("--build", action="store_true")
+    mode.add_argument("--test", action="store_true")
+    args = parser.parse_args()
+
+    found = extensions()
+    if not found:
+        sys.exit("no maturin-built crates found; discovery is broken")
+
+    if args.list:
+        for manifest, module in found:
+            print(f"{manifest.relative_to(REPO_ROOT)} {module}")
+        return
+
+    if args.build:
+        for manifest, _ in found:
+            subprocess.run(
+                ["maturin", "develop", "-m", str(manifest)], cwd=str(REPO_ROOT), check=True
+            )
+        names = [module for _, module in found]
+        subprocess.run(
+            [sys.executable, "-c", "import " + ", ".join(names)], cwd=str(REPO_ROOT), check=True
+        )
+        return
+
+    files = tests_importing([module for _, module in found])
+    if not files:
+        sys.exit("no test files import the extensions; discovery is broken")
+    # A bare pytest: the repo's addopts assume a conftest and a coverage run.
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-c",
+            "/dev/null",
+            "--rootdir",
+            ".",
+            "--noconftest",
+            "--import-mode=importlib",
+            "-p",
+            "no:cacheprovider",
+            "-v",
+            *files,
+        ],
+        cwd=str(REPO_ROOT),
+        check=True,
+    )
+
+
+if __name__ == "__main__":
+    main()

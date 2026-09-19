@@ -85,6 +85,9 @@
           { vals.pkg=pkgs.uv;                             flags={}; }
           { vals.pkg=pkgs.pre-commit;                   flags={}; }
 
+          { vals.pkg=pkgs.cargo;                        flags={}; }
+          { vals.pkg=pkgs.rustc;                        flags={}; }
+
           ### Runtime deps
           { vals.pkg=pkgs.portaudio;                 flags={ldLibraryGroup=true; packageConfGroup=true;}; }
           { vals.pkg=pkgs.ffmpeg_6;                  flags={}; }

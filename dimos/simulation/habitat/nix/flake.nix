@@ -1,9 +1,10 @@
 {
   description = "micromamba for the dimos Habitat native module";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.dimos-native-cpp.url = "github:dimensionalOS/dimos?ref=jeff/fix/native_build_cargo_path&dir=native/cpp";
+  inputs.nixpkgs.follows = "dimos-native-cpp/nixpkgs";
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, ... }:
     let
       # linux-64 only: the aihabitat conda channel has no aarch64 habitat-sim.
       systems = [ "x86_64-linux" ];

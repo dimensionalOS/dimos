@@ -32,7 +32,7 @@ local_map_fine = "sensor_msgs.PointCloud2"
 region_bounds = "geometry_msgs.PoseStamped"
 
 [dependencies]
-dimos-module = { path = "../../../../native/rust/dimos-module" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", branch = "main" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
@@ -42,3 +42,16 @@ rayon = "1"
 tracing = "0.1"
 validator = { version = "0.21", features = ["derive"] }
 nalgebra = "0.35.0"
+
+[workspace]
+members = ["py"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0

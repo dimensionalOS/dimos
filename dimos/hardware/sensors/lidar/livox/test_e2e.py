@@ -46,7 +46,11 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
 
-_RELEASE = DIMOS_PROJECT_ROOT / "target" / "release"
+_LIDAR = DIMOS_PROJECT_ROOT / "dimos" / "hardware" / "sensors" / "lidar"
+_MODULE_OF = {
+    "mid360_native": (_LIDAR / "livox" / "rust", "dimos-livox"),
+    "virtual_mid360": (_LIDAR / "virtual_mid360", "dimos-virtual-mid360"),
+}
 
 GRAVITY_MS2 = 9.80665
 
@@ -121,11 +125,10 @@ def synth_pcap(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def _require_binary(name: str) -> Path:
-    binary = _RELEASE / name
+    module_dir, package = _MODULE_OF[name]
+    binary = module_dir / "result" / "bin" / name
     if not binary.exists():
-        pytest.fail(
-            f"{binary} missing; run: cargo build --release -p dimos-livox -p dimos-virtual-mid360"
-        )
+        pytest.fail(f"{binary} missing; run: (cd {module_dir}) && nix build -L path:.#{package}")
     return binary
 
 

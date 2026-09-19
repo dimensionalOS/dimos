@@ -30,7 +30,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.nvidia_env import driver_env, sdk_variant
+from dimos.utils.nvidia_env import driver_env
 
 logger = setup_logger()
 
@@ -122,13 +122,7 @@ class SourceConfig(BaseModel):
 class DimSlamConfig(NativeModuleConfig):
     cwd: str | None = "rust"
     executable: str = "result/bin/dim_slam"
-    # git+file, not path:. : the flake's ../../../.. input must be inside the entered tree.
-    # Builds see tracked files only.
-    build_command: str | None = Field(
-        default_factory=lambda: (
-            f"nix build -L 'git+file:../../../..?dir=dimos/mapping/dim_slam/rust#{sdk_variant()}'"
-        )
-    )
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=driver_env)
 

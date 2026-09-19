@@ -130,6 +130,7 @@ jobs:
       - name: Install Nix (with Cachix substituter)
         env:
           INPUT_EXTRA_NIX_CONFIG: |
+            http-connections = 50
             extra-substituters = https://dimensionalos.cachix.org
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           INPUT_SET_AS_TRUSTED_USER: "true"
@@ -155,8 +156,18 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build native modules
         env:
-          BUILD_WORKERS: "1"
+          BUILD_WORKERS: "4"
         run: python3 bin/build-native-modules
+      - name: Lint native modules
+        env:
+          BUILD_WORKERS: "4"
+        run: python3 bin/build-native-modules --lint
+      # Published so the `native` job substitutes them instead of compiling the
+      # test targets itself on every run.
+      - name: Test rust native modules
+        env:
+          BUILD_WORKERS: "4"
+        run: python3 bin/build-native-modules --tests
       - name: Verify Cachix holds the built paths
         env:
           CACHIX_CACHE_NAME: dimensionalos
@@ -202,6 +213,7 @@ jobs:
       - name: Install Nix (with Cachix substituter)
         env:
           INPUT_EXTRA_NIX_CONFIG: |
+            http-connections = 50
             extra-substituters = https://dimensionalos.cachix.org
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           INPUT_SET_AS_TRUSTED_USER: "true"
@@ -223,7 +235,7 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build native modules
         env:
-          BUILD_WORKERS: "1"
+          BUILD_WORKERS: "4"
         run: python3 bin/build-native-modules
       - name: Verify Cachix holds the built paths
         env:
@@ -293,15 +305,28 @@ jobs:
           deno-version: ${{ steps.deno-version.outputs.version }}
           cache: true
 
-      - name: Run pre-commit
-        uses: pre-commit/action@v3.0.1
+      - name: Install Nix
         env:
-          # clippy and fmt are checked in the rust job, so we can skip them here
-          SKIP: cargo-fmt,cargo-clippy
+          INPUT_EXTRA_NIX_CONFIG: |
+            http-connections = 50
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          INPUT_SET_AS_TRUSTED_USER: "true"
+        run: bash docker/ros/install-nix.sh
+
+      - name: Run pre-commit
+        env:
+          SKIP: native-module-lint
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: --all-files --verbose
+
 
   rust:
     timeout-minutes: 30
     runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: "0"
     permissions:
       contents: read  # For checkout
 
@@ -312,18 +337,18 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
+      - name: Restore cargo build cache
+        uses: actions/cache/restore@v4
         with:
-          # Only main writes the cache, so a PR run cannot evict main's entry
-          # from the repo's 10GB budget. PR runs still restore from it.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: cargo fmt
-        run: cargo fmt --all -- --check
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - name: cargo test
-        run: cargo test --workspace --all-features --locked
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            !target/debug/incremental
+          key: cargo-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-test-${{ runner.os }}-${{ runner.arch }}-
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
         with:
@@ -334,25 +359,62 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev
       - name: Build and test PyO3 bindings
-        # PyO3 extension modules (cdylib + `extension-module`) are the one case
-        # that still needs a plain build: pytest imports the compiled .so.
+        # The one rust artefact nix does not build: pytest imports the compiled
+        # .so, which has to match uv's interpreter rather than nixpkgs'.
         run: |
           uv sync --group tests --frozen
           source .venv/bin/activate
-          maturin develop -m dimos/mapping/ray_tracing/rust/py/Cargo.toml
-          maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/py/Cargo.toml
-          python -c "import dimos_voxel_ray_tracing, dimos_mls_planner"
-          python -m pytest -c /dev/null --rootdir . --noconftest --import-mode=importlib -p no:cacheprovider -v \
-            dimos/mapping/ray_tracing/test_voxel_map.py \
-            dimos/mapping/ray_tracing/test_transformer.py \
-            dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
-            dimos/navigation/nav_3d/mls_planner/test_transformer.py
+          python bin/pyo3-extensions --build
+          python bin/pyo3-extensions --test
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
-      - name: Native module e2e tests
+
+      - name: Save cargo build cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            !target/debug/incremental
+          key: cargo-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
+
+  flake-locks-current:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install Nix
+        env:
+          INPUT_EXTRA_NIX_CONFIG: |
+            http-connections = 50
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          INPUT_SET_AS_TRUSTED_USER: "true"
+        run: bash docker/ros/install-nix.sh
+      - name: Every flake.lock is current
         run: |
-          cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
-          uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
+          set -u
+          git ls-files '*flake.nix' | sed 's|/flake.nix$||;s|^flake.nix$|.|' | sort -u > /tmp/flakes
+          : > /tmp/stale
+          while read -r dir; do
+            echo "::group::$dir"
+            nix flake lock --no-update-lock-file "path:$dir" || echo "$dir" >> /tmp/stale
+            echo "::endgroup::"
+          done < /tmp/flakes
+          if [ -s /tmp/stale ]; then
+            while read -r dir; do
+              echo "::error::flake.lock is stale or incomplete in $dir -- run 'nix flake lock' there and commit it"
+            done < /tmp/stale
+            exit 1
+          fi
+          echo "$(wc -l < /tmp/flakes) flake locks are current"
 
   native:
     name: Native builds (C++ and Rust)
@@ -374,7 +436,8 @@ jobs:
           sudo apt-get update
           # lcm.pc carries `Requires: glib-2.0`, so pkg-config cannot resolve
           # lcm at all without glib's own .pc file
-          sudo apt-get install -y liblcm-dev libglib2.0-dev nlohmann-json3-dev
+          sudo apt-get install -y liblcm-dev libglib2.0-dev nlohmann-json3-dev \
+            portaudio19-dev
           base=https://github.com/eclipse-zenoh
           curl -fsSL -o /tmp/zenoh-c.zip \
             "$base/zenoh-c/releases/download/$ZENOH_VERSION/zenoh-c-$ZENOH_VERSION-x86_64-unknown-linux-gnu-standalone.zip"
@@ -397,16 +460,14 @@ jobs:
       - name: Test
         run: ctest --test-dir build/native-cpp --output-on-failure
 
-      - name: Find C++ native modules
+      - name: List C++ native modules
         id: find-modules
         run: |
-          modules=$(find . -name flake.nix \
-            -not -path './.git/*' \
-            -not -path '*/build/*' \
-            -not -path '*/result/*' \
-            -printf '%h\n' \
+          modules=$(git ls-files '*/flake.nix' \
+            | sed 's|/flake.nix$||' \
+            | grep -v '^native/' \
             | while read -r dir; do
-                [ -f "$dir/CMakeLists.txt" ] && echo "${dir#./}"
+                [ -f "$dir/CMakeLists.txt" ] && echo "$dir"
               done \
             | sort)
           if [ -z "$modules" ]; then
@@ -427,25 +488,18 @@ jobs:
         # and this stays safe on fork PRs.
         env:
           INPUT_EXTRA_NIX_CONFIG: |
+            http-connections = 50
             extra-substituters = https://dimensionalos.cachix.org
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           INPUT_SET_AS_TRUSTED_USER: "true"
         run: bash docker/ros/install-nix.sh
-      - name: Build Rust memory recorder Nix package
-        run: |
-          cd dimos/experimental/memory/rust
-          nix build .#dimos-memory-recorder --no-write-lock-file --print-build-logs
-          test -x result/bin/dimos-memory-recorder
       # PCL, GTSAM and the SLAM cores come from each module's flake, not apt.
-      - name: Build C++ native modules
+      - name: Build native modules
+        run: python3 bin/build-native-modules
+      - name: Test rust native modules
         env:
-          MODULES: ${{ steps.find-modules.outputs.modules }}
-        run: |
-          for module in $MODULES; do
-            echo "::group::$module"
-            (cd "$module" && nix build --no-write-lock-file --print-build-logs)
-            echo "::endgroup::"
-          done
+          BUILD_WORKERS: "4"
+        run: python3 bin/build-native-modules --tests
       - name: Test C++ native modules
         env:
           MODULES: ${{ steps.find-modules.outputs.modules }}
@@ -457,6 +511,15 @@ jobs:
               echo "::endgroup::"
             fi
           done
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          prune-cache: true
+      - name: Native module e2e tests
+        run: |
+          uv sync --group tests --frozen
+          uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
 
   md-babel:
     timeout-minutes: 15
@@ -702,6 +765,7 @@ jobs:
         if: steps.native-marker.outputs.cache-hit == 'true'
         env:
           INPUT_EXTRA_NIX_CONFIG: |
+            http-connections = 50
             extra-substituters = https://dimensionalos.cachix.org
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           INPUT_SET_AS_TRUSTED_USER: "true"
@@ -946,7 +1010,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Build rust native modules
         if: contains(matrix.markers, 'self_hosted')
-        run: cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
+        run: python3 bin/build-native-modules
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
@@ -1176,6 +1240,7 @@ jobs:
     - lint
     - rust
     - native
+    - flake-locks-current
     - md-babel
     - web
     - tests

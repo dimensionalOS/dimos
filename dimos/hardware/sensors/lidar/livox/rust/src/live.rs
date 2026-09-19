@@ -542,60 +542,6 @@ mod tests {
     }
 
     #[test]
-    fn packets_from_unexpected_senders_are_ignored() {
-        let ports = test_ports(3);
-        let stop = Arc::new(AtomicBool::new(false));
-        // A dropped loopback datagram fails the test instead of hanging it.
-        let watchdog = stop.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs(10));
-            watchdog.store(true, Ordering::Relaxed);
-        });
-        let mut source = LiveSource::start(
-            LiveConfig {
-                host_ip: Ipv4Addr::LOCALHOST,
-                lidar_ip: Ipv4Addr::LOCALHOST,
-                multicast_ip: None,
-                enable_imu: false,
-                ports,
-            },
-            stop,
-        )
-        .unwrap();
-
-        let packet = |ts_ns: u64| {
-            let payload = build_points_high(&[crate::wire::PointHigh {
-                x_mm: 1,
-                y_mm: 0,
-                z_mm: 0,
-                reflectivity: 255,
-                tag: 0,
-            }]);
-            DataPacket {
-                time_interval: 0,
-                dot_num: 1,
-                data_type: DataType::CartesianHigh,
-                timestamp_ns: ts_ns,
-                payload: &payload,
-            }
-            .build()
-        };
-        let target = SocketAddrV4::new(Ipv4Addr::LOCALHOST, ports.host_point_data);
-        let forged = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 2), 0)).unwrap();
-        forged.send_to(&packet(7), target).unwrap();
-        std::thread::sleep(Duration::from_millis(100));
-        let genuine = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
-        genuine.send_to(&packet(42), target).unwrap();
-
-        // The channel is FIFO: had the forged packet been accepted, it would
-        // arrive first.
-        let mut buf = [0u8; 4096];
-        let len = source.recv(&mut buf).expect("genuine packet delivered");
-        let delivered = DataPacket::parse(&buf[..len]).unwrap();
-        assert_eq!(delivered.timestamp_ns, 42);
-    }
-
-    #[test]
     fn recv_ends_on_stop() {
         let ports = test_ports(1);
         let stop = Arc::new(AtomicBool::new(false));

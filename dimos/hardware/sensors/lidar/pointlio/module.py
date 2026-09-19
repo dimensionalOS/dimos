@@ -38,7 +38,6 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, Field
 from reactivex.disposable import Disposable
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
@@ -146,7 +145,7 @@ class PointLioConfig(NativeModuleConfig, PointLioTuning):
     base_fields: frozenset[str] = frozenset({"frame_id"})
     cwd: str | None = "cpp"
     executable: str = "result/bin/pointlio_native"
-    build_command: str | None = "nix build -L .#pointlio_native"
+    build_command: str | None = "nix build -L path:."
     # lidar_ip required; host_ip optional (auto-derived from lidar_ip's subnet).
     # Both fall back to DIMOS_POINTLIO_LIDAR_IP / DIMOS_POINTLIO_HOST_IP.
     host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_HOST_IP"))
@@ -221,8 +220,8 @@ class PointLioRustConfig(NativeModuleConfig, PointLioTuning):
     base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})
     cwd: str | None = "rust"
     # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "pointlio_native")
-    build_command: str | None = "cargo build --release"
+    executable: str = "result/bin/pointlio_native"
+    build_command: str | None = "nix build -L path:."
 
 
 class PointLioRust(NativeModule, perception.Lidar, perception.Odometry):

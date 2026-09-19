@@ -44,7 +44,7 @@ path = "src/main.rs"
 [dependencies]
 {dependencies}
 
-# Must match the workspace root's profiles or the shared target dir refingerprints.
+# Must match every module workspace's profiles or the shared target dir refingerprints.
 [profile.release]
 lto = "thin"
 codegen-units = 1
@@ -83,13 +83,18 @@ fn main() {{
 """
 
 
+DIMOS_MODULE_DEP = (
+    'dimos-module = { git = "https://github.com/dimensionalOS/dimos", branch = "main" }'
+)
+
+
 def crate_dir(host: str, root: Path | None = None) -> Path:
     """Where the generated crate for `host` lives."""
     return (root or DIMOS_PROJECT_ROOT) / "build" / "dimos-bake" / host
 
 
 def _dependencies(modules: Sequence[RegisteredModule], root: Path) -> str:
-    lines = [f'dimos-module = {{ path = "{root / "native" / "rust" / "dimos-module"}" }}']
+    lines = [DIMOS_MODULE_DEP]
     # Keyed by crate: one crate can register several module ids, and a repeated
     # crate name is a duplicate key cargo refuses to parse.
     for crate_name, crate_path in dict.fromkeys((m.crate_name, m.crate_dir) for m in modules):
@@ -149,10 +154,6 @@ def generate_crate(
     src.mkdir(parents=True, exist_ok=True)
 
     (directory / "Cargo.toml").write_text(render_cargo_toml(host, modules, root))
-    # Check for workspace lock so we resolve to same dependencies
-    root_lock = root / "Cargo.lock"
-    if root_lock.exists():
-        (directory / "Cargo.lock").write_text(root_lock.read_text())
     (src / "main.rs").write_text(render_main_rs(host, modules, graph))
     (src / "default_topics.json").write_text(json.dumps(graph.topics(), indent=2) + "\n")
     (src / "default_qos.json").write_text(json.dumps(graph.qos(), indent=2) + "\n")

@@ -22,7 +22,7 @@ imu = "sensor_msgs.Imu"
 
 [dependencies]
 crc = "3"
-dimos-module = { path = "../../../../../../native/rust/dimos-module" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", branch = "main" }
 etherparse = "0.21.0"
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 pcap-parser = "0.17.0"
@@ -35,3 +35,15 @@ validator = { version = "0.21", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3"
+
+[workspace]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0

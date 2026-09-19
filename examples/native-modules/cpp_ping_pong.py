@@ -33,7 +33,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 
 _CPP_DIR = Path(__file__).parent / "cpp"
-_BUILD = "nix build .#default"
+_BUILD = "nix build -L path:.#dimos-native-module-examples-cpp"
 
 
 class PingConfig(NativeModuleConfig):

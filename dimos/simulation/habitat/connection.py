@@ -36,7 +36,7 @@ class HabitatConnectionConfig(NativeModuleConfig):
     # target/habitat (outside the package tree); the wrapper is the build sentinel.
     cwd: str | None = "nix"
     executable: str = str(DIMOS_PROJECT_ROOT / "target" / "habitat" / "habitat-native")
-    build_command: str | None = "nix develop path:. -c ./install.sh"
+    build_command: str | None = None
     stdin_config: bool = True
     log_format: LogFormat = LogFormat.TEXT
 

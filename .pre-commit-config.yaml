@@ -42,12 +42,12 @@ repos:
       - id: trailing-whitespace
         language: python
         types: [text]
-        exclude: \.patch$  # patch files contain intentional trailing whitespace
+        exclude: &verbatim-files (\.patch$)
       - id: end-of-file-fixer
-        exclude: \.patch$  # keep patch files byte-identical to upstream diffs
+        exclude: *verbatim-files
       - id: mixed-line-ending
         args: [--fix=lf]
-        exclude: \.patch$  # keep patch files byte-identical to upstream diffs
+        exclude: *verbatim-files
       - id: check-json
         exclude: ^misc/DimSim/public/sims/  # LFS-tracked
       - id: check-toml
@@ -95,6 +95,13 @@ repos:
         entry: bin/hooks/lfs_check
         language: script
 
+      - id: module-dir-guard
+        name: No untracked files in a native-module dir
+        always_run: true
+        pass_filenames: false
+        entry: bin/module-dir-guard
+        language: script
+
       - id: largefiles-check
         name: Large files check
         always_run: true
@@ -136,39 +143,17 @@ repos:
 
       - id: cargo-fmt
         name: cargo fmt
-        entry: |
-          bash -c '
-            set -euo pipefail
-            git ls-files "*Cargo.toml" | while read -r m; do
-              cargo locate-project --manifest-path "$m" --workspace --message-format plain
-            done | sort -u | while read -r root; do
-              cargo fmt --manifest-path "$root" --all
-            done
-          '
+        entry: bin/hooks/rust-module-foreach --shell native/rust fmt --all
         language: system
         types: [rust]
         pass_filenames: false
 
-      # Off: minutes per rust commit, and it breaks on toolchain skew (E0514); CI clippies the root workspace.
-      # - id: cargo-clippy
-      #   name: cargo clippy
-      #   entry: |
-      #     bash -c '
-      #       set -euo pipefail
-      #       git ls-files "*Cargo.toml" | while read -r m; do
-      #         cargo locate-project --manifest-path "$m" --workspace --message-format plain
-      #       done | sort -u | while read -r root; do
-      #         # A crate with its own flake carries system deps the root shell lacks.
-      #         if [ -f "$(dirname "$root")/flake.nix" ]; then
-      #           nix develop "$(dirname "$root")" -c cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
-      #         else
-      #           cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
-      #         fi
-      #       done
-      #     '
-      #   language: system
-      #   types: [rust]
-      #   pass_filenames: false
+      - id: native-module-lint
+        name: lint (nix)
+        entry: bin/hooks/native-module-lint
+        language: system
+        types: [rust]
+        pass_filenames: false
 
       - id: deno-fmt
         name: deno fmt (web/)

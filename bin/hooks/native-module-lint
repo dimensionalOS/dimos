@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+top=$(git rev-parse --show-toplevel)
+system=$(nix eval --raw --impure --expr builtins.currentSystem)
+
+# Not `... | while read`: a subshell would turn the failure below into a silent pass.
+flakes=$(git ls-files '*/flake.nix')
+
+failed=0
+while read -r flake; do
+    dir=$(dirname "$flake")
+    if ! nix eval --quiet "path:$top/$dir#packages.$system.lint.drvPath" >/dev/null 2>&1; then
+        continue  # no lint check for this system, or none at all
+    fi
+    started=$(date +%s)
+    if nix build -L "path:$top/$dir#lint" --no-link; then
+        printf '  lint %s: %ss\n' "$dir" "$(( $(date +%s) - started ))" >&2
+    else
+        printf '  lint %s: FAILED\n' "$dir" >&2
+        failed=$((failed + 1))
+    fi
+done <<< "$flakes"
+
+if [ "$failed" -ne 0 ]; then
+    echo "$failed module(s) failed the lint check" >&2
+    exit 1
+fi

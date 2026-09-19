@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""Fail if a native-module directory holds anything but tracked source.
+
+Every native module is built with `nix build path:.#<package>` from its own
+directory, and a `path:` flake ref copies that directory wholesale -- tracked,
+untracked and gitignored alike. Whatever reaches the copy is part of the
+derivation hash, so one stray file means the module no longer matches what CI
+published and the whole module recompiles instead of being substituted from
+Cachix. A `.DS_Store` from opening the folder in Finder is enough.
+
+Rather than filter the copy down to an allow list -- which would silently drop a
+new source file a module forgot to declare -- the convention is that a module
+directory contains only its tracked source. This guard enforces that convention
+at commit time, where the offending file can still be removed.
+
+Exempt are exactly the names nix's own source filter already discards, so the
+guard flags a file if and only if that file would change a derivation hash.
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import subprocess
+import sys
+
+EXEMPT_NAMES = {"target", "build", "__pycache__"}
+EXEMPT_PREFIXES = ("result",)  # `nix build` writes result, result-1, result-2, ...
+EXEMPT_SUFFIXES = ("~", ".o", ".so")
+
+
+def git(*args: str, cwd: Path) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout
+
+
+def repo_root() -> Path:
+    return Path(git("rev-parse", "--show-toplevel", cwd=Path.cwd()).strip())
+
+
+def module_dirs(root: Path) -> list[str]:
+    """Every directory that is a native module: a flake next to a build manifest."""
+    dirs = []
+    for line in git("ls-files", "*/flake.nix", cwd=root).splitlines():
+        d = str(Path(line).parent)
+        if (root / d / "Cargo.toml").exists() or (root / d / "CMakeLists.txt").exists():
+            dirs.append(d)
+    return sorted(dirs)
+
+
+def is_exempt(relative_to_module: str) -> bool:
+    for part in Path(relative_to_module).parts:
+        if part in EXEMPT_NAMES:
+            return True
+        if part.startswith(EXEMPT_PREFIXES):
+            return True
+        if part.endswith(EXEMPT_SUFFIXES):
+            return True
+        if part.startswith(".sw") and len(part) == 4:  # vim swap files
+            return True
+    return False
+
+
+def offenders(root: Path, module: str) -> list[str]:
+    out = git("status", "--porcelain", "--ignored=matching", "-z", "--", module, cwd=root)
+    found = []
+    for entry in out.split("\0"):
+        if not entry or entry[:2] not in ("??", "!!"):
+            continue
+        path = entry[3:]
+        if not is_exempt(str(Path(path).relative_to(module))):
+            found.append(path)
+    return found
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("files", nargs="*", help="ignored; pre-commit passes the staged files")
+    parser.parse_args()
+
+    root = repo_root()
+    bad = {m: found for m in module_dirs(root) if (found := offenders(root, m))}
+    if not bad:
+        return 0
+
+    print(
+        "Untracked or ignored files inside a native-module directory.\n"
+        "`nix build path:.#…` copies the whole directory, so each of these is part\n"
+        "of the module's derivation hash and costs a Cachix hit on every build:\n",
+        file=sys.stderr,
+    )
+    for module, found in bad.items():
+        print(f"  {module}", file=sys.stderr)
+        for path in found:
+            print(f"    {path}", file=sys.stderr)
+    print(
+        "\nDelete them, or commit them if they are source. Build output belongs in\n"
+        "the repo-root `target/` (see .cargo/config.toml), not next to the crate.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

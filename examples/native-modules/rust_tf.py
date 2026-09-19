@@ -28,7 +28,6 @@ import math
 from pathlib import Path
 import time
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
@@ -41,8 +40,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 _RUST_DIR = Path(__file__).parent / "rust"
 # The crate is a workspace member, so cargo builds into the repo-root target dir.
-_EXAMPLES = DIMOS_PROJECT_ROOT / "target" / "release"
-_BUILD = "cargo build --release"
+_BUILD = "nix build -L path:.#dimos-native-module-examples"
 
 
 class TfProducer(Module):
@@ -86,7 +84,7 @@ class TfProducer(Module):
 
 
 class TfListenerConfig(NativeModuleConfig):
-    executable: str = str(_EXAMPLES / "tf_listener")
+    executable: str = "result/bin/tf_listener"
     build_command: str = _BUILD
     cwd: str = str(_RUST_DIR)
     stdin_config: bool = True
@@ -103,7 +101,7 @@ class TfListenerModule(NativeModule):
 
 
 class TfBroadcasterConfig(NativeModuleConfig):
-    executable: str = str(_EXAMPLES / "tf_broadcaster")
+    executable: str = "result/bin/tf_broadcaster"
     build_command: str = _BUILD
     cwd: str = str(_RUST_DIR)
     stdin_config: bool = True

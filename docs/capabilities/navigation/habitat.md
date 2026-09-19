@@ -36,7 +36,20 @@ Layered so a failure can be bisected by dropping a level:
 
 habitat-sim only ships python 3.9 builds, so it cannot share the dimos interpreter. `HabitatConnection` is a [native module](/docs/usage/native_modules.md): the simulator runs as a subprocess and speaks dimos over zenoh through `dimos_lcm`, the standalone message package. Nothing on that side imports dimos, and a test enforces it.
 
-`dimos/simulation/habitat/nix/install.sh` is the module's `build_command`. Run through the module's flake, it creates the conda env, installs the message and transport packages, downloads the example scene and writes the `habitat-native` wrapper whose existence `NativeModule` treats as the build sentinel. Everything it produces lands in `target/habitat`, beside the cargo natives' output; delete `target/habitat/env` to force a rebuild.
+`dimos/simulation/habitat/nix/install.sh` provisions the module. It is **not** a
+`build_command`: habitat is the one native module `NativeModule` will not build for
+you, because habitat-sim is conda-only, the install pulls a multi-gigabyte HM3D scene,
+and headless rendering needs the host's own EGL driver -- so the module's flake offers
+a devShell and no package, and its `build_command` is `None`. Run it once by hand:
+
+```bash
+cd dimos/simulation/habitat/nix && nix develop path:. -c ./install.sh
+```
+
+It creates the conda env, installs the message and transport packages, downloads the
+example scene and writes the `habitat-native` wrapper whose existence `NativeModule`
+treats as the build sentinel. Everything lands in `target/habitat`, beside the other
+native modules' output; delete `target/habitat/env` to redo it.
 
 ## Frames
 

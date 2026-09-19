@@ -14,3 +14,10 @@
 
 // dimos glue around pointlio-core.
 pub mod module;
+
+#[allow(dead_code)]
+pub mod pcap;
+#[allow(dead_code)]
+pub mod pipeline;
+#[allow(dead_code)]
+pub mod wire;

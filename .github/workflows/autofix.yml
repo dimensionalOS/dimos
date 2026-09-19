@@ -6,7 +6,7 @@ permissions: {}
 
 jobs:
   lint:
-    timeout-minutes: 1
+    timeout-minutes: 1.5
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
@@ -30,5 +30,25 @@ jobs:
         run: uv run ruff format
       - name: uv lock
         run: uv lock
+
+      - name: Did native/ change?
+        id: shared
+        run: |
+          set -euo pipefail
+          base=${{ github.event.pull_request.base.sha }}
+          git fetch --quiet --depth 1 origin "$base"
+          if git diff --quiet "$base"...HEAD -- native; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install Nix
+        if: steps.shared.outputs.changed == 'true'
+        run: bash docker/ros/install-nix.sh
+      - name: Relock the modules onto this revision
+        if: steps.shared.outputs.changed == 'true'
+        run: python3 bin/relock-shared-flakes
+
+      # Unguarded: it commits the ruff and uv fixes too, which every PR may need.
       - name: autofix.ci
         uses: autofix-ci/action@v1

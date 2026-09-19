@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+top=$(git rev-parse --show-toplevel)
+system=$(nix eval --raw --impure --expr builtins.currentSystem)
+
+shared_shell=""
+if [ "${1:-}" = "--shell" ]; then
+    shared_shell=$2
+    shift 2
+fi
+subcommand=$1
+shift
+
+roots=$(git ls-files "*Cargo.toml" | while read -r manifest; do
+    cargo locate-project --manifest-path "$manifest" --workspace --message-format plain
+done | sort -u)
+
+while read -r root; do
+    dir=$(dirname "$root")
+    while [ "$dir" != "$top" ] && [ ! -f "$dir/flake.nix" ]; do dir=$(dirname "$dir"); done
+    if [ "$dir" = "$top" ]; then
+        echo "no module flake above $root -- refusing to fall back to the repo-root" >&2
+        echo "flake, which would copy the whole tree (git-lfs blobs included)." >&2
+        exit 1
+    fi
+
+    if [ -n "$shared_shell" ]; then
+        shell_dir=$shared_shell
+    else
+        shell_dir=$dir
+        if ! nix eval --quiet "path:$dir#devShells.$system.default.outPath" >/dev/null 2>&1; then
+            echo "skipping ${root#"$top"/}: $dir declares no devShell for $system" >&2
+            continue
+        fi
+    fi
+
+    started=$(date +%s)
+    nix develop "path:$shell_dir" -c true
+    entered=$(date +%s)
+    nix develop "path:$shell_dir" -c cargo "$subcommand" --manifest-path "$root" "$@"
+    finished=$(date +%s)
+    printf '  cargo %s %s: devShell %ss, cargo %ss\n' \
+        "$subcommand" "${dir#"$top"/}" "$((entered - started))" "$((finished - entered))" >&2
+done <<< "$roots"
