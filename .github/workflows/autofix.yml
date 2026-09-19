@@ -6,7 +6,7 @@ permissions: {}
 
 jobs:
   lint:
-    timeout-minutes: 1.5
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
           base=${{ github.event.pull_request.base.sha }}
           git fetch --quiet --depth 1 origin "$base"
-          if git diff --quiet "$base"...HEAD -- native; then
+          if git diff --quiet "$base" HEAD -- native; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
