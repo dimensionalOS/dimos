@@ -20,6 +20,7 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.camera.depth_cloud.module import StereoCloud
+from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
 from dimos.robot.galaxea.r1pro.blueprints.basic import r1pro_recorder as recorder_module
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_recorder import (
@@ -27,12 +28,12 @@ from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_recorder import (
     r1pro_calibration_recorder,
     r1pro_recorder,
 )
+from dimos.robot.galaxea.r1pro.config import R1PRO_CHASSIS_LIDAR_IP
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection
 from dimos.robot.galaxea.r1pro.lio import (
     LIDAR_FRAME,
     ODOM_FRAME,
     R1ProLioMountTf,
-    R1ProMid360,
 )
 
 
@@ -46,7 +47,8 @@ def test_the_robot_hangs_off_pointlio_and_its_streams_stay_apart(blueprint: Blue
     # The wheel odometry is off, so base_link has one parent: the mount tf's.
     assert atoms[R1ProConnection].kwargs["publish_odom"] is False
     assert R1ProLioMountTf in atoms
-    assert atoms[R1ProMid360].kwargs["frame_id"] == LIDAR_FRAME
+    assert atoms[Mid360].kwargs["frame_id"] == LIDAR_FRAME
+    assert atoms[Mid360].kwargs["lidar_ip"] == R1PRO_CHASSIS_LIDAR_IP
     assert atoms[PointLioRust].kwargs["sensor_frame_id"] == LIDAR_FRAME
     assert atoms[PointLioRust].kwargs["frame_id"] == ODOM_FRAME
     # Above the estimator's own rate, so the caps never decide anything.
@@ -57,7 +59,7 @@ def test_the_robot_hangs_off_pointlio_and_its_streams_stay_apart(blueprint: Blue
     key = blueprint._instance_key
     # Renamed off the vendor driver's `lidar` and the wheels' `odometry`, so
     # the recording never interleaves two producers on one stream.
-    assert remaps[(key(R1ProMid360), "lidar")] == "lidar_raw"
+    assert remaps[(key(Mid360), "lidar")] == "lidar_raw"
     assert remaps[(key(PointLioRust), "lidar")] == "pointlio_lidar"
     assert remaps[(key(PointLioRust), "odometry")] == "pointlio_odometry"
 
