@@ -11,6 +11,7 @@ import { StatusBar, type View } from "./ui/StatusBar.tsx";
 import { TokenForm } from "./ui/TokenForm.tsx";
 import { clearToken, readToken, storeToken } from "./token.ts";
 import styles from "./App.module.css";
+import { OperatorView } from "./OperatorView.tsx";
 
 export function App({ session }: { session: Session }) {
   const status = useStatus(session);
@@ -105,6 +106,18 @@ export function App({ session }: { session: Session }) {
           channels={status.manifest.channels}
           panels={status.manifest.panels}
           store={session.store}
+        />
+      );
+    } else if (
+      page === null && new URLSearchParams(globalThis.location.search).get("view") === "operator"
+    ) {
+      content = (
+        <OperatorView
+          panels={status.manifest.panels}
+          channels={status.manifest.channels}
+          store={session.store}
+          teleop={teleop}
+          session={session}
         />
       );
     } else if (status.manifest.panels.length === 0) {

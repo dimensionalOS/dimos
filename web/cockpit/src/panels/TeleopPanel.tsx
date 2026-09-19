@@ -63,6 +63,7 @@ function TeleopControls({ spec, teleop, ch }: {
     )
   );
   const snap = useSyncExternalStore(machine.subscribe, machine.getSnapshot);
+  const [speedScale, setSpeedScale] = useState(1);
 
   useEffect(() => teleop.onMsg((msg) => machine.onRelayMsg(msg)), [teleop, machine]);
   useEffect(() => machine.connectionChanged(connected), [machine, connected]);
@@ -99,8 +100,10 @@ function TeleopControls({ spec, teleop, ch }: {
     e.preventDefault();
     if (e.repeat) return;
     if (e.code === "Escape") {
-      // Blur (which disarms) so the next click re-focuses and re-arms.
-      e.currentTarget.blur();
+      machine.disarm("escape pressed");
+      // Focus may be on a child control; blurring the pad alone won't release it.
+      const focused = e.currentTarget.ownerDocument.activeElement;
+      if (focused instanceof HTMLElement && e.currentTarget.contains(focused)) focused.blur();
     } else if (e.code === "Space") {
       machine.estop();
     } else {
@@ -131,41 +134,75 @@ function TeleopControls({ spec, teleop, ch }: {
 
   return (
     <PanelFrame spec={spec}>
-      <div
-        tabIndex={0}
-        role="application"
-        aria-label={`keyboard teleop ${ch}`}
-        className={state === "armed" ? styles.padArmed : styles.pad}
-        data-testid={`teleop-${ch}`}
-        data-state={state}
-        onFocus={arm}
-        onClick={arm}
-        onBlur={onBlur}
-        onKeyDown={onKeyDown}
-        onKeyUp={onKeyUp}
-      >
-        <div className={styles.banner}>{banner}</div>
-        <div className={styles.cluster}>
-          {KEY_ROWS.map((row) => (
-            <div key={row[0].code} className={styles.keyRow}>
-              {row.map(({ code, label }) => (
-                <span
-                  key={code}
-                  className={pressedClass(snap, code)}
-                  data-testid={`teleop-key-${label}`}
-                  data-pressed={snap.pressed.has(code) || undefined}
-                >
-                  {label}
-                </span>
-              ))}
-            </div>
-          ))}
-        </div>
-        <div className={styles.readout} data-testid={`teleop-${ch}-readout`}>
-          <span>vx {snap.vx.toFixed(2)}</span>
-          <span>vy {snap.vy.toFixed(2)}</span>
-          <span>wz {snap.wz.toFixed(2)}</span>
-          {snap.boosted && <span className={styles.boost}>boost</span>}
+      <div className={styles.controls}>
+        <label className={styles.speedControl}>
+          Drive speed
+          <select
+            aria-label="Drive speed"
+            value={speedScale}
+            onChange={(event) => {
+              const scale = Number(event.target.value);
+              machine.setSpeedScale(scale);
+              setSpeedScale(scale);
+            }}
+          >
+            <option value={0.25}>Precision · 25%</option>
+            <option value={0.5}>Slow · 50%</option>
+            <option value={1}>Normal · 100%</option>
+          </select>
+          <span>
+            {(machine.config.maxLinear * speedScale).toFixed(2)} m/s ·{" "}
+            {(machine.config.maxAngular * speedScale).toFixed(2)}{" "}
+            rad/s · Shift ×{machine.config.boost}
+          </span>
+        </label>
+        <div
+          tabIndex={0}
+          role="application"
+          aria-label={`keyboard teleop ${ch}`}
+          className={state === "armed" ? styles.padArmed : styles.pad}
+          data-testid={`teleop-${ch}`}
+          data-state={state}
+          onFocus={arm}
+          onClick={arm}
+          onBlur={onBlur}
+          onKeyDown={onKeyDown}
+          onKeyUp={onKeyUp}
+        >
+          <div className={styles.banner}>{banner}</div>
+          <div className={styles.cluster}>
+            {KEY_ROWS.map((row) => (
+              <div key={row[0].code} className={styles.keyRow}>
+                {row.map(({ code, label }) => (
+                  <span
+                    key={code}
+                    className={pressedClass(snap, code)}
+                    data-testid={`teleop-key-${label}`}
+                    data-pressed={snap.pressed.has(code) || undefined}
+                  >
+                    {label}
+                  </span>
+                ))}
+              </div>
+            ))}
+          </div>
+          <div className={styles.readout} data-testid={`teleop-${ch}-readout`}>
+            <span>vx {snap.vx.toFixed(2)}</span>
+            <span>vy {snap.vy.toFixed(2)}</span>
+            <span>wz {snap.wz.toFixed(2)}</span>
+            {snap.boosted && <span className={styles.boost}>boost</span>}
+          </div>
+          <button
+            type="button"
+            className={styles.stopButton}
+            disabled={state !== "armed"}
+            onClick={(event) => {
+              event.stopPropagation();
+              machine.estop();
+            }}
+          >
+            STOP · Space
+          </button>
         </div>
       </div>
     </PanelFrame>

@@ -102,6 +102,7 @@ export class TeleopMachine {
   readonly config: TeleopConfig;
   #send: Pick<TeleopHooks, "control" | "datagram">;
   #phase: TeleopPhase = "disarmed";
+  #speedScale = 1;
   #reason: string | null = null;
   #pressed = new Set<string>();
   #seq = 0;
@@ -223,6 +224,12 @@ export class TeleopMachine {
     return false;
   }
 
+  setSpeedScale(scale: number): void {
+    if (!Number.isFinite(scale) || scale <= 0 || scale > 1) throw new Error("Invalid speed scale");
+    this.disarm("speed changed; click to arm");
+    this.#speedScale = scale;
+  }
+
   #sendCurrent(): void {
     const held = this.#pressed;
     let vx = 0;
@@ -235,7 +242,7 @@ export class TeleopMachine {
     if (held.has("KeyA")) wz = this.config.maxAngular;
     if (held.has("KeyD")) wz = -this.config.maxAngular;
     const boosted = held.has("ShiftLeft") || held.has("ShiftRight");
-    const k = boosted ? this.config.boost : 1;
+    const k = (boosted ? this.config.boost : 1) * this.#speedScale;
     this.#sendTwist(vx * k, vy * k, wz * k, boosted);
   }
 

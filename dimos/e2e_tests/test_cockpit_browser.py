@@ -136,6 +136,30 @@ def _assert_video_plays(page: Page) -> None:
     wait_pixels_change()
 
 
+def test_operator_view_live_video_and_responsive_swap(
+    start_go2_replay: Callable[[], DimosCliCall], page: Page
+) -> None:
+    call = start_go2_replay()
+    _wait_for_relay(call, START_TIMEOUT_S)
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    page.goto(f"{COCKPIT_URL}?view=operator")
+    expect(page.get_by_test_id("status")).to_have_attribute(
+        "data-phase", "connected", timeout=120_000
+    )
+    _assert_video_plays(page)
+    canvas = page.get_by_test_id("video-color_image-canvas")
+    canvas.evaluate("el => { window.operatorCanvas = el; }")
+    page.get_by_role("button", name="Map view", exact=True).click()
+    expect(page.get_by_role("button", name="Map view", exact=True)).to_have_attribute(
+        "aria-pressed", "true"
+    )
+    assert canvas.evaluate("el => el === window.operatorCanvas")
+    _assert_video_plays(page)
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.get_by_role("button", name="Camera view", exact=True).click()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
 def test_cockpit_live_data_and_reconnect(
     start_go2_replay: Callable[[], DimosCliCall], page: Page
 ) -> None:
