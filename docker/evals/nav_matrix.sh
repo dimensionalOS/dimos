@@ -13,6 +13,8 @@ export EVALS_IMAGE=${EVALS_IMAGE:-dimensional/evals:nav}
 export COMPOSE_FILE=${COMPOSE_FILE:-docker/evals/compose.yaml:docker/evals/compose.gpu.yaml:docker/evals/compose.habitat-data.yaml}
 export HABITAT_DATA_DIR=${HABITAT_DATA_DIR:-/data/habitat} EVAL_RUNS_DIR=${EVAL_RUNS_DIR:-$HOME/eval-runs}
 export DIMOS_TRANSPORT=zenoh RERUN_SAVE=0
+# The HSSD ground truth (PR 4214) is not in the image; mount it from this checkout. NAV_VOLUMES adds more.
+export NAV_VOLUMES="-v $PWD/misc/habitat/ground_truth:/app/misc/habitat/ground_truth:ro ${NAV_VOLUMES:-}"
 declare -A ARGS=(
   [dimos-planner]="--agent dimos.evals.agents.topic --set send=goal --set send_type=point --set done=goal_reached --set done_type=Bool --set done_when_still=true"
   [typesafe]="--agent dimos.evals.agents.topic --set modules=[\"type-safe-agent\"] --set trace=TypeSafeAgent"
@@ -33,12 +35,13 @@ job() {  # one (arm, scene) container, foreground; marker on a clean exit
   [ -f "$EVAL_RUNS_DIR/nav-done/$arm--$scene" ] && return 0
   echo "$(date +%FT%T) START $arm $scene"
   docker compose run --rm --name "nav-$arm-$scene-$$" -e DIMOS_ZENOH_SHM=0 -e CI=1 -e PYTEST_VERSION=1 \
-    -e "DIMOS_EVAL_TIMEOUT_S=$timeout" worker \
+    -e "DIMOS_EVAL_TIMEOUT_S=$timeout" $NAV_VOLUMES worker \
     dimos evals run dimos.evals.suites.habitat_nav --tags "$scene" --video $(cat "$EVAL_RUNS_DIR/nav-args/$arm") > "$log" 2>&1
   rc=$?; run=$(grep -a -o "/state/[^ ]*run-[^ ]*" "$log" | tail -1)
   echo "$(date +%FT%T) DONE $arm $scene rc=$rc $run"
   [ "$rc" = 0 ] && [ -n "$run" ] && echo "$run" > "$EVAL_RUNS_DIR/nav-done/$arm--$scene"
 }
-export -f job
+export -f job NAV_VOLUMES
+export NAV_VOLUMES
 for arm in ${arms//,/ }; do for scene in ${scenes//,/ }; do echo "$arm $scene ${TIMEOUT[$arm]:-900}"; done; done \
   | xargs -P "$J" -L 1 bash -c 'job "$0" "$1" "$2"' 2>&1 | tee -a "$EVAL_RUNS_DIR/nav-matrix.log"
