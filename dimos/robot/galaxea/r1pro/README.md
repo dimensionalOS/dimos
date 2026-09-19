@@ -102,3 +102,46 @@ default port, so use `LCM_DEFAULT_URL=udpm://239.255.76.67:7767?ttl=0`.
 **Build.** The estimator is a native binary built on first run with
 `nix build -L .#pointlio_native` in `dimos/hardware/sensors/lidar/pointlio/cpp`;
 on an Orin that is about twenty minutes, once.
+
+## Recording stereo calibration data
+
+The head's two eyes are calibrated as a pair from a recording, not on the
+robot: `calibrate_stereo.py` fits the baseline and how the right eye is aimed
+relative to the left (`right_{roll,pitch,yaw}_rad`) against the chassis lidar
+and writes `~/.dimos/r1pro/calibration.json`
+(`dimos/robot/galaxea/r1pro/stereo_calibration.py` is the schema and loader;
+`DIMOS_R1_STEREO_CALIBRATION` points it elsewhere, and with no file the
+committed rig numbers are used). The recording it consumes comes from this,
+on the robot:
+
+```bash
+dimos run r1pro-calibration-recorder \
+    --record sqlite --record-engine rust \
+    --record-topics head_left_color,head_right_color,head_left_info,head_right_info,pointlio_lidar,pointlio_odometry,tf
+```
+
+That is both eyes and both infos at 30 fps, Point-LIO's deskewed cloud and
+pose, and tf -- with the wrist cameras off and nothing that plans, so the
+Orin's CPU goes to the frames. The engine must be `rust` (the robot's sqlite
+cannot write the python recorder's JSONB), and Point-LIO's native binary has
+to have been rebuilt since the publish-stamp fix (`nix build .#pointlio_native`
+in `dimos/hardware/sensors/lidar/pointlio/cpp`).
+
+**Driving.** Slowly, for 60-120 s, with the floor and at least one wall in the
+head's view at 1-6 m the whole time. Put in a couple of gentle turns -- a turn
+is what separates a yaw error from a baseline error; a straight line cannot --
+and keep people from walking through the frame, since the fit assumes the
+scene held still between one eye's exposure and the other's.
+
+**Check it before fitting.** A recorder that fell behind leaves gaps that look
+like motion to the fit, and the file does not say it dropped anything:
+
+```bash
+python -m dimos.robot.galaxea.r1pro.recording_rates <recording.db> \
+    --require head_left_color=28 --require head_right_color=28
+```
+
+prints count, first/last stamp, mean Hz and the min/median/max Hz over
+10-second windows (`--window-s`) per stream, and exits 1 when a `--require`
+is not met. The window minimum is where a stall shows; the cameras arrive at
+about 28 Hz, so a mean under that means frames were lost.
