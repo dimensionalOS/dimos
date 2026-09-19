@@ -128,7 +128,7 @@ def _require_binary(name: str) -> Path:
     module_dir, package = _MODULE_OF[name]
     binary = module_dir / "result" / "bin" / name
     if not binary.exists():
-        pytest.fail(f"{binary} missing; run: (cd {module_dir}) && nix build -L path:.#{package}")
+        pytest.fail(f"{binary} missing; run: (cd {module_dir} && nix build -L path:.#{package})")
     return binary
 
 
