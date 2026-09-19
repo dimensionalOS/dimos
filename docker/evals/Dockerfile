@@ -1,7 +1,6 @@
-# Eval worker image: one container runs one eval case at a time, booting its own
-# dimos + DimSim inside the container's network namespace so N containers never
-# share a port or a multicast bus. Driven from the host by docker/evals/dispatch.py,
-# which execs docker/evals/run_case.py into a pool of these.
+# Eval worker image: one container runs one eval, booting its own dimos + simulator
+# inside the container's network namespace so N containers never share a port or a
+# multicast bus. Started from the host by `dimos evals run --docker`.
 #
 # Build from the repo root (the DimSim LFS assets must be real, not pointer stubs):
 #   git lfs pull --include="misc/DimSim/**"
@@ -26,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
     libxkbcommon-x11-0 libnss3 libnspr4 libasound2t64 libatspi2.0-0 \
     libxfixes3 libdrm2 libx11-xcb1 libxext6 libxshmfence1 fonts-liberation \
-    iproute2 \
+    iproute2 xvfb ffmpeg x11-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Everything dimos caches or records lives under /cache and /state so a bind
@@ -98,8 +97,7 @@ ENV PATH="/app/.venv/bin:${PATH}" \
 
 RUN mkdir -p /state /config
 
-# `dimos evals run --docker` runs one eval per container through this entrypoint;
-# the pool mode (dispatch.py) starts it idle and execs cases in.
+# `dimos evals run --docker` runs one eval per container through this entrypoint.
 COPY docker/evals/entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["sleep", "infinity"]

@@ -214,21 +214,15 @@ on wall clock, so a starved GPU or CPU shows up as lower scores, not just
 slower runs. Multi-GPU instances need one X screen per GPU and a
 per-container `DISPLAY`, which the compose files do not do yet.
 
-## Pool mode (optional)
+## Many at once
 
-`dispatch.py` is the other way to use the same image: keep N idle containers
-up and let one host command feed a suite's cases to them, one case per exec,
-pulling the next case as each finishes.
-
-```bash
-docker compose -f docker/evals/compose.yaml up -d --scale worker=4
-python docker/evals/dispatch.py --suite ... --agent ... [--set ...] [--tags ...] [--limit N]
-```
-
-It needs only Python and the docker CLI on the host, writes to
-`eval-runs/pool/<run-id>/`, and merges every case into one summary. Use it
-when one suite should finish as fast as possible; use `--docker` when you
-want independent runs you start and forget.
+There is no scheduler: to run a suite N ways, start N `--docker` invocations
+that select disjoint parts of it, with `--tags` or `--case`, and let each
+container work through its part in order. A shell loop with `xargs -P N`
+over a list of such commands is all the parallelism there is; `docker ps`
+shows what is running and `EVAL_RUNS_DIR` collects every run. A benchmark
+that spans scenes and agent configurations maps one container to each
+(configuration, scene) pair.
 
 ## Notes
 

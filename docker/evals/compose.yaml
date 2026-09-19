@@ -1,6 +1,4 @@
-# A pool of idle eval workers. Scale it, then drive it from the host:
-#   docker compose -f docker/evals/compose.yaml up -d --scale worker=4
-#   python docker/evals/dispatch.py --suite ... --agent ...
+# The eval worker: `dimos evals run --docker` starts one of these per eval.
 #
 # Each container has its own network namespace, so every dimos runs on its
 # default ports and multicast groups without colliding with its neighbours.
