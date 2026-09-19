@@ -58,10 +58,11 @@ class SecondaryModule(Module):
 class Body:
     length: float
     max_speed: float
+    rows: tuple[tuple[float, float], ...]
 
 
 class BodyConfig(ModuleConfig):
-    body: Body = Body(length=1.0, max_speed=0.5)
+    body: Body = Body(length=1.0, max_speed=0.5, rows=((1.0, 2.0),))
 
 
 class BodyModule(Module):
@@ -88,13 +89,21 @@ def test_sparse_dataclass_override_completes_from_the_default() -> None:
         [], environ={"BODYMODULE__BODY__MAX_SPEED": "0.6"}
     )
 
-    assert parsed.module_kwargs("bodymodule")["body"] == {"length": 1.0, "max_speed": 0.6}
+    body = parsed.module_kwargs("bodymodule")["body"]
+    assert body == {"length": 1.0, "max_speed": 0.6, "rows": ((1.0, 2.0),)}
 
-    # A blueprint-pinned body is what gets overlaid, not the class default.
-    pinned = BodyModule.blueprint(body=Body(length=2.0, max_speed=0.4))
-    parsed = BlueprintConfigParser(pinned).parse([], environ={"BODYMODULE__BODY__MAX_SPEED": "0.6"})
+    # A blueprint-pinned body is what gets overlaid, not the class default, and a
+    # sequence leaf takes JSON.
+    pinned = BodyModule.blueprint(body=Body(length=2.0, max_speed=0.4, rows=()))
+    parsed = BlueprintConfigParser(pinned).parse(
+        [], environ={"BODYMODULE__BODY__MAX_SPEED": "0.6", "BODYMODULE__BODY__ROWS": "[[3, 4]]"}
+    )
 
-    assert parsed.module_kwargs("bodymodule")["body"] == {"length": 2.0, "max_speed": 0.6}
+    assert parsed.module_kwargs("bodymodule")["body"] == {
+        "length": 2.0,
+        "max_speed": 0.6,
+        "rows": ((3.0, 4.0),),
+    }
 
 
 def test_parse_supports_value_forms_types_nested_defaults_and_last_wins() -> None:
