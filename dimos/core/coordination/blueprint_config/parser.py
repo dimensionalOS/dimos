@@ -248,6 +248,8 @@ class BlueprintConfigParser:
         reserved = {normalize_option_name(option.removeprefix("--")) for option in reserved_options}
 
         for target in sorted(schema.targets, key=lambda item: item.qualified_name):
+            if target.section == "shared":
+                continue  # would repeat every module line; the ambiguity error names it
             aliases = schema.aliases[normalize_option_name(target.qualified_name)]
             relative_available = (
                 target.section != "module"
@@ -316,6 +318,10 @@ class BlueprintConfigParser:
         for transport in transports:
             for path, annotation in leaf_fields(transport.config_cls):
                 target_annotations[("transport", transport.name, path)].append(annotation)
+        # every module leaf is also addressable as shared.<path>: one value, every module
+        for (section, _root, path), leaf_annotations in list(target_annotations.items()):
+            if section == "module":
+                target_annotations[("shared", "shared", path)].extend(leaf_annotations)
 
         targets = tuple(
             OptionTarget(
@@ -353,6 +359,8 @@ class BlueprintConfigParser:
                 shorthand_names.add(target.relative_name)
             elif target.section == "transport":
                 shorthand_names.add(target.relative_name)
+            elif target.section == "shared":
+                pass  # qualified only: the bare name stays the module shorthand
             else:
                 escaped = cli_path((config_key(target.root), *target.path))
                 canonical_names.add(escaped)

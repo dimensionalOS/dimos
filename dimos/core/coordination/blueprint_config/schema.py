@@ -46,7 +46,8 @@ class TransportSchema:
 
 @dataclass(frozen=True, slots=True)
 class OptionTarget:
-    section: Literal["module", "global", "transport"]
+    # shared: one module field, set on every module declaring it (--shared.x, SHARED__X)
+    section: Literal["module", "global", "transport", "shared"]
     root: str
     path: tuple[str, ...]
     annotations: tuple[Any, ...]
@@ -61,6 +62,8 @@ class OptionTarget:
             parts = ("g", *self.path)
         elif self.section == "transport":
             parts = ("transports", self.root, *self.path)
+        elif self.section == "shared":
+            parts = ("shared", *self.path)
         else:
             parts = (self.root, *self.path)
         return cli_path(parts)
@@ -93,6 +96,11 @@ class ParserSchema:
     transports: tuple[TransportSchema, ...]
     targets: tuple[OptionTarget, ...]
     aliases: Mapping[str, tuple[OptionTarget, ...]]
+
+
+def modules_with_field(schema: ParserSchema, field: str) -> list[str]:
+    """Names of the modules whose config declares the top-level field."""
+    return [m.atom.name for m in schema.modules if field in m.config_cls.model_fields]
 
 
 def cli_path(parts: tuple[str, ...]) -> str:

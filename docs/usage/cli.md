@@ -58,6 +58,11 @@ Values cascade (later overrides earlier):
 
 Environment variables and `.env` values use the field name in uppercase, for example `ROBOT_IPS`.
 
+Module fields cascade the same way, per source: `Module.blueprint(k=v)` →
+`.shared_config(k=v)` → config file → environment → CLI. Within a source the
+`shared` section (`SHARED__K`, `--shared.k`, every module declaring `k`) is
+overridden by a module's own section (`PLANNER__K`, `--planner.k`).
+
 ---
 
 ## Commands

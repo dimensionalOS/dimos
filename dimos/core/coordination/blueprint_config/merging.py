@@ -24,9 +24,11 @@ from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.schema import (
     OptionTarget,
     ParserSchema,
+    cli_path,
     coerce_cli_value,
     coerce_environment_value,
     display_normalized_option,
+    modules_with_field,
     normalize_option_name,
 )
 from dimos.core.coordination.blueprint_config.sources import global_environment_names
@@ -52,7 +54,10 @@ def merge_root_source(
         module_roots[module.atom.name.lower()] = module.atom.name
         module_roots[config_key(module.atom.name).lower()] = module.atom.name
 
-    for raw_root, raw_value in values.items():
+    # shared merges first so a module's own section wins within one source
+    for raw_root, raw_value in sorted(
+        values.items(), key=lambda kv: str(kv[0]).lower() != "shared"
+    ):
         if not isinstance(raw_root, str):
             raise BlueprintConfigError(f"{source} contains a non-string root key.")
         root = raw_root.lower().replace("-", "_")
@@ -67,10 +72,19 @@ def merge_root_source(
             deep_merge(global_values, normalized)
         elif root == "transports":
             deep_merge(transport_values, normalized)
+        elif root == "shared":
+            for key, value in normalized.items():
+                names = modules_with_field(schema, key)
+                if not names:
+                    raise BlueprintConfigError(
+                        f"Unknown shared option {key!r} in {source}: no module has that field."
+                    )
+                for name in names:
+                    deep_merge(module_values[name], {key: value})
         elif root in module_roots:
             deep_merge(module_values[module_roots[root]], normalized)
         else:
-            choices = [*module_roots, "g", "transports"]
+            choices = [*module_roots, "g", "transports", "shared"]
             suggestion = difflib.get_close_matches(root, choices, n=1)
             hint = f" Did you mean {suggestion[0]!r}?" if suggestion else ""
             raise BlueprintConfigError(
@@ -85,7 +99,7 @@ def merge_environment(
     environ: Mapping[str, str],
     schema: ParserSchema,
 ) -> None:
-    roots: dict[str, str] = {"g": "g", "transports": "transports"}
+    roots: dict[str, str] = {"g": "g", "transports": "transports", "shared": "shared"}
     for module in schema.modules:
         roots[config_key(module.atom.name).lower()] = module.atom.name
         roots[module.atom.name.lower()] = module.atom.name
@@ -195,6 +209,9 @@ def merge_cli(
             deep_set(module_values[target.root], target.path, value)
         elif target.section == "global":
             deep_set(global_values, target.path, value)
+        elif target.section == "shared":
+            for name in modules_with_field(schema, target.path[0]):
+                deep_set(module_values[name], target.path, value)
         else:
             section = transport_values.setdefault(target.root, {})
             if not isinstance(section, dict):
@@ -212,6 +229,8 @@ def _environment_identity(path: tuple[str, ...]) -> tuple[str, str, tuple[str, .
         if len(rest) < 2:
             return None
         return ("transport", rest[0], tuple(rest[1:]))
+    if root == "shared":
+        return ("shared", "shared", tuple(rest))
     return ("module", root, tuple(rest))
 
 
@@ -222,6 +241,9 @@ def _resolve_target(normalized: str, schema: ParserSchema) -> OptionTarget | Non
     if len(candidates) == 1:
         return candidates[0]
     choices = ", ".join(f"--{candidate.qualified_name}" for candidate in candidates)
+    paths = {c.path for c in candidates}
+    if len(paths) == 1 and all(c.section == "module" for c in candidates):
+        choices += f", or --{cli_path(('shared', *paths.pop()))} to set every one"
     raise BlueprintConfigError(
         f"Option --{display_normalized_option(normalized)} is ambiguous. Use one of: {choices}."
     )

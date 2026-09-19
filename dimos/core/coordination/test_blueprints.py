@@ -35,7 +35,7 @@ from dimos.core.coordination.blueprints import (
     autoconnect,
 )
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.spec.utils import Spec
@@ -356,3 +356,59 @@ def test_namespace_remappings_by_instance_name() -> None:
             ModuleA.blueprint().namespace("robot0"),
             ModuleA.blueprint().namespace("robot1"),
         ).remappings([(ModuleA, "data1", "other")])
+
+
+class SharedAConfig(ModuleConfig):
+    body: str = "default"
+    speed: float = 1.0
+
+
+class SharedA(Module):
+    config: SharedAConfig
+
+
+class SharedBConfig(ModuleConfig):
+    body: str = "default"
+
+
+class SharedB(Module):
+    config: SharedBConfig
+
+
+def test_shared_config_sets_the_field_on_every_module_declaring_it() -> None:
+    blueprint = autoconnect(SharedA.blueprint(), SharedB.blueprint(), ModuleA.blueprint())
+    shared = blueprint.shared_config(body="go2")
+
+    kwargs = {atom.name: atom.kwargs for atom in shared.blueprints}
+    assert kwargs["shareda"] == {"body": "go2"}
+    assert kwargs["sharedb"] == {"body": "go2"}
+    assert kwargs["modulea"] == {}
+    # the original is untouched
+    assert all(atom.kwargs == {} for atom in blueprint.blueprints)
+
+
+def test_shared_config_unknown_field_raises() -> None:
+    with pytest.raises(ValueError, match="nobody"):
+        autoconnect(SharedA.blueprint(), SharedB.blueprint()).shared_config(nobody=1)
+
+
+def test_shared_config_outer_wins_and_stays_in_its_subtree() -> None:
+    inner = autoconnect(SharedA.blueprint(body="inner"), SharedB.blueprint()).shared_config(
+        speed=2.0
+    )
+    outer = autoconnect(inner, ModuleA.blueprint()).shared_config(body="outer")
+    kwargs = {atom.name: atom.kwargs for atom in outer.blueprints}
+    assert kwargs["shareda"] == {"body": "outer", "speed": 2.0}
+    assert kwargs["sharedb"] == {"body": "outer"}
+
+    # a module joined after the call is not reached
+    later = autoconnect(SharedA.blueprint().shared_config(body="x"), SharedB.blueprint())
+    kwargs = {atom.name: atom.kwargs for atom in later.blueprints}
+    assert kwargs["sharedb"] == {}
+
+
+def test_shared_config_composes_with_namespace() -> None:
+    blueprint = autoconnect(SharedA.blueprint(), SharedB.blueprint()).namespace("r0")
+    kwargs = {atom.name: atom.kwargs for atom in blueprint.shared_config(body="ns").blueprints}
+    assert kwargs["r0/shareda"]["body"] == "ns"
+    assert kwargs["r0/sharedb"]["body"] == "ns"
