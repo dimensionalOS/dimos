@@ -173,12 +173,10 @@ impl Drop for LiveSource {
 
 /// Bind a UDP socket the way Livox SDK2 binds its own: with `SO_REUSEADDR`
 /// (and `SO_REUSEPORT`, which macOS needs before a wildcard bind will sit
-/// over a specific one). A vendor SDK2 process -- `livox_ros_driver2` on the
-/// Galaxea R1 -- holds the same host ports, and the kernel only lets two
-/// sockets share a port when both asked for it. A plain bind is refused with
-/// `EADDRINUSE`; the C++ Point-LIO module, which binds through SDK2, never
-/// was. Sharing the port is not sharing the lidar: whichever process last ran
-/// the handshake is the one the device streams to.
+/// over a specific one). Another SDK2 process on the same host holds the same
+/// ports, and the kernel only lets two sockets share a port when both asked
+/// for it. Sharing the port is not sharing the lidar: whichever process last
+/// ran the handshake is the one the device streams to.
 fn bind_shared(addr: SocketAddrV4, recv_buffer: Option<usize>) -> io::Result<UdpSocket> {
     let raw = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     raw.set_reuse_address(true)?;
