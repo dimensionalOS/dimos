@@ -61,7 +61,9 @@ from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.transport_factory import session_config
+from dimos.protocol.service.lcmservice import LCMConfig
 from dimos.protocol.service.spec import SessionConfig
+from dimos.protocol.service.zenohservice import ZenohConfig
 from dimos.utils.logging_config import setup_logger
 
 if sys.platform.startswith("linux"):
@@ -124,7 +126,9 @@ class NativeModuleConfig(ModuleConfig):
     extra_env: dict[str, str] = Field(default_factory=dict)
     # Session settings for this module alone, e.g. opening it as the zenoh router
     # the rest of the graph connects to. None follows the global config.
-    session: SessionConfig | None = None
+    # The concrete classes, not the base: the blueprint config layer re-validates
+    # a pinned session from its fields.
+    session: ZenohConfig | LCMConfig | None = None
     shutdown_timeout: float = DEFAULT_THREAD_JOIN_TIMEOUT
     log_format: LogFormat = LogFormat.JSON
     auto_build: bool = False
