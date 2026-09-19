@@ -111,10 +111,8 @@ def run(
     if config_path == DEFAULT_CONFIG_PATH:
         _reject_legacy_config()
     from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
-    from dimos.core.coordination.blueprint_config.parser import (
-        BlueprintConfigParser,
-        split_run_arguments,
-    )
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+    from dimos.core.coordination.blueprint_config.sources.cli import split_run_arguments
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.core.coordination.module_coordinator import ModuleCoordinator, stream_name_types
     from dimos.core.coordination.process_lifecycle import (

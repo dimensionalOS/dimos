@@ -20,10 +20,8 @@ from pydantic import BaseModel, Field
 import pytest
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
-from dimos.core.coordination.blueprint_config.parser import (
-    BlueprintConfigParser,
-    split_run_arguments,
-)
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprint_config.sources.cli import split_run_arguments
 from dimos.core.coordination.blueprints import TransportSpec, autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Stream, Transport
@@ -579,6 +577,12 @@ def test_module_section_beats_shared_within_one_source() -> None:
     blueprint = autoconnect(PrimaryModule.blueprint(), SecondaryModule.blueprint())
     parsed = BlueprintConfigParser(blueprint).parse(
         environ={"SHARED__MAP_FILE": "shared", "PRIMARYMODULE__MAP_FILE": "mine"}
+    )
+    assert parsed.module_kwargs("primarymodule")["map_file"] == "mine"
+    assert parsed.module_kwargs("secondarymodule")["map_file"] == "shared"
+    # the CLI too, whatever the token order
+    parsed = BlueprintConfigParser(blueprint).parse(
+        ["--primarymodule.map-file", "mine", "--shared.map-file", "shared"], environ={}
     )
     assert parsed.module_kwargs("primarymodule")["map_file"] == "mine"
     assert parsed.module_kwargs("secondarymodule")["map_file"] == "shared"

@@ -22,7 +22,7 @@ callers all resolve blueprint configuration in the same way.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -44,11 +44,15 @@ from dimos.core.coordination.blueprint_config.fields import (
     prepare_model_input,
     safe_field_default,
 )
-from dimos.core.coordination.blueprint_config.merging import (
-    merge_cli,
-    merge_environment,
-    merge_root_source,
+from dimos.core.coordination.blueprint_config.global_schema import (
+    global_environment_names,
+    global_option_targets,
+    global_schema_defaults,
+    global_targets_by_name,
+    reserved_global_short_names,
+    validate_global_values,
 )
+from dimos.core.coordination.blueprint_config.merging import merge_root_source
 from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
 from dimos.core.coordination.blueprint_config.schema import (
     ModuleSchema,
@@ -57,17 +61,18 @@ from dimos.core.coordination.blueprint_config.schema import (
     TransportSchema,
     cli_path,
     normalize_option_name,
+    section_roots,
 )
-from dimos.core.coordination.blueprint_config.sources import (
+from dimos.core.coordination.blueprint_config.sources.cli import (
+    raise_unknown_option,
+    read_cli,
+    resolve_target,
+)
+from dimos.core.coordination.blueprint_config.sources.environment import (
     configuration_environment,
-    global_environment_names,
-    global_schema_defaults,
-    merge_global_cli,
-    merge_global_environment,
-    read_config_file,
-    reserved_global_short_names,
-    validate_global_values,
+    read_environment,
 )
+from dimos.core.coordination.blueprint_config.sources.file import read_config_file
 from dimos.core.coordination.blueprint_config.values import (
     deep_merge,
     extract_shape,
@@ -83,22 +88,6 @@ from dimos.core.coordination.blueprints import (
     transport_config_name,
 )
 from dimos.core.global_config import GlobalConfig
-
-
-def split_run_arguments(tokens: Sequence[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Split Typer's variadic run arguments into blueprint names and config tokens.
-
-    Blueprint names must form the leading positional segment.  Once any
-    dash-prefixed token is seen, all remaining tokens belong to option parsing.
-    """
-    split_at = next((i for i, token in enumerate(tokens) if token.startswith("-")), len(tokens))
-    blueprint_names = tuple(tokens[:split_at])
-    if not blueprint_names:
-        raise BlueprintConfigError(
-            "At least one blueprint name must precede configuration options. "
-            "Usage: dimos run <blueprint> [--config-field value]."
-        )
-    return blueprint_names, tuple(tokens[split_at:])
 
 
 class BlueprintConfigParser:
@@ -136,11 +125,13 @@ class BlueprintConfigParser:
                     )
                 deep_merge(values, normalize_mapping_keys(raw_global))
 
-        merge_global_environment(
-            values,
-            configuration_environment(environ),
+        targets = global_option_targets()
+        environment = read_environment(
+            configuration_environment(environ), {"g": "g"}, {t.identity: t for t in targets}
         )
-        merge_global_cli(values, tuple(cli_tokens))
+        deep_merge(values, environment.get("g", {}))
+        cli = read_cli(tuple(cli_tokens), global_targets_by_name(targets).get)
+        deep_merge(values, cli.get("g", {}))
         if global_overrides is not None:
             deep_merge(values, normalize_mapping_keys(global_overrides))
         return validate_global_values(values)
@@ -179,42 +170,41 @@ class BlueprintConfigParser:
         deep_merge(global_values, plain_mapping(self.blueprint.global_config_overrides))
         transport_values: dict[str, Any] = {}
 
+        sources: list[tuple[str, Mapping[str, Any]]] = []
         if config_path is not None:
-            config_values = read_config_file(Path(config_path))
-            merge_root_source(
-                module_values,
-                global_values,
-                transport_values,
-                config_values,
-                source="config file",
-                schema=schema,
+            sources.append(("config file", read_config_file(Path(config_path))))
+        sources.append(
+            (
+                "environment",
+                read_environment(
+                    configuration_environment(environ),
+                    section_roots(schema),
+                    {target.identity: target for target in schema.targets},
+                    known_transports={transport.name for transport in schema.transports},
+                ),
             )
-
-        merge_environment(
-            module_values,
-            global_values,
-            transport_values,
-            configuration_environment(environ),
-            schema,
         )
-
         if overrides is not None:
+            sources.append(("programmatic overrides", overrides))
+        sources.append(
+            (
+                "command line",
+                read_cli(
+                    tuple(cli_tokens),
+                    lambda name: resolve_target(name, schema),
+                    on_unknown=lambda option: raise_unknown_option(option, schema),
+                ),
+            )
+        )
+        for source, values in sources:
             merge_root_source(
                 module_values,
                 global_values,
                 transport_values,
-                overrides,
-                source="programmatic overrides",
+                values,
+                source=source,
                 schema=schema,
             )
-
-        merge_cli(
-            module_values,
-            global_values,
-            transport_values,
-            tuple(cli_tokens),
-            schema,
-        )
 
         if global_overrides is not None:
             deep_merge(global_values, plain_mapping(global_overrides))
