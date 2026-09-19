@@ -133,6 +133,7 @@ impl VoxelRayMapper {
             support_min,
             emit_every,
             global_emit_every: 1,
+            global_max_interval_s: 0.0,
             region_percentile,
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,

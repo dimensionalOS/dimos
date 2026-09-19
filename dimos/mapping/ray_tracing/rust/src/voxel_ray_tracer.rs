@@ -86,8 +86,24 @@ pub struct Config {
     #[validate(range(min = 0))]
     pub emit_every: u32,
     /// Publish the global map every Nth frame. Zero disables it.
+    ///
+    /// A count is the wrong unit on its own. The global map is due on accepted
+    /// clouds, so anything that slows the input slows the map by the same
+    /// factor: at 4 accepted clouds a second `global_emit_every = 50` is every
+    /// 12.5 s, and at a quarter of a cloud a second it is every 200 s. Measured
+    /// on the 2026-09-16 R1 run, the input fell to 1.5 Hz and the map's 63rd
+    /// publish came due at frame 3150 while the run ended at 3117 -- so it
+    /// looked exactly like the global map had died, and nothing had.
     #[validate(range(min = 0))]
     pub global_emit_every: u32,
+    /// Publish the global map at least this often in *cloud stamp* seconds,
+    /// however few clouds have arrived. Zero leaves the count as the only
+    /// trigger.
+    ///
+    /// Taken from the cloud's own stamp rather than the wall clock so a replay
+    /// emits on the same cadence as the live run it is replaying.
+    #[validate(range(min = 0.0))]
+    pub global_max_interval_s: f32,
     /// Size the local region to this percentile of batch point distances, so a
     /// stray far hit cannot inflate it.
     #[validate(range(min = 0.0, max = 100.0))]

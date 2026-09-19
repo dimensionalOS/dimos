@@ -66,7 +66,19 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Zero disables them.
     emit_every: int = 1
     # Publish the global map every Nth frame. Zero disables it.
+    #
+    # A count alone is the wrong unit: the map is due on accepted clouds, so
+    # anything that slows the input slows the map by the same factor. Pair it
+    # with global_max_interval_s on any robot whose cloud rate can sag.
     global_emit_every: int = 1
+    # Publish the global map at least this often in cloud-stamp seconds,
+    # however few clouds arrive. Zero leaves the count as the only trigger.
+    #
+    # Off by default on purpose. Where a slow input is slow *because* the
+    # global emit is expensive -- it is unbounded and scans the whole map --
+    # forcing it more often makes that worse, so this is opted into per robot
+    # by someone who has measured that robot.
+    global_max_interval_s: float = 0.0
     # Size the local region to this percentile of batch point distances.
     region_percentile: float = 95.0
     # Fixed frame clouds are registered and published in. Each cloud is placed

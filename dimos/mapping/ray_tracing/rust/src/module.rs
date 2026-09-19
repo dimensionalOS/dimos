@@ -61,6 +61,11 @@ pub struct RayTracingVoxelMap {
     // newer mask already accounted for.
     last_clear_mask_stamp: f64,
 
+    /// Cloud stamp of the last global map published, so a slow input cannot
+    /// stretch the global map's cadence without bound. Zero until the first
+    /// one, which makes that first publish due immediately.
+    last_global_stamp: f64,
+
     // Stamp of the last cloud registered from each source frame, for
     // max_cloud_rate_hz. Keyed by frame_id so a fast sensor cannot starve a
     // slow one sharing the port.
@@ -133,7 +138,16 @@ impl RayTracingVoxelMap {
         let region = mapper.local_due().then(|| mapper.take_local_bounds());
         let cylinder = region.map(|c| c.bounds());
 
-        let global_points = mapper.global_due().then(|| mapper.global_points());
+        let global_due = global_map_due(
+            mapper.global_due(),
+            stamp,
+            self.last_global_stamp,
+            self.config.global_max_interval_s,
+        );
+        if global_due {
+            self.last_global_stamp = stamp;
+        }
+        let global_points = global_due.then(|| mapper.global_points());
         let local_points = cylinder.as_ref().map(|cyl| mapper.local_points(cyl));
         let fine_points = self
             .config
@@ -398,8 +412,73 @@ async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
     }
 }
 
+/// Whether the global map is due: on the frame count, or because too long has
+/// passed in cloud time.
+///
+/// The count alone is what made the global map look dead on the 2026-09-16 R1
+/// run. It is due every Nth *accepted cloud*, so anything that slows the input
+/// slows the map by the same factor -- at 4 clouds a second, `50` is every
+/// 12.5 s; at a quarter of a cloud a second it is every 200 s. That run's input
+/// fell to 1.5 Hz, its 63rd global publish came due at frame 3150, and the run
+/// ended at frame 3117. Nothing had failed and nothing was ever going to
+/// publish again.
+///
+/// *max_interval_s* is measured on the cloud's own stamp, not the wall clock,
+/// so a replay emits on the same cadence as the run it is replaying. Zero
+/// leaves the count as the only trigger, which is the default: where the input
+/// is slow *because* the global emit is expensive -- it is unbounded and scans
+/// the whole map -- forcing it more often makes that worse.
+fn global_map_due(count_due: bool, stamp: f64, last_stamp: f64, max_interval_s: f32) -> bool {
+    count_due || (max_interval_s > 0.0 && stamp - last_stamp >= max_interval_s as f64)
+}
+
 #[cfg(test)]
+
 mod tests {
+    #[test]
+    fn a_slow_input_cannot_stretch_the_global_map_without_bound() {
+        // The 2026-09-16 R1 run, in miniature. Clouds arrive every four
+        // seconds and the count is not due; without an interval the global map
+        // is simply never published again.
+        let mut last = 1000.0;
+        let mut published = 0;
+        for step in 1..=10 {
+            let stamp = 1000.0 + 4.0 * step as f64;
+            if global_map_due(false, stamp, last, 0.0) {
+                published += 1;
+                last = stamp;
+            }
+        }
+        assert_eq!(published, 0, "the count alone publishes nothing here");
+
+        // With a 20 s ceiling the same clouds get a map every 20 s.
+        let mut last = 1000.0;
+        let mut published = 0;
+        for step in 1..=10 {
+            let stamp = 1000.0 + 4.0 * step as f64;
+            if global_map_due(false, stamp, last, 20.0) {
+                published += 1;
+                last = stamp;
+            }
+        }
+        assert_eq!(published, 2, "40 s of clouds at a 20 s ceiling");
+    }
+
+    #[test]
+    fn the_count_still_wins_when_the_input_is_healthy() {
+        // The ceiling must not *add* publishes to a fast input -- that is the
+        // case where the global emit is already the expensive thing.
+        assert!(global_map_due(true, 100.0, 99.9, 0.0));
+        assert!(global_map_due(true, 100.0, 99.9, 20.0));
+        assert!(!global_map_due(false, 100.0, 99.9, 20.0));
+    }
+
+    #[test]
+    fn a_zero_interval_leaves_the_count_as_the_only_trigger() {
+        // The default, and what every robot that has not measured itself gets.
+        assert!(!global_map_due(false, 1e9, 0.0, 0.0));
+    }
+
     use super::*;
     use crate::voxel_ray_tracer::{
         emit_points, metric_voxel_keys, update_map, LocalBounds, VoxelKey, VoxelMap,
@@ -422,6 +501,7 @@ mod tests {
             support_min: 0,
             emit_every: 1,
             global_emit_every: 1,
+            global_max_interval_s: 0.0,
             region_percentile: 95.0,
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
