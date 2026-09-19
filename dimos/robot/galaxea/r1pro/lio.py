@@ -131,7 +131,7 @@ class R1ProLioOdomPose(Module):
 
 class R1ProMid360Config(Mid360Config):
     # No factory-default address: on an R1 the vendor's file answers instead.
-    lidar_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_LIDAR_IP"))
+    lidar_ip: str = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_LIDAR_IP", ""))
 
 
 class R1ProMid360(Mid360):
