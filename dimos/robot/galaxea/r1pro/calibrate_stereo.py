@@ -233,7 +233,7 @@ def check_streams(recording: Any, streams: Streams) -> None:
 
 def check_duration(recording: Any, streams: Streams, min_duration_s: float) -> float:
     stream = recording.stream(streams.left)
-    duration = stream.last_ts() - stream.first_ts()
+    duration = float(stream.last_ts() - stream.first_ts())
     if duration < min_duration_s:
         raise InsufficientError(
             EXIT_TOO_SHORT,
