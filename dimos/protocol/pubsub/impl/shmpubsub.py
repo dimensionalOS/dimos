@@ -127,6 +127,17 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
         self._topics: dict[str, SharedMemoryPubSubBase._TopicState] = {}
         self._lock = threading.Lock()
 
+    def __getstate__(self) -> dict[str, Any]:
+        state = self.__dict__.copy()
+        state.pop("_topics", None)
+        state.pop("_lock", None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._topics = {}
+        self._lock = threading.Lock()
+
     def start(self) -> None:
         pref = (self.config.prefer or "auto").lower()
         backend = os.getenv("DIMOS_IPC_BACKEND", pref).lower()
