@@ -104,10 +104,11 @@ class Replay(Configurable):
                 self._anchor = (time.time(), candidate_first_ts)
             return self._anchor
 
-    def pin_anchor(self) -> None:
-        """Pin the anchor at the earliest recorded ts now, before any stream subscribes,
-        so streams that start earlier than the first-subscribed one keep their frames."""
-        first = self.first_ts()
+    def pin_anchor(self, ts: float | None = None) -> None:
+        """Pin the anchor at *ts* (default: the earliest recorded ts) now, before any stream
+        subscribes, so streams that start earlier than the first-subscribed one keep their
+        frames."""
+        first = self.first_ts() if ts is None else ts
         if first is not None:
             self._resolve_anchor(first)
 

@@ -113,14 +113,15 @@ def test_subclass_payload_gets_the_base_port_type(tmp_path: Path) -> None:
     assert replay_module(str(path)).__annotations__ == {"odom": Out[PoseStamped]}
 
 
-def test_single_timestamp_stream_is_republished(tmp_path: Path) -> None:
+def test_single_timestamp_stream_is_republished_and_not_the_anchor(tmp_path: Path) -> None:
+    """camera_info stamped at import sits 39 s before the run; the run must start at odom."""
     path = tmp_path / "memory.db"
     store = SqliteStore(path=str(path))
     store.start()
     info = store.stream("camera_info", PoseStamped)
     for _ in range(3):
         info.append(PoseStamped(ts=1.0), ts=1.0)
-    store.stream("odom", PoseStamped).append(PoseStamped(ts=1.0), ts=1.0)
+    store.stream("odom", PoseStamped).append(PoseStamped(ts=40.0), ts=40.0)
     store.stop()
     module = replay_module(str(path))(dataset=str(path))
     got: dict[str, int] = {"camera_info": 0, "odom": 0}
@@ -135,11 +136,11 @@ def test_single_timestamp_stream_is_republished(tmp_path: Path) -> None:
         module.outputs[name].subscribe(count(name))
     module.start()
     deadline = time.time() + 5
-    while time.time() < deadline and got["camera_info"] < 5:
+    while time.time() < deadline and (got["camera_info"] < 2 or got["odom"] < 1):
         time.sleep(0.05)
     module.stop()
-    assert got["camera_info"] >= 5  # 3 recorded + at least 2 republishes
-    assert got["odom"] == 1
+    assert got["camera_info"] >= 2  # republished at 1 Hz
+    assert got["odom"] == 1  # arrived within the 5 s deadline, not 39 s later
 
 
 def test_slow_first_decode_does_not_skip_other_streams(

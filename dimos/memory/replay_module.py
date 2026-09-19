@@ -141,20 +141,24 @@ class ReplayModule(Module):
         streams: dict[str, ReplayStream[DimosMsg]] = {
             name: replay.stream(name) for name in self.outputs
         }
-        replay.pin_anchor()
+        # A stream whose rows all carry one timestamp (camera_info recorded from a
+        # constant stamped at import, often long before the run) is republished at
+        # 1 Hz instead of replayed, and does not set the anchor: otherwise the replay
+        # would spend that lead time emitting nothing.
+        static = {n for n, s in streams.items() if s.count() > 1 and s.first_ts() == s.last_ts()}
+        timed_starts = [t for n, s in streams.items() if n not in static and (t := s.first_ts())]
+        replay.pin_anchor(min(timed_starts) if timed_starts else None)
         port: Out[DimosMsg]
         for name, port in self.outputs.items():
             stream = streams[name]
-            timed: Observable[DimosMsg] = stream.observable()
             logger.info("Replaying %s -> %s", name, port)
-            self.register_disposable(timed.subscribe(port.publish))
-            if stream.count() > 1 and stream.first_ts() == stream.last_ts():
-                # Every row carries one timestamp (camera_info recorded from a constant),
-                # so the timed replay emits them all at once. Keep republishing the
-                # value at 1 Hz so subscribers that join later still get it.
+            if name in static:
                 self.register_disposable(
                     interval(1.0).subscribe(partial(_republish, port, stream.first()))
                 )
+                continue
+            timed: Observable[DimosMsg] = stream.observable()
+            self.register_disposable(timed.subscribe(port.publish))
 
     @rpc
     def stop(self) -> None:
