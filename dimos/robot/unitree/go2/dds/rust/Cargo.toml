@@ -1,0 +1,55 @@
+[package]
+name = "dimos-go2-dds"
+version = "0.1.0"
+edition = "2021"
+description = "The Go2 over CycloneDDS as a dimos native module: sport control in, odometry, L1 cloud and front video out"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_go2_dds"
+path = "src/lib.rs"
+
+[[bin]]
+name = "go2_dds"
+path = "src/bin/go2_dds.rs"
+
+[dependencies]
+# Our fork: serdata leak fix, no SHM (UDP only).
+cyclonedds-rs = { git = "ssh://git@github.com/dimensionalOS/cyclonedds-rs.git", rev = "06e6a4b79293bc3d0cc7fd2a522b62ca148ef96a", default-features = false }
+dimos-module = { path = "../../../../../../native/rust/dimos-module" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+serde = { version = "1", features = ["derive"] }
+serde-big-array = "0.5"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+
+[dev-dependencies]
+cdr = "0.2.4"
+
+[package.metadata.dimos.module.go2_dds]
+path = "dimos_go2_dds::module::Go2Dds"
+python = "dimos.robot.unitree.go2.dds.module:GO2DDS"
+
+[package.metadata.dimos.module.go2_dds.inputs]
+cmd_vel = "geometry_msgs.Twist"
+command = "std_msgs.String"
+tf = "tf2_msgs.TFMessage"
+
+[package.metadata.dimos.module.go2_dds.outputs]
+odometry = "nav_msgs.Odometry"
+lidar = "sensor_msgs.PointCloud2"
+video = "foxglove_msgs.CompressedVideo"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# Our cyclonedds-sys fork (no-SHM wrapper, static-link patch) with bindgen bumped so it
+# builds against the libclang the dev shell has; see vendor/cyclonedds-sys/Cargo.toml.
+[patch.crates-io]
+cyclonedds-sys = { path = "vendor/cyclonedds-sys" }
+
+# Own lockfile, like the other native crates: not in the repo's top-level workspace.
+[workspace]
+exclude = ["vendor/cyclonedds-sys"]
