@@ -55,11 +55,13 @@ from dimos.core.global_config import global_config
 from dimos.core.stream import In
 from dimos.core.transport import pSHMTransport
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
-from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.memory.module import Recorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1GrootCoordinator,
     _unitree_g1_groot_wbc_core,
@@ -68,8 +70,8 @@ from dimos.robot.unitree.g1.manip_config import g1_manipulation_model_config
 from dimos.teleop.webxr.extensions import VideoArmTeleopModule
 
 
-class G1CollectionRecorder(CollectionRecorder):
-    """CollectionRecorder plus the operator's absolute controller poses.
+class G1CollectionRecorder(Recorder):
+    """Record G1 observations and the operator's absolute controller poses.
 
     The shared teleop IK captures controller and robot references internally,
     so joint commands do not appear on a stream. Recording both controller
@@ -80,6 +82,9 @@ class G1CollectionRecorder(CollectionRecorder):
     # a GIL with control modules.
     dedicated_worker = True
 
+    color_image: In[Image]
+    coordinator_joint_state: In[JointState]
+    status: In[EpisodeStatus]
     left_cartesian_command: In[PoseStamped]
     right_cartesian_command: In[PoseStamped]
 
@@ -123,6 +128,7 @@ unitree_g1_teleop = (
         EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
         G1CollectionRecorder.blueprint(
             db_path=_session_db(),
+            record_tf=False,
             # Collection observations/actions are synchronized by timestamp,
             # not localized in the world frame. Declaring them poseless also
             # avoids attempting a world-to-camera lookup when nav localization

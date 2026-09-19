@@ -34,7 +34,12 @@ from dimos.protocol.service.spec import BaseConfig
 
 
 class CollectionFeature(FeatureSpec):
-    """A dataset feature with the raw message type needed to record its stream."""
+    """A dataset projection and the raw message type needed to record its stream.
+
+    ``message_type`` describes the input, not the exported feature. ``field``,
+    ``dtype``, and ``shape`` select its dataset representation: for example,
+    Image data as video or JointState positions converted to float32.
+    """
 
     message_type: type[Any]
 

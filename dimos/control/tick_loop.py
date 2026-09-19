@@ -191,10 +191,7 @@ class TickLoop:
 
         hw_commands = self._route_to_hardware(joint_commands)
 
-        accepted_commands = self._write_all_hardware(hw_commands)
-
-        if self._publish_command_callback:
-            self._publish_applied_position_command(accepted_commands, joint_states.timestamp)
+        self._write_all_hardware(hw_commands, joint_states.timestamp)
 
         if self._publish_callback:
             self._publish_joint_state(joint_states)
@@ -412,10 +409,12 @@ class TickLoop:
     def _write_all_hardware(
         self,
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
-    ) -> dict[str, tuple[dict[str, float], ControlMode]]:
-        """Write commands to all hardware interfaces."""
+        timestamp: float,
+    ) -> None:
+        """Write commands and publish accepted position updates outside the hardware lock."""
         hardware = self._hardware
-        accepted_commands: dict[str, tuple[dict[str, float], ControlMode]] = {}
+        names: list[str] = []
+        values: list[float] = []
         with self._hardware_lock:
             for hw_id, (positions, mode) in hw_commands.items():
                 if hw_id in hardware:
@@ -427,25 +426,11 @@ class TickLoop:
                             logger.error(
                                 f"Hardware {hw_id} rejected {mode.name} command from control task"
                             )
-                        else:
-                            accepted_commands[hw_id] = (positions, mode)
+                        elif mode in (ControlMode.POSITION, ControlMode.SERVO_POSITION):
+                            names.extend(positions)
+                            values.extend(positions.values())
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
-        return accepted_commands
-
-    def _publish_applied_position_command(
-        self,
-        accepted_commands: dict[str, tuple[dict[str, float], ControlMode]],
-        timestamp: float,
-    ) -> None:
-        """Publish position commands only after the hardware accepted them."""
-        names: list[str] = []
-        positions: list[float] = []
-        for commands, mode in accepted_commands.values():
-            if mode not in (ControlMode.POSITION, ControlMode.SERVO_POSITION):
-                continue
-            names.extend(commands)
-            positions.extend(commands.values())
         if not names or self._publish_command_callback is None:
             return
         self._publish_command_callback(
@@ -453,7 +438,7 @@ class TickLoop:
                 ts=timestamp,
                 frame_id=self._frame_id,
                 name=names,
-                position=positions,
+                position=values,
                 velocity=[],
                 effort=[],
             )

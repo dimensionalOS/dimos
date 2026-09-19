@@ -333,16 +333,6 @@ class _EEFTwistCoordinator(ControlCoordinator):
 
 
 class TestControlCoordinatorLifecycle:
-    def test_base_coordinator_starts_without_command_output(self, make_coordinator, mocker):
-        mocker.patch("dimos.core.module.Module.start")
-        loop = mocker.patch("dimos.control.coordinator.TickLoop")
-        coordinator = make_coordinator()
-
-        coordinator.start()
-
-        assert loop.call_args.kwargs["publish_command_callback"] is None
-        assert "applied_joint_position_command" not in coordinator.outputs
-
     def test_start_subscribes_ee_twist_only_for_eef_twist_tasks(self, make_coordinator, mocker):
         mocker.patch("dimos.core.module.Module.start")
         mocker.patch("dimos.control.coordinator.TickLoop")
@@ -1142,7 +1132,9 @@ class TestTickLoop:
 
         state, per_hardware = tick_loop._read_all_hardware()
         imu = tick_loop._read_all_imu()
-        tick_loop._write_all_hardware({"g1": ({"g1/joint1": 0.25}, ControlMode.SERVO_POSITION)})
+        tick_loop._write_all_hardware(
+            {"g1": ({"g1/joint1": 0.25}, ControlMode.SERVO_POSITION)}, timestamp=123.0
+        )
 
         assert state.joint_positions == {}
         assert per_hardware == {}
@@ -1173,7 +1165,9 @@ class TestTickLoop:
         )
 
         state, _per_hardware = tick_loop._read_all_hardware()
-        tick_loop._write_all_hardware({"g1": ({"g1/joint1": 0.25}, ControlMode.SERVO_POSITION)})
+        tick_loop._write_all_hardware(
+            {"g1": ({"g1/joint1": 0.25}, ControlMode.SERVO_POSITION)}, timestamp=123.0
+        )
 
         assert state.joint_positions == {"g1/joint1": 0.5}
         adapter.write_motor_commands.assert_called_once()
@@ -1306,54 +1300,96 @@ class TestTickLoop:
             joint_to_hardware={"arm/joint1": "arm"},
         )
 
-        tick_loop._write_all_hardware({"arm": ({"arm/joint1": 0.25}, ControlMode.SERVO_POSITION)})
+        tick_loop._write_all_hardware(
+            {"arm": ({"arm/joint1": 0.25}, ControlMode.SERVO_POSITION)}, timestamp=123.0
+        )
 
         log_error.assert_called_once_with(
             "Hardware arm rejected SERVO_POSITION command from control task"
         )
 
-    def test_applied_position_command_publishes_only_accepted_position_modes(self):
-        publish = MagicMock()
+    @pytest.mark.parametrize(
+        "mode,ready,accepted,error,expected",
+        [
+            (ControlMode.POSITION, True, True, None, [0.25]),
+            (ControlMode.SERVO_POSITION, True, True, None, [0.25]),
+            (ControlMode.VELOCITY, True, True, None, []),
+            (ControlMode.TORQUE, True, True, None, []),
+            (ControlMode.POSITION, False, True, None, []),
+            (ControlMode.POSITION, True, False, None, []),
+            (ControlMode.POSITION, True, True, RuntimeError("write failed"), []),
+        ],
+    )
+    def test_command_feedback_reports_only_successful_position_writes(
+        self, mocker, mode, ready, accepted, error, expected
+    ):
+        hardware = mocker.Mock(spec=ConnectedHardware)
+        hardware.ready_for_control.return_value = ready
+        hardware.write_command.return_value = accepted
+        hardware.write_command.side_effect = error
+        received = []
+        lock = threading.Lock()
+
+        def receive(message):
+            assert not lock.locked()
+            received.append(message)
+
         tick_loop = TickLoop(
             tick_rate=100.0,
-            hardware={},
-            hardware_lock=threading.Lock(),
+            hardware={"arm": hardware},
+            hardware_lock=lock,
             tasks={},
             task_lock=threading.Lock(),
             joint_to_hardware={},
-            publish_command_callback=publish,
+            publish_command_callback=receive,
+            frame_id="robot",
         )
+        tick_loop._write_all_hardware({"arm": ({"arm/joint1": 0.25}, mode)}, timestamp=123.0)
 
-        tick_loop._publish_applied_position_command(
-            {
-                "arm": ({"arm/joint1": 0.25}, ControlMode.SERVO_POSITION),
-                "base": ({"base/wheel": 1.0}, ControlMode.VELOCITY),
-            },
-            timestamp=123.0,
+        assert [value for msg in received for value in msg.position] == expected
+        assert [msg.name for msg in received] == ([["arm/joint1"]] if expected else [])
+        assert [(msg.ts, msg.frame_id) for msg in received] == (
+            [(123.0, "robot")] if expected else []
         )
+        assert hardware.write_command.call_count == int(ready)
 
-        message = publish.call_args.args[0]
-        assert message.ts == 123.0
-        assert message.name == ["arm/joint1"]
-        assert message.position == [0.25]
-
-    def test_rejected_hardware_command_is_not_returned_as_applied(self):
-        hardware = {"arm": MagicMock()}
-        hardware["arm"].write_command.return_value = False
+    def test_command_feedback_combines_successful_writes_and_keeps_sparse_updates(self, mocker):
+        hardware = {
+            name: mocker.Mock(spec=ConnectedHardware) for name in ("left", "right", "failed")
+        }
+        for hw in hardware.values():
+            hw.ready_for_control.return_value = True
+            hw.write_command.return_value = True
+        hardware["failed"].write_command.return_value = False
+        received = []
         tick_loop = TickLoop(
             tick_rate=100.0,
             hardware=hardware,
             hardware_lock=threading.Lock(),
             tasks={},
             task_lock=threading.Lock(),
-            joint_to_hardware={"arm/joint1": "arm"},
+            joint_to_hardware={},
+            publish_command_callback=received.append,
+        )
+        tick_loop._write_all_hardware(
+            {
+                "left": ({"left/joint1": 0.25}, ControlMode.POSITION),
+                "failed": ({"failed/joint1": 0.75}, ControlMode.POSITION),
+                "right": ({"right/gripper": 0.5}, ControlMode.SERVO_POSITION),
+            },
+            timestamp=123.0,
+        )
+        tick_loop._write_all_hardware(
+            {
+                "right": ({"right/gripper": 0.6}, ControlMode.SERVO_POSITION),
+            },
+            timestamp=124.0,
         )
 
-        accepted = tick_loop._write_all_hardware(
-            {"arm": ({"arm/joint1": 0.25}, ControlMode.SERVO_POSITION)}
-        )
-
-        assert accepted == {}
+        assert [(msg.name, msg.position) for msg in received] == [
+            (["left/joint1", "right/gripper"], [0.25, 0.5]),
+            (["right/gripper"], [0.6]),
+        ]
 
 
 class TestIntegration:
