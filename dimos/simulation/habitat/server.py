@@ -52,6 +52,14 @@ _spec = importlib.util.spec_from_file_location(
 assert _spec is not None and _spec.loader is not None
 frames = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(frames)
+_nspec = importlib.util.spec_from_file_location(
+    "_habitat_navmesh", Path(__file__).parent / "navmesh.py"
+)
+assert _nspec is not None and _nspec.loader is not None
+navmesh = importlib.util.module_from_spec(_nspec)
+_nspec.loader.exec_module(navmesh)
+# Computed navmeshes (HSSD ships none) live outside the package tree, like the env.
+NAVMESH_CACHE = Path(__file__).resolve().parents[3] / "target" / "habitat" / "navmesh"
 
 
 def log(msg: str) -> None:
@@ -269,6 +277,7 @@ class HabitatHost:
         if self._sim is not None:
             self._sim.close()
         self._sim = hs.Simulator(hs.Configuration(backend, [agent_cfg]))
+        log("navmesh: " + navmesh.ensure_navmesh(self._sim, scene_id, NAVMESH_CACHE))
         self._agent = self._sim.initialize_agent(0)
         self.reset_pose()
 

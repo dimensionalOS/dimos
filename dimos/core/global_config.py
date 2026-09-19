@@ -97,6 +97,9 @@ class GlobalConfig(BaseSettings):
     viewer: ViewerBackend = "rerun"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
+    # Also write the whole Rerun stream to recordings/<run-id>/rerun.rrd, the
+    # folder the --record memory.db lands in, so a run can be replayed offline.
+    rerun_save: bool = False
     rerun_host: str | None = None
     rerun_websocket_server_port: int = 3030
     n_workers: int = 2

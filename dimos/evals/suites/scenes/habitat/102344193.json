@@ -1,0 +1,2754 @@
+{
+  "dataset": "hssd-hab",
+  "scene_id": "102344193",
+  "frame_id": "world",
+  "timestamp": 0.0,
+  "count": 117,
+  "detections": [
+    {
+      "id": "3d779b56904aafa1c8f2412e4f5e4c4460098bb0@0",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xyz": [
+        3.877085,
+        8.109331999999998,
+        0.5253965
+      ],
+      "size_xyz": [
+        0.12814199999999998,
+        0.1534040000000001,
+        0.130793
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "drinkware",
+        "Frosty Santa mug"
+      ]
+    },
+    {
+      "id": "b5061af764b94e966a35149eb419152f4a3687d1@1",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xyz": [
+        4.011843,
+        8.172358,
+        0.5050955
+      ],
+      "size_xyz": [
+        0.09629800000000044,
+        0.08118399999999859,
+        0.09019099999999997
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "drinkware",
+        "Gold Moroccan Mug"
+      ]
+    },
+    {
+      "id": "cb47ce31bd4309c8b3c99a1d53db43f7046cb489@2",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        0.9038999999999999,
+        0.6685099999999999,
+        0.851546
+      ],
+      "size_xyz": [
+        0.570002,
+        0.414648,
+        1.6969079999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "plant"
+      ]
+    },
+    {
+      "id": "e4c49b444dda05bdac79ad01ec10f82b735b62a1@3",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        6.5017,
+        -1.3753425,
+        1.0622795
+      ],
+      "size_xyz": [
+        0.6566479999999997,
+        0.49810299999999996,
+        2.125409
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "Bamboo Plant"
+      ]
+    },
+    {
+      "id": "8df45b4963699bb2f2340149b79a7229d3048184@4",
+      "label": "counter",
+      "score": 1.0,
+      "center_xyz": [
+        2.99466,
+        3.0120525,
+        0.47423
+      ],
+      "size_xyz": [
+        0.9951499999999998,
+        2.401445,
+        0.94846
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "counter",
+        "YOO OH Kitchen Island 250, AIR"
+      ]
+    },
+    {
+      "id": "1d438cf2a0be5706ffdbd1489fbfb27f712589a0@5",
+      "label": "tv",
+      "score": 1.0,
+      "center_xyz": [
+        3.9581395,
+        9.530855,
+        1.31671
+      ],
+      "size_xyz": [
+        1.2582870000000002,
+        0.07618599999999986,
+        0.802968
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "tv",
+        "Flat TV"
+      ]
+    },
+    {
+      "id": "2f4e1518e7dca8f8b31ced792313bd79e09e9011@6",
+      "label": "Badacessoire/accessoire",
+      "score": 1.0,
+      "center_xyz": [
+        8.234829000000001,
+        -0.1360385,
+        0.9446635
+      ],
+      "size_xyz": [
+        0.3986579999999993,
+        0.195063,
+        1.889263
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "da29f67f9ed90652128b715ef29b0d1636da5d6a@7",
+      "label": "tray",
+      "score": 1.0,
+      "center_xyz": [
+        3.97179,
+        8.0772305,
+        0.48550000000000004
+      ],
+      "size_xyz": [
+        0.565226,
+        0.565227000000001,
+        0.05099999999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "tray",
+        "COLOR TRAY"
+      ]
+    },
+    {
+      "id": "a50665eb9bf6c57860330bc8f492760001163607@8",
+      "label": "mantel_clock",
+      "score": 1.0,
+      "center_xyz": [
+        1.3782079999999999,
+        4.407298,
+        1.0771985
+      ],
+      "size_xyz": [
+        0.08834200000000014,
+        0.1975359999999995,
+        0.254397
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "mantel_clock",
+        "Painted Metal Desk Clock"
+      ]
+    },
+    {
+      "id": "0d2c009971e681c8943126c50ae416b50d666577@9",
+      "label": "carpet",
+      "score": 1.0,
+      "center_xyz": [
+        7.897759,
+        -2.07021,
+        0.0025505
+      ],
+      "size_xyz": [
+        0.5999999999999996,
+        0.9000000000000001,
+        0.005001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "carpet",
+        "Malaga Reversible Bath Mat - 60x90 cms, Blue"
+      ]
+    },
+    {
+      "id": "0d2c009971e681c8943126c50ae416b50d666577@10",
+      "label": "carpet",
+      "score": 1.0,
+      "center_xyz": [
+        8.237589,
+        -0.80619,
+        0.0025499999999999997
+      ],
+      "size_xyz": [
+        0.6000000000000005,
+        0.8999999999999999,
+        0.005
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "carpet",
+        "Malaga Reversible Bath Mat - 60x90 cms, Blue"
+      ]
+    },
+    {
+      "id": "1e0ece19554ca4590786059ecf15e49c5e5cf5f5@11",
+      "label": "Esoft RW - Hanging Clothes",
+      "score": 1.0,
+      "center_xyz": [
+        5.7576195,
+        -2.2017905,
+        0.7075645
+      ],
+      "size_xyz": [
+        2.144769,
+        0.7244809999999999,
+        1.2951650000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "670c0caf8cb7df8466c675d7c91f7877840f9513@12",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        7.6281795,
+        2.0685505,
+        0.5161385
+      ],
+      "size_xyz": [
+        0.527819,
+        0.603121,
+        1.032277
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Siena 27 Inch Bar Stool, Blue"
+      ]
+    },
+    {
+      "id": "670c0caf8cb7df8466c675d7c91f7877840f9513@13",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        8.1936495,
+        2.6340205,
+        0.5161385
+      ],
+      "size_xyz": [
+        0.6031209999999998,
+        0.527819,
+        1.032277
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Siena 27 Inch Bar Stool, Blue"
+      ]
+    },
+    {
+      "id": "670c0caf8cb7df8466c675d7c91f7877840f9513@14",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        8.2059395,
+        3.4271504999999998,
+        0.5161385
+      ],
+      "size_xyz": [
+        0.6031210000000007,
+        0.5278189999999996,
+        1.032277
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Siena 27 Inch Bar Stool, Blue"
+      ]
+    },
+    {
+      "id": "670c0caf8cb7df8466c675d7c91f7877840f9513@15",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        7.6404695,
+        3.99262,
+        0.5161385
+      ],
+      "size_xyz": [
+        0.527819,
+        0.6031219999999999,
+        1.032277
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Siena 27 Inch Bar Stool, Blue"
+      ]
+    },
+    {
+      "id": "7d1667de2aee96561ab58d921d0ad053a598ae58@16",
+      "label": "carpet",
+      "score": 1.0,
+      "center_xyz": [
+        2.1885,
+        -1.50223,
+        0.009956000000000001
+      ],
+      "size_xyz": [
+        3.048,
+        2.4383999999999997,
+        0.019812
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "carpet",
+        "Bensi Hand-Knotted 8' x 10' Rug, Navy"
+      ]
+    },
+    {
+      "id": "e70cce397f9d6cb12542e6de70baeff0fc7e17e3@17",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        8.2342875,
+        6.8512465,
+        0.3817115
+      ],
+      "size_xyz": [
+        0.9822630000000006,
+        0.996283,
+        0.762767
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Cuba Outdoor Lounge Chair, Walnut/Black"
+      ]
+    },
+    {
+      "id": "e70cce397f9d6cb12542e6de70baeff0fc7e17e3@18",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        8.318529,
+        8.686756500000001,
+        0.3817115
+      ],
+      "size_xyz": [
+        0.9900240000000009,
+        0.9913550000000004,
+        0.762767
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Cuba Outdoor Lounge Chair, Walnut/Black"
+      ]
+    },
+    {
+      "id": "e432bd2619cb6eb619e6bf72ffa6a39892c92b7d@19",
+      "label": "wardrobe",
+      "score": 1.0,
+      "center_xyz": [
+        3.83102,
+        0.3485,
+        0.9649975
+      ],
+      "size_xyz": [
+        0.6100000000000003,
+        1.003,
+        1.929995
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "wardrobe",
+        "Matera Armoire - Oak"
+      ]
+    },
+    {
+      "id": "2c1633348f01bcd9dfd81539bb4fcd3621383ea9@20",
+      "label": "picture_frame",
+      "score": 1.0,
+      "center_xyz": [
+        4.4301995000000005,
+        9.389389999999999,
+        0.8794059999999999
+      ],
+      "size_xyz": [
+        0.23001699999999925,
+        0.20682399999999923,
+        0.2730119999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture_frame",
+        "Geometric photo frame"
+      ]
+    },
+    {
+      "id": "6c988f13a1ea7360d4958bb938e7910c547e7ed4@21",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xyz": [
+        3.9374015,
+        7.991179,
+        0.5
+      ],
+      "size_xyz": [
+        0.08190299999999961,
+        0.07080999999999982,
+        0.08000000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "drinkware",
+        "Bucolic Scene Mug"
+      ]
+    },
+    {
+      "id": "a3e7ee889942ea04526f0c0bab67f0b255d6a17f@22",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        6.208951,
+        3.3995300000000004,
+        1.7500005
+      ],
+      "size_xyz": [
+        0.0044480000000000075,
+        0.10565399999999991,
+        0.14803300000000008
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Gold Photo Frame"
+      ]
+    },
+    {
+      "id": "f1060281ecb9903623755e30cf227200b71742dc@23",
+      "label": "picture",
+      "score": 1.0,
+      "center_xyz": [
+        1.005,
+        4.439030000000001,
+        1.3717199999999998
+      ],
+      "size_xyz": [
+        0.010000000000000009,
+        0.3799999999999999,
+        0.30499999999999994
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture",
+        "Greenpeace Calendar 2009"
+      ]
+    },
+    {
+      "id": "f927fc27c1c9849c5206f7fc15b4e7296b992572@24",
+      "label": "Balcony",
+      "score": 1.0,
+      "center_xyz": [
+        7.9986775,
+        6.841931000000001,
+        0.469946
+      ],
+      "size_xyz": [
+        2.010205000000001,
+        1.9877919999999998,
+        1.054268
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "f927fc27c1c9849c5206f7fc15b4e7296b992572@25",
+      "label": "Balcony",
+      "score": 1.0,
+      "center_xyz": [
+        7.9986795,
+        8.7280365,
+        0.4699465
+      ],
+      "size_xyz": [
+        1.9877910000000005,
+        2.010204999999999,
+        1.054269
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "95d1e189e93694bb8eee73a64b0d84a8be5a5057@26",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        1.4498895,
+        9.1982605,
+        1.1100774999999998
+      ],
+      "size_xyz": [
+        0.899781,
+        0.7434750000000001,
+        2.220221
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "Ficus Lyrata plant"
+      ]
+    },
+    {
+      "id": "9494221acb244f996e96d36178eb6d964c41dd6c@27",
+      "label": "cabinet",
+      "score": 1.0,
+      "center_xyz": [
+        1.3388499999999999,
+        2.9401595,
+        1.2012655
+      ],
+      "size_xyz": [
+        0.596214,
+        2.3780990000000006,
+        2.402531
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "cabinet",
+        "YOO OH Kitchen 250, AIR"
+      ]
+    },
+    {
+      "id": "448d008ec31f9a6e35f96e2a165a4864fbaea2d4@28",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        5.130803,
+        8.9913015,
+        0.469271
+      ],
+      "size_xyz": [
+        1.1025200000000002,
+        1.1430030000000002,
+        0.938542
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Faust II Accent Chair"
+      ]
+    },
+    {
+      "id": "448d008ec31f9a6e35f96e2a165a4864fbaea2d4@29",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        2.7489295,
+        8.9777955,
+        0.469271
+      ],
+      "size_xyz": [
+        1.1092709999999997,
+        1.1475029999999986,
+        0.938542
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Faust II Accent Chair"
+      ]
+    },
+    {
+      "id": "448d008ec31f9a6e35f96e2a165a4864fbaea2d4@30",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        1.1741885,
+        -2.8294435,
+        0.4692705
+      ],
+      "size_xyz": [
+        1.168443,
+        1.145099,
+        0.938541
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Faust II Accent Chair"
+      ]
+    },
+    {
+      "id": "88e330051d42588cce96aba4dec5a35d5336217c@31",
+      "label": "couch",
+      "score": 1.0,
+      "center_xyz": [
+        3.9311585000000004,
+        6.9586555,
+        0.380766
+      ],
+      "size_xyz": [
+        2.0239350000000003,
+        0.769933,
+        0.761532
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "couch",
+        "Theatre Three Seater Sofa, Linen Weave - Fin"
+      ]
+    },
+    {
+      "id": "af5520efad641bdc90f485facab8e84bf3a7f20f@32",
+      "label": "carpet",
+      "score": 1.0,
+      "center_xyz": [
+        3.9717900000000004,
+        8.350999999999999,
+        0.00505
+      ],
+      "size_xyz": [
+        3.0480000000000005,
+        2.4380000000000006,
+        0.01
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "carpet",
+        "Dune Rug 8x10, Indigo"
+      ]
+    },
+    {
+      "id": "ee7b9e4cf5c533737ebd058f7950ca632db5bc62@33",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        7.545881,
+        2.9858835,
+        0.8416655
+      ],
+      "size_xyz": [
+        0.6213419999999994,
+        0.6196070000000002,
+        0.16747100000000004
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "Potted Faux Eucalyptus 8\""
+      ]
+    },
+    {
+      "id": "b5d1b894bdc9d22be934ea4efeae007d9048add2@34",
+      "label": "Graphix 15 Piece Knife Set",
+      "score": 1.0,
+      "center_xyz": [
+        1.3156295,
+        3.1420500000000002,
+        1.0767605
+      ],
+      "size_xyz": [
+        0.21627300000000016,
+        0.1219199999999998,
+        0.353421
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "5308f862dcc5bd45f62aececd538135a03ff93d2@35",
+      "label": "mirror",
+      "score": 1.0,
+      "center_xyz": [
+        0.6316085,
+        -0.36378,
+        1.75
+      ],
+      "size_xyz": [
+        0.025426999999999977,
+        0.9143680000000001,
+        0.9143679999999998
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "mirror",
+        "Infinity Black Round Wall Mirror 36'', Black"
+      ]
+    },
+    {
+      "id": "d4960da019b35da664905c729de7bd9fa233ff51@36",
+      "label": "drinkware",
+      "score": 1.0,
+      "center_xyz": [
+        4.0746115,
+        8.0443865,
+        0.51
+      ],
+      "size_xyz": [
+        0.10720100000000077,
+        0.09013699999999947,
+        0.10000000000000003
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "drinkware",
+        "Pantone Mugs - Pea"
+      ]
+    },
+    {
+      "id": "cb3dd8f2c8de396606e0794f6effc921aff7235d@37",
+      "label": "dishwasher",
+      "score": 1.0,
+      "center_xyz": [
+        1.3759945,
+        4.44421,
+        0.475
+      ],
+      "size_xyz": [
+        0.670547,
+        0.6300000000000008,
+        0.95
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "dishwasher",
+        "DISHWASHER HOBART"
+      ]
+    },
+    {
+      "id": "14bdc1398760aef6d8757e2dd6a1c674d7851e66@38",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        8.325299999999999,
+        7.6846195,
+        0.8542235
+      ],
+      "size_xyz": [
+        0.23005599999999937,
+        0.23002900000000004,
+        0.22244700000000006
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "Succulent Plant- 23x9x11 cms"
+      ]
+    },
+    {
+      "id": "af59e299ef373a1247cf6f67ba1114c3631da76d@39",
+      "label": "Badaccessoire/accessoire Casual 60 cm",
+      "score": 1.0,
+      "center_xyz": [
+        7.2782295,
+        -3.1212195,
+        1.7500005
+      ],
+      "size_xyz": [
+        0.5964670000000005,
+        0.10750300000000035,
+        0.6305930000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "add6ba89a44ace58e20a36248fb932b20205a5f1@40",
+      "label": "Surfboard",
+      "score": 1.0,
+      "center_xyz": [
+        7.0999935,
+        6.10045,
+        1.3275505
+      ],
+      "size_xyz": [
+        0.23314700000000066,
+        0.5638180000000004,
+        2.1388350000000003
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "690e8c1cacddc85ec161581ea595d10d9b496ca7@41",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        2.504589,
+        -2.7654315,
+        0.422372
+      ],
+      "size_xyz": [
+        0.5972339999999998,
+        0.6044130000000001,
+        0.844744
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Wire Metal White Cushion Office Chair"
+      ]
+    },
+    {
+      "id": "dec7a995ecf6360cb68d15b80403d604a143e389@42",
+      "label": "chair",
+      "score": 1.0,
+      "center_xyz": [
+        3.5827085,
+        -2.9533655000000003,
+        0.361734
+      ],
+      "size_xyz": [
+        0.8397710000000003,
+        0.8377750000000002,
+        0.723468
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chair",
+        "Lina Swivel Chair, Pecora - Dark Navy"
+      ]
+    },
+    {
+      "id": "79eb16e537f29ff752b46b20b1961c491665237f@43",
+      "label": "bed",
+      "score": 1.0,
+      "center_xyz": [
+        1.7442535,
+        -0.32869,
+        0.5717914999999999
+      ],
+      "size_xyz": [
+        2.159207,
+        1.940684,
+        1.143467
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "bed",
+        "Brushed Gold Queen Metal Bed"
+      ]
+    },
+    {
+      "id": "65a7263c49e050b733ccfac3208dca20e92498ab@44",
+      "label": "bench",
+      "score": 1.0,
+      "center_xyz": [
+        6.991884000000001,
+        3.0490795,
+        0.23545
+      ],
+      "size_xyz": [
+        0.48665,
+        1.0739970000000003,
+        0.4709
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "bench",
+        "Striped Upholstered Bench"
+      ]
+    },
+    {
+      "id": "cbe7567842652e9e27eb421afc713a37d05f19d0@45",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        7.5307765,
+        2.9803625,
+        2.1579639999999998
+      ],
+      "size_xyz": [
+        0.9278929999999992,
+        0.9365550000000002,
+        1.2840719999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Bonnington 3-Tier Chandelier 36'', Brass"
+      ]
+    },
+    {
+      "id": "db2f10d91d5a3a26ce56a6f9eb178c66ebc989a8@46",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        7.2025495,
+        9.35814,
+        0.7500005
+      ],
+      "size_xyz": [
+        0.9000009999999996,
+        0.7499959999999994,
+        1.500001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "Schefflera Bush"
+      ]
+    },
+    {
+      "id": "da6ab8a359f639f9bbd92f51bf7ffc89f65714ee@47",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        2.4334000000000002,
+        -3.12419,
+        0.4
+      ],
+      "size_xyz": [
+        1.130006,
+        0.5650399999999998,
+        0.8
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Hidden Home Office"
+      ]
+    },
+    {
+      "id": "5bb8abe60b296ee6bd0846dd445da915b0d9fc1e@48",
+      "label": "Small Seagrass Laundry Basket",
+      "score": 1.0,
+      "center_xyz": [
+        8.6268505,
+        -4.8638705,
+        0.27500050000000004
+      ],
+      "size_xyz": [
+        0.3300029999999996,
+        0.3300029999999996,
+        0.549999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "9cbee54a4e7bc24a5b6a9764a92c1fee1fe7381b@49",
+      "label": "candle",
+      "score": 1.0,
+      "center_xyz": [
+        1.4607195,
+        4.2795605000000005,
+        1.0069615
+      ],
+      "size_xyz": [
+        0.08327499999999999,
+        0.08327499999999954,
+        0.113923
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "candle",
+        "Rewined Manhattan Cocktail Candle"
+      ]
+    },
+    {
+      "id": "d413be1b49919287e484dd5cb5658c56b05aebf5@50",
+      "label": "book",
+      "score": 1.0,
+      "center_xyz": [
+        1.4301685,
+        4.460579,
+        0.972485
+      ],
+      "size_xyz": [
+        0.40527500000000005,
+        0.3664620000000003,
+        0.04425200000000007
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "book",
+        "\"The Big Book Of Chic\" Book"
+      ]
+    },
+    {
+      "id": "029c59012cbc787082f4b8725695730327daf981@51",
+      "label": "picture_frame",
+      "score": 1.0,
+      "center_xyz": [
+        4.28382,
+        9.3329895,
+        0.8513200000000001
+      ],
+      "size_xyz": [
+        0.16910399999999992,
+        0.1522030000000001,
+        0.21684000000000003
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture_frame",
+        "Rectanglular Stripe Photo Frame"
+      ]
+    },
+    {
+      "id": "112675b8a4203aafe0c47dd38ec9002ebd856f07@52",
+      "label": "shoes",
+      "score": 1.0,
+      "center_xyz": [
+        4.52492,
+        -2.323029,
+        0.018582
+      ],
+      "size_xyz": [
+        0.22466000000000008,
+        0.2449659999999998,
+        0.031862
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shoes",
+        "Shoes - Flip Flops"
+      ]
+    },
+    {
+      "id": "782f0a9b9f354f0055c0ba551ebde2f459b83a09@53",
+      "label": "stool",
+      "score": 1.0,
+      "center_xyz": [
+        3.5590795,
+        3.30144,
+        0.425
+      ],
+      "size_xyz": [
+        0.41000099999999984,
+        0.3899980000000003,
+        0.85
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "stool",
+        "Slim Bar Stool"
+      ]
+    },
+    {
+      "id": "782f0a9b9f354f0055c0ba551ebde2f459b83a09@54",
+      "label": "stool",
+      "score": 1.0,
+      "center_xyz": [
+        3.56908,
+        3.84891,
+        0.425
+      ],
+      "size_xyz": [
+        0.41000000000000014,
+        0.3899980000000003,
+        0.85
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "stool",
+        "Slim Bar Stool"
+      ]
+    },
+    {
+      "id": "782f0a9b9f354f0055c0ba551ebde2f459b83a09@55",
+      "label": "stool",
+      "score": 1.0,
+      "center_xyz": [
+        3.5790100000000002,
+        2.77521,
+        0.425
+      ],
+      "size_xyz": [
+        0.4099999999999997,
+        0.3899980000000003,
+        0.85
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "stool",
+        "Slim Bar Stool"
+      ]
+    },
+    {
+      "id": "782f0a9b9f354f0055c0ba551ebde2f459b83a09@56",
+      "label": "stool",
+      "score": 1.0,
+      "center_xyz": [
+        3.5919,
+        2.2064000000000004,
+        0.425
+      ],
+      "size_xyz": [
+        0.41000000000000014,
+        0.38999799999999984,
+        0.85
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "stool",
+        "Slim Bar Stool"
+      ]
+    },
+    {
+      "id": "e5562c171fa549aae14853d5175ab72739946032@57",
+      "label": "shoes",
+      "score": 1.0,
+      "center_xyz": [
+        4.531629499999999,
+        -2.0973205,
+        0.06301749999999999
+      ],
+      "size_xyz": [
+        0.21123899999999995,
+        0.2064849999999998,
+        0.12361899999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shoes",
+        "Shoes - Wedge"
+      ]
+    },
+    {
+      "id": "fc4c24323baf711f6a78c9cbd02dd590e8778c8a@58",
+      "label": "Cherry Oven Gloves",
+      "score": 1.0,
+      "center_xyz": [
+        1.29812,
+        3.0739905,
+        0.015302
+      ],
+      "size_xyz": [
+        0.2601340000000001,
+        0.29103499999999993,
+        0.030604
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "2efebdcc1ba9514b0deb0dfb05951341432bd26a@59",
+      "label": "APPLE iMac 5K 27\"",
+      "score": 1.0,
+      "center_xyz": [
+        2.48078,
+        -3.1733905,
+        1.045016
+      ],
+      "size_xyz": [
+        0.6448680000000002,
+        0.46663299999999985,
+        0.48885600000000007
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "c26b16c8dfdba6600221a57542782292c15e983b@60",
+      "label": "shower",
+      "score": 1.0,
+      "center_xyz": [
+        8.9912585,
+        -0.83862,
+        1.0621605
+      ],
+      "size_xyz": [
+        0.9073429999999991,
+        1.600224,
+        2.124319
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shower",
+        "Dusche/douche New Classic "
+      ]
+    },
+    {
+      "id": "49f223142cedeb34ba5f6831d20650038e2f174b@61",
+      "label": "carpet",
+      "score": 1.0,
+      "center_xyz": [
+        5.5310299999999994,
+        -0.2450095,
+        0.0075
+      ],
+      "size_xyz": [
+        2.4900279999999997,
+        2.490029,
+        0.015
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "carpet",
+        "Grayson 8' Hand Knotted Round Rug, Grey"
+      ]
+    },
+    {
+      "id": "293c42d04758bffcc63070066170cbb1f09918cc@62",
+      "label": "chest_of_drawers",
+      "score": 1.0,
+      "center_xyz": [
+        0.80531,
+        -1.5048,
+        0.3683
+      ],
+      "size_xyz": [
+        0.45418400000000003,
+        0.6096000000000001,
+        0.7366
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "chest_of_drawers",
+        "Agate Painted Accent Chest"
+      ]
+    },
+    {
+      "id": "058936386adb57586905a14d68fbe70719cff89b@63",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        3.9311095000000003,
+        9.33691,
+        0.371475
+      ],
+      "size_xyz": [
+        1.2281810000000002,
+        0.4661799999999996,
+        0.74295
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Industrial Wood And Metal Sofa Table"
+      ]
+    },
+    {
+      "id": "9d809de6424e746f09d2cc40255f635fc264eed8@64",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        2.9469995,
+        2.16427,
+        2.1969695
+      ],
+      "size_xyz": [
+        0.28569900000000015,
+        0.285698,
+        1.2063570000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Flat Glass Pendant Light"
+      ]
+    },
+    {
+      "id": "9d809de6424e746f09d2cc40255f635fc264eed8@65",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        2.9891294999999998,
+        2.7752095,
+        2.1969695
+      ],
+      "size_xyz": [
+        0.2856989999999997,
+        0.28569900000000015,
+        1.2063570000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Flat Glass Pendant Light"
+      ]
+    },
+    {
+      "id": "9d809de6424e746f09d2cc40255f635fc264eed8@66",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        2.9891294999999998,
+        3.3440195,
+        2.1969695
+      ],
+      "size_xyz": [
+        0.2856989999999997,
+        0.28569900000000015,
+        1.2063570000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Flat Glass Pendant Light"
+      ]
+    },
+    {
+      "id": "9d809de6424e746f09d2cc40255f635fc264eed8@67",
+      "label": "ceiling_lamp",
+      "score": 1.0,
+      "center_xyz": [
+        2.9680595,
+        3.8706995,
+        2.1969695
+      ],
+      "size_xyz": [
+        0.2856989999999997,
+        0.28569900000000015,
+        1.2063570000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "ceiling_lamp",
+        "Flat Glass Pendant Light"
+      ]
+    },
+    {
+      "id": "3c163391afeb4130eadacb6ef9b6e5930329a32b@68",
+      "label": "potted_plant",
+      "score": 1.0,
+      "center_xyz": [
+        2.1086605,
+        -3.1649364999999996,
+        0.9791665
+      ],
+      "size_xyz": [
+        0.19461299999999992,
+        0.19461299999999992,
+        0.3582169999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "potted_plant",
+        "Potted Faux Succulent White Pot 14\""
+      ]
+    },
+    {
+      "id": "45260b2b621ba5473292bcfe8995535b336b4244@69",
+      "label": "fridge",
+      "score": 1.0,
+      "center_xyz": [
+        1.4175005,
+        1.454321,
+        0.8408024999999999
+      ],
+      "size_xyz": [
+        0.753439,
+        0.59361,
+        1.678995
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "fridge",
+        "Smeg Fridge FAB30OS6"
+      ]
+    },
+    {
+      "id": "00b285ed70673826ccb6941929a64abfaf5f9239@70",
+      "label": "washer_dryer",
+      "score": 1.0,
+      "center_xyz": [
+        7.830847499999999,
+        -4.7381899999999995,
+        0.425
+      ],
+      "size_xyz": [
+        0.5813569999999997,
+        0.601,
+        0.85
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "washer_dryer",
+        "Hotpoint WDF740A Satin Aluminium Washer Dryer."
+      ]
+    },
+    {
+      "id": "688e8dde29b7a0f6d35a36a478f05050b2e5c262@71",
+      "label": "laptop",
+      "score": 1.0,
+      "center_xyz": [
+        0.8542810000000001,
+        -1.500518,
+        0.866668
+      ],
+      "size_xyz": [
+        0.4412300000000001,
+        0.46717999999999993,
+        0.257406
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "laptop",
+        "intel celeron 15.4in Celeron Laptop - black/white"
+      ]
+    },
+    {
+      "id": "6cd2dc2611c27f758c972b4874efad8c8cbd5d29@72",
+      "label": "washer_dryer",
+      "score": 1.0,
+      "center_xyz": [
+        7.8506149999999995,
+        -4.1382375,
+        0.34864700000000004
+      ],
+      "size_xyz": [
+        0.6209020000000001,
+        0.5989049999999998,
+        0.696588
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "washer_dryer",
+        "Dryer"
+      ]
+    },
+    {
+      "id": "cd34f9ba863367e2d2dc066ad1f70f68de2c5153@73",
+      "label": "shoes",
+      "score": 1.0,
+      "center_xyz": [
+        4.548926,
+        -2.154484,
+        0.06623749999999999
+      ],
+      "size_xyz": [
+        0.27252399999999977,
+        0.34956600000000027,
+        0.125673
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shoes",
+        "Shoes - Clarks"
+      ]
+    },
+    {
+      "id": "bd1acc91b2bd475e72252462535820135f48607b@74",
+      "label": "shoes",
+      "score": 1.0,
+      "center_xyz": [
+        4.5403065,
+        -2.338387,
+        0.0692905
+      ],
+      "size_xyz": [
+        0.25540300000000027,
+        0.21425599999999978,
+        0.133347
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shoes",
+        "Shoes - All Stars"
+      ]
+    },
+    {
+      "id": "d5a65235abfa2c1307eb1ba6ee12cc6a5b34208e@75",
+      "label": "picture_frame",
+      "score": 1.0,
+      "center_xyz": [
+        3.565471,
+        9.3583485,
+        0.9011819999999999
+      ],
+      "size_xyz": [
+        0.27341000000000015,
+        0.22658500000000004,
+        0.27537599999999995
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "picture_frame",
+        "Oak certificate photo frame"
+      ]
+    },
+    {
+      "id": "c8b5bac9217dd13b6eb65e0cb4dfaa2852fce3db@76",
+      "label": "shoes",
+      "score": 1.0,
+      "center_xyz": [
+        4.5489335,
+        -2.154476,
+        0.06723749999999999
+      ],
+      "size_xyz": [
+        0.2725230000000005,
+        0.34956600000000004,
+        0.125673
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "shoes",
+        "Shoes - Clarks"
+      ]
+    },
+    {
+      "id": "7ff8c2d48e8d49e2f1504bc83d16ef933cd7163b@77",
+      "label": "toilet",
+      "score": 1.0,
+      "center_xyz": [
+        9.053123,
+        -2.84892,
+        0.4084835
+      ],
+      "size_xyz": [
+        0.37237799999999943,
+        0.6521059999999999,
+        0.8169230000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "toilet",
+        "Cooke & Lewis Romeo Modern Close-Coupled Toilet with Soft Close Seat"
+      ]
+    },
+    {
+      "id": "fcaebfe141f5a16bffdb8599c50551150353010c@78",
+      "label": "Waschplatz/zone lavabo Villeroy & Boch Venticello 42 x 50 x  115 cm",
+      "score": 1.0,
+      "center_xyz": [
+        7.2371595,
+        -2.13342,
+        1.171103
+      ],
+      "size_xyz": [
+        0.514329,
+        1.4986119999999998,
+        1.5171540000000001
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "23ec75b0ef2ac85d6830b065b810e12f05cd083d@79",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        8.362968500000001,
+        7.70491,
+        0.371493
+      ],
+      "size_xyz": [
+        0.7025330000000007,
+        0.7031659999999995,
+        0.742986
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Paliddade Cone Table, Anthracite"
+      ]
+    },
+    {
+      "id": "7cb71427fd80d85e04a601e04c9b9db866d355c9@80",
+      "label": "mirror",
+      "score": 1.0,
+      "center_xyz": [
+        3.7807205,
+        -1.7247965,
+        0.8759870000000001
+      ],
+      "size_xyz": [
+        0.7351670000000006,
+        0.737743,
+        1.751496
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "mirror",
+        "Standspiegel Lines, silver"
+      ]
+    },
+    {
+      "id": "468c7b290805e59fc57bfd0792437889e4fa4403@81",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        7.600287,
+        3.0295170000000002,
+        0.3804
+      ],
+      "size_xyz": [
+        1.0666859999999998,
+        1.8286859999999998,
+        0.7608
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Custom Oak Large Table w/Miller Leg"
+      ]
+    },
+    {
+      "id": "752f77d7c0349b81c201fcc71650970170382456@82",
+      "label": "table",
+      "score": 1.0,
+      "center_xyz": [
+        3.9462495000000004,
+        8.0443405,
+        0.22858
+      ],
+      "size_xyz": [
+        0.9153290000000003,
+        0.9135229999999996,
+        0.45724
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "labels": [
+        "table",
+        "Metal And Wood Industrial Coffee Table"
+      ]
+    },
+    {
+      "id": "51a22c69abd300c67c0b53c7045d1e7f2db52cfb@83",
+      "label": "Food, White Pedestal Bowl",
+      "score": 1.0,
+      "center_xyz": [
+        3.00936,
+        3.06304,
+        1.074888
+      ],
+      "size_xyz": [
+        0.32616599999999973,
+        0.28996400000000033,
+        0.2476379999999999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "f564f2a2e73741e74899b75e16df4d8555a0cae3@84",
+      "label": "Roscoe Large Rectangle Metal Basket",
+      "score": 1.0,
+      "center_xyz": [
+        3.85288,
+        0.352502,
+        2.035476
+      ],
+      "size_xyz": [
+        0.3171739999999996,
+        0.545652,
+        0.21169999999999978
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "210-0@85",
+      "label": "door",
+      "score": 1.0,
+      "center_xyz": [
+        6.904999999999999,
+        8.42297,
+        1.1200005000000002
+      ],
+      "size_xyz": [
+        0.2060000000000004,
+        1.790000000000001,
+        2.199999
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "218-23@86",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        6.905,
+        6.7779595,
+        1.4500000000000002
+      ],
+      "size_xyz": [
+        0.08000000000000007,
+        1.179995,
+        1.5000000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "3755-0@87",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        2.63099,
+        9.6450005,
+        1.4500000000000002
+      ],
+      "size_xyz": [
+        1.08,
+        0.08000099999999932,
+        1.5000000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "3755-0@88",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        5.18011,
+        9.6450005,
+        1.4500000000000002
+      ],
+      "size_xyz": [
+        1.08,
+        0.08000099999999932,
+        1.5000000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "3755-0@89",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        1.3458999999999999,
+        -3.48171,
+        1.4500000000000002
+      ],
+      "size_xyz": [
+        1.08,
+        0.08000000000000007,
+        1.5000000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "3755-0@90",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        3.4526095,
+        -3.48171,
+        1.4500000000000002
+      ],
+      "size_xyz": [
+        1.0800010000000002,
+        0.08000000000000007,
+        1.5000000000000002
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "4076-2@91",
+      "label": "door",
+      "score": 1.0,
+      "center_xyz": [
+        0.925,
+        8.07899,
+        1.12
+      ],
+      "size_xyz": [
+        0.22999999999999998,
+        0.9799999999999995,
+        2.2
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "5775-0@92",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        9.1193125,
+        4.476572,
+        1.4500005
+      ],
+      "size_xyz": [
+        0.8033149999999996,
+        0.9685100000000002,
+        1.4999990000000003
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "218-23@93",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        9.161317,
+        1.559992,
+        1.4500005
+      ],
+      "size_xyz": [
+        0.7972099999999998,
+        0.973246,
+        1.4999990000000003
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "4718-0@94",
+      "label": "window",
+      "score": 1.0,
+      "center_xyz": [
+        9.62526,
+        3.0095995,
+        1.4500005
+      ],
+      "size_xyz": [
+        0.08000000000000007,
+        1.1799950000000003,
+        1.4999990000000003
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_0.003",
+      "label": "wall_0.003",
+      "score": 1.0,
+      "center_xyz": [
+        6.905,
+        7.34773,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.15000000000000036,
+        4.744540000000001,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_1.004",
+      "label": "wall_1.004",
+      "score": 1.0,
+      "center_xyz": [
+        9.519929999999999,
+        -1.60674,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.15000000000000036,
+        3.43646,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_10.003",
+      "label": "wall_10.003",
+      "score": 1.0,
+      "center_xyz": [
+        4.2110199999999995,
+        -3.09787,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.14999999999999947,
+        0.9176799999999998,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_13.002",
+      "label": "wall_13.002",
+      "score": 1.0,
+      "center_xyz": [
+        8.249965,
+        0.03649,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        2.6899299999999995,
+        0.15000000000000002,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_15.001",
+      "label": "wall_15.001",
+      "score": 1.0,
+      "center_xyz": [
+        8.8668495,
+        -4.21442,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.15000100000000138,
+        1.9289,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_16.001",
+      "label": "wall_16.001",
+      "score": 1.0,
+      "center_xyz": [
+        6.905,
+        -2.982,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.15000000000000036,
+        0.68594,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_17.001",
+      "label": "wall_17.001",
+      "score": 1.0,
+      "center_xyz": [
+        7.1426750000000006,
+        -3.2499700000000002,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.6253500000000001,
+        0.1499999999999999,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_19.002",
+      "label": "wall_19.002",
+      "score": 1.0,
+      "center_xyz": [
+        7.45535,
+        -4.21442,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.15000000000000036,
+        1.9289,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_2.004",
+      "label": "wall_2.004",
+      "score": 1.0,
+      "center_xyz": [
+        9.230889999999999,
+        -3.2499700000000002,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.7280800000000003,
+        0.1499999999999999,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_20.003",
+      "label": "wall_20.003",
+      "score": 1.0,
+      "center_xyz": [
+        8.161100000000001,
+        -5.103870000000001,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        1.5615000000000006,
+        0.14999999999999947,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_23.003",
+      "label": "wall_23.003",
+      "score": 1.0,
+      "center_xyz": [
+        6.905,
+        0.48074500000000003,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.15000000000000036,
+        0.88851,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_25.001",
+      "label": "wall_25.001",
+      "score": 1.0,
+      "center_xyz": [
+        7.798677,
+        0.925,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        1.7873539999999997,
+        0.15000000000000002,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_26.002",
+      "label": "wall_26.002",
+      "score": 1.0,
+      "center_xyz": [
+        7.761015,
+        5.05046,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        1.8620300000000007,
+        0.15000000000000036,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_27.003",
+      "label": "wall_27.003",
+      "score": 1.0,
+      "center_xyz": [
+        9.160295,
+        4.4743005,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        1.079930000000001,
+        1.3023190000000002,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_28.001",
+      "label": "wall_28.001",
+      "score": 1.0,
+      "center_xyz": [
+        9.1601335,
+        1.5096965,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        1.0802530000000008,
+        1.3193929999999998,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_29.002",
+      "label": "wall_29.002",
+      "score": 1.0,
+      "center_xyz": [
+        9.6252605,
+        2.9965625,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.1500009999999996,
+        1.7591109999999999,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_4.004",
+      "label": "wall_4.004",
+      "score": 1.0,
+      "center_xyz": [
+        3.915,
+        9.6450005,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        6.130000000000001,
+        0.1499990000000011,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_5.003",
+      "label": "wall_5.003",
+      "score": 1.0,
+      "center_xyz": [
+        2.3774599999999997,
+        -3.4817099999999996,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        3.8171199999999996,
+        0.1499999999999999,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_6.004",
+      "label": "wall_6.004",
+      "score": 1.0,
+      "center_xyz": [
+        0.5439,
+        -1.278355,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.15000000000000002,
+        4.55671,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_7.002",
+      "label": "wall_7.002",
+      "score": 1.0,
+      "center_xyz": [
+        0.69695,
+        0.925,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.45610000000000006,
+        0.15000000000000002,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_8.002",
+      "label": "wall_8.002",
+      "score": 1.0,
+      "center_xyz": [
+        0.925,
+        5.322500000000001,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        0.15000000000000002,
+        8.795,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "id": "wall_9.002",
+      "label": "wall_9.002",
+      "score": 1.0,
+      "center_xyz": [
+        5.55801,
+        -2.63903,
+        1.4004999999999999
+      ],
+      "size_xyz": [
+        2.69398,
+        0.15000000000000036,
+        2.799
+      ],
+      "orientation_xyzw": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  ]
+}
