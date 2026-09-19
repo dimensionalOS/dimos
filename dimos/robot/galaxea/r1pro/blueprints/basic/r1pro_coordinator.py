@@ -161,11 +161,19 @@ def _zenoh_transport(
 def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
+    publish_odom: bool | None = None,
 ) -> Blueprint:
     """R1ProConnection and ControlCoordinator.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
     velocity); transports and remappings stay identical either way.
+
+    ``publish_odom=False`` drops the connection's wheel odometry -- both the
+    ``odom`` stream and the ``odom -> base_link`` edge it puts on tf -- for a run
+    that gets that edge from somewhere better. Nothing else about the tf tree
+    changes: the torso joint chain, and with it the head camera's pose, is
+    published off joint feedback and is unaffected. See
+    :mod:`dimos.robot.galaxea.r1pro.lio`.
     """
     resolved_tasks = (
         list(tasks)
@@ -183,7 +191,9 @@ def r1pro_control(
 
     return (
         autoconnect(
-            R1ProConnection.blueprint(),
+            R1ProConnection.blueprint(
+                **({} if publish_odom is None else {"publish_odom": publish_odom}),
+            ),
             ControlCoordinator.blueprint(
                 tick_rate=100,
                 hardware=[
