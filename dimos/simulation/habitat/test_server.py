@@ -28,6 +28,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.simulation.habitat import server
 
 SERVER_PY = Path(server.__file__)
@@ -84,6 +85,41 @@ def test_odometry_round_trip():
     )
     assert out.frame_id == "world"
     assert out.child_frame_id == "base_link"
+
+
+def test_objects_round_trip_keeps_each_object():
+    msg = server.objects_msg(
+        [
+            ("chair", np.array([1.0, 2.0, 0.4]), np.array([0.5, 0.6, 0.9])),
+            ("table", np.array([-3.0, 0.0, 0.7]), np.array([1.2, 0.8, 0.7])),
+        ],
+        1.5,
+    )
+    assert Detection3DArray.lcm_decode(msg).to_json() == [
+        {
+            "label": "chair",
+            "score": 1.0,
+            "position": {"x": 1.0, "y": 2.0, "z": 0.4},
+            "size": {"x": 0.5, "y": 0.6, "z": 0.9},
+        },
+        {
+            "label": "table",
+            "score": 1.0,
+            "position": {"x": -3.0, "y": 0.0, "z": 0.7},
+            "size": {"x": 1.2, "y": 0.8, "z": 0.7},
+        },
+    ]
+
+
+def test_visible_objects_boxes_each_instance():
+    k = {"fx": 10.0, "fy": 10.0, "cx": 2.0, "cy": 1.0, "width": 4.0, "height": 2.0}
+    depth = np.full((2, 4), 2.0, dtype=np.float32)
+    semantic = np.array([[1, 1, 2, 2], [1, 1, 2, 2]], dtype=np.uint16)  # chair left, wall right
+    objs = server.visible_objects(
+        depth, semantic, k, 5.0, 1, np.eye(4), ["unknown", "chair", "wall"], min_points=1
+    )
+    assert [o[0] for o in objs] == ["chair"]
+    np.testing.assert_allclose(objs[0][1], [-0.3, -0.1, 2.0], atol=1e-6)  # u in {0,1}, v in {0,1}
 
 
 def test_tf_round_trip_carries_the_optical_link():

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 import time
-from typing import TYPE_CHECKING, Any, BinaryIO, TypeAlias
+from typing import TYPE_CHECKING, Any, BinaryIO, TypeAlias, TypedDict
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -40,6 +40,30 @@ PoseConvertable: TypeAlias = (
 def sec_nsec(ts):  # type: ignore[no-untyped-def]
     s = int(ts)
     return [s, int((ts - s) * 1_000_000_000)]
+
+
+class XyzJson(TypedDict):
+    x: float
+    y: float
+    z: float
+
+
+class PoseJson(TypedDict):
+    position: XyzJson
+    yaw_deg: float
+    heading: str
+
+
+_HEADINGS = (
+    "east",
+    "north_east",
+    "north",
+    "north_west",
+    "west",
+    "south_west",
+    "south",
+    "south_east",
+)
 
 
 class PoseStamped(Pose, Timestamped):
@@ -96,6 +120,15 @@ class PoseStamped(Pose, Timestamped):
             f"PoseStamped(pos=[{self.x:.3f}, {self.y:.3f}, {self.z:.3f}], "
             f"euler=[{math.degrees(self.roll):.1f}, {math.degrees(self.pitch):.1f}, {math.degrees(self.yaw):.1f}])"
         )
+
+    def to_json(self) -> PoseJson:
+        """Position, yaw and an 8-way compass word (+x east, +y north)."""
+        yaw_deg = math.degrees(self.yaw)
+        return {
+            "position": {"x": round(self.x, 2), "y": round(self.y, 2), "z": round(self.z, 2)},
+            "yaw_deg": round(yaw_deg, 1),
+            "heading": _HEADINGS[round(yaw_deg / 45.0) % 8],
+        }
 
     def to_rerun(self) -> Archetype:
         """Convert to rerun Transform3D format.
