@@ -19,6 +19,7 @@ repos:
       - id: insert-license
         name: insert-license (rust)
         files: \.rs$
+        exclude: /vendor/
         types: [rust]
         args:
           - --license-filepath
