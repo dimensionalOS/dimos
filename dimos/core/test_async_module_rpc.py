@@ -76,6 +76,10 @@ def cube_a_transport(each_transport):
 def test_async_module_rpc(start_cube_module, a_transport, cube_a_transport):
     queue = Queue()
     cube_a_transport.subscribe(queue.put)
+    # Warm up: the first cross-process LCM message pays a ~50 ms cold-start; a
+    # throwaway round-trip absorbs it so the timed exchange below is on the warm path.
+    a_transport.publish(3)
+    queue.get(timeout=1.0)
     a_transport.publish(3)
     cubed = queue.get(timeout=0.1)
     assert cubed == 27

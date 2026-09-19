@@ -57,6 +57,10 @@ def double_a_transport(each_transport):
 def test_async_module_handles(start_double_module, a_transport, double_a_transport):
     queue = Queue()
     double_a_transport.subscribe(queue.put)
+    # Warm up: the first cross-process LCM message pays a ~50 ms cold-start; a
+    # throwaway round-trip absorbs it so the timed exchange below is on the warm path.
+    a_transport.publish(42)
+    queue.get(timeout=1.0)
     a_transport.publish(42)
     doubled = queue.get(timeout=0.1)
     assert doubled == 84
