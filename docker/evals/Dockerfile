@@ -65,11 +65,11 @@ COPY pyproject.toml uv.lock README.md setup.py ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv python install "${PYTHON_VERSION}" \
     && uv sync --frozen --no-install-project --python "${PYTHON_VERSION}" \
-        --group tests-self-hosted --extra typesafe
+        --group tests-self-hosted
 
 COPY . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --python "${PYTHON_VERSION}" --group tests-self-hosted --extra typesafe \
+    uv sync --frozen --python "${PYTHON_VERSION}" --group tests-self-hosted \
     && uv run python setup.py build_ext --inplace
 
 # DimSim's frontend, built the way cli.ts would on first run (dist/ is gitignored),

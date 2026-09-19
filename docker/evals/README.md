@@ -71,7 +71,8 @@ under `target/habitat`, the annotated HM3D example house, and the
 time so a run starts in seconds. Two things differ from DimSim runs:
 
 - Habitat renders headless through EGL from the host's NVIDIA driver, so it
-  needs the GPU overlay below. It cannot run on a CPU-only host.
+  needs the GPU overlay from the EC2 runbook below. It cannot run on a
+  CPU-only host.
 - Its native process speaks zenoh, while DimSim needs LCM. Export
   `DIMOS_TRANSPORT=zenoh` for Habitat runs:
 
@@ -86,38 +87,106 @@ default paths. Add it to `COMPOSE_FILE` next to the GPU overlay and set
 `HABITAT_DATA_DIR`; the overlay's header shows how to fill the directory with
 the image's own downloader.
 
-## GPU rendering on EC2
+## EC2 runbook
 
-Without the GPU overlay DimSim renders in software (`DIMSIM_RENDER=cpu`).
-That works anywhere but is expensive: one software-rendered apartment scene
-was measured at about 11 cores of Chromium on a 16-core laptop. For hardware
-WebGL the containers render through an Xorg server on the host GPU, the same
-way the self-hosted CI runner does; a virtual framebuffer is not enough.
+Verified on a `g6.8xlarge` (32 vCPU, 128 GB, one L4) with plain Ubuntu 26.04.
+A Deep Learning AMI already has the driver, Docker and the container toolkit;
+skip what you have.
 
-Prepare the instance once (a `g6` class, Ubuntu 24.04):
+1. Driver, Docker with its compose and buildx plugins (Ubuntu's `docker.io`
+   ships neither), git-lfs; then reboot for the driver:
 
-1. Install the NVIDIA driver, Docker, and the NVIDIA container toolkit;
-   run `nvidia-ctk runtime configure --runtime=docker` and restart Docker.
-2. Configure a headless Xorg on the GPU with a virtual screen, for example
-   `nvidia-xconfig --allow-empty-initial-configuration --use-display-device=None --virtual=1280x720`,
-   and run `Xorg :0` under systemd so it survives logout.
-3. Let containers use its socket: `xhost +local:root`.
-4. Raise the socket buffers dimos asks for: `sysctl -w net.core.rmem_max=67108864 net.core.rmem_default=67108864`.
+   ```bash
+   sudo apt-get update && sudo apt-get install -y nvidia-driver-580-server docker.io docker-compose-v2 docker-buildx git git-lfs && sudo usermod -aG docker "$USER" && sudo reboot
+   ```
 
-Then point every `--docker` run at both compose files:
+2. NVIDIA container toolkit, and BuildKit as Docker's default builder (the
+   image uses cache mounts):
 
-```bash
-export COMPOSE_FILE=docker/evals/compose.yaml:docker/evals/compose.gpu.yaml
-dimos evals run --docker ...
-```
+   ```bash
+   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list && sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+   echo '{"features":{"buildkit":true},"runtimes":{"nvidia":{"path":"nvidia-container-runtime","runtimeArgs":[]}}}' | sudo tee /etc/docker/daemon.json && sudo systemctl restart docker
+   docker run --rm --gpus all ubuntu:24.04 nvidia-smi
+   ```
 
-Validate with one container and `--limit 1` first; the GPU path has only been
-exercised on the CI runner so far. Then add containers while watching
-per-case duration, score, and `nvidia-smi`. The sim runs on wall clock, so a
-starved GPU or CPU shows up as lower scores, not just slower runs. Per
-container with hardware rendering plan on 3 to 4 vCPU, 4 to 5 GB of RAM and a
-slice of one GPU; a `g6.8xlarge` (32 vCPU, one L4) is a good first box at 6
-concurrent evals.
+3. A headless Xorg on the GPU. DimSim's Chromium gets hardware WebGL on
+   Linux only through an X server on the card (the self-hosted CI runner
+   does the same; a virtual framebuffer is not enough). The datacenter GPU
+   presents a virtual display of its own, so do not pass
+   `--use-display-device=None`:
+
+   ```bash
+   sudo apt-get install -y xserver-xorg xinit x11-xserver-utils
+   sudo nvidia-xconfig --allow-empty-initial-configuration --virtual=1280x720 --busid="PCI:$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader | awk -F'[:.]' '{printf "%d:%d:%d", strtonum("0x"$2), strtonum("0x"$3), strtonum("0x"$4)}')"
+   sudo tee /etc/systemd/system/xorg.service >/dev/null <<'UNIT'
+   [Unit]
+   Description=Headless Xorg on the GPU
+   After=multi-user.target
+   [Service]
+   ExecStart=/usr/bin/Xorg :0 -noreset
+   Restart=always
+   [Install]
+   WantedBy=multi-user.target
+   UNIT
+   sudo systemctl enable --now xorg && sleep 3 && sudo DISPLAY=:0 xhost +local:root
+   ```
+
+   `xhost` printing "non-network local connections being added" means Xorg
+   is up; `sudo journalctl -u xorg -n 30` otherwise.
+
+4. The socket buffers dimos's LCM setup asks for; host-wide, so they cannot
+   be set per container:
+
+   ```bash
+   echo -e "net.core.rmem_max=67108864\nnet.core.rmem_default=67108864" | sudo tee /etc/sysctl.d/90-dimos.conf && sudo sysctl --system
+   ```
+
+5. The repo, its DimSim assets, and the host venv the `--docker` flag runs
+   from (a few packages build from source, hence the compilers):
+
+   ```bash
+   sudo apt-get install -y build-essential pkg-config portaudio19-dev libturbojpeg0-dev libgl1
+   curl -LsSf https://astral.sh/uv/install.sh | sh && source ~/.bashrc
+   git clone -b <branch> https://github.com/dimensionalOS/dimos.git ~/dimos && cd ~/dimos && git lfs pull --include="misc/DimSim/**" && uv sync
+   ```
+
+6. The image, 30 to 40 minutes the first time:
+
+   ```bash
+   cd ~/dimos && docker build -f docker/evals/Dockerfile -t dimensional/evals .
+   ```
+
+7. Environment, in the shell profile so it survives reconnects. Habitat runs
+   need `DIMOS_TRANSPORT=zenoh`; DimSim runs need it unset:
+
+   ```bash
+   export OPENAI_API_KEY=... TYPESAFE_API_KEY=... DISPLAY=:0 HABITAT_DATA_DIR=/data/habitat
+   export COMPOSE_FILE=docker/evals/compose.yaml:docker/evals/compose.gpu.yaml:docker/evals/compose.habitat-data.yaml
+   ```
+
+8. Datasets into `HABITAT_DATA_DIR` (the overlay replaces the container's
+   whole data folder, so the HM3D example goes there too):
+
+   ```bash
+   sudo mkdir -p /data/habitat && sudo chown "$USER" /data/habitat
+   cd ~/dimos && docker compose run --rm worker /app/target/habitat/env/bin/python -m habitat_sim.utils.datasets_download --uids hm3d_example --data-path /app/target/habitat/data --no-replace
+   uv tool install huggingface_hub && huggingface-cli login   # after accepting the terms on the hssd/hssd-hab dataset page
+   huggingface-cli download hssd/hssd-hab --repo-type dataset --local-dir /data/habitat/hssd-hab
+   ```
+
+9. Check a container sees everything, then run:
+
+   ```bash
+   cd ~/dimos && docker compose run --rm worker bash -c 'nvidia-smi -L; echo DISPLAY=$DISPLAY; ls /tmp/.X11-unix'
+   uv run dimos evals run --docker <suite> --agent <agent> ...
+   ```
+
+Sizing: with hardware rendering plan on 3 to 4 vCPU, 4 to 5 GB of RAM and a
+slice of the one GPU per concurrent eval; start a `g6.8xlarge` at six and
+watch per-case duration, score and `nvidia-smi` as you add more. The sim runs
+on wall clock, so a starved GPU or CPU shows up as lower scores, not just
+slower runs. Multi-GPU instances need one X screen per GPU and a
+per-container `DISPLAY`, which the compose files do not do yet.
 
 ## Pool mode (optional)
 
