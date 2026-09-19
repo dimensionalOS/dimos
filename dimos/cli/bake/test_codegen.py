@@ -16,6 +16,7 @@
 
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 if sys.version_info >= (3, 11):
@@ -65,13 +66,18 @@ def test_the_generated_crate_reuses_the_module_profiles() -> None:
 
     deliberate_deviations = {"dimos/mapping/dim_slam/rust/Cargo.toml"}
 
+    # Tracked manifests only: a baked crate under build/ is gitignored, not a module.
+    tracked = subprocess.run(
+        ["git", "ls-files", "*Cargo.toml"],
+        cwd=DIMOS_PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
     roots = [
         path
-        for path in DIMOS_PROJECT_ROOT.rglob("Cargo.toml")
-        if ".git" not in path.parts
-        and "target" not in path.parts
-        and "[workspace]" in path.read_text()
-        and "[profile.release]" in path.read_text()
+        for path in (DIMOS_PROJECT_ROOT / p for p in tracked)
+        if "[workspace]" in path.read_text() and "[profile.release]" in path.read_text()
     ]
     assert roots, "no module workspace roots found"
     checked = 0
@@ -80,7 +86,10 @@ def test_the_generated_crate_reuses_the_module_profiles() -> None:
         if where in deliberate_deviations:
             continue
         module_toml = tomllib.loads(path.read_text())
-        assert release == module_toml["profile"]["release"], where
+        module_release = {
+            k: v for k, v in module_toml["profile"]["release"].items() if k != "package"
+        }
+        assert release == module_release, where
         assert generated["profile"]["dev"] == module_toml["profile"]["dev"], where
         checked += 1
     assert checked, "every workspace root was excused; the check proved nothing"
