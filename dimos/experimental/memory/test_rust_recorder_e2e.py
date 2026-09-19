@@ -84,7 +84,7 @@ def rust_recorder_executable() -> Path:
                 "nix-command flakes",
                 "build",
                 "-L",
-                ".#dimos-memory-recorder",
+                "path:.#dimos-memory-recorder",
                 "--no-write-lock-file",
             ],
             cwd=_RUST_PACKAGE,

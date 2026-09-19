@@ -40,7 +40,7 @@ logger = setup_logger()
 
 _RUST_DIR = Path(__file__).resolve().parent / "rust"
 _EXECUTABLE = _RUST_DIR / "result/bin/dimos-memory-recorder"
-_BUILD_COMMAND = ("nix", "build", "-L", ".#dimos-memory-recorder")
+_BUILD_COMMAND = ("nix", "build", "-L", "path:.#dimos-memory-recorder")
 _READY_TIMEOUT = 10.0
 _DEFAULT_ENCODING_THREADS = 4
 _READY_MESSAGE = "memory recorder ready"
