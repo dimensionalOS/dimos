@@ -45,6 +45,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--mujoco-global-map-from-pointcloud` | TEXT | `None` | Generate map from point cloud |
 | `--mujoco-start-pos` | TEXT | `-1.0, 1.0` | MuJoCo robot start position |
 | `--mujoco-steps-per-frame` | INT | `7` | MuJoCo simulation steps per frame |
+| `--mujoco-shadows` | `auto\|on\|off` | `auto` | MuJoCo shadow mapping. `auto` benchmarks one shadowed render at startup and disables shadows when it exceeds 30% of the video frame budget; `on` and `off` skip the benchmark |
 
 ### Configuration Precedence
 

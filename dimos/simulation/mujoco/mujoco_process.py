@@ -70,6 +70,39 @@ class MockController:
         pass
 
 
+def _shadow_render_is_slow(model: mujoco.MjModel, data: mujoco.MjData) -> bool:
+    """Benchmark one offscreen camera render with shadow mapping enabled.
+
+    Shadow-mapping a mesh-heavy scene can cost 4x per render on integrated
+    GPUs, which pins the whole sim below realtime. The video camera renders at
+    VIDEO_FPS and shares the loop with physics and three depth cameras, so a
+    shadowed render that eats a large slice of the frame budget cannot keep up.
+    """
+    camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
+    renderer = mujoco.Renderer(model, height=VIDEO_HEIGHT, width=VIDEO_WIDTH)
+    try:
+        for _ in range(3):  # warmup: first renders pay asset-upload cost
+            renderer.update_scene(data, camera=camera_id)
+            renderer.render()
+        n = 5
+        start = time.perf_counter()
+        for _ in range(n):
+            renderer.update_scene(data, camera=camera_id)
+            renderer.render()
+        render_ms = (time.perf_counter() - start) / n * 1e3
+    finally:
+        renderer.close()
+
+    budget_ms = 1.0 / VIDEO_FPS * 1e3
+    is_slow = render_ms > budget_ms * 0.3
+    if is_slow:
+        logger.warning(
+            f"Shadowed render took {render_ms:.1f} ms of the {budget_ms:.0f} ms frame "
+            "budget; disabling shadows (force with mujoco_shadows=on)"
+        )
+    return is_slow
+
+
 def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
     import open3d as o3d  # type: ignore[import-untyped]
 
@@ -101,6 +134,15 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
     lidar_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_front_camera")
 
     person_position_controller = PersonPositionController(model)
+
+    if config.mujoco_shadows == "off" or (
+        config.mujoco_shadows == "auto" and _shadow_render_is_slow(model, data)
+    ):
+        # Must happen before the viewer and renderers build their GL contexts:
+        # the shadow framebuffer is allocated at context creation, so the
+        # viewer would keep shadow-rendering the whole scene regardless of
+        # per-render flags.
+        model.vis.quality.shadowsize = 0
 
     lidar_left_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_left_camera")
     lidar_right_camera_id = mujoco.mj_name2id(
@@ -222,7 +264,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
                 last_lidar_time = current_time
 
             # Control simulation speed
-            time_until_next_step = model.opt.timestep - (time.time() - step_start)
+            frame_sim_time = model.opt.timestep * config.mujoco_steps_per_frame
+            time_until_next_step = frame_sim_time - (time.time() - step_start)
             if time_until_next_step > 0:
                 time.sleep(time_until_next_step)
 
