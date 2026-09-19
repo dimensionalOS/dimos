@@ -25,27 +25,31 @@ Usage, on the robot::
 
 The Mid-360 driver and the Rust Point-LIO are native binaries built on first
 run (``cargo build --release`` in the Rust workspace; on an Orin, cargo comes
-from ``nix develop path:nix/rust``). The lidar's address comes from the
-vendor's ``MID360_config.json`` unless ``DIMOS_MID360_LIDAR_IP`` /
-``DIMOS_MID360_HOST_IP`` say otherwise. See the R1 README for the transport,
-for what this does to the vendor's own lidar driver, and how to give the
-sensor back.
+from ``nix develop path:nix/rust``). The lidar's address is in
+:mod:`dimos.robot.galaxea.r1pro.config`; ``--mid360.lidar_ip`` /
+``--mid360.host_ip`` override it. See the R1 README for the transport, for
+what this does to the vendor's own lidar driver, and how to give the sensor
+back.
 """
 
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     r1pro_control,
     r1pro_visualization,
+)
+from dimos.robot.galaxea.r1pro.config import (
+    R1PRO_CHASSIS_LIDAR_HOST_IP,
+    R1PRO_CHASSIS_LIDAR_IP,
 )
 from dimos.robot.galaxea.r1pro.lio import (
     LIDAR_FRAME,
     ODOM_FRAME,
     R1ProLioMountTf,
     R1ProLioOdomPose,
-    R1ProMid360,
 )
 
 
@@ -69,9 +73,11 @@ def r1pro_lidar_odometry() -> Blueprint:
     tracking.
     """
     return autoconnect(
-        R1ProMid360.blueprint(frame_id=LIDAR_FRAME).remappings(
-            [(R1ProMid360, "lidar", "lidar_raw")]
-        ),
+        Mid360.blueprint(
+            frame_id=LIDAR_FRAME,
+            lidar_ip=R1PRO_CHASSIS_LIDAR_IP,
+            host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
+        ).remappings([(Mid360, "lidar", "lidar_raw")]),
         PointLioRust.blueprint(frame_id=ODOM_FRAME, sensor_frame_id=LIDAR_FRAME).remappings(
             [
                 (PointLioRust, "lidar", "lidar"),

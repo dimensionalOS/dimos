@@ -312,7 +312,6 @@ all_modules = {
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
     "r1-pro-lio-mount-tf": "dimos.robot.galaxea.r1pro.lio.R1ProLioMountTf",
     "r1-pro-lio-odom-pose": "dimos.robot.galaxea.r1pro.lio.R1ProLioOdomPose",
-    "r1-pro-mid360": "dimos.robot.galaxea.r1pro.lio.R1ProMid360",
     "raw-robot-bridge": "dimos.robot.raw_robot_bridge.RawRobotBridge",
     "ray-tracing-voxel-map": "dimos.mapping.ray_tracing.module.RayTracingVoxelMap",
     "real-sense-camera": "dimos.hardware.sensors.camera.realsense.camera.RealSenseCamera",
