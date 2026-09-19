@@ -65,7 +65,7 @@ find_package(glog REQUIRED)
 
 find_library(LIVOX_SDK livox_lidar_sdk_shared)
 if(NOT LIVOX_SDK)
-  message(FATAL_ERROR "Livox SDK2 not found. Available via nix flake in lidar/livox/")
+  message(FATAL_ERROR "Livox SDK2 not found: build with nix, whose flake takes it from github:jeff-hykin/livox-sdk2")
 endif()
 get_filename_component(LIVOX_SDK_LIB_DIR ${LIVOX_SDK} DIRECTORY)
 get_filename_component(LIVOX_SDK_PREFIX ${LIVOX_SDK_LIB_DIR} DIRECTORY)
@@ -78,8 +78,10 @@ add_executable(pointlio_native
   ${FASTLIO_DIR}/src/parameters.cpp
 )
 
+# The shared livox headers (livox_sdk_config.hpp etc.) live in github:jeff-hykin/livox-sdk2,
+# as its livox-common package; the flake passes them in.
 if(NOT LIVOX_COMMON_DIR)
-  set(LIVOX_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
+  message(FATAL_ERROR "LIVOX_COMMON_DIR is not set: build with nix, or pass the livox_common directory of a github:jeff-hykin/livox-sdk2 checkout")
 endif()
 
 target_include_directories(pointlio_native PRIVATE
