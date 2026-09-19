@@ -264,7 +264,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
                 last_lidar_time = current_time
 
             # Control simulation speed
-            time_until_next_step = model.opt.timestep - (time.time() - step_start)
+            frame_sim_time = model.opt.timestep * config.mujoco_steps_per_frame
+            time_until_next_step = frame_sim_time - (time.time() - step_start)
             if time_until_next_step > 0:
                 time.sleep(time_until_next_step)
 
