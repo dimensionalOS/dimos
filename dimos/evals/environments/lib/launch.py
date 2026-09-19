@@ -143,6 +143,7 @@ def screen_capture(path: Path, url: str, size: str = "1920x1080", fps: int = 15)
             "--window-size", size,
             "--hide-welcome-screen",
             "--expect-data-soon",
+            "--memory-limit", "2GB",  # the default is a share of host RAM: 30 GB on a big box
         ],
         env=env, stdin=null, stdout=null, stderr=null,
     )  # fmt: skip
