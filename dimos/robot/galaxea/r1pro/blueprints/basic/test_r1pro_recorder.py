@@ -20,6 +20,7 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.camera.depth_cloud.module import StereoCloud
+from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
 from dimos.robot.galaxea.r1pro.blueprints.basic import r1pro_recorder as recorder_module
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_recorder import (
     CALIBRATION_COLOR_HZ,
@@ -31,7 +32,7 @@ from dimos.robot.galaxea.r1pro.lio import (
     LIDAR_FRAME,
     ODOM_FRAME,
     R1ProLioMountTf,
-    R1ProPointLio,
+    R1ProMid360,
 )
 
 
@@ -45,18 +46,20 @@ def test_the_robot_hangs_off_pointlio_and_its_streams_stay_apart(blueprint: Blue
     # The wheel odometry is off, so base_link has one parent: the mount tf's.
     assert atoms[R1ProConnection].kwargs["publish_odom"] is False
     assert R1ProLioMountTf in atoms
-    assert atoms[R1ProPointLio].kwargs["sensor_frame_id"] == LIDAR_FRAME
-    assert atoms[R1ProPointLio].kwargs["frame_id"] == ODOM_FRAME
+    assert atoms[R1ProMid360].kwargs["frame_id"] == LIDAR_FRAME
+    assert atoms[PointLioRust].kwargs["sensor_frame_id"] == LIDAR_FRAME
+    assert atoms[PointLioRust].kwargs["frame_id"] == ODOM_FRAME
     # Above the estimator's own rate, so the caps never decide anything.
-    assert atoms[R1ProPointLio].kwargs["pointcloud_freq"] >= 100.0
-    assert atoms[R1ProPointLio].kwargs["odom_freq"] >= 100.0
+    assert atoms[PointLioRust].kwargs["pointcloud_freq"] >= 100.0
+    assert atoms[PointLioRust].kwargs["odom_freq"] >= 100.0
 
     remaps = blueprint.remapping_map
     key = blueprint._instance_key
     # Renamed off the vendor driver's `lidar` and the wheels' `odometry`, so
     # the recording never interleaves two producers on one stream.
-    assert remaps[(key(R1ProPointLio), "lidar")] == "pointlio_lidar"
-    assert remaps[(key(R1ProPointLio), "odometry")] == "pointlio_odometry"
+    assert remaps[(key(R1ProMid360), "lidar")] == "lidar_raw"
+    assert remaps[(key(PointLioRust), "lidar")] == "pointlio_lidar"
+    assert remaps[(key(PointLioRust), "odometry")] == "pointlio_odometry"
 
 
 @pytest.mark.parametrize("blueprint", [r1pro_recorder, r1pro_calibration_recorder])

@@ -26,7 +26,7 @@ use lcm_msgs::sensor_msgs::{Imu, PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use pointlio_core::{LivoxPoint, PointLio, PointXYZI};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use validator::ValidationError;
 
 /// Python's `None`, sent as a JSON null under a key that is always present.
@@ -138,8 +138,77 @@ pub struct PointLioModule {
     // Handlers run one at a time on the dispatch loop, so the estimator is
     // fed in arrival order without a lock.
     lio: Option<PointLio>,
+    host_clock: HostClock,
     last_cloud_ts: Option<f64>,
     last_odom_ts: Option<f64>,
+}
+
+/// The offset that carries the Livox's own clock onto the host's.
+///
+/// The driver stamps every cloud and IMU sample with the sensor's packet time,
+/// and a Mid-360 with no time source counts its own uptime -- 162,771 s on the
+/// R1's, 45 hours, not an epoch. The estimator works in that base and so would
+/// its odometry and tf, and nothing that looks a pose up by a camera's stamp
+/// would find one. The only handle on the host's clock is when packets arrive:
+/// `host_arrival - device_stamp` is the offset plus a transport delay that is
+/// always positive, so the minimum over a window is the offset. Two windows
+/// alternate so the estimate follows a drifting sensor and is never older than
+/// two windows. The same rule as the C++ module's `publish_stamp.hpp`.
+struct HostClock {
+    window_s: f64,
+    offset: f64,
+    candidate: f64,
+    window_started: f64,
+}
+
+impl Default for HostClock {
+    fn default() -> Self {
+        HostClock::new(30.0)
+    }
+}
+
+impl HostClock {
+    fn new(window_s: f64) -> Self {
+        HostClock {
+            window_s,
+            offset: f64::INFINITY,
+            candidate: f64::INFINITY,
+            window_started: 0.0,
+        }
+    }
+
+    /// One message: `device_s` is its own stamp, `host_s` the wall clock now.
+    fn observe(&mut self, device_s: f64, host_s: f64) {
+        if device_s.is_nan() || device_s <= 0.0 {
+            return;
+        }
+        let difference = host_s - device_s;
+        self.candidate = self.candidate.min(difference);
+        self.offset = self.offset.min(difference);
+        if self.window_started <= 0.0 {
+            self.window_started = host_s;
+        } else if host_s - self.window_started >= self.window_s {
+            self.offset = self.candidate;
+            self.candidate = f64::INFINITY;
+            self.window_started = host_s;
+        }
+    }
+
+    fn ready(&self) -> bool {
+        self.offset.is_finite()
+    }
+
+    /// A sensor time on the host's clock, or `None` before any message.
+    fn to_host(&self, device_s: f64) -> Option<f64> {
+        self.ready().then_some(device_s + self.offset)
+    }
+}
+
+fn wall_now_s() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 impl PointLioModule {
@@ -157,6 +226,7 @@ impl PointLioModule {
 
     async fn handle_imu(&mut self, msg: Imu) {
         let ts = stamp_secs(&msg.header.stamp);
+        self.host_clock.observe(ts, wall_now_s());
         let g = &msg.angular_velocity;
         let a = &msg.linear_acceleration;
         self.lio.as_mut().expect("setup ran").feed_imu(
@@ -176,6 +246,8 @@ impl PointLioModule {
             }
         };
         let start_ns = stamp_ns(&msg.header.stamp);
+        self.host_clock
+            .observe(start_ns as f64 * 1e-9, wall_now_s());
         self.lio
             .as_mut()
             .expect("setup ran")
@@ -202,8 +274,13 @@ impl PointLioModule {
     async fn publish(&mut self) {
         let lio = self.lio.as_ref().expect("setup ran");
         let o = lio.odometry();
+        // The state's time, on the host's clock. The rate limits stay on the
+        // estimator's own clock, which is what they measure.
+        let Some(host_ts) = self.host_clock.to_host(o.ts) else {
+            return;
+        };
         if due(&mut self.last_odom_ts, o.ts, self.config.odom_freq) {
-            let msg = odometry_message(&self.config, &o);
+            let msg = odometry_message(&self.config, &o, host_ts);
             let _ = self.odometry.publish(&msg).await;
             let iso = Isometry3::from_parts(
                 Translation3::new(o.pos[0], o.pos[1], o.pos[2]),
@@ -214,7 +291,7 @@ impl PointLioModule {
             let t = Transform::new(
                 self.config.world_frame(),
                 self.config.sensor_frame(),
-                o.ts,
+                host_ts,
                 iso,
             );
             let _ = self.tf.publish(&[t]).await;
@@ -222,7 +299,7 @@ impl PointLioModule {
         if due(&mut self.last_cloud_ts, o.ts, self.config.pointcloud_freq) {
             let cloud = lio.body_cloud();
             if !cloud.is_empty() {
-                let msg = cloud_message(&self.config.sensor_frame(), o.ts, &cloud);
+                let msg = cloud_message(&self.config.sensor_frame(), host_ts, &cloud);
                 let _ = self.lidar.publish(&msg).await;
             }
         }
@@ -354,14 +431,14 @@ impl Config {
     }
 }
 
-fn odometry_message(cfg: &Config, o: &pointlio_core::Odom) -> Odometry {
+fn odometry_message(cfg: &Config, o: &pointlio_core::Odom, ts: f64) -> Odometry {
     let v = |a: [f64; 3]| Vector3 {
         x: a[0],
         y: a[1],
         z: a[2],
     };
     Odometry {
-        header: header(&cfg.world_frame(), o.ts),
+        header: header(&cfg.world_frame(), ts),
         child_frame_id: cfg.sensor_frame(),
         pose: PoseWithCovariance {
             pose: Pose {
@@ -527,6 +604,51 @@ mod tests {
         let mut legacy = c.clone();
         legacy.fields[3] = field("intensity", 12, PointField::FLOAT32);
         assert!(livox_points(&legacy).is_err());
+    }
+
+    #[test]
+    fn host_clock_is_not_ready_until_a_packet_is_seen() {
+        let clock = HostClock::new(30.0);
+        assert!(!clock.ready());
+        assert_eq!(clock.to_host(162_771.0), None);
+    }
+
+    #[test]
+    fn host_clock_offset_is_the_smallest_delay_seen() {
+        // The Livox reports 45 hours of its own uptime while the host is at
+        // epoch. Every packet arrives late by a positive, varying delay, so
+        // the true offset is the minimum of (host - device).
+        let device = 162_771.0;
+        let wall = 1.7e9;
+        let mut clock = HostClock::new(30.0);
+        clock.observe(device, wall + 0.010);
+        clock.observe(device + 0.1, wall + 0.1 + 0.002);
+        clock.observe(device + 0.2, wall + 0.2 + 0.050);
+        assert!(clock.ready());
+        let host = clock.to_host(device + 0.3).unwrap();
+        assert!((host - (wall + 0.3 + 0.002)).abs() < 1e-6, "{host}");
+    }
+
+    #[test]
+    fn host_clock_follows_drift_once_a_window_ends() {
+        let device = 162_771.0;
+        let wall = 1.7e9;
+        let mut clock = HostClock::new(10.0);
+        clock.observe(device, wall);
+        // The sensor's clock falls half a second behind and stays there.
+        for i in 1..=30 {
+            let t = f64::from(i);
+            clock.observe(device + t, wall + t + 0.5);
+        }
+        let host = clock.to_host(device + 31.0).unwrap();
+        assert!(host > wall + 31.0 + 0.4, "{host}");
+    }
+
+    #[test]
+    fn host_clock_ignores_a_packet_with_no_device_stamp() {
+        let mut clock = HostClock::new(30.0);
+        clock.observe(0.0, 1.7e9);
+        assert!(!clock.ready());
     }
 
     #[test]

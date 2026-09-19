@@ -42,6 +42,25 @@ def _convert_navigation_costmap(grid: Any) -> Any:
     )
 
 
+def _plot_odom(odom: Any) -> Any:
+    import rerun as rr
+
+    return [
+        ("world/odom", odom.to_rerun()),
+        ("plots/odom/x", rr.Scalars(odom.x)),
+        ("plots/odom/y", rr.Scalars(odom.y)),
+    ]
+
+
+def _plot_cmd_vel(t: Any) -> Any:
+    import rerun as rr
+
+    return [
+        ("plots/cmd_vel/linear_x", rr.Scalars(t.linear.x)),
+        ("plots/cmd_vel/angular_z", rr.Scalars(t.angular.z)),
+    ]
+
+
 def _static_robot_body(rr: Any) -> list[Any]:
     return [
         rr.Boxes3D(
@@ -59,7 +78,11 @@ def _go2_rerun_blueprint() -> Any:
 
     return rrb.Blueprint(
         rrb.Horizontal(
-            rrb.Spatial2DView(origin="world/color_image", name="Camera"),
+            rrb.Vertical(
+                rrb.Spatial2DView(origin="world/color_image", name="Camera"),
+                rrb.TimeSeriesView(origin="plots/odom", name="odom"),
+                rrb.TimeSeriesView(origin="plots/cmd_vel", name="cmd_vel"),
+            ),
             rrb.Spatial3DView(
                 origin="world",
                 name="3D",
@@ -87,6 +110,8 @@ rerun_config: dict[str, Any] = {
     # This is unsustainable once we move to multi robot etc
     "visual_override": {
         "world/camera_info": _convert_camera_info,
+        "world/odom": _plot_odom,
+        "world/cmd_vel": _plot_cmd_vel,
         "world/global_map": _convert_global_map,
         "world/merged_map": _convert_global_map,
         "world/navigation_costmap": _convert_navigation_costmap,

@@ -16,13 +16,13 @@
 
 Galaxea's stack drives the chassis lidar through ``livox_ros_driver2``, and that
 driver is configured by a ``MID360_config.json`` shipped on every R1 Pro. The
-two addresses Point-LIO needs -- the lidar's IP and the host NIC the lidar
+two addresses the Mid-360 driver needs -- the lidar's IP and the host NIC the lidar
 pushes its data to -- are already in that file, so rather than asking every
 operator to find them and export two environment variables, read them from
 where the vendor put them.
 
-The environment variables still win when set (``DIMOS_POINTLIO_LIDAR_IP`` and
-``DIMOS_POINTLIO_HOST_IP``, as :class:`PointLio` already honours), and the
+The environment variables still win when set (``DIMOS_MID360_LIDAR_IP`` and
+``DIMOS_MID360_HOST_IP``, as :class:`Mid360` already honours), and the
 file's location can be overridden with ``DIMOS_R1_MID360_CONFIG`` for a robot
 whose vendor install lives somewhere else.
 """
@@ -70,7 +70,7 @@ def read_vendor_lidar_network(path: Path | None = None) -> LidarNetwork:
     """
     path = path or vendor_config_path()
     how_to_fix = (
-        f"Set DIMOS_POINTLIO_LIDAR_IP and DIMOS_POINTLIO_HOST_IP yourself, or point "
+        f"Set DIMOS_MID360_LIDAR_IP and DIMOS_MID360_HOST_IP yourself, or point "
         f"{ENV_CONFIG_PATH} at the robot's livox_ros_driver2 MID360_config.json."
     )
     try:

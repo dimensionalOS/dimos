@@ -89,13 +89,10 @@ number in the way.
 moment they were *published* rather than the moment the state describes, so on
 a run where it fell behind, its stamps ran ahead of the world -- 22 seconds on
 2026-09-16 -- and every camera frame paired with tf by timestamp got a pose from
-22 s earlier. Fixed in the module (see ``pointlio/cpp/publish_stamp.hpp``), which
-means **the native binary has to be rebuilt on the robot** before this blueprint
-is used: ``nix build .#pointlio_native`` in
-``dimos/hardware/sensors/lidar/pointlio/cpp``. It also now logs
-``pointlio is behind the world`` with the lag whenever the estimator trails the
-wall clock by more than a second -- worth watching in the run's output, because
-that lag is invisible in the data itself.
+22 s earlier. The Rust estimator this blueprint runs stamps every output with
+the state's own time, carried onto the host's clock from packet arrival (the
+Livox counts its own uptime); it never republishes a state, so a stalled
+estimator goes quiet rather than inventing a present.
 
 The engine has to be ``rust``: the robot ships sqlite 3.37.2 and the python
 recorder writes JSONB, which needs 3.45, so it can neither write nor read its
@@ -106,12 +103,13 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
+from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
 from dimos.robot.galaxea.r1pro.lio import (
     LIDAR_FRAME,
     ODOM_FRAME,
     R1ProLioMountTf,
-    R1ProPointLio,
+    R1ProMid360,
 )
 from dimos.visualization.vis_module import vis_module
 
@@ -158,7 +156,8 @@ def _sensors(*, color_publish_hz: float, enable_wrist_color: bool | None = None)
             enable_wrist_color=enable_wrist_color,
         ),
         R1ProLioMountTf.blueprint(),
-        R1ProPointLio.blueprint(
+        R1ProMid360.blueprint(frame_id=LIDAR_FRAME),
+        PointLioRust.blueprint(
             sensor_frame_id=LIDAR_FRAME,
             frame_id=ODOM_FRAME,
             # Publish every state the estimator solves. These are output rate
@@ -176,8 +175,10 @@ def _sensors(*, color_publish_hz: float, enable_wrist_color: bool | None = None)
             # odometry. Left alone, both producers land on one stream and the
             # recording interleaves them with no way to tell which row came
             # from which. Renamed, the recording has both and they stay apart.
-            (R1ProPointLio, "lidar", "pointlio_lidar"),
-            (R1ProPointLio, "odometry", "pointlio_odometry"),
+            # The driver's raw sweep is a third copy, for the estimator only.
+            (R1ProMid360, "lidar", "lidar_raw"),
+            (PointLioRust, "lidar", "pointlio_lidar"),
+            (PointLioRust, "odometry", "pointlio_odometry"),
         ]
     )
 

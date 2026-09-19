@@ -60,7 +60,7 @@ def test_missing_file_says_where_it_looked_and_what_to_set(tmp_path: Path) -> No
         read_vendor_lidar_network(missing)
     message = str(error.value)
     assert str(missing) in message
-    assert "DIMOS_POINTLIO_LIDAR_IP" in message
+    assert "DIMOS_MID360_LIDAR_IP" in message
     assert ENV_CONFIG_PATH in message
 
 

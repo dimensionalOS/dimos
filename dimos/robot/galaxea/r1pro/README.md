@@ -83,12 +83,14 @@ chassis was *commanded*, which smears a map around a spin) is switched off, and
 
 **What keeps running.** All of the vendor's ROS nodes stay up: the chassis and
 arm controllers, the cameras, the IMUs. dimos does not replace any of them.
-Point-LIO opens its *own* connection to the Mid-360 beside the vendor's
-`livox_ros_driver2`.
+dimos's own Mid-360 driver opens a *second* connection to the sensor beside
+the vendor's `livox_ros_driver2`, and feeds the Rust Point-LIO: the estimator
+deskews a sweep by a per-point time offset the vendor's cloud does not carry,
+and it needs the IMU inside the sensor, not the chassis IMU.
 
 **What stops.** A Livox streams to the host that last asked it to. As soon as
 Point-LIO starts, the vendor driver receives nothing: `/hdas/lidar_chassis_left`
-keeps its publisher and goes silent, and it does not recover when Point-LIO
+keeps its publisher and goes silent, and it does not recover when the driver
 exits, because `livox_ros_driver2` never asks again. Nothing in the vendor's
 navigation runs while dimos owns the sensor, and the sensor stays with dimos
 until the vendor driver is restarted.
@@ -106,22 +108,31 @@ cd ~/galaxea-dimos/install/startup_config/share/startup_config/script/boot/modul
 tmux send-keys -t hdas './start_livox_lidar.sh' Enter
 ```
 
-**Network.** Point-LIO needs the lidar's IP and the host NIC it pushes to. On
+**Network.** The driver needs the lidar's IP and the host NIC it pushes to. On
 an R1 they are read from the vendor's own
 `~/galaxea-dimos/install/livox_ros_driver2/share/livox_ros_driver2/config/MID360_config.json`
 (override the location with `DIMOS_R1_MID360_CONFIG`), or set
-`DIMOS_POINTLIO_LIDAR_IP` / `DIMOS_POINTLIO_HOST_IP` to skip the file. The
+`DIMOS_MID360_LIDAR_IP` / `DIMOS_MID360_HOST_IP` to skip the file. The
 blueprint refuses to start, naming the file and the variables, when neither
-can answer, or when no local interface sits on the lidar's subnet.
+can answer, or when no local interface sits on the lidar's subnet. The vendor
+driver holds the same host ports (56101, 56201, ...); both bind them with
+`SO_REUSEADDR`, and the device streams to whichever asked last.
+
+**Time.** A Mid-360 with no time source stamps its packets with its own
+uptime. The estimator carries its output onto the host's clock from packet
+arrival times (the minimum of host-minus-device over a 30 s window), so its
+odometry, tf and cloud resolve against the cameras' stamps.
 
 **Transport.** Run with `--g.transport lcm`. Over zenoh the C++ estimator's
-cloud is dropped by the Rust voxel map (`Received Data for unknown expr_id`)
-with no warning naming the stream. The vendor's `realsense2_camera` holds LCM's
-default port, so use `LCM_DEFAULT_URL=udpm://239.255.76.67:7767?ttl=0`.
+cloud was dropped by the Rust voxel map (`Received Data for unknown expr_id`)
+with no warning naming the stream; the Rust estimator has not been tried
+there. The vendor's `realsense2_camera` holds LCM's default port, so use
+`LCM_DEFAULT_URL=udpm://239.255.76.67:7767?ttl=0`.
 
-**Build.** The estimator is a native binary built on first run with
-`nix build -L .#pointlio_native` in `dimos/hardware/sensors/lidar/pointlio/cpp`;
-on an Orin that is about twenty minutes, once.
+**Build.** The driver and the estimator are native binaries
+(`target/release/mid360_native`, `target/release/pointlio_native`) built on
+first run with `cargo build --release`. On an Orin `cargo` is not on the
+path: build once inside `nix develop path:nix/rust`.
 
 ## Recording stereo calibration data
 
@@ -143,9 +154,9 @@ dimos run r1pro-calibration-recorder \
 That is both eyes and both infos at 30 fps, Point-LIO's deskewed cloud and
 pose, and tf -- with the wrist cameras off and nothing that plans, so the
 Orin's CPU goes to the frames. The engine must be `rust` (the robot's sqlite
-cannot write the python recorder's JSONB), and Point-LIO's native binary has
-to have been rebuilt since the publish-stamp fix (`nix build .#pointlio_native`
-in `dimos/hardware/sensors/lidar/pointlio/cpp`).
+cannot write the python recorder's JSONB), and the estimator's stamps have to
+be on the host's clock, which the Rust Point-LIO does by design (see *Time*
+above).
 
 **Driving.** Slowly, for 60-120 s, with the floor and at least one wall in the
 head's view at 1-6 m the whole time. Put in a couple of gentle turns -- a turn
