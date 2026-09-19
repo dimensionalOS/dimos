@@ -46,8 +46,10 @@ GO2 = Embodiment(
     height=0.45,  # above this the body passes underneath; not an obstacle (m)
     base_height=0.29,  # base origin above support; frame plumbing, not semantics (m)
     # Fitted-sim envelope sweep over the governed slow band; the sweep lives with the sim.
+    # Straight ahead and back the feet never leave the trunk's 0.33 m (measured); the
+    # drift rows keep the fitted widths.
     envelope=(
-        (0.0, 0.819, 0.416, -0.023, 0.000),
+        (0.0, 0.819, 0.33, -0.023, 0.000),
         (26.6, 0.802, 0.436, -0.032, -0.008),
         (45.0, 0.788, 0.472, -0.035, -0.018),
         (63.4, 0.781, 0.500, -0.039, -0.016),
@@ -55,7 +57,7 @@ GO2 = Embodiment(
         (116.6, 0.781, 0.497, -0.039, 0.000),
         (135.0, 0.781, 0.463, -0.039, -0.001),
         (153.4, 0.781, 0.422, -0.039, -0.003),
-        (180.0, 0.781, 0.416, -0.039, 0.000),
+        (180.0, 0.781, 0.33, -0.039, 0.000),
     ),
     arc_inflate=0.0334,  # extra width per rad/m of curvature, residuals <= 12 mm
     # Follower tuning fitted in the closed-loop lab, unlike the measurements above.
