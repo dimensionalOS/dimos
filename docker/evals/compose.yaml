@@ -32,9 +32,10 @@ services:
       DIMSIM_RENDER: ${DIMSIM_RENDER:-cpu}
       # Log to Rerun but never open a viewer; every run writes
       # recordings/<run-id>/rerun.rrd next to its memory.db for offline replay.
+      # RERUN_SAVE=0 on the host skips the file (the bridge still runs).
       VIEWER: rerun
       RERUN_OPEN: none
-      RERUN_SAVE: "1"
+      RERUN_SAVE: ${RERUN_SAVE:-1}
       TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

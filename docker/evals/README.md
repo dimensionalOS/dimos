@@ -69,7 +69,8 @@ client of the bridge's own gRPC server streams every event to `rerun.rrd`
 next to that run's `memory.db`. The same `--rerun-save` flag works on a bare
 `dimos run`, with a live viewer too if you want one. Files grow at roughly
 20 MB per minute of a DimSim case with camera and lidar on, so budget disk
-accordingly and sync the runs directory to S3 after a batch.
+accordingly and sync the runs directory to S3 after a batch. `RERUN_SAVE=0`
+in front of a `--docker` run skips the file for that run.
 
 ## Setup
 
