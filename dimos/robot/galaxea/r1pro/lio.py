@@ -39,20 +39,23 @@ chassis lidar's own cloud has no path to the world and the map never sees it.
 ``PoseStamped`` and Point-LIO emits an ``Odometry``, which is the same pose
 with a twist beside it.
 
-:class:`R1ProPointLio` is the estimator itself, with one R1-specific addition:
-when nobody told it where the lidar is, it reads the vendor's own
-``MID360_config.json`` rather than failing. See
+:class:`R1ProMid360` is dimos's own Mid-360 driver, which feeds the Rust
+Point-LIO, with one R1-specific addition: when nobody told it where the lidar
+is, it reads the vendor's own ``MID360_config.json`` rather than failing. See
 :mod:`dimos.robot.galaxea.r1pro.vendor_lidar`.
 """
 
 from __future__ import annotations
 
+import os
+
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.livox.module import Mid360, Mid360Config
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -126,39 +129,48 @@ class R1ProLioOdomPose(Module):
         )
 
 
-class R1ProPointLio(PointLio):
-    """Point-LIO on the R1's chassis Mid-360.
+class R1ProMid360Config(Mid360Config):
+    # No factory-default address: on an R1 the vendor's file answers instead.
+    lidar_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_LIDAR_IP"))
 
-    Identical to :class:`PointLio` except for how it learns the lidar's address.
-    ``PointLio`` insists on ``lidar_ip`` (config or ``DIMOS_POINTLIO_LIDAR_IP``)
-    and fails otherwise. On an R1 that address is already written down in the
-    vendor's ``MID360_config.json``, so when nothing sets it this reads it from
-    there, and only fails -- naming the file and the variables -- when that file
-    cannot answer either.
+
+class R1ProMid360(Mid360):
+    """dimos's Mid-360 driver on the R1's chassis lidar.
+
+    Identical to :class:`Mid360` except for how it learns the lidar's address.
+    ``Mid360`` assumes the factory IP when ``lidar_ip`` (config or
+    ``DIMOS_MID360_LIDAR_IP``) is unset. On an R1 the real address is already
+    written down in the vendor's ``MID360_config.json``, so when nothing sets it
+    this reads it from there, and only fails -- naming the file and the
+    variables -- when that file cannot answer either.
 
     The sensor itself: a Livox streams to the host that last asked it to, so
     while this runs the vendor's ``livox_ros_driver2`` receives nothing and its
-    ``/hdas/lidar_chassis_left`` topic goes quiet. The cloud this module
-    publishes is the only copy of the chassis scan dimos sees -- and the better
-    one, deskewed and stamped in the frame the estimator tracks. The vendor
-    driver does not recover on its own; the R1 README says how to give it the
-    sensor back.
+    ``/hdas/lidar_chassis_left`` topic goes quiet. The vendor driver does not
+    recover on its own; the R1 README says how to give it the sensor back.
     """
 
-    def _validate_network(self) -> None:
-        if not self.config.lidar_ip:
-            try:
-                network = read_vendor_lidar_network()
-            except VendorLidarConfigError as error:
-                raise RuntimeError(
-                    f"R1ProPointLio: the chassis lidar's address is unknown. {error}"
-                ) from error
-            self.config.lidar_ip = network.lidar_ip
-            if not self.config.host_ip:
-                self.config.host_ip = network.host_ip
-            logger.info(
-                "R1ProPointLio: lidar %s, host %s, from the vendor's MID360_config.json",
-                network.lidar_ip,
-                self.config.host_ip,
-            )
-        super()._validate_network()
+    config: R1ProMid360Config
+
+    @rpc
+    def start(self) -> None:
+        self._resolve_vendor_network()
+        super().start()
+
+    def _resolve_vendor_network(self) -> None:
+        if self.config.lidar_ip:
+            return
+        try:
+            network = read_vendor_lidar_network()
+        except VendorLidarConfigError as error:
+            raise RuntimeError(
+                f"R1ProMid360: the chassis lidar's address is unknown. {error}"
+            ) from error
+        self.config.lidar_ip = network.lidar_ip
+        if not self.config.host_ip:
+            self.config.host_ip = network.host_ip
+        logger.info(
+            "R1ProMid360: lidar %s, host %s, from the vendor's MID360_config.json",
+            network.lidar_ip,
+            self.config.host_ip,
+        )
