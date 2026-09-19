@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -31,7 +32,7 @@ from dimos.robot.galaxea.r1pro.lio import (
     LIDAR_FRAME,
     R1ProLioMountTf,
     R1ProLioOdomPose,
-    R1ProPointLio,
+    R1ProMid360,
     mount_transforms,
 )
 from dimos.robot.galaxea.r1pro.vendor_lidar import ENV_CONFIG_PATH
@@ -110,20 +111,23 @@ def test_blueprint_hangs_the_robot_off_pointlio_alone() -> None:
     # The wheel odometry is off, so base_link has one parent: the mount tf's.
     assert atoms[R1ProConnection].kwargs["publish_odom"] is False
     assert R1ProLioMountTf in atoms
-    assert atoms[R1ProPointLio].kwargs["sensor_frame_id"] == LIDAR_FRAME
+    assert atoms[PointLioRust].kwargs["sensor_frame_id"] == LIDAR_FRAME
+    assert atoms[R1ProMid360].kwargs["frame_id"] == LIDAR_FRAME
 
     remaps = r1pro_pointlio.remapping_map
     key = r1pro_pointlio._instance_key
-    # The estimator's cloud is the only copy of the chassis scan: onto the bus.
-    assert remaps[(key(R1ProPointLio), "lidar")] == "lidar"
-    assert remaps[(key(R1ProPointLio), "odometry")] == "pointlio_odometry"
+    # The driver's raw sweep is only for the estimator; the estimator's cloud
+    # is the only copy of the chassis scan that reaches the bus.
+    assert remaps[(key(R1ProMid360), "lidar")] == "lidar_raw"
+    assert remaps[(key(PointLioRust), "lidar")] == "lidar"
+    assert remaps[(key(PointLioRust), "odometry")] == "pointlio_odometry"
     assert remaps[(key(R1ProLioOdomPose), "odometry")] == "pointlio_odometry"
     # The name the planners already read.
     assert remaps[(key(R1ProLioOdomPose), "pose")] == "chassis_odom"
 
 
 def test_network_from_the_vendor_file_when_nothing_else_says(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker, built
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, built
 ) -> None:
     vendor = tmp_path / "MID360_config.json"
     vendor.write_text(
@@ -135,29 +139,20 @@ def test_network_from_the_vendor_file_when_nothing_else_says(
         )
     )
     monkeypatch.setenv(ENV_CONFIG_PATH, str(vendor))
-    resolve = mocker.patch(
-        "dimos.hardware.sensors.lidar.pointlio.module.resolve_host_ip",
-        side_effect=lambda lidar_ip, configured, label: configured,
-    )
 
-    module = built(R1ProPointLio, lidar_ip=None, host_ip=None)
-    module._validate_network()
+    module = built(R1ProMid360, lidar_ip=None, host_ip=None)
+    module._resolve_vendor_network()
 
     assert module.config.lidar_ip == "192.168.2.100"
     assert module.config.host_ip == "192.168.2.150"
-    resolve.assert_called_once_with("192.168.2.100", "192.168.2.150", label="PointLio")
 
 
 def test_explicit_addresses_win_over_the_vendor_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker, built
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, built
 ) -> None:
     monkeypatch.setenv(ENV_CONFIG_PATH, str(tmp_path / "does-not-exist.json"))
-    mocker.patch(
-        "dimos.hardware.sensors.lidar.pointlio.module.resolve_host_ip",
-        side_effect=lambda lidar_ip, configured, label: configured,
-    )
-    module = built(R1ProPointLio, lidar_ip="10.0.0.9", host_ip="10.0.0.1")
-    module._validate_network()
+    module = built(R1ProMid360, lidar_ip="10.0.0.9", host_ip="10.0.0.1")
+    module._resolve_vendor_network()
     assert (module.config.lidar_ip, module.config.host_ip) == ("10.0.0.9", "10.0.0.1")
 
 
@@ -166,10 +161,10 @@ def test_unknown_address_fails_naming_the_file_and_the_variables(
 ) -> None:
     missing = tmp_path / "MID360_config.json"
     monkeypatch.setenv(ENV_CONFIG_PATH, str(missing))
-    module = built(R1ProPointLio, lidar_ip=None, host_ip=None)
+    module = built(R1ProMid360, lidar_ip=None, host_ip=None)
     with pytest.raises(RuntimeError) as error:
-        module._validate_network()
+        module._resolve_vendor_network()
     message = str(error.value)
     assert str(missing) in message
-    assert "DIMOS_POINTLIO_LIDAR_IP" in message
+    assert "DIMOS_MID360_LIDAR_IP" in message
     assert ENV_CONFIG_PATH in message
