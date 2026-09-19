@@ -31,9 +31,12 @@ from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+JOY_AXES = ("linear_x", "linear_y", "linear_z", "angular_x", "angular_y", "angular_z")
 
 
 class ClickMsg(TypedDict):
@@ -77,6 +80,7 @@ class RerunWebSocketServer(Module):
     """This handles outputs from dimos-viewer (like keyboard controls)"""
 
     clicked_point: Out[PointStamped]
+    joystick: Out[Joy]
     tele_cmd_vel: Out[Twist]
 
     _STARTUP_TIMEOUT = 10.0
@@ -208,6 +212,7 @@ class RerunWebSocketServer(Module):
             )
 
         elif msg_type == "twist":
+            self.joystick.publish(Joy(axes=[_num(msg.get(axis)) for axis in JOY_AXES]))
             self.tele_cmd_vel.publish(
                 Twist(
                     linear=Vector3(
@@ -224,4 +229,5 @@ class RerunWebSocketServer(Module):
             )
 
         elif msg_type == "stop":
+            self.joystick.publish(Joy(axes=[0.0] * len(JOY_AXES)))
             self.tele_cmd_vel.publish(Twist.zero())
