@@ -80,24 +80,25 @@ def test_topic_filter_reaches_the_instance(recording: str) -> None:
 
 
 def test_stream_named_like_a_module_attribute_is_skipped(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import structlog
+    from unittest.mock import MagicMock
 
+    from dimos.memory import replay_module as rm
+
+    log = MagicMock()
+    monkeypatch.setattr(rm, "logger", log)
     path = tmp_path / "memory.db"
     store = SqliteStore(path=str(path))
     store.start()
     store.stream("start", PoseStamped).append(PoseStamped(ts=1.0), ts=1.0)
     store.stream("odom", PoseStamped).append(PoseStamped(ts=1.0), ts=1.0)
     store.stop()
-    with structlog.testing.capture_logs() as logs:
-        assert list(replay_module(str(path)).__annotations__) == ["odom"]
-        module = replay_module("")(dataset=str(path))
+    assert list(replay_module(str(path)).__annotations__) == ["odom"]
+    module = replay_module("")(dataset=str(path))
     assert sorted(module.outputs) == ["odom"]
     module.stop()
-    assert [e["event"] for e in logs].count(
-        "Skipping recorded stream 'start': it clashes with a ReplayModule attribute"
-    ) == 2
+    assert [c.args[1] for c in log.warning.call_args_list] == ["start", "start"]
 
 
 def test_subclass_payload_gets_the_base_port_type(tmp_path: Path) -> None:
