@@ -127,7 +127,6 @@ def create_worker_manager():
         manager.stop()
 
 
-@pytest.mark.skipif_macos_bug
 def test_worker_manager_basic(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
     module = worker_manager.deploy(SimpleModule, global_config, {})
@@ -145,7 +144,6 @@ def test_worker_manager_basic(create_worker_manager):
     module.stop()
 
 
-@pytest.mark.skipif_macos_bug
 def test_unpicklable_rpc_result_raises_without_killing_the_worker(create_worker_manager):
     """An RPC result that cannot pickle comes back as the error, not a dead worker."""
     worker_manager = create_worker_manager(n_workers=1)
@@ -160,7 +158,6 @@ def test_unpicklable_rpc_result_raises_without_killing_the_worker(create_worker_
     module.stop()
 
 
-@pytest.mark.skipif_macos_bug
 def test_unpicklable_pipe_response_raises_without_killing_the_worker(create_worker_manager):
     """A response the worker pipe cannot pickle errors out; the worker lives on."""
     worker_manager = create_worker_manager(n_workers=1)
@@ -177,7 +174,6 @@ def test_unpicklable_pipe_response_raises_without_killing_the_worker(create_work
     module.stop()
 
 
-@pytest.mark.skipif_macos_bug
 def test_worker_inherits_host_global_config(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=1)
     host_config = GlobalConfig(robot_ip="10.11.12.13")
@@ -189,7 +185,6 @@ def test_worker_inherits_host_global_config(create_worker_manager):
     module.stop()
 
 
-@pytest.mark.skipif_macos_bug
 def test_worker_manager_multiple_different_modules(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
     module1 = worker_manager.deploy(SimpleModule, global_config, {})
@@ -211,7 +206,6 @@ def test_worker_manager_multiple_different_modules(create_worker_manager):
     module2.stop()
 
 
-@pytest.mark.skipif_macos_bug
 def test_worker_manager_parallel_deployment(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
     simple_kwargs = {}
@@ -247,7 +241,6 @@ def test_worker_manager_parallel_deployment(create_worker_manager):
     module3.stop()
 
 
-@pytest.mark.skipif_macos_bug
 def test_collect_stats(create_worker_manager):
     from dimos.core.resource_monitor.monitor import StatsMonitor
 
@@ -296,7 +289,6 @@ def test_collect_stats(create_worker_manager):
     module2.stop()
 
 
-@pytest.mark.skipif_macos_bug
 def test_worker_pool_modules_share_workers(create_worker_manager):
     manager = create_worker_manager(n_workers=1)
     module1 = manager.deploy(SimpleModule, global_config, {})
@@ -342,7 +334,6 @@ def manager_and_modules():
         manager.stop()
 
 
-@pytest.mark.skipif_macos_bug
 def test_health_check_alive_workers(manager_and_modules):
     manager, modules = manager_and_modules(n_workers=2)
     module = manager.deploy(SimpleModule, global_config, {})
@@ -352,7 +343,6 @@ def test_health_check_alive_workers(manager_and_modules):
     assert manager.health_check() is True
 
 
-@pytest.mark.skipif_macos_bug
 def test_add_workers_grows_pool(manager_and_modules):
     manager, modules = manager_and_modules(n_workers=1)
     manager.add_workers(2)
@@ -366,7 +356,6 @@ def test_add_workers_grows_pool(manager_and_modules):
     assert module.increment() == 1
 
 
-@pytest.mark.skipif_macos_bug
 def test_load_balancing_distributes_modules(manager_and_modules):
     manager, modules = manager_and_modules(n_workers=2)
 
@@ -380,7 +369,6 @@ def test_load_balancing_distributes_modules(manager_and_modules):
     assert counts == [2, 2]
 
 
-@pytest.mark.skipif_macos_bug
 def test_dedicated_worker_gets_own_process(manager_and_modules):
     manager, modules = manager_and_modules(n_workers=2)
 
@@ -399,7 +387,6 @@ def test_dedicated_worker_gets_own_process(manager_and_modules):
     assert sum(1 for w in manager._workers if w.dedicated) == 1
 
 
-@pytest.mark.skipif_macos_bug
 def test_dedicated_workers_trigger_autoscale(manager_and_modules):
     manager, modules = manager_and_modules(n_workers=2)
 

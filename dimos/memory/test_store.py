@@ -20,7 +20,6 @@ The parametrized ``session`` fixture from conftest runs each test against both b
 
 from __future__ import annotations
 
-import platform
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -29,10 +28,10 @@ from dimos.memory.backend import Backend
 from dimos.memory.blobstore.base import BlobStore
 from dimos.memory.vectorstore.base import VectorStore
 
-_SKIP_SQLITE_VEC = platform.machine() == "aarch64" or platform.system() == "Darwin"
-
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
+
+pytestmark = pytest.mark.macos_ci
 
 
 class TestStoreBasic:
@@ -349,8 +348,6 @@ def memory_spy_session():
 
 @pytest.fixture
 def sqlite_spy_session(tmp_path):
-    if _SKIP_SQLITE_VEC:
-        pytest.skip("sqlite-vec extension not loadable here")
     from dimos.memory.store.sqlite import SqliteStore
 
     blob_spy = SpyBlobStore()
@@ -425,8 +422,6 @@ class TestStoreDelegation:
         assert results[0].data == "north"
 
 
-@pytest.mark.skipif_macos
-@pytest.mark.skipif_aarch64
 class TestStandaloneComponents:
     """Verify each SQLite component works standalone with path= (no Store needed)."""
 
