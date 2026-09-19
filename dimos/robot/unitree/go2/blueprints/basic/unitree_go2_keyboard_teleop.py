@@ -15,7 +15,10 @@
 
 """Unitree Go2 keyboard teleop via ControlCoordinator (DDS/SDK2 path).
 
-WASD keys -> Twist -> coordinator twist_command -> UnitreeGo2TwistAdapter (DDS).
+Keyboard input -> Twist -> coordinator twist_command -> UnitreeGo2TwistAdapter (DDS).
+
+Use W/S or Up/Down to move, A/D or Left/Right to turn, and Q/E or
+Alt plus the turn keys to strafe.
 
 Usage:
     dimos run unitree-go2-keyboard-teleop
