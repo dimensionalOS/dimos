@@ -91,7 +91,9 @@ _WRIST_DEPTH_CAMERAS: dict[str, str] = {
 _HEAD_DEPTH_TOPIC = "/hdas/camera_head/depth/depth_registered"
 _LIDAR_TOPIC = "/hdas/lidar_chassis_left"
 # base_link -> lidar_chassis_left_link, the fixed joint origin in the vendor URDF.
-_LIDAR_MOUNT_XYZ = (0.15711, 0.26215, 0.29465)
+# The chassis lidar's mount, from the vendor URDF. Public: lio.py hangs the
+# robot off Point-LIO through the inverse of this edge.
+LIDAR_MOUNT_XYZ = (0.15711, 0.26215, 0.29465)
 
 
 @dataclass
@@ -640,7 +642,7 @@ class R1ProConnection(Module):
             TFMessage(
                 Transform.from_pose(base, pose),
                 Transform(
-                    translation=Vector3(*_LIDAR_MOUNT_XYZ),
+                    translation=Vector3(*LIDAR_MOUNT_XYZ),
                     frame_id=base,
                     child_frame_id=self.config.lidar_frame_id,
                     ts=now,
