@@ -42,7 +42,7 @@ repos:
       - id: trailing-whitespace
         language: python
         types: [text]
-        exclude: &verbatim-files (\.patch$)
+        exclude: &verbatim-files (\.patch$|crate-hashes\.json$)
       - id: end-of-file-fixer
         exclude: *verbatim-files
       - id: mixed-line-ending
@@ -59,7 +59,7 @@ repos:
         name: format json
         args: [ --autofix, --no-sort-keys ]
         # misc/DimSim/public/sims/ is LFS-tracked; web/ JSON is owned by `deno fmt`
-        exclude: ^(misc/DimSim/public/sims/|web/)
+        exclude: ^(misc/DimSim/public/sims/|web/)|crate-hashes\.json$
 
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
     rev: 3.4.1

@@ -1,7 +1,7 @@
 {
   description = "micromamba for the dimos Habitat native module";
 
-  inputs.dimos-native-cpp.url = "github:dimensionalOS/dimos?ref=jeff/fix/native_build_cargo_path&dir=native/cpp";
+  inputs.dimos-native-cpp.url = "github:dimensionalOS/dimos?dir=native/cpp";
   inputs.nixpkgs.follows = "dimos-native-cpp/nixpkgs";
 
   outputs = { self, nixpkgs, ... }:

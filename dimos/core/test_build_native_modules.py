@@ -32,7 +32,6 @@ import json
 import os
 from pathlib import Path
 import re
-import subprocess
 from types import ModuleType
 from typing import NamedTuple
 
@@ -45,8 +44,8 @@ if not _SCRIPT_PATH.is_file():
     pytest.skip("dimos is not running from a source checkout", allow_module_level=True)
 
 
-def _load_script() -> ModuleType:
-    loader = SourceFileLoader("build_native_modules", str(_SCRIPT_PATH))
+def _load_script(path: Path, name: str) -> ModuleType:
+    loader = SourceFileLoader(name, str(path))
     spec = spec_from_loader(loader.name, loader)
     assert spec is not None
     module = module_from_spec(spec)
@@ -54,7 +53,8 @@ def _load_script() -> ModuleType:
     return module
 
 
-_SCRIPT = _load_script()
+_SCRIPT = _load_script(_SCRIPT_PATH, "build_native_modules")
+_RELOCK = _load_script(DIMOS_PROJECT_ROOT / "bin" / "relock-shared-flakes", "relock_shared_flakes")
 _IN_GIT_CHECKOUT = (DIMOS_PROJECT_ROOT / ".git").exists()
 # (file, class) form of the script's externally-provisioned exclusions; their
 # machine-dependent build commands are exempt from the literal rule, and
@@ -250,9 +250,6 @@ def test_no_module_reaches_the_repository_root() -> None:
         )
 
 
-_SHARED_FLAKES = ("native/rust/flake.nix", "native/cpp/flake.nix")
-_DEFAULT_BRANCH = "main"
-
 _IN_REPO_INPUT = re.compile(r'url = "github:dimensionalOS/dimos\?(?P<query>[^"]*)"')
 
 
@@ -273,80 +270,6 @@ def _in_repo_input_refs() -> dict[str, list[str | None]]:
         if found:
             refs[flake.relative_to(DIMOS_PROJECT_ROOT).as_posix()] = found
     return refs
-
-
-def _current_branch_names() -> set[str]:
-    """Every name this checkout answers to.
-
-    A pull request is checked out detached, where `--abbrev-ref HEAD` is the literal
-    string "HEAD" and names nothing; the branch is then only in the environment the
-    runner sets. Both are consulted so the same test means the same thing on a
-    developer's machine and on a runner.
-    """
-    done = subprocess.run(
-        ("git", "-C", str(DIMOS_PROJECT_ROOT), "rev-parse", "--abbrev-ref", "HEAD"),
-        capture_output=True,
-        text=True,
-    )
-    names = {done.stdout.strip()} - {"HEAD", ""}
-    names |= {
-        os.environ[key] for key in ("GITHUB_HEAD_REF", "GITHUB_REF_NAME") if os.environ.get(key)
-    }
-    return names
-
-
-def _default_branch_has_shared_flakes() -> bool:
-    """True once the shared flakes exist on the default branch we can see locally."""
-    for ref in ("origin/HEAD", f"origin/{_DEFAULT_BRANCH}", _DEFAULT_BRANCH):
-        for flake in _SHARED_FLAKES:
-            done = subprocess.run(
-                ("git", "-C", str(DIMOS_PROJECT_ROOT), "cat-file", "-e", f"{ref}:{flake}"),
-                capture_output=True,
-            )
-            if done.returncode == 0:
-                return True
-    return False
-
-
-@pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs a git checkout to read refs")
-def _locked_in_repo_inputs() -> dict[str, list[tuple[str, str]]]:
-    """flake.lock path -> the (rev, dir) of each in-repo input it pins."""
-    locked: dict[str, list[tuple[str, str]]] = {}
-    for lock in DIMOS_PROJECT_ROOT.rglob("flake.lock"):
-        if ".git" in lock.parts:
-            continue
-        nodes = json.loads(lock.read_text()).get("nodes", {})
-        pins = [
-            (node["locked"]["rev"], node["locked"]["dir"])
-            for node in nodes.values()
-            if node.get("locked", {}).get("repo") == "dimos"
-            and node["locked"].get("owner") == "dimensionalOS"
-            and "dir" in node["locked"]
-        ]
-        if pins:
-            locked[lock.relative_to(DIMOS_PROJECT_ROOT).as_posix()] = pins
-    return locked
-
-
-def _tree_at(rev: str, path: str) -> str | None:
-    """The git tree hash of `path` at `rev`, or None if the revision cannot be had."""
-
-    def read() -> str | None:
-        done = subprocess.run(
-            ("git", "-C", str(DIMOS_PROJECT_ROOT), "rev-parse", f"{rev}:{path}"),
-            capture_output=True,
-            text=True,
-        )
-        return done.stdout.strip() if done.returncode == 0 else None
-
-    if (tree := read()) is not None:
-        return tree
-    subprocess.run(
-        ("git", "-C", str(DIMOS_PROJECT_ROOT), "fetch", "--depth=1", "origin", rev),
-        capture_output=True,
-        timeout=120,
-    )
-    return read()
 
 
 @pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs a git checkout to read refs")
@@ -488,36 +411,43 @@ def test_flake_refs_resolve_and_are_covered() -> None:
                 )
 
 
-def test_module_locks_pin_the_shared_flakes_as_they_are_now() -> None:
-    """A module's lock must name a revision whose shared tree is the one in this commit.
+@pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs a git checkout to read refs")
+def test_in_repo_inputs_follow_the_default_branch() -> None:
+    """A `ref=` on an in-repo input names a branch that is gone once its PR merges.
 
-    `nix flake lock` does not notice that the shared flake moved -- it only checks
-    that the lock is complete -- so a change to native/rust can land while every
-    module still builds against the revision before it, and nothing says so. The
-    revision itself is free to be older than HEAD; what must match is the content it
-    pins.
-
-    Shallow clones cannot answer the question at all, so this skips rather than
-    guesses when the pinned revision is not in the checkout.
+    The revision is pinned by bin/relock-shared-flakes; the input must not name a branch.
     """
-    stale: dict[str, list[str]] = {}
-    checked = 0
-    for lock, pins in _locked_in_repo_inputs().items():
-        for rev, subdir in pins:
-            pinned = _tree_at(rev, subdir)
-            if pinned is None:
-                continue  # shallow clone: the revision is not here to compare
-            checked += 1
-            here = _tree_at("HEAD", subdir)
-            if pinned != here:
-                stale.setdefault(lock, []).append(f"{subdir} @ {rev[:10]}")
-    if not checked:
-        pytest.skip("no pinned revision is present in this checkout to compare against")
+    pinned = {flake: refs for flake, refs in _in_repo_input_refs().items() if any(refs)}
+    assert not pinned, f"drop the `ref=` from these in-repo inputs: {pinned}"
+
+
+@pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs a git checkout to read refs")
+def test_module_locks_pin_the_shared_code_as_it_is_now() -> None:
+    """Every module's pin on native/cpp or native/rust must hold this commit's tree.
+
+    `nix flake lock` and `cargo build --locked` do not notice that the shared code
+    moved -- they only check that the lock is complete -- so a change there can land
+    while every module still builds against the revision before it. The revision is
+    free to be older than HEAD; what must match is the content it pins.
+    """
+    stale = {
+        _rel(lock): names
+        for lock in _RELOCK.flake_locks()
+        if (names := _RELOCK.stale_flake_inputs(lock))
+    }
+    stale |= {
+        _rel(manifest): why
+        for manifest in _RELOCK.cargo_manifests()
+        if (why := _RELOCK.stale_cargo_pins(manifest))
+    }
     assert not stale, (
-        "these locks pin a revision whose shared tree is not the one in this commit, "
-        f"so the modules build against the older shared flake: {stale} -- run "
-        "`nix flake update <input>` in each and commit the lock"
+        "these modules pin shared code that is not the code in this commit, so they build "
+        f"against the older version: {stale} -- push, run bin/relock-shared-flakes, commit"
     )
+
+
+def _rel(path: Path) -> str:
+    return path.relative_to(DIMOS_PROJECT_ROOT).as_posix()
 
 
 _BUILD_EDGES = ("nixpkgs", "dimos-native-rust", "dimos-native-cpp")

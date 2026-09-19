@@ -9,7 +9,7 @@
     zenoh.inputs.flake-utils.follows = "flake-utils";
     nixpkgs.follows = "dimos-native-cpp/nixpkgs";
     flake-utils.follows = "dimos-native-cpp/flake-utils";
-    dimos-native-cpp.url = "github:dimensionalOS/dimos?ref=jeff/fix/native_build_cargo_path&dir=native/cpp";
+    dimos-native-cpp.url = "github:dimensionalOS/dimos?dir=native/cpp";
     dimos-lcm = {
       url = "github:dimensionalOS/dimos-lcm/main";
       flake = false;

@@ -39,8 +39,6 @@ build/
 result
 result-*
 
-crate-hashes.json
-
 # Editor and OS files
 .vscode/
 .DS_Store

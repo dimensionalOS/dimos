@@ -23,7 +23,7 @@
       url = "github:apolukhin/pfr_non_boost/2.3.2";
       flake = false;
     };
-    dimos-native-cpp.url = "github:dimensionalOS/dimos?ref=jeff/fix/native_build_cargo_path&dir=native/cpp";
+    dimos-native-cpp.url = "github:dimensionalOS/dimos?dir=native/cpp";
   };
 
   outputs = { self, nix-filter, nixpkgs, zenoh, flake-utils, lcm-extended, dimos-lcm, pfr, dimos-native-cpp, ... }:

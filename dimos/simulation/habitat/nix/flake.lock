@@ -18,7 +18,6 @@
       "original": {
         "dir": "native/cpp",
         "owner": "dimensionalOS",
-        "ref": "jeff/fix/native_build_cargo_path",
         "repo": "dimos",
         "type": "github"
       }

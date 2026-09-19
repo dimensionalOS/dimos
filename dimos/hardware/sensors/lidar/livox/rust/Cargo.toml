@@ -22,7 +22,7 @@ imu = "sensor_msgs.Imu"
 
 [dependencies]
 crc = "3"
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", branch = "main" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "7050d56a44efa6c6c2a59e3d3f6eec41387e529a" }
 etherparse = "0.21.0"
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 pcap-parser = "0.17.0"
