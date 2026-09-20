@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Draw a top-down ground-truth file (``*.top_down.json``) as a reference SVG.
+"""Draw top-down files (``*.top_down.json``, ``*.obstacles.json``) as reference SVGs.
 
-Walls and objects are outlined rectangles; objects get their category written
-inside when the footprint is large enough to hold text, and doorways show up as
-gaps between wall boxes. Coordinates are
-the file's ROS ``world`` meters: x to the right, y up.
+Walls and objects are outlined rectangles; labeled objects get their category
+written inside when the footprint is large enough to hold text, and doorways
+show up as gaps between wall boxes. Coordinates are the file's ROS ``world``
+meters: x to the right, y up.
 
     uv run python misc/habitat/render_top_down.py misc/habitat/ground_truth/hssd/*.top_down.json
 """
@@ -36,6 +36,8 @@ INK_SECONDARY = "#52514e"
 GRID = "#e6e5e0"
 OBJECT = "#2a78d6"
 PADDING_M = 1.0
+# Structure and reduced obstacles carry no category worth writing inside the box.
+UNLABELED = ("wall", "obstacle")
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,10 @@ class Rect:
     @property
     def is_wall(self) -> bool:
         return self.label == "wall"
+
+    @property
+    def has_text(self) -> bool:
+        return self.label not in UNLABELED
 
 
 def load(path: Path) -> tuple[dict[str, object], list[Rect]]:
@@ -116,7 +122,7 @@ def render(view: dict[str, object], rects: list[Rect], *, width_px: int, min_lab
             f"<title>{escape(r.id if r.is_wall else r.label)}</title></rect>"
         )
     for r in objects:
-        if min(r.w, r.h) < min_label_m:
+        if not r.has_text or min(r.w, r.h) < min_label_m:
             continue
         size = min(font, r.h * 0.6, r.w / max(len(r.label), 1) * 1.8)
         parts.append(
@@ -124,9 +130,10 @@ def render(view: dict[str, object], rects: list[Rect], *, width_px: int, min_lab
             f'text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="{SURFACE}" '
             f'stroke-width="{size * 0.25:.3f}">{escape(r.label)}</text>'
         )
+    noun = "objects" if any(r.has_text for r in objects) else "obstacles"
     title = (
         f"{view.get('dataset', '')} {view.get('scene_id', '')}  "
-        f"{len(objects)} objects, {len(walls)} walls  (meters, ROS world frame: x right, y up)"
+        f"{len(objects)} {noun}, {len(walls)} walls  (meters, ROS world frame: x right, y up)"
     )
     parts.append(
         f'<text x="{lo_x + font:.3f}" y="{y(hi_y) + font * 1.6:.3f}" font-size="{font * 1.3:.3f}" '
@@ -138,7 +145,9 @@ def render(view: dict[str, object], rects: list[Rect], *, width_px: int, min_lab
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("paths", nargs="+", type=Path, help="*.top_down.json files")
+    parser.add_argument(
+        "paths", nargs="+", type=Path, help="*.top_down.json or *.obstacles.json files"
+    )
     parser.add_argument("--out", type=Path, help="output directory (default: next to each input)")
     parser.add_argument("--width-px", type=int, default=1600)
     parser.add_argument(

@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="2409" viewBox="-0.531 -10.733 11.231 16.912" font-family="sans-serif">
+<rect x="-0.531" y="-10.733" width="11.231" height="16.912" fill="#fcfcfb"/>
+<line x1="-1" y1="-10.733" x2="-1" y2="6.179" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="0" y1="-10.733" x2="0" y2="6.179" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="0" y="6.104" font-size="0.188" fill="#52514e" text-anchor="middle">0</text>
+<line x1="1" y1="-10.733" x2="1" y2="6.179" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="2" y1="-10.733" x2="2" y2="6.179" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="2" y="6.104" font-size="0.188" fill="#52514e" text-anchor="middle">2</text>
+<line x1="3" y1="-10.733" x2="3" y2="6.179" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="4" y1="-10.733" x2="4" y2="6.179" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="4" y="6.104" font-size="0.188" fill="#52514e" text-anchor="middle">4</text>
+<line x1="5" y1="-10.733" x2="5" y2="6.179" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="6" y1="-10.733" x2="6" y2="6.179" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="6" y="6.104" font-size="0.188" fill="#52514e" text-anchor="middle">6</text>
+<line x1="7" y1="-10.733" x2="7" y2="6.179" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="8" y1="-10.733" x2="8" y2="6.179" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="8" y="6.104" font-size="0.188" fill="#52514e" text-anchor="middle">8</text>
+<line x1="9" y1="-10.733" x2="9" y2="6.179" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="10" y1="-10.733" x2="10" y2="6.179" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="10" y="6.104" font-size="0.188" fill="#52514e" text-anchor="middle">10</text>
+<line x1="11" y1="-10.733" x2="11" y2="6.179" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="-0.531" y1="7" x2="10.700" y2="7" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="-0.531" y1="6" x2="10.700" y2="6" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="-0.456" y="6.066" font-size="0.188" fill="#52514e">-6</text>
+<line x1="-0.531" y1="5" x2="10.700" y2="5" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="-0.531" y1="4" x2="10.700" y2="4" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="-0.456" y="4.066" font-size="0.188" fill="#52514e">-4</text>
+<line x1="-0.531" y1="3" x2="10.700" y2="3" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="-0.531" y1="2" x2="10.700" y2="2" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="-0.456" y="2.066" font-size="0.188" fill="#52514e">-2</text>
+<line x1="-0.531" y1="1" x2="10.700" y2="1" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="-0.531" y1="0" x2="10.700" y2="0" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="-0.456" y="0.066" font-size="0.188" fill="#52514e">0</text>
+<line x1="-0.531" y1="-1" x2="10.700" y2="-1" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="-0.531" y1="-2" x2="10.700" y2="-2" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="-0.456" y="-1.934" font-size="0.188" fill="#52514e">2</text>
+<line x1="-0.531" y1="-3" x2="10.700" y2="-3" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="-0.531" y1="-4" x2="10.700" y2="-4" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="-0.456" y="-3.934" font-size="0.188" fill="#52514e">4</text>
+<line x1="-0.531" y1="-5" x2="10.700" y2="-5" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="-0.531" y1="-6" x2="10.700" y2="-6" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="-0.456" y="-5.934" font-size="0.188" fill="#52514e">6</text>
+<line x1="-0.531" y1="-7" x2="10.700" y2="-7" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="-0.531" y1="-8" x2="10.700" y2="-8" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="-0.456" y="-7.934" font-size="0.188" fill="#52514e">8</text>
+<line x1="-0.531" y1="-9" x2="10.700" y2="-9" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="-0.531" y1="-10" x2="10.700" y2="-10" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="-0.456" y="-9.934" font-size="0.188" fill="#52514e">10</text>
+<line x1="-0.531" y1="-11" x2="10.700" y2="-11" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<rect x="0.469" y="-0.850" width="0.337" height="4.407" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_000</title></rect>
+<rect x="0.469" y="-1.000" width="4.071" height="0.325" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_001</title></rect>
+<rect x="0.544" y="3.407" width="3.721" height="0.150" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_002</title></rect>
+<rect x="0.850" y="-7.589" width="0.379" height="6.739" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_003</title></rect>
+<rect x="0.850" y="-9.720" width="0.150" height="1.151" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_004</title></rect>
+<rect x="0.925" y="-9.720" width="6.055" height="0.402" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_005</title></rect>
+<rect x="3.907" y="-1.000" width="0.379" height="1.337" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_006</title></rect>
+<rect x="4.136" y="1.317" width="0.583" height="2.239" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_007</title></rect>
+<rect x="4.206" y="2.564" width="2.769" height="0.150" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_008</title></rect>
+<rect x="6.399" y="1.064" width="0.581" height="2.261" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_009</title></rect>
+<rect x="6.620" y="-1.315" width="2.442" height="0.465" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_010</title></rect>
+<rect x="6.815" y="-1.000" width="0.351" height="1.084" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_011</title></rect>
+<rect x="6.830" y="3.137" width="0.831" height="0.188" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_012</title></rect>
+<rect x="6.830" y="-0.111" width="2.765" height="0.374" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_013</title></rect>
+<rect x="6.830" y="-5.203" width="2.072" height="0.576" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_014</title></rect>
+<rect x="6.830" y="-7.528" width="0.150" height="2.553" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_015</title></rect>
+<rect x="7.341" y="3.175" width="0.320" height="2.004" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_016</title></rect>
+<rect x="7.380" y="4.907" width="1.562" height="0.272" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_017</title></rect>
+<rect x="8.641" y="3.175" width="0.301" height="2.004" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_018</title></rect>
+<rect x="8.641" y="3.080" width="0.954" height="0.245" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_019</title></rect>
+<rect x="8.735" y="-1.805" width="0.525" height="0.660" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_020</title></rect>
+<rect x="8.807" y="-4.983" width="0.529" height="0.656" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_021</title></rect>
+<rect x="8.902" y="-4.626" width="0.529" height="0.656" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_022</title></rect>
+<rect x="9.063" y="-2.068" width="0.525" height="0.753" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_023</title></rect>
+<rect x="9.336" y="-4.327" width="0.364" height="2.352" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_024</title></rect>
+<rect x="9.445" y="-0.111" width="0.150" height="3.436" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_025</title></rect>
+<rect x="0.578" y="-0.876" width="2.246" height="2.685" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="0.590" y="2.257" width="1.168" height="1.145" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="0.810" y="-8.569" width="0.230" height="0.980" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="1.000" y="-9.570" width="0.900" height="0.743" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="1.041" y="-4.759" width="0.753" height="3.602" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="1.868" y="2.463" width="1.130" height="0.943" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="2.194" y="-9.570" width="3.488" height="1.982" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="2.497" y="-4.213" width="1.300" height="2.401" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="2.919" y="-7.344" width="2.024" height="0.770" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="3.163" y="2.534" width="0.840" height="0.838" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="3.413" y="1.356" width="0.735" height="0.738" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="3.526" y="-0.850" width="0.610" height="1.003" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="4.685" y="1.840" width="2.145" height="0.724" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="6.173" y="1.126" width="0.657" height="0.498" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="6.749" y="-4.294" width="1.759" height="2.527" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="6.753" y="-9.733" width="2.251" height="3.885" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="7.540" y="3.839" width="0.621" height="1.200" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="8.036" y="0.039" width="0.399" height="0.195" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="8.462" y="4.699" width="0.330" height="0.330" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="8.538" y="0.039" width="0.907" height="1.600" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<rect x="8.867" y="2.523" width="0.372" height="0.652" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>obstacle</title></rect>
+<text x="-0.343" y="-10.432" font-size="0.244" fill="#0b0b0b">hssd-hab 102344193  21 obstacles, 26 walls  (meters, ROS world frame: x right, y up)</text>
+</svg>

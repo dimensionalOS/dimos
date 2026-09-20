@@ -21,9 +21,12 @@ stage wall (the stage sliced 20 cm above the floor, so doorways stay open), and 
 :mod:`dimos.simulation.object_detections` in the DimOS Z-up ``world`` frame, the
 frame the Habitat connection publishes odometry in. No simulator is needed.
 
-Regenerate the checked-in files with::
+Regenerate the checked-in 3D files with::
 
     uv run python -m dimos.simulation.habitat.hssd_ground_truth
+
+The top-down 2D files and the obstacle maps derive from those files with the
+scripts in ``misc/habitat/`` and need no dataset.
 
 Labels come from ``semantics/objects.csv`` (category and product name). The
 ``semantic_id`` in object configs is not used: it does not match the assets.
@@ -52,8 +55,6 @@ from dimos.simulation.object_detections import (
     GroundTruthBox,
     Point3,
     boxes_to_detection3d_array,
-    top_down,
-    write_detection2d_json,
     write_detection3d_json,
 )
 from dimos.utils.logging_config import setup_logger
@@ -440,27 +441,23 @@ def export_scene(
     *,
     label_mode: LabelMode = DEFAULT_LABEL_MODE,
 ) -> Path:
-    """Write ``<out_dir>/<scene_id>.json`` and its top-down ``<scene_id>.top_down.json``.
-
-    Both are JSON views with dataset provenance; the top-down file holds the
-    ``Detection2DArray`` from :func:`dimos.simulation.object_detections.top_down`.
-    """
+    """Write ``<out_dir>/<scene_id>.json``, the JSON view with dataset provenance."""
     boxes = scene_boxes(dataset, scene_id, label_mode=label_mode)
     detections = boxes_to_detection3d_array(
         boxes.all, to_ros=habitat_to_ros, frame_id=HABITAT_WORLD_FRAME, ts=GROUND_TRUTH_TS
     )
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    provenance = {"dataset": dataset.name, "scene_id": scene_id}
-    path = write_detection3d_json(detections, out / f"{scene_id}.json", provenance=provenance)
-    flat = top_down(detections)
-    write_detection2d_json(flat, out / f"{scene_id}.top_down.json", provenance=provenance)
+    path = write_detection3d_json(
+        detections,
+        out / f"{scene_id}.json",
+        provenance={"dataset": dataset.name, "scene_id": scene_id},
+    )
     logger.info(
         "wrote HSSD ground truth",
         scene_id=scene_id,
         objects=len(boxes.objects),
         walls=len(boxes.walls),
-        top_down=flat.detections_length,
         path=str(path),
     )
     return path
