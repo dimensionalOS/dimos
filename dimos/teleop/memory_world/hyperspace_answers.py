@@ -156,6 +156,9 @@ class HyperspaceAnswers:
             logger.debug("no hyperspace connected; the world draws its own answers only")
             return
         self.register_disposable(stream.observable().subscribe(self._on_hyperspace_found))
+        # Read by `_index_status`: with Hyperspace answering, the ask box must not wait
+        # for a siglip index this recording may never hold.
+        self._hyperspace_live = True
         logger.info("memory world: drawing whatever hyperspace answers")
 
     def _on_hyperspace_found(self, found: FoundObjects) -> None:

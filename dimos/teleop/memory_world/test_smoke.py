@@ -284,6 +284,52 @@ def test_a_place_is_ranked_by_similarity_alone() -> None:
 
 
 @pytest.mark.parametrize(
+    ("present", "via_agent", "hyperspace_live", "ask"),
+    [
+        (False, False, False, False),
+        (False, True, False, False),
+        (False, True, True, True),
+        (True, False, False, True),
+    ],
+)
+def test_the_ask_box_opens_for_hyperspace_without_a_siglip_index(
+    present, via_agent, hyperspace_live, ask
+) -> None:  # type: ignore[no-untyped-def]
+    """The viewer gates the ask box and the mic on the status payload's `ask`.
+
+    It used to gate on `present` -- the siglip index holding vectors -- so the hyperspace
+    blueprint, which answers through the agent and Hyperspace and has no siglip index,
+    sat on "Search not ready" while every question sent by curl was answered and drawn.
+    Seen live on grocery.db 2026-09-20. An agent without Hyperspace still needs the index:
+    its only lookup is `find_in_memory`.
+    """
+    from dimos.teleop.memory_world.visual_answers import VisualAnswers
+
+    class Host(VisualAnswers):
+        def __init__(self) -> None:
+            self.config = SimpleNamespace(ask_via_agent=via_agent)
+            self._store_lock = threading.Lock()
+            self._index_progress = "no embeddings"
+            self._embed_job = SimpleNamespace(status=lambda: {"embedding": "idle"})
+            if hyperspace_live:
+                self._hyperspace_live = True
+
+        def _ensure_visual_index(self):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(
+                precomputed_stream_name="s" if present else None, count=lambda: 0
+            )
+
+    status = Host()._index_status()
+    assert status["ask"] is ask
+    assert status["present"] is present
+    assert status["embedding"] == "idle"
+    if ask and not present:
+        assert status["index"].startswith("not needed")
+    else:
+        assert status["index"] == "no embeddings"
+
+
+@pytest.mark.parametrize(
     ("recorded", "expect_siglipify"),
     [("Image", True), ("CompressedImage", False), (None, False)],
 )

@@ -176,8 +176,22 @@ class VisualAnswers:
                 logger.warning("index status unavailable: %s", error)
             finally:
                 self._store_lock.release()
-        # `present` is whether a QUESTION can be answered.
-        return {"present": present, "index": self._index_progress, **self._embed_job.status()}
+        # `present` is whether the siglip index holds vectors; `ask` is whether a QUESTION
+        # can be answered, which on the hyperspace blueprint needs no siglip index at all.
+        # The viewer gated the ask box and the mic on `present` alone, so that build sat
+        # on "Search not ready" while every curl'd question was answered and drawn.
+        via_hyperspace = bool(
+            self.config.ask_via_agent and getattr(self, "_hyperspace_live", False)
+        )
+        index = self._index_progress
+        if not present and via_hyperspace:
+            index = "not needed: hyperspace answers questions"
+        return {
+            "present": present,
+            "ask": present or via_hyperspace,
+            "index": index,
+            **self._embed_job.status(),
+        }
 
     def _start_embedding(self) -> bool:
         """Add embeddings in the background unless that is already happening.

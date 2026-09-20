@@ -735,10 +735,10 @@ askForm.addEventListener('submit', (event) => {
     askInput.blur();
 });
 
-/** Whether you can ask at all: the frame index has to hold vectors. */
+/** Whether you can ask at all: the server says so (`ask`), older servers only said `present`. */
 function applyAskAvailability() {
     const connected = !!ws;
-    const canAsk = !!indexStatus.present;
+    const canAsk = !!(indexStatus.ask ?? indexStatus.present);
     askInput.disabled = !connected || !canAsk;
     askInput.placeholder = canAsk
         ? 'Ask the recording, e.g. where did I see a chair'
