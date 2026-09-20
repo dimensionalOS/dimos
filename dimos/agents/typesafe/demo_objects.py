@@ -50,7 +50,7 @@ class DemoObjectsConfig(ModuleConfig):
         default_factory=lambda: [("chair", 1.2, 2.0, 0.4)]
     )
     scene_json: Path | None = None
-    exclude: str = "^wall"  # labels matching this regex are not published (walls crowd the list)
+    exclude: str = ""  # labels matching this regex are not published
     size: tuple[float, float, float] = (0.5, 0.5, 0.9)  # for ``objects``, which carry none
     rate_hz: float = 2.0
 
