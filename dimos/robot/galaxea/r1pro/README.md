@@ -49,4 +49,65 @@ dimos run r1pro-teleop          # + chassis teleop from the viewer
 dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
+dimos run r1pro-pointlio --g.transport lcm   # coordinator + Point-LIO on the chassis lidar
 ```
+
+## Point-LIO on the chassis lidar
+
+`r1pro-pointlio` replaces the wheel odometry with lidar-inertial odometry from
+the chassis Mid-360. The connection's own `odom` (integrated from the speed the
+chassis was *commanded*, which smears a map around a spin) is switched off, and
+`base_link` hangs off Point-LIO through the lidar mount
+(`dimos/robot/galaxea/r1pro/lio.py`). Downstream consumers keep reading
+`chassis_odom`; it just comes from the lidar now.
+
+**What keeps running.** All of the vendor's ROS nodes stay up: the chassis and
+arm controllers, the cameras, the IMUs. dimos does not replace any of them.
+dimos's own Mid-360 driver opens a *second* connection to the sensor beside
+the vendor's `livox_ros_driver2`, and feeds the Rust Point-LIO: the estimator
+deskews a sweep by a per-point time offset the vendor's cloud does not carry,
+and it needs the IMU inside the sensor, not the chassis IMU.
+
+**What stops.** A Livox streams to the host that last asked it to. As soon as
+Point-LIO starts, the vendor driver receives nothing: `/hdas/lidar_chassis_left`
+keeps its publisher and goes silent, and it does not recover when the driver
+exits, because `livox_ros_driver2` never asks again. Nothing in the vendor's
+navigation runs while dimos owns the sensor, and the sensor stays with dimos
+until the vendor driver is restarted.
+
+**Giving the sensor back.** The vendor driver runs in the tmux session `hdas`,
+started by
+`~/galaxea-dimos/install/startup_config/share/startup_config/script/boot/modules/hdas/start_livox_lidar.sh`.
+Kill it by PID (never `pkill -f` over ssh -- the pattern matches your own ssh
+command) and re-run that script from its own directory, in that session:
+
+```bash
+pgrep -a livox_ros_driver2      # note the pid
+kill <pid>
+cd ~/galaxea-dimos/install/startup_config/share/startup_config/script/boot/modules/hdas
+tmux send-keys -t hdas './start_livox_lidar.sh' Enter
+```
+
+**Network.** The driver needs the lidar's IP and the host NIC it pushes to:
+`R1PRO_CHASSIS_LIDAR_IP` / `R1PRO_CHASSIS_LIDAR_HOST_IP` in
+`dimos/robot/galaxea/r1pro/config.py`, the same addresses as the vendor's
+`MID360_config.json`; `--mid360.lidar_ip` / `--mid360.host_ip` override them.
+The blueprint refuses to start when no local interface sits on the lidar's
+subnet. The vendor driver holds the same host ports (56101, 56201, ...); both
+bind them with `SO_REUSEADDR`, and the device streams to whichever asked last.
+
+**Time.** A Mid-360 with no time source stamps its packets with its own
+uptime. The estimator carries its output onto the host's clock from packet
+arrival times (the minimum of host-minus-device over a 30 s window), so its
+odometry, tf and cloud resolve against the cameras' stamps.
+
+**Transport.** Run with `--g.transport lcm`. Over zenoh the C++ estimator's
+cloud was dropped by the Rust voxel map (`Received Data for unknown expr_id`)
+with no warning naming the stream; the Rust estimator has not been tried
+there. The vendor's `realsense2_camera` holds LCM's default port, so use
+`LCM_DEFAULT_URL=udpm://239.255.76.67:7767?ttl=0`.
+
+**Build.** The driver and the estimator are native binaries
+(`target/release/mid360_native`, `target/release/pointlio_native`) built on
+first run with `cargo build --release`. On an Orin `cargo` is not on the
+path: build once inside `nix develop path:nix/rust`.
