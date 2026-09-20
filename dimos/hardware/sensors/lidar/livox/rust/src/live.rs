@@ -430,6 +430,22 @@ mod tests {
         }
     }
 
+    /// A local IPv4 address that is not 127.0.0.1 to forge from: 127.0.0.2 on Linux, else the default route's.
+    fn other_local_ip() -> Ipv4Addr {
+        let alias = Ipv4Addr::new(127, 0, 0, 2);
+        if UdpSocket::bind(SocketAddrV4::new(alias, 0)).is_ok() {
+            return alias;
+        }
+        let probe = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).unwrap();
+        probe
+            .connect(SocketAddrV4::new(Ipv4Addr::new(10, 255, 255, 255), 9))
+            .expect("no 127.0.0.2 alias and no default route: nowhere to forge from");
+        match probe.local_addr().unwrap() {
+            std::net::SocketAddr::V4(addr) if !addr.ip().is_loopback() => *addr.ip(),
+            addr => panic!("routed address {addr} is not a usable impostor"),
+        }
+    }
+
     /// A minimal in-test device: ACK every param-set, then stream one point packet and one IMU packet.
     fn spawn_fake_device(ports: Ports) -> std::thread::JoinHandle<Vec<u16>> {
         std::thread::spawn(move || {
@@ -560,49 +576,58 @@ mod tests {
         );
     }
 
-    /// The source expects 127.0.0.2, which nothing on loopback can send from, so every packet is an impostor's.
     #[test]
     fn packets_from_unexpected_senders_are_ignored() {
         let ports = test_ports(3);
-        let source = LiveSource::start(
+        let stop = Arc::new(AtomicBool::new(false));
+        // A dropped loopback datagram fails the test instead of hanging it.
+        let watchdog = stop.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(10));
+            watchdog.store(true, Ordering::Relaxed);
+        });
+        let mut source = LiveSource::start(
             LiveConfig {
                 host_ip: Ipv4Addr::LOCALHOST,
-                lidar_ip: Ipv4Addr::new(127, 0, 0, 2),
+                lidar_ip: Ipv4Addr::LOCALHOST,
                 multicast_ip: None,
                 enable_imu: false,
                 ports,
             },
-            Arc::new(AtomicBool::new(false)),
+            stop,
         )
         .unwrap();
 
-        let payload = build_points_high(&[crate::wire::PointHigh {
-            x_mm: 1,
-            y_mm: 0,
-            z_mm: 0,
-            reflectivity: 255,
-            tag: 0,
-        }]);
-        let packet = DataPacket {
-            time_interval: 0,
-            dot_num: 1,
-            data_type: DataType::CartesianHigh,
-            timestamp_ns: 7,
-            payload: &payload,
-        }
-        .build();
-        let forged = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
-        forged
-            .send_to(
-                &packet,
-                SocketAddrV4::new(Ipv4Addr::LOCALHOST, ports.host_point_data),
-            )
-            .unwrap();
-        std::thread::sleep(Duration::from_millis(200));
-        assert!(matches!(
-            source.rx.try_recv(),
-            Err(mpsc::TryRecvError::Empty)
-        ));
+        let packet = |ts_ns: u64| {
+            let payload = build_points_high(&[crate::wire::PointHigh {
+                x_mm: 1,
+                y_mm: 0,
+                z_mm: 0,
+                reflectivity: 255,
+                tag: 0,
+            }]);
+            DataPacket {
+                time_interval: 0,
+                dot_num: 1,
+                data_type: DataType::CartesianHigh,
+                timestamp_ns: ts_ns,
+                payload: &payload,
+            }
+            .build()
+        };
+        let target = SocketAddrV4::new(Ipv4Addr::LOCALHOST, ports.host_point_data);
+        let forged = UdpSocket::bind(SocketAddrV4::new(other_local_ip(), 0)).unwrap();
+        forged.send_to(&packet(7), target).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        let genuine = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        genuine.send_to(&packet(42), target).unwrap();
+
+        // The channel is FIFO: had the forged packet been accepted, it would
+        // arrive first.
+        let mut buf = [0u8; 4096];
+        let len = source.recv(&mut buf).expect("genuine packet delivered");
+        let delivered = DataPacket::parse(&buf[..len]).unwrap();
+        assert_eq!(delivered.timestamp_ns, 42);
     }
 
     /// Bind `addr` the way Livox SDK2 does, with `SO_REUSEADDR` (plus `SO_REUSEPORT`, which macOS needs).
