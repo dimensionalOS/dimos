@@ -21,8 +21,14 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.sources import validate_global_values
 from dimos.core.coordination.blueprint_config.values import read_only_view, snapshot_mapping
-from dimos.core.coordination.blueprints import Blueprint, config_key
+from dimos.core.coordination.blueprints import (
+    Blueprint,
+    TransportSpec,
+    config_key,
+    transport_config_name,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,3 +96,45 @@ class ParsedBlueprintConfig:
     def transport_overrides(self) -> dict[str, Any]:
         """Return independent mutable transport configuration overrides."""
         return snapshot_mapping(self._transport_config_values)
+
+    def subset_for(
+        self,
+        blueprint: Blueprint,
+        *,
+        global_overrides: Mapping[str, Any] | None = None,
+    ) -> ParsedBlueprintConfig:
+        """Bind a configuration subset to a Blueprint fragment.
+
+        Only module and transport configuration used by ``blueprint`` is retained.
+        Global overrides are validated against ``GlobalConfig`` before the immutable
+        snapshot is created.
+        """
+        module_values = {
+            atom.name: self.module_kwargs(atom.name) for atom in blueprint.active_blueprints
+        }
+        transport_names = {
+            transport_config_name(spec.config_cls)
+            for spec in blueprint.transport_map.values()
+            if isinstance(spec, TransportSpec) and spec.config_cls is not None
+        }
+        transport_values = {
+            name: snapshot_mapping(values)
+            for name, values in self._transport_config_values.items()
+            if name in transport_names and isinstance(values, Mapping)
+        }
+
+        global_values = self.global_config_values()
+        explicit_global_values = self.explicit_global_config_values()
+        if global_overrides is not None:
+            global_values.update(snapshot_mapping(global_overrides))
+            global_values = validate_global_values(global_values)
+            for name in global_overrides:
+                explicit_global_values[name] = global_values[name]
+
+        return ParsedBlueprintConfig(
+            _module_config_values=snapshot_mapping(module_values),
+            _global_config_values=snapshot_mapping(global_values),
+            _global_explicit_values=snapshot_mapping(explicit_global_values),
+            _transport_config_values=snapshot_mapping(transport_values),
+            _blueprint=blueprint,
+        )
