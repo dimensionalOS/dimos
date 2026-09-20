@@ -646,10 +646,8 @@ mod tests {
         raw.into()
     }
 
-    /// The vendor's `livox_ros_driver2` (Livox SDK2) binds every host port with
-    /// `SO_REUSEADDR`, and the C++ Point-LIO module coexists with it for that
-    /// reason. This source must bind the same way, or it is the one process on
-    /// the robot that gets `EADDRINUSE`.
+    /// An SDK2 process (the vendor's `livox_ros_driver2`) binds every host port
+    /// with `SO_REUSEADDR`; this source must bind the same way to coexist with it.
     #[test]
     fn starts_while_an_sdk2_process_holds_the_host_ports() {
         let ports = test_ports(6);
