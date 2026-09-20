@@ -430,28 +430,16 @@ mod tests {
         }
     }
 
-    /// A local IPv4 address that is not 127.0.0.1, to send from as an
-    /// impostor. Linux has all of 127/8 on lo; macOS aliases only 127.0.0.1,
-    /// so fall back to the address the default route goes out of (a connect
-    /// on a UDP socket picks it without sending anything).
-    fn other_local_ip() -> Ipv4Addr {
-        let alias = Ipv4Addr::new(127, 0, 0, 2);
-        if UdpSocket::bind(SocketAddrV4::new(alias, 0)).is_ok() {
-            return alias;
-        }
-        let probe = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).unwrap();
-        probe
-            .connect(SocketAddrV4::new(Ipv4Addr::new(10, 255, 255, 255), 9))
-            .expect("no 127.0.0.2 alias and no default route: nowhere to forge from");
-        match probe.local_addr().unwrap() {
-            std::net::SocketAddr::V4(addr) if !addr.ip().is_loopback() => *addr.ip(),
-            addr => panic!("routed address {addr} is not a usable impostor"),
-        }
+    /// Send data from `addr` over loopback, whether the target is unicast or a multicast group.
+    fn data_sender(addr: SocketAddrV4) -> UdpSocket {
+        let raw = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+        raw.bind(&std::net::SocketAddr::V4(addr).into()).unwrap();
+        raw.set_multicast_if_v4(&Ipv4Addr::LOCALHOST).unwrap();
+        raw.into()
     }
 
-    /// A minimal in-test device: ACK every param-set, then stream one point
-    /// packet and one IMU packet once work mode is set.
-    fn spawn_fake_device(ports: Ports) -> std::thread::JoinHandle<Vec<u16>> {
+    /// A minimal in-test device: ACK every param-set, then stream one point packet and one IMU packet to `data_ip`.
+    fn spawn_fake_device(ports: Ports, data_ip: Ipv4Addr) -> std::thread::JoinHandle<Vec<u16>> {
         std::thread::spawn(move || {
             let loopback = Ipv4Addr::LOCALHOST;
             let cmd = UdpSocket::bind(SocketAddrV4::new(loopback, ports.cmd_data)).unwrap();
@@ -499,12 +487,10 @@ mod tests {
                 payload: &point_payload,
             }
             .build();
-            let point_socket =
-                UdpSocket::bind(SocketAddrV4::new(loopback, ports.point_data)).unwrap();
-            point_socket
+            data_sender(SocketAddrV4::new(loopback, ports.point_data))
                 .send_to(
                     &point_packet,
-                    SocketAddrV4::new(loopback, ports.host_point_data),
+                    SocketAddrV4::new(data_ip, ports.host_point_data),
                 )
                 .unwrap();
 
@@ -520,12 +506,8 @@ mod tests {
                 payload: &imu_payload,
             }
             .build();
-            let imu_socket = UdpSocket::bind(SocketAddrV4::new(loopback, ports.imu_data)).unwrap();
-            imu_socket
-                .send_to(
-                    &imu_packet,
-                    SocketAddrV4::new(loopback, ports.host_imu_data),
-                )
+            data_sender(SocketAddrV4::new(loopback, ports.imu_data))
+                .send_to(&imu_packet, SocketAddrV4::new(data_ip, ports.host_imu_data))
                 .unwrap();
 
             keys_seen
@@ -534,8 +516,11 @@ mod tests {
 
     #[test]
     fn handshake_and_stream_over_loopback() {
-        let ports = test_ports(0);
-        let device = spawn_fake_device(ports);
+        handshake_and_stream(test_ports(0), None);
+    }
+
+    fn handshake_and_stream(ports: Ports, multicast_ip: Option<Ipv4Addr>) {
+        let device = spawn_fake_device(ports, multicast_ip.unwrap_or(Ipv4Addr::LOCALHOST));
 
         let stop = Arc::new(AtomicBool::new(false));
         // A dropped loopback datagram fails the test instead of hanging it.
@@ -548,7 +533,7 @@ mod tests {
             LiveConfig {
                 host_ip: Ipv4Addr::LOCALHOST,
                 lidar_ip: Ipv4Addr::LOCALHOST,
-                multicast_ip: None,
+                multicast_ip,
                 enable_imu: true,
                 ports,
             },
@@ -580,76 +565,64 @@ mod tests {
         );
     }
 
+    /// The source expects 127.0.0.2, which nothing on loopback can send from, so every packet is an impostor's.
     #[test]
     fn packets_from_unexpected_senders_are_ignored() {
         let ports = test_ports(3);
-        let stop = Arc::new(AtomicBool::new(false));
-        // A dropped loopback datagram fails the test instead of hanging it.
-        let watchdog = stop.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs(10));
-            watchdog.store(true, Ordering::Relaxed);
-        });
-        let mut source = LiveSource::start(
+        let source = LiveSource::start(
             LiveConfig {
                 host_ip: Ipv4Addr::LOCALHOST,
-                lidar_ip: Ipv4Addr::LOCALHOST,
+                lidar_ip: Ipv4Addr::new(127, 0, 0, 2),
                 multicast_ip: None,
                 enable_imu: false,
                 ports,
             },
-            stop,
+            Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
 
-        let packet = |ts_ns: u64| {
-            let payload = build_points_high(&[crate::wire::PointHigh {
-                x_mm: 1,
-                y_mm: 0,
-                z_mm: 0,
-                reflectivity: 255,
-                tag: 0,
-            }]);
-            DataPacket {
-                time_interval: 0,
-                dot_num: 1,
-                data_type: DataType::CartesianHigh,
-                timestamp_ns: ts_ns,
-                payload: &payload,
-            }
-            .build()
-        };
-        let target = SocketAddrV4::new(Ipv4Addr::LOCALHOST, ports.host_point_data);
-        let forged = UdpSocket::bind(SocketAddrV4::new(other_local_ip(), 0)).unwrap();
-        forged.send_to(&packet(7), target).unwrap();
-        std::thread::sleep(Duration::from_millis(100));
-        let genuine = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
-        genuine.send_to(&packet(42), target).unwrap();
-
-        // The channel is FIFO: had the forged packet been accepted, it would
-        // arrive first.
-        let mut buf = [0u8; 4096];
-        let len = source.recv(&mut buf).expect("genuine packet delivered");
-        let delivered = DataPacket::parse(&buf[..len]).unwrap();
-        assert_eq!(delivered.timestamp_ns, 42);
+        let payload = build_points_high(&[crate::wire::PointHigh {
+            x_mm: 1,
+            y_mm: 0,
+            z_mm: 0,
+            reflectivity: 255,
+            tag: 0,
+        }]);
+        let packet = DataPacket {
+            time_interval: 0,
+            dot_num: 1,
+            data_type: DataType::CartesianHigh,
+            timestamp_ns: 7,
+            payload: &payload,
+        }
+        .build();
+        let forged = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        forged
+            .send_to(
+                &packet,
+                SocketAddrV4::new(Ipv4Addr::LOCALHOST, ports.host_point_data),
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(matches!(
+            source.rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
     }
 
-    /// Bind `addr` the way Livox SDK2 does: `SO_REUSEADDR` set (and
-    /// `SO_REUSEPORT`, which macOS needs for a wildcard bind to sit over a
-    /// specific one). A vendor SDK2 process is what holds our ports on a real
-    /// robot.
+    /// Bind as SDK2's `CreateSocket` does: `SO_REUSEADDR` only, on the host's specific address.
+    #[cfg(target_os = "linux")]
     fn sdk2_style_bind(addr: SocketAddrV4) -> UdpSocket {
         let raw = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
         raw.set_reuse_address(true).unwrap();
-        raw.set_reuse_port(true).unwrap();
         raw.bind(&std::net::SocketAddr::V4(addr).into()).unwrap();
         raw.into()
     }
 
-    /// An SDK2 process (the vendor's `livox_ros_driver2`) binds every host port
-    /// with `SO_REUSEADDR`; this source must bind the same way to coexist with it.
+    /// Next to an SDK2 process (the robot's `livox_ros_driver2`) the ACKs still reach us and the multicast data never reaches its unicast sockets; macOS refuses the second bind, so Linux only.
+    #[cfg(target_os = "linux")]
     #[test]
-    fn starts_while_an_sdk2_process_holds_the_host_ports() {
+    fn streams_while_an_sdk2_process_holds_the_host_ports() {
         let ports = test_ports(6);
         let loopback = Ipv4Addr::LOCALHOST;
         let _held = [
@@ -657,23 +630,7 @@ mod tests {
             sdk2_style_bind(SocketAddrV4::new(loopback, ports.host_point_data)),
             sdk2_style_bind(SocketAddrV4::new(loopback, ports.host_imu_data)),
         ];
-        let stop = Arc::new(AtomicBool::new(false));
-        let source = LiveSource::start(
-            LiveConfig {
-                host_ip: loopback,
-                lidar_ip: loopback,
-                multicast_ip: None,
-                enable_imu: true,
-                ports,
-            },
-            stop.clone(),
-        );
-        assert!(
-            source.is_ok(),
-            "must coexist with an SDK2 binder: {:?}",
-            source.err()
-        );
-        stop.store(true, Ordering::Relaxed);
+        handshake_and_stream(ports, Some(Ipv4Addr::new(224, 1, 1, 5)));
     }
 
     #[test]
