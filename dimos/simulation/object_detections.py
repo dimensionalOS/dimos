@@ -157,6 +157,32 @@ def write_detection3d_json(
     return out
 
 
+def read_detection3d_json(path: str | Path) -> tuple[Detection3DArray, dict[str, Any]]:
+    """Read a file written by :func:`write_detection3d_json` back into a typed array.
+
+    Returns the array and the provenance written ahead of the view (e.g. dataset
+    and scene id). The view keeps every field a ``Detection3D`` needs, so this
+    reproduces the message exactly and :func:`top_down` can run from the file
+    alone, without the simulator or dataset that produced it.
+    """
+    view = json.loads(Path(path).read_text())
+    provenance = {
+        k: v for k, v in view.items() if k not in ("frame_id", "timestamp", "count", "detections")
+    }
+    frame_id, ts = str(view["frame_id"]), float(view["timestamp"])
+    detections = [_detection_from_dict(entry, frame_id, ts) for entry in view["detections"]]
+    if len(detections) != view["count"]:
+        raise ValueError(f"{path}: count {view['count']} but {len(detections)} detections")
+    return (
+        Detection3DArray(
+            detections_length=len(detections),
+            header=Header(ts, frame_id),
+            detections=detections,
+        ),
+        provenance,
+    )
+
+
 def detection3d_array_to_dict(
     detections: Detection3DArray, *, provenance: Mapping[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -312,6 +338,27 @@ def _detection_to_dict(detection: Detection3D) -> dict[str, Any]:
     if len(hypotheses) > 1:
         entry["labels"] = [h.class_id for h in hypotheses]
     return entry
+
+
+def _detection_from_dict(entry: dict[str, Any], frame_id: str, ts: float) -> Detection3D:
+    labels = [str(label) for label in entry.get("labels", [entry["label"]])]
+    center = cast("Point3", tuple(float(v) for v in entry["center_xyz"]))
+    size = cast("Point3", tuple(float(v) for v in entry["size_xyz"]))
+    qx, qy, qz, qw = (float(v) for v in entry["orientation_xyzw"])
+    pose = Pose(Vector3(*center), Quaternion(qx, qy, qz, qw))
+    return Detection3D(
+        results_length=len(labels),
+        header=Header(ts, frame_id),
+        results=[
+            ObjectHypothesisWithPose(
+                hypothesis=ObjectHypothesis(class_id=label, score=float(entry["score"])),
+                pose=PoseWithCovariance(Pose(Vector3(*center), Quaternion(qx, qy, qz, qw))),
+            )
+            for label in labels
+        ],
+        bbox=BoundingBox3D(center=pose, size=Vector3(*size)),
+        id=str(entry["id"]),
+    )
 
 
 def _to_detection(

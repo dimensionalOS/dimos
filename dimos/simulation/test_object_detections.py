@@ -25,6 +25,7 @@ from dimos.simulation.object_detections import (
     detection2d_array_to_dict,
     detection3d_array_to_dict,
     read_detection3d_array,
+    read_detection3d_json,
     ros_box,
     top_down,
     write_detection2d_json,
@@ -134,6 +135,31 @@ def test_binary_and_json_round_trip(tmp_path: Path) -> None:
 
 
 LAMP = GroundTruthBox(id="lamp", labels=("lamp",), min=(0.0, 0.0, 0.0), max=(1.0, 1.0, 1.0))
+
+
+def test_json_view_reads_back_to_the_same_message(tmp_path: Path) -> None:
+    arr = boxes_to_detection3d_array([BOX, LAMP], to_ros=flip, frame_id="world", ts=1.5)
+    text = write_detection3d_json(
+        arr, tmp_path / "boxes.json", provenance={"dataset": "hssd-hab", "scene_id": "s1"}
+    )
+
+    decoded, provenance = read_detection3d_json(text)
+
+    assert provenance == {"dataset": "hssd-hab", "scene_id": "s1"}
+    assert decoded.lcm_encode() == arr.lcm_encode()
+    assert detection3d_array_to_dict(decoded) == detection3d_array_to_dict(arr)
+    assert detection2d_array_to_dict(top_down(decoded)) == detection2d_array_to_dict(top_down(arr))
+
+
+def test_json_view_with_wrong_count_is_rejected(tmp_path: Path) -> None:
+    arr = boxes_to_detection3d_array([BOX], to_ros=flip, frame_id="world", ts=1.5)
+    path = write_detection3d_json(arr, tmp_path / "boxes.json")
+    view = json.loads(path.read_text())
+    view["count"] = 2
+    path.write_text(json.dumps(view))
+
+    with pytest.raises(ValueError, match="count 2 but 1"):
+        read_detection3d_json(path)
 
 
 def test_top_down_projects_footprints_and_keeps_labels() -> None:
