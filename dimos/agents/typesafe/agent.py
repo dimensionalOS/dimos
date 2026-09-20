@@ -30,7 +30,12 @@ from reactivex.disposable import Disposable
 
 from dimos.agents.typesafe.client import API_KEY_ENV, DEFAULT_MODEL, Answers, Question, SystemOne
 from dimos.agents.typesafe.drive import Drive, decode, questions
-from dimos.agents.typesafe.world_state import RobotState, WorldState, build_world_state
+from dimos.agents.typesafe.world_state import (
+    Memory,
+    RobotState,
+    WorldState,
+    build_world_state,
+)
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -53,14 +58,27 @@ PUBLISH_HZ = 10.0
 SLOW_WITHIN_M = 1.5
 TURN_FULL_AT_DEG = 45.0
 TASK = (
-    "You are a mobile robot in a room. Each tick you receive this JSON: `goal` (what to do), "
-    "`robot` (your position, heading and last motion), `objects` (things in the room with their "
-    "world position, size, `distance` from you to their nearest edge, and `bearing`), and "
-    "`room.sectors` (the nearest obstacle in each direction around you). Drive toward the object "
-    "named in `goal`, around obstacles. Coordinates in `goal` only say which object is meant; "
-    "you cannot stand on an object's centre, so never compare them with your own position. The "
-    "task is finished when that object's `distance` is touching, or near with the robot stopped "
-    "as close as it can get: then report finished."
+    "You are a mobile ground robot indoors. Everything in this JSON is relative to you. "
+    "`goal`: what to do. `robot`: your last motion and picks; `recent`: what "
+    "you did over the last 8 seconds (`pattern` stuck: driving without moving). `objects`: first the target named in `goal` "
+    "(`target: true`), then the nearest floor-level obstacles, each with `bearing` (8-way word; "
+    "ahead means within 15 degrees), `distance_m` to its nearest edge and `width_m`; the target "
+    "also has `bearing_deg` (positive is left) and a `distance` word. `way_to_target`: whether "
+    "the straight line to the target is free (`state` clear / blocked). Clear: `room` is the "
+    "room along that line, `narrowed_on` the side from which something beside the line narrows "
+    "it. Blocked: `blocked_by` names what stands on it (obstacle: only the depth scan sees it), "
+    "`blocked_at_m` how far away, "
+    "and `open_sides` lists, left and right of that line, the nearest way past: kind doorway "
+    "is an opening in a wall with a free straight line to it (`range_m`, `width_m`, "
+    "`target_beyond`: the target is on the other side of that wall); kind open / corner is a "
+    "direction with free length `clear_m` (kind free: nothing is open, only the longest). Each has its own `bearing` and `detour_deg` away "
+    "from the line, agrees with what the depth scan sees or saw lately, and has `been_there` true when you have "
+    "already driven where it leads; `going_around` is the side your own picks began steering to. "
+    "`free_space`: the nearest obstacle in each direction (`clear_m`, `state` clear / tight / "
+    "blocked, `by` what it is). You cannot drive through what blocks the line: while blocked, "
+    "steer by the `bearing` of one of `open_sides` instead of the target's. The task is "
+    "finished when the target's `distance` is touching, or near with the robot stopped as "
+    "close as it can get and no wall on the line to it: then report finished."
 )
 
 
@@ -125,6 +143,7 @@ class TypeSafeAgent(Module):
         self._lock = threading.Lock()
         self._goal: str | None = None
         self._robot: RobotState = {"motion": "idle"}
+        self._memory = Memory()
         self._target: Vec3 = ZERO
         self._current: Vec3 = ZERO
         self._decided_at = 0.0
@@ -238,6 +257,8 @@ class TypeSafeAgent(Module):
             robot=self._robot,
             image_size=self.config.image_size,
             lidar_band=self.config.lidar_band,
+            memory=self._memory,
+            now=time.monotonic(),
         )
         qs = questions(tuple(dict.fromkeys(o["label"] for o in state["objects"])))
         started, t0 = time.time(), time.monotonic()
