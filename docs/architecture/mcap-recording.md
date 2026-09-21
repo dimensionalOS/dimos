@@ -85,9 +85,25 @@ The large integration test transcribes all 2,438 primary observations from the
 LFS `go2_short.db` fixture through the production Rust encoder and MCAP writer:
 855 images, 461 point clouds, and 1,122 poses; the derived embedding stream is
 excluded. Its lidar stream includes out-of-order source timestamps, which also
-exercise Memory2 time-range summaries. It writes both a raw-image recording and an image-only recording that
-preserves the original JPEG bytes. Raw pixels are compared against decoded
-source JPEGs, so this does not undo the source recording's JPEG loss.
+exercise Memory2 time-range summaries. It writes a raw-image recording with all
+primary streams and a JPEG-preserving image recording, both with transforms.
+Raw pixels are compared against decoded source JPEGs, so this does not undo the
+source recording's JPEG loss.
+
+The source database has frame IDs and odometry but no TF stream. This Go2-specific
+fixture adds 1,122 `/tf` messages from the recorded base poses and two `/tf_static`
+messages from the existing Go2 camera mount configuration:
+
+```text
+world -> base_link -> camera_link -> camera_optical
+```
+
+Both use CDR `tf2_msgs/msg/TFMessage` through the production Rust encoder. The
+report identifies these transforms as derived and names the calibration source;
+the camera mount was not measured in this recording. Tests compare every edge,
+check the connected frame tree and odometry coverage of every image timestamp,
+and exercise both transform channels with Foxglove's parser and CDR reader.
+The generic recorder continues to record supplied TF without inferring geometry.
 
 ```bash
 mkdir -p recordings

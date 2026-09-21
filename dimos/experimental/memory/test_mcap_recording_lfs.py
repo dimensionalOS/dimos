@@ -30,8 +30,9 @@ import sys
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from dimos_lcm.geometry_msgs import PoseStamped
+from dimos_lcm.geometry_msgs import PoseStamped, Transform as LCMTransform, TransformStamped
 from dimos_lcm.sensor_msgs import Image, PointCloud2
+from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 from mcap.reader import make_reader
 from mcap_ros2.decoder import DecoderFactory
 import numpy as np
@@ -43,7 +44,11 @@ from dimos.memory.cli.render import render_store
 from dimos.memory.cli.summary import main as summarize
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as DimosPoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as DimosPointCloud2
+from dimos.robot.unitree.go2.dds.extrinsics import CAM_Q, CAM_T
 from dimos.utils.data import get_data
 
 pytestmark = [pytest.mark.self_hosted_large, pytest.mark.timeout(1200)]
@@ -54,8 +59,11 @@ SCHEMAS = {
     "color_image": "sensor_msgs/msg/Image",
     "lidar": "sensor_msgs/msg/PointCloud2",
     "odom": "geometry_msgs/msg/PoseStamped",
+    "/tf": "tf2_msgs/msg/TFMessage",
+    "/tf_static": "tf2_msgs/msg/TFMessage",
 }
 SNAPSHOTS = {
+    "geometry2": "f702874b1c8535d6a038230ab2cda0ba5d521ebd",
     "common_interfaces": "a941f14bb318d8d904505ed935ccbb97f24a70a4",
     "rcl_interfaces": "7aa3caf43377ea6ad615bc1040832e2c7566bfbe",
 }
@@ -73,6 +81,58 @@ def _rows(db: sqlite3.Connection, name: str) -> sqlite3.Cursor:
 def _source_stamp(name: str, blob: bytes) -> int:
     stamp = TYPES[name].lcm_decode(blob).header.stamp
     return stamp.sec * 10**9 + stamp.nsec
+
+
+def _go2_transforms(db: sqlite3.Connection) -> dict[str, list[tuple[float, TransformStamped]]]:
+    """Derive this legacy fixture's missing TF using its Go2 base-pose convention."""
+    dynamic = []
+    for ts, blob in _rows(db, "odom"):
+        pose = PoseStamped.lcm_decode(blob)
+        assert pose.header.frame_id == "world"
+        dynamic.append(
+            (
+                ts,
+                TransformStamped(
+                    header=pose.header,
+                    child_frame_id="base_link",
+                    transform=LCMTransform(
+                        translation=pose.pose.position, rotation=pose.pose.orientation
+                    ),
+                ),
+            )
+        )
+    first_ts, first = dynamic[0]
+    static = [
+        Transform(
+            translation=Vector3(CAM_T),
+            frame_id="base_link",
+            child_frame_id="camera_link",
+            ts=first_ts,
+        ),
+        Transform(
+            rotation=Quaternion(CAM_Q),
+            frame_id="camera_link",
+            child_frame_id="camera_optical",
+            ts=first_ts,
+        ),
+    ]
+    mounts = []
+    for transform in static:
+        edge = transform.lcm_transform()
+        edge.header.stamp = first.header.stamp
+        mounts.append((first_ts, edge))
+    return {"/tf": dynamic, "/tf_static": mounts}
+
+
+def _verify_transform(actual: Any, expected: TransformStamped) -> None:
+    assert actual.header.frame_id == expected.header.frame_id
+    assert actual.header.stamp.sec == expected.header.stamp.sec
+    assert actual.header.stamp.nanosec == expected.header.stamp.nsec
+    assert actual.child_frame_id == expected.child_frame_id
+    for field, axes in (("translation", "xyz"), ("rotation", "xyzw")):
+        assert [getattr(getattr(actual.transform, field), axis) for axis in axes] == [
+            getattr(getattr(expected.transform, field), axis) for axis in axes
+        ]
 
 
 def _transcribe(db: sqlite3.Connection, out: Path, jpeg: bool, writer: Any) -> None:
@@ -103,7 +163,27 @@ def _transcribe(db: sqlite3.Connection, out: Path, jpeg: bool, writer: Any) -> N
                 filename = f"{name}-{index}.lcm"
                 (directory / filename).write_bytes(blob)
                 records.append({"stream": name, "reception_ts": repr(ts), "payload_path": filename})
-        records.sort(key=lambda item: float(item["reception_ts"]))
+        for name, transforms in _go2_transforms(db).items():
+            streams.append(
+                {
+                    "name": name,
+                    "port": name,
+                    "payload_type": "dimos.msgs.tf2_msgs.TFMessage.TFMessage",
+                    "codec": "cdr",
+                }
+            )
+            for index, (ts, transform) in enumerate(transforms):
+                filename = f"{name.lstrip('/')}-{index}.lcm"
+                (directory / filename).write_bytes(
+                    LCMTFMessage(transforms_length=1, transforms=[transform]).lcm_encode()
+                )
+                records.append({"stream": name, "reception_ts": repr(ts), "payload_path": filename})
+        records.sort(
+            key=lambda item: (
+                float(item["reception_ts"]),
+                {"/tf_static": 0, "/tf": 1}.get(item["stream"], 2),
+            )
+        )
         (directory / "messages.jsonl").write_text(
             "".join(json.dumps(record) + "\n" for record in records)
         )
@@ -126,7 +206,9 @@ def _verify_schema(name: str, data: bytes, upstream: dict[str, str]) -> None:
     for type_name, definition in definitions.items():
         package, short_name = type_name.split("/")
         canonical_name = f"{package}/msg/{short_name}"
-        repository = "rcl_interfaces" if package == "builtin_interfaces" else "common_interfaces"
+        repository = {"builtin_interfaces": "rcl_interfaces", "tf2_msgs": "geometry2"}.get(
+            package, "common_interfaces"
+        )
         if canonical_name not in upstream:
             url = f"https://raw.githubusercontent.com/ros2/{repository}/{SNAPSHOTS[repository]}/{package}/msg/{short_name}.msg"
             response = requests.get(url, timeout=30)
@@ -185,8 +267,16 @@ def _verify_payload(name: str, actual: Any, blob: bytes, jpeg: bool) -> Any:
 def _verify_recording(
     db: sqlite3.Connection, out: Path, jpeg: bool, upstream: dict[str, str]
 ) -> dict[str, Any]:
-    counts = {"color_image": 855} if jpeg else COUNTS
-    cursors = {name: iter(_rows(db, name)) for name in counts}
+    payload_counts = {"color_image": 855} if jpeg else COUNTS
+    transforms = _go2_transforms(db)
+    counts = {**payload_counts, **{name: len(edges) for name, edges in transforms.items()}}
+    schemas = {
+        name: "sensor_msgs/msg/CompressedImage" if jpeg and name == "color_image" else SCHEMAS[name]
+        for name in counts
+    }
+    cursors = {name: iter(_rows(db, name)) for name in payload_counts}
+    tf_cursors = {name: iter(edges) for name, edges in transforms.items()}
+    parents: dict[str, str] = {}
     seen: Counter[str] = Counter()
     ranges: dict[str, list[float]] = {name: [] for name in counts}
     with out.open("rb") as source:
@@ -199,15 +289,23 @@ def _verify_recording(
         for channel in summary.channels.values():
             assert channel.schema_id != 0 and channel.message_encoding == "cdr"
             schema = summary.schemas[channel.schema_id]
-            expected_name = "sensor_msgs/msg/CompressedImage" if jpeg else SCHEMAS[channel.topic]
+            expected_name = schemas[channel.topic]
             assert schema.name == expected_name and schema.encoding == "ros2msg"
             assert summary.statistics.channel_message_counts[channel.id] == counts[channel.topic]
             _verify_schema(schema.name, schema.data, upstream)
         for _, channel, message, decoded in reader.iter_decoded_messages():
             name = channel.topic
-            ts, blob = next(cursors[name])
-            expected = _verify_payload(name, decoded, blob, jpeg)
-            stamp = expected.header.stamp
+            if name in tf_cursors:
+                ts, expected_transform = next(tf_cursors[name])
+                assert len(decoded.transforms) == 1
+                edge = decoded.transforms[0]
+                _verify_transform(edge, expected_transform)
+                parents[edge.child_frame_id] = edge.header.frame_id
+                stamp = expected_transform.header.stamp
+            else:
+                ts, blob = next(cursors[name])
+                expected = _verify_payload(name, decoded, blob, jpeg)
+                stamp = expected.header.stamp
             assert message.log_time == round(Fraction(ts) * 10**9)
             assert abs(message.publish_time - (stamp.sec * 10**9 + stamp.nsec)) <= 256
             assert message.sequence == seen[name]
@@ -215,6 +313,15 @@ def _verify_recording(
             ranges[name].append(message.publish_time / 1e9)
     assert dict(seen) == counts
     assert all(next(cursor, None) is None for cursor in cursors.values())
+    assert all(next(cursor, None) is None for cursor in tf_cursors.values())
+    assert parents == {
+        "base_link": "world",
+        "camera_link": "base_link",
+        "camera_optical": "camera_link",
+    }
+    # Every camera exposure is bracketed by actual recorded robot poses.
+    assert min(ranges["/tf"]) <= min(ranges["color_image"])
+    assert max(ranges["/tf"]) >= max(ranges["color_image"])
     with open_store(out) as store:
         assert store.list_streams() == sorted(counts)
         for name, count in counts.items():
@@ -223,6 +330,14 @@ def _verify_recording(
             assert stream.get_time_range() == (min(ranges[name]), max(ranges[name]))
             assert stream.first().ts == ranges[name][0]
             assert stream.last().ts == max(ranges[name])
+            if name in tf_cursors:
+                for actual, (_, expected_edge) in zip(stream, transforms[name], strict=True):
+                    edge = actual.data.transforms[0]
+                    assert (edge.frame_id, edge.child_frame_id) == (
+                        expected_edge.header.frame_id,
+                        expected_edge.child_frame_id,
+                    )
+                continue
             source_rows = sorted(
                 _rows(db, name),
                 key=lambda row: _source_stamp(name, row[1]),
@@ -264,7 +379,7 @@ def _verify_recording(
     out.with_suffix(".rerun.log").write_text(result.stdout + result.stderr)
     assert result.returncode == 0, result.stderr
     for name in counts:
-        assert f"/{name}" in result.stdout + result.stderr
+        assert f"/{name.lstrip('/')}" in result.stdout + result.stderr
     assert out.with_suffix(".memory.rrd").stat().st_size > 0
     assert out.with_suffix(".direct.rrd").stat().st_size > 0
     with out.open("rb") as source:
@@ -274,8 +389,12 @@ def _verify_recording(
         "bytes": out.stat().st_size,
         "sha256": digest,
         "counts": counts,
-        "schemas": {
-            name: "sensor_msgs/msg/CompressedImage" if jpeg else SCHEMAS[name] for name in counts
+        "schemas": schemas,
+        "derived_transforms": {
+            "dynamic": "recorded odom pose: world -> base_link",
+            "static": "Go2 CAM_T/CAM_Q: base_link -> camera_link -> camera_optical",
+            "calibration_source": "dimos/robot/unitree/go2/dds/extrinsics.py",
+            "camera_mount_measured_in_recording": False,
         },
         "message_encoding": "cdr",
         "schema_encoding": "ros2msg",
@@ -294,6 +413,8 @@ def _verify_recording(
             "memory_reader",
             "memory_rerun",
             "direct_rerun",
+            "tf_values_and_frame_chain",
+            "camera_tf_time_coverage",
         ],
     }
 
@@ -322,7 +443,7 @@ def test_lfs_recording_transcription(
             report["artifacts"][-1]["checks"].append("foxglove_cdr_sample_roundtrip")
             summarize(str(out))
             output = capsys.readouterr().out
-            for name, count in ({"color_image": 855} if jpeg else COUNTS).items():
+            for name, count in report["artifacts"][-1]["counts"].items():
                 assert f'Stream("{name}"): {count} items' in output
     report["verified_schema_definitions"] = sorted(upstream)
     (tmp_path / "validation.json").write_text(json.dumps(report, indent=2) + "\n")
