@@ -365,6 +365,7 @@ Built-in ids:
 |---|---|
 | `jpeg.v1` | The raw JPEG bytes (`Uint8Array`). Wrap them in a `Blob` to decode them: `createImageBitmap(new Blob([bytes], { type: "image/jpeg" }))` for a canvas, or `URL.createObjectURL(blob)` for an `<img>` (revoke the URL once the image is shown). |
 | `costmap.zlib.v1` | `{ bytes, w, h, res, origin }` with the cells still deflated. `await inflateCostmap(value)` returns the `w * h` cells. |
+| `voxels.zlib.v1` | `{ bytes, res, n, chunks }` with the chunk records still deflated. `await inflateVoxels(value)` returns a `Float32Array` of the `n` voxel centres as x, y, z triplets. `n` is 0 for an empty cloud. |
 | `json.v1` (and any `*.json.vN`) | The parsed JSON value. |
 | `*.lcm.v1` | A plain object with the LCM fields in wire order (the `*_length` count fields included). Nested structs are plain objects, `byte[]` is a `Uint8Array` and `int8_t[]` an `Int8Array` viewing the frame (a view pins the whole frame, `slice()` copies it out), other primitive arrays are typed arrays, and `int64_t` is a `bigint` (`JSON.stringify` throws on it). |
 

@@ -1,0 +1,72 @@
+.canvas {
+  background: #000;
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+.waiting {
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  position: absolute;
+}
+
+.error {
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  left: 8px;
+  position: absolute;
+  top: 8px;
+}
+
+/* A toggle: the box is an outline when off and, when on, the badge's green
+   dot grown into a ticked box with the same glow. */
+.follow {
+  align-items: center;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  bottom: 8px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  display: flex;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  gap: 6px;
+  left: 8px;
+  padding: 4px 10px 4px 8px;
+  position: absolute;
+}
+
+.follow:hover,
+.follow[aria-pressed="true"] {
+  color: var(--fg);
+}
+
+.check {
+  border: 1px solid var(--fg-muted);
+  border-radius: 2px;
+  height: 11px;
+  position: relative;
+  width: 11px;
+}
+
+.follow[aria-pressed="true"] .check {
+  background: var(--ok);
+  border-color: var(--ok);
+  box-shadow: 0 0 6px var(--ok);
+}
+
+.follow[aria-pressed="true"] .check::after {
+  border: solid var(--bg-0);
+  border-width: 0 2px 2px 0;
+  content: "";
+  height: 6px;
+  left: 3px;
+  position: absolute;
+  top: 1px;
+  transform: rotate(45deg);
+  width: 3px;
+}

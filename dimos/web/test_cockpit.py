@@ -51,6 +51,7 @@ from dimos.web.cockpit import (
     Chat,
     Col,
     Map2D,
+    Map3D,
     Panel,
     Row,
     Stats,
@@ -67,6 +68,7 @@ from dimos.web.relay_bridge.builtin_codecs import (
     decode_text,
     encode_path,
     encode_stats,
+    encode_voxels,
 )
 from dimos.web.relay_bridge.chat_codec import encode_chat
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
@@ -605,6 +607,95 @@ def test_map2d_nav_channels_blueprint() -> None:
     restored = pickle.loads(pickle.dumps(blueprint))
     (ratom,) = restored.blueprints
     assert {s.ch: s.decoder for s in ratom.kwargs["channels"]}["clicked_point"] is decode_point
+
+
+def test_map3d_blueprint() -> None:
+    blueprint = cockpit(layout=Map3D())
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    assert [
+        (c["ch"], c["dir"], c["encoding"], c["delivery"], c["maxHz"], c["params"])
+        for c in manifest["channels"]
+    ] == [
+        ("odom", "rx", "pose.json.v1", "reliable", 20.0, {}),
+        ("global_map", "rx", "voxels.zlib.v1", "latest", 1.0, {"res": 0.05}),
+    ]
+    (panel,) = manifest["panels"]
+    assert panel["kind"] == "map3d"
+    assert panel["channels"] == ["global_map", "odom"]
+    assert panel["params"] == {}
+    assert parse_manifest(manifest).model_dump() == manifest
+    # The map is a generated port, wired to the mapper's global_map by name + type.
+    ports = {(s.name, s.direction): s.type for s in atom.streams}
+    assert ports[("global_map", "in")] is PointCloud2
+    spec = next(s for s in atom.kwargs["channels"] if s.ch == "global_map")
+    assert spec.encoder is encode_voxels
+    assert spec.resend_on_subscribe and not spec.paced
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert {s.ch: s.encoder for s in ratom.kwargs["channels"]}["global_map"] is encode_voxels
+
+
+def test_map3d_without_pose_binds_one_slot() -> None:
+    (atom,) = cockpit(layout=Map3D(pose=None)).blueprints
+    manifest = atom.kwargs["manifest"]
+    assert [c["ch"] for c in manifest["channels"]] == ["global_map"]
+    assert manifest["panels"][0]["channels"] == ["global_map"]
+    assert parse_manifest(manifest).model_dump() == manifest
+
+
+def test_map3d_explicit_declaration_merges_rate_and_keeps_resend() -> None:
+    (atom,) = cockpit(
+        layout=Map3D(res=0.1),
+        channels=[
+            Channel(
+                "global_map",
+                PointCloud2,
+                encoding="voxels.zlib.v1",
+                delivery="latest",
+                max_hz=2.0,
+                params={"res": 0.1},
+            )
+        ],
+    ).blueprints
+    spec = next(s for s in atom.kwargs["channels"] if s.ch == "global_map")
+    assert spec.max_hz == 2.0
+    assert dict(spec.params) == {"res": 0.1}
+    assert spec.resend_on_subscribe
+
+
+def test_map3d_conflicting_res_raises() -> None:
+    with pytest.raises(ValueError, match="conflicting requirements for stream 'global_map'"):
+        cockpit(
+            layout=Map3D(res=0.1),
+            channels=[
+                Channel(
+                    "global_map",
+                    PointCloud2,
+                    encoding="voxels.zlib.v1",
+                    delivery="latest",
+                    params={"res": 0.05},
+                )
+            ],
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"res": 0},
+        {"res": -0.05},
+        {"res": float("nan")},
+        {"res": "0.05"},
+        {"max_hz": 0},
+        {"pose_hz": -1.0},
+        {"cloud": ""},
+        {"pose": ""},
+    ],
+)
+def test_map3d_rejects_bad_arguments(kwargs: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        Map3D(**kwargs)  # type: ignore[arg-type]
 
 
 def test_map2d_path_flags_survive_an_explicit_declaration() -> None:

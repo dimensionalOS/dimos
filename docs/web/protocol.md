@@ -80,7 +80,7 @@ Manifest version 1 is `{version, channels, panels, layout, pages}`:
 - A panel is `{id, kind, title, channels, params}`. Panel channels are indexes into the channel list by id.
 - A layout node is a panel id, `{row: [...], shares?}` or `{col: [...], shares?}`. `pages` is a list of panel ids.
 
-Panel kinds are validated by their channels: `video` (one `jpeg.v1` latest rx), `map2d` (a `costmap.zlib.v1` latest rx and optionally a `pose.json.v1` rx), `teleop` (one `twist.json.v1` latest tx), `chat` (four, in order: `text.json.v1` reliable shared tx, `chat.json.v1` reliable rx, `json.v1` latest rx, `audio.json.v1` reliable shared tx), `stats` (one `stats.json.v1` latest rx). Unknown kinds pass through, and the cockpit renders them as unknown panels. The robot's `{id, name, model}` is not part of the manifest. It travels in `hello`. An unsupported manifest version makes the SDK report `manifestUnsupported`.
+Panel kinds are validated by their channels: `video` (one `jpeg.v1` latest rx), `map2d` (a `costmap.zlib.v1` latest rx and optionally a `pose.json.v1` rx), `map3d` (the same with a `voxels.zlib.v1` latest rx), `teleop` (one `twist.json.v1` latest tx), `chat` (four, in order: `text.json.v1` reliable shared tx, `chat.json.v1` reliable rx, `json.v1` latest rx, `audio.json.v1` reliable shared tx), `stats` (one `stats.json.v1` latest rx). Unknown kinds pass through, and the cockpit renders them as unknown panels. The robot's `{id, name, model}` is not part of the manifest. It travels in `hello`. An unsupported manifest version makes the SDK report `manifestUnsupported`.
 
 ## Transport per leg
 
@@ -140,10 +140,11 @@ cd web
 deno run --allow-write=shared/fixtures shared/fixtures/gen.ts
 ```
 
-Two files pin Python encoder output and are generated from Python. `costmap_frames.json` holds the zlib bytes of the costmap encoder, and `lcm_frames.json` holds `lcm_encode()` bytes plus the exported schemas:
+Three files pin Python encoder output and are generated from Python. `costmap_frames.json` and `voxel_frames.json` hold the zlib bytes of the costmap and voxel encoders, and `lcm_frames.json` holds `lcm_encode()` bytes plus the exported schemas:
 
 ```bash
 uv run python -m dimos.web.relay_bridge.gen_costmap_fixtures
+uv run python -m dimos.web.relay_bridge.gen_voxel_fixtures
 uv run python -m dimos.web.relay_bridge.gen_lcm_fixtures
 ```
 

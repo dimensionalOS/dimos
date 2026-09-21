@@ -1754,6 +1754,315 @@
       "error": "invalid_map2d_panel"
     },
     {
+      "name": "map3d_panel_full",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            }
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": [
+              "global_map",
+              "odom"
+            ]
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "dir": "rx",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            },
+            "publish": "none",
+            "requiredScope": null
+          },
+          {
+            "ch": "odom",
+            "dir": "rx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "title": "",
+            "channels": [
+              "global_map",
+              "odom"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "map3d_panel_no_pose",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            }
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": [
+              "global_map"
+            ]
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "dir": "rx",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            },
+            "publish": "none",
+            "requiredScope": null
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "title": "",
+            "channels": [
+              "global_map"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "map3d_panel_no_channel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            }
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": []
+          }
+        ]
+      },
+      "error": "invalid_map3d_panel"
+    },
+    {
+      "name": "map3d_panel_three_channels",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            }
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": [
+              "global_map",
+              "odom",
+              "color_image"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map3d_panel"
+    },
+    {
+      "name": "map3d_panel_wrong_encoding",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": [
+              "global_costmap"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map3d_panel"
+    },
+    {
+      "name": "map3d_panel_wrong_delivery",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "reliable",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            }
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": [
+              "global_map"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map3d_panel"
+    },
+    {
+      "name": "map3d_panel_bad_pose",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            }
+          },
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": [
+              "global_map",
+              "color_image"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map3d_panel"
+    },
+    {
+      "name": "map3d_panel_tx_cloud",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            },
+            "dir": "tx"
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": [
+              "global_map"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map3d_panel"
+    },
+    {
       "name": "teleop_panel_valid",
       "data": {
         "version": 1,

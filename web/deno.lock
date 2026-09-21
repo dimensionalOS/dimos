@@ -12,11 +12,13 @@
     "npm:@types/node@^24.10.1": "24.12.2",
     "npm:@types/react-dom@^19.2.0": "19.2.3_@types+react@19.2.17",
     "npm:@types/react@^19.2.0": "19.2.17",
+    "npm:@types/three@0.186": "0.186.0",
     "npm:@vitejs/plugin-react@^5.1.0": "5.2.0_vite@7.3.2__@types+node@24.12.2__picomatch@4.0.5_@babel+core@7.29.7_@types+node@24.12.2",
     "npm:happy-dom@^20.11.1": "20.11.1",
     "npm:react-dom@^19.2.0": "19.2.8_react@19.2.8",
     "npm:react@^19.2.0": "19.2.8",
     "npm:reflect-metadata@0.2": "0.2.2",
+    "npm:three@0.186": "0.186.0",
     "npm:typescript@*": "5.9.3",
     "npm:typescript@~5.9.2": "5.9.3",
     "npm:vite@*": "7.3.2_@types+node@24.12.2_picomatch@4.0.5",
@@ -185,6 +187,9 @@
         "@babel/helper-string-parser",
         "@babel/helper-validator-identifier"
       ]
+    },
+    "@dimforge/rapier3d-compat@0.12.0": {
+      "integrity": "sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow=="
     },
     "@esbuild/aix-ppc64@0.27.7": {
       "integrity": "sha512-EKX3Qwmhz1eMdEJokhALr0YiD0lhQNwDqkPYyPhiSwKrh7/4KRjQc04sZ8db+5DVVnZ1LmbNDI1uAMPEUBnQPg==",
@@ -594,6 +599,9 @@
       "os": ["win32"],
       "cpu": ["x64"]
     },
+    "@tweenjs/tween.js@23.1.3": {
+      "integrity": "sha512-vJmvvwFxYuGnF2axRtPYocag6Clbb5YS7kLL+SO/TeVFzHqDIWrNKYtcsPMibjDx9O+bu+psAy9NKfWklassUA=="
+    },
     "@types/babel__core@7.20.5": {
       "integrity": "sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==",
       "dependencies": [
@@ -653,6 +661,23 @@
       "dependencies": [
         "csstype"
       ]
+    },
+    "@types/stats.js@0.17.4": {
+      "integrity": "sha512-jIBvWWShCvlBqBNIZt0KAshWpvSjhkwkEu4ZUcASoAvhmrgAUI2t1dXrjSL4xXVLB4FznPrIsX3nKXFl/Dt4vA=="
+    },
+    "@types/three@0.186.0": {
+      "integrity": "sha512-mxYSBpDC+D0pLfSP6sW4WZTcT+nrtmZcimMqnVmy36Hte3XpeYSrvgg4TRdaM1GemGog1AWzI5qL2VoIfMXbJQ==",
+      "dependencies": [
+        "@dimforge/rapier3d-compat",
+        "@tweenjs/tween.js",
+        "@types/stats.js",
+        "@types/webxr",
+        "fflate",
+        "meshoptimizer"
+      ]
+    },
+    "@types/webxr@0.5.24": {
+      "integrity": "sha512-h8fgEd/DpoS9CBrjEQXR+dIDraopAEfu4wYVNY2tEPwk60stPWhvZMf4Foo5FakuQ7HFZoa8WceaWFervK2Ovg=="
     },
     "@types/whatwg-mimetype@3.0.2": {
       "integrity": "sha512-c2AKvDT8ToxLIOUlN51gTiHXflsfIFisS4pO7pDPoKouJCESkhZnEy623gwP9laCy5lnLDAw1vAzu2vM2YLOrA=="
@@ -862,6 +887,9 @@
         "picomatch"
       ]
     },
+    "fflate@0.8.3": {
+      "integrity": "sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA=="
+    },
     "fsevents@2.3.3": {
       "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
       "os": ["darwin"],
@@ -910,6 +938,9 @@
       "dependencies": [
         "@jridgewell/sourcemap-codec"
       ]
+    },
+    "meshoptimizer@1.1.1": {
+      "integrity": "sha512-oRFNWJRDA/WTrVj7NWvqa5HqE1t9MYDj2VaWirQCzCCrAd2GHrqR/sQezCxiWATPNlKTcRaPRHPJwIRoPBAp5g=="
     },
     "ms@2.1.3": {
       "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="
@@ -1025,6 +1056,9 @@
       "dependencies": [
         "js-tokens@9.0.1"
       ]
+    },
+    "three@0.186.0": {
+      "integrity": "sha512-cr/fIM2ddMSVbYVgkfD4jLJv7Fh/8ZTjvo+7gQeSVGUZHxpx9FDwoL5iC7hUz/LiRA8wMbqfnb90xKfm1/HHkQ=="
     },
     "tinybench@2.9.0": {
       "integrity": "sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg=="
@@ -1174,10 +1208,12 @@
             "npm:@types/node@^24.10.1",
             "npm:@types/react-dom@^19.2.0",
             "npm:@types/react@^19.2.0",
+            "npm:@types/three@0.186",
             "npm:@vitejs/plugin-react@^5.1.0",
             "npm:happy-dom@^20.11.1",
             "npm:react-dom@^19.2.0",
             "npm:react@^19.2.0",
+            "npm:three@0.186",
             "npm:typescript@~5.9.2",
             "npm:vite@^7.1.0",
             "npm:vitest@^3.2.4"

@@ -14,6 +14,7 @@ export type { ChannelSnapshot, ChannelStats, SessionStatus, Slot } from "./store
 export { createDecoderRegistry, DecoderRegistry } from "./decoders/index.ts";
 export type { Decoded, Decoder } from "./decoders/index.ts";
 export { type CostmapValue, inflateCostmap } from "./decoders/costmap.ts";
+export { inflateVoxels, type VoxelsValue } from "./decoders/voxels.ts";
 export {
   isLcmSchema,
   lcmDecoder,

@@ -43,13 +43,13 @@ Two notices can replace the grid. "Waiting for a robot to register" means no rob
 ```python skip
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
-from dimos.web.cockpit import Col, Map2D, Row, Teleop, Video, cockpit
+from dimos.web.cockpit import Col, Map2D, Map3D, Row, Teleop, Video, cockpit
 
 unitree_go2_cockpit = autoconnect(
     unitree_go2,
     cockpit(
         layout=Row(
-            Video("color_image"),
+            Col(Video("color_image"), Map3D()),
             Col(
                 Map2D(path="path", click="clicked_point", stop="stop_movement"),
                 Teleop(),
@@ -72,19 +72,22 @@ fill = none
 boxrad = 5px
 margin = 0.06in
 
-V: box "Video" wid 2.2in ht 1.65in
+V: box "Video" wid 2.2in ht 0.8in
+D: box "Map3D" wid 2.2in ht 0.8in with .nw at V.sw + (0, -0.05in)
 M: box "Map2D" wid 1.1in ht 1.2in with .nw at V.ne + (0.05in, 0)
 T: box "Teleop" wid 1.1in ht 0.4in with .nw at M.sw + (0, -0.05in)
 
 line from (V.w.x, V.n.y + 0.12in) to (M.e.x, V.n.y + 0.12in)
 text "Row shares=[2, 1]" with .s at (0.5 * (V.w.x + M.e.x), V.n.y + 0.16in)
+line from (V.w.x - 0.12in, V.n.y) to (V.w.x - 0.12in, D.s.y)
+text "Col" with .e at (V.w.x - 0.18in, 0.5 * (V.n.y + D.s.y))
 line from (M.e.x + 0.12in, M.n.y) to (M.e.x + 0.12in, T.s.y)
 text "Col shares=[3, 1]" with .w at (M.e.x + 0.18in, 0.5 * (M.n.y + T.s.y))
 ```
 
 </details>
 
-![The layout: the video panel on the left takes two shares of the row, the right column takes one share and splits three to one between the map and the teleop panel](assets/layout.svg)
+![The layout: the left column takes two shares of the row and splits equally between the video panel and the 3D map, the right column takes one share and splits three to one between the 2D map and the teleop panel](assets/layout.svg)
 
 Panels named in `pages=[...]` render as full-page tabs instead of grid cells. A panel can appear in both places. With no `layout` and no `channels`, `cockpit()` uses the default preset: `Row(Video("color_image"), Col(Map2D("global_costmap", "odom"), Teleop(), shares=[3, 1]), shares=[2, 1])`. That is also what `--local-relay` gives a blueprint that has no `cockpit()` at all.
 
@@ -144,7 +147,7 @@ Every panel takes a `title` (shown in its title bar, the panel id when empty) an
 Which names a panel can use depends on the stream:
 
 - The bridge has four built-in ports with fixed codecs: `color_image`, `odom`, `global_costmap` and `tele_cmd_vel`. The default panel arguments name them.
-- Map2D's `path`, `click` and `stop`, Chat's four streams and Stats' `resource_stats` are declared by the panel itself, so any name works there.
+- Map2D's `path`, `click` and `stop`, Map3D's `cloud`, Chat's four streams and Stats' `resource_stats` are declared by the panel itself, so any name works there.
 - Video's `stream`, and Map2D's `costmap` and `pose`, must be a built-in port or a `Channel` in `channels=[...]` that repeats what the panel asks for: the encoding, the delivery, and the panel's params (`quality` for Video). Teleop always drives `tele_cmd_vel`.
 
 A second camera, for example:
@@ -207,6 +210,14 @@ A 2D occupancy grid (`OccupancyGrid`) with the robot's pose (`PoseStamped`) draw
 - `stop`: a cancel button that publishes a `Bool` on this stream. It is shown while a path is active.
 
 The Go2 blueprints use `path="path"`, `click="clicked_point"` and `stop="stop_movement"`.
+
+### Map3D
+
+`Map3D(cloud="global_map", pose="odom", *, res=0.05, max_hz=1.0, pose_hz=20.0, title="")`
+
+The world in 3D: a `PointCloud2` stream drawn as one point per voxel, coloured by height, with the robot's pose (`PoseStamped`) as a red cone. `pose=None` drops the cone and the follow toggle. Drag to orbit, wheel to zoom, right-drag to pan. The `follow` toggle keeps the camera a few metres behind and above the robot as it drives. Orbit, zoom and pan then hold relative to the robot.
+
+`cloud` is any point cloud, the mapper's whole-world map by default. The bridge quantizes it to `res` metres (the mapper's own voxel size by default) and sends occupancy bits, not points: the Go2's office-sized map costs about 100 KB per frame instead of the 6 MB of its LCM encoding. A map over a million voxels is sent coarser. An empty cloud clears the panel. `max_hz` caps the frame rate. The renderer (three.js) is downloaded only by pages that show this panel.
 
 ### Teleop
 
@@ -275,13 +286,13 @@ The mechanism on the bridge side (generation numbers, clamps, why zeros are sent
 
 The page subscribes to every channel it can use as soon as it loads, whatever tab or panel is visible, and keeps those subscriptions until the manifest changes. The bridge encodes a channel only while at least one viewer is subscribed, so an open page keeps the robot encoding its cheap channels.
 
-Cheap means channels with a JSON encoding, and LCM encodings whose message has no variable-length array. They are read for the channels tab whether or not a panel shows them. Video frames, costmaps and LCM messages with variable-length arrays (point clouds, scans, paths) are read only when a panel binds them or a [web SDK](/docs/web/web_sdk.md) page subscribes. A channel whose encoding the cockpit cannot decode is listed with `no decoder` and left alone.
+Cheap means channels with a JSON encoding, and LCM encodings whose message has no variable-length array. They are read for the channels tab whether or not a panel shows them. Video frames, costmaps, voxel maps and LCM messages with variable-length arrays (point clouds, scans, paths) are read only when a panel binds them or a [web SDK](/docs/web/web_sdk.md) page subscribes. A channel whose encoding the cockpit cannot decode is listed with `no decoder` and left alone.
 
 The reason to have this distinction (cheap/expensive) is because you normally want everything present even if you're not focused on it. But some messages are espensive, so only those are excluded.
 
 ## Ready-made blueprints
 
-- `unitree-go2-cockpit`: the Go2 navigation stack with video, an interactive map (goal clicks, path, cancel) and teleop.
+- `unitree-go2-cockpit`: the Go2 navigation stack with video, the 3D voxel map, an interactive map (goal clicks, path, cancel) and teleop.
 - `unitree-go2-agentic-cockpit`: the same plus the agent chat with push-to-talk, a full-page camera tab and the stats tab. It replaces the older `WebInput` page of the agentic blueprint.
 
 They are [`unitree_go2_cockpit.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2_cockpit.py) and [`unitree_go2_agentic_cockpit.py`](/dimos/robot/unitree/go2/blueprints/agentic/unitree_go2_agentic_cockpit.py).

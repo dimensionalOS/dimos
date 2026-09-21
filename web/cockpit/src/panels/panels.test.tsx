@@ -3,15 +3,17 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { FrameHeader, PanelSpec } from "@dimos/shared";
-import type { CostmapValue } from "@dimos/sdk";
+import type { CostmapValue, VoxelsValue } from "@dimos/sdk";
 import { ChannelStore, PublishError } from "@dimos/sdk";
 import type { DrawHealth } from "../layout/PanelFrame.tsx";
 import { FakeSession } from "../testing/fakeSession.ts";
+import { Map3DPanel, startVoxelSink, type VoxelSink } from "./Map3DPanel.tsx";
 import { MapPanel, startMapSink } from "./MapPanel.tsx";
 import { fitTransform, posePath } from "./mapRenderer.ts";
 import { ChatPanel } from "./ChatPanel.tsx";
 import { getPanel, UnknownPanel } from "./registry.tsx";
 import { startVideoSink, VideoPanel } from "./VideoPanel.tsx";
+import type { VoxelScene } from "./voxelView.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -925,5 +927,365 @@ describe("MapPanel", () => {
     });
     expect(cancel()).toBeNull();
     expect(container.querySelector("canvas")!.className).not.toContain("clickable");
+  });
+});
+
+const VOX_CH = "global_map";
+const POSITIONS = Float32Array.from([0.025, 0.025, 0.025, 0.075, 0.025, 0.125]);
+
+function fakeScene() {
+  return {
+    setVoxels: vi.fn(),
+    setPose: vi.fn(),
+    fit: vi.fn(),
+    setFollow: vi.fn(),
+    resize: vi.fn(),
+    render: vi.fn(),
+    dispose: vi.fn(),
+  };
+}
+
+function voxelFrame(store: ChannelStore, seq: number, ts = seq, n = 2): VoxelsValue {
+  const value: VoxelsValue = { bytes: new Uint8Array([seq]), res: 0.05, n, chunks: n > 0 ? 1 : 0 };
+  store.ingest(VOX_CH, { ch: VOX_CH, seq, ts, delivery: "latest" }, value, true);
+  return value;
+}
+
+/** Inflate stub whose promises settle only when the test says so. */
+function deferredInflateVoxels() {
+  const calls: VoxelsValue[] = [];
+  const settlers: { resolve: (p: Float32Array) => void; reject: (e: Error) => void }[] = [];
+  const inflate = (value: VoxelsValue): Promise<Float32Array> => {
+    calls.push(value);
+    return new Promise((resolve, reject) => settlers.push({ resolve, reject }));
+  };
+  return { inflate, calls, settlers };
+}
+
+describe("startVoxelSink", () => {
+  const CHS = { cloud: VOX_CH, pose: POSE_CH };
+  let store: ChannelStore;
+  let canvas: HTMLCanvasElement;
+  let health: DrawHealth;
+  let scene: ReturnType<typeof fakeScene>;
+  let sink: VoxelSink | null;
+  const deps = (over: Record<string, unknown> = {}) => ({
+    hidden: () => false,
+    createScene: () => Promise.resolve(scene as unknown as VoxelScene),
+    ...over,
+  });
+
+  beforeEach(() => {
+    store = new ChannelStore();
+    canvas = document.createElement("canvas");
+    defineSize(canvas, 100, 80);
+    health = { lastDrawOkAtMs: 0, failures: 0 };
+    scene = fakeScene();
+    sink = null;
+  });
+
+  afterEach(() => {
+    sink?.stop();
+    vi.restoreAllMocks();
+  });
+
+  it("inflates one frame at a time once the scene is up and skips to the newest", async () => {
+    const { inflate, calls, settlers } = deferredInflateVoxels();
+    voxelFrame(store, 1); // a slot may predate the mount
+    sink = startVoxelSink(store, CHS, canvas, health, deps({ inflate }));
+    expect(calls.length).toBe(0); // the scene (a lazy chunk) is not up yet
+    await flush();
+    expect(calls.length).toBe(1);
+    voxelFrame(store, 2);
+    const newest = voxelFrame(store, 3);
+    expect(calls.length).toBe(1); // one inflate in flight, burst sheds
+
+    settlers[0].resolve(POSITIONS);
+    await flush();
+    expect(scene.setVoxels).toHaveBeenCalledTimes(1);
+    const [positions, colors, res] = scene.setVoxels.mock.calls[0] as [
+      Float32Array,
+      Uint8Array,
+      number,
+    ];
+    expect(positions).toBe(POSITIONS);
+    expect(colors.length).toBe(6);
+    expect(res).toBe(0.05);
+    expect(scene.fit).toHaveBeenCalledTimes(1);
+    expect(scene.render).toHaveBeenCalled();
+    expect(canvas.dataset.voxels).toBe("2");
+    expect(health.failures).toBe(0);
+    expect(calls.length).toBe(2);
+    expect(calls[1]).toBe(newest); // frame 2 was never inflated
+
+    settlers[1].resolve(POSITIONS);
+    await flush();
+    expect(scene.fit).toHaveBeenCalledTimes(1); // only the first frame frames the camera
+    expect(calls.length).toBe(2); // caught up
+  });
+
+  it("clears the scene on an empty frame and frames the camera on the first voxels", async () => {
+    const { inflate, settlers } = deferredInflateVoxels();
+    sink = startVoxelSink(store, CHS, canvas, health, deps({ inflate }));
+    await flush();
+    const drawn = (call: number) => (scene.setVoxels.mock.calls[call] as [Float32Array])[0].length;
+
+    voxelFrame(store, 1, 1, 0); // a cleared map before any voxels: nothing to frame yet
+    settlers[0].resolve(new Float32Array(0));
+    await flush();
+    expect(drawn(0)).toBe(0);
+    expect(canvas.dataset.voxels).toBe("0");
+    expect(scene.fit).not.toHaveBeenCalled();
+
+    voxelFrame(store, 2);
+    settlers[1].resolve(POSITIONS);
+    await flush();
+    expect(drawn(1)).toBe(6);
+    expect(canvas.dataset.voxels).toBe("2");
+    expect(scene.fit).toHaveBeenCalledTimes(1);
+
+    voxelFrame(store, 3, 3, 0); // the producer cleared its map: the old voxels must go
+    settlers[2].resolve(new Float32Array(0));
+    await flush();
+    expect(drawn(2)).toBe(0);
+    expect(canvas.dataset.voxels).toBe("0");
+    expect(health.failures).toBe(0);
+
+    voxelFrame(store, 4);
+    settlers[3].resolve(POSITIONS);
+    await flush();
+    expect(drawn(3)).toBe(6);
+    expect(canvas.dataset.voxels).toBe("2");
+    expect(scene.fit).toHaveBeenCalledTimes(1); // the viewer's orbit is left alone
+  });
+
+  it("redraws the pose without a new inflate and passes the follow toggle on", async () => {
+    const { inflate, calls, settlers } = deferredInflateVoxels();
+    sink = startVoxelSink(store, CHS, canvas, health, deps({ inflate }));
+    await flush();
+    voxelFrame(store, 1);
+    settlers[0].resolve(POSITIONS);
+    await flush();
+    const renders = scene.render.mock.calls.length;
+
+    poseFrame(store, 1);
+    expect(scene.setPose).toHaveBeenLastCalledWith({ x: 0.5, y: 0.5, z: 0.1, yaw: 0.25 });
+    expect(scene.render.mock.calls.length).toBe(renders + 1);
+    expect(calls.length).toBe(1);
+
+    sink.follow(true);
+    expect(scene.setFollow).toHaveBeenLastCalledWith(true);
+    expect(scene.render.mock.calls.length).toBe(renders + 2);
+    sink.follow(false);
+    expect(scene.setFollow).toHaveBeenLastCalledWith(false);
+  });
+
+  it("carries a follow toggled before the scene is up into it and skips the first fit", async () => {
+    const { inflate, settlers } = deferredInflateVoxels();
+    sink = startVoxelSink(store, CHS, canvas, health, deps({ inflate }));
+    sink.follow(true); // clicked while the three.js chunk was still loading
+    expect(scene.setFollow).not.toHaveBeenCalled();
+    await flush();
+    expect(scene.setFollow).toHaveBeenCalledWith(true);
+    voxelFrame(store, 1);
+    settlers[0].resolve(POSITIONS);
+    await flush();
+    expect(scene.setVoxels).toHaveBeenCalledTimes(1);
+    expect(scene.fit).not.toHaveBeenCalled(); // the camera stays behind the robot
+  });
+
+  it("does not inflate while hidden and catches up on visibilitychange", async () => {
+    const { inflate, calls, settlers } = deferredInflateVoxels();
+    let hidden = true;
+    sink = startVoxelSink(store, CHS, canvas, health, deps({ inflate, hidden: () => hidden }));
+    await flush();
+    voxelFrame(store, 1);
+    const newest = voxelFrame(store, 2);
+    expect(calls.length).toBe(0); // a backgrounded panel costs no inflate
+
+    hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(calls.length).toBe(1);
+    expect(calls[0]).toBe(newest);
+    settlers[0].resolve(POSITIONS);
+    await flush();
+  });
+
+  it("counts inflate rejections and recovers on the next frame", async () => {
+    const { inflate, settlers } = deferredInflateVoxels();
+    sink = startVoxelSink(store, CHS, canvas, health, deps({ inflate }));
+    await flush();
+    const stamp = health.lastDrawOkAtMs;
+    voxelFrame(store, 1);
+    settlers[0].reject(new Error("corrupt zlib"));
+    await flush();
+    expect(health.failures).toBe(1);
+    expect(health.lastDrawOkAtMs).toBe(stamp); // only successes stamp it
+
+    voxelFrame(store, 2);
+    settlers[1].resolve(POSITIONS);
+    await flush();
+    expect(health.failures).toBe(0);
+  });
+
+  it("reports an unavailable renderer and never inflates", async () => {
+    const { inflate, calls } = deferredInflateVoxels();
+    const onError = vi.fn();
+    sink = startVoxelSink(store, CHS, canvas, health, {
+      inflate,
+      hidden: () => false,
+      createScene: () => Promise.reject(new Error("no webgl")),
+      onError,
+    });
+    voxelFrame(store, 1);
+    await flush();
+    expect(onError).toHaveBeenCalledWith("3D view unavailable: no webgl");
+    expect(calls.length).toBe(0);
+    expect(health.failures).toBe(0); // the badge says "stalled", the overlay says why
+  });
+
+  it("resizes the scene from the layout and disposes it on stop", async () => {
+    const { inflate } = deferredInflateVoxels();
+    let resize: (() => void) | null = null;
+    const disposeObserver = vi.fn();
+    sink = startVoxelSink(
+      store,
+      CHS,
+      canvas,
+      health,
+      deps({
+        inflate,
+        observeResize: (_el: Element, cb: () => void) => {
+          resize = cb;
+          return disposeObserver;
+        },
+      }),
+    );
+    await flush();
+    expect(scene.resize).toHaveBeenCalledWith(100, 80, 1);
+
+    defineSize(canvas, 250, 80);
+    resize!();
+    expect(scene.resize).toHaveBeenLastCalledWith(250, 80, 1);
+
+    sink.stop();
+    sink = null;
+    expect(scene.dispose).toHaveBeenCalledTimes(1);
+    expect(disposeObserver).toHaveBeenCalledTimes(1);
+  });
+
+  it("disposes a scene that arrives after stop", async () => {
+    let resolveScene: (s: VoxelScene) => void = () => {};
+    sink = startVoxelSink(store, CHS, canvas, health, {
+      hidden: () => false,
+      createScene: () => new Promise((resolve) => (resolveScene = resolve)),
+    });
+    sink.stop();
+    sink = null;
+    resolveScene(scene as unknown as VoxelScene);
+    await flush();
+    expect(scene.dispose).toHaveBeenCalledTimes(1);
+    expect(scene.resize).not.toHaveBeenCalled();
+  });
+});
+
+describe("Map3DPanel", () => {
+  const SPEC: PanelSpec = {
+    id: "map3d",
+    kind: "map3d",
+    title: "",
+    channels: [VOX_CH, POSE_CH],
+    params: {},
+  };
+  let container: HTMLElement;
+  let root: Root;
+  let now: number;
+  let store: ChannelStore;
+  let scene: ReturnType<typeof fakeScene>;
+  const badge = () => container.querySelector(`[data-testid="map3d-${VOX_CH}-badge"]`)!;
+  const sinkDeps = () => ({
+    createScene: () => Promise.resolve(scene as unknown as VoxelScene),
+    inflate: () => Promise.resolve(POSITIONS),
+  });
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    now = 1_000_000;
+    store = new ChannelStore(() => now);
+    scene = fakeScene();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.restoreAllMocks();
+  });
+
+  it("is registered for the map3d kind", () => {
+    expect(getPanel("map3d")).toBe(Map3DPanel);
+  });
+
+  it("shows waiting, then the Hz badge, then flags staleness", async () => {
+    const deps = sinkDeps();
+    act(() => root.render(<Map3DPanel spec={SPEC} store={store} sinkDeps={deps} />));
+    expect(container.textContent).toContain("waiting for data");
+    expect(badge().textContent).toBe("waiting");
+    expect(badge().getAttribute("data-state")).toBe("waiting");
+    const canvas = container.querySelector("canvas")!;
+    expect(canvas.getAttribute("data-testid")).toBe(`map3d-${VOX_CH}-canvas`);
+    expect(canvas.getAttribute("aria-label")).toBe("map3d");
+
+    // Frames at 1 Hz of source time, arriving with zero skew.
+    await act(async () => {
+      for (let i = 0; i < 3; i++) voxelFrame(store, i, now / 1000 - (2 - i));
+      await flush();
+      store.publishUi();
+    });
+    expect(container.textContent).not.toContain("waiting for data");
+    expect(badge().textContent).toMatch(/Hz$/);
+    expect(badge().getAttribute("data-state")).toBe("live");
+    expect(canvas.dataset.voxels).toBe("2");
+    expect(scene.setVoxels).toHaveBeenCalled();
+
+    // Silence: source age climbs past the threshold on a later UI tick.
+    act(() => {
+      now += 20_000;
+      store.publishUi();
+    });
+    expect(badge().textContent).toMatch(/^stale/);
+    expect(badge().getAttribute("data-state")).toBe("stale");
+  });
+
+  it("toggles follow from its button, which needs a pose channel", async () => {
+    const deps = sinkDeps();
+    const follow = () => container.querySelector(`[data-testid="map3d-${VOX_CH}-follow"]`);
+    act(() => root.render(<Map3DPanel spec={SPEC} store={store} sinkDeps={deps} />));
+    await act(flush);
+    expect(follow()!.getAttribute("aria-pressed")).toBe("false");
+    act(() => follow()!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(follow()!.getAttribute("aria-pressed")).toBe("true");
+    expect(scene.setFollow).toHaveBeenLastCalledWith(true);
+    act(() => follow()!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(follow()!.getAttribute("aria-pressed")).toBe("false");
+    expect(scene.setFollow).toHaveBeenLastCalledWith(false);
+
+    const noPose = { ...SPEC, channels: [VOX_CH] };
+    act(() => root.render(<Map3DPanel spec={noPose} store={store} sinkDeps={deps} />));
+    expect(follow()).toBeNull();
+  });
+
+  it("shows why the renderer could not start", async () => {
+    const deps = { createScene: () => Promise.reject(new Error("no webgl")) };
+    act(() => root.render(<Map3DPanel spec={SPEC} store={store} sinkDeps={deps} />));
+    await act(flush);
+    const alert = container.querySelector('[role="alert"]')!;
+    expect(alert.textContent).toBe("3D view unavailable: no webgl");
+  });
+
+  it("renders a bridge authoring mistake instead of crashing", () => {
+    act(() => root.render(<Map3DPanel spec={{ ...SPEC, channels: [] }} store={store} />));
+    expect(container.textContent).toContain("map3d panel map3d: no channel bound");
   });
 });

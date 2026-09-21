@@ -60,6 +60,8 @@ const lcmCloud = spec({
 });
 const videoPanel = panel({ id: "cam", kind: "video", channels: ["color_image"] });
 const mapPanel = panel({ id: "map", kind: "map2d", channels: ["global_costmap", "odom"] });
+const voxels = spec({ ch: "global_map", encoding: "voxels.zlib.v1", delivery: "latest" });
+const map3dPanel = panel({ id: "map3d", kind: "map3d", channels: ["global_map", "odom"] });
 
 describe("subscribableChannels", () => {
   it("keeps only channels with a decoder (undecodable ones waste bandwidth)", () => {
@@ -96,6 +98,12 @@ describe("subscribableChannels", () => {
     expect(channelSubscribable(costmap, [])).toBe(false);
     expect(channelSubscribable(costmap, [mapPanel])).toBe(true);
     expect(channelSubscribable(costmap, [{ ...mapPanel, kind: "hologram" }])).toBe(false);
+  });
+
+  it("gates the voxel map encoding like the costmap", () => {
+    expect(channelSubscribable(voxels, [])).toBe(false);
+    expect(channelSubscribable(voxels, [map3dPanel])).toBe(true);
+    expect(channelSubscribable(voxels, [{ ...map3dPanel, kind: "hologram" }])).toBe(false);
   });
 
   it("consults the given registry, not a global one", () => {

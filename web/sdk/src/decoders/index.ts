@@ -12,6 +12,7 @@ import { costmapDecoder } from "./costmap.ts";
 import { jpegDecoder } from "./jpeg.ts";
 import { jsonDecoder } from "./json.ts";
 import { LCM_ENCODING_RE, lcmDecoderFor } from "./lcm.ts";
+import { voxelsDecoder } from "./voxels.ts";
 
 export interface Decoded {
   value: unknown;
@@ -65,6 +66,7 @@ export function createDecoderRegistry(): DecoderRegistry {
   const registry = new DecoderRegistry();
   registry.register("jpeg.v1", jpegDecoder);
   registry.register("costmap.zlib.v1", costmapDecoder);
+  registry.register("voxels.zlib.v1", voxelsDecoder);
   registry.register("json.v1", jsonDecoder);
   return registry;
 }

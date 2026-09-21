@@ -38,7 +38,7 @@ The arrows show traffic. The robot initiates its connection in both modes, so it
 
 ## Local relay
 
-Add `--local-relay` to a blueprint command (a blueprint with `cockpit(...)` and no `--relay-url` does the same by itself). dimOS starts the relay and opens the cockpit. In a checkout, it builds missing or outdated web bundles first. Installed wheels include the bundles. If Deno is missing from `PATH`, dimOS downloads the pinned version into the dimos cache. The relay listens on port 7780 (`--local-port`), and the page opens at `http://127.0.0.1:7780/` once the relay's ready line appears (`--no-open-browser` to skip that).
+Add `--local-relay` to a blueprint command (a blueprint with `cockpit(...)` and no `--relay-url` does the same by itself). dimOS starts the relay and opens the cockpit. In a checkout, it builds missing or outdated web bundles first. Installed wheels include the bundles. If Deno is missing from `PATH`, dimOS downloads the pinned version into the dimos cache. The relay listens on port 7780 (`--local-port`), and the page opens at `http://127.0.0.1:7780/` once the relay's ready line appears (`--open-browser false` to skip that).
 
 The local relay listens on 127.0.0.1 only and deliberately trusts local pages: `/api/info`, `/sdk.js` and served JavaScript modules answer with wildcard CORS, so a Vite dev server, a page on another local port, or a `file:` page can connect without configuration and without a token. Only pages on the same machine can use it, because browsers allow WebTransport only on secure pages and `http://<lan-ip>` is not one. Another machine needs the TLS and auth flags below.
 
