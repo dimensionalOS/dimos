@@ -30,7 +30,6 @@ def runtime(mocker):
     engine.measured.return_value = {"arm": 0.1}
     engine.action.return_value = "hold"
     engine.step.return_value = (0.0, False, False, {})
-    engine.observation.return_value = {"obs": {}}
     engine.ground_truth.return_value = {"objects": {}}
     engine.task = None
     engine.limits = {"arm": (-1, 1)}

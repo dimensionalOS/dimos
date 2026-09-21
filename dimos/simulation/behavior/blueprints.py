@@ -51,15 +51,19 @@ from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module
 
 
+def _camera_views() -> rrb.Vertical:
+    return rrb.Vertical(
+        rrb.Spatial2DView(origin="world/color_image"),
+        rrb.Spatial2DView(origin="world/left_wrist_image"),
+        rrb.Spatial2DView(origin="world/right_wrist_image"),
+    )
+
+
 def _view() -> rrb.Blueprint:
     return rrb.Blueprint(
         rrb.Horizontal(
             rrb.Spatial3DView(origin="world"),
-            rrb.Vertical(
-                rrb.Spatial2DView(origin="world/color_image"),
-                rrb.Spatial2DView(origin="world/left_wrist_image"),
-                rrb.Spatial2DView(origin="world/right_wrist_image"),
-            ),
+            _camera_views(),
         )
     )
 
@@ -97,11 +101,7 @@ def _navigation_view() -> rrb.Blueprint:
                     "world/odometry/**",
                 ],
             ),
-            rrb.Vertical(
-                rrb.Spatial2DView(origin="world/color_image"),
-                rrb.Spatial2DView(origin="world/left_wrist_image"),
-                rrb.Spatial2DView(origin="world/right_wrist_image"),
-            ),
+            _camera_views(),
             column_shares=[3, 1],
         )
     )
@@ -159,10 +159,37 @@ _behavior_navigation = autoconnect(
 ).global_config(transport="zenoh", n_workers=6, robot_width=0.7, robot_rotation_diameter=0.9)
 
 
-behavior_nav = autoconnect(
-    _behavior_navigation,
-    vis_module(global_config.viewer, rerun_config={"blueprint": _view}),
+_navigation_visualization = vis_module(
+    global_config.viewer,
+    rerun_config={
+        "blueprint": _navigation_view,
+        "memory_limit": "4GB",
+        "max_hz": {
+            "world/global_map": 2.0,
+            "world/tf": 2.0,
+            "world/planning_tf": 2.0,
+            "world/color_image": 5.0,
+            "world/left_wrist_image": 5.0,
+            "world/right_wrist_image": 5.0,
+        },
+        "visual_override": {
+            **planner_visual_override(viz_publish_hz=2.0, voxel_size=0.05, wall_clearance_m=0.35),
+            "world/goal": _navigation_goal,
+            "world/raw_scan": None,
+            "world/registered_scan": None,
+            "world/local_map": None,
+            "world/local_map_fine": None,
+            "world/nodes": None,
+            "world/node_edges": None,
+            "world/depth_image": None,
+            "world/left_wrist_depth": None,
+            "world/right_wrist_depth": None,
+        },
+        "static": {"world/odometry": _robot_heading},
+    },
 )
+
+behavior_nav = autoconnect(_behavior_navigation, _navigation_visualization)
 
 
 behavior_task = autoconnect(
@@ -186,37 +213,7 @@ behavior_r1pro = (
             task=TaskSelection(), headless=False, publish_scan=True, allow_task_changes=False
         ),
         BehaviorR1ProBridge.blueprint(),
-        vis_module(
-            global_config.viewer,
-            rerun_config={
-                "blueprint": _navigation_view,
-                "memory_limit": "4GB",
-                "max_hz": {
-                    "world/global_map": 2.0,
-                    "world/tf": 2.0,
-                    "world/planning_tf": 2.0,
-                    "world/color_image": 5.0,
-                    "world/left_wrist_image": 5.0,
-                    "world/right_wrist_image": 5.0,
-                },
-                "visual_override": {
-                    **planner_visual_override(
-                        viz_publish_hz=2.0, voxel_size=0.05, wall_clearance_m=0.35
-                    ),
-                    "world/goal": _navigation_goal,
-                    "world/raw_scan": None,
-                    "world/registered_scan": None,
-                    "world/local_map": None,
-                    "world/local_map_fine": None,
-                    "world/nodes": None,
-                    "world/node_edges": None,
-                    "world/depth_image": None,
-                    "world/left_wrist_depth": None,
-                    "world/right_wrist_depth": None,
-                },
-                "static": {"world/odometry": _robot_heading},
-            },
-        ),
+        _navigation_visualization,
         BehaviorCoordinator.blueprint(
             instance_name="ControlCoordinator",
             tick_rate=30,

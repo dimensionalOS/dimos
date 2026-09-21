@@ -24,7 +24,6 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -46,7 +45,6 @@ class BehaviorProbe(Module):
     joint_state: In[JointState]
     odometry: In[Odometry]
     tf: In[TFMessage]
-    goal: Out[PointStamped]
     cmd_vel: Out[Twist]
     joint_command: Out[JointState]
     native_action: Out[list[float]]
@@ -106,10 +104,6 @@ class BehaviorProbe(Module):
     @rpc
     def set_joints(self, targets: dict[str, float]) -> None:
         self.joint_command.publish(JointState(name=list(targets), position=list(targets.values())))
-
-    @rpc
-    def set_goal(self, x: float, y: float, z: float) -> None:
-        self.goal.publish(PointStamped(x, y, z, frame_id="world"))
 
     @rpc
     def send_native(self, action: list[float]) -> None:

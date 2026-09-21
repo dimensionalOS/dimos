@@ -53,7 +53,6 @@ class BehaviorRuntime(BehaviorConnection):
         self._primitive_id: str | None = None
         self._mailbox: dict[str, tuple[int, Any, float]] = {}
         self._description: dict[str, Any] = {}
-        self._observation: dict[str, Any] = {}
         self._truth: dict[str, Any] = {}
         self._tasks: list[TaskSelection] = []
         self._scenes: list[str] = []
@@ -123,11 +122,6 @@ class BehaviorRuntime(BehaviorConnection):
     def get_status(self) -> BehaviorStatus:
         with self._lock:
             return self._state.model_copy(deep=True)
-
-    @rpc
-    def get_observation(self) -> dict[str, Any]:
-        with self._lock:
-            return copy.deepcopy(self._observation)
 
     @rpc
     def get_ground_truth(self) -> dict[str, Any]:
@@ -314,11 +308,9 @@ class BehaviorRuntime(BehaviorConnection):
                 logger.warning("Rejected BEHAVIOR command", error=str(error))
 
     def _refresh(self) -> None:
-        observation = self._engine.observation()
         truth = self._engine.ground_truth()
         with self._lock:
             tags = {"episode": self._state.episode.id, "step": self._state.episode.step}
-            self._observation = {**tags, **observation}
             self._truth = {**tags, **truth}
         if self._started.is_set():
             for name, message in self._engine.messages(time.time()).items():

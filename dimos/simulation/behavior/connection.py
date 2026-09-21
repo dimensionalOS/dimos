@@ -126,11 +126,6 @@ class BehaviorConnection(IsolatedPythonModule):
         raise NotImplementedError
 
     @rpc
-    def get_observation(self) -> dict[str, Any]:
-        """Read the last complete observation, tagged with episode and step."""
-        raise NotImplementedError
-
-    @rpc
     def get_ground_truth(self) -> dict[str, Any]:
         """Read simulator object poses and task goal evaluation, not perception estimates."""
         raise NotImplementedError

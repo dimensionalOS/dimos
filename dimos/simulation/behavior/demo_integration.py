@@ -24,7 +24,7 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.simulation.behavior.blueprints import behavior_nav, behavior_task, behavior_teleop
+from dimos.simulation.behavior.blueprints import behavior_task, behavior_teleop
 from dimos.simulation.behavior.connection import BehaviorConnection
 from dimos.simulation.behavior.probe import BehaviorProbe
 from dimos.simulation.behavior.types import ControlMode
@@ -222,20 +222,11 @@ def check_handoff(connection: Any, probe: Any) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("demo", choices=["sensors", "task", "handoff", "navigation"])
+    parser.add_argument("demo", choices=["sensors", "task", "handoff"])
     parser.add_argument("--kind", choices=["physical", "symbolic"], default="physical")
-    parser.add_argument(
-        "--goal", nargs=3, type=float, help="Navigation world x y z; choose a reachable floor point"
-    )
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
-    blueprint = (
-        behavior_task
-        if args.demo in ("task", "handoff")
-        else behavior_nav
-        if args.demo == "navigation"
-        else behavior_teleop
-    )
+    blueprint = behavior_task if args.demo in ("task", "handoff") else behavior_teleop
     coordinator = ModuleCoordinator.build(autoconnect(blueprint, BehaviorProbe.blueprint()))
     try:
         connection = coordinator.get_instance(BehaviorConnection)
@@ -263,18 +254,6 @@ def main() -> None:
             report["motion"] = {"before": before, "after": after}
             report["joints"] = check_joints(connection, probe)
             report["native"] = check_native(connection, probe)
-        else:
-            if args.goal is None:
-                raise ValueError("navigation requires --goal X Y Z")
-            # Drive the same public goal port used by the Rerun clicked-point stream.
-            probe.set_goal(*args.goal)
-            deadline = time.monotonic() + 120
-            while time.monotonic() < deadline:
-                if math.dist(probe.snapshot()["position"][:2], args.goal[:2]) <= 0.3:
-                    break
-                time.sleep(0.1)
-            else:
-                raise AssertionError("Navigation did not reach the goal within 0.3 m")
         report["passed"] = True
         output = json.dumps(report, indent=2)
         print(output)

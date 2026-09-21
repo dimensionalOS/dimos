@@ -180,7 +180,7 @@ limits, controller action slices, cameras, primitive capabilities, and grasping 
 | `semantic_image` | Optional semantic IDs, 16-bit image |
 | `status` | Runtime state, control owner, episode evaluator result, operation, achieved loop frequency |
 
-Optical coordinates are +X right, +Y down, +Z forward. Observations and ground-truth
+Optical coordinates are +X right, +Y down, +Z forward. Ground-truth
 RPC responses carry episode and step tags. Ground truth is privileged simulator
 information, and is explicitly labeled as such in agent tools.
 
@@ -224,8 +224,8 @@ python -m dimos.simulation.behavior.demo_integration sensors --report /tmp/behav
 python -m dimos.simulation.behavior.demo_integration handoff --report /tmp/behavior-handoff.json
 python -m dimos.simulation.behavior.demo_integration task --kind physical --report /tmp/behavior-physical.json
 python -m dimos.simulation.behavior.demo_integration task --kind symbolic --report /tmp/behavior-symbolic.json
-# Choose a reachable floor point from the scene; example coordinates are not assumed.
-python -m dimos.simulation.behavior.demo_integration navigation --goal X Y Z --report /tmp/behavior-nav.json
+# Combined navigation and manipulation; optionally supply --goal X Y Z.
+python -m dimos.simulation.behavior.demo_r1pro --headless --report /tmp/r1pro.json
 ```
 
 | Demo | Required evidence |
@@ -233,7 +233,7 @@ python -m dimos.simulation.behavior.demo_integration navigation --goal X Y Z --r
 | sensors | All three cameras with depth/calibration, joints, odometry and TF; base moves ≥2 cm; both arms/grippers reach named targets; native actions move and expire |
 | handoff | Conflicting stream cannot steal primitive control; explicit takeover cancels; held robot does not replay old velocity; fresh command moves |
 | task | All three cans placed inside the bin; evaluator success; reset and repeat with a distinct episode ID |
-| navigation | Existing DimOS planner/follower reaches selected goal within 0.3 m in 120 s |
+| R1 Pro | Navigation ≥0.5 m to within 0.2 m, stationary finish, FK agreement, both arms, and cancellation hold |
 | agentic | `dimos agent-send` can inspect and attempt the task through MCP; LLM completion is exploratory, not an acceptance gate |
 
 Agent example: `dimos agent-send "Inspect the task and ground truth, take primitive control, then use physical actions to put all soda cans into the trash bin. Poll each operation and report the evaluator result."`
@@ -243,82 +243,35 @@ and failure reporting without importing Isaac Sim. They do not establish camera
 calibration, physical grasp success, or task-fixture compatibility. Those claims
 require the live demos and their reports.
 
-### GPU driver validation
+### Tested environment and results
 
-The installed environment and assets reached Isaac Sim startup on an RTX 3090
-with NVIDIA driver 610.57.04. Both the sensor demo and a standalone OmniGibson
-empty-scene launch crashed before scene initialization. A native debugger located
-the segmentation fault in `librtx.scenedb.plugin.so` on a renderer worker thread.
+The integration was validated on an RTX 3090 with NVIDIA driver **590.48.01**,
+Isaac Sim 5.1, and OmniGibson 3.9.2. The combined demo used training instance 0
+of `picking_up_trash` in `house_double_floor_lower`.
 
-Further local checks reproduced the renderer crash with bare Isaac Sim 5.1,
-without DimOS or OmniGibson imports; with a clean environment and only `libxml2`
-preloaded; and with fresh user settings and NVIDIA-only Vulkan device selection.
-An existing native Isaac Sim 4.5 installation also crashed. Basic host CUDA
-initialization succeeded. Historical logs confirm that Isaac Sim 5.0 ran on the
-same RTX 3090 with driver 580.76.05, before subsequent driver upgrades.
-
-After changing the host driver to **590.48.01**, the same bare Isaac Sim 5.1
-startup test completed, ran ten updates, and exited successfully. This removes
-the renderer startup blocker. On the preceding R1 integration, the `sensors` demo also passed: three RGB/depth
-cameras with calibration, joints, odometry and TF; about 9 cm of Twist-controlled
-base motion; both arms and grippers reaching named targets; about 10 cm of native
-action motion followed by a stable expired-command hold; and clean shutdown.
-That R1 `handoff` demo passed in the task scene: explicit takeover cancelled the
-primitive, discarded the inactive command, held position, and accepted a fresh
-direct command. Task-camera initialization requires a simulation update after
-reset before reading calibration; render-only updates returned empty metadata.
-The reference task has **not** passed: symbolic GRASP succeeded, but PLACE_INSIDE
-exhausted its placement samples for `trash_can_116`; physical GRASP exhausted five
-attempts because the upstream planner found no accessible path to the first can.
-Neither run reached evaluator success or the second episode. The physical run
-exited cleanly with the simulator's ten-second shutdown allowance.
-That earlier R1 navigation stack built and ran, but the planner reported no full path to the
-nearby `(0.6, 0, 0)` goal and the 120-second acceptance check timed out. Navigation
-also exited cleanly. The R1 Pro results below supersede that navigation check.
-The earlier crash matches
-[Isaac Sim issue #651](https://github.com/isaac-sim/IsaacSim/issues/651), where
-NVIDIA identifies a driver compatibility gap and recommends the R580 branch for
-Isaac Sim 5.1. The local 590.48.01 result is a tested alternative on this machine,
-not a claim of upstream certification. Installing CUDA or native libraries with
-Pixi does not replace the machine's NVIDIA kernel driver.
-
-### R1 Pro navigation and manipulation validation
-
-On 2026-09-16, the combined headless demo passed on the RTX 3090 / 590.48.01
-with Isaac Sim 5.1 and OmniGibson 3.9.2. It loaded training instance 0 of
-`picking_up_trash` in `house_double_floor_lower` and completed without external
-map injection or manual control:
-
-| Check | Measured result |
+| Check | Observed result |
 |---|---|
-| Navigation | 0.661 m displacement; 0.140 m goal error; stationary for 2 s |
-| End-effector FK | About 5.3 mm position error, before and after navigation |
-| Planned left arm | 0.00195 rad maximum joint error |
-| Planned right arm | 0.00027 rad maximum joint error |
-| Cancellation | Confirmed `ABORTED`; 0.000013 rad maximum hold drift |
+| Three RGB-D cameras, calibration, joints, odometry, TF | Sensor demo passed in `Rs_int` |
+| Direct and native base commands | 0.090 m and 0.152 m motion; stable height and expired-command hold |
+| Combined navigation | 0.655 m displacement; 0.145 m goal error; stationary for 2 s |
+| End-effector FK | About 5.3 mm position error before and after navigation |
+| Planned left / right arms | 0.00025 / 0.00198 rad maximum joint error |
+| Cancellation | Confirmed `ABORTED`; 0.000008 rad maximum hold drift |
+| Native viewer navigation and teleop | Click goal, manual takeover, stationary hold, and fresh goal passed |
 
-A fresh native-viewer repeat also passed: 0.655 m displacement, 0.146 m goal
-error, both arms within 0.001 rad, and 0.0000024 rad cancellation hold drift.
-The Isaac viewport showed the robot clear of scene geometry, and the Viser
-server returned HTTP 200. Both runs used the same combined blueprint.
+These checks establish the navigation/manipulation connection, not full task
+completion or benchmark performance. The reference physical and symbolic task
+runs did not reach evaluator success: physical grasp planning failed to find an
+accessible path, and symbolic placement exhausted its samples.
 
-The R1 Pro scene-only sensor demo also passed in `Rs_int`: all three RGB-D
-cameras and calibration, joints, odometry and TF, both arms and grippers,
-0.090 m of base-command motion, and 0.157 m of native-action motion. Base height
-remained stable, and the expired native command held position. Spawn validation
-requires floor support after settling; the demo checks vertical motion as well
-as horizontal displacement.
+### Renderer startup troubleshooting
 
-This verifies the navigation/manipulation connection and its control lifecycle.
-It does not establish full BEHAVIOR task completion or benchmark performance.
-
-On 2026-09-17, native Rerun click events reached the planner and keyboard takeover
-cleared the active path. A repeat through the viewer's WebSocket interface moved
-1.20 m with 0.138 m goal error, stopped on manual takeover, held within 0.000002 m,
-and accepted a fresh goal. With the final visualization rate limits, the same
-control sequence passed again: 0.651 m displacement, 0.149 m goal error, stationary
-hold, and 0.139 m error at the fresh goal. The headless navigation/manipulation
-regression also passed with the visualization modules included.
+Driver 610.57.04 caused renderer crashes in `librtx.scenedb.plugin.so`, including
+with bare Isaac Sim outside DimOS. Driver 590.48.01 passed locally; this is a tested
+configuration, not an upstream certification. See
+[Isaac Sim issue #651](https://github.com/isaac-sim/IsaacSim/issues/651) for upstream
+driver compatibility guidance. Pixi supplies userspace libraries and CUDA tools;
+it does not replace the host NVIDIA kernel driver.
 
 ## Runtime development
 

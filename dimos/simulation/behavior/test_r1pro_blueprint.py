@@ -17,6 +17,7 @@
 import math
 import pickle
 
+import pytest
 import rerun as rr
 
 from dimos.core.transport_factory import zenoh_key_expr
@@ -26,7 +27,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS
-from dimos.simulation.behavior.blueprints import _navigation_goal, behavior_r1pro
+from dimos.simulation.behavior.blueprints import _navigation_goal, behavior_nav, behavior_r1pro
 from dimos.simulation.behavior.connection import BehaviorConnection
 from dimos.simulation.behavior.types import TaskSelection
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -49,15 +50,16 @@ def test_coordinator_transport_topics_match_adapter_factory():
         assert spec.args[0].key_expr == zenoh_key_expr(f"/r1pro/{port}", message.msg_name)
 
 
-def test_viewer_controls_use_movement_manager_as_only_base_command_source():
-    modules = {atom.module: atom for atom in behavior_r1pro.blueprints}
+@pytest.mark.parametrize("blueprint", [behavior_nav, behavior_r1pro])
+def test_viewer_controls_use_movement_manager_as_only_base_command_source(blueprint):
+    modules = {atom.module: atom for atom in blueprint.blueprints}
     assert RerunBridgeModule in modules
     viewer = modules[RerunWebSocketServer]
     manager = modules[MovementManager]
     sim = modules[BehaviorConnection]
 
     def topic(atom, port):
-        return behavior_r1pro.remapping_map.get((atom.name, port), port)
+        return blueprint.remapping_map.get((atom.name, port), port)
 
     for port in ("clicked_point", "tele_cmd_vel"):
         assert topic(viewer, port) == topic(manager, port)
@@ -70,8 +72,9 @@ def test_viewer_controls_use_movement_manager_as_only_base_command_source():
     assert sources == [MovementManager]
 
 
-def test_navigation_visuals_survive_worker_serialization():
-    atom = next(a for a in behavior_r1pro.blueprints if a.module is RerunBridgeModule)
+@pytest.mark.parametrize("blueprint", [behavior_nav, behavior_r1pro])
+def test_navigation_visuals_survive_worker_serialization(blueprint):
+    atom = next(a for a in blueprint.blueprints if a.module is RerunBridgeModule)
     config = pickle.loads(pickle.dumps(atom.kwargs))
     assert isinstance(config["static"]["world/odometry"](rr)[0], rr.Arrows3D)
     assert config["blueprint"]() is not None

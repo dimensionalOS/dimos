@@ -456,10 +456,6 @@ class OmniEngine:
             else [],
         }
 
-    def observation(self) -> dict[str, Any]:
-        obs, info = self.env.get_obs()
-        return {"obs": cpu(obs), "info": cpu(info)}
-
     def messages(self, ts: float) -> dict[str, Any]:
         pos, quat = self.robot.base_footprint_link.get_position_orientation()
         p, q = plain(pos), plain(quat)
