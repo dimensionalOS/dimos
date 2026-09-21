@@ -104,6 +104,13 @@ repos:
         language: python
         additional_dependencies: ['tomli']
 
+      - id: branch-name
+        name: Branch name
+        always_run: true
+        pass_filenames: false
+        entry: bin/hooks/branch_name_check
+        language: script
+
       - id: emdash-check
         name: No em dashes in docs
         entry: bin/hooks/emdash_check
