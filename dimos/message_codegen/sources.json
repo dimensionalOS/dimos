@@ -135,7 +135,8 @@
       "schemas/visualization_msgs/msg/MeshFile.msg": "6c5393590d3765a6da1bc815f0dba8962b55efad40ab4fb1346673cf89c294ed",
       "schemas/visualization_msgs/msg/UVCoordinate.msg": "544f2580cfb42e1e28dcb27856572abd52ad348d8f6197526f51f6d15acec1f0",
       "schemas/visualization_msgs/package.xml": "19ed838dc5a99735e2dd9b45e308d1227f6ba7c411ce3675cca480620993750d"
-    }
+    },
+    "patches": {}
   },
   {
     "repository": "ros2/rcl_interfaces",
@@ -145,7 +146,8 @@
       "schemas/builtin_interfaces/msg/Time.msg": "dc5a01ddde3aecffee21eb24974fe77cc969f873218a2b1811aa0ac8a456b8bd",
       "schemas/builtin_interfaces/package.xml": "0f709bdbc4742e9040e788adcc2df710542d9a095080cbcda2dcb4174461de51",
       "schemas/licenses/ros2_rcl_interfaces/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
-    }
+    },
+    "patches": {}
   },
   {
     "repository": "ros2/geometry2",
@@ -155,7 +157,8 @@
       "schemas/tf2_msgs/msg/TF2Error.msg": "f1f3603b877ed51a5a28b264257e9bc37312e32a767838f52310d07027d819ab",
       "schemas/tf2_msgs/msg/TFMessage.msg": "f3fca610a59b31ee4c7b740522ecdd0fd8c76002170088111409e4df513f1dfc",
       "schemas/tf2_msgs/package.xml": "ac78cb0ff503bc07b20358bbe7bcb7475db7b6f0d87d2a84e321b92755bfb14e"
-    }
+    },
+    "patches": {}
   },
   {
     "repository": "ros-perception/vision_msgs",
@@ -179,15 +182,22 @@
       "schemas/vision_msgs/msg/VisionClass.msg": "ae82ce087350e3ee1c0f0f8bb8f6e6c2e08f94dea6d984dec579fd72663bdb72",
       "schemas/vision_msgs/msg/VisionInfo.msg": "5a47776dfea36e48958dbde43ab55e9cb94fb337b0f68b4fcc444807f333b23d",
       "schemas/vision_msgs/package.xml": "b69e5eb38183cbcf2cf0b729a21ea6217eb76a48bd0613c00539a598a5f35872"
-    }
+    },
+    "patches": {}
   },
   {
     "repository": "ros2/rosidl",
     "revision": "85fa592b698b0f665e3120f48fac0d35e2f7d8a4",
     "files": {
-      "_vendor/rosidl_parser.py": "ce1f7d84ab0ad8300e77917061b74dbe701d33f3fd12de5ba6b75374c8f9970e",
+      "_vendor/rosidl_parser.py": "4ca3bc4ecbfca7f48a07f1d9630bfb5d006f55857e75a3d3207380386431572e",
       "schemas/licenses/ros2_rosidl/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
       "schemas/rosidl_adapter/package.xml": "653c797d2b4e2f5e6ad7b18812632bf6bf55aa924dfbca0405439389a5273989"
+    },
+    "patches": {
+      "_vendor/rosidl_parser.py": {
+        "upstream_sha256": "ce1f7d84ab0ad8300e77917061b74dbe701d33f3fd12de5ba6b75374c8f9970e",
+        "description": "Equivalent linear-time constant-name validation regex"
+      }
     }
   },
   {
@@ -196,6 +206,7 @@
     "files": {
       "schemas/foxglove_msgs/msg/CompressedVideo.msg": "83d044efaefc90291cdd56cd36b2ef6b190748c1df860d1eca7df77328174324",
       "schemas/licenses/foxglove_schemas/LICENSE": "da11235665c17d4c1634072dae92b8ba1b38d6fdde2ccf19a6bbede33253f58d"
-    }
+    },
+    "patches": {}
   }
 ]

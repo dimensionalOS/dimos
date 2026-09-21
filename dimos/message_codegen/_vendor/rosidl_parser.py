@@ -72,7 +72,8 @@ VALID_FIELD_NAME_PATTERN = VALID_PACKAGE_NAME_PATTERN
 VALID_MESSAGE_NAME_PATTERN = re.compile('^[A-Z][A-Za-z0-9]*$')
 # relaxed patterns used for compatibility with ROS 1 messages
 # VALID_MESSAGE_NAME_PATTERN = re.compile('^[A-Za-z][A-Za-z0-9]*$')
-VALID_CONSTANT_NAME_PATTERN = re.compile('^[A-Z]([A-Z0-9_]?[A-Z0-9]+)*$')
+# DimOS patch: equivalent linear-time pattern; avoid nested ambiguous repetition.
+VALID_CONSTANT_NAME_PATTERN = re.compile('^[A-Z](?:[A-Z0-9]|_[A-Z0-9])*$')
 
 
 class InvalidSpecification(Exception):

@@ -83,6 +83,21 @@ def test_explicit_empty_sequence_default(tmp_path):
     assert message.fields[0].default == ()
 
 
+@pytest.mark.parametrize("name", ["A", "A0", "A_B2_C"])
+def test_constant_name_validation_accepts_ros_names(tmp_path, name):
+    path = write_message(tmp_path, "example_msgs/msg/Value", f"uint8 {name}=1\n")
+
+    assert parse_message(path).constants[0].name == name
+
+
+@pytest.mark.parametrize("name", ["A_", "A__B", "a", "A" + "0" * 10000 + "!"])
+def test_constant_name_validation_rejects_invalid_names(tmp_path, name):
+    path = write_message(tmp_path, "example_msgs/msg/Value", f"uint8 {name}=1\n")
+
+    with pytest.raises(ValueError):
+        parse_message(path)
+
+
 def test_equivalent_definitions_ignore_comments(tmp_path):
     write_message(tmp_path / "one", "example_msgs/msg/Value", "int32 value # comment\n")
     write_message(tmp_path / "two", "example_msgs/msg/Value", "# another comment\nint32 value\n")

@@ -58,6 +58,7 @@ def main() -> None:
         response = requests.get(url, timeout=90)
         response.raise_for_status()
         files: dict[str, str] = {}
+        patches: dict[str, dict[str, str]] = {}
         with tarfile.open(fileobj=io.BytesIO(response.content), mode="r:gz") as archive:
             for member in archive:
                 path = Path(*Path(member.name).parts[1:])
@@ -83,11 +84,30 @@ def main() -> None:
                 source = archive.extractfile(member)
                 assert source is not None
                 content = source.read()
+                if target == ROOT / "_vendor" / "rosidl_parser.py":
+                    original = (
+                        b"VALID_CONSTANT_NAME_PATTERN = re.compile('^[A-Z]([A-Z0-9_]?[A-Z0-9]+)*$')"
+                    )
+                    replacement = (
+                        b"# DimOS patch: equivalent linear-time pattern; avoid nested ambiguous repetition.\n"
+                        b"VALID_CONSTANT_NAME_PATTERN = re.compile('^[A-Z](?:[A-Z0-9]|_[A-Z0-9])*$')"
+                    )
+                    assert content.count(original) == 1, "Recheck parser patch against upstream"
+                    patches[str(target.relative_to(ROOT))] = {
+                        "upstream_sha256": hashlib.sha256(content).hexdigest(),
+                        "description": "Equivalent linear-time constant-name validation regex",
+                    }
+                    content = content.replace(original, replacement)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(content)
                 files[str(target.relative_to(ROOT))] = hashlib.sha256(content).hexdigest()
         provenance.append(
-            {"repository": repository, "revision": revision, "files": dict(sorted(files.items()))}
+            {
+                "repository": repository,
+                "revision": revision,
+                "files": dict(sorted(files.items())),
+                "patches": patches,
+            }
         )
         print(f"{repository}@{revision}: {len(files)} files")
     (ROOT / "sources.json").write_text(json.dumps(provenance, indent=2) + "\n")

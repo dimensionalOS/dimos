@@ -35,7 +35,9 @@ files. `schemas/*/package.xml` retains upstream authorship and declared licenses
 `schemas/licenses/` contains upstream license texts, including the Apache 2.0
 license shared by the standard interface packages and parser. The parser's
 original copyright header is preserved. `rosidl_parser.pyi` is DimOS's type stub;
-the upstream implementation remains unmodified.
+the upstream implementation has one documented patch replacing an ambiguous
+constant-name regex with its linear-time equivalent. `sources.json` records both
+the original and patched hashes; the maintenance script reapplies the patch.
 
 To refresh the pinned inputs intentionally, edit the revisions in
 `scripts/vendor_message_definitions.py`, then run that maintenance command with

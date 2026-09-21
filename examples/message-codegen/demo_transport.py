@@ -29,7 +29,7 @@ def main() -> None:
     parser.add_argument("--executable", type=Path, required=True)
     args = parser.parse_args()
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as port_socket:
-        port_socket.bind(("", 0))
+        port_socket.bind(("127.0.0.1", 0))
         port = port_socket.getsockname()[1]
     transport = lcm.LCM(f"udpm://239.255.76.67:{port}?ttl=0&recv_buf_size=4194304")
     received: list[bytes] = []
