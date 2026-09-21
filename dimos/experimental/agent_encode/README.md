@@ -10,7 +10,7 @@ entry point and an `AGENT_ENCODE_LEGEND`.
 ## Point clouds
 
 Overview: [`pointcloud/README.md`](/dimos/experimental/agent_encode/pointcloud/README.md). Agent instructions:
-`legend()` in [`pointcloud/runtime/dispatch.py`](/dimos/experimental/agent_encode/pointcloud/runtime/dispatch.py#L273), served as `PointCloud2.AGENT_ENCODE_LEGEND`.
+`legend()` in [`pointcloud/runtime/dispatch.py`](/dimos/experimental/agent_encode/pointcloud/runtime/dispatch.py), served as `PointCloud2.AGENT_ENCODE_LEGEND`.
 
 ## Odometry
 

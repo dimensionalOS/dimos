@@ -65,7 +65,7 @@ Design rules:
 
 ## What the agent reads
 
-`legend()` in [`runtime/dispatch.py`](/dimos/experimental/agent_encode/pointcloud/runtime/dispatch.py#L273) holds the agent's instructions: API table, rules,
+`legend()` in [`runtime/dispatch.py`](/dimos/experimental/agent_encode/pointcloud/runtime/dispatch.py) holds the agent's instructions: API table, rules,
 conventions and worked examples. It is served as `PointCloud2.AGENT_ENCODE_LEGEND`.
 Edit it when the API changes.
 
