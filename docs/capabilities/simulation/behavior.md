@@ -1,11 +1,11 @@
 # BEHAVIOR / OmniGibson
 
-BEHAVIOR runs an R1 Pro mobile manipulator in an isolated Python process. DimOS owns
+BEHAVIOR runs an R1 Pro mobile manipulator in an isolated Python process. dimOS owns
 blueprint composition, visualization, navigation, and agent tools. OmniGibson owns
 physics, cameras, task evaluation, and physical/symbolic action primitives.
 
 ```text
-DimOS host (NumPy 2, Rerun)
+dimOS host (NumPy 2, Rerun)
   BehaviorConnection ── streams / RPC ── BehaviorRuntime (Python 3.11, NumPy 1)
                                           └─ main thread: OmniGibson + Isaac Sim
 ```
@@ -38,7 +38,7 @@ and completion in an ignored local marker. Subsequent launches use that location
 A failed setup leaves the marker incomplete; rerun setup to finish it.
 
 The runtime owns all its dependencies. Setup syncs its lockfile, then installs the
-shared DimOS checkout selected by `get_project_root()` with `--no-deps`.
+shared dimOS checkout selected by `get_project_root()` with `--no-deps`.
 It never installs host Rerun dependencies into the simulator environment. The
 lockfile uses NumPy 1.26.4 for bidirectional NumPy 2 array serialization and
 explicitly reproduces upstream's Pillow, websockets, packaging, and cffi
@@ -91,7 +91,7 @@ env -u WAYLAND_DISPLAY dimos --rerun-open native run behavior-r1pro
 python -m dimos.simulation.behavior.demo_r1pro --headless --report /tmp/r1pro.json
 ```
 
-The blueprint opens the native Isaac Sim viewport, the DimOS Rerun viewer, and
+The blueprint opens the native Isaac Sim viewport, the dimOS Rerun viewer, and
 the existing manipulation Viser server (its URL appears in the startup log).
 Unsetting `WAYLAND_DISPLAY` avoids a native viewer hang on the tested Linux desktop.
 Rerun shows the fused voxel map, traversable surface, robot heading, current goal
@@ -102,7 +102,7 @@ or control rates.
 Long recordings can still trigger Rerun memory-pressure warnings and display lag;
 the viewer's memory cap bounds retained history rather than guaranteeing latency.
 
-For navigation and base teleop in the **native DimOS viewer**:
+For navigation and base teleop in the **native dimOS viewer**:
 
 1. Wait for the map and camera images to appear, with the timeline following live data.
 2. Click a mapped floor point in the **Navigation** view to send a goal. Pick the
@@ -133,13 +133,13 @@ pose. Scene-only teleop samples a traversable floor position, lets the robot
 settle, and requires floor support without furniture contact before accepting it;
 `spawn_position` and `spawn_yaw` can select an explicit pose.
 
-The manipulation layer reuses DimOS's R1 Pro planning groups, joint names,
+The manipulation layer reuses dimOS's R1 Pro planning groups, joint names,
 ControlCoordinator, and trajectory task. Its geometry and joint limits come from
 the installed simulator assets, whose dimensions differ from the hardware URDF.
 The bundled `r1pro_original.urdf` has the same joints as the processed URDF and
 complete mesh references. Measured base pose and gripper positions update the
 planning model; they are not executable manipulation groups.
-Planning uses DimOS's selected-joint RRT-Connect with RoboPlan collision queries.
+Planning uses dimOS's selected-joint RRT-Connect with RoboPlan collision queries.
 This keeps unbounded measured base translation outside the arm search space;
 the native RoboPlan RRT interprets omitted prismatic limits as zero bounds.
 
@@ -267,7 +267,7 @@ accessible path, and symbolic placement exhausted its samples.
 ### Renderer startup troubleshooting
 
 Driver 610.57.04 caused renderer crashes in `librtx.scenedb.plugin.so`, including
-with bare Isaac Sim outside DimOS. Driver 590.48.01 passed locally; this is a tested
+with bare Isaac Sim outside dimOS. Driver 590.48.01 passed locally; this is a tested
 configuration, not an upstream certification. See
 [Isaac Sim issue #651](https://github.com/isaac-sim/IsaacSim/issues/651) for upstream
 driver compatibility guidance. Pixi supplies userspace libraries and CUDA tools;

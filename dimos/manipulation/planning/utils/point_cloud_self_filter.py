@@ -19,14 +19,13 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from functools import partial
+from importlib import import_module
 from io import BytesIO
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import open3d as o3d
 from pydantic import Field
 import trimesh
-import yourdfpy  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -37,6 +36,9 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    import open3d as o3d
 
 logger = setup_logger()
 
@@ -180,6 +182,9 @@ class PointCloudSelfFilter(Module):
         self.filtered_pointcloud.publish(filtered)
 
     def _load_collision_geometry(self) -> list[_CollisionGeometry]:
+        o3d = import_module("open3d")
+        yourdfpy = import_module("yourdfpy")
+
         # The URDF is read as-is: yourdfpy tolerates what Drake needs stripped,
         # and trimesh loads DAE and STL without conversion.
         description = self.config.model.load()
@@ -324,6 +329,7 @@ def _points_inside(
     inside = np.zeros(len(points), dtype=bool)
     if np.any(candidates):
         assert scene is not None
+        o3d = import_module("open3d")
         signed_distance = scene.compute_signed_distance(
             o3d.core.Tensor(np.asarray(points[candidates], dtype=np.float32)),
             nthreads=1,

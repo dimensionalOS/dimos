@@ -14,11 +14,12 @@
 
 """R1 Pro teleop, navigation, manipulation, and task execution."""
 
+from __future__ import annotations
+
+from importlib import import_module
 import math
 from types import ModuleType
-
-import rerun as rr
-import rerun.blueprint as rrb
+from typing import TYPE_CHECKING, cast
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
@@ -50,25 +51,41 @@ from dimos.simulation.behavior.types import TaskSelection
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module
 
+if TYPE_CHECKING:
+    import rerun as rr
+    import rerun.blueprint as rrb
+
 
 def _camera_views() -> rrb.Vertical:
-    return rrb.Vertical(
-        rrb.Spatial2DView(origin="world/color_image"),
-        rrb.Spatial2DView(origin="world/left_wrist_image"),
-        rrb.Spatial2DView(origin="world/right_wrist_image"),
+    blueprint_module = import_module("rerun.blueprint")
+
+    return cast(
+        "rrb.Vertical",
+        blueprint_module.Vertical(
+            blueprint_module.Spatial2DView(origin="world/color_image"),
+            blueprint_module.Spatial2DView(origin="world/left_wrist_image"),
+            blueprint_module.Spatial2DView(origin="world/right_wrist_image"),
+        ),
     )
 
 
 def _view() -> rrb.Blueprint:
-    return rrb.Blueprint(
-        rrb.Horizontal(
-            rrb.Spatial3DView(origin="world"),
-            _camera_views(),
-        )
+    blueprint_module = import_module("rerun.blueprint")
+
+    return cast(
+        "rrb.Blueprint",
+        blueprint_module.Blueprint(
+            blueprint_module.Horizontal(
+                blueprint_module.Spatial3DView(origin="world"),
+                _camera_views(),
+            )
+        ),
     )
 
 
 def _navigation_goal(msg: PointStamped) -> list[tuple[str, rr.Points3D]]:
+    rr = import_module("rerun")
+
     # Viewer clicks carry the picked entity path, but their coordinates are world-space.
     position = [msg.x, msg.y, msg.z]
     return [
@@ -88,22 +105,27 @@ def _robot_heading(rerun: ModuleType) -> list[rr.Arrows3D]:
 
 
 def _navigation_view() -> rrb.Blueprint:
-    return rrb.Blueprint(
-        rrb.Horizontal(
-            rrb.Spatial3DView(
-                name="Navigation",
-                origin="world",
-                contents=[
-                    "world/global_map/**",
-                    "world/surface_map/**",
-                    "world/path/**",
-                    "world/navigation_goal/**",
-                    "world/odometry/**",
-                ],
-            ),
-            _camera_views(),
-            column_shares=[3, 1],
-        )
+    blueprint_module = import_module("rerun.blueprint")
+
+    return cast(
+        "rrb.Blueprint",
+        blueprint_module.Blueprint(
+            blueprint_module.Horizontal(
+                blueprint_module.Spatial3DView(
+                    name="Navigation",
+                    origin="world",
+                    contents=[
+                        "world/global_map/**",
+                        "world/surface_map/**",
+                        "world/path/**",
+                        "world/navigation_goal/**",
+                        "world/odometry/**",
+                    ],
+                ),
+                _camera_views(),
+                column_shares=[3, 1],
+            )
+        ),
     )
 
 
