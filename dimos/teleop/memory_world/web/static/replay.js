@@ -259,7 +259,7 @@ export class ReplayController {
             // A drag across the bar asks for many segments in a row; only the one under
             // the thumb matters, so the others' downloads are dropped.
             this._abortPendingExcept(number);
-            this._setLoading(true, number);
+            this._setLoading(true);
             const exitedAt = this._exitedAt || 0;
             this._fetchSegment(number).then(() => {
                 // Only the latest target matters once the data is here -- and only while
@@ -452,18 +452,27 @@ export class ReplayController {
 
     // ---- loading state -----------------------------------------------------------
 
-    /** The scrubber shows "loading" while the segment under the thumb downloads. */
-    _setLoading(on, number = null) {
+    /** Seconds into the recording as m:ss. */
+    _clock(t) {
+        const s = Math.max(0, Math.round(t - this.t0));
+        return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    }
+
+    /** The scrubber shows "loading map at m:ss" while the map under the thumb downloads. */
+    _setLoading(on) {
         if (!this.ui) return;
         if (on) {
             if (this._loadingSince === null) this._loadingSince = performance.now();
             if (performance.now() - this._loadingSince < LOADING_LABEL_AFTER_MS) {
                 // Re-read the target when the timer fires: a drag may have moved on.
-                setTimeout(() => { if (this._loadingSince !== null) this._setLoading(true, this.segmentOf(this.targetScan)); }, LOADING_LABEL_AFTER_MS);
+                setTimeout(() => { if (this._loadingSince !== null) this._setLoading(true); }, LOADING_LABEL_AFTER_MS);
                 return;
             }
             this.ui.bar.classList.add('loading');
-            this.ui.timeLabel.textContent = `loading ${number !== null ? `${number + 1}/${this.index.keyframes.length}` : ''}…`;
+            // The map at the thumb's moment, not a segment number: the viewer is asking
+            // for a time, and the download is that time's map.
+            const at = this.index.scans[Math.max(0, this.targetScan)];
+            this.ui.timeLabel.textContent = at === undefined ? 'loading map…' : `loading map at ${this._clock(at)}…`;
         } else {
             this._loadingSince = null;
             this.ui.bar.classList.remove('loading');
@@ -566,7 +575,7 @@ export class ReplayController {
         // A download in flight would otherwise turn replay back ON when it lands, because
         // its continuation calls seekScan. And the loading timer armed by _setLoading is
         // not cancelled by going inactive: it fires on the exited bar and writes
-        // "loading 3/12…" into the label, where it stays until some later seek.
+        // "loading map at 0:15…" into the label, where it stays until some later seek.
         this._exitedAt = (this._exitedAt || 0) + 1;
         this._setLoading(false);
     }
@@ -617,11 +626,7 @@ export class ReplayController {
         if (!ui || !this.index) return;
         const scan = Math.max(0, this.targetScan);
         if (Number(ui.scrub.value) !== scan) ui.scrub.value = scan;
-        const clock = (t) => {
-            const s = Math.max(0, Math.round(t - this.t0));
-            return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-        };
-        if (!ui.bar.classList.contains('loading')) ui.timeLabel.textContent = `${clock(this.index.scans[scan])} / ${clock(this.t1)}`;
+        if (!ui.bar.classList.contains('loading')) ui.timeLabel.textContent = `${this._clock(this.index.scans[scan])} / ${this._clock(this.t1)}`;
         ui.playBtn.textContent = this.playing ? '❚❚' : '▶';
     }
 
