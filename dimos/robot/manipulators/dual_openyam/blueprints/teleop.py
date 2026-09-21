@@ -78,6 +78,28 @@ _dual_openyam_webxr_task = teleop_ik_task(
 )
 
 
+def dual_openyam_webxr_tasks() -> list[TaskConfig]:
+    """Compose existing WebXR tasks with additional coordinator tasks."""
+    return [
+        _dual_openyam_webxr_task,
+        TaskConfig(
+            name="left_arm_gripper",
+            type="gripper",
+            joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[0]],
+            priority=20,
+            stream_bind={"gripper_command": "left_gripper_command"},
+        ),
+        TaskConfig(
+            name="right_arm_gripper",
+            type="gripper",
+            joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[1]],
+            priority=20,
+            stream_bind={"gripper_command": "right_gripper_command"},
+        ),
+        dual_openyam_trajectory_task(priority=10),
+    ]
+
+
 def build_dual_openyam_webxr(
     *, visualization: ManipulationVisualizationConfig = ViserVisualizationConfig()
 ) -> Blueprint:
@@ -86,24 +108,7 @@ def build_dual_openyam_webxr(
         ArmTeleopModule.blueprint(),
         DualOpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            tasks=[
-                _dual_openyam_webxr_task,
-                TaskConfig(
-                    name="left_arm_gripper",
-                    type="gripper",
-                    joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[0]],
-                    priority=20,
-                    stream_bind={"gripper_command": "left_gripper_command"},
-                ),
-                TaskConfig(
-                    name="right_arm_gripper",
-                    type="gripper",
-                    joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[1]],
-                    priority=20,
-                    stream_bind={"gripper_command": "right_gripper_command"},
-                ),
-                dual_openyam_trajectory_task(priority=10),
-            ],
+            tasks=dual_openyam_webxr_tasks(),
         ),
         ManipulationModule.blueprint(
             model=_dual_openyam_webxr_model,
