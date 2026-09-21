@@ -28,7 +28,7 @@ def test_walk_forward(
         "unitree-go2-agentic",
         simulator="dimsim",
     )
-    wait_for_system_ready(timeout=1200.0)
+    wait_for_system_ready(timeout=300.0)
 
     origin_x, origin_y = 1, 2
     dim_sim.set_agent_position(origin_x, origin_y)

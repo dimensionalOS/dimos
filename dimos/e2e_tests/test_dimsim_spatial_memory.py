@@ -24,7 +24,7 @@ def test_go_to_the_bed(
         "unitree-go2-agentic",
         simulator="dimsim",
     )
-    wait_for_system_ready(timeout=1200.0)
+    wait_for_system_ready(timeout=300.0)
 
     explore_house()
 

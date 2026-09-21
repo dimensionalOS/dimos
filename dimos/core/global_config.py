@@ -136,6 +136,11 @@ class GlobalConfig(BaseSettings):
     dimsim_scene: str = "apartment"
     dimsim_port: int = 8090
     dimsim_headless: bool = True
+    # Seconds a headless DimSim gets to report server physics live (frontend
+    # built, Chromium up, scene snapshot delivered) before startup fails. A
+    # cold checkout also builds the frontend inside this window; CI avoids
+    # that with bin/dimsim-prepare.
+    dimsim_ready_timeout: float = 300.0
     local_relay: bool = False
     relay_url: str | None = None
     """HTTP URL of a relay started elsewhere (e.g. http://localhost:7780); the

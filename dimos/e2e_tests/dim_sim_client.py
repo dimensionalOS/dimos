@@ -33,7 +33,10 @@ class DimSimClient:
         self._goal_request.start()
 
     def stop(self) -> None:
-        self.client.stop()
+        # Only close a scene connection that was actually opened; going through
+        # `self.client` here would dial the bridge just to hang up.
+        if self._client is not None:
+            self._client.stop()
         self._goal_request.stop()
 
     @property
