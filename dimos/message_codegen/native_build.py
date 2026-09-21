@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from typing import Any
@@ -62,3 +63,7 @@ class MessageBuildExt(build_ext):
             check=True,
         )
         subprocess.run(["cmake", "--build", str(build), "--parallel", "2"], check=True)
+        stubs = destination / f"{extension.name}-stubs"
+        if stubs.exists():
+            shutil.rmtree(stubs)
+        shutil.copytree(extension.cmake_source_dir.parent / "typing" / extension.name, stubs)

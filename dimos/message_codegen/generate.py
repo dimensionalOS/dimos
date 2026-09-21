@@ -23,7 +23,7 @@ from pathlib import Path
 import re
 import shutil
 
-from dimos.message_codegen import cpp, python, rust
+from dimos.message_codegen import cpp, python, rust, stubs
 from dimos.message_codegen.definitions import Definitions
 from dimos.message_codegen.distribution import write_distribution
 
@@ -53,6 +53,13 @@ def generate(
                     f"{message.source}: wstring is not yet supported by the Rust CDR backend"
                 )
     output.mkdir(parents=True, exist_ok=True)
+    typing_root = output / "typing" / module
+    if typing_root.exists():
+        shutil.rmtree(typing_root)
+    for name, content in stubs.generate(messages, module).items():
+        path = typing_root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
     native = output / "cpp"
     native.mkdir(exist_ok=True)
     (native / "messages.hpp").write_text(cpp.generate(messages))

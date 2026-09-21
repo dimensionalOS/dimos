@@ -17,6 +17,19 @@ before output is written. Repeat `--package-root` and `--type` for multiple inpu
 omitting `--type` generates all available definitions. The output belongs in an
 ignored build directory. Generation never downloads dependencies.
 
+The `typing/<module>/` output describes the native Python fields, keyword-only
+constructors, sequence operations, and NumPy views. For a local generated build,
+point `MYPYPATH` at `typing/`. Wheels install the same interfaces as a PEP 561
+`<module>-stubs` package, so callers get type checking without source generation
+or runtime introspection. Fixed-array interfaces omit resizing methods.
+
+DimOS-owned definitions live under `schemas/dimos_msgs/msg/`. They use the same
+generation and packaging path as the pinned standard definitions. In particular,
+weighted line segments have explicit endpoints and weights; they do not reuse
+Path poses or quaternion fields. Stamped custom messages use standard Header,
+and trajectory durations use builtin_interfaces/Duration. Numeric convenience
+operations belong in helpers such as `dimos.msgs.time`, outside generated types.
+
 Python and C++ use Fast CDR 2.4.0; Python bindings use pybind11 3.0.1. Rust uses
 `re_cdr` 0.1.0 and `serde-big-array` 0.5.1. The current generator explicitly rejects
 `wstring` because the selected Rust backend has no matching wide-string Serde

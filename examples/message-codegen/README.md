@@ -223,3 +223,20 @@ Stop the Rerun process with Ctrl-C and close its browser tab. The script starts
 no persistent services. Remove `build/message-codegen/viewers/` to clean up
 recordings and `examples/message-codegen/viewer-checker/node_modules/` to clean
 up the Node dependencies.
+
+## Runtime cutover foundations
+
+The generated set also includes the in-tree `dimos_msgs` definitions. To inspect
+weighted segments and trajectory duration fields without a running robot:
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_message_helpers.py
+```
+
+The source timestamp survives CDR at full nanosecond precision. Segment endpoints
+and weights are explicit fields, and controller-facing floating seconds are an
+explicit helper conversion from ROS Duration. The generated classes carry data
+and codecs; helpers do not add methods or compatibility properties to them.
+This is preparation for stage 4, whose runtime consumer cutover is still in
+progress.

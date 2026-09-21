@@ -35,7 +35,7 @@ jobs:
         run: |
           test ! -d /opt/ros
           uv venv .venv --python 3.12
-          uv pip install --python .venv/bin/python pybind11==3.0.1 rosbags==0.11.0 numpy pytest pytest-asyncio pytest-env lcm-dimos-fork setuptools wheel mcap==1.4.0 rerun-sdk==0.32.0 pillow
+          uv pip install --python .venv/bin/python pybind11==3.0.1 rosbags==0.11.0 numpy pytest pytest-asyncio pytest-env lcm-dimos-fork setuptools wheel mcap==1.4.0 rerun-sdk==0.32.0 pillow mypy==1.19.0
           .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rclpy') is None"
       - name: Build the pinned standalone CDR library
         run: bash scripts/setup_message_codegen.sh
