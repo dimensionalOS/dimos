@@ -94,7 +94,7 @@ def _pixels(pick: Pick, width: int, height: int) -> tuple[np.ndarray, bool]:
 def _cell_points(source: Any, ctx: EncodeContext) -> np.ndarray | None:
     if isinstance(source, field_nodes.HeightField):
         return ctx.select(source.source).points
-    if isinstance(source, field_nodes.Channel):
+    if isinstance(source, (field_nodes.Channel, field_nodes.Percentile)):
         return _cell_points(source.source, ctx)
     # Derived values may depend on remote cells/returns. Do not claim local contributors.
     return None

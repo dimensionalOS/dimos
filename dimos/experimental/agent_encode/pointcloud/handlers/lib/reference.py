@@ -103,6 +103,7 @@ def _restore(spec: Any) -> Any:
         field_nodes.Select,
         field_nodes.Band,
         field_nodes.HeightField,
+        field_nodes.Percentile,
         field_nodes.Channel,
         field_nodes.DistanceField,
         field_nodes.Binary,

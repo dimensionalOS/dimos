@@ -20,10 +20,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 from scipy import ndimage
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
 from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
+
+MAX_GRID_CELLS = 262144
 
 
 @dataclass(frozen=True)
@@ -51,8 +56,8 @@ class Grid:
             raise ValueError("cell_m must be positive and finite")
         if len(self.shape) != 2 or any(type(n) is not int or n <= 0 for n in self.shape):
             raise ValueError("shape must contain two positive integers")
-        if self.shape[0] * self.shape[1] > 262144:
-            raise ValueError("grid exceeds 262144 cells; request a smaller region")
+        if self.shape[0] * self.shape[1] > MAX_GRID_CELLS:
+            raise ValueError(f"grid exceeds {MAX_GRID_CELLS} cells; request a smaller region")
 
     @property
     def axes(self) -> tuple[int, int]:
@@ -189,6 +194,10 @@ class HeightField(FieldNode):
     def count(self) -> Channel:
         return Channel(self, "count")
 
+    def percentile(self, q: float, min_count: int = 4) -> Percentile:
+        """Remaining-axis percentile per cell; insufficient support stays missing."""
+        return Percentile(self, q, min_count)
+
     def run(self, ctx: EncodeContext) -> FieldData:
         self.grid.describe(ctx)
         points = ctx.select(self.source).points.astype(np.float64)
@@ -208,6 +217,59 @@ class HeightField(FieldNode):
             {
                 "coordinate": "xyz"[self.grid.normal],
                 "units": {"count": "returns", "min": "m", "max": "m"},
+            },
+        )
+
+
+@dataclass(frozen=True)
+class Percentile(FieldNode):
+    """Per-cell return percentile using linear interpolation between sorted values.
+
+    q is in [0, 100]. Cells with fewer than min_count selected returns are missing.
+    Like HeightField extrema, this measures a cloud axis, not an inferred floor.
+    """
+
+    source: HeightField
+    q: float
+    min_count: int = 4
+
+    def __post_init__(self) -> None:
+        if not np.isfinite(self.q) or not 0 <= self.q <= 100:
+            raise ValueError("q must be finite and between 0 and 100")
+        if type(self.min_count) is not int or self.min_count <= 0:
+            raise ValueError("min_count must be a positive integer")
+
+    def run(self, ctx: EncodeContext) -> FieldData:
+        height = ctx.evaluate(self.source)
+        grid = height.grid
+        count = height.values["count"].ravel()
+        # Percentiles share sorting; extrema and counts never require it.
+        key = ("height_percentile_order", id(self.source), id(ctx.points))
+        if key not in ctx.cache:
+            points = ctx.select(self.source.source).points.astype(np.float64)
+            ij, inside = grid.indices(points[:, grid.axes])
+            index = ij[inside, 1] * grid.shape[0] + ij[inside, 0]
+            values = points[inside, grid.normal]
+            ctx.cache[key] = values[np.lexsort((values, index))]
+        ordered = ctx.cache[key]
+        supported = count >= self.min_count
+        starts = np.cumsum(count) - count
+        position = (count[supported] - 1) * (self.q / 100)
+        lower_index = np.floor(position).astype(np.int64)
+        upper_index = np.ceil(position).astype(np.int64)
+        lower = ordered[starts[supported] + lower_index]
+        upper = ordered[starts[supported] + upper_index]
+        values = np.full(count.shape, np.nan)
+        values[supported] = lower + (upper - lower) * (position - lower_index)
+        return FieldData(
+            grid,
+            {"percentile": values.reshape(grid.shape[1], grid.shape[0])},
+            {
+                "coordinate": height.metadata["coordinate"],
+                "units": {"percentile": "m"},
+                "q": self.q,
+                "min_count": self.min_count,
+                "method": "linear",
             },
         )
 
@@ -355,44 +417,132 @@ class Threshold(FieldNode):
         )
 
 
+def _statistics(values: NDArray[np.float64]) -> dict[str, Any]:
+    """Equal-weight statistics of a region's finite cells; all null when it has none."""
+    finite = values[np.isfinite(values)]
+    names = ("min", "p10", "p50", "p90", "max")
+    if not len(finite):
+        return {"valid_cells": 0, **dict.fromkeys(names)}
+    numbers = np.quantile(finite, (0, 0.1, 0.5, 0.9, 1), method="linear")
+    return {"valid_cells": len(finite), **dict(zip(names, numbers.tolist(), strict=True))}
+
+
 @dataclass(frozen=True)
 class Components(FieldNode):
+    """Group true cells without adding evidence in gaps between them.
+
+    ``gap_cells`` extends the linking radius to ``gap_cells + 1`` cells:
+    Chebyshev distance for connectivity 8, Manhattan distance for connectivity 4.
+    It links true cells across any cell between them, measured or not.
+    Labels and region geometry include only the original true cells.
+
+    ``values`` adds each region's statistics of another field on the same grid:
+    finite cells weighted equally, quantiles by linear interpolation.
+    ``max_regions`` keeps the largest regions in the table (cells, then id) and
+    counts the rest; labels always cover every region.
+    """
+
     source: FieldNode
     connectivity: int = 8
+    gap_cells: int = 0
+    values: FieldNode | None = None
+    max_regions: int | None = None
 
     def run(self, ctx: EncodeContext) -> FieldData:
         if self.connectivity not in (4, 8):
             raise ValueError("connectivity must be 4 or 8")
+        if type(self.gap_cells) is not int or not 0 <= self.gap_cells <= 4:
+            raise ValueError("gap_cells must be an integer from 0 to 4")
+        if self.max_regions is not None and (
+            type(self.max_regions) is not int or self.max_regions < 1
+        ):
+            raise ValueError("max_regions must be a positive integer or None")
         data = ctx.evaluate(self.source)
         if data.kind != "mask":
             raise ValueError("Components requires a mask")
         values = data.scalar()
+        measured = None
+        if self.values is not None:
+            field = ctx.evaluate(self.values)
+            if field.grid != data.grid:
+                raise ValueError(
+                    "field grids differ; put one on the other's grid with Resample(field, grid)"
+                )
+            measured = field.scalar().astype(np.float64)
         labels, count = ndimage.label(
             values == 1, ndimage.generate_binary_structure(2, 1 if self.connectivity == 4 else 2)
         )
+        if self.gap_cells and count > 1:
+            labels, count = self._link_gaps(labels, count)
+        sizes = np.bincount(labels.ravel(), minlength=count + 1)[1:]
+        order = np.arange(count)
+        if self.max_regions is not None:
+            order = np.lexsort((order, -sizes))[: self.max_regions]
         regions = []
         centres = data.grid.centres()
-        for label, slices in enumerate(ndimage.find_objects(labels), 1):
-            if slices is None:
-                continue
+        found = ndimage.find_objects(labels)
+        for index in order:
+            label, slices = int(index) + 1, found[index]
             mask = labels[slices] == label
             xy = centres[slices][mask]
-            regions.append(
-                {
-                    "id": label,
-                    "cells": int(mask.sum()),
-                    "centroid": xy.mean(0).tolist(),
-                    "bounds": [
-                        (xy.min(0) - data.grid.cell_m / 2).tolist(),
-                        (xy.max(0) + data.grid.cell_m / 2).tolist(),
-                    ],
-                }
-            )
+            region = {
+                "id": label,
+                "cells": int(mask.sum()),
+                "centroid": xy.mean(0).tolist(),
+                "bounds": [
+                    (xy.min(0) - data.grid.cell_m / 2).tolist(),
+                    (xy.max(0) + data.grid.cell_m / 2).tolist(),
+                ],
+            }
+            if measured is not None:
+                region.update(_statistics(measured[slices][mask]))
+            regions.append(region)
+        omitted = {}
+        if self.max_regions is not None:
+            omitted = {
+                "omitted_regions": int(count - len(order)),
+                "omitted_cells": int(sizes.sum() - sizes[order].sum()),
+            }
         result = labels.astype(float)
         result[~np.isfinite(values)] = np.nan
         return FieldData(
             data.grid,
             {"label": result},
-            {"connectivity": self.connectivity, "region_count": int(count), "regions": regions},
+            {
+                "connectivity": self.connectivity,
+                **({"gap_cells": self.gap_cells} if self.gap_cells else {}),
+                "region_count": int(count),
+                **omitted,
+                "regions": regions,
+            },
             "regions",
         )
+
+    def _link_gaps(self, labels: NDArray[np.int32], count: int) -> tuple[NDArray[np.int32], int]:
+        radius = self.gap_cells + 1
+        rows, columns = labels.shape
+        edges = []
+        for dy in range(min(radius + 1, rows)):
+            for dx in range(-min(radius, columns - 1), min(radius, columns - 1) + 1):
+                if (dy == 0 and dx <= 0) or (self.connectivity == 4 and abs(dx) + dy > radius):
+                    continue
+                first = labels[: rows - dy, max(-dx, 0) : min(columns, columns - dx)]
+                second = labels[dy:, max(dx, 0) : min(columns, columns + dx)]
+                linked = (first != 0) & (second != 0) & (first != second)
+                if linked.any():
+                    edges.append(np.column_stack((first[linked] - 1, second[linked] - 1)))
+        if not edges:
+            return labels, count
+        pairs = np.concatenate(edges)
+        graph = coo_matrix(
+            (np.ones(len(pairs), dtype=np.uint8), (pairs[:, 0], pairs[:, 1])),
+            shape=(count, count),
+        )
+        group_count, groups = connected_components(graph, directed=False)
+        # Canonical labels follow each group's first original cell in raster order.
+        first_component = np.full(group_count, count)
+        np.minimum.at(first_component, groups, np.arange(count))
+        canonical = np.empty(group_count, dtype=np.int32)
+        canonical[np.argsort(first_component)] = np.arange(1, group_count + 1)
+        lookup = np.concatenate((np.zeros(1, dtype=np.int32), canonical[groups]))
+        return lookup[labels], int(group_count)

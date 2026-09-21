@@ -229,7 +229,8 @@ def test_encode_orders_results_and_legend_lists_everything(tmp_path: Path) -> No
         out_dir=tmp_path,
     )
     assert [r["handler"] for r in out["results"]] == ["Overlap", "Closest"]
-    assert encode(cloud)["results"] == [] and encode(cloud)["bounds_m"] is not None
+    metadata = encode(cloud, {})
+    assert metadata["results"] == {} and metadata["bounds_m"] is not None
     with pytest.raises(TypeError, match="not one of"):
         encode(cloud, "DepthView")  # type: ignore[arg-type]
     text = legend()

@@ -42,6 +42,7 @@ from dimos.experimental.agent_encode.pointcloud.handlers.depth_view import Depth
 from dimos.experimental.agent_encode.pointcloud.handlers.field_outputs import Map, Sample, Window
 from dimos.experimental.agent_encode.pointcloud.handlers.occupancy_map import OccupancyMap
 from dimos.experimental.agent_encode.pointcloud.handlers.overlap import Overlap
+from dimos.experimental.agent_encode.pointcloud.handlers.overview import Overview
 from dimos.experimental.agent_encode.pointcloud.handlers.pick import Pick, SelectionRef
 from dimos.experimental.agent_encode.pointcloud.handlers.sweep import Sweep
 from dimos.experimental.agent_encode.pointcloud.runtime import dispatch as agent_encoding
@@ -368,6 +369,7 @@ class PointCloud2(Timestamped):
     DepthView = DepthView
     OccupancyMap = OccupancyMap
     Overlap = Overlap
+    Overview = Overview
     Sweep = Sweep
     Closest = Closest
     Box = Box
@@ -398,10 +400,12 @@ class PointCloud2(Timestamped):
         return their results in order, or pass one mapping of names to queries
         for shared lazy fields and named results. ``budget`` bounds the JSON
         response for the named form without changing measurement resolution.
+        With no handlers, return a compact ``Overview`` of coverage, height-band
+        regions and lower-surface relief; ``agent_encode({})`` returns metadata only.
         Handlers are renders (``DepthView``,
         ``OccupancyMap``) or geometric queries (``Overlap``, ``Sweep``,
         ``Closest``) over shapes (``Box``, ``Cylinder``, ``Sphere``), reachable
-        as ``PointCloud2.<Name>``; every pose, size and band is the caller's.
+        as ``PointCloud2.<Name>``; explicit requests choose their poses, sizes and bands.
         ``AGENT_ENCODE_LEGEND`` documents each and shows an example call. Images, when
         this build produces them, go under ``out_dir`` (default
         ``$AGENT_ENCODE_DIR``, the current run directory, or the DimOS state directory).

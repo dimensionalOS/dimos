@@ -33,6 +33,7 @@ from dimos.experimental.agent_encode.pointcloud.handlers.closest import Closest
 from dimos.experimental.agent_encode.pointcloud.handlers.depth_view import DepthView
 from dimos.experimental.agent_encode.pointcloud.handlers.occupancy_map import OccupancyMap
 from dimos.experimental.agent_encode.pointcloud.handlers.overlap import Overlap
+from dimos.experimental.agent_encode.pointcloud.handlers.overview import Overview
 from dimos.experimental.agent_encode.pointcloud.handlers.sweep import Sweep
 from dimos.experimental.agent_encode.pointcloud.render import raster as render
 from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
@@ -283,15 +284,37 @@ out = cloud.agent_encode({"name": query, ...})
 r = out["results"]["name"]
 ```
 
-Every class is reachable as `P.<Name>`. All sizes, poses and bands are yours to
-choose; there are no robot defaults.
+Public query classes are reachable as `P.<Name>`. Explicit queries choose their
+sizes, poses and bands. No-argument calls select the compact Overview recipe below.
 
 Envelope: `schema`, `frame_id`, `ts`, `num_points`, `bounds_m` (return bounds
 `[[x,y,z]min, [x,y,z]max]`, rounded to 0.001 m), `centroid_m` (mean `[x,y,z]` of
 all returns; the centre of the cloud, unlike the middle of `bounds_m`, which a few
 outliers move), `form`, `results`.
-Positional form `cloud.agent_encode(h1, h2)` returns `results` as a list in order;
-no handlers (`cloud.agent_encode({})`) returns the envelope only; `{}` is not a handler.
+Positional form `cloud.agent_encode(h1, h2)` returns `results` as a list in order.
+`cloud.agent_encode({})` returns the envelope only.
+`cloud.agent_encode()` returns `results["overview"]`: compact numeric coverage,
+height-band region bounds, and signed lower-surface relief. No images or grids
+are emitted. Print this compact result directly; use explicit queries for details.
+`P.Overview()` can also be requested by name to customize its defaults.
+
+Overview sizes its XY cells from the cloud's own return spacing (`spacing_m`, the
+median gap between neighbouring returns), never from the cloud's extent: 2 spacings
+for coverage and structure, 4 for the lower surface so each cell pools enough returns.
+Cells are aligned to multiples of the cell size, so one scene measures the same in
+any frame that holds it. The reported grids (`origin`, `shape`, `cell_m`) are
+authoritative; `limited_by` appears only if the grid memory limit forced larger cells.
+Coverage area is occupied XY cells times cell area, so it depends on `cell_m`.
+Lower-surface values are per-cell 10th-percentile Z (linear interpolation, at least
+4 returns). Their median is `reference_z_m`, not a verified floor. The structure
+band is reference + [0.15, 1.0] m; relief lists patches more than 0.15 m above/below
+reference, with `offset_quantiles_m` relative to it. Patches one cell apart are
+linked whatever lies between them, and only their own cells count towards area.
+At most 8 regions per list, largest first; omitted counts/areas are explicit, and a
+patch of a few cells is weak evidence. Bounds enclose occupied cells, not solid
+obstacles. Use Closest/DistanceField on selected returns for distances. Sparse
+support is reported, and no reported patch does not prove level ground. These XY/Z
+summaries are most useful in a Z-up cloud frame.
 
 Conventions:
 
@@ -314,11 +337,12 @@ Conventions:
 | query | `Closest` | `Closest(shape, source=None)`; Cylinder: only returns in its `z_range`, horizontal distance | `distance_m`, `point_m` |
 | query | `Sweep` | `Sweep(shape, direction_deg=\|direction=(dx,dy,dz), max_distance, step_m=0.05)`; shape must be at least `step_m` thick (body-sized) | `hit`, `distance_m`, `point_m`, `start_inside` |
 | grid | `Grid` | `Grid(origin=(u,v), shape=(cols,rows), cell_m, plane="xy")` | |
-| field | `HeightField` | `HeightField(grid, source=None)` | `.min` `.max` `.count` |
+| field | `HeightField` | `HeightField(grid, source=None)` | `.min` `.max` `.count`, `.percentile(q, min_count=4)` |
 | field | `DistanceField` | `DistanceField(grid, source=None)` | metres to nearest target |
 | field | `Threshold` | `Threshold(field, ">", value)` | mask; combine with `&` `\|` |
 | field | `Resample` | `Resample(field, grid)` | the field on another grid (containing-cell lookup) |
-| field | `Components` | `Components(mask, connectivity=8)` | `regions` table; `.label` per cell |
+| field | `Components` | `Components(mask, connectivity=8, gap_cells=0, values=None, max_regions=None)`; `gap_cells` links true cells that far apart without filling between them; `values=field` adds each region's statistics of that field; `max_regions=n` keeps the n largest in the table | `regions` table; `.label` per cell |
+| output | `Overview` | `Overview(max_regions=8, percentile=10, min_count=4, band=(0.15,1.0), relief_m=0.15, cell_spacings=2, relief_cell_spacings=4)` | compact default recipe; band is relative to measured reference Z |
 | output | `Sample` | `Sample(field, at=[(u,v)], fields=None, decimals=None, radius=0)` — a few points, ~170 B each; `radius` summarises the disc: min/max, and `distinct` values for masks/labels | `samples[i]["values"][ch]`: a number when `radius=0`, `{"min", "max"(, "distinct")}` when `radius>0` |
 | output | `Window` | `Window(field, cells=(col,row,w,h), fields=None, decimals=None)` — ~7 B/cell, ~4 for counts/masks/labels | `values[channel][row][col]` |
 | render | `Map` | `Map(field_or_channel, value_range=None, overlays=())` | image + `view_ref` |
@@ -386,6 +410,8 @@ output reads it. Build the whole question as fields, then read the least you nee
 - **Height:** `h = HeightField(grid, source)` gives `h.count` (returns per cell),
   `h.min`, `h.max` (stored z along the remaining axis, not a fitted floor).
   Empty cells: count 0, null min/max.
+- **Percentiles:** `h.percentile(10, min_count=4)` is a scalar field of per-cell
+  return heights, using linear interpolation. Cells below support are null.
 - **Masks:** `Threshold(channel, op, value)` → 1 / 0 / null (null = no data).
   `a & b`, `a | b`: false AND null = 0, true OR null = 1; otherwise null.
   `a - b` subtracts fields.
@@ -400,6 +426,10 @@ output reads it. Build the whole question as fields, then read the least you nee
   each target cell takes the source cell containing its centre; outside → null.
 - **Components:** `Components(mask, connectivity=8)` labels connected 1-cells.
   Returned directly: `regions` (id, cells, centroid, bounds), no per-cell data.
+  `values=field` (same grid) adds each region's `valid_cells`, `min`, `p10`, `p50`,
+  `p90`, `max` of that field over its finite cells, e.g. a patch's height offsets.
+  The table lists every region; on a fragmented mask pass `max_regions=n` for the
+  n largest plus `omitted_regions` / `omitted_cells`. Labels always cover them all.
   `Sample(Components(mask), at=[a, b])` → equal non-zero labels = connected.
 - **Reading:** `Sample` for a few points. `Window(field, (col, row, w, h), fields=("max",))`
   for a block of cells; values are `[row][col]`, null = no data. Window only the
@@ -754,6 +784,8 @@ def encode(
     points = points[np.isfinite(points).all(axis=1)]
     stem = _stem(cloud, points, handlers)
     ctx = EncodeContext(cloud=cloud, points=points, out_dir=render.output_dir(out_dir), stem=stem)
+    if not handlers:
+        return _named(ctx, {"overview": Overview()}, budget or EncodeBudget())
     if len(handlers) == 1 and isinstance(handlers[0], Mapping):
         return _named(ctx, handlers[0], budget or EncodeBudget())
     if budget is not None:
