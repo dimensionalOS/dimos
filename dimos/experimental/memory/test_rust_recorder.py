@@ -229,7 +229,7 @@ def test_unconnected_recorder_does_not_spawn_or_touch_the_store(
     assert not path.exists()
 
 
-def test_mcap_store_uses_python_codec_defaults_and_does_not_precreate_the_artifact(
+def test_mcap_store_uses_cdr_defaults_and_does_not_precreate_the_artifact(
     tmp_path: Path, make_recorder: Any
 ) -> None:
     path = tmp_path / "recording.mcap"
@@ -243,7 +243,7 @@ def test_mcap_store_uses_python_codec_defaults_and_does_not_precreate_the_artifa
     specs = recorder._stream_specs()
     recorder._prepare_store(specs)
 
-    assert [spec.codec for spec in specs] == ["jpeg", "lcm"]
+    assert [spec.codec for spec in specs] == ["cdr", "cdr"]
     assert not path.exists()
     recorder.config.streams = specs
     assert recorder.config.to_config_dict()["store"] == {
@@ -252,7 +252,7 @@ def test_mcap_store_uses_python_codec_defaults_and_does_not_precreate_the_artifa
     }
 
 
-def test_mcap_accepts_storage_codecs_and_rejects_append(tmp_path: Path, make_recorder: Any) -> None:
+def test_mcap_accepts_explicit_jpeg_and_rejects_append(tmp_path: Path, make_recorder: Any) -> None:
     path = tmp_path / "recording.mcap"
     recorder = make_recorder(
         SampleRustRecorder,
@@ -262,7 +262,7 @@ def test_mcap_accepts_storage_codecs_and_rejects_append(tmp_path: Path, make_rec
     )
     connect(recorder, color_image="/camera")
 
-    assert [spec.codec for spec in recorder._stream_specs()] == ["jpeg"]
+    assert [spec.codec for spec in recorder._stream_specs()] == ["ros-jpeg"]
 
     append_recorder = make_recorder(
         SampleRustRecorder,
@@ -304,3 +304,22 @@ def test_duplicate_remapped_stream_names_fail_before_launch(
 
     with pytest.raises(ValueError, match="Duplicate recorded stream names"):
         recorder._stream_specs()
+
+
+@pytest.mark.parametrize("codec", ["lcm", "lz4+lcm", "protobuf"])
+def test_mcap_invalid_codec_preserves_existing_file(
+    tmp_path: Path, make_recorder: Any, codec: str
+) -> None:
+    path = tmp_path / "recording.mcap"
+    path.write_bytes(b"existing recording")
+    recorder = make_recorder(
+        SampleRustRecorder,
+        store=RustMcapStoreConfig(path=str(path)),
+        record_tf=False,
+        on_existing=OnExisting.OVERWRITE,
+        stream_codecs={"color_image": codec},
+    )
+    connect(recorder, color_image="/camera")
+    with pytest.raises(ValueError, match="Unsupported MCAP codec"):
+        recorder.start()
+    assert path.read_bytes() == b"existing recording"
