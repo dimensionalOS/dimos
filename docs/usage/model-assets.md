@@ -1,15 +1,16 @@
 # Model asset downloads
 
-Use `dimos.utils.assets` for individual HTTPS and Hugging Face model files:
+Use `dimos.utils.assets` for individual HTTPS and Hugging Face model files.
+This loader accepts a real asset URL and holds the cache guard while reading:
 
 ```python
-from dimos.utils.assets import download_http_asset, download_hf_asset
+from dimos.utils.assets import download_http_asset
 from dimos.utils.cache import cache_usage_guard
 
-# Hold the guard until your model has finished reading the returned files.
-with cache_usage_guard():
-    checkpoint = download_http_asset("https://example.com/model.pt")
-    # Load checkpoint here.
+def load_checkpoint(url: str, sha256: str | None = None) -> bytes:
+    with cache_usage_guard():
+        checkpoint = download_http_asset(url, sha256=sha256)
+        return checkpoint.read_bytes()
 ```
 
 `download_http_asset(url, sha256=None)` returns a local `Path`. URLs must use

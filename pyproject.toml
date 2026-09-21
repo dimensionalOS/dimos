@@ -67,6 +67,7 @@ exclude = [
     "web/dimos_interface/public/**",
     "web/dimos_interface/node_modules/**",
     "hardware/sensors/lidar/fastlio2/cpp/**",
+
 ]
 
 [project]
@@ -747,6 +748,7 @@ max_size_kb = 75
 ignore = [
     "uv.lock",
     "*/uv.lock",
+    "native/python/behavior/pixi.lock",
     "*/package-lock.json",
     "Cargo.lock",
     "*/Cargo.lock",
@@ -758,3 +760,7 @@ ignore = [
     # Generated golden vectors (web/shared/fixtures/gen.ts); grows per panel kind.
     "web/shared/fixtures/manifests.json",
 ]
+
+[[tool.mypy.overrides]]
+module = ["omnigibson.*", "yaml"]
+ignore_missing_imports = true

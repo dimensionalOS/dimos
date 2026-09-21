@@ -56,7 +56,7 @@ After changing cockpit or SDK dependencies, run `deno install` in `web/` and com
 
 Without vite, `--local-relay` serves the built `cockpit/dist` at `/` and `sdk/dist/sdk.js` at `/sdk.js`. In a checkout, `ensure_web_dist` in [`relay_process.py`](/dimos/web/relay_bridge/relay_process.py#L76) builds both first when either is missing or older than the sources. It stamps the shared, SDK and cockpit sources, the workspace config and the lockfile, builds under a cross-process lock into temporary directories, and swaps both products in together.
 
-Release wheels ship both bundles prebuilt inside `dimos/web/relay_bridge/_relay_dist` (built by the release workflow, see [`setup.py`](/setup.py#L116)), so a pip-installed dimos never builds or downloads npm packages.
+Release wheels ship both bundles prebuilt inside `dimos/web/relay_bridge/_relay_dist` (built by the release workflow, see [root wheel build script](/setup.py#L116)), so a pip-installed dimos never builds or downloads npm packages.
 
 Two overrides: `--no-web-build` skips the staleness check and the build, and `DIMOS_WEB_DIR` points the bridge at another web tree.
 

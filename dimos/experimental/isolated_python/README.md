@@ -65,23 +65,27 @@ a contract stub or changes its signature or classification.
 
 ## Runtime behavior
 
-During `build()`, dimOS uses `uv run` to sync the declared project and prepare a
-cached overlay containing dimOS from the shared checkout and its dependencies.
-The first build can take minutes to download; later builds reuse the cache.
-If `pixi.toml` exists, Pixi supplies `uv`. If `uv.lock` exists, dimOS uses
-`--frozen` and treats the lockfile as the source of truth.
+During `build()`, dimOS syncs the project's lockfile with `uv sync --frozen`,
+then installs dimOS from the shared checkout using `uv pip install --no-deps --editable`.
+Runtime projects explicitly declare their dependencies, including the DimOS
+transport and message imports they use. Launch uses `uv run --no-sync`.
+If `pixi.toml` exists, Pixi supplies the toolchain and `uv`.
 
 The runtime project and child dimOS come from `get_project_root()`, the shared
 LFS checkout helper. Development uses the current checkout, including local edits.
 Installed hosts reuse the cached repository or clone `main` on first use. The child
-installs dimOS from that checkout with `--with-editable`; its revision may differ
+installs dimOS from that checkout editable; its revision may differ
 from the host's. Existing clones are not updated automatically. The checkout must
 contain the declared project. Restart running modules after editing sources.
 
 The project's `.python-version` and `requires-python` select its Python
 version. Environments are stored under the dimOS cache directory in
 `isolated-python/<project-path-hash>/.venv`, so projects do not share environments.
-Preparation also warms the DimOS overlay before starting the readiness deadline.
+Preparation completes before starting the readiness deadline.
+
+The bootstrap calls `run_runtime(stopping)` on its main thread after establishing
+RPC service. The default waits for shutdown; thread-affine engines override it
+and queue operations from RPC handlers. `stop()` must signal the loop to exit.
 
 Runtime projects are not packaged in dimOS wheels or source distributions.
 The examples use `[tool.uv] package = false` and import runtime code from the
@@ -117,8 +121,10 @@ checks inside their own environment. For GraspGenX, from the repository root:
 ```bash
 cd native/python/graspgenx
 export UV_PROJECT_ENVIRONMENT="${XDG_CACHE_HOME:-$HOME/.cache}/dimos/graspgenx-tests"
-uv run --frozen --group tests --with-editable ../../.. python -m pytest
-uv run --frozen --group lint --with-editable ../../.. python -m mypy
+uv sync --frozen --group tests --group lint
+uv pip install --no-deps --editable ../../..
+uv run --no-sync python -m pytest
+uv run --no-sync python -m mypy
 ```
 
 The tests mock the model backend and need no GPU or checkpoints. Runtime mypy
