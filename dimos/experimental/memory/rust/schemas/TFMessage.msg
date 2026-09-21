@@ -1,7 +1,7 @@
 geometry_msgs/TransformStamped[] transforms
 
 ================================================================================
-MSG: geometry_msgs/msg/TransformStamped
+MSG: geometry_msgs/TransformStamped
 
 # This expresses a transform from coordinate frame header.frame_id
 # to the coordinate frame child_frame_id at the time of header.stamp
@@ -24,7 +24,7 @@ string child_frame_id
 Transform transform
 
 ================================================================================
-MSG: std_msgs/msg/Header
+MSG: std_msgs/Header
 
 # Standard metadata for higher-level stamped data types.
 # This is generally used to communicate timestamped data
@@ -37,7 +37,7 @@ builtin_interfaces/Time stamp
 string frame_id
 
 ================================================================================
-MSG: builtin_interfaces/msg/Time
+MSG: builtin_interfaces/Time
 
 # This message communicates ROS Time defined here:
 # https://design.ros2.org/articles/clock_and_time.html
@@ -52,7 +52,7 @@ int32 sec
 uint32 nanosec
 
 ================================================================================
-MSG: geometry_msgs/msg/Transform
+MSG: geometry_msgs/Transform
 
 # This represents the transform between two coordinate frames in free space.
 
@@ -60,7 +60,7 @@ Vector3 translation
 Quaternion rotation
 
 ================================================================================
-MSG: geometry_msgs/msg/Vector3
+MSG: geometry_msgs/Vector3
 
 # This represents a vector in free space.
 
@@ -73,7 +73,7 @@ float64 y
 float64 z
 
 ================================================================================
-MSG: geometry_msgs/msg/Quaternion
+MSG: geometry_msgs/Quaternion
 
 # This represents an orientation in free space in quaternion form.
 

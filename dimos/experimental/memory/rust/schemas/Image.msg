@@ -26,7 +26,7 @@ uint32 step           # Full row length in bytes
 uint8[] data          # actual matrix data, size is (step * rows)
 
 ================================================================================
-MSG: std_msgs/msg/Header
+MSG: std_msgs/Header
 
 # Standard metadata for higher-level stamped data types.
 # This is generally used to communicate timestamped data
@@ -39,7 +39,7 @@ builtin_interfaces/Time stamp
 string frame_id
 
 ================================================================================
-MSG: builtin_interfaces/msg/Time
+MSG: builtin_interfaces/Time
 
 # This message communicates ROS Time defined here:
 # https://design.ros2.org/articles/clock_and_time.html

@@ -119,25 +119,27 @@ def _normalized(definition: str) -> list[str]:
 
 
 def _verify_schema(name: str, data: bytes, upstream: dict[str, str]) -> None:
+    name = name.replace("/msg/", "/")
     sections = re.split(r"={80}\nMSG: ([^\n]+)\n", data.decode())
     definitions = {name: sections[0], **dict(zip(sections[1::2], sections[2::2], strict=True))}
     dependencies = {name}
     for type_name, definition in definitions.items():
-        package, _, short_name = type_name.split("/")
+        package, short_name = type_name.split("/")
+        canonical_name = f"{package}/msg/{short_name}"
         repository = "rcl_interfaces" if package == "builtin_interfaces" else "common_interfaces"
-        if type_name not in upstream:
+        if canonical_name not in upstream:
             url = f"https://raw.githubusercontent.com/ros2/{repository}/{SNAPSHOTS[repository]}/{package}/msg/{short_name}.msg"
             response = requests.get(url, timeout=30)
             response.raise_for_status()
-            upstream[type_name] = response.text
-        assert _normalized(definition) == _normalized(upstream[type_name]), type_name
+            upstream[canonical_name] = response.text
+        assert _normalized(definition) == _normalized(upstream[canonical_name]), type_name
         for line in _normalized(definition):
             field_type = line.split()[0].split("[")[0]
             if "/" in field_type:
                 dep_package, dep_type = field_type.split("/")
-                dependencies.add(f"{dep_package}/msg/{dep_type}")
+                dependencies.add(f"{dep_package}/{dep_type}")
             elif field_type[0].isupper():
-                dependencies.add(f"{package}/msg/{field_type}")
+                dependencies.add(f"{package}/{field_type}")
     assert set(definitions) == dependencies
 
 
@@ -297,7 +299,10 @@ def _verify_recording(
 
 
 def test_lfs_recording_transcription(
-    tmp_path: Path, native_mcap_writer: Any, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    native_mcap_writer: Any,
+    foxglove_validator: Any,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Preserve every primary observation, schema, and source JPEG bitstream."""
     source = get_data("go2_short.db")
@@ -313,6 +318,8 @@ def test_lfs_recording_transcription(
             out = tmp_path / ("go2_short_jpeg.mcap" if jpeg else "go2_short.mcap")
             _transcribe(db, out, jpeg, native_mcap_writer)
             report["artifacts"].append(_verify_recording(db, out, jpeg, upstream))
+            foxglove_validator(out)
+            report["artifacts"][-1]["checks"].append("foxglove_cdr_sample_roundtrip")
             summarize(str(out))
             output = capsys.readouterr().out
             for name, count in ({"color_image": 855} if jpeg else COUNTS).items():

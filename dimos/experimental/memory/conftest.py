@@ -19,7 +19,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from tempfile import TemporaryDirectory
 
+from mcap.reader import make_reader
 import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -59,3 +61,57 @@ def native_mcap_writer() -> Callable[[Path, Path, list[dict[str, str]]], None]:
         assert result.returncode == 0, result.stdout + result.stderr
 
     return write
+
+
+@pytest.fixture(scope="module")
+def foxglove_validator() -> Callable[[Path], None]:
+    """Exercise the same schema parser and CDR reader as the Foxglove viewer."""
+
+    def validate(artifact: Path) -> None:
+        with TemporaryDirectory(dir=artifact.parent) as temporary, artifact.open("rb") as source:
+            directory = Path(temporary)
+            reader = make_reader(source)
+            summary = reader.get_summary()
+            assert summary is not None
+            remaining = {c.topic for c in summary.channels.values() if c.message_encoding == "cdr"}
+            expected = sorted(remaining)
+            samples = []
+            for schema, channel, message in reader.iter_messages():
+                if channel.topic not in remaining:
+                    continue
+                assert schema is not None
+                schema_path = directory / f"{channel.id}.msg"
+                payload_path = directory / f"{channel.id}.cdr"
+                schema_path.write_bytes(schema.data)
+                payload_path.write_bytes(message.data)
+                samples.append(
+                    {
+                        "topic": channel.topic,
+                        "schema": str(schema_path),
+                        "payload": str(payload_path),
+                    }
+                )
+                remaining.remove(channel.topic)
+                if not remaining:
+                    break
+            assert expected and not remaining
+            manifest = directory / "samples.json"
+            manifest.write_text(json.dumps(samples))
+            result = subprocess.run(
+                [
+                    "deno",
+                    "run",
+                    "--no-config",
+                    "--no-lock",
+                    f"--allow-read={directory}",
+                    str(Path(__file__).with_name("foxglove_decode.ts")),
+                    str(manifest),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert sorted(json.loads(result.stdout)) == expected
+
+    return validate

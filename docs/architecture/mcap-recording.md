@@ -95,12 +95,15 @@ uv run pytest dimos/experimental/memory/test_mcap_recording_lfs.py \
   -m self_hosted_large --basetemp recordings/mcap-lfs-validation
 ```
 
-The test requires the recording extras, Cargo, the Rerun CLI, several GB of free
-disk space, and network access to pinned upstream ROS definitions. It compares
+The test requires the recording extras, Cargo, Deno, the Rerun CLI, several GB of free
+disk space, and network access to pinned upstream ROS definitions and Foxglove
+npm packages on the first run. It compares
 every CDR payload using `mcap_ros2`, checks schemas and dependency closure against
 those definitions, checks chunk CRCs, indexes, sequences, and both timestamps,
 then exercises Memory2 summary/read/export and direct Rerun import with raw
-fallback disabled. MCAP files, both Rerun exports, importer logs, and a JSON
+fallback disabled. Foxglove's pinned ROS parser and CDR reader/writer also
+round-trip one native payload per CDR channel byte-for-byte, checking dependency
+names without the alias normalization performed by other readers. MCAP files, both Rerun exports, importer logs, and a JSON
 validation report remain under the ignored `recordings/mcap-lfs-validation`
 directory; pytest replaces this directory on the next run.
 

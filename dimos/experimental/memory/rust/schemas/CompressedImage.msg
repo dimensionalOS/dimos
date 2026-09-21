@@ -41,7 +41,7 @@ string format                # Specifies the format of the data
 uint8[] data                 # Compressed image buffer
 
 ================================================================================
-MSG: std_msgs/msg/Header
+MSG: std_msgs/Header
 
 # Standard metadata for higher-level stamped data types.
 # This is generally used to communicate timestamped data
@@ -54,7 +54,7 @@ builtin_interfaces/Time stamp
 string frame_id
 
 ================================================================================
-MSG: builtin_interfaces/msg/Time
+MSG: builtin_interfaces/Time
 
 # This message communicates ROS Time defined here:
 # https://design.ros2.org/articles/clock_and_time.html

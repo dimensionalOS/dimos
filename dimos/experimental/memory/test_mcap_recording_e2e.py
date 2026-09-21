@@ -261,3 +261,9 @@ def test_native_recording_rerun_export(
     with open_store(recording[0]) as store:
         assert render_store(store, out=str(out), no_gui=True) == str(out)
     assert out.stat().st_size > 0
+
+
+def test_foxglove_cdr_decode(
+    recording: tuple[Path, dict[str, Any]], foxglove_validator: Any
+) -> None:
+    foxglove_validator(recording[0])

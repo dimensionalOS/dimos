@@ -26,7 +26,7 @@ uint8[] data         # Actual point data, size is (row_step*height)
 bool is_dense        # True if there are no invalid points
 
 ================================================================================
-MSG: std_msgs/msg/Header
+MSG: std_msgs/Header
 
 # Standard metadata for higher-level stamped data types.
 # This is generally used to communicate timestamped data
@@ -39,7 +39,7 @@ builtin_interfaces/Time stamp
 string frame_id
 
 ================================================================================
-MSG: builtin_interfaces/msg/Time
+MSG: builtin_interfaces/Time
 
 # This message communicates ROS Time defined here:
 # https://design.ros2.org/articles/clock_and_time.html
@@ -54,7 +54,7 @@ int32 sec
 uint32 nanosec
 
 ================================================================================
-MSG: sensor_msgs/msg/PointField
+MSG: sensor_msgs/PointField
 
 # This message holds the description of one point entry in the
 # PointCloud2 message format.

@@ -1,7 +1,11 @@
 # Recording schemas
 
 These ROS 2 Jazzy message definitions are bundled as MCAP `ros2msg` schemas,
-including every transitive dependency separated by `MSG: package/msg/Type`.
+including every transitive dependency separated by `MSG: package/Type`.
+Dependency block names match the `package/Type` field references in upstream
+`.msg` files; the MCAP Schema record name remains `package/msg/Type`.
+Foxglove resolves these references literally, so mixing the two spellings inside
+a definition leaves its dependencies unresolved.
 They are compile-time assets; building the recorder requires no ROS installation
 or schema download, and the wire structs in `src/ros.rs` follow their field order.
 

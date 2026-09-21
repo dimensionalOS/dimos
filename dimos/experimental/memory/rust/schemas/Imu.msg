@@ -24,7 +24,7 @@ geometry_msgs/Vector3 linear_acceleration
 float64[9] linear_acceleration_covariance # Row major x, y z
 
 ================================================================================
-MSG: std_msgs/msg/Header
+MSG: std_msgs/Header
 
 # Standard metadata for higher-level stamped data types.
 # This is generally used to communicate timestamped data
@@ -37,7 +37,7 @@ builtin_interfaces/Time stamp
 string frame_id
 
 ================================================================================
-MSG: builtin_interfaces/msg/Time
+MSG: builtin_interfaces/Time
 
 # This message communicates ROS Time defined here:
 # https://design.ros2.org/articles/clock_and_time.html
@@ -52,7 +52,7 @@ int32 sec
 uint32 nanosec
 
 ================================================================================
-MSG: geometry_msgs/msg/Quaternion
+MSG: geometry_msgs/Quaternion
 
 # This represents an orientation in free space in quaternion form.
 
@@ -62,7 +62,7 @@ float64 z 0
 float64 w 1
 
 ================================================================================
-MSG: geometry_msgs/msg/Vector3
+MSG: geometry_msgs/Vector3
 
 # This represents a vector in free space.
 
