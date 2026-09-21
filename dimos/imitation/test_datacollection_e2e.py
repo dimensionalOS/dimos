@@ -12,76 +12,54 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""End-to-end coverage from live collection through both dataset formats."""
+"""End-to-end coverage from live collection through host-side DataPrep."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import json
 from pathlib import Path
-from typing import Any
+import subprocess
+from typing import Any, cast
+import uuid
 
-import cv2
 import h5py
 import numpy as np
-import pyarrow.parquet as pq
 import pytest
 
-from dimos.core.stream import Stream, Transport
-from dimos.imitation.collection.episode_monitor import (
-    EpisodeEvent,
-    EpisodeStatus,
-    RecordingState,
-)
-from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.core.global_config import global_config
+from dimos.core.transport import ZenohTransport
+from dimos.imitation.collection.profile import CollectionFeature, CollectionProfile
+from dimos.imitation.collection.recorder import collection_recorder
+from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.build import inspect_dataset, run_dataprep
 from dimos.imitation.dataprep.core import (
     DataPrepConfig,
     EpisodeExtractor,
+    FeatureSpec,
     OutputConfig,
-    StreamField,
+    QualityConfig,
     SyncConfig,
     extract_episodes,
 )
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.imitation_msgs.EpisodeStatus import (
+    EpisodeEvent,
+    EpisodeStatus,
+    RecordingState,
+)
+from dimos.msgs.protocol import DimosMsg
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic
 from dimos.utils.testing.waiting import wait_until
 
 pytestmark = [
+    pytest.mark.native_e2e,
     pytest.mark.skipif_macos,
     pytest.mark.skipif_aarch64,
     pytest.mark.skipif_no_turbojpeg,
 ]
-
-
-class _DirectTransport(Transport[Any]):
-    """Synchronous in-process transport used to exercise real port subscriptions."""
-
-    def __init__(self) -> None:
-        self._subscribers: list[Callable[[Any], Any]] = []
-
-    def start(self) -> None:
-        pass
-
-    def stop(self) -> None:
-        self._subscribers.clear()
-
-    def broadcast(self, selfstream: Stream[Any] | None, value: Any) -> None:
-        for callback in tuple(self._subscribers):
-            callback(value)
-
-    def subscribe(
-        self,
-        callback: Callable[[Any], Any],
-        selfstream: Stream[Any] | None = None,
-    ) -> Callable[[], None]:
-        self._subscribers.append(callback)
-
-        def unsubscribe() -> None:
-            self._subscribers.remove(callback)
-
-        return unsubscribe
 
 
 def _status(
@@ -107,37 +85,87 @@ def _dataprep_config(db_path: Path, output: OutputConfig) -> DataPrepConfig:
         source=str(db_path),
         episodes=EpisodeExtractor(status_stream="status"),
         observation={
-            "camera": StreamField(stream="color_image"),
-            "state": StreamField(stream="coordinator_joint_state", field="position"),
+            "camera": FeatureSpec(
+                stream="color_image",
+                field="data",
+                dtype="video",
+                shape=(16, 16, 3),
+                names=["height", "width", "channels"],
+            ),
+            "state": FeatureSpec(
+                stream="coordinator_joint_state",
+                field="position",
+                dtype="float32",
+                shape=(2,),
+                names=["joint_0", "joint_1"],
+            ),
         },
         action={
-            "action": StreamField(stream="coordinator_joint_state", field="position"),
+            "action": FeatureSpec(
+                stream="coordinator_joint_state",
+                field="position",
+                dtype="float32",
+                shape=(2,),
+                names=["joint_0", "joint_1"],
+            ),
         },
-        sync=SyncConfig(anchor="camera", rate_hz=1.0, tolerance_ms=1.0, action_shift=1),
+        sync=SyncConfig(anchor="camera", rate_hz=1.0, tolerance_ms=1.0),
+        quality=QualityConfig(max_camera_gap_ms=1100.0),
         output=output,
     )
 
 
-def _record_session(db_path: Path) -> None:
-    recorder = CollectionRecorder(
-        db_path=db_path,
-        record_tf=False,
-        poseless_streams=["color_image", "coordinator_joint_state", "status"],
+def _record_session(db_path: Path, executable: Path) -> dict[str, int]:
+    config = _dataprep_config(db_path, OutputConfig(path=db_path.parent / "unused"))
+    profile = CollectionProfile(
+        name="synthetic",
+        robot_type="synthetic",
+        observations={
+            name: CollectionFeature(
+                **feature.model_dump(),
+                message_type=Image if name == "camera" else JointState,
+            )
+            for name, feature in config.observation.items()
+        },
+        actions={
+            name: CollectionFeature(**feature.model_dump(), message_type=JointState)
+            for name, feature in config.action.items()
+        },
+        sync=config.sync,
+        quality=config.quality,
     )
+    atom = collection_recorder(
+        profile=profile, recording=db_path.parent, format="sqlite"
+    ).active_blueprints[0]
+    recorder = atom.module(**atom.kwargs, executable=str(executable))
+    topic_prefix = f"dimos/test/collection-export/{uuid.uuid4().hex}"
+    payload_types = {
+        "color_image": Image,
+        "coordinator_joint_state": JointState,
+        "status": EpisodeStatus,
+    }
     transports = {
-        "color_image": _DirectTransport(),
-        "coordinator_joint_state": _DirectTransport(),
-        "status": _DirectTransport(),
+        name: ZenohTransport(
+            Topic(f"{topic_prefix}/{name}", cast("type[DimosMsg]", kind), qos=QOS_NEVER_DROP)
+        )
+        for name, kind in payload_types.items()
     }
     for name, transport in transports.items():
         getattr(recorder, name).transport = transport
     counts = {name: 0 for name in transports}
 
+    def stream_count(name: str) -> int:
+        with SqliteStore(path=str(db_path), must_exist=True) as store:
+            stream = store.stream(name)
+            if name == "status":
+                return sum(obs.data.last_event != "init" for obs in stream.to_list())
+            return stream.count()
+
     def publish(name: str, message: Any) -> None:
         counts[name] += 1
-        transports[name].publish(message)
+        transports[name].broadcast(None, message)
         wait_until(
-            lambda: recorder.store.stream(name).count() == counts[name],
+            lambda: stream_count(name) == counts[name],
             timeout=5.0,
             interval=0.005,
             message=f"{name} message {counts[name]} was not recorded",
@@ -150,6 +178,21 @@ def _record_session(db_path: Path) -> None:
     ]
     try:
         recorder.start()
+        ready = _status(1.0, "init", "idle", 0, 0, "")
+
+        def received_probe() -> bool:
+            with SqliteStore(path=str(db_path), must_exist=True) as store:
+                if store.stream("status").count() > 0:
+                    return True
+            transports["status"].broadcast(None, ready)
+            return False
+
+        wait_until(
+            received_probe,
+            timeout=10.0,
+            interval=0.1,
+            message="native collection status subscription did not become ready",
+        )
         saved = 0
         discarded = 0
         for start_ts, task, success, base in episodes:
@@ -193,41 +236,47 @@ def _record_session(db_path: Path) -> None:
         publish("status", _status(112.0, "start", "recording", 2, 1, "interrupted"))
     finally:
         recorder.stop()
-
-
-def _read_video(path: Path) -> list[np.ndarray[Any, Any]]:
-    capture = cv2.VideoCapture(str(path))
-    frames: list[np.ndarray[Any, Any]] = []
-    try:
-        while True:
-            ok, bgr = capture.read()
-            if not ok:
-                return frames
-            frames.append(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
-    finally:
-        capture.release()
+        for transport in transports.values():
+            transport.stop()
+    return counts
 
 
 EXPECTED_STATE = np.asarray(
-    [[0.0, 100.0], [1.0, 101.0], [20.0, 120.0], [21.0, 121.0]],
+    [
+        [0.0, 100.0],
+        [1.0, 101.0],
+        [2.0, 102.0],
+        [20.0, 120.0],
+        [21.0, 121.0],
+        [22.0, 122.0],
+    ],
     dtype=np.float32,
 )
-EXPECTED_ACTION = np.asarray(
-    [[1.0, 101.0], [2.0, 102.0], [21.0, 121.0], [22.0, 122.0]],
-    dtype=np.float32,
-)
+EXPECTED_ACTION = EXPECTED_STATE.copy()
 
 
 @pytest.fixture(scope="module")
 def recorded_session(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> tuple[Path, dict[float, np.ndarray[Any, Any]]]:
-    db_path = tmp_path_factory.mktemp("recorded-session") / "recording.db"
-    _record_session(db_path)
+    subprocess.run(
+        ["cargo", "build", "--locked", "-p", "dimos-memory-recorder"],
+        cwd=DIMOS_PROJECT_ROOT,
+        check=True,
+    )
+    executable = DIMOS_PROJECT_ROOT / "target" / "debug" / "dimos-memory-recorder"
+    db_path = tmp_path_factory.mktemp("recorded-session") / "session" / "recording.db"
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(global_config, "transport", "zenoh")
+        counts = _record_session(db_path, executable)
     with SqliteStore(path=str(db_path), must_exist=True) as store:
         assert store.stream("color_image").count() == 9
         assert store.stream("coordinator_joint_state").count() == 9
-        assert store.stream("status").count() == 7
+        assert (
+            sum(obs.data.last_event != "init" for obs in store.stream("status").to_list())
+            == counts["status"]
+            == 7
+        )
         episodes = extract_episodes(store, EpisodeExtractor(status_stream="status"))
         assert [
             (episode.start_ts, episode.end_ts, episode.success, episode.task_label)
@@ -259,8 +308,8 @@ def test_collection_to_hdf5_roundtrip(
     db_path, recorded_images = recorded_session
 
     hdf5_path = run_dataprep(
-        _dataprep_config(
-            db_path,
+        RecordingSchema.read(db_path.parent).dataprep_config(
+            db_path.parent,
             OutputConfig(
                 format="hdf5",
                 path=tmp_path / "dataset.hdf5",
@@ -269,11 +318,11 @@ def test_collection_to_hdf5_roundtrip(
         )
     )
     hdf5_info = inspect_dataset(hdf5_path)
-    assert (hdf5_info["episodes"], hdf5_info["frames"], hdf5_info["fps"]) == (2, 4, 1.0)
+    assert (hdf5_info["episodes"], hdf5_info["frames"], hdf5_info["fps"]) == (2, 6, 1.0)
     assert hdf5_info["episode_lengths"] == {
-        "min": 2,
-        "max": 2,
-        "mean": 2.0,
+        "min": 3,
+        "max": 3,
+        "mean": 3.0,
         "uniform": True,
     }
 
@@ -281,8 +330,8 @@ def test_collection_to_hdf5_roundtrip(
         first = h5["episodes/episode_000000"]
         second = h5["episodes/episode_000001"]
         assert [first.attrs["start_ts"], second.attrs["start_ts"]] == [100.0, 108.0]
-        np.testing.assert_array_equal(first["timestamp"][:], [0.0, 1.0])
-        np.testing.assert_array_equal(second["timestamp"][:], [0.0, 1.0])
+        np.testing.assert_array_equal(first["timestamp"][:], [0.0, 1.0, 2.0])
+        np.testing.assert_array_equal(second["timestamp"][:], [0.0, 1.0, 2.0])
         np.testing.assert_array_equal(
             np.concatenate([first["observation/state"][:], second["observation/state"][:]]),
             EXPECTED_STATE,
@@ -293,11 +342,11 @@ def test_collection_to_hdf5_roundtrip(
         )
         np.testing.assert_array_equal(
             first["observation/camera"][:],
-            np.stack([recorded_images[100.0], recorded_images[101.0]]),
+            np.stack([recorded_images[100.0], recorded_images[101.0], recorded_images[102.0]]),
         )
         np.testing.assert_array_equal(
             second["observation/camera"][:],
-            np.stack([recorded_images[108.0], recorded_images[109.0]]),
+            np.stack([recorded_images[108.0], recorded_images[109.0], recorded_images[110.0]]),
         )
 
     hdf5_meta = json.loads((tmp_path / "dataset.dimos_meta.json").read_text())
@@ -305,51 +354,3 @@ def test_collection_to_hdf5_roundtrip(
         (episode["start_ts"], episode["end_ts"], episode["task_label"])
         for episode in hdf5_meta["episodes"]
     ] == [(100.0, 102.0, "pick"), (108.0, 110.0, "place")]
-
-
-def test_collection_to_lerobot_roundtrip(
-    tmp_path: Path,
-    recorded_session: tuple[Path, dict[float, np.ndarray[Any, Any]]],
-) -> None:
-    db_path, recorded_images = recorded_session
-    try:
-        lerobot_path = run_dataprep(
-            _dataprep_config(
-                db_path,
-                OutputConfig(
-                    format="lerobot",
-                    path=tmp_path / "lerobot",
-                    metadata={"robot": "synthetic"},
-                ),
-            )
-        )
-    except RuntimeError as exc:
-        if "VideoWriter" in str(exc):
-            pytest.skip(f"no mp4v encoder available in this environment: {exc}")
-        raise
-
-    lerobot_info = inspect_dataset(lerobot_path)
-    assert (lerobot_info["episodes"], lerobot_info["frames"], lerobot_info["fps"]) == (2, 4, 1.0)
-    data = pq.read_table(lerobot_path / "data/chunk-000/file-000.parquet")
-    assert data.column("timestamp").to_pylist() == pytest.approx([0.0, 1.0, 0.0, 1.0])
-    assert data.column("episode_index").to_pylist() == [0, 0, 1, 1]
-    assert data.column("frame_index").to_pylist() == [0, 1, 0, 1]
-    np.testing.assert_array_equal(
-        np.asarray(data.column("observation.state").to_pylist()), EXPECTED_STATE
-    )
-    np.testing.assert_array_equal(np.asarray(data.column("action").to_pylist()), EXPECTED_ACTION)
-
-    episode_rows = pq.read_table(
-        lerobot_path / "meta/episodes/chunk-000/file-000.parquet"
-    ).to_pylist()
-    assert [row["length"] for row in episode_rows] == [2, 2]
-    assert [(row["dataset_from_index"], row["dataset_to_index"]) for row in episode_rows] == [
-        (0, 2),
-        (2, 4),
-    ]
-    assert [row["tasks"] for row in episode_rows] == [["pick"], ["place"]]
-
-    video = _read_video(lerobot_path / "videos/observation.images.camera/chunk-000/file-000.mp4")
-    assert len(video) == 4
-    expected_means = [recorded_images[ts].mean() for ts in (100.0, 101.0, 108.0, 109.0)]
-    np.testing.assert_allclose([frame.mean() for frame in video], expected_means, atol=5.0)

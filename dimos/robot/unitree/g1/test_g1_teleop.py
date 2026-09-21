@@ -31,6 +31,10 @@ from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1_TELEOP_MODEL,
     _G1GrootCoordinator,
@@ -141,16 +145,23 @@ def test_g1_teleop_excludes_navigation_and_legacy_visualization() -> None:
     )
 
 
-def test_g1_collection_streams_do_not_require_world_poses() -> None:
-    recorder_kwargs = _module_kwargs(unitree_g1_teleop, G1CollectionRecorder)
-
-    assert recorder_kwargs["poseless_streams"] == [
-        "color_image",
-        "status",
-        "left_cartesian_command",
-        "right_cartesian_command",
-        "coordinator_joint_state",
-    ]
+async def test_g1_collection_accepts_blueprint_config_and_records_without_world_poses(tmp_path):
+    kwargs = _module_kwargs(unitree_g1_teleop, G1CollectionRecorder)
+    recorder = G1CollectionRecorder(**{**kwargs, "db_path": str(tmp_path / "session.db")})
+    try:
+        ports = recorder._data_ports()
+        assert {name: port.type for name, port in ports.items()} == {
+            "color_image": Image,
+            "coordinator_joint_state": JointState,
+            "status": EpisodeStatus,
+            "left_cartesian_command": PoseStamped,
+            "right_cartesian_command": PoseStamped,
+        }
+        assert recorder.config.record_tf is False
+        for name in ports:
+            assert await recorder._resolve_pose(name, JointState(ts=1.0), 1.0) is None
+    finally:
+        recorder.stop()
 
 
 @pytest.mark.self_hosted

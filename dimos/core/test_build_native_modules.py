@@ -70,6 +70,7 @@ class _ClassDef(NamedTuple):
     bases: tuple[str, ...]
     command: str | None  # build_command literal defined in this class body
     command_kind: str  # "absent" | "literal" | "opaque"
+    owns_cwd: bool = False
 
 
 def _base_names(node: ast.ClassDef) -> tuple[str, ...]:
@@ -83,7 +84,7 @@ def _base_names(node: ast.ClassDef) -> tuple[str, ...]:
     return tuple(names)
 
 
-def _own_build_command(node: ast.ClassDef) -> tuple[str, str | None]:
+def _own_default(node: ast.ClassDef, field: str) -> tuple[str, str | None]:
     for stmt in node.body:
         if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
             target, value = stmt.target.id, stmt.value
@@ -95,7 +96,7 @@ def _own_build_command(node: ast.ClassDef) -> tuple[str, str | None]:
             target, value = stmt.targets[0].id, stmt.value
         else:
             continue
-        if target != "build_command" or value is None:
+        if target != field or value is None:
             continue
         if isinstance(value, ast.Constant) and (
             value.value is None or isinstance(value.value, str)
@@ -117,15 +118,21 @@ def _scan_all_config_classes() -> list[_ClassDef]:
             rel = path.relative_to(DIMOS_PROJECT_ROOT).as_posix()
             for node in ast.walk(ast.parse(path.read_text(), filename=rel)):
                 if isinstance(node, ast.ClassDef):
-                    kind, command = _own_build_command(node)
-                    classes.append(_ClassDef(rel, node.name, _base_names(node), command, kind))
+                    kind, command = _own_default(node, "build_command")
+                    cwd_kind, _ = _own_default(node, "cwd")
+                    classes.append(
+                        _ClassDef(
+                            rel, node.name, _base_names(node), command, kind, cwd_kind != "absent"
+                        )
+                    )
     return classes
 
 
 def _closure_nix_configs(classes: list[_ClassDef]) -> set[tuple[str, str]]:
-    """(file, class) for every transitive NativeModuleConfig subclass whose
-    effective build_command default (own, or inherited from another config in
-    the closure) mentions nix."""
+    """Build owners, including indirect configs that change a command or directory.
+
+    Unmodified inherited builds are covered by their defining ancestor.
+    """
     by_name: dict[str, list[_ClassDef]] = {}
     for cls in classes:
         by_name.setdefault(cls.name, []).append(cls)
@@ -140,16 +147,18 @@ def _closure_nix_configs(classes: list[_ClassDef]) -> set[tuple[str, str]]:
             break
         closure |= added
 
-    def effective_command(cls: _ClassDef, seen: frozenset[str]) -> tuple[str, str | None]:
+    def effective_command(
+        cls: _ClassDef, seen: frozenset[str]
+    ) -> tuple[str, str | None, _ClassDef]:
         if cls.command_kind != "absent":
-            return cls.command_kind, cls.command
+            return cls.command_kind, cls.command, cls
         for base in cls.bases:
             if base in closure and base != "NativeModuleConfig" and base not in seen:
                 for parent in by_name.get(base, []):
-                    kind, command = effective_command(parent, seen | {cls.name})
+                    kind, command, owner = effective_command(parent, seen | {cls.name})
                     if kind != "absent":
-                        return kind, command
-        return "absent", None
+                        return kind, command, cls if cls.owns_cwd else owner
+        return "absent", None, cls
 
     nix_configs = set()
     for cls in classes:
@@ -164,27 +173,57 @@ def _closure_nix_configs(classes: list[_ClassDef]) -> set[tuple[str, str]]:
                 " from EXTERNALLY_PROVISIONED in bin/build-native-modules"
             )
             continue
-        kind, command = effective_command(cls, frozenset())
+        kind, command, owner = effective_command(cls, frozenset())
         assert kind != "opaque", (
             f"{cls.file}: {cls.name}.build_command must default to a plain string literal "
             "so bin/build-native-modules can read it without importing dimos"
         )
-        if _SCRIPT.is_nix_build(command):
-            nix_configs.add((cls.file, cls.name))
+        # Deliberately independent of the production command parser: options
+        # before `build` must not silently remove a config from both scans.
+        tokens = command.split() if command else []
+        if "nix" in tokens and "build" in tokens and "develop" not in tokens:
+            nix_configs.add((owner.file, owner.name))
     return nix_configs
 
 
-def test_discovery_is_complete_and_flat() -> None:
-    """The script's direct-base discovery must find every config the transitive
-    closure finds. A mismatch means a module (e.g. a depth-2 subclass) would
-    silently escape the publish gate: flatten the hierarchy, or extend the
-    script's discovery to match."""
+def test_discovery_covers_every_build() -> None:
+    """Every distinct native build must participate in the publish gate."""
     expected = _closure_nix_configs(_scan_all_config_classes())
     discovered = {
         (module.source, module.qualname.rsplit(".", 1)[-1]) for module in _SCRIPT.discover()
     }
     assert discovered == expected
     assert discovered, "expected at least one nix-built native module"
+
+
+def test_recorder_is_in_the_publish_manifest() -> None:
+    recorder = next(
+        module
+        for module in _SCRIPT.discover()
+        if module.qualname == "dimos.experimental.memory.rust_recorder.RustRecorderConfig"
+    )
+    assert recorder.build_dir == "dimos/experimental/memory/rust"
+    assert _SCRIPT._flake_ref_of(recorder) == ".#dimos-memory-recorder"
+
+
+@pytest.mark.parametrize("override", [None, "build_command", "cwd"])
+def test_inherited_build_coverage_tracks_overrides(override: str | None) -> None:
+    owner = _ClassDef(
+        "owner.py", "Owner", ("NativeModuleConfig",), "nix build .#owner", "literal", True
+    )
+    child = _ClassDef(
+        "child.py",
+        "Child",
+        ("Owner",),
+        "nix build .#child" if override == "build_command" else None,
+        "literal" if override == "build_command" else "absent",
+        override == "cwd",
+    )
+    grandchild = _ClassDef("grandchild.py", "Grandchild", ("Child",), None, "absent")
+    expected = {("owner.py", "Owner")}
+    if override is not None:
+        expected.add(("child.py", "Child"))
+    assert _closure_nix_configs([owner, child, grandchild]) == expected
 
 
 def test_ast_extraction_matches_runtime() -> None:

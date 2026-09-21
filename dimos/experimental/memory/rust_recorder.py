@@ -140,6 +140,13 @@ class RustRecorderConfig(NativeModuleConfig):
     )
 
     @model_validator(mode="after")
+    def _resolve_cwd(self) -> RustRecorderConfig:
+        # Subclassed recorders share this native project, regardless of their source file.
+        if not Path(self.cwd).is_absolute():
+            self.cwd = str(Path(__file__).parent / self.cwd)
+        return self
+
+    @model_validator(mode="after")
     def _stdin_only(self) -> RustRecorderConfig:
         if self.extra_args:
             raise ValueError("RustRecorder is stdin-only and does not accept extra_args")
@@ -224,6 +231,11 @@ class RustRecorder(NativeModule):
         if not specs:
             logger.warning("Native recorder has no connected streams")
         return specs
+
+    def _collect_topics(self) -> dict[str, str]:
+        topics = super()._collect_topics()
+        enabled_ports = {spec.port for spec in self.config.streams}
+        return {port: topic for port, topic in topics.items() if port in enabled_ports}
 
     @staticmethod
     def _default_codec(payload_type: type[Any]) -> str:

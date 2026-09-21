@@ -329,10 +329,11 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
-      - name: Install dependency for pyaudio
+      # Python readback and dataset export tests decode recorded JPEGs with PyTurboJPEG.
+      - name: Install Python audio and image dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
+          sudo apt-get install -y portaudio19-dev libturbojpeg
       - name: Build and test PyO3 bindings
         # PyO3 extension modules (cdylib + `extension-module`) are the one case
         # that still needs a plain build: pytest imports the compiled .so.
@@ -352,7 +353,10 @@ jobs:
       - name: Native module e2e tests
         run: |
           cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
-          uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
+          uv run pytest -m native_e2e \
+            dimos/hardware/sensors/lidar/livox/test_e2e.py \
+            dimos/robot/manipulators/openyam/blueprints/test_learning_collection_e2e.py \
+            dimos/imitation/test_datacollection_e2e.py --no-cov
 
   native:
     name: Native builds (C++ and Rust)

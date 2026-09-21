@@ -186,8 +186,8 @@ def test_default_store_path_is_resolved_from_the_project_root() -> None:
 def test_native_recorder_is_built_and_run_from_the_nix_package() -> None:
     config = RustRecorderConfig()
 
-    assert config.cwd == "rust"
-    assert config.build_command == "nix build -L .#dimos-memory-recorder"
+    assert Path(config.cwd) == Path(__file__).with_name("rust")
+    assert config.build_command == ("nix build -L .#dimos-memory-recorder")
     assert config.executable == "result/bin/dimos-memory-recorder"
 
 
