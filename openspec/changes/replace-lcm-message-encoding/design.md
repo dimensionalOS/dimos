@@ -55,7 +55,9 @@ bundled Jazzy .msg + local/installed .msg
 
 Use Fast CDR-backed generated C++ serialization and generated pybind11 bindings for Python. Python and C++ share the implementation rather than maintaining separate Python wire layouts. Rust uses generated native types with a Serde-compatible CDR backend. The generator also emits qualified type metadata and complete schema text for recording and introspection.
 
-The implementation starting point is standalone `.msg` parsing, lowering to IDL for Fast-DDS-Gen without DDS type support, generated pybind11 bindings, and a Rust struct emitter plus `re_cdr`. These are candidates to validate, not a claim that a turnkey three-language generator exists. Stage 1 must pin working versions and document the exact build invocation, generated APIs, namespace handling, bounds/default behavior, and dependency footprint. A backend that cannot satisfy the contract must be replaced or the design revised before stage 1 is accepted; do not proceed with a knowingly temporary codec.
+The implementation uses the pinned upstream `rosidl_adapter` parser, a shared normalized definition model, a C++ struct/Fast CDR customization emitter, generated pybind11 bindings, and a Rust struct emitter plus `re_cdr`. Fast CDR owns sizing, alignment, primitive representation, and containers; the emitter only supplies the declared fields, defaults, validation, and library calls. There is no second handwritten wire engine.
+
+The Fast-DDS-Gen 4.3.0 candidate was built successfully without ROS, but its IDL default annotation did not accept a ROS fixed-array default (`@default({1.0, 2.0})`). Using it would require additional default handling and a second schema transformation. Directly emitting the small native value types from the same normalized model preserves scalar and array defaults across all languages and removes Java/Gradle from the user build requirements. The currently validated dependencies are Fast CDR 2.4.0, pybind11 3.0.1, and `re_cdr` 0.1.0. The full 142-type build, independent-codec checks, Jazzy reference, bounds, and buffer tests now pass locally; CI repeats these gates. Packaging is stage 2.
 
 Use encapsulated plain CDR/XCDR1 with little-endian emission as the initial wire profile; decode the supported big- and little-endian representations according to the encapsulation header and reject unsupported representations. Check layout against ROS2 Jazzy serialization in CI. No LCM fingerprint or DimOS schema-hash prefix is part of the CDR payload.
 
@@ -132,14 +134,39 @@ Stages 1–3 establish the new generation workflow in standalone examples before
 
 Rollback is source/release rollback as a unit; old and new processes or recordings are not promised interoperability. Retain demo artifacts as review evidence, not as a promise to decode the obsolete format.
 
-## Open Questions
+## Engineering gates
 
-No outstanding product decisions require another user interview. The following engineering checks are mandatory stage-1 work and must be recorded here before later stages proceed:
+No outstanding product decisions require another user interview. The stage-1 checks below are resolved by the implementation evidence that follows; CI repeats the executable checks:
 
 1. Exact pinned parser, C++ generator/Fast CDR, pybind11, and Rust codec versions that pass the complete `.msg` and CDR conformance suite without ROS installed.
 2. Measured Python buffer-copy and owner-lifetime behavior, with any unavoidable copies documented.
 3. The license/provenance and build viability of extracting Rust's existing raw LCM transport, or the concrete maintained replacement if extraction is unsuitable.
 4. The consumer inventory and any necessary subdivision of stage 4 into independently runnable PRs, each retaining the demo requirement.
+
+## Implementation inventory and evidence
+
+The initial source inventory found 185 files under `dimos` with direct LCM-codec/generated-type references, 8 native SDK files, 2 native examples, and the browser SDK decoder. A broader scan finds 690 Python files importing `dimos.msgs`; this includes tests and indirect convenience-API users, so the direct codec count is not the size of the full cutover.
+
+| Consumer group | Required cutover |
+| --- | --- |
+| Message classes and helpers | Replace generated/wrapped types, dynamic lookup, timestamp inheritance, flattened poses, and rich geometry/image/cloud methods |
+| Python transports and workers | CDR codec selection on LCM/Zenoh and typed SHM; worker serialization and explicit WebRTC type routing |
+| C++ and Rust modules | Generated native types, codec adapters, transform streams, hardware/perception producers, and examples |
+| Navigation/perception/robot code | Constructors, geometry operators, image/cloud conversion, timestamp access, detector messages, and standard primitive imports |
+| Recorders and readers | Python and Rust MCAP/SQLite paths, image codecs, timestamps, transform collections, replay, and fixtures |
+| Live viewers and browser | Rerun adapters, cockpit schema export, browser CDR decoder, relay codecs, and WebXR/phone/hosted teleoperation |
+
+Bundled upstream packages now cover builtin, standard, geometry, sensor, navigation, trajectory, visualization, shape, TF2, and vision definitions. Existing nonstandard messages also require in-tree definitions: JointCommand, RobotState, MotorCommandArray, ImuInfo, TrajectoryStatus, grasp candidates, bounding-box arrays, entity markers, and weighted line segments. Use a DimOS-owned schema namespace for nonstandard messages rather than redefining standard ROS types. Replace the current custom `TrajectoryPoint`/`JointTrajectory` layouts with the actual standard joint trajectory definitions and explicit time conversion at callers. The current line-segment decoder's overloaded Path/orientation representation requires an explicit generated line-segment message and matching native producer change.
+
+Keep stage 4 as a coordinated public type/caller cutover unless a dependency-closed working subdivision is proven. Separate helper extraction can precede the switch only if it has its own runnable demo and does not introduce compatibility methods on the generated classes.
+
+Initial executable evidence is the `examples/message-codegen` relay: sequence 40 and hops `[1]` enter C++, C++ adds hop 2, Rust adds hop 3, and Python receives sequence 42 with the nested reading/position/arrays intact. A generated PoseStamped also matched an independent Jazzy codec byte-for-byte. See the example README and `scripts/test_message_codegen.sh` for reproducible commands. Local stage-1 verification built 139 bundled types and three demo types, passed 22 Python tests plus nine Rust transport tests and its doctest, exercised all nine language combinations in both byte orders, and checked every generated type against the independent Jazzy codec. An isolated Jazzy container independently generated the demo types and decoded all three native implementations' payloads. ROS alignment padding can be unspecified, so ROS comparisons assert every decoded field; the rosbags oracle checks deterministic native bytes. Jazzy's Python generator emitted invalid code for an explicit empty sequence default, so the demo uses the equivalent implicit empty default; our parser still tests explicit empty defaults.
+
+The raw Rust LCM implementation is extracted into `native/rust/dimos-lcm-transport` from external revision `04d78e8622500244123ba9cefa4c51b4cb454549`, preserving its Apache-2.0 provenance. It has no generated-message dependency. The Python/native duplex demo verified 128-byte, 64 KiB, and fragmented 1 MiB payloads exactly; receive buffers are 4 MiB to accommodate the large burst. Integration into the native SDK remains stage 4.
+
+Primitive sequences and nested message fields are live. Nested sequence elements are returned by value and must be assigned back after edits, avoiding references invalidated by vector resizing. Numeric `.view()` returns read-only NumPy storage retaining the root owner; borrowed views block resizing or replacement of that owner's nested storage. `.copy()` explicitly produces independent writable storage. Local 30-iteration medians were 4.2/31.6/71.4/74.2 microseconds for borrowing/copying/encoding/decoding a 921,600-byte RGB image and 5.7/47.0/119.3/128.2 microseconds for a 1,200,000-byte cloud. These are local measurements, not portable performance promises. Lifetime, multiple-borrow, mutation rejection, fixed-array edits, and worker pickle behavior have regression tests.
+
+The generation entry point is `python -m dimos.message_codegen.generate`. It reads bundled/local sources only; setup downloads native dependencies separately. Generated sources stay under ignored `build/`. The host has no ROS installation, the generated Rust crate builds with Cargo's offline flag after setup, and `.github/workflows/message-codegen.yml` separates standalone builds from the independent ROS reference container. Release packaging and installed external providers remain stage 2.
 
 ## Reference material
 

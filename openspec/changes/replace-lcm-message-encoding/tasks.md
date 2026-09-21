@@ -1,17 +1,17 @@
 ## 1. PR 1 — Generate and exchange messages without ROS
 
-- [ ] 1.1 Inventory message definitions and consumers across Python, C++, Rust, recordings, SHM, WebRTC/browser, live Rerun, and the existing ROS bridge; record required standard/custom types and any working subdivisions of the runtime cutover in design.md.
-- [ ] 1.2 Inspect the external Rust raw LCM implementation and license; prove an extraction or maintained-replacement route with native/Python raw-byte and fragmented-payload checks, and record the choice before advancing the stack.
-- [ ] 1.3 Pin and vendor the required Jazzy `.msg` dependency closure with immutable upstream revisions, licenses, and notices.
-- [ ] 1.4 Implement standalone package resolution and parsing, including qualified names, transitive dependencies, defaults/bounds, conflict rejection, and source diagnostics for unsupported or invalid definitions.
-- [ ] 1.5 Validate and pin the C++ generator/Fast CDR pipeline without ROS or DDS runtime requirements; generate buildable types and encapsulated XCDR1 codecs rather than handwritten message layouts.
-- [ ] 1.6 Generate pybind11 bindings sharing the C++ codecs, with transport-neutral encode/decode, nested-field/sequence mutation semantics, and type/schema metadata.
-- [ ] 1.7 Validate and pin the native Rust generation/CDR backend, emit equivalent types/metadata/codecs, and document any rejected candidates with evidence in design.md.
-- [ ] 1.8 Implement and verify read-only image/point-cloud buffer views, explicit mutable copies, owner lifetimes, and rejection of storage-invalidating mutations while views exist; capture representative buffer performance and copying behavior.
-- [ ] 1.9 Add all nine language encoder/decoder conformance combinations, endian/alignment cases, defaults, bounds, fixed/dynamic arrays, nested standard/custom messages, malformed inputs, and independent ROS2 Jazzy reference checks in a separate CI job.
-- [ ] 1.10 Provide one documented generation entry point and an ignored output directory; demonstrate generation/build/runtime with ROS absent and preinstalled dependencies available offline.
-- [ ] 1.11 Create the cumulative example definitions and a runnable `demo_` file relay: Python → C++ → Rust → Python, printing decoded fields and each process's edits; include realistic buffer-view behavior in its terminal demo.
-- [ ] 1.12 Add exact demo setup/run/teardown instructions, capture visible output and automated results for PR review, and resolve the stage-1 engineering gates in design.md before accepting PR 1.
+- [x] 1.1 Inventory message definitions and consumers across Python, C++, Rust, recordings, SHM, WebRTC/browser, live Rerun, and the existing ROS bridge; record required standard/custom types and any working subdivisions of the runtime cutover in design.md.
+- [x] 1.2 Inspect the external Rust raw LCM implementation and license; prove an extraction or maintained-replacement route with native/Python raw-byte and fragmented-payload checks, and record the choice before advancing the stack.
+- [x] 1.3 Pin and vendor the required Jazzy `.msg` dependency closure with immutable upstream revisions, licenses, and notices.
+- [x] 1.4 Implement standalone package resolution and parsing, including qualified names, transitive dependencies, defaults/bounds, conflict rejection, and source diagnostics for unsupported or invalid definitions.
+- [x] 1.5 Validate and pin the shared-definition C++ emitter/Fast CDR pipeline without ROS or DDS runtime requirements; generate buildable types and encapsulated XCDR1 codecs rather than handwritten message layouts.
+- [x] 1.6 Generate pybind11 bindings sharing the C++ codecs, with transport-neutral encode/decode, nested-field/sequence mutation semantics, and type/schema metadata.
+- [x] 1.7 Validate and pin the native Rust generation/CDR backend, emit equivalent types/metadata/codecs, and document any rejected candidates with evidence in design.md.
+- [x] 1.8 Implement and verify read-only image/point-cloud buffer views, explicit mutable copies, owner lifetimes, and rejection of storage-invalidating mutations while views exist; capture representative buffer performance and copying behavior.
+- [x] 1.9 Add all nine language encoder/decoder conformance combinations, endian/alignment cases, defaults, bounds, fixed/dynamic arrays, nested standard/custom messages, malformed inputs, and independent ROS2 Jazzy reference checks in a separate CI job.
+- [x] 1.10 Provide one documented generation entry point and an ignored output directory; demonstrate generation/build/runtime with ROS absent and preinstalled dependencies available offline.
+- [x] 1.11 Create the cumulative example definitions and a runnable `demo_` file relay: Python → C++ → Rust → Python, printing decoded fields and each process's edits; include realistic buffer-view behavior in its terminal demo.
+- [x] 1.12 Add exact demo setup/run/teardown instructions, capture visible output and automated results for PR review, and resolve the stage-1 engineering gates in design.md before accepting PR 1.
 
 ## 2. PR 2 — Package and consume messages outside DimOS
 
