@@ -104,6 +104,7 @@ all_blueprints = {
     "openyam-lerobot-rollout": "dimos.robot.manipulators.openyam.blueprints.learning_rollout:openyam_lerobot_rollout",
     "openyam-planner-coordinator": "dimos.robot.manipulators.openyam.blueprints.basic:openyam_planner_coordinator",
     "openyam-quest-collection": "dimos.robot.manipulators.openyam.blueprints.learning_quest_collection:openyam_quest_collection",
+    "openyam-teach-collection": "dimos.robot.manipulators.openyam.blueprints.learning_collection:openyam_teach_collection",
     "pointlio-rust": "dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints:pointlio_rust",
     "pointlio-rust-replay": "dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints:pointlio_rust_replay",
     "r1pro-coordinator": "dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator:r1pro_coordinator",
