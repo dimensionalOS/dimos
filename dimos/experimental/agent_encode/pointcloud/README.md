@@ -6,13 +6,25 @@ masks, regions), renders (depth view, occupancy map, field map) and picking
 pixels in those renders back to stored returns.
 
 ```python
+import numpy as np
+
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as P
 
+cloud = P.from_numpy(
+    np.array([[0.5, 0.0, 0.5], [1.0, 0.2, 0.8], [0.0, 0.0, 0.0]], dtype=np.float32),
+    frame_id="map",
+    timestamp=0.0,
+)
 out = cloud.agent_encode({
     "near": P.Closest(P.Cylinder(center=(0, 0), radius=0.3, z_range=(0.15, 1.0))),
     "map": P.OccupancyMap(z_range=(0.15, 1.0)),
 })
+print(out)
 ```
+
+Coordinates and height bands use the cloud's frame, with distances in meters.
+Render results include paths to generated images; pass `out_dir` to
+`agent_encode()` to choose where they are written.
 
 Design rules:
 
@@ -25,7 +37,7 @@ Design rules:
 
 ## What the agent reads
 
-`legend()` in [`runtime/dispatch.py`](runtime/dispatch.py) holds the agent's instructions: API table, rules,
+`legend()` in [`runtime/dispatch.py`](/dimos/experimental/agent_encode/pointcloud/runtime/dispatch.py#L273) holds the agent's instructions: API table, rules,
 conventions and worked examples. It is served as `PointCloud2.AGENT_ENCODE_LEGEND`.
 Edit it when the API changes.
 
@@ -43,7 +55,9 @@ Edit it when the API changes.
 ## Testing
 
 ```bash
-uv run pytest dimos/experimental/agent_encode
+uv run pytest dimos/experimental/agent_encode/pointcloud/tests
 ```
 
-For evaluating how well agents use it, see `dimos/evals/context_efficiency/`.
+The tests use synthetic point clouds to check geometry, field operations,
+rendering, pixel picking, and response budgets. They run without robot hardware
+or an LLM API key.

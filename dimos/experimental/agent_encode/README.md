@@ -7,22 +7,32 @@ entry point and an `AGENT_ENCODE_LEGEND`.
 - `odometry.py`: native-frame position, quaternion, linear/angular velocity. No
   frame transforms, no covariances. Entry: `odom.agent_encode()`.
 
-# Point clouds
+## Point clouds
 
-Overview: [`pointcloud/README.md`](pointcloud/README.md). Agent instructions:
-`legend()` in [`pointcloud/runtime/dispatch.py`](pointcloud/runtime/dispatch.py), served as `PointCloud2.AGENT_ENCODE_LEGEND`.
+Overview: [`pointcloud/README.md`](/dimos/experimental/agent_encode/pointcloud/README.md). Agent instructions:
+`legend()` in [`pointcloud/runtime/dispatch.py`](/dimos/experimental/agent_encode/pointcloud/runtime/dispatch.py#L273), served as `PointCloud2.AGENT_ENCODE_LEGEND`.
 
-# Odometry
+## Odometry
+
+Returns pose and velocity with explicit units and frame IDs. Position and
+orientation describe the child frame in the parent frame; velocities are in the
+child frame. Covariances are omitted.
 
 ```python
-r = odom.agent_encode()  # position, orientation (quaternion), linear/angular velocity, frame ids
+from dimos.msgs.nav_msgs.Odometry import Odometry
+
+odom = Odometry(frame_id="map", child_frame_id="base_link")
+print(odom.agent_encode())
 ```
 
-# Validation
+## Testing
+
+Run the encoding tests from the repository root:
 
 ```bash
 uv run pytest dimos/experimental/agent_encode
-uv run python dimos/evals/context_efficiency/tool_benchmark.py --offline --slice all --repeats 1
-# paid (Pi + OPENAI_API_KEY):
-uv run python dimos/evals/context_efficiency/tool_benchmark.py --slice all --repeats 1 --metric correctness --worktree "$PWD"
 ```
+
+These tests check geometry queries, fields, rendering, picking, response budgets,
+and odometry serialization using synthetic inputs. They do not require a running
+robot or an LLM API key.
