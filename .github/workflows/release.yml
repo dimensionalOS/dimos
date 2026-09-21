@@ -122,6 +122,7 @@ jobs:
       CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
       CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_34  # open3d>=0.19 requires glibc 2.31+
       # Asserts the packaged relay + Cockpit and serves them from the installed wheel.
+      CIBW_BEFORE_BUILD: "bash {project}/scripts/setup_message_codegen.sh"
       CIBW_TEST_COMMAND: "python {project}/.github/scripts/wheel_smoke.py"
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
@@ -141,6 +142,26 @@ jobs:
           name: wheels-${{ matrix.os }}-${{ matrix.arch }}
           path: wheelhouse/*.whl
 
+  build-message-packages:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - run: uv venv .venv --python 3.12
+      - run: bash scripts/setup_message_codegen.sh
+      - name: Package CMake headers, schemas, and native Rust sources
+        env:
+          MESSAGE_VERSION: ${{ needs.validate.outputs.version }}
+        run: bash scripts/package_messages.sh "$MESSAGE_VERSION"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-message-packages
+          path: build/message-codegen/release/dist/*
+
   publish-testpypi:
     if: ${{ inputs.dry-run }}
     needs: [validate, build-sdist, build-wheels]
@@ -155,6 +176,12 @@ jobs:
       - name: Download wheels/sdist
         uses: actions/download-artifact@v8
         with:
+          name: sdist
+          path: dist
+      - name: Download wheels
+        uses: actions/download-artifact@v8
+        with:
+          pattern: wheels-*
           path: dist
           merge-multiple: true
       - name: Install uv
@@ -184,6 +211,12 @@ jobs:
       - name: Download wheels/sdist
         uses: actions/download-artifact@v8
         with:
+          name: sdist
+          path: dist
+      - name: Download wheels
+        uses: actions/download-artifact@v8
+        with:
+          pattern: wheels-*
           path: dist
           merge-multiple: true
       - name: Install uv
@@ -199,7 +232,7 @@ jobs:
 
   tag-and-release:
     if: ${{ ! inputs.dry-run }}
-    needs: [validate, publish-pypi]
+    needs: [validate, publish-pypi, build-message-packages]
     runs-on: ubuntu-latest
     environment: release-tag
     permissions:

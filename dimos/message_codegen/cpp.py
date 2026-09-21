@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+from hashlib import sha256
 import json
 import math
 from typing import Any
@@ -201,6 +203,22 @@ def validation(message: Message) -> list[str]:
 
 
 def generate(messages: tuple[Message, ...]) -> str:
+    guards = {
+        message.name: "DIMOS_MESSAGE_"
+        + sha256(
+            json.dumps(
+                [
+                    message.name,
+                    [asdict(field) for field in message.fields],
+                    [asdict(constant) for constant in message.constants],
+                ],
+                sort_keys=True,
+            ).encode()
+        )
+        .hexdigest()
+        .upper()
+        for message in messages
+    }
     lines = [
         "// Generated from ROS2 .msg definitions. Do not edit.",
         "#pragma once",
@@ -215,6 +233,8 @@ def generate(messages: tuple[Message, ...]) -> str:
         '#include "dimos_cdr.hpp"',
     ]
     for message in messages:
+        guard = guards[message.name] + "_TYPE"
+        lines.extend([f"#ifndef {guard}", f"#define {guard}"])
         namespace = qualified(message.name.rsplit("/", 1)[0])
         name = identifier(message.short_name)
         lines.extend([f"namespace {namespace} {{", f"struct {name} {{"])
@@ -236,9 +256,12 @@ def generate(messages: tuple[Message, ...]) -> str:
         lines.append("void validate() const {")
         lines.extend(validation(message))
         lines.extend(["}", f'static constexpr const char* msg_name = "{message.name}";', "};", "}"])
+        lines.append("#endif")
 
     lines.append("namespace eprosima::fastcdr {")
     for message in messages:
+        guard = guards[message.name] + "_CODEC"
+        lines.extend([f"#ifndef {guard}", f"#define {guard}"])
         name = qualified(message.name)
         lines.extend(
             [
@@ -269,5 +292,6 @@ def generate(messages: tuple[Message, ...]) -> str:
         if not message.fields:
             lines.append("uint8_t unused; cdr >> unused;")
         lines.extend(["value.validate();", "}"])
+        lines.append("#endif")
     lines.append("}")
     return "\n".join(lines) + "\n"

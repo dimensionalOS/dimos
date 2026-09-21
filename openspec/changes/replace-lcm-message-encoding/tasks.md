@@ -15,13 +15,13 @@
 
 ## 2. PR 2 — Package and consume messages outside DimOS
 
-- [ ] 2.1 Add Python wheel/sdist generation using the existing native-build infrastructure; include schema resources and the inputs needed to reproduce source builds.
-- [ ] 2.2 Add an installable/exported CMake message package and a consumable generated Rust crate with schema metadata and dependency declarations.
-- [ ] 2.3 Register installed Python schema/type providers through `dimos.messages`; support external packages without editing the built-in message registry.
-- [ ] 2.4 Wire the same pinned local generation into CI and release packaging, preserving the supported build matrix; upload review artifacts and publish official packages through the normal release workflow.
-- [ ] 2.5 Verify deterministic generated sources/metadata, packaged schema closure, clean wheel/sdist/CMake/Cargo consumers, and absence of generated source from version control.
-- [ ] 2.6 Extend the demo into a separate application: install built packages, add a field to a local custom `.msg`, regenerate/build all three consumers, and visibly exchange the new field without changing DimOS or publishing a package.
-- [ ] 2.7 Document exact external-project commands and setup-time dependencies, verify no runtime downloading/generation, capture demo evidence, and rerun PR 1's demo and automated checks.
+- [x] 2.1 Add Python wheel/sdist generation using the existing native-build infrastructure; include schema resources and the inputs needed to reproduce source builds.
+- [x] 2.2 Add an installable/exported CMake message package and a consumable generated Rust crate with schema metadata and dependency declarations.
+- [x] 2.3 Register installed Python schema/type providers through `dimos.messages`; support external packages without editing the built-in message registry.
+- [x] 2.4 Wire the same pinned local generation into CI and release packaging, preserving the supported build matrix; upload review artifacts and publish official packages through the normal release workflow.
+- [x] 2.5 Verify deterministic generated sources/metadata, packaged schema closure, clean wheel/sdist/CMake/Cargo consumers, and absence of generated source from version control.
+- [x] 2.6 Extend the demo into a separate application: install built packages, add a field to a local custom `.msg`, regenerate/build all three consumers, and visibly exchange the new field without changing DimOS or publishing a package.
+- [x] 2.7 Document exact external-project commands and setup-time dependencies, verify no runtime downloading/generation, capture demo evidence, and rerun PR 1's demo and automated checks.
 
 ## 3. PR 3 — Inspect the same MCAP in Foxglove and Rerun
 

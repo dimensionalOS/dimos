@@ -76,3 +76,23 @@ ROS2 Jazzy confirms declared defaults, nested fields, bounds, arrays, Unicode, a
 
 Reproduce with the commands in [README.md](README.md). CI retains fresh output
 and binary payloads as artifacts; generated sources and build products are ignored.
+
+## Stage 2 installed application
+
+Built a Python wheel from its sdist, installed CMake packages, and compiled a
+separate consumer from the Cargo archive. The Python consumer ran with `-I` in a
+fresh environment containing only the external message wheel.
+
+```text
+Installed Python package sends new field: added-locally
+Installed C++ package received: added-locally
+Packaged Rust crate received: added-locally/cpp
+Installed Python package receives: added-locally/cpp/rust
+A locally added field crossed three installed native packages; no DimOS source change or upstream PR.
+```
+
+The full DimOS wheel also built with web assets. Its sdist passed the repository
+content check (1,928 entries; 10.7 MB). A fresh environment with both wheels
+discovered 141 types and accepted a built-in Point inside external Telemetry.
+Two separately installed CMake packages can include the same standard Point
+without duplicate definitions. Focused tests now pass 34 cases.

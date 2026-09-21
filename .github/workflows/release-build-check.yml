@@ -13,6 +13,8 @@ on:
       - .github/scripts/wheel_smoke.py
       - pyproject.toml
       - setup.py
+      - dimos/message_codegen/**
+      - scripts/setup_message_codegen.sh
       - MANIFEST.in
       - web/cockpit/**
       - web/sdk/**
@@ -31,6 +33,7 @@ jobs:
     env:
       # Keep in sync with the build-wheels env in release.yml
       CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34
+      CIBW_BEFORE_BUILD: "bash {project}/scripts/setup_message_codegen.sh"
       CIBW_TEST_COMMAND: "python {project}/.github/scripts/wheel_smoke.py"
     steps:
       - name: Checkout

@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.20)
+project(external_message_demo LANGUAGES CXX)
+find_package(external_telemetry CONFIG REQUIRED)
+find_package(dimos_generated CONFIG REQUIRED)
+add_executable(relay relay.cpp)
+target_link_libraries(relay PRIVATE external_telemetry::messages dimos_generated::messages)

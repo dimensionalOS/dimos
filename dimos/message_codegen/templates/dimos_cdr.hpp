@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#pragma once
+#ifndef DIMOS_CDR_RUNTIME_V1_HPP
+#define DIMOS_CDR_RUNTIME_V1_HPP
 
 #include <cstdint>
 #include <stdexcept>
@@ -69,3 +70,4 @@ T decode(const std::vector<uint8_t>& bytes) {
 }
 
 }  // namespace dimos::cdr
+#endif

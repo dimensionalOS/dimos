@@ -605,6 +605,8 @@ jobs:
           sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
       - name: Fetch the go2_short replay dataset
         run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
+      - name: Build standalone CDR dependency
+        run: bash scripts/setup_message_codegen.sh
       - name: Install dependencies
         run: uv sync --group tests --group browser-tests --frozen
       - name: Install Playwright browsers  # the e2e runs in both engines
@@ -709,6 +711,8 @@ jobs:
       - name: Provision native modules from Cachix
         if: steps.native-marker.outputs.cache-hit == 'true'
         run: python3 bin/build-native-modules --link-results .cachix-marker/links.txt
+      - name: Build standalone CDR dependency
+        run: bash scripts/setup_message_codegen.sh
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
@@ -842,6 +846,8 @@ jobs:
         run: |
           uv venv .codecov-venv
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
+      - name: Build standalone CDR dependency
+        run: bash scripts/setup_message_codegen.sh
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
       - name: Install web_browser e2e dependencies (macOS)
@@ -1089,6 +1095,8 @@ jobs:
             libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
             `# Rerun viewer pulls in X11 keyboard bindings when DISPLAY is set.` \
             libxkbcommon-x11-0
+      - name: Build standalone CDR dependency
+        run: bash scripts/setup_message_codegen.sh
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
       - name: Build C++ extensions in-place

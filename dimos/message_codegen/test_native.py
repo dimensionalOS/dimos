@@ -23,6 +23,11 @@ import pytest
 from rosbags.typesys import Stores, get_types_from_msg, get_typestore
 
 generated = pytest.importorskip("dimos_generated", reason="Build examples/message-codegen first")
+if not hasattr(generated, "demo_msgs"):
+    pytest.skip(
+        "Build examples/message-codegen and add its extension to PYTHONPATH",
+        allow_module_level=True,
+    )
 Telemetry = generated.demo_msgs.msg.Telemetry
 ImageEnvelope = generated.demo_msgs.msg.ImageEnvelope
 Image = generated.sensor_msgs.msg.Image

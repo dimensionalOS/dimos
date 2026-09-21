@@ -21,8 +21,8 @@ trap 'exit 143' TERM
 INSTALLER_VERSION="0.3.0"
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
-UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config"
-MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit ffmpeg libsndfile pkg-config"
+UBUNTU_PACKAGES="ca-certificates curl git g++ cmake portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config"
+MACOS_PACKAGES="gnu-sed gcc cmake portaudio git-lfs libjpeg-turbo pre-commit ffmpeg libsndfile pkg-config"
 
 INSTALL_MODE="${DIMOS_INSTALL_MODE:-}"
 EXTRAS="${DIMOS_EXTRAS:-}"
@@ -780,6 +780,7 @@ do_install_dev() {
     info "Developer installs use locked PyTorch builds; Linux x86_64 includes CUDA libraries even for CPU use."
     dim "will run: uv sync ${sync_args[*]}"
     if ! prompt_confirm "Install dependencies now?" yes; then INSTALL_DEPS=0; return; fi
+    project_cmd bash scripts/setup_message_codegen.sh
     project_cmd uv sync "${sync_args[@]}"
     ok "developer environment ready in $dir"
 }

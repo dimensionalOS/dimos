@@ -2,7 +2,8 @@
 requires = [
     "setuptools>=70",
     "wheel",
-    "pybind11>=2.12",
+    "pybind11==3.0.1",
+    "cmake>=3.20",
     "tomli>=2.0; python_version < '3.11'",
 ]
 build-backend = "setuptools.build_meta"
@@ -49,6 +50,8 @@ exclude = [
     "**/*.svg",
     "**/*.tcss",
     "**/*.pyi",
+    "message_codegen/schemas/**/*",
+    "message_codegen/templates/*",
 ]
 
 [tool.setuptools.exclude-package-data]
@@ -162,6 +165,9 @@ dependencies = [
     "websocket-client>=1.8",
 ]
 
+
+[project.entry-points."dimos.messages"]
+builtin = "dimos.message_codegen.builtin_provider"
 
 [project.scripts]
 lcmspy = "dimos.cli.spy.run_spy:lcm_main"
@@ -495,7 +501,7 @@ tests-self-hosted = [
     # doesn't expose to the build — and these tests never open a live DDS link.
     "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
-    "pybind11>=2.12",
+    "pybind11==3.0.1",
     "dim-odom>=0.4.1",
 ]
 docs = [

@@ -27,6 +27,10 @@ MAX_UNCOMPRESSED_MB = 40
 
 # Paths below the dimos-<version>/ root that every release sdist must carry.
 REQUIRED = (
+    "dimos/message_codegen/schemas/sensor_msgs/msg/Image.msg",
+    "dimos/message_codegen/templates/dimos_cdr.hpp",
+    "dimos/message_codegen/_vendor/rosidl_parser.py",
+    "scripts/setup_message_codegen.sh",
     "web/cockpit/dist/index.html",
     "web/deno.lock",
     "web/relay/main.ts",
