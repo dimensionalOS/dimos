@@ -60,6 +60,7 @@ def test_json_queries_are_lazy_and_source_time_ordered(
     with McapRecordingStore(path=str(path)) as store:
         stream = store.stream("state")
         assert stream.count() == 3
+        assert stream.get_time_range() == (1, 3)
         assert [obs.ts for obs in stream.order_by("ts")] == [1, 2, 3]
         assert stream.order_by("ts").first().data == {"n": 1}
         assert stream.order_by("ts").limit(2).count() == 2

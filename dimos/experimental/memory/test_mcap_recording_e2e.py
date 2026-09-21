@@ -17,9 +17,7 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-import subprocess
 from typing import Any
 
 from mcap.reader import make_reader
@@ -27,7 +25,6 @@ from mcap_ros2.decoder import DecoderFactory
 import numpy as np
 import pytest
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.experimental.memory.rust_recorder import mcap_codec
 from dimos.memory.cli.dataset import open_store
 from dimos.memory.cli.render import render_store
@@ -55,7 +52,9 @@ pytestmark = pytest.mark.self_hosted
 
 
 @pytest.fixture(scope="module")
-def recording(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, dict[str, Any]]:
+def recording(
+    tmp_path_factory: pytest.TempPathFactory, native_mcap_writer: Any
+) -> tuple[Path, dict[str, Any]]:
     directory = tmp_path_factory.mktemp("native-mcap")
     pose = PoseStamped(
         ts=12.5,
@@ -151,6 +150,7 @@ def recording(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, dict[str,
         ts=12.5, frame_id="map", segments=[[[1, 2, 3], [4, 5, 6]]], weights=[0.75]
     )
     streams = []
+    manifest = []
     for name, value in messages.items():
         streams.append(
             {
@@ -162,33 +162,10 @@ def recording(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, dict[str,
         )
         data = segments_path.lcm_encode() if name == "segments" else value.lcm_encode()
         (directory / f"{name}.lcm").write_bytes(data)
+        manifest.append({"stream": name, "reception_ts": "20.0", "payload_path": f"{name}.lcm"})
     artifact = directory / "recording.mcap"
-    (directory / "config.json").write_text(
-        json.dumps(
-            {
-                "store": {"kind": "mcap", "path": str(artifact)},
-                "encoding_threads": 2,
-                "streams": streams,
-            }
-        )
-    )
-    subprocess.run(
-        [
-            "cargo",
-            "test",
-            "-p",
-            "dimos-memory-recorder",
-            "--lib",
-            "write_interop_fixture",
-            "--",
-            "--ignored",
-        ],
-        cwd=DIMOS_PROJECT_ROOT,
-        env={**os.environ, "DIMOS_MCAP_INTEROP_DIR": str(directory)},
-        check=True,
-        capture_output=True,
-        timeout=300,
-    )
+    (directory / "messages.jsonl").write_text("".join(json.dumps(row) + "\n" for row in manifest))
+    native_mcap_writer(directory, artifact, streams)
     return artifact, messages
 
 

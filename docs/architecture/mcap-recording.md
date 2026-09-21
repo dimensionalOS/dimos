@@ -79,6 +79,31 @@ endianness, padding, covariances, TF timestamps, JPEG, raw depth, JSON, summary,
 and Rerun export. Existing transport integration tests exercise SQLite and MCAP
 through the native process.
 
+### Real recording regression
+
+The large integration test transcribes all 2,438 primary observations from the
+LFS `go2_short.db` fixture through the production Rust encoder and MCAP writer:
+855 images, 461 point clouds, and 1,122 poses; the derived embedding stream is
+excluded. Its lidar stream includes out-of-order source timestamps, which also
+exercise Memory2 time-range summaries. It writes both a raw-image recording and an image-only recording that
+preserves the original JPEG bytes. Raw pixels are compared against decoded
+source JPEGs, so this does not undo the source recording's JPEG loss.
+
+```bash
+mkdir -p recordings
+uv run pytest dimos/experimental/memory/test_mcap_recording_lfs.py \
+  -m self_hosted_large --basetemp recordings/mcap-lfs-validation
+```
+
+The test requires the recording extras, Cargo, the Rerun CLI, several GB of free
+disk space, and network access to pinned upstream ROS definitions. It compares
+every CDR payload using `mcap_ros2`, checks schemas and dependency closure against
+those definitions, checks chunk CRCs, indexes, sequences, and both timestamps,
+then exercises Memory2 summary/read/export and direct Rerun import with raw
+fallback disabled. MCAP files, both Rerun exports, importer logs, and a JSON
+validation report remain under the ignored `recordings/mcap-lfs-validation`
+directory; pytest replaces this directory on the next run.
+
 ## References
 
 - [MCAP specification](https://mcap.dev/spec) defines schema/channel records and permits schema ID zero only to indicate no schema.

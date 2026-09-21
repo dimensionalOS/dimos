@@ -323,15 +323,43 @@ mod tests {
         let directory = std::path::PathBuf::from(std::env::var("DIMOS_MCAP_INTEROP_DIR").unwrap());
         let config: RecorderConfig =
             serde_json::from_slice(&std::fs::read(directory.join("config.json")).unwrap()).unwrap();
-        let streams = config.streams.clone();
-        let engine = RecorderEngine::start(config).unwrap();
-        let handle = engine.handle();
-        for stream in streams {
-            let data = std::fs::read(directory.join(format!("{}.lcm", stream.name))).unwrap();
-            handle.record(Arc::new(stream), &data);
+        #[derive(serde::Deserialize)]
+        struct InputRecord {
+            stream: String,
+            reception_ts: String,
+            payload_path: String,
         }
-        let stats = engine.shutdown().unwrap();
-        assert_eq!(stats.encode_errors, 0);
-        assert!(stats.written > 0);
+        use std::io::BufRead;
+        let streams = config
+            .streams
+            .iter()
+            .map(|stream| (stream.name.clone(), Arc::new(stream.clone())))
+            .collect::<std::collections::HashMap<_, _>>();
+        let mut writer =
+            crate::store::open(&config.store, &config.streams, config.encoding_threads).unwrap();
+        let input =
+            std::io::BufReader::new(std::fs::File::open(directory.join("messages.jsonl")).unwrap());
+        let mut written = 0;
+        for line in input.lines() {
+            let record: InputRecord = serde_json::from_str(&line.unwrap()).unwrap();
+            let stream = streams.get(&record.stream).unwrap();
+            // Parse the decimal with Rust's correctly rounded float parser.
+            let reception_ts = record.reception_ts.parse::<f64>().unwrap();
+            let data = std::fs::read(directory.join(&record.payload_path)).unwrap();
+            let observations = crate::process(stream, &data, reception_ts)
+                .unwrap()
+                .into_iter()
+                .map(|observation| crate::store::Observation {
+                    stream: Arc::clone(stream),
+                    source_ts: observation.ts,
+                    reception_ts,
+                    data: observation.data,
+                })
+                .collect::<Vec<_>>();
+            written += observations.len();
+            writer.write_batch(&observations).unwrap();
+        }
+        writer.finish().unwrap();
+        assert!(written > 0);
     }
 }
