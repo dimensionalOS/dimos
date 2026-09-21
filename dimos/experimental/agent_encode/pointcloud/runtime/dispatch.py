@@ -28,27 +28,22 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.experimental.agent_encode.pointcloud import constants
 from dimos.experimental.agent_encode.pointcloud.fields import FieldData
-from dimos.experimental.agent_encode.pointcloud.handlers.closest import Closest
-from dimos.experimental.agent_encode.pointcloud.handlers.depth_view import DepthView
-from dimos.experimental.agent_encode.pointcloud.handlers.occupancy_map import OccupancyMap
-from dimos.experimental.agent_encode.pointcloud.handlers.overlap import Overlap
 from dimos.experimental.agent_encode.pointcloud.handlers.overview import Overview
-from dimos.experimental.agent_encode.pointcloud.handlers.sweep import Sweep
 from dimos.experimental.agent_encode.pointcloud.render import raster as render
 from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-HANDLERS: tuple[Any, ...] = (DepthView, OccupancyMap, Overlap, Sweep, Closest)
-
 
 @dataclass(frozen=True)
 class EncodeBudget:
-    """Maximum JSON bytes returned by a named request; geometry is never coarsened."""
+    """Bounds a named request's response; geometry is never coarsened."""
 
     max_text_bytes: int = 16384
+    """Maximum JSON bytes returned."""
 
     def __post_init__(self) -> None:
         if type(self.max_text_bytes) is not int or self.max_text_bytes < 1024:
@@ -134,7 +129,7 @@ def _stem(cloud: PointCloud2, points: np.ndarray, requests: Any) -> str:
             {
                 "frame_id": cloud.frame_id,
                 "ts": _request_spec(cloud.ts),
-                "form": render.FORM,
+                "form": constants.FORM,
                 "requests": _request_spec(requests),
             },
             ensure_ascii=True,
@@ -216,7 +211,7 @@ def _named(ctx: EncodeContext, requests: Mapping[str, Any], budget: EncodeBudget
         "num_points": len(ctx.points),
         "bounds_m": _bounds(ctx.points),
         "centroid_m": _centroid(ctx.points),
-        "form": render.FORM,
+        "form": constants.FORM,
         "results": {},
     }
     if metadata_errors:
@@ -308,8 +303,10 @@ Coverage area is occupied XY cells times cell area, so it depends on `cell_m`.
 Lower-surface values are per-cell 10th-percentile Z (linear interpolation, at least
 4 returns). Their median is `reference_z_m`, not a verified floor. The structure
 band is reference + [0.15, 1.0] m; relief lists patches more than 0.15 m above/below
-reference, with `offset_quantiles_m` relative to it. Patches one cell apart are
-linked whatever lies between them, and only their own cells count towards area.
+reference, with `offset_quantiles_m` relative to it. Patches one cell apart
+(`relief_gap_cells`) are linked whatever lies between them, and only their own cells
+count towards area. With fewer than 8 supported cells, or under half of the observed
+cells supported, `status` is `insufficient_support` and both lists are left out.
 At most 8 regions per list, largest first; omitted counts/areas are explicit, and a
 patch of a few cells is weak evidence. Bounds enclose occupied cells, not solid
 obstacles. Use Closest/DistanceField on selected returns for distances. Sparse
@@ -342,7 +339,7 @@ Conventions:
 | field | `Threshold` | `Threshold(field, ">", value)` | mask; combine with `&` `\|` |
 | field | `Resample` | `Resample(field, grid)` | the field on another grid (containing-cell lookup) |
 | field | `Components` | `Components(mask, connectivity=8, gap_cells=0, values=None, max_regions=None)`; `gap_cells` links true cells that far apart without filling between them; `values=field` adds each region's statistics of that field; `max_regions=n` keeps the n largest in the table | `regions` table; `.label` per cell |
-| output | `Overview` | `Overview(max_regions=8, percentile=10, min_count=4, band=(0.15,1.0), relief_m=0.15, cell_spacings=2, relief_cell_spacings=4)` | compact default recipe; band is relative to measured reference Z |
+| output | `Overview` | `Overview(max_regions=8, percentile=10, min_count=4, band=(0.15,1.0), relief_m=0.15, cell_spacings=2, relief_cell_spacings=4, relief_gap_cells=1, min_supported_cells=8, min_supported_fraction=0.5)` | compact default recipe; band is relative to measured reference Z |
 | output | `Sample` | `Sample(field, at=[(u,v)], fields=None, decimals=None, radius=0)` — a few points, ~170 B each; `radius` summarises the disc: min/max, and `distinct` values for masks/labels | `samples[i]["values"][ch]`: a number when `radius=0`, `{"min", "max"(, "distinct")}` when `radius>0` |
 | output | `Window` | `Window(field, cells=(col,row,w,h), fields=None, decimals=None)` — ~7 B/cell, ~4 for counts/masks/labels | `values[channel][row][col]` |
 | render | `Map` | `Map(field_or_channel, value_range=None, overlays=())` | image + `view_ref` |
@@ -769,8 +766,16 @@ Images go to `out_dir`, else `$AGENT_ENCODE_DIR`, the run directory, or the stat
 """.strip()
         + "\n"
     )
-    if render.FORM != "image":
-        text += "\n" + render._LEGEND_TEXT
+    if constants.FORM != "image":
+        text += (
+            "\nText forms are ascii grids. depth ascii: rows top-to-bottom, columns "
+            "left-to-right, digit 0..9 = near..far by ascii_formula, '.' = no return (depth "
+            "unknown, treat as infinity). occupancy ascii: rows run north (top) to south, "
+            "columns west to east, '#' occupied (colour='flat') or digit 0..9 = z_low..z_high "
+            "of the highest return (colour='height'), '.' free, '?' unseen, the mark is drawn "
+            "as ^ > v < for north east south west when given; mark_cell is (column, row) in "
+            "the ascii. "
+        )
     return text
 
 
@@ -794,7 +799,7 @@ def encode(
     for i, handler in enumerate(handlers):
         if not hasattr(handler, "run"):
             raise TypeError(
-                f"handler {i} is {type(handler).__name__}, not one of {[h.__name__ for h in HANDLERS]}"
+                f"handler {i} is {type(handler).__name__}, not a query such as P.Overlap(...)"
             )
         sub = EncodeContext(
             cloud=ctx.cloud,
@@ -810,6 +815,6 @@ def encode(
         "num_points": len(points),
         "bounds_m": _bounds(points),
         "centroid_m": _centroid(points),
-        "form": render.FORM,
+        "form": constants.FORM,
         "results": results,
     }

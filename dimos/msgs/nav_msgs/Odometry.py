@@ -146,7 +146,7 @@ class Odometry(Timestamped):
             ],
         )
 
-    AGENT_ENCODE_LEGEND = agent_encoding.LEGEND
+    AGENT_ENCODE_LEGEND = agent_encoding.legend()
 
     def agent_encode(self) -> dict[str, Any]:
         """Describe native-frame pose and twist for an agent, with explicit units."""

@@ -73,6 +73,7 @@ Edit it when the API changes.
 
 | Path | Contents |
 |---|---|
+| `constants.py` | The two values more than one module reads: the build form and the grid cell limit. |
 | `fields.py` | `Select`, `Band`, `Grid`, `HeightField`, `Percentile`, `DistanceField`, `Threshold`, `Resample`, `Components`. |
 | `shapes/` | `Box`, `Cylinder`, `Sphere`. |
 | `handlers/` | One output per file: `closest`, `overlap`, `sweep`, `depth_view`, `occupancy_map`, `field_outputs` (`Sample`, `Window`, `Map`), `pick`, and `overview`, the no-argument default recipe. |

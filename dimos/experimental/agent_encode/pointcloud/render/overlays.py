@@ -28,7 +28,6 @@ from PIL import Image, ImageDraw
 from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
 
 Project = Callable[[np.ndarray], tuple[float, float] | None]
-COLOURS = ("#ff3bcc", "#00cfef", "#f79b24", "#91d52a")
 
 
 def grid_pixel(
@@ -63,8 +62,8 @@ def shape_lines(shape: dict[str, Any]) -> list[np.ndarray]:
         return [corners[[i, i ^ bit]] for i in range(8) for bit in (1, 2, 4) if i < i ^ bit]
     if kind not in ("Sphere", "Cylinder"):
         return []
-    angle = np.linspace(0, 2 * math.pi, 49)
-    circle = np.column_stack((np.cos(angle), np.sin(angle))) * shape["radius"]
+    angles = np.linspace(0, 2 * math.pi, 49)
+    circle = np.column_stack((np.cos(angles), np.sin(angles))) * shape["radius"]
     if kind == "Sphere":
         center = np.asarray(shape["center"])
         lines = []
@@ -87,11 +86,13 @@ def draw_overlays(
     project: Project,
     *,
     view_ref: dict[str, Any] | None = None,
+    palette: tuple[str, ...] = ("#ff3bcc", "#00cfef", "#f79b24", "#91d52a"),
 ) -> list[dict[str, Any]]:
     """Draw shapes, query contacts, and sweep paths with the render's own projection.
 
     Queries are evaluated against the original context, honoring each query's source.
-    Returned metadata identifies each colour and the query evidence it represents.
+    Overlays take ``palette`` colours in turn; the returned metadata identifies each
+    colour and the query evidence it represents.
     """
     if not overlays:
         return []
@@ -110,7 +111,7 @@ def draw_overlays(
             raise TypeError("overlays must be geometric shapes, query nodes, or query results")
         if not isinstance(result, dict):
             raise TypeError("overlay queries must return geometric result dictionaries")
-        colour = COLOURS[index % len(COLOURS)]
+        colour = palette[index % len(palette)]
         if None in result.get("z_range", ()):
             # Unbounded cylinder ends are drawn at the cloud's lowest/highest return.
             z = ctx.points[:, 2]

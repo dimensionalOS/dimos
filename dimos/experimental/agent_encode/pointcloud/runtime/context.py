@@ -37,9 +37,11 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class EncodeContext:
     cloud: PointCloud2
-    points: np.ndarray  # finite (N, 3) float32
+    points: np.ndarray
+    """Finite (N, 3) float32."""
     out_dir: Path
-    stem: str  # file name prefix for anything a handler writes
+    stem: str
+    """File name prefix for anything a handler writes."""
     cache: dict[tuple[Any, ...], Any] = field(default_factory=dict, compare=False, repr=False)
     parent: EncodeContext | None = field(default=None, compare=False, repr=False)
 
@@ -106,15 +108,11 @@ class EncodeContext:
         return's distance to its nearest neighbour. Renders draw no finer
         than this, so their cells and splats close at the cloud's own
         resolution."""
-        if len(self.points) < 2:
-            return render.MAX_POINT_SIZE_M
-        return float(np.median(render.point_spacing(self.points)))
+        return render.cloud_spacing(self.points)
 
 
 class Handler(Protocol):
     """One request inside ``agent_encode(*handlers)``: a render or a query,
-    fully parameterised by the caller. ``LEGEND`` documents its result."""
-
-    LEGEND: str
+    fully parameterised by the caller."""
 
     def run(self, ctx: EncodeContext) -> dict[str, Any]: ...

@@ -21,12 +21,15 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from dimos.msgs.nav_msgs.Odometry import Odometry
 
-LEGEND = (
-    "Odometry: ts is seconds; position_m and orientation_xyzw describe child_frame_id "
-    "in frame_id. Orientation is a quaternion in [x,y,z,w] order. "
-    "linear_velocity_m_s and angular_velocity_rad_s are [x,y,z] in child_frame_id. "
-    "No frame conversion or trajectory inference is performed. Covariances are not included."
-)
+
+def legend() -> str:
+    """The agent guide, served as ``Odometry.AGENT_ENCODE_LEGEND``."""
+    return (
+        "Odometry: ts is seconds; position_m and orientation_xyzw describe child_frame_id "
+        "in frame_id. Orientation is a quaternion in [x,y,z,w] order. "
+        "linear_velocity_m_s and angular_velocity_rad_s are [x,y,z] in child_frame_id. "
+        "No frame conversion or trajectory inference is performed. Covariances are not included."
+    )
 
 
 def encode(odometry: Odometry) -> dict[str, Any]:

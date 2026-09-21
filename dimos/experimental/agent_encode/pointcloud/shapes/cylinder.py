@@ -21,15 +21,14 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Cylinder:
-    """A vertical cylinder: ``center`` (x, y), ``radius`` in metres, and the
-    absolute ``z_range`` (low, high) it spans in the cloud's frame. Radius 0
-    is a vertical line, useful for "the nearest return to this spot"."""
+    """A vertical cylinder."""
 
     center: tuple[float, float]
+    """x, y."""
     radius: float
-    z_range: tuple[float | None, float | None]  # None = unbounded, as in Band
-
-    LEGEND = "Cylinder(center=(x, y), radius, z_range=(z_low, z_high)): vertical, absolute z."
+    """In metres. 0 is a vertical line, useful for "the nearest return to this spot"."""
+    z_range: tuple[float | None, float | None]
+    """The absolute (low, high) it spans in the cloud's frame; None = unbounded, as in Band."""
 
     def __post_init__(self) -> None:
         if not isinstance(self.z_range, (tuple, list)) or len(self.z_range) != 2:

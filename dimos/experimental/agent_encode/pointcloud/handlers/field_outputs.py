@@ -22,7 +22,8 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from dimos.experimental.agent_encode.pointcloud.fields import FieldData, FieldNode
+from dimos.experimental.agent_encode.pointcloud import constants
+from dimos.experimental.agent_encode.pointcloud.fields import FieldData, FieldNode, Grid
 from dimos.experimental.agent_encode.pointcloud.handlers.lib.reference import reference
 from dimos.experimental.agent_encode.pointcloud.render import raster as render
 from dimos.experimental.agent_encode.pointcloud.render.overlays import draw_overlays, grid_pixel
@@ -65,17 +66,16 @@ def metadata(data: FieldData, ctx: EncodeContext) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class Sample:
-    """Sample containing cells without interpolation; at uses the grid plane's coordinates.
-
-    radius > 0 summarises every cell whose centre lies within radius of the point:
-    min/max per channel, plus the distinct values for masks and component labels.
-    """
+    """Sample containing cells without interpolation."""
 
     source: FieldNode
     at: Any
+    """Coordinate pairs on the grid's plane."""
     fields: tuple[str, ...] | None = None
     decimals: int | None = None
     radius: float = 0.0
+    """Above 0, summarises every cell whose centre lies within it of the point:
+    min/max per channel, plus the distinct values for masks and component labels."""
 
     def run(self, ctx: EncodeContext) -> dict[str, Any]:
         data = ctx.evaluate(self.source)
@@ -151,10 +151,11 @@ class Sample:
 
 @dataclass(frozen=True)
 class Window:
-    """Exact cell slice (column, row, width, height), preserving the parent grid."""
+    """Exact cell slice, preserving the parent grid."""
 
     source: FieldNode
     cells: tuple[int, int, int, int]
+    """(column, row, width, height)."""
     fields: tuple[str, ...] | None = None
     decimals: int | None = None
 
@@ -191,24 +192,29 @@ class Map:
     """Render a scalar field, mask, or labels without modifying the field grid.
 
     Pixel origin is top-left; increasing the grid's second axis goes up.
-    Images use nearest-neighbour enlargement only; oversized grids are rejected.
     """
 
     source: FieldNode
     value_range: tuple[float, float] | None = None
     overlays: tuple[Any, ...] = ()
     max_side: int = 1024
+    """Longest image side in pixels. Images use nearest-neighbour enlargement only;
+    oversized grids are rejected."""
+
+    def pixels_per_cell(self, grid: Grid) -> int:
+        if (
+            type(self.max_side) is not int
+            or not 1 <= self.max_side <= 2048
+            or max(grid.shape) > self.max_side
+        ):
+            raise ValueError("map grid exceeds max_side (1..2048); request a smaller grid region")
+        return max(1, self.max_side // max(grid.shape))
 
     def run(self, ctx: EncodeContext) -> dict[str, Any]:
         data = ctx.evaluate(self.source)
         values = data.scalar()
         nx, ny = data.grid.shape
-        if (
-            type(self.max_side) is not int
-            or not 1 <= self.max_side <= 2048
-            or max(nx, ny) > self.max_side
-        ):
-            raise ValueError("map grid exceeds max_side (1..2048); request a smaller grid region")
+        scale = self.pixels_per_cell(data.grid)
         finite = np.isfinite(values)
         low, high = (
             self.value_range
@@ -223,16 +229,17 @@ class Map:
             raise ValueError("value_range must be finite and ordered")
         denominator = high - low if high != low else 1.0
         fractions = np.where(finite, np.clip((values - low) / denominator, 0, 1), 0)
+        missing_colour = [96, 96, 96]
         out = {
             **metadata(data, ctx),
             "handler": "Map",
             "view_ref": reference(self, ctx),
             "channel": next(iter(data.values)),
             "value_range": [low, high],
-            "missing_colour": [96, 96, 96],
+            "missing_colour": missing_colour,
             "display_aggregation": "none",
         }
-        if render.FORM != "image":
+        if constants.FORM != "image":
             chars = np.where(finite, (fractions * 9).astype(int).astype(str), "?")
             out.update(
                 ascii="\n".join("".join(row) for row in chars[::-1]),
@@ -244,8 +251,7 @@ class Map:
         if table is None:
             table = np.repeat(np.arange(256, dtype=np.uint8)[:, None], 3, axis=1)
         rgb = table[(fractions * 255).astype(int)].copy()
-        rgb[~finite] = (96, 96, 96)
-        scale = max(1, self.max_side // max(nx, ny))
+        rgb[~finite] = missing_colour
         picture = Image.fromarray(rgb[::-1].astype(np.uint8)).resize(
             (nx * scale, ny * scale), Image.Resampling.NEAREST
         )

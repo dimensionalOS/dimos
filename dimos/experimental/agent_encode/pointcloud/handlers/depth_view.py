@@ -20,6 +20,7 @@ from typing import Any
 
 import numpy as np
 
+from dimos.experimental.agent_encode.pointcloud import constants
 from dimos.experimental.agent_encode.pointcloud.handlers.lib.reference import _json, reference
 from dimos.experimental.agent_encode.pointcloud.render import raster as render
 from dimos.experimental.agent_encode.pointcloud.render.overlays import draw_overlays
@@ -43,27 +44,27 @@ def depth_data(node: Any, ctx: EncodeContext) -> tuple[render.DepthRaster, Encod
 
 @dataclass(frozen=True)
 class DepthView:
-    """A perspective depth render of the cloud from ``view``, in this build's
-    form (image or text)."""
+    """A perspective depth render of the cloud, in this build's form (image or text).
 
-    view: tuple[float, float, float, float, float]  # x, y, z, yaw_deg, pitch_deg
-    fov_deg: float = render.DEFAULT_FOV_DEG
-    size: tuple[int, int] = render.DEFAULT_DEPTH_SIZE
-    max_depth: float | None = render.DEFAULT_MAX_DEPTH_M
-    point_size_m: float | None = render.DEFAULT_POINT_SIZE_M
+    In the result, ``point_size_m`` is the [smallest, largest] width drawn, in metres,
+    and ``covered_pixels`` counts pixels with a return. ``colour`` gives near_m, far_m,
+    the near, far and no-return colours, sampled stops with depths, and the formula
+    depth_m = near_m * (far_m / near_m) ** f, f from 0 at colour_near to 1 at
+    colour_far on a log scale.
+    """
+
+    view: tuple[float, float, float, float, float]
+    """x, y, z, yaw_deg, pitch_deg."""
+    fov_deg: float = 90.0
+    size: tuple[int, int] = (768, 480)
+    """Width, height in pixels; large enough for a VLM to read detail."""
+    max_depth: float | None = None
+    """No cap: every return in front of the view is drawn."""
+    point_size_m: float | None = None
+    """One width for every return. None draws each as wide as the gap to its nearest
+    neighbour, so surfaces close at the cloud's own resolution."""
     source: Any = None
     overlays: tuple[Any, ...] = ()
-
-    LEGEND = (
-        "DepthView(view=(x, y, z, yaw_deg, pitch_deg), fov_deg=90, size=(w, h), max_depth=None, "
-        "point_size_m=None) -> a perspective render from the view. Every return in front of the "
-        "view is drawn unless max_depth caps it, each as wide as the gap to its nearest neighbour "
-        "so surfaces close at the cloud's own resolution; point_size_m fixes one width for all. "
-        "point_size_m in the result is the [smallest, largest] width drawn, in metres. "
-        "covered_pixels counts pixels with a return; colour gives near_m, far_m, the near, far and "
-        "no-return colours, sampled stops with depths, and the formula depth_m = near_m * "
-        "(far_m / near_m) ** f, f from 0 at colour_near to 1 at colour_far on a log scale."
-    )
 
     def run(self, ctx: EncodeContext) -> dict[str, Any]:
         original_ctx = ctx
@@ -83,7 +84,7 @@ class DepthView:
             "covered_pixels": int(np.isfinite(depth).sum()),
             "colour": render.colour_scale(near, far),
         }
-        if render.FORM == "image":
+        if constants.FORM == "image":
             with ctx.artifact("depth.png") as (staging, path):
                 render.depth_png(depth, staging, max_depth=self.max_depth)
                 if self.overlays:

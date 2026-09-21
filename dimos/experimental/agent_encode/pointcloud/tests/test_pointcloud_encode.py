@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from dimos.experimental.agent_encode.pointcloud import constants
 from dimos.experimental.agent_encode.pointcloud.handlers.closest import Closest
 from dimos.experimental.agent_encode.pointcloud.handlers.depth_view import DepthView
 from dimos.experimental.agent_encode.pointcloud.handlers.occupancy_map import OccupancyMap
@@ -29,6 +30,7 @@ from dimos.experimental.agent_encode.pointcloud.runtime.dispatch import encode, 
 from dimos.experimental.agent_encode.pointcloud.shapes.box import Box
 from dimos.experimental.agent_encode.pointcloud.shapes.cylinder import Cylinder
 from dimos.experimental.agent_encode.pointcloud.shapes.sphere import Sphere
+from dimos.msgs.nav_msgs.OccupancyGrid import CostValues
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
@@ -146,9 +148,9 @@ def test_views_follow_the_build_form(tmp_path: Path) -> None:
     assert occ["mark_cell"] is not None and occ["colour"] == "flat"
     assert Path(depth["image"]).parent == tmp_path.resolve()
     assert depth["image"] != occ["image"]
-    saved = render.FORM
+    saved = constants.FORM
     try:
-        render.FORM = "text"
+        constants.FORM = "text"
         text = encode(
             cloud,
             DepthView(view=(0.0, 0.0, 1.0, 0.0, 0.0)),
@@ -156,7 +158,7 @@ def test_views_follow_the_build_form(tmp_path: Path) -> None:
             out_dir=tmp_path / "none",
         )
     finally:
-        render.FORM = saved
+        constants.FORM = saved
     assert (
         text["form"] == "text" and "ascii" in text["results"][0] and "ascii" in text["results"][1]
     )
@@ -174,15 +176,15 @@ def occupancy_at(result: dict, x: float, y: float) -> str:
 
 def test_occupancy_band_is_absolute_and_free_means_floor_returns(tmp_path: Path) -> None:
     cloud = room()
-    saved = render.FORM
+    saved = constants.FORM
     try:
-        render.FORM = "text"
+        constants.FORM = "text"
         band = encode(cloud, OccupancyMap(z_range=(0.1, 2.5)))["results"][0]
         low = encode(cloud, OccupancyMap(z_range=(-0.5, 2.5)))["results"][0]
         spread = encode(cloud, OccupancyMap(z_range=(0.1, 2.5), free_radius=1.0))["results"][0]
         tall = encode(cloud, OccupancyMap(z_range=(0.1, 2.5), colour="height"))["results"][0]
     finally:
-        render.FORM = saved
+        constants.FORM = saved
     assert band["z_range_m"] == [0.1, 2.5] and band["free_radius_m"] == 0
     assert occupancy_at(band, -2.0, 0.0) == ".", "floor returns below the band mark free"
     assert occupancy_at(band, 1.0, -1.0) == "#", "the box is inside the band"
@@ -214,10 +216,18 @@ def test_height_image_and_bounds(tmp_path: Path) -> None:
     assert occ["size"][0] <= 2 * 1.0 / occ["cell_m"] + 3, "a 1 m zoom is about 2 m of cells"
     assert Path(occ["image"]).exists() and "stops" in occ["height_scale"]
     grid, top = render.occupancy_grid(
-        cloud, np.asarray(cloud.points_f32()), z_range=(0.1, 2.5), spacing=0.1, heights=True
+        cloud,
+        np.asarray(cloud.points_f32()),
+        z_range=(0.1, 2.5),
+        spacing=0.1,
+        max_cells=256,
+        free_radius=0.0,
+        heights=True,
     )
     assert top is not None and top.shape == grid.grid.shape
-    assert not np.isnan(top[grid.grid == render.OCCUPIED]).any(), "every occupied cell has a height"
+    assert not np.isnan(top[grid.grid == CostValues.OCCUPIED]).any(), (
+        "every occupied cell has a height"
+    )
 
 
 def test_encode_orders_results_and_legend_lists_everything(tmp_path: Path) -> None:
@@ -231,7 +241,7 @@ def test_encode_orders_results_and_legend_lists_everything(tmp_path: Path) -> No
     assert [r["handler"] for r in out["results"]] == ["Overlap", "Closest"]
     metadata = encode(cloud, {})
     assert metadata["results"] == {} and metadata["bounds_m"] is not None
-    with pytest.raises(TypeError, match="not one of"):
+    with pytest.raises(TypeError, match="not a query"):
         encode(cloud, "DepthView")  # type: ignore[arg-type]
     text = legend()
     for name in (

@@ -22,8 +22,8 @@ it, so a render from inside the space can be placed on the map of the whole
 space. Every height is absolute z in the cloud's frame; nothing here
 estimates a floor.
 
-A build produces one form, set by ``FORM``: images (PNGs written to disk)
-or text (ASCII grids). Text builds describe their grids in ``_LEGEND_TEXT``.
+A build produces one form, set by ``constants.FORM``: images (PNGs written to
+disk) or text (ASCII grids).
 
 Conventions: x east, y north, z up. Yaw 0 looks along +x, positive yaw turns
 toward +y (counter-clockwise from above). Pitch positive looks up.
@@ -43,54 +43,23 @@ from PIL import Image, ImageDraw
 from dimos.constants import STATE_DIR
 from dimos.mapping.pointclouds.occupancy import general_occupancy
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-DEFAULT_FOV_DEG = 90.0
-DEFAULT_DEPTH_SIZE = (768, 480)  # width, height in pixels; large enough for a VLM to read detail
-DEFAULT_MAX_DEPTH_M: float | None = None  # no cap: every return in front of the view is drawn
-DEFAULT_POINT_SIZE_M: float | None = (
-    None  # None: each return as wide as the gap to its nearest neighbour
-)
-MIN_POINT_SIZE_M = 0.01
-MAX_POINT_SIZE_M = 0.5
-MAX_SPLAT_RADIUS_PX = 12
-DEFAULT_MAX_CELLS = 256  # a 25 m span keeps 0.1 m cells
-DEFAULT_FREE_RADIUS_M = 0.0  # free cells spread no further than the floor returns that made them
-COLOUR_FLAT = "flat"  # occupied cells black
-COLOUR_HEIGHT = "height"  # occupied cells coloured by their highest return
-COLOURS = (COLOUR_FLAT, COLOUR_HEIGHT)
-DEFAULT_ASCII_DEPTH = (64, 16)  # columns, rows
-DEFAULT_ASCII_MAP_COLS = 64
-OCCUPANCY_TARGET_PX = 1024  # long side of the occupancy image; cells scale up to reach it
-# The form this build produces: "image" (PNG files, paths in the result) or
-# "text" (ascii grids). One per build; there is no caller-side switch. The
-# legend describes only this form.
-FORM = "image"
-OCCUPIED = 100
-FREE = 0
-UNKNOWN = -1
-
-_LEGEND_TEXT = (
-    "Text forms are ascii grids. depth ascii: rows top-to-bottom, columns left-to-right, digit 0..9 = "
-    "near..far by ascii_formula, '.' = no return (depth unknown, treat as infinity). occupancy ascii: rows run north (top) to "
-    "south, columns west to east, '#' occupied (colour='flat') or digit 0..9 = z_low..z_high of the "
-    "highest return (colour='height'), '.' free, '?' unseen, the mark is drawn as ^ > v < for "
-    "north east south west when given; mark_cell is (column, row) in the ascii. "
-)
-
 
 @dataclass(frozen=True)
 class View:
-    """A camera pose: position in the cloud's frame, heading and tilt in degrees."""
+    """A camera pose in the cloud's frame."""
 
     x: float
     y: float
     z: float
     yaw_deg: float = 0.0
+    """Heading in degrees."""
     pitch_deg: float = 0.0
+    """Tilt in degrees."""
 
     def axes(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Unit vectors forward, right, up in the cloud's frame."""
@@ -120,7 +89,8 @@ class DepthRaster:
     depth: np.ndarray
     widths: tuple[float, float] | None
     point_ids: np.ndarray
-    provenance: np.ndarray  # 0 missing, 1 projected return, 2 splat, 3 filled pixel
+    provenance: np.ndarray
+    """0 missing, 1 projected return, 2 splat, 3 filled pixel."""
     projected_uv: np.ndarray
 
 
@@ -128,10 +98,10 @@ def depth_image(
     points: np.ndarray,
     view: View,
     *,
-    fov_deg: float = DEFAULT_FOV_DEG,
-    size: tuple[int, int] = DEFAULT_DEPTH_SIZE,
-    max_depth: float | None = DEFAULT_MAX_DEPTH_M,
-    point_size_m: float | None = DEFAULT_POINT_SIZE_M,
+    fov_deg: float,
+    size: tuple[int, int],
+    max_depth: float | None,
+    point_size_m: float | None,
 ) -> tuple[np.ndarray, tuple[float, float] | None]:
     raster = depth_raster(
         points, view, fov_deg=fov_deg, size=size, max_depth=max_depth, point_size_m=point_size_m
@@ -143,10 +113,11 @@ def depth_raster(
     points: np.ndarray,
     view: View,
     *,
-    fov_deg: float = DEFAULT_FOV_DEG,
-    size: tuple[int, int] = DEFAULT_DEPTH_SIZE,
-    max_depth: float | None = DEFAULT_MAX_DEPTH_M,
-    point_size_m: float | None = DEFAULT_POINT_SIZE_M,
+    fov_deg: float,
+    size: tuple[int, int],
+    max_depth: float | None,
+    point_size_m: float | None,
+    max_splat_px: int = 12,
 ) -> DepthRaster:
     """Depth along the view direction per pixel, ``inf`` where nothing was hit,
     shape (height, width), and the (smallest, largest) width in metres the
@@ -154,7 +125,8 @@ def depth_raster(
     drawn as a square at its depth, as wide as the gap to its nearest
     neighbour in the cloud (or ``point_size_m`` for every return when given),
     so a dense cloud renders finely and a sparse one still closes into
-    surfaces; the nearest return wins wherever squares overlap. Remaining
+    surfaces; the nearest return wins wherever squares overlap. A square
+    reaches at most ``max_splat_px`` pixels from its return. Remaining
     one-pixel holes are closed from their nearest neighbour."""
     width, height = size
     if any(type(n) is not int or not 1 <= n <= 2048 for n in size) or width * height > 2097152:
@@ -191,7 +163,7 @@ def depth_raster(
     col = np.floor(u).astype(np.int64)
     row = np.floor(v).astype(np.int64)
     width_m = point_spacing(rel) if point_size_m is None else np.full(len(d), point_size_m)
-    radius = np.clip(np.round(focal * width_m / d / 2.0), 0, MAX_SPLAT_RADIUS_PX).astype(np.int64)
+    radius = np.clip(np.round(focal * width_m / d / 2.0), 0, max_splat_px).astype(np.int64)
     # Positive float32 bit order equals numeric depth order; low bits break ties by return ID.
     keys = (d.astype(np.float32).view(np.uint32).astype(np.uint64) << 32) | source_ids.astype(
         np.uint64
@@ -207,10 +179,10 @@ def depth_raster(
                 cols = gc + dx
                 inside = (cols >= 0) & (cols < width) & (rows >= 0) & (rows < height)
                 np.minimum.at(packed, rows[inside] * width + cols[inside], gkeys[inside])
-    packed = packed.reshape(height, width)
-    valid = packed != missing
-    depth[valid] = (packed[valid] >> 32).astype(np.uint32).view(np.float32)
-    ids[valid] = (packed[valid] & np.uint64(0xFFFFFFFF)).astype(np.int64)
+    nearest = packed.reshape(height, width)
+    valid = nearest != missing
+    depth[valid] = (nearest[valid] >> 32).astype(np.uint32).view(np.float32)
+    ids[valid] = (nearest[valid] & np.uint64(0xFFFFFFFF)).astype(np.int64)
     yy, xx = np.indices(depth.shape)
     provenance[valid] = 2
     exact = (
@@ -239,17 +211,24 @@ def depth_raster(
     )
 
 
-def point_spacing(points: np.ndarray) -> np.ndarray:
+def point_spacing(points: np.ndarray, *, min_m: float = 0.01, max_m: float = 0.5) -> np.ndarray:
     """Distance from each return to its nearest neighbour, clamped to
-    [MIN_POINT_SIZE_M, MAX_POINT_SIZE_M]: the width to draw it at so that
-    neighbours just touch."""
+    [``min_m``, ``max_m``]: the width to draw it at so that neighbours just
+    touch. A lone return has no neighbour and gets ``max_m``."""
     from scipy.spatial import cKDTree
 
     if len(points) < 2:
-        return np.full(len(points), MAX_POINT_SIZE_M)
+        return np.full(len(points), max_m)
     d, _ = cKDTree(points).query(points, k=2)
-    spacing: np.ndarray = np.clip(d[:, 1], MIN_POINT_SIZE_M, MAX_POINT_SIZE_M)
+    spacing: np.ndarray = np.clip(d[:, 1], min_m, max_m)
     return spacing
+
+
+def cloud_spacing(points: np.ndarray) -> float:
+    """The typical gap between neighbouring returns: the median of
+    :func:`point_spacing`. A cloud without returns is spaced like a lone return."""
+    lone = np.zeros((1, 3), dtype=np.float32)
+    return float(np.median(point_spacing(points if len(points) else lone)))
 
 
 def _close_holes(depth: np.ndarray) -> np.ndarray:
@@ -268,10 +247,10 @@ def _close_holes(depth: np.ndarray) -> np.ndarray:
 
 
 def depth_ascii(
-    depth: np.ndarray, *, max_depth: float | None, shape: tuple[int, int] = DEFAULT_ASCII_DEPTH
+    depth: np.ndarray, *, max_depth: float | None, shape: tuple[int, int] = (64, 16)
 ) -> str:
-    """The depth image as text: nearest return per block, digit 0..9 near..far
-    over the colour range (see :func:`colour_range`)."""
+    """The depth image as ``shape`` (columns, rows) of text: nearest return per
+    block, digit 0..9 near..far over the colour range (see :func:`colour_range`)."""
     near, far = colour_range(depth, max_depth)
     cols, rows = shape
     height, width = depth.shape
@@ -393,8 +372,8 @@ def occupancy_grid(
     *,
     z_range: tuple[float, float],
     spacing: float,
-    max_cells: int = DEFAULT_MAX_CELLS,
-    free_radius: float = DEFAULT_FREE_RADIUS_M,
+    max_cells: int,
+    free_radius: float,
     zoom: tuple[float, float, float] | None = None,
     heights: bool = False,
     _point_cells: dict[str, np.ndarray] | None = None,
@@ -556,7 +535,7 @@ def occupancy_ascii(
     mark: tuple[float, float, float] | None = None,
     heights: np.ndarray | None = None,
     z_range: tuple[float, float] | None = None,
-    max_cols: int = DEFAULT_ASCII_MAP_COLS,
+    max_cols: int = 64,
 ) -> tuple[str, int]:
     """The map as text and the thinning step used. Blocks of ``step`` cells
     become one character: '#' if any is occupied (or, with ``heights`` and
@@ -577,13 +556,13 @@ def occupancy_ascii(
             block = cells[r : r + step, c : c + step]
             if mark is not None and r <= mark_row < r + step and c <= mark_col < c + step:
                 chars.append(heading_char(mark[2]))
-            elif (block == OCCUPIED).any():
+            elif (block == CostValues.OCCUPIED).any():
                 if digits is None:
                     chars.append("#")
                 else:
                     top = np.nanmax(digits[r : r + step, c : c + step])
                     chars.append(str(min(9, int(9 * float(top)))) if np.isfinite(top) else "#")
-            elif (block == FREE).any():
+            elif (block == CostValues.FREE).any():
                 chars.append(".")
             else:
                 chars.append("?")
@@ -598,24 +577,21 @@ def occupancy_png(
     mark: tuple[float, float, float] | None = None,
     heights: np.ndarray | None = None,
     z_range: tuple[float, float] | None = None,
-    target_px: int = OCCUPANCY_TARGET_PX,
+    scale: int,
 ) -> Path:
     """White free, grey unseen, thin grey lines every metre. Occupied cells
     are black, or with ``heights`` and ``z_range`` coloured by their highest
     return from the low to the high end of the band. ``mark`` (x, y,
-    yaw_deg) is drawn in red with a line along its heading. Cells are scaled
-    so the image's long side is about ``target_px``, large enough to read
-    rooms."""
+    yaw_deg) is drawn in red with a line along its heading. Each cell is
+    ``scale`` pixels wide."""
     cells = grid_north_up(grid)
-    rows, cols = cells.shape
-    scale = max(1, round(target_px / max(rows, cols)))
     rgb = np.full((*cells.shape, 3), 190, dtype=np.uint8)
-    rgb[cells == FREE] = 255
-    rgb[cells == OCCUPIED] = 0
+    rgb[cells == CostValues.FREE] = 255
+    rgb[cells == CostValues.OCCUPIED] = 0
     table = _turbo()
     if heights is not None and z_range is not None:
         fraction = np.flipud(height_fraction(heights, z_range))
-        painted = (cells == OCCUPIED) & np.isfinite(fraction)
+        painted = (cells == CostValues.OCCUPIED) & np.isfinite(fraction)
         if table is not None:
             rgb[painted] = table[(255 * fraction[painted]).astype(np.uint8)]
         else:

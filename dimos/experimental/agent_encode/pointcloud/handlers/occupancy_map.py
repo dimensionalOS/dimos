@@ -20,44 +20,52 @@ from typing import Any
 import numpy as np
 from scipy import ndimage
 
+from dimos.experimental.agent_encode.pointcloud import constants
 from dimos.experimental.agent_encode.pointcloud.fields import Grid
 from dimos.experimental.agent_encode.pointcloud.handlers.lib.reference import reference
 from dimos.experimental.agent_encode.pointcloud.render import raster as render
 from dimos.experimental.agent_encode.pointcloud.render.overlays import draw_overlays, grid_pixel
 from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 
 
 @dataclass(frozen=True)
 class OccupancyMap:
-    """The top-down occupancy map of the cloud over the absolute band
-    ``z_range``, in this build's form (image or text). The whole cloud unless
-    ``zoom`` crops a square; ``mark`` draws a pose on it."""
+    """The top-down occupancy map of the cloud, in this build's form (image or text).
 
-    z_range: tuple[float, float]  # absolute z: below = free, inside = occupied, above = ignored
-    max_cells: int = render.DEFAULT_MAX_CELLS
-    zoom: tuple[float, float, float] | None = None  # x, y, radius
-    mark: tuple[float, float, float] | None = None  # x, y, yaw_deg
-    free_radius: float = render.DEFAULT_FREE_RADIUS_M
-    colour: str = render.COLOUR_FLAT
+    The result gives z_range_m, spacing_m, cell_m, origin_xy (world position of the
+    south-west corner), size [columns, rows], occupied_cells, free_cells,
+    unseen_cells, and mark_cell [column, row] when a mark is given.
+    """
+
+    z_range: tuple[float, float]
+    """Absolute z: a return below it marks its cell free, inside it occupied, above it
+    is ignored."""
+    max_cells: int = 256
+    """Most cells on a side. Cells are spacing_m, the gap between neighbouring returns,
+    or coarser to fit; a 25 m span keeps 0.1 m cells."""
+    zoom: tuple[float, float, float] | None = None
+    """x, y, radius of a square to see a place closely; the whole cloud otherwise."""
+    mark: tuple[float, float, float] | None = None
+    """x, y, yaw_deg of a pose to draw on the map."""
+    free_radius: float = 0.0
+    """Metres that free spreads. At 0, free cells spread no further than the floor
+    returns that made them."""
+    colour: str = "flat"
+    """Occupied cells are black, or with "height" coloured by their highest return over
+    ``z_range``, which adds height_scale to read it back."""
     source: Any = None
     overlays: tuple[Any, ...] = ()
     grid: Grid | None = None
+    """An explicit XY grid fixes the origin, resolution, and extent; it cannot be
+    combined with ``zoom`` and must fit ``max_cells`` without coarsening."""
 
-    LEGEND = (
-        "OccupancyMap(z_range=(z_low, z_high), max_cells=256, zoom=None | (x, y, radius), "
-        "mark=None | (x, y, yaw_deg), free_radius=0, colour='flat' | 'height') -> top-down map of "
-        "the whole cloud, or of the square zoom; a return below z_range (absolute z) marks its cell "
-        "free, inside it occupied, above it is ignored; free spreads free_radius metres when set. "
-        "Cells are spacing_m, the gap between neighbouring returns, or coarser to fit max_cells; "
-        "zoom to see a place closely. colour='height' colours each occupied cell by its highest "
-        "return over z_range and adds height_scale to read it back. Result: z_range_m, spacing_m, "
-        "cell_m, origin_xy (world position of the south-west corner), size [columns, rows], "
-        "occupied_cells, free_cells, unseen_cells, mark_cell [column, row] when a mark is given. "
-        "An explicit XY grid fixes the origin, resolution, and extent; it cannot be combined "
-        "with zoom and must fit max_cells without coarsening."
-    )
+    @staticmethod
+    def pixels_per_cell(grid: OccupancyGrid) -> int:
+        """Cells scale up until the image's long side is about 1024 px, large enough
+        to read rooms."""
+        return max(1, round(1024 / max(grid.width, grid.height)))
 
     def _fixed_grid(self, ctx: EncodeContext) -> tuple[OccupancyGrid, np.ndarray | None]:
         spec = self.grid
@@ -80,17 +88,17 @@ class OccupancyMap:
         indices, valid = spec.indices(ctx.points[:, :2])
         points, indices = ctx.points[valid], indices[valid]
         shape = (spec.shape[1], spec.shape[0])
-        cells = np.full(shape, render.UNKNOWN, dtype=np.int8)
+        cells = np.full(shape, CostValues.UNKNOWN, dtype=np.int8)
         below = points[:, 2] < self.z_range[0]
         occupied = (points[:, 2] >= self.z_range[0]) & (points[:, 2] <= self.z_range[1])
-        cells[indices[below, 1], indices[below, 0]] = render.FREE
-        cells[indices[occupied, 1], indices[occupied, 0]] = render.OCCUPIED
-        free = cells == render.FREE
+        cells[indices[below, 1], indices[below, 0]] = CostValues.FREE
+        cells[indices[occupied, 1], indices[occupied, 0]] = CostValues.OCCUPIED
+        free = cells == CostValues.FREE
         if self.free_radius > 0 and free.any():
             distance = ndimage.distance_transform_edt(~free, sampling=spec.cell_m)
-            cells[(distance <= self.free_radius) & (cells != render.OCCUPIED)] = render.FREE
+            cells[(distance <= self.free_radius) & (cells != CostValues.OCCUPIED)] = CostValues.FREE
         heights = None
-        if self.colour == render.COLOUR_HEIGHT:
+        if self.colour == "height":
             heights = np.full(shape, -np.inf)
             np.maximum.at(
                 heights,
@@ -109,8 +117,8 @@ class OccupancyMap:
 
     def measure(self, ctx: EncodeContext) -> tuple[OccupancyGrid, np.ndarray | None, np.ndarray]:
         """Build the rendered grid and retain the builder's exact contributor cell indices."""
-        if self.colour not in render.COLOURS:
-            raise ValueError(f"colour must be one of {render.COLOURS}, not {self.colour!r}")
+        if self.colour not in ("flat", "height"):
+            raise ValueError(f"colour must be 'flat' or 'height', not {self.colour!r}")
         if type(self.max_cells) is not int or not 1 <= self.max_cells <= 1024:
             raise ValueError("max_cells must be an integer in 1..1024")
         if (
@@ -135,7 +143,7 @@ class OccupancyMap:
                 max_cells=self.max_cells,
                 free_radius=self.free_radius,
                 zoom=self.zoom,
-                heights=self.colour == render.COLOUR_HEIGHT,
+                heights=self.colour == "height",
                 _point_cells=provenance,
             )
             indices = provenance["indices"]
@@ -163,9 +171,9 @@ class OccupancyMap:
             "mark": list(self.mark) if self.mark is not None else None,
             "free_radius_m": self.free_radius,
             "colour": self.colour,
-            "occupied_cells": int((grid.grid == render.OCCUPIED).sum()),
-            "free_cells": int((grid.grid == render.FREE).sum()),
-            "unseen_cells": int((grid.grid == render.UNKNOWN).sum()),
+            "occupied_cells": int((grid.grid == CostValues.OCCUPIED).sum()),
+            "free_cells": int((grid.grid == CostValues.FREE).sum()),
+            "unseen_cells": int((grid.grid == CostValues.UNKNOWN).sum()),
         }
         if self.grid is not None:
             out["grid"] = self.grid.describe(ctx)
@@ -175,7 +183,8 @@ class OccupancyMap:
             out["mark_cell"] = list(render.cell_of(grid, self.mark[0], self.mark[1]))
         if heights is not None:
             out["height_scale"] = render.height_scale(self.z_range)
-        if render.FORM == "image":
+        if constants.FORM == "image":
+            scale = self.pixels_per_cell(grid)
             with ctx.artifact("occupancy.png") as (staging, path):
                 render.occupancy_png(
                     grid,
@@ -183,9 +192,9 @@ class OccupancyMap:
                     mark=self.mark,
                     heights=heights,
                     z_range=self.z_range,
+                    scale=scale,
                 )
                 if self.overlays:
-                    scale = max(1, round(render.OCCUPANCY_TARGET_PX / max(grid.width, grid.height)))
 
                     def project(point: np.ndarray) -> tuple[float, float]:
                         return grid_pixel(

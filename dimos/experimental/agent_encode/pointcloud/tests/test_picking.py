@@ -24,6 +24,7 @@ import numpy as np
 from PIL import Image
 import pytest
 
+from dimos.experimental.agent_encode.pointcloud import constants
 from dimos.experimental.agent_encode.pointcloud.render import raster as render
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as P
 
@@ -307,7 +308,7 @@ def test_reference_validation_refuses_tampering_and_nested_overflow(
     nested = {}
     nested["loop"] = nested
     assert result(cloud, P.Pick(nested, uv=(0, 0)), tmp_path)["status"] == "invalid"
-    monkeypatch.setattr(render, "FORM", "text")
+    monkeypatch.setattr(constants, "FORM", "text")
     assert "image build" in result(cloud, P.Pick(ref, uv=(0, 0)), tmp_path)["error"]
 
 

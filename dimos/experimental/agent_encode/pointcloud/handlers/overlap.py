@@ -29,16 +29,16 @@ Shape = Box | Cylinder | Sphere
 
 @dataclass(frozen=True)
 class Overlap:
-    """Are there returns inside ``shape``, and where do they lie."""
+    """Are there returns inside a shape, and where do they lie.
+
+    The result gives the count of returns inside and, when any, bounds_m as
+    [[x_min, y_min, z_min], [x_max, y_max, z_max]] of those returns. A count of 0
+    says nothing was returned from inside the shape; it does not prove the volume
+    is empty.
+    """
 
     shape: Shape
     source: Any = None
-
-    LEGEND = (
-        "Overlap(shape) -> count of returns inside the shape and, when any, bounds_m as "
-        "[[x_min, y_min, z_min], [x_max, y_max, z_max]] of those returns. A count of 0 says "
-        "nothing was returned from inside the shape; it does not prove the volume is empty."
-    )
 
     @cached_property
     def selection(self) -> Select:

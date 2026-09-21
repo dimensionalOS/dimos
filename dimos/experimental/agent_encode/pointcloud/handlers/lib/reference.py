@@ -23,18 +23,21 @@ from typing import Any
 
 import numpy as np
 
-from dimos.experimental.agent_encode.pointcloud import fields as field_nodes
+from dimos.experimental.agent_encode.pointcloud import constants, fields as field_nodes
 from dimos.experimental.agent_encode.pointcloud.render import raster as render
 from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
 from dimos.experimental.agent_encode.pointcloud.shapes.box import Box
 from dimos.experimental.agent_encode.pointcloud.shapes.cylinder import Cylinder
 from dimos.experimental.agent_encode.pointcloud.shapes.sphere import Sphere
 
-MAX_REF_BYTES = 8192
-
 
 def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _small(ref: dict[str, Any]) -> None:
+    if len(_json(ref).encode()) > 8192:
+        raise ValueError("reference exceeds 8192 bytes; simplify its source recipe")
 
 
 def _bounded(value: Any, depth: int = 0, count: list[int] | None = None) -> None:
@@ -132,7 +135,9 @@ def _cloud_digest(ctx: EncodeContext) -> str:
     if key not in ctx.cache:
         digest = hashlib.sha256(np.ascontiguousarray(root.points, dtype="<f4").tobytes())
         digest.update(
-            _json({"frame": root.cloud.frame_id, "ts": root.cloud.ts, "form": render.FORM}).encode()
+            _json(
+                {"frame": root.cloud.frame_id, "ts": root.cloud.ts, "form": constants.FORM}
+            ).encode()
         )
         ctx.cache[key] = digest.hexdigest()
     return str(ctx.cache[key])
@@ -146,8 +151,7 @@ def reference(node: Any, ctx: EncodeContext, kind: str = "view") -> dict[str, An
     }
     _bounded(payload)
     result = {**payload, "digest": hashlib.sha256(_json(payload).encode()).hexdigest()}
-    if len(_json(result).encode()) > MAX_REF_BYTES:
-        raise ValueError("reference exceeds 8192 bytes; simplify its source recipe")
+    _small(result)
     return result
 
 
@@ -155,8 +159,7 @@ def resolve(ref: Any, ctx: EncodeContext, kind: str = "view") -> Any:
     _bounded(ref)
     if not isinstance(ref, dict) or set(ref) != {"schema", "cloud", "recipe", "digest"}:
         raise ValueError("invalid reference envelope")
-    if len(_json(ref).encode()) > MAX_REF_BYTES:
-        raise ValueError("reference exceeds 8192 bytes")
+    _small(ref)
     payload = {k: v for k, v in ref.items() if k != "digest"}
     if (
         ref["schema"] != f"pointcloud.{kind}/v1"

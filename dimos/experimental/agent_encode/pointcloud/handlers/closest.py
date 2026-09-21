@@ -29,16 +29,15 @@ Shape = Box | Cylinder | Sphere
 
 @dataclass(frozen=True)
 class Closest:
-    """The return nearest to ``shape``'s surface, and how far away it is."""
+    """The return nearest to a shape's surface, and how far away it is.
+
+    The result gives distance_m from the surface to that return (0 when a return is
+    inside) and its point_m [x, y, z]; both are null when no return qualifies.
+    """
 
     shape: Shape
+    """A Cylinder only considers returns inside its z_range and measures horizontally."""
     source: Any = None
-
-    LEGEND = (
-        "Closest(shape) -> distance_m from the shape's surface to the nearest return (0 when a "
-        "return is inside) and point_m [x, y, z] of that return; a Cylinder only considers "
-        "returns inside its z_range and measures horizontally. null when no return qualifies."
-    )
 
     def run(self, ctx: EncodeContext) -> dict[str, Any]:
         ctx = ctx.select(self.source)

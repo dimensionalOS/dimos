@@ -17,7 +17,7 @@ import json
 import numpy as np
 import pytest
 
-from dimos.experimental.agent_encode.pointcloud.fields import MAX_GRID_CELLS
+from dimos.experimental.agent_encode.pointcloud.constants import MAX_GRID_CELLS
 from dimos.experimental.agent_encode.pointcloud.handlers.overview import cover
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as P
 

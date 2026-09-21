@@ -21,13 +21,12 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Sphere:
-    """A sphere: ``center`` (x, y, z) and ``radius`` in metres. Radius 0 is a
-    point, useful for "the nearest return to here in any direction"."""
+    """A sphere."""
 
     center: tuple[float, float, float]
+    """x, y, z."""
     radius: float
-
-    LEGEND = "Sphere(center=(x, y, z), radius)."
+    """In metres. 0 is a point, useful for "the nearest return to here in any direction"."""
 
     def _from_center(self, points: np.ndarray) -> np.ndarray:
         d: np.ndarray = np.linalg.norm(points - np.asarray(self.center, dtype=points.dtype), axis=1)

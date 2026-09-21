@@ -22,14 +22,14 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Box:
-    """An axis-aligned-in-z box: ``center`` (x, y, z) in the cloud's frame,
-    ``size`` (x, y, z) full extents in metres, rotated ``yaw_deg`` about z."""
+    """An axis-aligned-in-z box."""
 
     center: tuple[float, float, float]
+    """x, y, z in the cloud's frame."""
     size: tuple[float, float, float]
+    """x, y, z full extents in metres."""
     yaw_deg: float = 0.0
-
-    LEGEND = "Box(center=(x, y, z), size=(sx, sy, sz), yaw_deg): full extents, rotated about z."
+    """Rotation about z."""
 
     def _local(self, points: np.ndarray) -> np.ndarray:
         """Points in the box frame: origin at the centre, x along the yaw."""

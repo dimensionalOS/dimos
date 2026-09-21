@@ -26,32 +26,28 @@ from dimos.experimental.agent_encode.pointcloud.shapes.cylinder import Cylinder
 from dimos.experimental.agent_encode.pointcloud.shapes.sphere import Sphere
 
 Shape = Box | Cylinder | Sphere
-DEFAULT_STEP_M = 0.05
 
 
 @dataclass(frozen=True)
 class Sweep:
-    """Sample a shape's motion along a heading or a normalized 3D direction.
+    """Sample a shape's motion along a heading or a 3D direction.
 
     Samples include the start and endpoint; contacts between samples can be missed.
+    The result gives hit (bool), distance_m the shape travelled before first touching
+    a return (null when it reaches max_distance untouched), and point_m [x, y, z] of
+    that first return. start_inside counts the returns already inside the shape
+    before it moves; any gives distance_m 0, so shrink or move the shape to sweep
+    past them.
     """
 
     shape: Shape
     direction_deg: float | None = None
+    """Horizontal heading, degrees from +x toward +y."""
     max_distance: float = 1.0
-    step_m: float = DEFAULT_STEP_M
+    step_m: float = 0.05
     source: Any = None
     direction: tuple[float, float, float] | None = None
-
-    LEGEND = (
-        "Sweep(shape, direction_deg, max_distance, step_m=0.05) -> hit (bool), distance_m the shape "
-        "travelled before first touching a return (null when it reaches max_distance untouched), "
-        "and point_m [x, y, z] of that first return. Direction is horizontal, degrees from +x "
-        "toward +y. start_inside counts the returns already inside the shape before it moves; "
-        "any gives distance_m 0, so shrink or move the shape to sweep past them. "
-        "Alternatively direction=(dx,dy,dz) supplies a normalized 3D heading. "
-        "This is sampled motion, including the endpoint; contacts between samples can be missed."
-    )
+    """A 3D heading (dx, dy, dz) in place of ``direction_deg``; it is normalized."""
 
     def run(self, ctx: EncodeContext) -> dict[str, Any]:
         ctx = ctx.select(self.source)

@@ -26,24 +26,25 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
+from dimos.experimental.agent_encode.pointcloud import constants
 from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
-
-MAX_GRID_CELLS = 262144
 
 
 @dataclass(frozen=True)
 class Grid:
-    """Fixed half-open cells, indexed [row, column]; shape is (columns, rows).
+    """Fixed half-open cells, indexed [row, column].
 
-    plane names two cloud axes, not gravity. None frame inherits the cloud frame.
     Resolution is never changed to satisfy an output budget.
     """
 
     origin: tuple[float, float]
     shape: tuple[int, int]
+    """(columns, rows)."""
     cell_m: float
     plane: str = "xy"
+    """Names two cloud axes, not gravity."""
     frame: str | None = None
+    """None inherits the cloud frame."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "origin", tuple(self.origin))
@@ -56,8 +57,10 @@ class Grid:
             raise ValueError("cell_m must be positive and finite")
         if len(self.shape) != 2 or any(type(n) is not int or n <= 0 for n in self.shape):
             raise ValueError("shape must contain two positive integers")
-        if self.shape[0] * self.shape[1] > MAX_GRID_CELLS:
-            raise ValueError(f"grid exceeds {MAX_GRID_CELLS} cells; request a smaller region")
+        if self.shape[0] * self.shape[1] > constants.MAX_GRID_CELLS:
+            raise ValueError(
+                f"grid exceeds {constants.MAX_GRID_CELLS} cells; request a smaller region"
+            )
 
     @property
     def axes(self) -> tuple[int, int]:
@@ -81,9 +84,10 @@ class Grid:
 
     def centres(self) -> np.ndarray:
         row, col = np.indices((self.shape[1], self.shape[0]))
-        return (
+        centres: np.ndarray = (
             np.stack((col, row), axis=-1) * self.cell_m + np.asarray(self.origin) + self.cell_m / 2
         )
+        return centres
 
     def indices(self, xy: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         ij = np.floor((xy - np.asarray(self.origin)) / self.cell_m).astype(np.int64)
@@ -93,10 +97,12 @@ class Grid:
 
 @dataclass(frozen=True)
 class Select:
-    """Intersect include shapes, then remove exclude shapes; no includes means all returns."""
+    """A lazy selection of returns: the include shapes, less the exclude shapes."""
 
     include: Any = ()
+    """Shapes to intersect; none means all returns."""
     exclude: Any = ()
+    """Shapes whose returns are then removed."""
     source: Any = None
 
     def run(self, ctx: EncodeContext) -> np.ndarray:
@@ -107,17 +113,19 @@ class Select:
             for shape in sequence:
                 inside = shape.contains(ctx.points)
                 keep &= ~inside if invert else inside
-        return ctx.points[keep]
+        selected: np.ndarray = ctx.points[keep]
+        return selected
 
 
 @dataclass(frozen=True)
 class Band:
-    """A coordinate interval, with independently explicit endpoint inclusion."""
+    """A coordinate interval."""
 
     axis: str
     low: float | None = None
     high: float | None = None
     closed: tuple[bool, bool] = (True, False)
+    """Whether the low and the high endpoint are included, each stated explicitly."""
 
     def __post_init__(self) -> None:
         if self.axis not in ("x", "y", "z") or len(self.closed) != 2:
@@ -139,10 +147,11 @@ class Band:
 
 @dataclass
 class FieldData:
-    """Internal computed fields; non-finite numeric values mean missing evidence."""
+    """Internal computed fields."""
 
     grid: Grid
     values: dict[str, np.ndarray]
+    """Non-finite numeric values mean missing evidence."""
     metadata: dict[str, Any] = field(default_factory=dict)
     kind: str = "field"
 
@@ -225,13 +234,14 @@ class HeightField(FieldNode):
 class Percentile(FieldNode):
     """Per-cell return percentile using linear interpolation between sorted values.
 
-    q is in [0, 100]. Cells with fewer than min_count selected returns are missing.
     Like HeightField extrema, this measures a cloud axis, not an inferred floor.
     """
 
     source: HeightField
     q: float
-    min_count: int = 4
+    """In [0, 100]."""
+    min_count: int
+    """Cells with fewer selected returns are missing."""
 
     def __post_init__(self) -> None:
         if not np.isfinite(self.q) or not 0 <= self.q <= 100:
@@ -290,12 +300,12 @@ class Channel(FieldNode):
 class DistanceField(FieldNode):
     """Cell-centre distances to selected projected returns or true mask-cell centres.
 
-    Targets outside the grid still participate when source is a selection.
     Empty target sets produce null distances and status=no_targets, never free space.
     """
 
     grid: Grid
     source: Any = None
+    """The targets. Those outside the grid still participate when this is a selection."""
 
     def run(self, ctx: EncodeContext) -> FieldData:
         self.grid.describe(ctx)
@@ -431,22 +441,21 @@ def _statistics(values: NDArray[np.float64]) -> dict[str, Any]:
 class Components(FieldNode):
     """Group true cells without adding evidence in gaps between them.
 
-    ``gap_cells`` extends the linking radius to ``gap_cells + 1`` cells:
-    Chebyshev distance for connectivity 8, Manhattan distance for connectivity 4.
-    It links true cells across any cell between them, measured or not.
     Labels and region geometry include only the original true cells.
-
-    ``values`` adds each region's statistics of another field on the same grid:
-    finite cells weighted equally, quantiles by linear interpolation.
-    ``max_regions`` keeps the largest regions in the table (cells, then id) and
-    counts the rest; labels always cover every region.
     """
 
     source: FieldNode
     connectivity: int = 8
     gap_cells: int = 0
+    """Extends the linking radius to ``gap_cells + 1`` cells: Chebyshev distance for
+    connectivity 8, Manhattan distance for connectivity 4. It links true cells across
+    any cell between them, measured or not."""
     values: FieldNode | None = None
+    """Adds each region's statistics of another field on the same grid: finite cells
+    weighted equally, quantiles by linear interpolation."""
     max_regions: int | None = None
+    """Keeps the largest regions in the table (cells, then id) and counts the rest;
+    labels always cover every region."""
 
     def run(self, ctx: EncodeContext) -> FieldData:
         if self.connectivity not in (4, 8):
