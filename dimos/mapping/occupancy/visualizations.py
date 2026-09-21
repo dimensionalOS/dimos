@@ -15,7 +15,6 @@
 from functools import lru_cache
 from typing import Literal, TypeAlias
 
-import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
@@ -50,6 +49,8 @@ def visualize_occupancy_grid(
 
 
 def _draw_path(occupancy_grid: OccupancyGrid, bgr_image: NDArray[np.uint8], path: Path) -> None:
+    import cv2
+
     points = []
     for pose in path.poses:
         grid_coord = occupancy_grid.world_to_grid([pose.x, pose.y, pose.z])
@@ -75,6 +76,7 @@ def rainbow_image(grid: NDArray[np.int8]) -> NDArray[np.uint8]:
     Returns:
         Image with rainbow visualization of the occupancy grid
     """
+    import cv2
 
     # Create a copy of the grid for visualization
     # Map values to 0-255 range for colormap

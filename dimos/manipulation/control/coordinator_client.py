@@ -44,11 +44,16 @@ from __future__ import annotations
 
 import math
 import sys
-import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 from dimos.control.components import split_joint_name
 from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryCancellationResult,
+    TrajectoryCancellationStatus,
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
+)
 from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
@@ -83,7 +88,7 @@ class CoordinatorClient:
         trajectory = client.generate_trajectory([current, target])
 
         # Execute
-        client.execute_trajectory("traj_left", trajectory)
+        client.execute_trajectory(trajectory)
     """
 
     def __init__(self) -> None:
@@ -119,22 +124,19 @@ class CoordinatorClient:
         """Get current joint positions for all joints."""
         return self._rpc.get_joint_positions() or {}
 
-    def get_trajectory_status(self, task_name: str) -> dict[str, Any]:
-        """Get status of a trajectory task via task_invoke."""
-        result = self._rpc.task_invoke(task_name, "get_state", {})
-        if result is not None:
-            return {"state": int(result), "task": task_name}
-        return {}
+    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
+        """Execute through the coordinator's sole trajectory task."""
+        return cast(
+            "TrajectoryExecutionResult",
+            self._rpc.execute_trajectory(trajectory),
+        )
 
-    def execute_trajectory(self, task_name: str, trajectory: JointTrajectory) -> bool:
-        """Execute a trajectory on a task via task_invoke."""
-        result = self._rpc.task_invoke(task_name, "execute", {"trajectory": trajectory})
-        return bool(result)
-
-    def cancel_trajectory(self, task_name: str) -> bool:
-        """Cancel an active trajectory via task_invoke."""
-        result = self._rpc.task_invoke(task_name, "cancel", {})
-        return bool(result)
+    def cancel_trajectory(self) -> TrajectoryCancellationResult:
+        """Cancel the coordinator's sole trajectory task."""
+        return cast(
+            "TrajectoryCancellationResult",
+            self._rpc.cancel_trajectory(),
+        )
 
     def select_task(self, task_name: str) -> bool:
         """
@@ -308,38 +310,6 @@ def preview_trajectory(trajectory: JointTrajectory, joint_names: list[str]) -> N
     print("=" * 70)
 
 
-def wait_for_completion(client: CoordinatorClient, task_name: str, timeout: float = 60.0) -> bool:
-    """Wait for trajectory to complete by polling task state.
-
-    TrajectoryState is an IntEnum: IDLE=0, EXECUTING=1, COMPLETED=2, ABORTED=3, FAULT=4.
-    """
-    start = time.time()
-    _STATE_NAMES = {0: "IDLE", 1: "EXECUTING", 2: "COMPLETED", 3: "ABORTED", 4: "FAULT"}
-
-    while time.time() - start < timeout:
-        status = client.get_trajectory_status(task_name)
-        if not status:
-            print("\nCould not get trajectory status")
-            return False
-
-        state_val = status.get("state")
-        state_name = _STATE_NAMES.get(state_val, f"UNKNOWN({state_val})")  # type: ignore[arg-type]
-
-        if state_val in (0, 2):  # IDLE or COMPLETED
-            print(f"\nTrajectory finished: {state_name}")
-            return True
-        if state_val in (3, 4):  # ABORTED or FAULT
-            print(f"\nTrajectory failed: {state_name}")
-            return False
-        # state_val == 1 means EXECUTING, keep polling
-        elapsed = time.time() - start
-        print(f"\r  Executing... ({elapsed:.1f}s)", end="", flush=True)
-        time.sleep(0.1)
-
-    print("\nTimeout waiting for trajectory")
-    return False
-
-
 class CoordinatorShell:
     """IPython shell interface for coordinator control."""
 
@@ -458,27 +428,28 @@ class CoordinatorShell:
         preview_trajectory(self._generated_trajectory, self._joints())
         confirm = input("\nExecute? [y/N]: ").strip().lower()
         if confirm == "y":
-            if self._client.execute_trajectory(self._current_task, self._generated_trajectory):
-                print("Trajectory started...")
-                wait_for_completion(self._client, self._current_task)
+            result = self._client.execute_trajectory(self._generated_trajectory)
+            if result.status is TrajectoryExecutionStatus.ACCEPTED:
+                print(
+                    "Trajectory accepted "
+                    f"(expected duration: {self._generated_trajectory.duration:.2f}s)"
+                )
             else:
-                print("Failed to start trajectory")
+                print(f"Failed to start trajectory: {result.message or result.status.name}")
 
     def status(self) -> None:
-        """Show task status."""
-        _STATE_NAMES = {0: "IDLE", 1: "EXECUTING", 2: "COMPLETED", 3: "ABORTED", 4: "FAULT"}
-        status = self._client.get_trajectory_status(self._current_task)
-        state_val = status.get("state")
-        state_name = _STATE_NAMES.get(state_val, f"UNKNOWN({state_val})")  # type: ignore[arg-type]
+        """Show whether the selected task is active."""
+        active = self._current_task in self._client.get_active_tasks()
         print(f"\nTask: {self._current_task}")
-        print(f"  State: {state_name} ({state_val})")
+        print(f"  Active: {active}")
 
     def cancel(self) -> None:
         """Cancel active trajectory."""
-        if self._client.cancel_trajectory(self._current_task):
+        result = self._client.cancel_trajectory()
+        if result.status is TrajectoryCancellationStatus.CANCELLED:
             print("Cancelled")
         else:
-            print("Cancel failed")
+            print(f"Cancel result: {result.message or result.status.name}")
 
     def tasks(self) -> None:
         """List all tasks."""

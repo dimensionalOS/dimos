@@ -19,6 +19,8 @@ from scipy.spatial.transform import Rotation as R
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils import transform_utils
 
@@ -54,6 +56,28 @@ class TestNormalizeAngle:
 
 
 # Tests for distance_angle_to_goal_xy removed as function doesn't exist in the module
+
+
+class TestTwistToNumpy:
+    def test_twist_to_numpy_orders_linear_then_angular(self) -> None:
+        twist = Twist(linear=[1.0, 2.0, 3.0], angular=[4.0, 5.0, 6.0])
+
+        result = transform_utils.twist_to_numpy(twist)
+
+        assert result.dtype == np.float64
+        np.testing.assert_array_equal(
+            result, np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float64)
+        )
+
+    def test_twist_to_numpy_accepts_twist_stamped(self) -> None:
+        twist = TwistStamped(frame_id="eef", linear=[-1.0, 0.0, 1.0], angular=[0.1, 0.2, 0.3])
+
+        result = transform_utils.twist_to_numpy(twist)
+
+        assert result.dtype == np.float64
+        np.testing.assert_array_equal(
+            result, np.array([-1.0, 0.0, 1.0, 0.1, 0.2, 0.3], dtype=np.float64)
+        )
 
 
 class TestPoseToMatrix:

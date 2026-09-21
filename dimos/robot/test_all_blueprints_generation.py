@@ -32,7 +32,17 @@ IGNORED_FILES: set[str] = {
     "dimos/core/blueprints.py",
     "dimos/core/test_blueprints.py",
 }
-BLUEPRINT_METHODS = {"transports", "global_config", "remappings", "requirements", "configurators"}
+# Terminal builder methods that mark a top-level blueprint expression. "blueprint"
+# is included so a bare single-module `X.blueprint(...)` (no transports/remappings
+# override needed) is still discovered as a runnable blueprint.
+BLUEPRINT_METHODS = {
+    "blueprint",
+    "transports",
+    "global_config",
+    "remappings",
+    "requirements",
+    "configurators",
+}
 _EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase", "StreamModule"}
 
 
@@ -106,9 +116,7 @@ def _build_module_class_set(root: Path) -> set[str]:
     known: set[str] = {"Module", "ModuleBase"}
     all_classes: list[tuple[str, list[str]]] = []
 
-    for path in sorted(root.rglob("*.py")):
-        if "__pycache__" in str(path):
-            continue
+    for path in sorted(_get_all_python_files(root)):
         try:
             tree = ast.parse(path.read_text("utf-8"), str(path))
         except Exception:
@@ -133,18 +141,37 @@ def _is_production_module_file(file_path: Path, root: Path) -> bool:
 
     Excludes test helpers, deprecated code, and framework base classes in core/.
     """
-    rel = str(file_path.relative_to(root))
+    relative_path = file_path.relative_to(root)
+    rel = str(relative_path)
     stem = file_path.stem
     return not (
         stem.startswith("test_")
         or "_test_" in stem
         or stem.endswith("_test")
+        or stem.startswith("tool_")
         or stem.startswith("fake_")
         or stem.startswith("mock_")
         or "deprecated" in rel
         or "/testing/" in rel
+        or "example" in relative_path.parts
+        or relative_path == Path("experimental/isolated_python/module.py")
         or rel.startswith("core/")
     )
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "experimental/isolated_python/example/contract.py",
+        "experimental/isolated_python/example/support.py",
+        "experimental/isolated_python/module.py",
+    ],
+)
+def test_isolated_python_framework_is_not_a_production_module(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    assert _is_production_module_file(tmp_path / relative_path, tmp_path) is False
 
 
 def _scan_for_blueprints(root: Path) -> tuple[dict[str, str], dict[str, str]]:
@@ -227,11 +254,17 @@ def _check_for_uncommitted_changes(file_path: Path) -> bool:
 
 
 def _get_all_python_files(root: Path) -> Generator[Path, None, None]:
-    for path in root.rglob("*.py"):
-        rel_path = str(path.relative_to(root.parent))
-        if "__pycache__" in str(path) or rel_path in IGNORED_FILES:
-            continue
-        yield path
+    for directory, children, filenames in os.walk(root):
+        parent = Path(directory)
+        children[:] = [
+            name
+            for name in children
+            if name != "__pycache__" and not (parent / name / "pyproject.toml").is_file()
+        ]
+        for name in filenames:
+            path = parent / name
+            if path.suffix == ".py" and str(path.relative_to(root.parent)) not in IGNORED_FILES:
+                yield path
 
 
 def _path_to_module_name(path: Path, root: Path) -> str:
@@ -296,3 +329,26 @@ def _ends_with_blueprint_method(node: ast.expr) -> bool:
         if isinstance(func, ast.Attribute) and func.attr in BLUEPRINT_METHODS:
             return True
     return False
+
+
+def test_nested_projects_do_not_contribute_modules_or_blueprints(tmp_path: Path) -> None:
+    root = tmp_path / "dimos"
+    runtime = root / "provider/python"
+    runtime.mkdir(parents=True)
+    (runtime / "pyproject.toml").write_text('[project]\nname = "runtime"\n')
+    (root / "provider/contract.py").write_text(
+        "class HostContract(Module): pass\n"
+        "class RuntimeOnlyBase: pass\n"
+        "class NotAModule(RuntimeOnlyBase): pass\n"
+        "host_blueprint = HostContract.blueprint()\n"
+    )
+    (runtime / "runtime.py").write_text(
+        "class PublicRuntime(HostContract): pass\n"
+        "class RuntimeOnlyBase(Module): pass\n"
+        "runtime_blueprint = PublicRuntime.blueprint()\n"
+    )
+
+    blueprints, modules = _scan_for_blueprints(root)
+
+    assert blueprints == {"host-blueprint": "dimos.provider.contract:host_blueprint"}
+    assert modules == {"host-contract": "dimos.provider.contract.HostContract"}

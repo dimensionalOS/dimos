@@ -21,7 +21,6 @@ from dimos_lcm.geometry_msgs import (
     PoseWithCovarianceStamped as LCMPoseWithCovarianceStamped,
 )
 import numpy as np
-from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Pose import Pose, PoseConvertable
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
@@ -45,28 +44,17 @@ class PoseWithCovarianceStamped(PoseWithCovariance, Timestamped):
     ts: float
     frame_id: str
 
-    @dispatch
-    def __init__(self, ts: float = 0.0, frame_id: str = "", **kwargs) -> None:
-        """Initialize with timestamp and frame_id."""
-        self.frame_id = frame_id
-        self.ts = ts if ts != 0 else time.time()
-        super().__init__(**kwargs)
-
-    @dispatch  # type: ignore[no-redef]
     def __init__(
         self,
-        ts: float = 0.0,
+        ts: float | None = None,
         frame_id: str = "",
         pose: Pose | PoseConvertable | None = None,
         covariance: list[float] | np.ndarray | None = None,
     ) -> None:
         """Initialize with timestamp, frame_id, pose and covariance."""
         self.frame_id = frame_id
-        self.ts = ts if ts != 0 else time.time()
-        if pose is None:
-            super().__init__()
-        else:
-            super().__init__(pose, covariance)
+        self.ts = time.time() if ts is None else ts
+        super().__init__(pose, covariance)
 
     def lcm_encode(self) -> bytes:
         lcm_msg = LCMPoseWithCovarianceStamped()

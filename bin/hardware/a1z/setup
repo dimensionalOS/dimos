@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Install A1Z dependencies into a DimOS source checkout.
+set -euo pipefail
+
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+A1Z_SDK="a1z @ git+https://github.com/userguide-galaxea/GALAXEA-A1Z.git@e931ecd0e25ad35df251097ba42921b3d2fa7224"
+ASSUME_YES=false
+
+usage() {
+    echo "usage: bin/hardware/a1z/setup [--yes]"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -y|--yes) ASSUME_YES=true ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+    esac
+    shift
+done
+
+[[ -f "$REPO_ROOT/pyproject.toml" && -f "$REPO_ROOT/uv.lock" ]] || {
+    echo "bin/hardware/a1z/setup must run from a DimOS source checkout." >&2
+    exit 1
+}
+command -v uv >/dev/null 2>&1 || {
+    echo "uv is required: https://docs.astral.sh/uv/" >&2
+    exit 1
+}
+
+SYSTEM=$(uname -s)
+PYTHON_REQUIREMENTS=("$A1Z_SDK")
+SYSTEM_COMMAND=()
+MANUAL_STEP=""
+
+case "$SYSTEM" in
+    Linux)
+        if ! command -v cansend >/dev/null 2>&1; then
+            DISTRIBUTION=""
+            if [[ -r /etc/os-release ]]; then
+                # shellcheck disable=SC1091
+                source /etc/os-release
+                DISTRIBUTION=${ID:-}
+            fi
+            if [[ "$DISTRIBUTION" == "ubuntu" ]]; then
+                SYSTEM_COMMAND=(sudo apt-get install -y can-utils)
+            else
+                MANUAL_STEP="Install the package that provides 'cansend' (can-utils on Ubuntu)."
+            fi
+        fi
+        ;;
+    Darwin)
+        PYTHON_REQUIREMENTS+=("gs-usb==0.3.1" "pyusb==1.3.1")
+        if command -v brew >/dev/null 2>&1; then
+            if ! brew list --versions libusb >/dev/null 2>&1; then
+                SYSTEM_COMMAND=(brew install libusb)
+            fi
+        else
+            MANUAL_STEP="Install libusb with your system package manager."
+        fi
+        ;;
+    *)
+        echo "A1Z setup supports Linux and macOS only." >&2
+        exit 1
+        ;;
+esac
+
+echo "A1Z source setup will run:"
+echo "  uv sync --locked --extra manipulation --inexact"
+printf "  uv pip install --python %q" "$REPO_ROOT/.venv/bin/python"
+printf " %q" "${PYTHON_REQUIREMENTS[@]}"
+printf "\n"
+if [[ ${#SYSTEM_COMMAND[@]} -gt 0 ]]; then
+    printf " "
+    printf " %q" "${SYSTEM_COMMAND[@]}"
+    printf "\n"
+fi
+if [[ -n "$MANUAL_STEP" ]]; then
+    echo "  Manual step: $MANUAL_STEP"
+fi
+
+if [[ "$ASSUME_YES" != true ]]; then
+    read -r -p "Continue? [y/N] " REPLY
+    [[ "$REPLY" == "y" || "$REPLY" == "Y" ]] || {
+        echo "Aborted."
+        exit 1
+    }
+fi
+
+cd "$REPO_ROOT"
+uv sync --locked --extra manipulation --inexact
+uv pip install --python "$REPO_ROOT/.venv/bin/python" "${PYTHON_REQUIREMENTS[@]}"
+if [[ ${#SYSTEM_COMMAND[@]} -gt 0 ]]; then
+    "${SYSTEM_COMMAND[@]}"
+fi
+
+if [[ -n "$MANUAL_STEP" ]]; then
+    echo "Manual step required: $MANUAL_STEP" >&2
+fi
+uv run --no-sync dimos hardware a1z doctor --software-only

@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING
 
 try:
     from cyclonedds.domain import DomainParticipant
@@ -28,9 +27,6 @@ except ImportError:
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.utils.logging_config import setup_logger
 
-if TYPE_CHECKING:
-    from cyclonedds.qos import Qos
-
 logger = setup_logger()
 
 _participants: dict[int, DomainParticipant] = {}
@@ -41,7 +37,6 @@ class DDSConfig(BaseConfig):
     """Configuration for DDS service."""
 
     domain_id: int = 0
-    qos: Qos | None = None
 
 
 class DDSService(Service):
@@ -67,9 +62,3 @@ class DDSService(Service):
         if domain_id not in _participants:
             raise RuntimeError(f"DomainParticipant not initialized for domain {domain_id}")
         return _participants[domain_id]
-
-
-__all__ = [
-    "DDSConfig",
-    "DDSService",
-]

@@ -4,11 +4,11 @@ Example on how we can use memory to compare two algos on a real data.
 ```python
 import time
 
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.transform import throttle
-from dimos.memory2.vis import color
-from dimos.memory2.vis.plot.elements import Style
-from dimos.memory2.vis.plot.plot import Plot
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.transform import throttle
+from dimos.memory.vis import color
+from dimos.memory.vis.plot.elements import Style
+from dimos.memory.vis.plot.plot import Plot
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.data import get_data
 
@@ -95,11 +95,11 @@ Above example loads the same data and iterates it for each plot line, it's a bit
 ```python
 import time
 
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.transform import throttle
-from dimos.memory2.vis import color
-from dimos.memory2.vis.plot.elements import HLine, Series, Style
-from dimos.memory2.vis.plot.plot import Plot
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.transform import throttle
+from dimos.memory.vis import color
+from dimos.memory.vis.plot.elements import HLine, Series, Style
+from dimos.memory.vis.plot.plot import Plot
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.data import get_data
 

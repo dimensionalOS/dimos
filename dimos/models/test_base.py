@@ -16,9 +16,10 @@
 
 from functools import cached_property
 
+import pytest
 import torch
 
-from dimos.models.base import HuggingFaceModel, LocalModel
+from dimos.models.base import HuggingFaceModel, LocalModel, default_torch_device
 
 
 class ConcreteLocalModel(LocalModel):
@@ -37,11 +38,17 @@ class ConcreteHuggingFaceModel(HuggingFaceModel):
         return f"hf_model:{self.model_name}"
 
 
-def test_local_model_device_auto_detection() -> None:
-    """Test that device is auto-detected based on CUDA availability."""
-    model = ConcreteLocalModel()
-    expected = "cuda" if torch.cuda.is_available() else "cpu"
-    assert model.device == expected
+def test_default_torch_device_priority(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CUDA wins over MPS, MPS wins over CPU, CPU is the last resort."""
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    assert default_torch_device() == "cuda"
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert default_torch_device() == "mps"
+
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    assert default_torch_device() == "cpu"
 
 
 def test_local_model_explicit_device() -> None:
@@ -67,11 +74,9 @@ def test_local_model_lazy_loading() -> None:
     model = ConcreteLocalModel()
     # Model not loaded yet
     assert "_model" not in model.__dict__
-    # Access triggers loading
-    _ = model._model
-    # Now it's cached
-    assert "_model" in model.__dict__
+    # Access triggers loading and caching
     assert model._model == "loaded_model"
+    assert "_model" in model.__dict__
 
 
 def test_local_model_start_triggers_loading() -> None:

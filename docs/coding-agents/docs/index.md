@@ -1,4 +1,3 @@
-
 # Code Blocks
 
 **All code blocks must be executable.**
@@ -10,7 +9,7 @@ After writing a code block in your markdown file, you can run it by executing
 
 more information on this tool is in [codeblocks](/docs/coding-agents/docs/codeblocks.md)
 
-# Code or Docs Links
+## Code or Docs Links
 
 After adding a link to a doc run
 
@@ -49,11 +48,11 @@ See [Configuration](/docs/usage/configuration.md) for more details.
 
 More information on this in [doclinks](/docs/coding-agents/docs/doclinks.md)
 
-# Pikchr
+## Pikchr
 
 [Pikchr](https://pikchr.org/) is a diagram language from SQLite. Use it for flowcharts and architecture diagrams.
 
-**Important:** Always wrap pikchr blocks in `<details>` tags so the source is collapsed by default on GitHub. The rendered SVG stays visible outside the fold. Code blocks (Python, etc.) should NOT be folded—they're meant to be read.
+**Important:** Always wrap pikchr blocks in `<details>` tags so the source is collapsed by default on GitHub. The rendered SVG stays visible outside the fold. Code blocks (Python, etc.) should NOT be folded. They're meant to be read.
 
 ## Basic syntax
 

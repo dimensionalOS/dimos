@@ -92,7 +92,7 @@ def test_classmethods() -> None:
     nav._close_module()
 
 
-@pytest.mark.skipif_in_ci
+@pytest.mark.self_hosted
 def test_basic_deployment(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)
 
@@ -116,7 +116,11 @@ def test_basic_deployment(dimos) -> None:
     robot.start()
     nav.start()
 
-    time.sleep(1)
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline:
+        if robot.mov_msg_count >= 8 and nav.odom_msg_count >= 8 and nav.lidar_msg_count >= 8:
+            break
+        time.sleep(0.1)
 
     assert robot.mov_msg_count >= 8
     assert nav.odom_msg_count >= 8

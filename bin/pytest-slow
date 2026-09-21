@@ -2,5 +2,8 @@
 
 set -euo pipefail
 
+bin/build-test-natives
+bin/fetch-test-data
+
 . .venv/bin/activate
-exec pytest "$@" -m 'not (tool or mujoco)' dimos
+exec pytest "$@" -m 'not (mujoco or self_hosted_large)' dimos

@@ -19,7 +19,6 @@ import time
 from typing import TypedDict, TypeVar
 
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
@@ -69,6 +68,8 @@ def pointcloud2_from_webrtc_lidar(raw_message: RawLidarMsg, ts: float | None = N
     occasionally re-emits a stale value on fresh scans — see
     :func:`repair_stale_ts` for the downstream repair.
     """
+    import open3d as o3d  # type: ignore[import-untyped]
+
     data = raw_message["data"]
     points = data["data"]["points"]
 

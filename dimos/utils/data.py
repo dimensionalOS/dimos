@@ -22,6 +22,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
+from typing import Any
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.utils.logging_config import setup_logger
@@ -153,8 +155,8 @@ def _get_lfs_dir() -> Path:
     return get_data_dir() / ".lfs"
 
 
-def _check_git_lfs_available() -> bool:
-    missing = []
+def _initialize_git_lfs(repo_root: Path) -> None:
+    missing: list[str] = []
 
     # Check if git is available
     try:
@@ -174,7 +176,13 @@ def _check_git_lfs_available() -> bool:
             "Git LFS installation instructions: https://git-lfs.github.io/"
         )
 
-    return True
+    subprocess.run(
+        ["git", "lfs", "install", "--local", "--skip-repo"],
+        cwd=repo_root,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
 
 
 def _is_lfs_pointer_file(file_path: Path) -> bool:
@@ -191,23 +199,32 @@ def _is_lfs_pointer_file(file_path: Path) -> bool:
         return False
 
 
-def _lfs_pull(file_path: Path, repo_root: Path) -> None:
-    try:
-        relative_path = file_path.relative_to(repo_root)
+def _lfs_pull(file_path: Path, repo_root: Path, *, retries: int = 2) -> None:
+    relative_path = file_path.relative_to(repo_root)
 
-        env = os.environ.copy()
-        env["GIT_LFS_FORCE_PROGRESS"] = "1"
+    env = os.environ.copy()
+    env["GIT_LFS_FORCE_PROGRESS"] = "1"
 
-        subprocess.run(
-            ["git", "lfs", "pull", "--include", str(relative_path)],
-            cwd=repo_root,
-            check=True,
-            env=env,
-        )
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to pull LFS file {file_path}: {e}")
+    last_err: subprocess.CalledProcessError | None = None
+    for attempt in range(1, retries + 2):  # retries + 1 total attempts
+        try:
+            subprocess.run(
+                # --exclude= overrides lfs.fetchexclude from .lfsconfig, which
+                # otherwise silently skips data/.lfs/* even when --include matches.
+                ["git", "lfs", "pull", "--include", str(relative_path), "--exclude="],
+                cwd=repo_root,
+                check=True,
+                env=env,
+            )
+            return
+        except subprocess.CalledProcessError as e:
+            last_err = e
+            if attempt <= retries:
+                time.sleep(attempt)  # 1s, 2s backoff
 
-    return None
+    raise RuntimeError(
+        f"Failed to pull LFS file {file_path} after {retries + 1} attempts: {last_err}"
+    )
 
 
 def _decompress_archive(filename: str | Path) -> Path:
@@ -219,9 +236,6 @@ def _decompress_archive(filename: str | Path) -> Path:
 
 
 def _pull_lfs_archive(filename: str | Path) -> Path:
-    # Check Git LFS availability first
-    _check_git_lfs_available()
-
     # Find repository root
     repo_root = get_project_root()
 
@@ -237,6 +251,7 @@ def _pull_lfs_archive(filename: str | Path) -> Path:
 
     # If it's an LFS pointer file, ensure LFS is set up and pull the file
     if _is_lfs_pointer_file(file_path):
+        _initialize_git_lfs(repo_root)
         _lfs_pull(file_path, repo_root)
 
         # Verify the file was actually downloaded
@@ -322,6 +337,9 @@ class LfsPath(type(Path())):  # type: ignore[misc]
             files = list(path.iterdir())
     """
 
+    _lfs_filename: str | Path
+    _lfs_resolved_cache: Path | None
+
     def __new__(cls, filename: str | Path) -> "LfsPath":
         # Create instance with a placeholder path to satisfy Path.__new__
         # We use "." as a dummy path that always exists
@@ -348,13 +366,33 @@ class LfsPath(type(Path())):  # type: ignore[misc]
         except AttributeError:
             return object.__getattribute__(self, name)
 
-        # After construction, allow access to our internal attributes directly
-        if name in ("_lfs_filename", "_lfs_resolved_cache", "_ensure_downloaded"):
+        # Copying and serializer/type introspection must inspect the lazy wrapper,
+        # not materialize the asset (including probes for absent attributes).
+        if name in (
+            "_lfs_filename",
+            "_lfs_resolved_cache",
+            "_ensure_downloaded",
+            "__class__",
+            "__copy__",
+            "__deepcopy__",
+            "__pydantic_serializer__",
+            "__dataclass_fields__",
+        ):
             return object.__getattribute__(self, name)
 
         # For all other attributes, ensure download first then delegate to resolved path
         resolved = object.__getattribute__(self, "_ensure_downloaded")()
         return getattr(resolved, name)
+
+    def __copy__(self) -> "LfsPath":
+        copied = LfsPath(self._lfs_filename)
+        object.__setattr__(copied, "_lfs_resolved_cache", self._lfs_resolved_cache)
+        return copied
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "LfsPath":
+        copied = self.__copy__()
+        memo[id(self)] = copied
+        return copied
 
     def __str__(self) -> str:
         """String representation returns resolved path."""
@@ -363,6 +401,10 @@ class LfsPath(type(Path())):  # type: ignore[misc]
     def __fspath__(self) -> str:
         """Return filesystem path, downloading from LFS if needed."""
         return str(self._ensure_downloaded())
+
+    def __hash__(self) -> int:
+        """Hash the resolved path instead of pathlib's placeholder state."""
+        return hash(self._ensure_downloaded())
 
     def __truediv__(self, other: object) -> "LfsPath":
         """Path division operator - returns a new lazy LfsPath (no download)."""

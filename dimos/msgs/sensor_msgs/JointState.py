@@ -15,20 +15,41 @@
 from __future__ import annotations
 
 import time
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from dimos_lcm.sensor_msgs import JointState as LCMJointState
-from plum import dispatch
 
 from dimos.types.timestamped import Timestamped
 
 # Types that can be converted to/from JointState
 JointStateConvertable: TypeAlias = dict[str, list[str] | list[float]] | LCMJointState
 
+_FIELDS = ("ts", "frame_id", "name", "position", "velocity", "effort")
+
 
 def sec_nsec(ts):  # type: ignore[no-untyped-def]
     s = int(ts)
     return [s, int((ts - s) * 1_000_000_000)]
+
+
+def _fields_of(source: Any) -> tuple[Any, ...]:
+    """Pull the six JointState fields out of a dict, a JointState or an LCM message."""
+    if isinstance(source, dict):
+        return (
+            source.get("ts"),
+            source.get("frame_id", ""),
+            source.get("name"),
+            source.get("position"),
+            source.get("velocity"),
+            source.get("effort"),
+        )
+    if isinstance(source, JointState):
+        return (source.ts, source.frame_id, *(list(getattr(source, f)) for f in _FIELDS[2:]))
+    return (
+        source.header.stamp.sec + (source.header.stamp.nsec / 1_000_000_000),
+        source.header.frame_id,
+        *(list(getattr(source, f) or []) for f in _FIELDS[2:]),
+    )
 
 
 class JointState(Timestamped):
@@ -40,10 +61,9 @@ class JointState(Timestamped):
     velocity: list[float]
     effort: list[float]
 
-    @dispatch
     def __init__(
         self,
-        ts: float = 0.0,
+        ts: float | JointStateConvertable | JointState | None = None,
         frame_id: str = "",
         name: list[str] | None = None,
         position: list[float] | None = None,
@@ -52,50 +72,28 @@ class JointState(Timestamped):
     ) -> None:
         """Initialize a JointState message.
 
+        The first argument doubles as the source for the copy/dict/LCM forms:
+        ``JointState(other)``, ``JointState({...})``, ``JointState(lcm_msg)``.
+
         Args:
             ts: Timestamp in seconds
             frame_id: Frame ID for the message
             name: List of joint names
-            position: List of joint positions (rad or m)
+            position: List of joint positions (rad or m); gripper joints use
+                the unit their adapter declares
             velocity: List of joint velocities (rad/s or m/s)
             effort: List of joint efforts (Nm or N)
         """
-        self.ts = ts if ts != 0 else time.time()
+        stamp: Any = ts
+        if isinstance(stamp, dict | JointState | LCMJointState):
+            stamp, frame_id, name, position, velocity, effort = _fields_of(stamp)
+
+        self.ts = time.time() if stamp is None else stamp
         self.frame_id = frame_id
         self.name = name if name is not None else []
         self.position = position if position is not None else []
         self.velocity = velocity if velocity is not None else []
         self.effort = effort if effort is not None else []
-
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, joint_dict: dict[str, list[str] | list[float]]) -> None:
-        """Initialize from a dictionary."""
-        self.ts = joint_dict.get("ts", time.time())
-        self.frame_id = joint_dict.get("frame_id", "")
-        self.name = list(joint_dict.get("name", []))
-        self.position = list(joint_dict.get("position", []))
-        self.velocity = list(joint_dict.get("velocity", []))
-        self.effort = list(joint_dict.get("effort", []))
-
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, joint: JointState) -> None:
-        """Initialize from another JointState (copy constructor)."""
-        self.ts = joint.ts
-        self.frame_id = joint.frame_id
-        self.name = list(joint.name)
-        self.position = list(joint.position)
-        self.velocity = list(joint.velocity)
-        self.effort = list(joint.effort)
-
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, lcm_joint: LCMJointState) -> None:
-        """Initialize from an LCM JointState message."""
-        self.ts = lcm_joint.header.stamp.sec + (lcm_joint.header.stamp.nsec / 1_000_000_000)
-        self.frame_id = lcm_joint.header.frame_id
-        self.name = list(lcm_joint.name) if lcm_joint.name else []
-        self.position = list(lcm_joint.position) if lcm_joint.position else []
-        self.velocity = list(lcm_joint.velocity) if lcm_joint.velocity else []
-        self.effort = list(lcm_joint.effort) if lcm_joint.effort else []
 
     def lcm_encode(self) -> bytes:
         lcm_msg = LCMJointState()

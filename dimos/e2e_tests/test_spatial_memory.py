@@ -30,11 +30,11 @@ def test_spatial_memory_navigation(
     start_blueprint: Callable[[str], DimosCliCall],
     human_input: Callable[[str], None],
     follow_points: Callable[..., None],
+    wait_for_system_ready: Callable[..., None],
 ) -> None:
     start_blueprint("run", "unitree-go2-agentic")
 
-    lcm_spy.save_topic("/rpc/McpClient/on_system_modules/res")
-    lcm_spy.wait_for_saved_topic("/rpc/McpClient/on_system_modules/res", timeout=120.0)
+    wait_for_system_ready(timeout=120.0)
 
     time.sleep(5)
 

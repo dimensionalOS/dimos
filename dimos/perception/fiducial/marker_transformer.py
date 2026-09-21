@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ArUco / AprilTag detection as memory2 transforms.
+"""ArUco / AprilTag detection as memory transforms.
 
 Wraps :func:`dimos.perception.fiducial.marker_detect.detect_markers_in_image`
 and emits one :class:`Detection3DMarker` observation per detected marker, with
@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from dimos.memory2.transform import Transformer
+from dimos.memory.transform import Transformer
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -59,7 +59,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
 
 logger = setup_logger()
 
@@ -142,6 +142,7 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         world_frame: str = "world",
         smoothing_window: float = 0.0,
         emit_empty_frames: bool = False,
+        detect_inverted: bool = False,
     ) -> None:
         if marker_length_m <= 0:
             raise ValueError(f"marker_length_m must be > 0, got {marker_length_m}")
@@ -153,7 +154,8 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         self.world_frame = world_frame
         self.smoothing_window = smoothing_window
         self.emit_empty_frames = emit_empty_frames
-        self._detector = create_aruco_detector(aruco_dictionary)
+        self.detect_inverted = detect_inverted
+        self._detector = create_aruco_detector(aruco_dictionary, detect_inverted=detect_inverted)
         self._camera_info_key: tuple[Any, ...] | None = None
         self._resolved_camera_info: CameraInfo | None = None
         self._cam_mtx: np.ndarray | None = None
@@ -176,7 +178,9 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         key = _camera_info_key(info)
         if key != self._camera_info_key:
             self._cam_mtx, self._dist = camera_info_to_cv_matrices(info)
-            self._detector = create_aruco_detector(self.aruco_dictionary)
+            self._detector = create_aruco_detector(
+                self.aruco_dictionary, detect_inverted=self.detect_inverted
+            )
             self._resolved_camera_info = info
             self._camera_info_key = key
         return info

@@ -1,6 +1,6 @@
 {
   "name": "dimos-dev",
-  "image": "ghcr.io/dimensionalos/dev:dev",
+  "image": "dimensional/dev:latest",
   "customizations": {
     "vscode": {
       "extensions": [

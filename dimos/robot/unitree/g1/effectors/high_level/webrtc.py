@@ -14,6 +14,7 @@
 
 from typing import Any
 
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -44,6 +45,8 @@ logger = setup_logger()
 class G1HighLevelWebRtcConfig(ModuleConfig):
     ip: str | None = None
     connection_mode: str = "ai"
+    # Per-device AES-128 key (G1 fw >=1.5.1); defaults from GlobalConfig.
+    aes_128_key: str | None = Field(default_factory=lambda m: m["g"].unitree_aes_128_key)
 
 
 class G1HighLevelWebRtc(Module, HighLevelG1Spec):
@@ -62,7 +65,11 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
     def start(self) -> None:
         super().start()
         assert self.config.ip is not None, "ip must be set in G1HighLevelWebRtcConfig"
-        self.connection = UnitreeWebRTCConnection(self.config.ip, self.config.connection_mode)
+        self.connection = UnitreeWebRTCConnection(
+            self.config.ip,
+            self.config.connection_mode,
+            aes_128_key=self.config.aes_128_key,
+        )
         self.connection.start()
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
@@ -153,6 +160,3 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
 
         {MODE_COMMANDS_DOC}
         """
-
-
-__all__ = ["G1HighLevelWebRtc", "G1HighLevelWebRtcConfig"]

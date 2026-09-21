@@ -1,17 +1,20 @@
 # Viewer Backends
 
-Dimos supports Rerun as its visualization backend (`rerun` default, or `none` to disable).
+Dimos uses Rerun for visualizations. It can be disabled by using
+`dimos --viewer none ...`.
+
+Blueprints add Rerun stream visualization with `vis_module(...)`, which renders typed
+robot streams according to `GlobalConfig.viewer`.
 
 ## Quick Start
 
 Choose your viewer via the CLI:
 
 ```bash
-# Rerun native viewer (default) - dimos-viewer with built-in teleop + click-to-navigate
+# Rerun native viewer - dimos-viewer with built-in teleop + click-to-navigate
 dimos run unitree-go2
 
-# Explicitly select the viewer backend:
-dimos --viewer rerun run unitree-go2
+# Disable visualization:
 dimos --viewer none run unitree-go2
 ```
 
@@ -27,7 +30,7 @@ dimos --rerun-open web run unitree-go2
 # Open both native and web
 dimos --rerun-open both run unitree-go2
 
-# No viewer (headless) — data still accessible via gRPC
+# No viewer (headless): data still accessible via gRPC
 dimos --rerun-open none run unitree-go2
 
 # Serve the web viewer without auto-opening a browser
@@ -36,7 +39,7 @@ dimos --rerun-web --rerun-open native run unitree-go2
 
 ## Viewer Modes Explained
 
-### Rerun Native (`rerun`, `--rerun-open native`) — Default
+### Rerun Native (`rerun`, `--rerun-open native`), the default
 
 **What you get:**
 - [dimos-viewer](https://github.com/dimensionalOS/dimos-viewer), a custom Dimensional fork of Rerun with built-in keyboard teleop and click-to-navigate
@@ -121,7 +124,7 @@ If you want to log data to Rerun directly from inside a module (e.g. for debuggi
 import rerun as rr
 from dimos.visualization.rerun.init import rerun_init
 
-# Basic init (no gRPC server — use when RerunBridgeModule is already running)
+# Basic init, no gRPC server (use when RerunBridgeModule is already running)
 rerun_init()
 rr.log("debug/my_points", rr.Points3D(positions=[[1, 2, 3]]))
 
@@ -137,7 +140,7 @@ rerun_init(
 # Then connect with: dimos-viewer --connect rerun+http://127.0.0.1:9999/proxy
 ```
 
-When a `RerunBridgeModule` is already part of your blueprint, you typically don't need `start_grpc` — just call `rerun_init()` and log directly with `rr.log()`. The data will appear in the existing viewer.
+When a `RerunBridgeModule` is already part of your blueprint, you typically don't need `start_grpc`. Just call `rerun_init()` and log directly with `rr.log()`. The data will appear in the existing viewer.
 
 ## How to use Rerun on `dev` (and the TF/entity nuances)
 

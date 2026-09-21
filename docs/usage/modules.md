@@ -1,4 +1,4 @@
-# DimOS Modules
+# dimOS Modules
 
 Modules are subsystems on a robot that operate autonomously and communicate with other subsystems using standardized messages.
 
@@ -48,14 +48,7 @@ print(CameraModule.io())
 └┬─────────────┘
  ├─ color_image: Image
  ├─ camera_info: CameraInfo
- │
- ├─ RPC build() -> None
- ├─ RPC get_skills() -> list
- ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
- ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
- ├─ RPC start() -> None
- ├─ RPC stop() -> None
- ├─ RPC take_a_picture() -> Image
+ ├─ tf: TFMessage
 ```
 
 We can see that the camera module outputs two streams:
@@ -63,9 +56,9 @@ We can see that the camera module outputs two streams:
 - `color_image` with [sensor_msgs.Image](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/Image.html) type
 - `camera_info` with [sensor_msgs.CameraInfo](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/CameraInfo.html) type
 
-It offers two RPC calls: `start()` and `stop()` (lifecycle methods).
+Every module also has the lifecycle RPCs `start()` and `stop()`; `io()` leaves those out.
 
-It also exposes an agentic [skill](/docs/usage/blueprints.md#defining-skills) called `take_a_picture` (more on skills in the Blueprints guide).
+Camera observation as an agentic [skill](/docs/usage/blueprints.md#defining-skills) is provided separately by the reusable `ObserveSkill` container (`dimos/agents/skills/observe_skill.py`), which subscribes to `color_image` and can be added to any blueprint (more on skills in the Blueprints guide).
 
 We can start this module and explore the output of its streams in real time (this will use your webcam).
 
@@ -116,13 +109,6 @@ print(Detection2DModule.io())
  ├─ detected_image_0: Image
  ├─ detected_image_1: Image
  ├─ detected_image_2: Image
- │
- ├─ RPC build() -> None
- ├─ RPC get_skills() -> list
- ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
- ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
- ├─ RPC start() -> None
- ├─ RPC stop() -> None
 ```
 
 {/* TODO: add easy way to print config */}
@@ -137,7 +123,7 @@ from dimos.hardware.sensors.camera.module import CameraModule
 camera = CameraModule()
 detector = Detection2DModule()
 
-detector.image.connect(camera.color_image)
+detector.color_image.connect(camera.color_image)
 
 camera.start()
 detector.start()
@@ -152,7 +138,7 @@ camera.stop()
 
 As we build module structures, we'll quickly want to utilize all cores on the machine (which Python doesn't allow as a single process) and potentially distribute modules across machines or even the internet.
 
-For this, we use `dimos.core` and DimOS transport protocols.
+For this, we use `dimos.core` and dimOS transport protocols.
 
 Defining message exchange protocols and message types also gives us the ability to write models in faster languages.
 
@@ -169,6 +155,93 @@ class HeavyModule(Module):
 ```
 
 If declaring dedicated modules would push the pool past half-dedicated, the coordinator auto-grows it so non-dedicated workers always at least match the dedicated count.
+
+## Sync input handlers
+
+If you don't need an asyncio loop, subscribe to your `In[T]` streams from `start()` and register the unsubscribe with `register_disposable` so cleanup happens automatically at `stop()`.
+
+```python
+from reactivex.disposable import Disposable
+
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In
+from dimos.msgs.std_msgs.Int32 import Int32
+
+
+class Counter(Module):
+    value: In[Int32]
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._total = 0
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(Disposable(self.value.subscribe(self._on_value)))
+
+    def _on_value(self, msg: Int32) -> None:
+        self._total += msg.data
+```
+
+`In.subscribe(cb)` returns an *unsubscribe function*, not a `DisposableBase`. Wrap it in `Disposable(...)` so `register_disposable` can dispose it on `stop()`. Without this, your handler keeps running after `stop()` and tests will fail thread-leak checks.
+
+The callback runs on whatever thread emits the message, so guard mutable state with a lock if multiple inputs share it.
+
+## Triggering side effects via Specs
+
+A common pattern is "subscribe to a stream, react by calling another module". Declare the other module's protocol as a `Spec` field (single-underscore, private). The coordinator binds the proxy at deploy time, so handlers can call it directly with no extra wiring:
+
+```python
+from typing import Protocol
+
+from reactivex.disposable import Disposable
+
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In
+from dimos.msgs.std_msgs.Int32 import Int32
+from dimos.spec.utils import Spec
+
+
+class NotifierSpec(Spec, Protocol):
+    def notify(self, text: str) -> None: ...
+
+
+class Watchdog(Module):
+    value: In[Int32]
+
+    _notifier: NotifierSpec
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(Disposable(self.value.subscribe(self._on_value)))
+
+    def _on_value(self, msg: Int32) -> None:
+        if msg.data > 100:
+            self._notifier.notify(f"value={msg.data}")
+```
+
+The Spec must match the target module's `@rpc` signatures. Sync and async are interchangeable (see [Async modules](#async-modules-lock-free-state)).
+
+To deploy `Watchdog`, add `Watchdog.blueprint()` to an existing blueprint's `autoconnect(...)` chain. The coordinator matches `Out[T]` to `In[T]` by name across the union of modules, and resolves `_notifier: NotifierSpec` to whichever module in the blueprint implements `notify`. No manual wiring required.
+
+## Testing modules
+
+Mock spec dependencies (anything typed `: SomeSpec`) after construction, since the framework normally wires them at deploy time:
+
+```python skip
+@pytest.fixture()
+def module(mocker):
+    m = MyModule(step=10)
+    m._speak_skill = mocker.MagicMock()
+    yield m
+    m.stop()  # required: cleans up the per-instance asyncio loop and thread
+```
+
+The `m.stop()` in teardown matters. The test session-wide thread-leak detector will fail the test otherwise, even if your test body never started any threads.
 
 ## Restarting a module
 
@@ -232,7 +305,7 @@ class MovementManager(Module):
         self.cmd_vel.publish(msg)
 ```
 
-Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are serialized: only one invocation of `handle_x` runs at a time. If messages arrive faster than the handler can process them, intermediate messages are dropped — only the most recent unprocessed message is kept (LATEST policy). The handler is guaranteed to eventually run with the most recently published value.
+Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are serialized: only one invocation of `handle_x` runs at a time. If messages arrive faster than the handler can process them, intermediate messages are dropped. Only the most recent unprocessed message is kept (LATEST policy). The handler is guaranteed to eventually run with the most recently published value.
 
 ### Async `@rpc` methods
 
@@ -383,3 +456,130 @@ to_svg(agentic, "assets/go2_agentic.svg")
 ![output](assets/go2_agentic.svg)
 
 To see more information on how to use Blueprints, see [Blueprints](/docs/usage/blueprints.md).
+
+## Low level manual plumbing
+
+Most of the time this is a bad idea, but you can peak behind blueprints, autoconnect etc, and deal with pubsub directly at lower and lower layers of abstraction
+
+### Connecting via transports
+
+`.connect` wires two modules living in the same process. Alternatively, you can assign a **transport** a typed pub/sub channel such as LCM or Zenoh. The modules never hold a reference to each other, so they can run as separate scripts.
+
+`camera_script.py`:
+
+```python skip
+import time
+from dimos.core.transport import LCMTransport
+from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.msgs.sensor_msgs.Image import Image
+
+camera = CameraModule()
+camera.color_image.transport = LCMTransport("/camera/rgb", Image)
+
+camera.start()
+time.sleep(10)
+camera.stop()
+```
+
+`detector_script.py`:
+
+```python skip
+import time
+from dimos.core.transport import LCMTransport
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.module2D import Detection2DModule
+
+detector = Detection2DModule()
+detector.color_image.transport = LCMTransport("/camera/rgb", Image)
+
+detector.start()
+detector.detections.subscribe(print)
+time.sleep(10)
+detector.stop()
+```
+
+Run each in its own terminal and detections start printing as soon as both are up. The channel name and message type must match on both sides `LCMTransport("/camera/rgb", Image)` maps to the typed channel `/camera/rgb#sensor_msgs.Image`, which you can watch with `dimos spy` or `dimos topic echo /camera/rgb`.
+
+Available transports live in `dimos.core.transport` (`LCMTransport`, `ZenohTransport`, `SHMTransport`, ...); see [Transports](/docs/usage/transports/index.md) for choosing between them.
+
+### Raw transports (no modules)
+
+A transport works on its own. Init one and send/receive from a plain script, no module or stream declarations needed:
+
+```python skip
+from dimos.core.transport import LCMTransport
+from dimos.msgs.std_msgs.String import String
+
+chat = LCMTransport("/chat", String)
+
+unsubscribe = chat.subscribe(print)     # receive
+chat.publish(String(data="hello"))      # send
+
+msg = chat.get_next()                   # or block for the next message
+chat.stop()
+```
+
+Any other script (or module stream) on the same channel sees the traffic. This is handy for quick probes and debug scripts. For a robot system, prefer modules so the streams show up in blueprints and introspection.
+
+### Dynamic streams
+
+Our system is very flexible, but this is dangerous as you lose essentially all support above pubsub. Autoconnect, blueprints, configuration support (dimos --transport=...) etc
+
+Streams don't have to be class annotations, a module can grow inputs and outputs at runtime, and they can even be attached externally.
+Construct the stream and assign it as an attribute.
+
+module has `inputs`/`outputs`/`io()` attributes and is a ble to discover streams attached.
+
+```python ansi=false
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
+from dimos.core.transport import LCMTransport
+from dimos.msgs.std_msgs.String import String
+
+class Dyn(Module):
+    @rpc
+    def start(self) -> None:
+        super().start()
+        # module can add a random input
+        self.echo = In(String, "echo", m)
+        print("Externally attached output:", self.words)
+
+m = Dyn()
+
+m.words = Out(String, "words", m)
+m.start()
+
+
+m.words.transport = LCMTransport("/words", String)
+m.echo.transport = LCMTransport("/words", String)
+
+
+print("\nInputs:")
+print(m.inputs)
+print(m.inputs['echo'])
+print("\nOutputs:")
+print(m.outputs)
+print(m.outputs['words'])
+
+print("\Send/Receive Test:")
+
+# we can subscribe to topics from anywhere also
+m.echo.subscribe(print)
+m.words.publish(String(data="loopback over LCM"))
+
+```
+
+```results
+Externally attached output: Out words[String] @ Dyn
+
+Inputs:
+{'echo': <dimos.core.stream.In object at 0x7f03b4bb32c0>}
+In echo[String] @ Dyn via LCMTransport(/words#std_msgs.String)
+
+Outputs:
+{'words': <dimos.core.stream.Out object at 0x7f03b4b7f860>}
+Out words[String] @ Dyn via LCMTransport(/words#std_msgs.String)
+\Send/Receive Test:
+<dimos.msgs.std_msgs.String.String object at 0x7f03eb2d10d0>
+```

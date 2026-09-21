@@ -14,42 +14,63 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.core.global_config import global_config
+from dimos.core.transport_factory import rpc_backend
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.protocol.rpc.spec import RPCInspectable
+    from dimos.protocol.rpc.spec import RPCInspectable, RPCSpec
 
 logger = setup_logger()
 
+_CONNECT_ATTEMPT_TIMEOUT = 0.25
+
 
 class CoordinatorRPC:
-    """Owns the LCM RPC connection to the singleton Coordinator service."""
+    """Owns the RPC connection to the singleton Coordinator service."""
 
     NAME = "Coordinator"
 
-    def __init__(self, rpc: LCMRPC) -> None:
+    def __init__(self, rpc: RPCSpec) -> None:
         self._rpc = rpc
 
     @classmethod
     def serve(cls, coordinator: RPCInspectable) -> CoordinatorRPC:
         """Publish `coordinator`'s @rpc methods under the `Coordinator/` prefix."""
         cls._ensure_no_existing_service()
-        rpc = LCMRPC()
-        rpc.serve_module_rpc(coordinator, name=cls.NAME)
+        rpc = rpc_backend()()
+        # start() before serve_module_rpc(): Zenoh's subscribe needs an open
+        # session (acquired in start()), whereas LCM tolerates either order.
         rpc.start()
+        rpc.serve_module_rpc(coordinator, name=cls.NAME)
         return cls(rpc)
 
     @classmethod
     def connect(cls, *, timeout: float) -> CoordinatorRPC:
         """Attach to a running Coordinator, raising `TimeoutError` if none answers."""
-        rpc = LCMRPC()
+        rpc = rpc_backend()()
         rpc.start()
         client = cls(rpc)
+        deadline = time.monotonic() + timeout
+        last_timeout: TimeoutError | None = None
         try:
-            client.call("ping", rpc_timeout=timeout)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"Coordinator did not respond within {timeout} seconds"
+                    ) from last_timeout
+                try:
+                    client.call(
+                        "ping",
+                        rpc_timeout=min(_CONNECT_ATTEMPT_TIMEOUT, remaining),
+                    )
+                    break
+                except TimeoutError as exc:
+                    last_timeout = exc
         except BaseException:
             rpc.stop()
             raise
@@ -65,7 +86,7 @@ class CoordinatorRPC:
         return result
 
     @property
-    def rpc(self) -> LCMRPC:
+    def rpc(self) -> RPCSpec:
         return self._rpc
 
     def stop(self) -> None:
@@ -76,7 +97,7 @@ class CoordinatorRPC:
 
     @classmethod
     def _ensure_no_existing_service(cls) -> None:
-        probe = LCMRPC()
+        probe = rpc_backend()()
         probe.start()
         try:
             try:
@@ -84,8 +105,8 @@ class CoordinatorRPC:
             except TimeoutError:
                 return
             raise RuntimeError(
-                f"another {cls.NAME} service is already running on this LCM bus. "
-                "Run `dimos stop` first."
+                f"another {cls.NAME} service is already running on the "
+                f"{global_config.transport} bus. Run `dimos stop` first."
             )
         finally:
             probe.stop()

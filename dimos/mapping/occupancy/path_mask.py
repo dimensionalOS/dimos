@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import cv2
 import numpy as np
 from numpy.typing import NDArray
 
@@ -43,6 +42,8 @@ def make_path_mask(
         A 2D boolean numpy array (height x width) where True indicates
         cells the robot will pass through.
     """
+    import cv2
+
     mask = np.zeros((occupancy_grid.height, occupancy_grid.width), dtype=np.uint8)
 
     line_width_pixels = max(1, int(robot_width / occupancy_grid.resolution))

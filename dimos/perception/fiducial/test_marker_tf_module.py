@@ -24,6 +24,7 @@ from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
+from dimos.protocol.tf.tf import TF
 
 
 def _detection_array(
@@ -71,6 +72,7 @@ def test_marker_tf_module_publishes_world_markers_chain() -> None:
     orientation = Quaternion(0.1, 0.2, 0.3, 0.9)
 
     mod = MarkerTfModule()
+    view = TF(mod.tf)
     try:
         mod._process_detections(
             _detection_array(
@@ -82,13 +84,13 @@ def test_marker_tf_module_publishes_world_markers_chain() -> None:
             )
         )
 
-        wm = mod.tf.get("world", "markers", ts, 1.0)
+        wm = view.get("world", "markers", ts, 1.0)
         assert wm is not None
         assert abs(wm.translation.x) < 1e-6
         assert abs(wm.translation.y) < 1e-6
         assert abs(wm.translation.z) < 1e-6
 
-        w_m7 = mod.tf.get("world", "marker_7", ts, 1.0)
+        w_m7 = view.get("world", "marker_7", ts, 1.0)
         assert w_m7 is not None
         assert w_m7.translation.x == pytest.approx(center.x)
         assert w_m7.translation.y == pytest.approx(center.y)
@@ -97,7 +99,7 @@ def test_marker_tf_module_publishes_world_markers_chain() -> None:
         assert w_m7.rotation.y == pytest.approx(orientation.y)
         assert w_m7.rotation.z == pytest.approx(orientation.z)
         assert w_m7.rotation.w == pytest.approx(orientation.w)
-        assert mod.tf.get("world", "marker_99", ts, 0.1) is None
+        assert view.get("world", "marker_99", ts, 0.1) is None
     finally:
         mod.stop()
 
@@ -106,12 +108,13 @@ def test_marker_tf_parses_class_id_when_detection_id_empty() -> None:
     ts = 700_000.0
 
     mod = MarkerTfModule()
+    view = TF(mod.tf)
     try:
         mod._process_detections(
             _detection_array(ts=ts, marker_id="", class_id="DICT_APRILTAG_36h11:42")
         )
 
-        assert mod.tf.get("world", "marker_42", ts, 1.0) is not None
+        assert view.get("world", "marker_42", ts, 1.0) is not None
     finally:
         mod.stop()
 
@@ -119,6 +122,7 @@ def test_marker_tf_parses_class_id_when_detection_id_empty() -> None:
 def test_marker_tf_empty_array_skips_publication() -> None:
     ts = 600_000.0
     mod = MarkerTfModule()
+    view = TF(mod.tf)
     try:
         mod._process_detections(
             Detection3DArray(
@@ -128,7 +132,7 @@ def test_marker_tf_empty_array_skips_publication() -> None:
             )
         )
 
-        assert mod.tf.get("world", "markers", ts, 0.1) is None
+        assert view.get("world", "markers", ts, 0.1) is None
     finally:
         mod.stop()
 
@@ -136,10 +140,11 @@ def test_marker_tf_empty_array_skips_publication() -> None:
 def test_marker_tf_non_empty_array_without_marker_id_skips_publication() -> None:
     ts = 650_000.0
     mod = MarkerTfModule()
+    view = TF(mod.tf)
     try:
         mod._process_detections(_detection_array(ts=ts, marker_id="", class_id="marker"))
 
-        assert mod.tf.get("world", "markers", ts, 0.1) is None
+        assert view.get("world", "markers", ts, 0.1) is None
     finally:
         mod.stop()
 
@@ -147,12 +152,13 @@ def test_marker_tf_non_empty_array_without_marker_id_skips_publication() -> None
 def test_marker_tf_does_not_recompute_marker_pose() -> None:
     ts = 800_000.0
     mod = MarkerTfModule()
+    view = TF(mod.tf)
     try:
         with patch("dimos.perception.fiducial.marker_pose.estimate_marker_pose") as mock_estimate:
             mod._process_detections(_detection_array(ts=ts, marker_id="4"))
 
         mock_estimate.assert_not_called()
-        assert mod.tf.get("world", "marker_4", ts, 1.0) is not None
+        assert view.get("world", "marker_4", ts, 1.0) is not None
     finally:
         mod.stop()
 
@@ -161,10 +167,11 @@ def test_marker_namespace_prefix_child_frames() -> None:
     ts = 500_000.0
 
     mod = MarkerTfModule(marker_namespace_prefix="r1")
+    view = TF(mod.tf)
     try:
         mod._process_detections(_detection_array(ts=ts))
 
-        assert mod.tf.get("world", "r1/markers", ts, 1.0) is not None
-        assert mod.tf.get("world", "r1/marker_0", ts, 1.0) is not None
+        assert view.get("world", "r1/markers", ts, 1.0) is not None
+        assert view.get("world", "r1/marker_0", ts, 1.0) is not None
     finally:
         mod.stop()

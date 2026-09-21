@@ -1,5 +1,7 @@
 # System Requirements
 
+Install dimOS with the [official installer](/docs/installation/index.md). It provisions Python and system dependencies for the supported installation paths.
+
 ## Hardware
 
 | Component | Minimum | Recommended |
@@ -8,7 +10,7 @@
 | CPU | 8-core Intel / AMD | 12+ cores |
 | RAM | 16 GB | 32 GB+ |
 | Disk | 10 GB SSD | 25 GB+ SSD |
-| OS | Ubuntu 22.04, macOS 12.6+ | Ubuntu 24.04 |
+| OS | Ubuntu 22.04, macOS 14+ | Ubuntu 24.04 |
 
 > GPU is optional for basic robot control. Required for perception, VLMs, and AI features.
 
@@ -25,22 +27,18 @@
 
 ## Dependency Tiers
 
-Bare `pip install dimos` installs the **core** tier. Extras add capabilities on top.
+The macOS 14 minimum follows the current developer dependencies, including ONNX Runtime and Drake. It does not mean that every older dimOS package requires macOS 14. See the [macOS installation guide](/docs/installation/osx.md).
+
+Choose extras with the installer's `--extras` option. The default is `all`, adjusted for the platform. For example:
 
 ```bash
-pip install dimos                                    # Core only
-pip install 'dimos[base,unitree]'                    # Unitree robot control (no torch)
-pip install 'dimos[base,unitree,perception]'         # + Object detection, VLMs (requires torch)
-pip install 'dimos[base,unitree,sim]'                # + MuJoCo simulation
-pip install 'dimos[base,unitree,perception,sim]'     # Full stack
-pip install 'dimos[base,unitree,drone]'              # + Drone support
-pip install 'dimos[base,unitree,manipulation]'       # + Arm control
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --extras base,unitree,sim
 ```
 
 | Extra | What it adds | Key packages | GPU? |
 |-------|-------------|--------------|------|
 | *(core)* | Transport, streams, CLI, blueprints, occupancy maps | dimos-lcm, numpy, scipy, opencv, open3d, numba, Pinocchio, typer, textual | No |
-| `agents` | LLM agent, speech, tool use | langchain, openai, faster-whisper, anthropic | No |
+| `agents` | LLM agent, speech, tool use | langchain, openai, ollama, faster-whisper | No |
 | `perception` | Object detection, VLMs, tracking | ultralytics, transformers, moondream | **Yes** |
 | `visualization` | Rerun viewer + bridge | rerun-sdk, dimos-viewer | No |
 | `web` | FastAPI web interface, audio | fastapi, uvicorn, ffmpeg-python | No |
@@ -49,21 +47,18 @@ pip install 'dimos[base,unitree,manipulation]'       # + Arm control
 | `unitree-dds` | Unitree DDS bridge (superset of 'unitree') | unitree-sdk2py, cyclonedds | No |
 | `drone` | DJI Tello / MAVLink drones | pymavlink | No |
 | `manipulation` | Arm planning + control | Drake, piper-sdk, xarm-sdk | No |
-| `mapping` | GTSAM-backed pose graph optimization (relocalization, nav_stack PGO) | gtsam-extended | No |
-| `cuda` | GPU acceleration | cupy, onnxruntime-gpu, xformers | **Yes** |
-| `cpu` | CPU inference backends | onnxruntime, ctransformers | No |
-| `misc` | Extra models, embeddings, hardware SDKs | cerebras, edgetam, sentence-transformers, tiktoken | Varies |
-| `docker` | Minimal set for Docker sidecar modules | dimos-lcm, numpy, opencv-headless, rerun-sdk | No |
+| `mapping` | GTSAM-backed pose graph optimization (relocalization) | gtsam-extended | No |
+| `cuda` | GPU inference backends | cupy, onnxruntime-gpu | **Yes** |
+| `cpu` | CPU inference backend | onnxruntime | No |
+| `misc` | Extra models, embeddings, hardware SDKs | edgetam, timm, torchreid, xarm-sdk | Varies |
 | `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |
-| `psql` | PostgreSQL storage | psycopg2 | No |
 | `dds` | DDS transport (CycloneDDS) | cyclonedds | No |
+
+Cockpit voice input and the legacy browser audio upload require the `ffmpeg`
+executable in addition to the Python `web` extra. The installer supplies it through system packages on Ubuntu and macOS.
 
 ## Headless / Server Environments
 
-If running on a headless Ubuntu server (no display), install OpenGL libraries for visualization dependencies:
+The Ubuntu installer includes `libgl1` and `libegl1` for visualization imports on headless servers.
 
-```bash
-sudo apt-get install -y libgl1 libegl1
-```
-
-Nix users (`nix develop`) don't need this — the flake provides `libGL`, `libGLU`, and `mesa`.
+Nix users (`nix develop`) don't need this. The flake provides `libGL`, `libGLU`, and `mesa`.

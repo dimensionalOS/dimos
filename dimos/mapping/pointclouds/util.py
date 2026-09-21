@@ -12,16 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Iterable
 import colorsys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
-from open3d.geometry import PointCloud  # type: ignore[import-untyped]
+
+if TYPE_CHECKING:
+    from open3d.geometry import PointCloud  # type: ignore[import-untyped]
 
 
 def read_pointcloud(path: Path) -> PointCloud:
+    import open3d as o3d
+
     return o3d.io.read_point_cloud(path)
 
 
@@ -34,6 +40,8 @@ def sum_pointclouds(pointclouds: Iterable[PointCloud]) -> PointCloud:
 
 
 def height_colorize(pointcloud: PointCloud) -> None:
+    import open3d as o3d
+
     points = np.asarray(pointcloud.points)
     z_values = points[:, 2]
     z_min = z_values.min()
@@ -48,6 +56,8 @@ def height_colorize(pointcloud: PointCloud) -> None:
 
 
 def visualize(pointcloud: PointCloud) -> None:
+    import open3d as o3d
+
     voxel_size = 0.05  # 0.05m voxels
     voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pointcloud, voxel_size=voxel_size)
     o3d.visualization.draw_geometries(

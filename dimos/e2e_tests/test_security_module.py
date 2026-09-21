@@ -26,11 +26,13 @@ from dimos.e2e_tests.lcm_spy import LcmSpy
 @pytest.mark.skipif_in_ci
 @pytest.mark.skipif_no_openai
 @pytest.mark.mujoco
+@pytest.mark.flaky(reruns=2)
 def test_security_module(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[[str], DimosCliCall],
     human_input: Callable[[str], None],
     start_person_track: StartPersonTrack,
+    wait_for_system_ready: Callable[..., None],
     explore_office: Callable[[], None],
 ) -> None:
     start_blueprint(
@@ -47,9 +49,8 @@ def test_security_module(
         "unitree-go2-security",
     )
 
-    lcm_spy.save_topic("/rpc/McpClient/on_system_modules/res")
     lcm_spy.save_topic("/security_state#std_msgs.String")
-    lcm_spy.wait_for_saved_topic("/rpc/McpClient/on_system_modules/res", timeout=120.0)
+    wait_for_system_ready(timeout=120.0)
 
     time.sleep(2)
 

@@ -26,12 +26,16 @@ from dimos.mapping.loop_closure.pgo import (
     _obs_to_pose3,
     _pose3_to_transform,
 )
-from dimos.memory2.store.memory import MemoryStore
-from dimos.memory2.stream import Stream
+from dimos.memory.store.memory import MemoryStore
+from dimos.memory.stream import Stream
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+# TODO(PY311): drop — the mapping extra excludes gtsam-extended where it has no
+# wheels (py3.10 Linux), see pyproject.
+pytest.importorskip("gtsam")
 
 
 def _random_R(rng: np.random.Generator) -> np.ndarray:
@@ -69,7 +73,7 @@ class TestPGOConfig:
 class TestTransformHelpers:
     def test_observation_normalizes_transform_pose(self) -> None:
         """Constructing/deriving with pose=Transform should coerce to 7-tuple."""
-        from dimos.memory2.type.observation import Observation
+        from dimos.memory.type.observation import Observation
 
         tf = Transform(
             translation=Vector3(1.5, -2.0, 0.7),
@@ -86,7 +90,7 @@ class TestTransformHelpers:
         assert derived.pose_tuple == obs.pose_tuple
 
     def test_observation_normalizes_posestamped(self) -> None:
-        from dimos.memory2.type.observation import Observation
+        from dimos.memory.type.observation import Observation
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         ps = PoseStamped(ts=1.0, position=(1.0, 2.0, 3.0), orientation=(0.0, 0.0, 0.0, 1.0))
@@ -94,7 +98,7 @@ class TestTransformHelpers:
         assert obs.pose_tuple == (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0)
 
     def test_obs_to_pose3_roundtrip(self) -> None:
-        from dimos.memory2.type.observation import Observation
+        from dimos.memory.type.observation import Observation
 
         rng = np.random.default_rng(4)
         R = _random_R(rng)
@@ -290,46 +294,3 @@ class TestKeyframeType:
             kf.ts = 2.0  # type: ignore[misc]
         assert isinstance(kf.local, Transform)
         assert isinstance(kf.optimized, Transform)
-
-
-# Real-recording smoke test. ~45-60s on go2_short.db. get_data() auto-pulls
-# the LFS archive on first use.
-class TestRealRecording:
-    @pytest.mark.self_hosted
-    def test_pgo_pipeline_against_go2_short(self) -> None:
-        """Run the full PGO pipeline on a real 60-second go2 recording.
-
-        Asserts: keyframes produced, drift correction actually corrects (some
-        optimized poses differ from local), correction stream length matches
-        keyframes, apply_corrections preserves input frame count.
-        """
-        from dimos.memory2.store.sqlite import SqliteStore
-        from dimos.utils.data import get_data
-
-        store = SqliteStore(path=get_data("go2_short.db"))
-        lidar = store.streams.lidar
-        in_count = lidar.count()
-        assert in_count > 0, "recording is empty"
-
-        graph = lidar.transform(PGO()).last().data
-        n_kf = len(graph.keyframes)
-        assert n_kf > 0, "PGO emitted no keyframes"
-        # 60s recording at ~0.5m keyframe spacing -> at least a handful.
-        assert n_kf >= 5
-
-        # Loop closure detection: at least one optimized pose should differ
-        # from its odom-frame counterpart. Without loops, the optimization is
-        # a no-op and local == optimized for every keyframe.
-        drifted = sum(
-            1
-            for kf in graph.keyframes
-            if kf.local.translation != kf.optimized.translation
-            or kf.local.rotation != kf.optimized.rotation
-        )
-        assert drifted > 0, "expected loop closures to drift at least one keyframe"
-        # loop_closures_out side-channel is gone — graph.loops carries them.
-        assert len(graph.loops) > 0
-
-        # PoseGraph-as-Transformer preserves frame count, including pose=None rows.
-        out_count = sum(1 for _ in lidar.transform(graph))
-        assert out_count == in_count

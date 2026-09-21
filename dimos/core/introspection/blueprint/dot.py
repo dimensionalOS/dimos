@@ -12,27 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hub-style Graphviz DOT renderer for blueprint visualization.
+"""Graphviz DOT renderer for Blueprint stream and RPC relationships.
 
 This renderer creates intermediate "type nodes" for data flow, making it clearer
 when one output fans out to multiple consumers:
 
     ModuleA --> [name:Type] --> ModuleB
                             --> ModuleC
+
+Resolved ModuleRef dependencies use RPC contract nodes with the declared Spec
+methods between the caller and provider modules.
 """
 
 from collections import defaultdict
+from dataclasses import dataclass
 from enum import Enum, auto
 
+from dimos.cli import theme
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.module_coordinator import _resolve_single_ref
 from dimos.core.introspection.utils import (
     GROUP_COLORS,
+    RPC_COLOR,
     TYPE_COLORS,
     color_for_string,
     sanitize_id,
 )
-from dimos.core.module import ModuleBase
-from dimos.utils.cli import theme
+from dimos.core.module import ModuleBase, is_module_type
+from dimos.spec.utils import get_protocol_method_signatures, is_spec
 
 
 class LayoutAlgo(Enum):
@@ -51,27 +58,85 @@ DEFAULT_IGNORED_MODULES = {
 }
 
 
+@dataclass(frozen=True)
+class RpcConnection:
+    """A resolved ModuleRef from an RPC caller to its provider."""
+
+    caller: str
+    provider: str
+    ref_name: str
+    contract_name: str
+    methods: tuple[str, ...]
+
+
+def _rpc_methods(contract: type) -> tuple[str, ...]:
+    if is_spec(contract):
+        return tuple(sorted(get_protocol_method_signatures(contract)))
+    if is_module_type(contract):
+        return tuple(sorted(contract.rpcs))
+    return ()
+
+
+def _resolve_rpc_connections(blueprint: Blueprint) -> list[RpcConnection]:
+    atoms_by_name = {atom.name: atom for atom in blueprint.active_blueprints}
+    disabled_set = set(blueprint.disabled_modules_tuple)
+    connections: list[RpcConnection] = []
+
+    for atom in blueprint.active_blueprints:
+        for module_ref in atom.module_refs:
+            replacement = blueprint.remapping_map.get((atom.name, module_ref.name), module_ref.spec)
+            if not (is_spec(replacement) or is_module_type(replacement)):
+                continue
+
+            provider_name = _resolve_single_ref(
+                atom,
+                module_ref,
+                replacement,
+                blueprint,
+                disabled_set,
+            )
+            if not isinstance(provider_name, str):
+                continue
+            provider = atoms_by_name.get(provider_name)
+            if provider is None:
+                continue
+
+            connections.append(
+                RpcConnection(
+                    caller=atom.module.__name__,
+                    provider=provider.module.__name__,
+                    ref_name=module_ref.name,
+                    contract_name=module_ref.spec.__name__,
+                    methods=_rpc_methods(module_ref.spec),
+                )
+            )
+
+    return connections
+
+
 def render(
     blueprint_set: Blueprint,
     *,
     layout: set[LayoutAlgo] | None = None,
     ignored_streams: set[tuple[str, str]] | None = None,
     ignored_modules: set[str] | None = None,
+    include_rpc: bool = True,
 ) -> str:
-    """Generate a hub-style DOT graph from a Blueprint.
+    """Generate a stream and RPC relationship graph from a Blueprint.
 
     This creates intermediate "type nodes" that represent data channels,
-    connecting producers to consumers through a central hub node.
+    connecting producers to consumers through a central hub node. Resolved
+    ModuleRefs become RPC contract nodes between callers and providers.
 
     Args:
         blueprint_set: The blueprint set to visualize.
         layout: Set of layout algorithms to apply. Default is none (let graphviz decide).
         ignored_streams: Set of (name, type_name) tuples to ignore.
         ignored_modules: Set of module names to ignore.
+        include_rpc: Whether to include RPC contracts and relationships.
 
     Returns:
-        A string in DOT format showing modules as nodes, type nodes as
-        small colored hubs, and edges connecting them.
+        A DOT graph containing modules, stream channels, and RPC contracts.
     """
     if layout is None:
         layout = set()
@@ -79,6 +144,8 @@ def render(
         ignored_streams = DEFAULT_IGNORED_CONNECTIONS
     if ignored_modules is None:
         ignored_modules = DEFAULT_IGNORED_MODULES
+
+    rpc_connections = _resolve_rpc_connections(blueprint_set) if include_rpc else []
 
     # Collect all outputs: (name, type) -> list of producer modules
     producers: dict[tuple[str, type], list[type[ModuleBase]]] = defaultdict(list)
@@ -91,7 +158,7 @@ def render(
         module_classes[bp.module.__name__] = bp.module
         for conn in bp.streams:
             # Apply remapping
-            remapped_name = blueprint_set.remapping_map.get((bp.module, conn.name), conn.name)
+            remapped_name = blueprint_set.remapping_map.get((bp.name, conn.name), conn.name)
             key = (remapped_name, conn.type)
             if conn.direction == "out":
                 producers[key].append(bp.module)  # type: ignore[index]
@@ -133,7 +200,7 @@ def render(
     # Build DOT output
     lines = [
         "digraph modules {",
-        "    bgcolor=transparent;",
+        f'    bgcolor="{theme.BACKGROUND}";',
         "    rankdir=LR;",
         # "    nodesep=1;",  # horizontal spacing between nodes
         # "    ranksep=1.5;",  # vertical spacing between ranks
@@ -196,8 +263,25 @@ def render(
 
     lines.append("")
 
-    # Add edges: producer -> type_node -> consumer
-    lines.append("    // Edges")
+    # Add RPC contract nodes (one per caller ModuleRef)
+    lines.append("    // RPC contracts")
+    for connection in sorted(rpc_connections, key=lambda c: (c.caller, c.ref_name)):
+        if connection.caller in ignored_modules or connection.provider in ignored_modules:
+            continue
+        node_id = sanitize_id(f"rpc_{connection.caller}_{connection.ref_name}")
+        method_lines = "".join(f"\\n{method}()" for method in connection.methods)
+        label = f"{connection.ref_name}:{connection.contract_name}{method_lines}"
+        lines.append(
+            f'    {node_id} [label="{label}", shape=component, style=filled, '
+            f'fillcolor="{RPC_COLOR}35", color="{RPC_COLOR}", '
+            f'fontcolor="{theme.FOREGROUND}", width=0, height=0, '
+            'margin="0.1,0.05", fontsize=9];'
+        )
+
+    lines.append("")
+
+    # Add stream edges: producer -> type_node -> consumer
+    lines.append("    // Stream edges")
     for key, color in sorted(
         active_channels.items(), key=lambda x: f"{x[0][0]}:{x[0][1].__name__}"
     ):
@@ -217,6 +301,20 @@ def render(
                 continue
             lines.append(f'    {node_id} -> {consumer.__name__} [color="{color}"];')
 
+    lines.append("")
+
+    # Add RPC edges: caller -> contract -> provider
+    lines.append("    // RPC edges")
+    for connection in sorted(rpc_connections, key=lambda c: (c.caller, c.ref_name)):
+        if connection.caller in ignored_modules or connection.provider in ignored_modules:
+            continue
+        node_id = sanitize_id(f"rpc_{connection.caller}_{connection.ref_name}")
+        lines.append(
+            f"    {connection.caller} -> {node_id} "
+            f'[color="{RPC_COLOR}", style=dashed, arrowhead=none];'
+        )
+        lines.append(f'    {node_id} -> {connection.provider} [color="{RPC_COLOR}", style=dashed];')
+
     lines.append("}")
     return "\n".join(lines)
 
@@ -226,6 +324,7 @@ def render_svg(
     output_path: str,
     *,
     layout: set[LayoutAlgo] | None = None,
+    include_rpc: bool = True,
 ) -> None:
     """Generate an SVG file from a Blueprint using graphviz.
 
@@ -233,13 +332,14 @@ def render_svg(
         blueprint_set: The blueprint set to visualize.
         output_path: Path to write the SVG file.
         layout: Set of layout algorithms to apply.
+        include_rpc: Whether to include RPC contracts and relationships.
     """
     import subprocess
 
     if layout is None:
         layout = set()
 
-    dot_code = render(blueprint_set, layout=layout)
+    dot_code = render(blueprint_set, layout=layout, include_rpc=include_rpc)
     engine = "fdp" if LayoutAlgo.FDP in layout else "dot"
     result = subprocess.run(
         [engine, "-Tsvg", "-o", output_path],

@@ -17,12 +17,12 @@ from typing import TypeVar
 
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.pointclouds.occupancy import general_occupancy
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.transform import normalize, smooth
-from dimos.memory2.vis.color import Color
-from dimos.memory2.vis.space.elements import Point
-from dimos.memory2.vis.space.space import Space
-from dimos.memory2.vis.utils import mosaic
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.transform import normalize, smooth
+from dimos.memory.vis.color import Color
+from dimos.memory.vis.space.elements import Point
+from dimos.memory.vis.space.space import Space
+from dimos.memory.vis.utils import mosaic
 from dimos.models.embedding.clip import CLIPModel
 from dimos.utils.data import get_data
 

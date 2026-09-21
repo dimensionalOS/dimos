@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Python NativeModule wrapper for the C++ Livox Mid-360 driver.
+"""Python NativeModule wrapper for the Rust Livox Mid-360 driver.
 
 Usage::
     from dimos.hardware.sensors.lidar.livox.module import Mid360
@@ -20,27 +20,31 @@ Usage::
 
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     ModuleCoordinator.build(autoconnect(
-        Mid360.blueprint(host_ip="192.168.1.5"),
+        Mid360.blueprint(),  # host_ip auto-detected, lidar_ip defaults to the factory IP
         SomeConsumer.blueprint(),
     )).loop()
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import sys
+from typing import TYPE_CHECKING, Any, Literal
 
+from pydantic import Field, field_validator
+
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
+from dimos.hardware.sensors.lidar.livox.net import resolve_host_ip
 from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_CMD_DATA_PORT,
     SDK_HOST_CMD_DATA_PORT,
     SDK_HOST_IMU_DATA_PORT,
-    SDK_HOST_LOG_DATA_PORT,
     SDK_HOST_POINT_DATA_PORT,
     SDK_HOST_PUSH_MSG_PORT,
     SDK_IMU_DATA_PORT,
-    SDK_LOG_DATA_PORT,
+    SDK_MULTICAST_GROUP,
     SDK_POINT_DATA_PORT,
     SDK_PUSH_MSG_PORT,
 )
@@ -50,15 +54,32 @@ from dimos.spec import perception
 
 
 class Mid360Config(NativeModuleConfig):
-    """Config for the C++ Mid-360 native module."""
-
-    cwd: str | None = "cpp"
-    executable: str = "result/bin/mid360_native"
-    build_command: str | None = "nix build .#mid360_native"
-    host_ip: str = "192.168.1.5"
+    cwd: str | None = "rust"
+    # The crate is a workspace member, so cargo builds into the repo-root target dir.
+    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mid360_native")
+    build_command: str | None = "cargo build --release"
+    stdin_config: bool = True
+    base_fields: frozenset[str] = frozenset({"frame_id"})
+    # None derives host_ip from a NIC on the lidar's subnet; a box with two links
+    # into that subnet sets it explicitly.
+    host_ip: str | None = None
     lidar_ip: str = "192.168.1.155"
     frequency: float = 10.0
     enable_imu: bool = True
+    # Replay this capture instead of a live sensor. host_ip/lidar_ip are unused.
+    pcap: str | None = None
+    # Replay speed relative to capture time. None runs flat-out.
+    replay_rate: float | None = Field(default=1.0, gt=0)
+    # Multicast group the device streams to. None receives unicast only, which
+    # loopback replay needs and macOS requires (see virtual_mid360).
+    multicast_ip: str | None = Field(
+        default_factory=lambda: None if sys.platform == "darwin" else SDK_MULTICAST_GROUP
+    )
+    # Wire layout per point:
+    #   "minimal" x,y,z,offset_time                    - 16 B (default)
+    #   "full"    x,y,z,intensity,offset_time,tag,line - 22 B
+    #   "legacy"  x,y,z,intensity                      - 16 B
+    point_format: Literal["full", "minimal", "legacy"] = "minimal"
     frame_id: str = "lidar_link"
     imu_frame_id: str = "imu_link"
 
@@ -67,22 +88,34 @@ class Mid360Config(NativeModuleConfig):
     push_msg_port: int = SDK_PUSH_MSG_PORT
     point_data_port: int = SDK_POINT_DATA_PORT
     imu_data_port: int = SDK_IMU_DATA_PORT
-    log_data_port: int = SDK_LOG_DATA_PORT
     host_cmd_data_port: int = SDK_HOST_CMD_DATA_PORT
     host_push_msg_port: int = SDK_HOST_PUSH_MSG_PORT
     host_point_data_port: int = SDK_HOST_POINT_DATA_PORT
     host_imu_data_port: int = SDK_HOST_IMU_DATA_PORT
-    host_log_data_port: int = SDK_HOST_LOG_DATA_PORT
+
+    @field_validator("pcap")
+    @classmethod
+    def _pcap_path_present(cls, value: str | None) -> str | None:
+        if value == "":
+            raise ValueError("pcap is empty; set DIMOS_MID360_PCAP or pass a path")
+        return value
+
+    def to_config_dict(self) -> dict[str, Any]:
+        config = super().to_config_dict()
+        # The rust struct has every key. None crosses as an explicit null.
+        for key in ("host_ip", "pcap", "replay_rate", "multicast_ip"):
+            config[key] = getattr(self, key)
+        return config
+
+
+def _resolved_host_ip(config: Mid360Config) -> str | None:
+    """Live mode derives host_ip from a NIC on the lidar's subnet. Replay skips it."""
+    if config.pcap is not None:
+        return config.host_ip
+    return resolve_host_ip(config.lidar_ip, config.host_ip, label="Mid360")
 
 
 class Mid360(NativeModule, perception.Lidar, perception.IMU):
-    """Livox Mid-360 LiDAR module backed by a native C++ binary.
-
-    Ports:
-        lidar (Out[PointCloud2]): Point cloud frames at configured frequency.
-        imu (Out[Imu]): IMU data at ~200 Hz (if enabled).
-    """
-
     config: Mid360Config
 
     lidar: Out[PointCloud2]
@@ -90,6 +123,7 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
 
     @rpc
     def start(self) -> None:
+        self.config.host_ip = _resolved_host_ip(self.config)
         super().start()
 
     @rpc

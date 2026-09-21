@@ -44,8 +44,10 @@ class _ActuatorSpec:
     tendon: str | None
 
 
-def build_joint_mappings(xml_path: Path, model: mujoco.MjModel) -> list[JointMapping]:
-    specs = _parse_actuator_specs(xml_path)
+def build_joint_mappings(xml_path: Path | None, model: mujoco.MjModel) -> list[JointMapping]:
+    specs: list[_ActuatorSpec] = []
+    if xml_path is not None:
+        specs = _parse_actuator_specs(xml_path)
     if specs:
         return _build_joint_mappings_from_specs(specs, model)
     if int(model.nu) > 0:

@@ -36,6 +36,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
 from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.utils.logging_config import setup_logger
@@ -69,11 +70,11 @@ class DroneConnectionModule(Module):
     telemetry: Out[Any]  # Full telemetry JSON
     video: Out[Image]
     follow_object_cmd: Out[Any]
+    tf: Out[TFMessage]
 
     # Internal state
     _odom: PoseStamped | None = None
     _status: dict[str, Any] = {}
-    _latest_video_frame: Image | None = None
     _latest_telemetry: dict[str, Any] | None = None
     _latest_status: dict[str, Any] | None = None
     _latest_status_lock: threading.RLock
@@ -89,7 +90,6 @@ class DroneConnectionModule(Module):
         super().__init__(**kwargs)
         self.connection: MavlinkConnection | None = None
         self.video_stream: DJIDroneVideoStream | None = None
-        self._latest_video_frame = None
         self._latest_telemetry = None
         self._latest_status = None
         self._latest_status_lock = threading.RLock()
@@ -121,9 +121,9 @@ class DroneConnectionModule(Module):
         # Start video stream (already created above)
         if self.video_stream.start():
             logger.info("Video stream started")
-            # Subscribe to video, store latest frame and publish it
+            # Subscribe to video and publish it
             self.register_disposable(
-                self.video_stream.get_stream().subscribe(self._store_and_publish_frame),
+                self.video_stream.get_stream().subscribe(self.video.publish),
             )
             # # TEMPORARY - DELETE AFTER RECORDING
             # from dimos.utils.testing import TimedSensorStorage
@@ -165,11 +165,6 @@ class DroneConnectionModule(Module):
         logger.info("Drone connection module started")
         return
 
-    def _store_and_publish_frame(self, frame: Image) -> None:
-        """Store the latest video frame and publish it."""
-        self._latest_video_frame = frame
-        self.video.publish(frame)
-
     def _publish_tf(self, msg: PoseStamped) -> None:
         """Publish odometry and TF transforms."""
         self._odom = msg
@@ -185,7 +180,6 @@ class DroneConnectionModule(Module):
             child_frame_id="base_link",
             ts=msg.ts if hasattr(msg, "ts") else time.time(),
         )
-        self.tf.publish(base_link)
 
         # Publish camera_link transform (camera mounted on front of drone, no gimbal factored in yet)
         camera_link = Transform(
@@ -195,7 +189,7 @@ class DroneConnectionModule(Module):
             child_frame_id="camera_link",
             ts=time.time(),
         )
-        self.tf.publish(camera_link)
+        self.tf.publish(TFMessage(base_link, camera_link))
 
     def _publish_status(self, status: dict[str, Any]) -> None:
         """Publish drone status as JSON string."""
@@ -464,12 +458,3 @@ class DroneConnectionModule(Module):
 
         # Call parent stop to clean up Module infrastructure (event loop, LCM, disposables, etc.)
         super().stop()
-
-    @skill
-    def observe(self) -> Image | None:
-        """Returns the latest video frame from the drone camera. Use this skill for any visual world queries.
-
-        This skill provides the current camera view for perception tasks.
-        Returns None if no frame has been captured yet.
-        """
-        return self._latest_video_frame

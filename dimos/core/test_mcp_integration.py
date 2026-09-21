@@ -36,16 +36,16 @@ from typer.testing import CliRunner
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.cli.dimos import main
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.global_config import global_config
 from dimos.core.run_registry import (
     RunEntry,
     cleanup_stale,
     list_runs,
 )
-from dimos.core.tests.stress_test_module import StressTestModule
-from dimos.robot.cli.dimos import main
 
 
 @pytest.fixture(autouse=True)

@@ -33,5 +33,3 @@ unitree_g1_shm = autoconnect(
     ),
     vis_module(viewer_backend=global_config.viewer),
 )
-
-__all__ = ["unitree_g1_shm"]

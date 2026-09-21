@@ -15,33 +15,35 @@
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.global_config import global_config
 from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.get_all_blueprints import get_blueprint_by_name
 
 # Optional dependencies that are allowed to be missing
-OPTIONAL_DEPENDENCIES = {"pyrealsense2", "pyzed", "geometry_msgs", "turbojpeg", "unitree_sdk2py"}
+OPTIONAL_DEPENDENCIES = {"pyzed", "geometry_msgs", "turbojpeg", "unitree_sdk2py"}
 OPTIONAL_ERROR_SUBSTRINGS = {
     "Unable to locate turbojpeg library automatically",
     "ZED SDK not installed",
     "Descriptors cannot be created directly",
+    # cockpit() blueprints without the [web] extra installed.
+    "needs the web extra",
 }
 
-# These need git LFS, so can't be run on the ubuntu runners.
+# These need self-hosted dependencies or external robot assets.
 SELF_HOSTED_BLUEPRINTS = frozenset(
     {
-        "alfred-nav",
         "coordinator-basic",
         "coordinator-cartesian-ik-mock",
         "coordinator-cartesian-ik-piper",
         "coordinator-combined-xarm6",
         "coordinator-flowbase",
         "coordinator-flowbase-keyboard-teleop",
-        "coordinator-flowbase-nav",
         "coordinator-mobile-manip-mock",
         "coordinator-mock",
         "coordinator-mock-twist-base",
+        "coordinator-openarm",
         "coordinator-piper",
-        "coordinator-servo-xarm6",
+        "coordinator-trajectory-xarm6",
         "coordinator-teleop-dual",
         "coordinator-teleop-piper",
         "coordinator-teleop-xarm6",
@@ -49,20 +51,27 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "coordinator-velocity-xarm6",
         "coordinator-xarm6",
         "coordinator-xarm7",
-        "dual-xarm6-planner",
-        "teleop-quest-dual",
-        "teleop-quest-go2",
-        "teleop-quest-piper",
-        "teleop-quest-rerun",
-        "teleop-quest-xarm6",
-        "teleop-quest-xarm7",
-        "teleop-quest-xarm7-video",
-        "unitree-g1-nav-sim",
-        "xarm-perception",
-        "xarm-perception-agent",
+        "dual-xarm6-planner-coordinator",
+        "learning-collect-webxr-xarm7",
+        "openarm-planner-coordinator",
+        "teleop-hosted-go2-multicam",
+        "teleop-hosted-go2-transport",
+        "teleop-hosted-xarm6",
+        "teleop-hosted-xarm7",
+        "teleop-webxr-dual",
+        "teleop-webxr-go2",
+        "teleop-webxr-hand-xarm7",
+        "teleop-webxr-piper",
+        "teleop-webxr-rerun",
+        "teleop-webxr-xarm6",
+        "teleop-webxr-xarm7",
+        "teleop-webxr-xarm7-video",
+        "xarm-grasp",
+        "xarm-grasp-agent",
+        "xarm-grasp-graspgenx",
+        "xarm-grasp-graspgenx-agent",
         "xarm-perception-sim",
         "xarm-perception-sim-agent",
-        "xarm6-planner-only",
         "xarm7-planner-coordinator",
         "xarm7-planner-coordinator-agent",
     }
@@ -96,8 +105,10 @@ def test_old_self_hosted_blueprints() -> None:
 
 
 @pytest.mark.parametrize("blueprint_name", UBUNTU_BLUEPRINTS)
-def test_blueprint_is_valid(blueprint_name: str) -> None:
+def test_blueprint_is_valid(blueprint_name: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """Validate blueprints that should import on the ubuntu-latest runner."""
+    # The multi-robot blueprints read ROBOT_IPS at import time.
+    monkeypatch.setattr(global_config, "robot_ips", "192.0.2.10,192.0.2.11")
     _check_blueprint(blueprint_name)
 
 

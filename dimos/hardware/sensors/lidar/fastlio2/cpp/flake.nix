@@ -2,18 +2,25 @@
   description = "FAST-LIO2 + Livox Mid-360 native module";
 
   inputs = {
+    zenoh.url = "github:jeff-hykin/zenoh_flake";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     livox-sdk.url = "path:../../livox/cpp";
     livox-sdk.inputs.nixpkgs.follows = "nixpkgs";
     livox-sdk.inputs.flake-utils.follows = "flake-utils";
-    livox-sdk.inputs.lcm-extended.follows = "lcm-extended";
     dimos-lcm = {
       url = "github:dimensionalOS/dimos-lcm/main";
       flake = false;
     };
+    # Standalone Boost.PFR, consumed by the SDK via a FetchContent source override.
+    pfr = {
+      url = "github:apolukhin/pfr_non_boost/2.3.2";
+      flake = false;
+    };
     fast-lio = {
-      url = "github:dimensionalOS/dimos-module-fastlio2/v0.3.0-quiet-logs";
+      # get_body_cloud()/get_body_cloud_down() with the IMU<-lidar extrinsic
+      # applied (PR #1); retarget to jeff/feat/fastlio-body-cloud once merged.
+      url = "github:dimensionalOS/dimos-module-fastlio2?ref=ivan/fix/body-cloud-imu-extrinsic";
       flake = false;
     };
     lcm-extended = {
@@ -23,7 +30,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, livox-sdk, dimos-lcm, fast-lio, lcm-extended, ... }:
+  outputs = { self, nixpkgs, zenoh, flake-utils, livox-sdk, dimos-lcm, pfr, fast-lio, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         # Overlay fixes for darwin-broken nixpkgs recipes in our transitive
@@ -63,6 +70,8 @@
         };
         livox-sdk2 = livox-sdk.packages.${system}.livox-sdk2;
         lcm = lcm-extended.packages.${system}.lcm;
+        zenohc = zenoh.packages.${system}.zenoh-c;
+        zenohcpp = zenoh.packages.${system}.zenoh-cpp;
 
         livox-common = ../../common;
 
@@ -79,16 +88,22 @@
             pkgs.glib
             pkgs.eigen
             pkgs.pcl
-            pkgs.yaml-cpp
             pkgs.boost
             pkgs.llvmPackages.openmp
+            pkgs.nlohmann_json
+            zenohc
+            zenohcpp
           ];
 
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
+            "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             "-DFASTLIO_DIR=${fast-lio}"
             "-DLIVOX_COMMON_DIR=${livox-common}"
+            # The header-only SDK lives outside this dir. A git-tree flake can
+            # reach it as a path literal within the repo tree.
+            "-DDIMOS_NATIVE_CPP_DIR=${../../../../../../native/cpp}"
           ];
         };
       in {

@@ -41,8 +41,6 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-DEFAULT_TIMEOUT = 30
-
 
 class McpError(Exception):
     """Raised when the MCP server returns a JSON-RPC error."""
@@ -55,13 +53,13 @@ class McpError(Exception):
 class McpAdapter:
     """Thin JSON-RPC client for a running MCP server."""
 
-    def __init__(self, url: str | None = None, timeout: int = DEFAULT_TIMEOUT) -> None:
-        if url is None:
-            from dimos.core.global_config import global_config
+    def __init__(self, url: str | None = None, timeout: int | None = None) -> None:
+        from dimos.core.global_config import global_config
 
+        if url is None:
             url = f"http://localhost:{global_config.mcp_port}/mcp"
         self.url = url
-        self.timeout = timeout
+        self.timeout = global_config.mcp_timeout if timeout is None else timeout
 
     def call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Send a JSON-RPC request and return the parsed response.
@@ -137,7 +135,7 @@ class McpAdapter:
         return False
 
     @classmethod
-    def from_run_entry(cls, entry: Any | None = None, timeout: int = DEFAULT_TIMEOUT) -> McpAdapter:
+    def from_run_entry(cls, entry: Any | None = None, timeout: int | None = None) -> McpAdapter:
         """Create an adapter from a RunEntry, or discover the latest one.
 
         Falls back to the default URL if no entry is found.

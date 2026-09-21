@@ -16,10 +16,12 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 
 from dimos.core.coordination.process_lifecycle import (
+    DIMOS_RUN_ID_ENV,
     kill_run_processes,
     wait_for_pid_exit,
 )
@@ -40,12 +42,13 @@ def main(argv: list[str]) -> int:
 
     main_pid = int(argv[1])
     run_id = argv[2]
+    env_var = os.environ.get("DIMOS_WATCHDOG_TARGET_ENV", DIMOS_RUN_ID_ENV)
 
     wait_for_pid_exit(main_pid)
 
     time.sleep(_GRACE_PERIOD_SECONDS)
 
-    kill_run_processes(run_id)
+    kill_run_processes(run_id, env_var=env_var)
 
     return 0
 

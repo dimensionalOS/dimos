@@ -1,4 +1,4 @@
-<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 880.364 157.968">
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 880.364 157.968" data-pikchr-date="20260403102956">
 <path d="M20.46,104.688L106.513,104.688A7.5 7.5 0 0 0 114.013 97.188L114.013,60.78A7.5 7.5 0 0 0 106.513 53.28L20.46,53.28A7.5 7.5 0 0 0 12.96 60.78L12.96,97.188A7.5 7.5 0 0 0 20.46 104.688Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
 <text x="63.4867" y="78.984" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">world</text>
 <polygon points="171.613,78.984 160.093,83.304 160.093,74.664" style="fill:rgb(255,255,255)"/>

@@ -1,0 +1,47 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 1000.8 370.69" data-pikchr-date="20260403102956">
+<text x="40.806" y="25.92" text-anchor="middle" font-weight="bold" fill="rgb(255,255,255)" dominant-baseline="central">local</text>
+<path d="M18.3,146.843L176.1,146.843A7.5 7.5 0 0 0 183.6 139.343L183.6,60.7433A7.5 7.5 0 0 0 176.1 53.2433L18.3,53.2433A7.5 7.5 0 0 0 10.8 60.7433L10.8,139.343A7.5 7.5 0 0 0 18.3 146.843Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="97.2" y="89.9633" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">browser</text>
+<text x="97.2" y="110.123" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">same machine</text>
+<path d="M464.7,146.843L622.5,146.843A7.5 7.5 0 0 0 630 139.343L630,60.7433A7.5 7.5 0 0 0 622.5 53.2433L464.7,53.2433A7.5 7.5 0 0 0 457.2 60.7433L457.2,139.343A7.5 7.5 0 0 0 464.7 146.843Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="543.6" y="89.9633" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Relay</text>
+<text x="543.6" y="110.123" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">127.0.0.1 only</text>
+<path d="M824.7,146.843L982.5,146.843A7.5 7.5 0 0 0 990 139.343L990,60.7433A7.5 7.5 0 0 0 982.5 53.2433L824.7,53.2433A7.5 7.5 0 0 0 817.2 60.7433L817.2,139.343A7.5 7.5 0 0 0 824.7 146.843Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="903.6" y="89.9633" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Bridge</text>
+<text x="903.6" y="110.123" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">same machine</text>
+<polygon points="183.6,79.8833 195.12,75.5633 195.12,84.2033" style="fill:rgb(255,255,255)"/>
+<polygon points="457.2,79.8833 445.68,84.2033 445.68,75.5633" style="fill:rgb(255,255,255)"/>
+<path d="M189.36,79.8833L451.44,79.8833"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="320.4" y="68.1833" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">HTTP: page, /api/info</text>
+<polygon points="183.6,120.203 195.12,115.883 195.12,124.523" style="fill:rgb(255,255,255)"/>
+<polygon points="457.2,120.203 445.68,124.523 445.68,115.883" style="fill:rgb(255,255,255)"/>
+<path d="M189.36,120.203L451.44,120.203"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="320.4" y="131.903" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">QUIC: discovered port</text>
+<polygon points="817.2,100.043 805.68,104.363 805.68,95.7233" style="fill:rgb(255,255,255)"/>
+<polygon points="630,100.043 641.52,95.7233 641.52,104.363" style="fill:rgb(255,255,255)"/>
+<path d="M811.44,100.043L635.76,100.043"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="723.6" y="88.3433" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">QUIC, loopback</text>
+<text x="49.6764" y="238.967" text-anchor="middle" font-weight="bold" fill="rgb(255,255,255)" dominant-baseline="central">hosted</text>
+<path d="M18.3,359.89L176.1,359.89A7.5 7.5 0 0 0 183.6 352.39L183.6,273.79A7.5 7.5 0 0 0 176.1 266.29L18.3,266.29A7.5 7.5 0 0 0 10.8 273.79L10.8,352.39A7.5 7.5 0 0 0 18.3 359.89Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="97.2" y="303.01" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">browser</text>
+<text x="97.2" y="323.17" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">anywhere</text>
+<path d="M464.7,359.89L622.5,359.89A7.5 7.5 0 0 0 630 352.39L630,273.79A7.5 7.5 0 0 0 622.5 266.29L464.7,266.29A7.5 7.5 0 0 0 457.2 273.79L457.2,352.39A7.5 7.5 0 0 0 464.7 359.89Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="543.6" y="292.93" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Relay</text>
+<text x="543.6" y="313.09" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">real certificate,</text>
+<text x="543.6" y="333.25" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">auth file</text>
+<path d="M824.7,359.89L982.5,359.89A7.5 7.5 0 0 0 990 352.39L990,273.79A7.5 7.5 0 0 0 982.5 266.29L824.7,266.29A7.5 7.5 0 0 0 817.2 273.79L817.2,352.39A7.5 7.5 0 0 0 824.7 359.89Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="903.6" y="303.01" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Bridge</text>
+<text x="903.6" y="323.17" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">behind NAT</text>
+<polygon points="183.6,292.93 195.12,288.61 195.12,297.25" style="fill:rgb(255,255,255)"/>
+<polygon points="457.2,292.93 445.68,297.25 445.68,288.61" style="fill:rgb(255,255,255)"/>
+<path d="M189.36,292.93L451.44,292.93"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="320.4" y="281.23" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">HTTPS: page, /api/info</text>
+<polygon points="183.6,333.25 195.12,328.93 195.12,337.57" style="fill:rgb(255,255,255)"/>
+<polygon points="457.2,333.25 445.68,337.57 445.68,328.93" style="fill:rgb(255,255,255)"/>
+<path d="M189.36,333.25L451.44,333.25"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="320.4" y="344.95" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">QUIC: same port, viewer token</text>
+<polygon points="817.2,313.09 805.68,317.41 805.68,308.77" style="fill:rgb(255,255,255)"/>
+<polygon points="630,313.09 641.52,308.77 641.52,317.41" style="fill:rgb(255,255,255)"/>
+<path d="M811.44,313.09L635.76,313.09"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="723.6" y="301.39" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">QUIC, robot key</text>
+</svg>

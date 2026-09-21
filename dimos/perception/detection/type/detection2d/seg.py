@@ -17,13 +17,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-import cv2
 import numpy as np
-import torch
 
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 
 if TYPE_CHECKING:
+    import torch
     from ultralytics.engine.results import Results
 
     from dimos.msgs.sensor_msgs.Image import Image
@@ -58,6 +57,8 @@ class Detection2DSeg(Detection2DBBox):
         Returns:
             Detection2DSeg instance.
         """
+        import torch
+
         # Convert mask to numpy if tensor
         if isinstance(mask, torch.Tensor):
             mask = mask.detach().cpu().numpy()
@@ -106,6 +107,8 @@ class Detection2DSeg(Detection2DBBox):
         Returns:
             Detection2DSeg instance
         """
+        import cv2
+
         if result.boxes is None:
             raise ValueError("Result has no boxes")
 

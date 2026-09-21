@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 if TYPE_CHECKING:
     import numpy as np
@@ -48,12 +48,12 @@ class Transform(Timestamped):
         rotation: Quaternion | None = None,
         frame_id: str = "world",
         child_frame_id: str = "unset",
-        ts: float = 0.0,
+        ts: float | None = None,
         **kwargs,
     ) -> None:
         self.frame_id = frame_id
         self.child_frame_id = child_frame_id
-        self.ts = ts if ts != 0.0 else time.time()
+        self.ts = time.time() if ts is None else ts
         self.translation = translation if translation is not None else Vector3()
         self.rotation = rotation if rotation is not None else Quaternion()
 
@@ -194,7 +194,7 @@ class Transform(Timestamped):
         else:
             raise TypeError(f"Expected Pose or PoseStamped, got {type(pose).__name__}")
 
-    def to_pose(self, **kwargs: object) -> PoseStamped:
+    def to_pose(self, **kwargs: Any) -> PoseStamped:
         """Create a Transform from a Pose or PoseStamped.
 
         Args:
@@ -207,14 +207,12 @@ class Transform(Timestamped):
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as _PoseStamped
 
         # Handle both Pose and PoseStamped
-        result: PoseStamped = _PoseStamped(
-            **{
-                "position": self.translation,
-                "orientation": self.rotation,
-                "frame_id": self.frame_id,
-            },
-            **kwargs,
-        )
+        fields: dict[str, Any] = {
+            "position": self.translation,
+            "orientation": self.rotation,
+            "frame_id": self.frame_id,
+        }
+        result: PoseStamped = _PoseStamped(**fields, **kwargs)
         return result
 
     @classmethod
@@ -222,7 +220,7 @@ class Transform(Timestamped):
         cls,
         matrix: np.ndarray,
         *,
-        ts: float = 0.0,
+        ts: float | None = None,
         frame_id: str = "world",
         child_frame_id: str = "unset",
     ) -> Transform:

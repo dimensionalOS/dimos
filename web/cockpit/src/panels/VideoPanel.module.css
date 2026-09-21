@@ -1,0 +1,14 @@
+.canvas {
+  background: #000;
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
+.waiting {
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  position: absolute;
+}

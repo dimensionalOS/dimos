@@ -12,180 +12,141 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
+"""Relocalization: place the live ``world`` frame inside a prior map's ``map`` frame.
+
+This file is the contract: every relocalizer, whatever it matches, loads a
+prior map and answers with a ``world -> map`` transform, so it publishes the
+same two things - that transform on ``tf`` and the placed prior map on
+``loaded_map``. All of that lives here: ``map_file`` is read into
+``self.premap``, republished on ``loaded_map`` once a fix can resolve its
+frame, and :meth:`RelocalizationModule.submit` takes the transform.
+
+An implementation reads ``self.premap`` in its own ``start()`` (after
+``super().start()``, and ``None`` means no map was configured), builds
+whatever it matches against, and drives itself from its own inputs. It owns
+what the base cannot know: which ports it listens on, when to attempt a fix,
+and how good a fix must be. Matching lidar against the premap's points,
+apriltags against tag poses baked into it and GPS against a datum share none
+of that. See ``lidar/module.py``, the pointcloud runtime.
+
+Whether a fix is good enough is the implementation's call, made against its
+own config. A second threshold here would be a second place to configure one
+decision, and the two would drift.
+
+A dual strategy is a subclass of two implementations: ports merge across the
+MRO and ``start()`` chains through ``super()``.
+"""
+
+from __future__ import annotations
+
 from typing import Any
 
-import numpy as np
 import reactivex as rx
-from reactivex import Subject, combine_latest, operators as ops
+from reactivex import Observable, Subject, operators as ops
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
-from dimos.mapping.relocalization.relocalize import relocalize as _relocalize
-from dimos.mapping.voxels import VoxelGrid
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.utils.data import resolve_named_path
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
-FRAME_MAP = "map"
-FRAME_WORLD = "world"
-
-PUBLISH_INTERVAL = 2.0  # for loaded_map + TF
-RELOC_INTERVAL = 2.0
-MIN_LOCAL_POINTS = 50_000
 MAP_SUFFIX = ".pc2.lcm"
 
 
+def fix_stream(fixes: Observable[Transform], interval: float) -> Observable[Transform]:
+    """Every accepted fix as it lands, then again every ``interval`` s (once only if <= 0)."""
+
+    def now_and_again(fix: Transform) -> Observable[Transform]:
+        again = rx.interval(interval).pipe(ops.map(lambda _: fix)) if interval > 0 else rx.empty()
+        return rx.concat(rx.of(fix), again)
+
+    return fixes.pipe(ops.switch_map(now_and_again))
+
+
 class Config(ModuleConfig):
-    map_file: str | None = (
-        None  # e.g. `-o relocalizationmodule.map_file=go2_hongkong_office_twopass_map`
-    )
-    publish_loaded_map: bool = False
-    fitness_threshold: float = 0.45
-    use_carving: bool = True
+    # Premap stem or path, e.g. `--map-file=go2_hongkong_office_twopass_map`;
+    # `.pc2.lcm` is appended if absent. Without one the module runs but never
+    # attempts a fix.
+    map_file: str | None = None
+    # What the live fixed frame is called, whatever the odometry is in
+    world_frame: str = "world"
+    # frame for a loaded premap
+    map_frame: str = "map"
+    # Seconds between tf republishes of the accepted fix. The fix itself does
+    # not change but tf is not latched,
+    tf_interval: float = 10.0
+    # Seconds between `loaded_map` republishes. A premap does not change, so
+    # one publish is all the information there is - but the topic is not
+    # latched. Zero for the one publish.
+    republish_loaded_map: float = 0.0
+    # Stop attempting once a fix is accepted.
+    relocalize_once: bool = True
 
 
 class RelocalizationModule(Module):
     config: Config
-    global_map: In[PointCloud2]
+    tf: Out[TFMessage]
     loaded_map: Out[PointCloud2]
-    merged_map: Out[PointCloud2]
+
+    _placed: bool = False
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._premap: PointCloud2 | None = None
-        self._last_skip_log = 0.0
-        self._world_to_map: Subject[Transform | None] = Subject()
+        self.fixes: Subject[Transform] = Subject()
+        self.premap: PointCloud2 | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
-
+        self.register_disposable(
+            fix_stream(self.fixes, self.config.tf_interval).subscribe(
+                lambda tf: self.tf.publish(TFMessage(tf.now()))
+            )
+        )
         if not self.config.map_file:
             logger.info("Relocalization module disabled (no map_file configured)")
             return
+        self._load_premap(self.config.map_file)
+        logger.info(f"Relocalization module started: map_file={self.config.map_file!r}")
 
-        path = resolve_named_path(self.config.map_file, MAP_SUFFIX)
-        self._premap = PointCloud2.lcm_decode(path.read_bytes())
-        self._premap.frame_id = FRAME_MAP
+    def _load_premap(self, map_file: str) -> None:
+        # get_data, so a premap that is only in LFS is pulled and decompressed
+        # rather than reported missing.
+        name = map_file if map_file.endswith(MAP_SUFFIX) else map_file + MAP_SUFFIX
+        premap = PointCloud2.lcm_decode(get_data(name).read_bytes())
 
-        self.register_disposable(
-            backpressure(
-                self.global_map.observable().pipe(  # type: ignore[no-untyped-call]
-                    ops.throttle_first(RELOC_INTERVAL),
-                    ops.do_action(self._maybe_log_skip),
-                    ops.filter(self._has_enough_points),
-                )
-            )
-            .pipe(ops.map(self._try_relocalize))
-            .subscribe(self._publish_tf)
-        )
+        premap.frame_id = self.config.map_frame
+        self.premap = premap
 
         self.register_disposable(
-            backpressure(
-                combine_latest(
-                    self.global_map.observable(),  # type: ignore[no-untyped-call]
-                    self._world_to_map.pipe(ops.start_with(None)),
-                )
-            ).subscribe(self._on_merge_input)
-        )
-
-        self.register_disposable(
-            rx.interval(PUBLISH_INTERVAL)
-            .pipe(ops.with_latest_from(self._world_to_map))
-            .subscribe(self._publish_periodic)
-        )
-
-        logger.info(
-            f"Relocalization module started: map_file={self.config.map_file!r}  "
-            f"loaded_map.frame_id={self._premap.frame_id!r}"
-        )
-
-    def _maybe_log_skip(self, msg: PointCloud2) -> None:
-        if self._has_enough_points(msg):
-            return
-        now = time.monotonic()
-        if now - self._last_skip_log > 5.0:
-            logger.warning(
-                f"relocalize skipped: n_pts={len(msg)} < MIN_LOCAL_POINTS={MIN_LOCAL_POINTS}"
+            fix_stream(self.fixes, self.config.republish_loaded_map).subscribe(
+                lambda _: self.loaded_map.publish(premap)
             )
-            self._last_skip_log = now
-
-    def _has_enough_points(self, msg: PointCloud2) -> bool:
-        return len(msg) >= MIN_LOCAL_POINTS
-
-    def _publish_tf(self, tf: Transform | None) -> None:
-        if tf is None:
-            return
-        self._world_to_map.on_next(tf)
-
-    def _try_relocalize(self, msg: PointCloud2) -> Transform | None:
-        assert self._premap is not None
-        t0 = time.monotonic()
-        try:
-            T, fitness = _relocalize(self._premap.pointcloud, msg.pointcloud)
-        except Exception:
-            logger.exception("relocalize() failed")
-            return None
-        dt = time.monotonic() - t0
-        n_pts = len(msg)
-
-        if fitness < self.config.fitness_threshold:
-            logger.warning(
-                f"relocalize rejected: fitness={fitness:.3f} < threshold={self.config.fitness_threshold} "
-                f"time_cost={dt:.1f}s n_pts={n_pts}"
-            )
-            return None
-
-        # relocalize(scan, map) returns T such that scan_in_map_frame = T(scan_raw).
-        # We are publishing a TF for map_in_scan_frame, notice that the base frame is `world`
-        # so inverse the transform T here to get map_in_scan_frame
-        T_inv = np.linalg.inv(T)
-        new_tf = Transform(
-            translation=Vector3(*T_inv[:3, 3]),
-            rotation=Quaternion.from_rotation_matrix(T_inv[:3, :3]),
-            frame_id=FRAME_WORLD,
-            child_frame_id=FRAME_MAP,
         )
-        logger.info(
-            f"relocalize: fitness={fitness:.3f} time_cost={dt:.1f}s n_pts={n_pts} "
-            f"reloc_t={T[:3, 3].round(3).tolist()} "
-            f"TF {FRAME_WORLD!r} -> {FRAME_MAP!r} "
-            f"published_t={T_inv[:3, 3].round(3).tolist()} "
+
+    @property
+    def placed(self) -> bool:
+        """Whether any fix has been accepted yet."""
+        return self._placed
+
+    def keep_relocalizing(self) -> bool:
+        """Whether to keep attempting. Implementations gate their input on this."""
+        return not (self._placed and self.config.relocalize_once)
+
+    def submit(self, tf: Transform, source: str = "") -> None:
+        """Publish a ``world_frame -> map`` fix the implementation already decided to believe."""
+        world, map_frame = self.config.world_frame, self.config.map_frame
+        assert (tf.frame_id, tf.child_frame_id) == (world, map_frame), (
+            f"relocalize {source}: expected {world!r} -> {map_frame!r}, "
+            f"got {tf.frame_id!r} -> {tf.child_frame_id!r}"
         )
-        return new_tf
-
-    def _publish_periodic(self, pair: tuple[int, Transform]) -> None:
-        _, tf = pair
-        if self._premap is None:
-            return
-        if self.config.publish_loaded_map:
-            self.loaded_map.publish(self._premap)
-        self.tf.publish(tf.now())
-
-    def _on_merge_input(self, pair: tuple[PointCloud2, Transform | None]) -> None:
-        local, tf = pair
-        if self._premap is None:
-            return
-        if tf is None:
-            # self.merged_map.publish(local)
-            # costmap fallbacks to local map, skip publishing
-            return
-        premap_in_world = self._premap.transform(tf)
-        if self.config.use_carving:
-            grid = VoxelGrid(carve_columns=True, frame_id=local.frame_id, show_startup_log=False)
-            try:
-                grid.add_frame(premap_in_world)
-                grid.add_frame(local)
-                self.merged_map.publish(grid.get_global_pointcloud2())
-            finally:
-                grid.dispose()
-        else:
-            self.merged_map.publish(local + premap_in_world)
+        logger.info(f"relocalize {source}: TF {world!r} -> {map_frame!r} t={tf.translation}")
+        self.fixes.on_next(tf)
+        if not self._placed and self.config.relocalize_once:
+            logger.info(f"relocalize {source}: placed, no further attempts (relocalize_once)")
+        self._placed = True

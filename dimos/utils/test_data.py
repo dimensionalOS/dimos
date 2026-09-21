@@ -12,12 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import hashlib
 import os
 from pathlib import Path
 import subprocess
+from typing import Any
+from unittest.mock import call
 
+from pydantic import TypeAdapter
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.utils import data
 from dimos.utils.data import LfsPath, backup_file
@@ -26,6 +31,69 @@ from dimos.utils.data import LfsPath, backup_file
 def _make_backups(dir_path: Path, stem: str, suffix: str, timestamps: list[str]) -> None:
     for ts in timestamps:
         (dir_path / f"{stem}.{ts}{suffix}").write_text(ts)
+
+
+def test_initialize_git_lfs_configures_only_repository(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    run = mocker.patch.object(data.subprocess, "run")
+
+    data._initialize_git_lfs(tmp_path)
+
+    assert run.call_args_list == [
+        call(["git", "--version"], capture_output=True, check=True, text=True),
+        call(["git-lfs", "version"], capture_output=True, check=True, text=True),
+        call(
+            ["git", "lfs", "install", "--local", "--skip-repo"],
+            cwd=tmp_path,
+            capture_output=True,
+            check=False,
+            text=True,
+        ),
+    ]
+
+
+def test_initialize_git_lfs_ignores_configuration_error(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    install_result = subprocess.CompletedProcess(
+        ["git", "lfs", "install", "--local", "--skip-repo"],
+        2,
+        stderr="unable to write repository config",
+    )
+    run = mocker.patch.object(data.subprocess, "run", side_effect=[None, None, install_result])
+
+    data._initialize_git_lfs(tmp_path)
+
+    assert run.call_count == 3
+
+
+def test_pull_lfs_archive_initializes_lfs_before_pull(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    lfs_dir = tmp_path / "data" / ".lfs"
+    lfs_dir.mkdir(parents=True)
+    archive = lfs_dir / "sample.tar.gz"
+    archive.write_text("version https://git-lfs.github.com/spec/v1\n")
+    mocker.patch.object(data, "get_project_root", return_value=tmp_path)
+    mocker.patch.object(data, "_get_lfs_dir", return_value=lfs_dir)
+    initialize = mocker.patch.object(data, "_initialize_git_lfs")
+    pull = mocker.patch.object(
+        data,
+        "_lfs_pull",
+        side_effect=lambda *_: archive.write_bytes(b"downloaded archive"),
+    )
+    steps = mocker.Mock()
+    steps.attach_mock(initialize, "initialize")
+    steps.attach_mock(pull, "pull")
+
+    result = data._pull_lfs_archive("sample")
+
+    assert result == archive
+    assert steps.mock_calls == [
+        call.initialize(tmp_path),
+        call.pull(archive, tmp_path),
+    ]
 
 
 def test_backup_file_missing_is_noop(tmp_path: Path) -> None:
@@ -225,6 +293,56 @@ def test_lfs_path_lazy_creation() -> None:
     assert filename == "test_data_file"
 
 
+@pytest.mark.parametrize("copy_path", [copy.copy, copy.deepcopy])
+@pytest.mark.parametrize("resolved", [False, True])
+def test_lfs_path_copy_preserves_lazy_resolution(copy_path, resolved, mocker, tmp_path):
+    target = tmp_path / "model.urdf"
+    target.write_text("<robot/>")
+    download = mocker.patch.object(data, "get_data", return_value=target)
+    original = LfsPath("robot/model.urdf")
+    if resolved:
+        assert os.fspath(original) == str(target)
+    download.reset_mock()
+
+    copied = copy_path(original)
+
+    assert type(copied) is LfsPath
+    assert copied is not original
+    download.assert_not_called()
+    assert copied.read_text() == "<robot/>"
+    assert download.call_count == (0 if resolved else 1)
+
+
+def test_lfs_path_deepcopy_preserves_shared_references(mocker, tmp_path):
+    download = mocker.patch.object(data, "get_data", return_value=tmp_path)
+    path = LfsPath("robot/model.urdf")
+
+    first, second = copy.deepcopy([path, path])
+
+    assert first is second
+    assert first is not path
+    download.assert_not_called()
+
+
+def test_lfs_path_serialization_introspection_does_not_download(mocker):
+    download = mocker.patch.object(data, "get_data", side_effect=AssertionError("Not lazy"))
+    path = LfsPath("robot/model.urdf")
+
+    assert not isinstance(path, dict)
+    assert TypeAdapter(Any).dump_python(path) is path
+    download.assert_not_called()
+
+
+def test_lfs_path_hash_matches_resolved_path(
+    mocker: MockerFixture,
+    tmp_path: Path,
+) -> None:
+    resolved = tmp_path / "model.urdf"
+    mocker.patch.object(LfsPath, "_ensure_downloaded", return_value=resolved)
+
+    assert hash(LfsPath("robot_description/model.urdf")) == hash(resolved)
+
+
 def test_lfs_path_safe_attributes() -> None:
     """Test that safe attributes don't trigger download."""
     lfs_path = LfsPath("test_data_file")
@@ -238,6 +356,16 @@ def test_lfs_path_safe_attributes() -> None:
     assert filename == "test_data_file"
     assert cache is None
     assert callable(ensure_fn)
+
+
+def test_lfs_path_hashes_as_resolved_path(mocker: MockerFixture, tmp_path: Path) -> None:
+    resolved = tmp_path / "model.urdf"
+    get_data = mocker.patch.object(data, "get_data", return_value=resolved)
+
+    lfs_path = LfsPath("model/model.urdf")
+
+    assert hash(lfs_path) == hash(resolved)
+    get_data.assert_called_once_with("model/model.urdf")
 
 
 def test_lfs_path_no_download_on_creation() -> None:

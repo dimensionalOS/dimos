@@ -1,11 +1,12 @@
 # Teleop Stack
 
-Teleoperation modules for DimOS. Supports Meta Quest 3 VR controllers and phone motion sensors.
+Teleoperation modules for DimOS. Supports browser-based WebXR devices, including
+Meta Quest and PICO headsets, plus phone motion sensors.
 
 ## Architecture
 
 ```
-Quest/Phone Browser
+WebXR/Phone Browser
     │
     │  LCM-encoded binary via WebSocket
     ▼
@@ -13,7 +14,7 @@ Embedded FastAPI Server (HTTPS)
     │
     │  Fingerprint-based message dispatch
     ▼
-TeleopModule (Quest or Phone)
+TeleopModule (WebXR or Phone)
     │  Frame transforms + pose/twist computation
     ▼
 PoseStamped / TwistStamped / Buttons outputs
@@ -26,11 +27,14 @@ Each teleop module embeds a `RobotWebInterface` (FastAPI + uvicorn) that:
 
 ## Modules
 
-### QuestTeleopModule
-Base Quest teleop module. Gets controller data via WebSocket, computes output poses, and publishes them. Default engage: hold primary button (X/A). Subclass to customize.
+### WebXRTeleopModule
+Base WebXR teleop module. Gets controller data via WebSocket, computes output poses, and publishes them. Default engage: hold primary button (X/A). Subclass to customize.
 
 ### ArmTeleopModule
-Toggle-based engage — press primary button once to engage, press again to disengage.
+Publishes controller poses and buttons to `TeleopIKTask`. Hold the middle-finger
+grip to engage arm control; release it to disengage. Bimanual control requires
+both grips held, and releasing either grip disengages both arms. The
+index-finger trigger controls gripper opening while that hand's grip is held.
 
 ### TwistTeleopModule
 Outputs TwistStamped (linear + angular velocity) instead of PoseStamped.
@@ -43,7 +47,7 @@ Filters to mobile-base axes (linear.x, linear.y, angular.z) and publishes as `Tw
 
 ## Subclassing
 
-`QuestTeleopModule` is designed for extension. Override these methods:
+`WebXRTeleopModule` is designed for extension. Override these methods:
 
 | Method | Purpose |
 |--------|---------|
@@ -63,12 +67,22 @@ Filters to mobile-base axes (linear.x, linear.y, angular.z) and publishes as `Tw
 
 ```
 teleop/
-├── quest/
-│   ├── quest_teleop_module.py   # Base Quest teleop module
-│   ├── quest_extensions.py      # ArmTeleop, TwistTeleop
-│   ├── quest_types.py           # QuestControllerState, Buttons
+├── webxr/
+│   ├── module.py                # Base WebXR teleop module (local WebSocket)
+│   ├── extensions.py            # ArmTeleop, TwistTeleop
+│   ├── controller_types.py      # WebXRControllerState, Buttons
 │   └── web/
 │       └── static/index.html    # WebXR client
+├── hosted/                      # Hosted teleop (transport-swap, per-concern modules)
+│   ├── go2_command.py           # Go2CommandModule: command/E-STOP dispatch + drive guard
+│   ├── arm_command.py           # ArmCommandModule: tracked poses / EE-twist → coordinator tasks
+│   ├── command_executor.py      # SerializedCommandExecutor: serialized cmds + safety fence
+│   ├── camera_mux.py            # CameraMuxModule: N cameras → one composited video track
+│   ├── map_compress.py          # MapCompressModule: costmap/odom → minimap datachannel
+│   ├── hosted_stats.py          # HostedStatsModule: telemetry + acks + cmd-link stats
+│   ├── robot_type.py            # RobotType: broker config → operator view auto-select
+│   ├── README.md                # Broker session / aiortc + Cloudflare WebRTC internals
+│   └── blueprints/              # cloudflare.py (Go2 transport + multicam, xArm6/7)
 ├── phone/
 │   ├── phone_teleop_module.py   # Base Phone teleop module
 │   ├── phone_extensions.py      # SimplePhoneTeleop
@@ -77,16 +91,20 @@ teleop/
 │       └── static/index.html    # Mobile sensor web app
 ├── utils/
 │   ├── teleop_transforms.py     # WebXR → robot frame math
+│   ├── recorder.py              # Generic SQLite recorder (writes .db + report_<ts>.json on stop)
+│   ├── report.py                # generate_report(db_path) — read .db, emit report_<ts>.json
+│   ├── stream_stats.py          # LiveStreamStats + pcts (shared latency/jitter math)
+│   └── video_stats.py           # VideoStats msg + loss_pct (operator-reported video health)
 └── blueprints.py                # Module blueprints for easy instantiation
 ```
 
 ## Quick Start
 
 ```bash
-dimos run teleop-quest-rerun     # Quest teleop + Rerun viz
+dimos run teleop-webxr-rerun     # WebXR teleop + Rerun viz
 dimos run teleop-phone-go2      # Phone → Go2
 ```
 
 Open `https://<host-ip>:<port>/teleop` on device. Accept the self-signed certificate.
-- Quest: port 8443
+- WebXR headset: port 8443
 - Phone: port 8444

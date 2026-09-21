@@ -16,14 +16,12 @@
 """Basic G1 stack: base sensors plus real robot connection and ROS nav."""
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.g1.blueprints.primitive.uintree_g1_primitive_no_nav import (
-    uintree_g1_primitive_no_nav,
+from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_primitive_no_nav import (
+    unitree_g1_primitive_no_nav,
 )
 from dimos.robot.unitree.g1.connection import G1Connection
 
 unitree_g1_basic = autoconnect(
-    uintree_g1_primitive_no_nav,
+    unitree_g1_primitive_no_nav,
     G1Connection.blueprint(),
 )
-
-__all__ = ["unitree_g1_basic"]

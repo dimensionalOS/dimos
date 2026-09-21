@@ -20,7 +20,6 @@ from dimos_lcm.geometry_msgs import (
     TwistWithCovariance as LCMTwistWithCovariance,
 )
 import numpy as np
-from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorConvertable
@@ -32,84 +31,73 @@ TwistWithCovarianceConvertable: TypeAlias = (
     | dict[str, Twist | tuple[VectorConvertable, VectorConvertable] | list[float] | np.ndarray]
 )
 
+COVARIANCE_SIZE = 36
+
+
+def _is_twist_covariance_pair(value: Any) -> bool:
+    """True for a 2-element (twist, covariance) pair, where covariance is 36 long."""
+    if not isinstance(value, tuple | list) or len(value) != 2:
+        return False
+    covariance = value[1]
+    return isinstance(covariance, list | np.ndarray) and np.size(covariance) == COVARIANCE_SIZE
+
+
+def _to_twist(value: Any) -> Twist:
+    """A Twist, or a (linear, angular) pair to build one from."""
+    if isinstance(value, Twist):
+        return value
+    if value is None:
+        return Twist()
+    return Twist(value[0], value[1])
+
 
 class TwistWithCovariance(LCMTwistWithCovariance):  # type: ignore[misc]
     twist: Twist
     covariance: np.ndarray[tuple[int], np.dtype[np.floating[Any]]]
     msg_name = "geometry_msgs.TwistWithCovariance"
 
-    @dispatch
-    def __init__(self) -> None:
-        """Initialize with default twist and zero covariance."""
-        self.twist = Twist()
-        self.covariance = np.zeros(36)
-
-    @dispatch  # type: ignore[no-redef]
     def __init__(
         self,
-        twist: Twist | tuple[VectorConvertable, VectorConvertable],
+        twist: Twist | TwistWithCovarianceConvertable | None = None,
         covariance: list[float] | np.ndarray | None = None,
     ) -> None:
-        """Initialize with twist and optional covariance."""
-        if isinstance(twist, Twist):
-            self.twist = twist
-        else:
-            # Assume it's a tuple of (linear, angular)
-            self.twist = Twist(twist[0], twist[1])
+        """Initialize a twist with covariance.
 
-        if covariance is None:
-            self.covariance = np.zeros(36)
-        else:
-            self.covariance = np.array(covariance, dtype=float).reshape(36)
+        Supported forms:
+            TwistWithCovariance()                       # zero twist and covariance
+            TwistWithCovariance(twist)
+            TwistWithCovariance(twist, covariance)
+            TwistWithCovariance(twist=..., covariance=...)
+            TwistWithCovariance((linear, angular))
+            TwistWithCovariance((twist, covariance))    # pair
+            TwistWithCovariance({"twist": ..., "covariance": ...})
+            TwistWithCovariance(other)                  # copy constructor
+            TwistWithCovariance(lcm_twist_with_cov)     # from LCM message
+        """
+        source: Any = twist
+        cov: Any = covariance
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, twist_with_cov: TwistWithCovariance) -> None:
-        """Initialize from another TwistWithCovariance (copy constructor)."""
-        self.twist = Twist(twist_with_cov.twist)
-        self.covariance = np.array(twist_with_cov.covariance).copy()
+        # TwistWithCovariance before LCMTwistWithCovariance (it is a subclass).
+        if isinstance(source, TwistWithCovariance):
+            if cov is None:
+                cov = np.array(source.covariance).copy()
+            source = Twist(source.twist)  # copy constructor: don't alias the source twist
+        elif isinstance(source, LCMTwistWithCovariance):
+            if cov is None:
+                cov = np.array(source.covariance)
+            source = Twist(source.twist)
+        elif isinstance(source, dict) and "twist" in source:
+            cov = source.get("covariance", cov)
+            source = source["twist"]
+        elif _is_twist_covariance_pair(source):
+            source, cov = source
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, lcm_twist_with_cov: LCMTwistWithCovariance) -> None:
-        """Initialize from an LCM TwistWithCovariance."""
-        self.twist = Twist(lcm_twist_with_cov.twist)
-        self.covariance = np.array(lcm_twist_with_cov.covariance)
-
-    @dispatch  # type: ignore[no-redef]
-    def __init__(
-        self,
-        twist_dict: dict[
-            str, Twist | tuple[VectorConvertable, VectorConvertable] | list[float] | np.ndarray
-        ],
-    ) -> None:
-        """Initialize from a dictionary with 'twist' and 'covariance' keys."""
-        twist = twist_dict["twist"]
-        if isinstance(twist, Twist):
-            self.twist = twist
-        else:
-            # Assume it's a tuple of (linear, angular)
-            self.twist = Twist(twist[0], twist[1])
-
-        covariance = twist_dict.get("covariance")
-        if covariance is None:
-            self.covariance = np.zeros(36)
-        else:
-            self.covariance = np.array(covariance, dtype=float).reshape(36)
-
-    @dispatch  # type: ignore[no-redef]
-    def __init__(
-        self,
-        twist_tuple: tuple[
-            Twist | tuple[VectorConvertable, VectorConvertable], list[float] | np.ndarray
-        ],
-    ) -> None:
-        """Initialize from a tuple of (twist, covariance)."""
-        twist = twist_tuple[0]
-        if isinstance(twist, Twist):
-            self.twist = twist
-        else:
-            # Assume it's a tuple of (linear, angular)
-            self.twist = Twist(twist[0], twist[1])
-        self.covariance = np.array(twist_tuple[1], dtype=float).reshape(36)
+        self.twist = _to_twist(source)
+        self.covariance = (
+            np.zeros(COVARIANCE_SIZE)
+            if cov is None
+            else np.array(cov, dtype=float).reshape(COVARIANCE_SIZE)
+        )
 
     def __getattribute__(self, name: str):  # type: ignore[no-untyped-def]
         """Override to ensure covariance is always returned as numpy array."""

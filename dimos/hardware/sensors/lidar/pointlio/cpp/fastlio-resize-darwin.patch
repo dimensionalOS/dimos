@@ -1,0 +1,24 @@
+Point-LIO laserMapping: resize (not reserve) crossmat_list / pbody_list.
+
+Written via operator[] in run_once and read as [idx+j+1] in Estimator.cpp, so
+they need size, not just capacity. reserve()+operator[] is out-of-bounds UB:
+benign on libstdc++ (Linux) but a SIGTRAP under macOS libc++ hardened
+operator[]. Upstream-able to hku-mars.
+
+--- a/src/laserMapping.hpp
++++ b/src/laserMapping.hpp
+@@ -642,8 +642,12 @@
+             t2 = omp_get_wtime();
+ 
+             /*** iterated state estimation ***/
+-            crossmat_list.reserve(feats_down_size);
+-            pbody_list.reserve(feats_down_size);
++            // resize (not reserve): both are indexed by [i] below and read as
++            // [idx+j+1] in Estimator.cpp, so they need size, not just capacity.
++            // reserve+operator[] is out-of-bounds UB — silently tolerated by
++            // libstdc++ but trapped by macOS libc++'s hardened operator[].
++            crossmat_list.resize(feats_down_size);
++            pbody_list.resize(feats_down_size);
+             // pbody_ext_list.reserve(feats_down_size);
+ 
+             for (size_t i = 0; i < feats_down_body->size(); i++) {

@@ -41,7 +41,7 @@ EMBODIMENT_PRESETS: dict[str, dict[str, Any]] = {
         "halfHeight": 0.25,
         "lidarMountHeight": 0.35,
         "embodimentType": "quadruped",
-        "avatarUrl": ["/agent-model/unitree_go2.glb", "/agent-model/robot.glb"],
+        "avatarUrl": ["/embodiment/dimsim_unitree_stub.glb"],
         # Physics
         "maxSpeed": 3.0,
         "turnRate": 3.0,
@@ -54,7 +54,7 @@ EMBODIMENT_PRESETS: dict[str, dict[str, Any]] = {
         "halfHeight": 0.25,
         "lidarMountHeight": 0.35,
         "embodimentType": "quadruped",
-        "avatarUrl": ["/agent-model/unitree_go2.glb", "/agent-model/robot.glb"],
+        "avatarUrl": ["/embodiment/dimsim_unitree_stub.glb"],
         "maxSpeed": 3.0,
         "turnRate": 3.0,
         "gravity": -9.81,
@@ -66,7 +66,7 @@ EMBODIMENT_PRESETS: dict[str, dict[str, Any]] = {
         "halfHeight": 0.2,
         "lidarMountHeight": 0.35,
         "embodimentType": "quadruped",  # ground physics
-        "avatarUrl": ["/agent-model/robot.glb"],
+        "avatarUrl": ["/embodiment/dimsim_unitree_stub.glb"],
         "maxSpeed": 2.0,
         "turnRate": 2.5,  # differential drive turns by wheel speed diff
         "gravity": -9.81,
@@ -78,7 +78,7 @@ EMBODIMENT_PRESETS: dict[str, dict[str, Any]] = {
         "halfHeight": 0.4,
         "lidarMountHeight": 0.8,
         "embodimentType": "quadruped",  # ground physics
-        "avatarUrl": ["/agent-model/robot.glb"],
+        "avatarUrl": ["/embodiment/dimsim_unitree_stub.glb"],
         "maxSpeed": 5.0,
         "turnRate": 1.2,  # car-like: slow turn rate (limited steering angle)
         "gravity": -9.81,
@@ -90,7 +90,7 @@ EMBODIMENT_PRESETS: dict[str, dict[str, Any]] = {
         "halfHeight": 0.25,
         "lidarMountHeight": 0.4,
         "embodimentType": "quadruped",  # ground physics (strafing via cmd_vel.linear.y)
-        "avatarUrl": ["/agent-model/robot.glb"],
+        "avatarUrl": ["/embodiment/dimsim_unitree_stub.glb"],
         "maxSpeed": 2.5,
         "turnRate": 4.0,  # omnidirectional: fast rotation
         "gravity": -9.81,
@@ -102,7 +102,7 @@ EMBODIMENT_PRESETS: dict[str, dict[str, Any]] = {
         "halfHeight": 0.8,
         "lidarMountHeight": 1.6,
         "embodimentType": "quadruped",  # ground physics
-        "avatarUrl": ["/agent-model/robot.glb"],
+        "avatarUrl": ["/embodiment/dimsim_unitree_stub.glb"],
         "maxSpeed": 1.5,
         "turnRate": 2.0,
         "gravity": -9.81,
@@ -114,7 +114,7 @@ EMBODIMENT_PRESETS: dict[str, dict[str, Any]] = {
         "halfHeight": 0.15,
         "lidarMountHeight": 0.25,
         "embodimentType": "quadruped",
-        "avatarUrl": ["/agent-model/robot.glb"],
+        "avatarUrl": ["/embodiment/dimsim_unitree_stub.glb"],
         "maxSpeed": 1.0,
         "turnRate": 3.0,
         "gravity": -9.81,
@@ -127,7 +127,7 @@ EMBODIMENT_PRESETS: dict[str, dict[str, Any]] = {
         "halfHeight": 0.1,
         "lidarMountHeight": 0.15,
         "embodimentType": "drone",
-        "avatarUrl": ["/agent-model/robot.glb"],
+        "avatarUrl": ["/embodiment/dimsim_unitree_stub.glb"],
         "maxSpeed": 5.0,
         "turnRate": 4.0,
         "gravity": 0,  # no gravity in flight
@@ -723,7 +723,7 @@ return true;
         - ``"flight"`` — 6DoF, optional gravity, altitude ceiling
 
         **Avatar URL** can be:
-        - Built-in: ``"/agent-model/robot.glb"``
+        - Built-in: ``"/embodiment/dimsim_unitree_stub.glb"``
         - Local asset: ``"/local-assets/my-drone.glb"`` (see :meth:`upload_asset`)
         - Any URL: ``"https://example.com/robot.glb"``
 

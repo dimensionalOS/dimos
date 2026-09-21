@@ -1,0 +1,11 @@
+node_modules/
+*.tar.gz
+dist/
+.DS_Store
+**/.DS_Store
+.deno/
+scripts/
+
+# local dev / playground scenes
+scenes/gamemap/
+scenes/playground/

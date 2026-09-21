@@ -14,17 +14,34 @@
 
 
 import numpy as np
+from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 def normalize_angle(angle: float) -> float:
     """Normalize angle to [-pi, pi] range"""
     return np.arctan2(np.sin(angle), np.cos(angle))  # type: ignore[no-any-return]
+
+
+def twist_to_numpy(twist: Twist) -> NDArray[np.float64]:
+    """Convert a Twist-like geometry message to [linear xyz, angular xyz]."""
+    return np.array(
+        [
+            twist.linear.x,
+            twist.linear.y,
+            twist.linear.z,
+            twist.angular.x,
+            twist.angular.y,
+            twist.angular.z,
+        ],
+        dtype=np.float64,
+    )
 
 
 def pose_to_matrix(pose: Pose) -> np.ndarray:

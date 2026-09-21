@@ -18,7 +18,8 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.core.transport import LCMTransport
+from dimos.core.transport import PubSubTransport
+from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.Pose import Pose
 
 
@@ -29,7 +30,7 @@ class PersonPositionController:
         person_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "person")
         self._person_mocap_id = model.body_mocapid[person_body_id]
         self._latest_pose: Pose | None = None
-        self._transport: LCMTransport[Pose] = LCMTransport("/person_pose", Pose)
+        self._transport: PubSubTransport[Pose] = make_transport("/person_pose", Pose)
         self._transport.subscribe(self._on_pose)
 
     def _on_pose(self, pose: Pose) -> None:
@@ -65,7 +66,7 @@ class PersonTrackPublisher:
         self._current_waypoint_idx = 0
         self._initialized = False
         self._current_pos = np.array([0.0, 0.0])
-        self._transport: LCMTransport[Pose] = LCMTransport("/person_pose", Pose)
+        self._transport: PubSubTransport[Pose] = make_transport("/person_pose", Pose)
 
     def _get_segment_heading(self, from_idx: int, to_idx: int) -> float:
         """Get heading angle for traveling from one waypoint to another."""

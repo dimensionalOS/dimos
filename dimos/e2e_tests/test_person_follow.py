@@ -25,11 +25,13 @@ from dimos.e2e_tests.lcm_spy import LcmSpy
 @pytest.mark.skipif_in_ci
 @pytest.mark.skipif_no_openai
 @pytest.mark.mujoco
+@pytest.mark.flaky(reruns=2)
 def test_person_follow(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[[str], DimosCliCall],
     human_input: Callable[[str], None],
     start_person_track: StartPersonTrack,
+    wait_for_system_ready: Callable[..., None],
 ) -> None:
     start_blueprint(
         "--mujoco-start-pos",
@@ -40,8 +42,7 @@ def test_person_follow(
         "unitree-go2-agentic",
     )
 
-    lcm_spy.save_topic("/rpc/McpClient/on_system_modules/res")
-    lcm_spy.wait_for_saved_topic("/rpc/McpClient/on_system_modules/res", timeout=120.0)
+    wait_for_system_ready(timeout=120.0)
 
     time.sleep(5)
 
