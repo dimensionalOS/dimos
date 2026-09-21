@@ -94,6 +94,7 @@ describe("App session states", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    window.history.replaceState(null, "", "/");
   });
 
   const view = (v: View) => {
@@ -128,6 +129,29 @@ describe("App session states", () => {
     expect(container.querySelector('[data-testid="ch-lcm_bad-value"]')!.textContent).toContain(
       "no decoder for t.Q.lcm.v1",
     );
+  });
+
+  it("operator overview keeps upstream channels, page navigation and robot switching", () => {
+    window.history.replaceState(null, "", "/?view=operator");
+    act(() =>
+      status.update({
+        transport: { phase: "connected" },
+        robots: [ROBOT, ROBOT_B],
+        watchedRobot: ROBOT,
+        manifest: { ...mf([IMAGE], [CAM]), pages: ["cam"] },
+      })
+    );
+    expect(container.textContent).toContain("LOCAL OPERATOR");
+    view("channels");
+    expect(container.textContent).not.toContain("LOCAL OPERATOR");
+    act(() => container.querySelector<HTMLElement>('[data-testid="tab-page-cam"]')!.click());
+    expect(panel()).not.toBeNull();
+    expect(container.textContent).not.toContain("LOCAL OPERATOR");
+    act(() => container.querySelector<HTMLElement>('[data-testid="tab-overview"]')!.click());
+    expect(container.textContent).toContain("LOCAL OPERATOR");
+    act(() => switchButton()!.click());
+    expect(picker()).not.toBeNull();
+    expect(container.textContent).not.toContain("LOCAL OPERATOR");
   });
 
   it("waits for a robot, shows its channels, and clears them when it leaves", () => {

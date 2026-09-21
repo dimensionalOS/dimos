@@ -145,6 +145,39 @@ describe("TeleopPanel", () => {
     expect(hooks.datagrams.at(-1)).toMatchObject({ t: "twist", vx: 0, vy: 0, wz: 0 });
   });
 
+  it("Stop button retains the lease on focus and stops on both paths", () => {
+    armPanel();
+    key("keydown", "KeyW");
+    const stop = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("STOP")
+    )!;
+    act(() => stop.focus());
+    expect(pad().dataset.state).toBe("armed");
+    act(() => stop.click());
+    expect(hooks.controls.at(-1)).toMatchObject({ t: "stop" });
+    expect(hooks.datagrams.at(-1)).toMatchObject({ t: "stop" });
+    expect(pad().dataset.state).toBe("armed");
+    expect(container.textContent).toContain("vx 0.00");
+  });
+
+  it("speed selection releases control and scales subsequent drive commands", () => {
+    armPanel();
+    key("keydown", "KeyW");
+    const select = container.querySelector("select")!;
+    act(() => {
+      select.value = "0.25";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(pad().dataset.state).toBe("disarmed");
+    expect(hooks.controls.at(-1)).toEqual({ t: "teleop_stop" });
+    act(() => pad().click());
+    act(() => hooks.reply({ t: "teleop_started" }));
+    key("keydown", "KeyW");
+    expect(hooks.datagrams.at(-1)).toMatchObject({ t: "twist", vx: 0.2 });
+    key("keydown", "ShiftLeft");
+    expect(hooks.datagrams.at(-1)).toMatchObject({ t: "twist", vx: 0.4 });
+  });
+
   it("Space e-stops on both paths and stays armed", () => {
     armPanel();
     key("keydown", "KeyW");
@@ -159,6 +192,30 @@ describe("TeleopPanel", () => {
     key("keydown", "Escape");
     expect(pad().dataset.state).toBe("disarmed");
     expect(hooks.controls.at(-1)).toEqual({ t: "teleop_stop" });
+  });
+
+  it("Escape from the focused Stop button zeros motion, releases control and allows re-arming", () => {
+    armPanel();
+    key("keydown", "KeyW");
+    const stop = pad().querySelector("button")!;
+    act(() => stop.focus());
+    expect(document.activeElement).toBe(stop);
+    expect(pad().dataset.state).toBe("armed");
+
+    act(() => {
+      stop.dispatchEvent(
+        new KeyboardEvent("keydown", { code: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(pad().dataset.state).toBe("disarmed");
+    expect(hooks.controls.filter((msg) => msg.t === "teleop_stop")).toHaveLength(1);
+    expect(hooks.datagrams.at(-1)).toMatchObject({ t: "twist", vx: 0, vy: 0, wz: 0 });
+    expect(pad().contains(document.activeElement)).toBe(false);
+
+    armPanel();
+    expect(hooks.controls.at(-1)).toEqual({ t: "teleop_start" });
+    expect(pad().dataset.state).toBe("armed");
   });
 
   it("focus loss and window blur disarm", () => {

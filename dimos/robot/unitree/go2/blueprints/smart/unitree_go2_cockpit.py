@@ -23,11 +23,31 @@ and `unitree-go2` itself must stay importable without it.
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
-from dimos.web.cockpit import Col, Map2D, Row, Teleop, Video, cockpit
+from dimos.robot.unitree.go2.operator_controls import (
+    Go2OperatorControls,
+    OperatorCommand,
+    OperatorResult,
+    OperatorState,
+)
+from dimos.web.cockpit import Channel, Col, Map2D, Row, Stats, Teleop, Video, cockpit
 
 unitree_go2_cockpit = autoconnect(
     unitree_go2,
+    Go2OperatorControls.blueprint(),
     cockpit(
+        pages=[Stats()],
+        channels=[
+            Channel(
+                "go2_operator_command",
+                OperatorCommand,
+                dir="tx",
+                encoding="go2.operator.json.v1",
+                publish="shared",
+                max_hz=2.0,
+            ),
+            Channel("go2_operator_state", OperatorState, max_hz=1.0),
+            Channel("go2_operator_result", OperatorResult, max_hz=10.0),
+        ],
         layout=Row(
             Video("color_image"),
             Col(
@@ -38,4 +58,4 @@ unitree_go2_cockpit = autoconnect(
             shares=[2, 1],
         ),
     ),
-).global_config(n_workers=11, robot_model="unitree_go2")
+).global_config(n_workers=12, robot_model="unitree_go2")
