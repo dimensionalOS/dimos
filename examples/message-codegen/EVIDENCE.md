@@ -96,3 +96,36 @@ content check (1,928 entries; 10.7 MB). A fresh environment with both wheels
 discovered 141 types and accepted a built-in Point inside external Telemetry.
 Two separately installed CMake packages can include the same standard Point
 without duplicate definitions. Focused tests now pass 34 cases.
+
+## Stage 3 automated recording checks
+
+`bash scripts/test_message_mcap.sh` passed on 2026-09-21 with Rerun 0.32.0,
+MCAP 1.4.0, and the locked Foxglove JavaScript packages. The artifact contains
+150 messages and is 3,123,201 bytes, including all schema dependencies.
+
+```text
+4 passed
+Foxglove libraries decoded 30 /camera/image messages from embedded definitions.
+Foxglove libraries decoded 30 /camera/compressed messages from embedded definitions.
+Foxglove libraries decoded 30 /robot/pose messages from embedded definitions.
+Foxglove libraries decoded 30 /telemetry messages from embedded definitions.
+Foxglove libraries decoded 30 /tf messages from embedded definitions.
+Rerun imported 30 /telemetry rows as demo_msgs.msg.Telemetry:message.
+Rerun imported 30 /camera/image rows as Image:buffer.
+Rerun imported 30 /camera/compressed rows as EncodedImage:blob.
+Rerun imported 30 /robot/pose rows as InstancePoses3D:translations.
+Rerun imported 30 /tf rows as Transform3D:translation.
+Custom telemetry is a structured Arrow value with nested fields.
+```
+
+The stage-1 conformance/buffer/raw-transport demos and stage-2 installed-package
+demo were rerun after correcting dependency section names to `package/Type`.
+The Rerun browser viewer displayed both images and exposed custom Telemetry's
+`sequence: 29`, `reading.temperature: 22.9`, and `hops: [1, 2, 3]` from the MCAP.
+Local screenshots are in `build/message-codegen/viewers/`.
+
+Full viewer acceptance is still pending. Foxglove's application redirected to
+sign-in in the isolated browser; no credentials were entered. Its decoding
+libraries pass independently, but that does not establish application UI
+acceptance. Rerun's direct-file screen capture also needs final confirmation
+of pose visualization and complete semantic playback before task 3.5 is closed.

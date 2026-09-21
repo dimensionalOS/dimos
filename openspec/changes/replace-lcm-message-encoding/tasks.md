@@ -25,10 +25,10 @@
 
 ## 3. PR 3 — Inspect the same MCAP in Foxglove and Rerun
 
-- [ ] 3.1 Generate complete concatenated `ros2msg` definitions and qualified schema metadata for every demo type, including transitive standard and custom dependencies.
-- [ ] 3.2 Add reusable MCAP writing support for the ROS2 profile, `cdr` channels, embedded `ros2msg` schemas, and MCAP chunk compression without private payload wrappers.
-- [ ] 3.3 Extend the example with a deterministic synthetic image, moving pose, and custom telemetry producer writing generated CDR directly to one MCAP artifact.
-- [ ] 3.4 Add automated checks for schema dependency closure, channel encodings, independently decodable payloads, source/log timestamps, and standard compressed-image representation.
+- [x] 3.1 Generate complete concatenated `ros2msg` definitions and qualified schema metadata for every demo type, including transitive standard and custom dependencies.
+- [x] 3.2 Add reusable MCAP writing support for the ROS2 profile, `cdr` channels, embedded `ros2msg` schemas, and MCAP chunk compression without private payload wrappers.
+- [x] 3.3 Extend the example with a deterministic synthetic image, moving pose, and custom telemetry producer writing generated CDR directly to one MCAP artifact.
+- [x] 3.4 Add automated checks for schema dependency closure, channel encodings, independently decodable payloads, source/log timestamps, and standard compressed-image representation.
 - [ ] 3.5 Open the same artifact in Foxglove and pinned Rerun with the custom message package absent from the viewer environment; demonstrate image/pose visualization and custom-field inspection, recording exact UI steps and screen evidence.
 - [ ] 3.6 Publish the demo MCAP as a review artifact, document reproduction and cleanup, and rerun all preceding demos and automated checks.
 

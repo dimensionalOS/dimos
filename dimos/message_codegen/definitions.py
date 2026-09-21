@@ -196,5 +196,8 @@ class Definitions:
         sections = [root.text.rstrip() + "\n"]
         for message in sorted(closure, key=lambda item: item.name):
             if message.name != name:
-                sections.append(f"{'=' * 80}\nMSG: {message.name}\n{message.text.rstrip()}\n")
+                # Concatenated .msg sections use the package/resource spelling
+                # used by field references. The outer schema name stays pkg/msg/T.
+                resource_name = message.name.replace("/msg/", "/")
+                sections.append(f"{'=' * 80}\nMSG: {resource_name}\n{message.text.rstrip()}\n")
         return "".join(sections)

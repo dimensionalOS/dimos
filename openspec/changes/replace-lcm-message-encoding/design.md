@@ -97,6 +97,16 @@ For Rust's raw LCM transport, first inspect the existing external implementation
 
 Write standard MCAP ROS2-profile channels with message encoding `cdr`, schema encoding `ros2msg`, qualified schema names, and the complete concatenated dependency definitions. Keep the stored payload exactly the generated CDR message. Use MCAP chunk compression rather than wrapping channel payloads in a custom compression codec. Compressed image data remains a standard `CompressedImage` message.
 
+The top-level schema name is `package/msg/Type`; concatenated dependency section
+headers use `MSG: package/Type`, as in the ROS concatenated message format. Rerun
+0.32 reflection resolves nested fields against these resource names. Using
+`package/msg/Type` in section headers can silently omit custom messages from
+its importer even when other readers accept the file. The stage-3 regression
+checks require all custom rows to appear as structured fields in native Rerun,
+in addition to decoding every payload with Foxglove's libraries. ROS2-profile
+channels include `offered_qos_profiles: "[]"`; this transport-neutral writer
+does not invent DDS QoS settings.
+
 Feed schema metadata to the recorder through its existing stream startup configuration. Recording an arbitrary custom type requires no recorder-specific generated decoder or rebuild. Existing recognized-type optimizations must preserve the declared schema and message semantics. Use source stamps for supported stamped messages and reception time for otherwise unstamped messages, with recording log time always recording reception.
 
 First prove viewer interoperability using a standalone producer and recording, then connect the actual recorder and replay paths. Both Foxglove and the repository's pinned Rerun version must inspect custom fields using only embedded definitions. Standard image and pose messages must have semantic visualization; arbitrary custom messages need only field inspection unless an explicit visualization adapter exists. Preserve existing live Rerun behavior; do not add a live Foxglove server in this stack.

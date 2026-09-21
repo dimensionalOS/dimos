@@ -8,6 +8,9 @@ on:
       - native/rust/dimos-lcm-transport/**
       - scripts/*message*codegen*
       - scripts/test_message_packages.sh
+      - scripts/test_message_mcap.sh
+      - dimos/protocol/cdr_mcap.py
+      - dimos/protocol/test_cdr_mcap.py
       - scripts/vendor_message_definitions.py
       - .github/workflows/message-codegen.yml
       - .github/docker/message-codegen-reference.Dockerfile
@@ -25,11 +28,14 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.1
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
       - name: Set up a ROS-free Python environment
         run: |
           test ! -d /opt/ros
           uv venv .venv --python 3.12
-          uv pip install --python .venv/bin/python pybind11==3.0.1 rosbags==0.11.0 numpy pytest pytest-asyncio pytest-env lcm-dimos-fork setuptools wheel
+          uv pip install --python .venv/bin/python pybind11==3.0.1 rosbags==0.11.0 numpy pytest pytest-asyncio pytest-env lcm-dimos-fork setuptools wheel mcap==1.4.0 rerun-sdk==0.32.0 pillow
           .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rclpy') is None"
       - name: Build the pinned standalone CDR library
         run: bash scripts/setup_message_codegen.sh
@@ -37,6 +43,16 @@ jobs:
         run: bash scripts/test_message_codegen.sh
       - name: Build and consume wheel, sdist, CMake, and Cargo packages
         run: bash scripts/test_message_packages.sh
+      - name: Record generated CDR and verify both viewer decoders
+        run: bash scripts/test_message_mcap.sh
+      - name: Retain self-contained recording and viewer evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: message-mcap-evidence
+          path: |
+            build/message-codegen/viewers/demo.mcap
+            build/message-codegen/viewers/demo.rrd
+            build/message-codegen/viewers/evidence/
       - name: Retain external application and packages
         uses: actions/upload-artifact@v7
         with:
