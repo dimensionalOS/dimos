@@ -100,6 +100,8 @@ all_blueprints = {
     "mid360-realsense-record": "dimos.robot.assembly.mid360_realsense_30:mid360_realsense_record",
     "mid360-realsense-record-with-pcap": "dimos.robot.assembly.mid360_realsense_30:mid360_realsense_record_with_pcap",
     "openarm-planner-coordinator": "dimos.robot.manipulators.openarm.blueprints.basic:openarm_planner_coordinator",
+    "openyam-lerobot-quest-rollout": "dimos.robot.manipulators.openyam.blueprints.learning_rollout:openyam_lerobot_quest_rollout",
+    "openyam-lerobot-rollout": "dimos.robot.manipulators.openyam.blueprints.learning_rollout:openyam_lerobot_rollout",
     "openyam-planner-coordinator": "dimos.robot.manipulators.openyam.blueprints.basic:openyam_planner_coordinator",
     "openyam-quest-collection": "dimos.robot.manipulators.openyam.blueprints.learning_quest_collection:openyam_quest_collection",
     "pointlio-rust": "dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints:pointlio_rust",
