@@ -329,6 +329,7 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
+      # Python readback and dataset export tests decode recorded JPEGs with PyTurboJPEG.
       - name: Install Python audio and image dependencies
         run: |
           sudo apt-get update

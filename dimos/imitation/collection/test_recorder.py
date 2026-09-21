@@ -328,7 +328,10 @@ def test_build_saves_portable_schema_before_native_capture(
     start.assert_not_called()
     recorder.start()
     start.assert_called_once_with()
-    assert recorder.config.to_config_dict()["store"]["path"] == str(directory / payload)
+    native_config = recorder.config.to_config_dict()
+    assert set(native_config) == {"store", "encoding_threads", "streams"}
+    assert native_config["store"] == {"kind": format, "path": str(directory / payload)}
+    assert native_config["streams"] == [spec.model_dump() for spec in recorder._stream_specs()]
 
 
 def test_existing_directory_is_never_overwritten(connected_recorder, mocker):

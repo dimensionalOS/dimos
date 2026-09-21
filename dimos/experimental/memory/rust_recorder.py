@@ -20,7 +20,7 @@ import os
 from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
@@ -86,12 +86,17 @@ RustRecordingStoreConfig: TypeAlias = Annotated[
 
 
 class RustRecorderConfig(NativeModuleConfig):
-    """Record connected streams to a Rust-backed SQLite or MCAP artifact.
+    """Compatibility-first configuration for :class:`RustRecorder`.
 
     Python owns artifact lifecycle and stream registration. The native process
     receives only ``store``, ``encoding_threads``, and the internally resolved
     ``streams`` list over stdin.
     """
+
+    executable: str = "result/bin/dimos-memory-recorder"
+    build_command: str = "nix build -L .#dimos-memory-recorder"
+    cwd: str = "rust"
+    stdin_config: bool = True
 
     store: RustRecordingStoreConfig = Field(
         default_factory=RustSqliteStoreConfig,
@@ -108,12 +113,6 @@ class RustRecorderConfig(NativeModuleConfig):
         exclude=True,
         description="Maximum rotated artifacts retained when on_existing is backup.",
     )
-
-    executable: str = "result/bin/dimos-memory-recorder"
-    build_command: str = "nix build -L .#dimos-memory-recorder"
-    cwd: str = "rust"
-    stdin_config: bool = True
-
     record_tf: bool = Field(
         default=True,
         exclude=True,
@@ -134,7 +133,11 @@ class RustRecorderConfig(NativeModuleConfig):
         ge=1,
         description="CPU workers for transport decoding and storage encoding.",
     )
-    _streams: list[RustStreamSpec] = PrivateAttr(default_factory=list)
+    streams: list[RustStreamSpec] = Field(
+        default_factory=list,
+        init=False,
+        description="Resolved stream plan populated internally before native launch.",
+    )
 
     @model_validator(mode="after")
     def _resolve_cwd(self) -> RustRecorderConfig:
@@ -148,13 +151,6 @@ class RustRecorderConfig(NativeModuleConfig):
         if self.extra_args:
             raise ValueError("RustRecorder is stdin-only and does not accept extra_args")
         return self
-
-    def to_config_dict(self) -> dict[str, Any]:
-        return {
-            "store": self.store.model_dump(),
-            "encoding_threads": self.encoding_threads,
-            "streams": [stream.model_dump() for stream in self._streams],
-        }
 
 
 class RustRecorder(NativeModule):
@@ -196,7 +192,7 @@ class RustRecorder(NativeModule):
             return
 
         self._prepare_store(specs)
-        self.config._streams = specs
+        self.config.streams = specs
         super().start()
 
     def _stream_specs(self) -> list[RustStreamSpec]:
@@ -238,7 +234,7 @@ class RustRecorder(NativeModule):
 
     def _collect_topics(self) -> dict[str, str]:
         topics = super()._collect_topics()
-        enabled_ports = {spec.port for spec in self.config._streams}
+        enabled_ports = {spec.port for spec in self.config.streams}
         return {port: topic for port, topic in topics.items() if port in enabled_ports}
 
     @staticmethod
@@ -287,12 +283,13 @@ class RustRecorder(NativeModule):
         path.parent.mkdir(parents=True, exist_ok=True)
         if self.config.store.kind == "mcap":
             return
-        if self.config.on_existing is OnExisting.APPEND:
-            with SqliteStore(path=str(path)) as store:
+
+        with SqliteStore(path=str(path)) as store:
+            if self.config.on_existing is OnExisting.APPEND:
                 existing = set(store.list_streams())
                 for name in {spec.name for spec in specs}.intersection(existing):
                     store.delete_stream(name)
-        with SqliteStore(path=str(path)) as store:
+
             ports = self.inputs
             for spec in specs:
                 tf_payload_type = f"{TFMessage.__module__}.{TFMessage.__qualname__}"
