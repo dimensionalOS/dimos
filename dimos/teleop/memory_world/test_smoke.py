@@ -473,3 +473,16 @@ def test_a_question_becomes_places_with_photographs() -> None:
         # hotspot, and the viewer only rings one when the server sends both keys.
         assert "uv" not in header, "an in-frame hotspot was published for a whole-image match"
         assert header["point"] == [float(v) for v in found[index].position]
+
+
+def test_prebuild_refuses_a_recording_it_cannot_build_instead_of_leaving_half_of_it(
+    memory_world,  # type: ignore[no-untyped-def]
+) -> None:
+    # The empty store has no camera frames, which the replay needs; prebuild must say so
+    # and exit non-zero rather than move on to the index over a recording with no replay.
+    from dimos.teleop.memory_world import prebuild
+
+    with pytest.raises(SystemExit) as refused:
+        prebuild.main([memory_world.config.store_path])
+    assert "prebuild failed" in str(refused.value)
+    assert "image stream" in str(refused.value)
