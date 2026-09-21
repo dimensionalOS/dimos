@@ -28,24 +28,9 @@ Render results include paths to generated images; pass `out_dir` to
 
 ## Default summary
 
-`cloud.agent_encode()` returns the normal envelope and `results["overview"]`:
-observed XY coverage, height-band component bounds, and lower-surface relief.
-It returns compact numbers, with at most eight regions in each list and explicit
-omitted counts and areas. Images and full grids require explicit requests.
-
-Grids are internal, so their resolution serves the measurement and never the
-response size: cells are multiples of the cloud's own return spacing (2 for
-coverage and structure, 4 for the lower surface so each percentile pools enough
-returns) and are aligned to multiples of the cell size, independent of the cloud's
-extent. A stray far return therefore does not change what is measured nearby. Both
-grids are reported; the cell grows, with a flag, only if the grid memory limit
-requires it. What bounds the response is the region lists.
-
-The reference height is the median of supported per-cell 10th-percentile Z values,
-not a verified floor; the default band is 0.15–1.0 m above that reference. Region
-bounds enclose observed cells, not solid obstacle volumes. These summaries are
-most useful in a Z-up frame. Sparse evidence does not establish level ground or
-free space, and areas depend on the reported cell size.
+`cloud.agent_encode()` can be called without parameters and defaults to a sensible
+overview of the cloud: roughly how much area was observed, where structure stands
+at body height, and where the ground rises or drops, as a few compact numbers.
 
 Use `P.Overview(...)` in an explicit named request to customize the recipe, or
 `cloud.agent_encode({})` for metadata only. The recipe is a composition of
