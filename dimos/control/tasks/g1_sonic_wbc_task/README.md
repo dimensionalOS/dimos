@@ -4,6 +4,12 @@ SONIC runs the planner, encoder and decoder at a 50 Hz policy rate. It accepts
 coordinator velocity commands, selectable gaits, motion clips and optional
 upper-body reference targets. No headset or teleop service is required.
 
+The default gait is `SLOW_WALK`. Velocity commands set direction and speed
+within that gait; they never select walking or running automatically. With a
+walking gait selected, zero input idles while preserving that selection. Use
+`set_locomotion_mode` through the coordinator to change modes; `None` restores
+`SLOW_WALK`.
+
 Install the workstation dependencies and NVIDIA assets:
 
 ```bash
@@ -37,6 +43,7 @@ dimos --transport zenoh shell
 c = app.ControlCoordinator
 c.task_invoke("sonic_wbc", "state_snapshot")
 c.task_invoke("sonic_wbc", "list_locomotion_modes")
+c.task_invoke("sonic_wbc", "set_locomotion_mode", {"mode": "SLOW_WALK"})
 c.task_invoke("sonic_wbc", "list_motion_clips")
 c.task_invoke("sonic_wbc", "play_motion_clip", {"name": "macarena_001__A545"})
 c.task_invoke("sonic_wbc", "stop_motion_clip")

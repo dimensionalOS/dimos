@@ -265,17 +265,27 @@ def test_centered_stick_idles_without_forgetting_selected_gait(
     )
 
 
-@pytest.mark.parametrize(("vx", "vy"), [(0.6, 0.0), (-0.6, 0.0), (0.0, 0.6), (0.0, -0.6)])
-def test_slow_walk_reaches_point_six_in_each_direction(
+@pytest.mark.parametrize(("vx", "vy"), [(0.6, 0.0), (-0.6, 0.0), (0.0, 1.5), (0.0, -1.5)])
+def test_default_slow_walk_caps_speed_in_each_direction(
     velocity_pipeline: SonicPipeline, planner_requests: Any, vx: float, vy: float
 ) -> None:
-    velocity_pipeline.set_mode("SLOW_WALK")
     velocity_pipeline.set_velocity(vx, vy, 0.0)
     _step(velocity_pipeline)
     inputs = planner_requests.call_args.args[2]
     assert inputs["mode"].item() == 1
     assert inputs["target_vel"].item() == pytest.approx(0.6)
-    np.testing.assert_allclose(inputs["movement_direction"], [[vx / 0.6, vy / 0.6, 0.0]])
+    speed = np.hypot(vx, vy)
+    np.testing.assert_allclose(inputs["movement_direction"], [[vx / speed, vy / speed, 0.0]])
+
+
+@pytest.mark.parametrize(("method", "args"), [("set_mode", (None,)), ("reset", ())])
+def test_reset_restores_slow_walk(velocity_pipeline, planner_requests, method, args):
+    velocity_pipeline.set_mode("RUN")
+    getattr(velocity_pipeline, method)(*args)
+    velocity_pipeline.set_velocity(1.5, 0.0, 0.0)
+    _step(velocity_pipeline)
+
+    assert planner_requests.call_args.args[2]["mode"].item() == 1
 
 
 def test_gradual_stick_changes_and_release_replan_before_periodic_timer(

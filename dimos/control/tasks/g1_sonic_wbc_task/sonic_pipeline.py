@@ -405,7 +405,7 @@ _FLOOR_CHAINS: dict[int, list[int]] = {
 }
 
 
-def _transition_stages(current: int | None, target: int | None) -> list[int | None]:
+def _transition_stages(current: int, target: int) -> list[int]:
     """Mode sequence from ``current`` to ``target`` (target included last).
 
     Mirrors gamepad_manager.hpp: entering a floor posture descends the
@@ -413,8 +413,8 @@ def _transition_stages(current: int | None, target: int | None) -> list[int | No
     switching floor branches goes back through the shared rungs. Non-floor
     to non-floor transitions are direct, exactly like the C++.
     """
-    cur_chain = _FLOOR_CHAINS.get(current) if current is not None else None
-    tgt_chain = _FLOOR_CHAINS.get(target) if target is not None else None
+    cur_chain = _FLOOR_CHAINS.get(current)
+    tgt_chain = _FLOOR_CHAINS.get(target)
     if cur_chain is None and tgt_chain is None:
         return [target]
     if cur_chain is None:
@@ -430,7 +430,7 @@ def _transition_stages(current: int | None, target: int | None) -> list[int | No
         common += 1
     up = list(reversed(cur_chain[common:-1]))
     down = tgt_chain[common:]
-    stages: list[int | None] = [*up, *down]
+    stages = [*up, *down]
     return stages if stages else [target]
 
 
@@ -597,8 +597,8 @@ class SonicPipeline:
         self._desired_heading: float | None = None
         self._last_planned_velocity = (0.0, 0.0, 0.0)
         self._height_cmd = -1.0  # -1 = mode default
-        self._mode_override: int | None = None
-        self._mode_queue: list[int | None] = []
+        self._mode_override = LOCOMOTION_MODES["SLOW_WALK"]
+        self._mode_queue: list[int] = []
         self._mode_dwell = 0.0
         self._upper_targets_dds = DEFAULT_ANGLES_DDS[15:].copy()
 
@@ -630,7 +630,7 @@ class SonicPipeline:
     # -- commands ---------------------------------------------------------
 
     @property
-    def target_mode(self) -> int | None:
+    def target_mode(self) -> int:
         """Final mode after any pending staged transition."""
         return self._mode_queue[-1] if self._mode_queue else self._mode_override
 
@@ -656,8 +656,8 @@ class SonicPipeline:
         ):
             self._needs_replan = True
 
-    def set_mode(self, mode: int | str | None) -> int | None:
-        """Force a LocomotionMode (int or name); None returns to speed-auto.
+    def set_mode(self, mode: int | str | None) -> int:
+        """Select a LocomotionMode (int or name); None restores SLOW_WALK.
 
         Floor postures are STAGED like the C++ gamepad manager
         (gamepad_manager.hpp): entering crawling kneels first, elbow
@@ -678,7 +678,7 @@ class SonicPipeline:
             mode = LOCOMOTION_MODES[mode]
         if mode is not None and not 0 <= int(mode) <= 26:
             raise ValueError(f"locomotion mode out of range: {mode}")
-        target = None if mode is None else int(mode)
+        target = LOCOMOTION_MODES["SLOW_WALK"] if mode is None else int(mode)
         stages = _transition_stages(self._mode_override, target)
         self._mode_queue = stages[1:]
         self._mode_dwell = 0.0
@@ -865,7 +865,7 @@ class SonicPipeline:
         self._planner_future = None
         self._upper_targets_dds = DEFAULT_ANGLES_DDS[15:].copy()
         self._planner_generation_frame = None
-        self._mode_override = None
+        self._mode_override = LOCOMOTION_MODES["SLOW_WALK"]
         self._mode_queue = []
         self._mode_dwell = 0.0
         self._merger.reset()
@@ -986,18 +986,7 @@ class SonicPipeline:
 
     # -- planner ----------------------------------------------------------
 
-    def _auto_mode(self, speed: float) -> int:
-        if speed < 0.05:
-            return 0
-        if speed < 0.4:
-            return 1
-        if speed < 1.2:
-            return 2
-        return 3
-
     def _locomotion_mode(self, speed: float) -> int:
-        if self._mode_override is None:
-            return self._auto_mode(speed)
         # Centering the stick stops walking without forgetting the selected gait.
         if self._mode_override in (1, 2, 3) and speed < 0.05:
             return 0
@@ -1060,9 +1049,9 @@ class SonicPipeline:
         else:
             target_vel = -1.0
 
-        # Per-mode planner params (C++ applySpeedAndHeight): forced modes get
+        # Per-mode planner params (C++ applySpeedAndHeight): selected modes get
         # their canonical speed/height; an explicit set_base_height wins.
-        params = MODE_PLANNER_PARAMS.get(mode) if self._mode_override is not None else None
+        params = MODE_PLANNER_PARAMS.get(mode)
         height = self._height_cmd
         if params is not None:
             mode_speed, mode_height = params
@@ -1287,8 +1276,7 @@ class SonicPipeline:
         mode = self._locomotion_mode(speed)
         # A held yaw command needs fresh facing targets even without translation.
         moving = self._yaw_rate != 0.0 or (
-            mode not in STATIC_MODES
-            and (speed > 0.05 or (self._mode_override is not None and mode not in CRAWLING_MODES))
+            mode not in STATIC_MODES and (speed > 0.05 or mode not in CRAWLING_MODES)
         )
         if speed >= 1.2 or mode == 3:
             interval = REPLAN_INTERVAL_RUNNING

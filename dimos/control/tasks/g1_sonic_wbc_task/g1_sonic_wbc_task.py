@@ -25,7 +25,7 @@ Supported locomotion modes (squat, kneel, crawl, boxing, dances,
 carrying, jump...) are RPC-reachable via coordinator.task_invoke:
 
     task_invoke("sonic_wbc", "set_locomotion_mode", {"mode": "HAPPY_DANCE_WALK"})
-    task_invoke("sonic_wbc", "set_locomotion_mode", {"mode": None})  # speed-auto
+    task_invoke("sonic_wbc", "set_locomotion_mode", {"mode": None})  # restore SLOW_WALK
 """
 
 from __future__ import annotations
@@ -530,7 +530,7 @@ class G1SonicWBCTask(BaseControlTask):
         return sorted(p.name for p in motions.iterdir() if p.is_dir())
 
     def set_locomotion_mode(self, mode: int | str | None) -> dict[str, Any]:
-        """Select a supported GEAR locomotion mode; None = speed-auto."""
+        """Select a supported GEAR locomotion mode; None restores SLOW_WALK."""
         applied = self._pipeline.set_mode(mode)
         logger.info(
             "G1SonicWBCTask locomotion mode",
