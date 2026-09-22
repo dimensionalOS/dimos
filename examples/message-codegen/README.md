@@ -941,3 +941,14 @@ This terminal demo decodes generated CameraInfo and prints CDR-decoded velocity
 commands for four synthetic detections: far away, at target distance, too close,
 and right of center. It needs no camera, robot, or ROS installation and writes no
 files. It exercises the 2D controller, not the complete person-follow pipeline.
+
+### Generated detection-cloud filters
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_cloud_filters.py
+```
+
+This terminal demo filters a synthetic cloud containing a dense object and one
+isolated low point. Height and radius filters each retain 100 of 101 points;
+results cross CDR boundaries and preserve the source header. It requires Open3D
+from the development environment, no sensor or ROS, and writes no files.

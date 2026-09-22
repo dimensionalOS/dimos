@@ -1061,3 +1061,15 @@ The terminal `demo_visual_servo.py` passed all four visible scenario assertions;
 mypy passed for controller and demo. Person-follow and security-demo callers,
 and their detection/cloud pipelines, remain part of the unfinished coordinated
 runtime cutover; these controller checks do not establish their acceptance.
+
+### Generated detection-cloud filters
+
+Height, statistical, radius, and visibility filters now consume generated
+PointCloud2, CameraInfo, and TransformStamped. Open3D performs geometric
+selection; original point records are selected by index so custom fields are
+not discarded when reconstructing the output. Four checks passed, verifying
+CDR round trips, exact source headers, field definitions, and byte-equivalent
+selected records carrying custom point IDs. Mypy passed for filters and demo.
+`demo_cloud_filters.py` passed both visible 101-to-100-point scenarios.
+Detection3DPC and its higher-level consumers still require conversion; these
+results establish filter behavior, not acceptance of the person-follow pipeline.
