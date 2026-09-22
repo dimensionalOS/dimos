@@ -495,3 +495,17 @@ and module ports replayed stamps `1700000000123456789` through
 `build/message-codegen/demo/evidence/storage-replay.txt`. Temporary files and module
 resources were cleaned up. The Rust recorder and remaining legacy fixtures still
 need conversion; this does not close stage 4 or stage 5 acceptance.
+
+### Native recorder configuration dependency audit
+
+The shared OnExisting policy moved to `dimos.memory.recording_policy`; its callers
+now import it there. Native recorder configuration no longer imports the Python
+embedding module just to obtain this enum. The previously blocked Rust-session
+delegation test passes without PyTorch, and the policy/native configuration
+modules pass mypy.
+
+Running both native-recorder Python configuration suites now reaches their real
+storage behavior: **23 passed, 9 failed**. Every failure requests the obsolete
+`lcm` storage codec. This is an outstanding coordinated Python/Rust recorder
+cutover, not an accepted regression result. Log:
+`build/message-codegen/rust-recorder-config-audit.log`.
