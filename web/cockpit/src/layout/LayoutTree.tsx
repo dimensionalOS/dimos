@@ -11,6 +11,25 @@ import styles from "./LayoutTree.module.css";
 
 type PanelContext = Omit<PanelProps, "spec">;
 
+/** The grid's tree: the authored layout, else one row of every non-page
+ * panel, null when there is nothing to lay out. */
+function gridNode(manifest: Manifest): LayoutNode | null {
+  const pages = new Set(manifest.pages);
+  const gridIds = manifest.panels.filter((p) => !pages.has(p.id)).map((p) => p.id);
+  return manifest.layout ?? (gridIds.length > 0 ? { row: gridIds } : null);
+}
+
+function leaves(node: LayoutNode): string[] {
+  if (typeof node === "string") return [node];
+  return ("row" in node ? node.row : node.col).flatMap(leaves);
+}
+
+/** The panels the grid mounts, in tree order (what App reports as shown). */
+export function gridPanelIds(manifest: Manifest): string[] {
+  const node = gridNode(manifest);
+  return node === null ? [] : leaves(node);
+}
+
 function Node({ node, byId, panelProps }: {
   node: LayoutNode;
   byId: Map<string, PanelSpec>;
@@ -35,11 +54,9 @@ function Node({ node, byId, panelProps }: {
 }
 
 export function LayoutTree({ manifest, ...panelProps }: { manifest: Manifest } & PanelContext) {
-  const byId = new Map(manifest.panels.map((p) => [p.id, p]));
-  const pages = new Set(manifest.pages);
-  const gridIds = manifest.panels.filter((p) => !pages.has(p.id)).map((p) => p.id);
-  const node = manifest.layout ?? (gridIds.length > 0 ? { row: gridIds } : null);
+  const node = gridNode(manifest);
   if (node === null) return null;
+  const byId = new Map(manifest.panels.map((p) => [p.id, p]));
   return (
     <div className={styles.root}>
       <Node node={node} byId={byId} panelProps={panelProps} />

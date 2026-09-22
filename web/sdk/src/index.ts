@@ -31,5 +31,14 @@ export {
   WatchRejectedError,
 } from "./errors.ts";
 export type { RelayInfo, TransportDeps, TransportPhase } from "./transport.ts";
-export type { ChannelSpec, FrameHeader, JsonValue, PanelSpec, RobotInfo } from "@dimos/shared";
+export type { PeerConnectionFactory, PeerConnectionLike } from "./rtc.ts";
+export type {
+  ChannelSpec,
+  FrameHeader,
+  IceServer,
+  JsonValue,
+  PanelSpec,
+  RobotInfo,
+} from "@dimos/shared";
+export { TRACK_ENCODING } from "@dimos/shared/manifest";
 export type { Manifest } from "@dimos/shared/manifest";

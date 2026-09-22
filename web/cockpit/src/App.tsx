@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { Session } from "@dimos/sdk";
 import { teleopHooks } from "@dimos/sdk/internal/teleop";
 import { useStatus } from "@dimos/sdk/react";
-import { LayoutTree } from "./layout/LayoutTree.tsx";
+import { gridPanelIds, LayoutTree } from "./layout/LayoutTree.tsx";
 import { type PageTab, pageTabs, PageView } from "./layout/PageView.tsx";
 import { startChatTranscripts } from "./panels/chatTranscript.ts";
 import { ChannelList } from "./ui/ChannelList.tsx";
@@ -12,7 +12,9 @@ import { TokenForm } from "./ui/TokenForm.tsx";
 import { clearToken, readToken, storeToken } from "./token.ts";
 import styles from "./App.module.css";
 
-export function App({ session }: { session: Session }) {
+export function App(
+  { session, onShownPanels }: { session: Session; onShownPanels: (ids: string[]) => void },
+) {
   const status = useStatus(session);
   const teleop = teleopHooks(session);
   // Panels or the raw channel table, the open page tab, and a pending
@@ -129,6 +131,15 @@ export function App({ session }: { session: Session }) {
       );
     }
   }
+
+  // What <main> mounts, for the subscription holder in main.tsx: a panel off
+  // screen keeps no video, costmap or bulk LCM subscription.
+  useEffect(() => {
+    if (status.manifest === null) return;
+    onShownPanels(
+      view === "channels" ? [] : page !== null ? [page] : gridPanelIds(status.manifest),
+    );
+  }, [onShownPanels, status.manifest, view, page]);
 
   return (
     <div className={styles.app}>
