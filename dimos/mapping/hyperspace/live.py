@@ -237,7 +237,13 @@ class LiveQuery:
             self.answers = answers
             return result
 
-    def close(self) -> None:
+    def dispose(self) -> None:
+        """Named for the protocol `register_disposable` expects, not for symmetry with
+        `towers.close()`. `Hyperspace.start()` registers this object, and a
+        `CompositeDisposable` calls `dispose` on what it holds -- so while this was
+        `close`, every stop raised `'LiveQuery' object has no attribute 'dispose'` and
+        the towers were never released. It only ever surfaced when a failed start made
+        the stop visible."""
         self.towers.close()
 
 

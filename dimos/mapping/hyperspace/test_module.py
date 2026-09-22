@@ -610,6 +610,30 @@ def test_every_module_can_say_no_to_metal_in_its_config() -> None:
     assert pick_device("mps", allow_mps=False) == "mps", "a named device still wins"
 
 
+def test_the_live_query_disposes_the_way_the_module_registers_it() -> None:
+    """`Hyperspace.start()` hands the LiveQuery to `register_disposable`, and a
+    `CompositeDisposable` calls `dispose` on what it holds. While the method was named
+    `close`, every stop raised `'LiveQuery' object has no attribute 'dispose'` and the
+    towers were never released -- invisible until a failed start made a stop happen."""
+    from dimos.core.resource import CompositeDisposable
+    from dimos.mapping.hyperspace.live import LiveQuery
+
+    closed = []
+
+    class Towers:
+        def close(self) -> None:
+            closed.append(True)
+
+    live = LiveQuery.__new__(LiveQuery)
+    live.towers = Towers()
+
+    held = CompositeDisposable()
+    held.add(live)
+    held.dispose()
+
+    assert closed == [True], "the composite must reach the towers through dispose()"
+
+
 def test_tiles_cover_the_frame_exactly_and_stitch_back() -> None:
     """A tiled member must rebuild the frame's geometry with no patch dropped,
     duplicated or averaged -- the stitched grid is the tiles laid side by side."""

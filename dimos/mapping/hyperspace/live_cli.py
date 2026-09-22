@@ -239,7 +239,7 @@ def main(
         for path in [index, *written]:
             archive.write(path, path.name)
     typer.echo(f"\n{len(written)} page(s) + {index.name} -> {bundle}")
-    live.close()
+    live.dispose()
 
 
 def _index_page(recording: str, queries: list[str], written: list[Path], summary: dict) -> str:
