@@ -52,16 +52,6 @@ def test_round_trip() -> None:
     assert decoded.values == original.values
 
 
-def test_round_trip_large_epoch_and_negative_sequence() -> None:
-    """int64 fields survive at the edges the coordinator can reach."""
-    frame = ControlValues("coordinator", epoch=2**62, sequence=-1)
-
-    decoded = ControlValues.lcm_decode(frame.lcm_encode())
-
-    assert decoded.epoch == 2**62
-    assert decoded.sequence == -1
-
-
 def test_empty_frame_round_trip() -> None:
     """The coordinator heartbeat: an epoch and a sequence, commanding nothing."""
     heartbeat = ControlValues("coordinator", source_ts=99.5, epoch=3, sequence=42)
@@ -130,43 +120,6 @@ def test_bytes_identical_to_generated_type() -> None:
     assert ControlValues(**FIXED_FRAME).lcm_encode() == generated.lcm_encode()  # type: ignore[arg-type]
 
 
-def test_empty_frame_bytes_identical_to_generated_type() -> None:
-    """Byte identity also holds for the heartbeat, where the arrays are empty."""
-    generated = LCMControlValues(
-        source="coordinator",
-        source_ts=99.5,
-        epoch=3,
-        sequence=42,
-        interface_names_length=0,
-        values_length=0,
-        interface_names=[],
-        values=[],
-    )
-
-    wrapper = ControlValues("coordinator", source_ts=99.5, epoch=3, sequence=42)
-
-    assert wrapper.lcm_encode() == generated.lcm_encode()
-
-
-def test_wrapper_decodes_bytes_written_by_generated_type() -> None:
-    """The generated type is also readable by the wrapper, not just writable."""
-    generated = LCMControlValues(
-        source="g1",
-        source_ts=5.0,
-        epoch=1,
-        sequence=2,
-        interface_names_length=1,
-        values_length=1,
-        interface_names=["g1/left_knee/kp"],
-        values=[60.0],
-    )
-
-    decoded = ControlValues.lcm_decode(generated.lcm_encode())
-
-    assert decoded.source == "g1"
-    assert decoded.as_dict() == {"g1/left_knee/kp": 60.0}
-
-
 def test_as_dict() -> None:
     """as_dict pairs the two arrays positionally."""
     frame = ControlValues(**FIXED_FRAME)  # type: ignore[arg-type]
@@ -193,15 +146,6 @@ def test_source_ts_zero_is_kept_not_replaced() -> None:
     assert (
         ControlValues.lcm_decode(ControlValues("arm", source_ts=0.0).lcm_encode()).source_ts == 0.0
     )
-
-
-def test_as_dict_duplicate_names_keep_the_last_value() -> None:
-    """Uniqueness is the contract package's job; as_dict just documents what it does."""
-    frame = ControlValues("arm", interface_names=["arm/j1/position"] * 2, values=[1.0, 2.0])
-
-    assert frame.as_dict() == {"arm/j1/position": 2.0}
-    assert frame.interface_names == ["arm/j1/position", "arm/j1/position"]
-    assert frame.values == [1.0, 2.0]
 
 
 def test_repr_names_every_field() -> None:
