@@ -51,7 +51,7 @@ def prepare(models: dict[str, Prepared], model_path: str) -> Prepared:
         model = mujoco.MjModel.from_binary_path(model_path)
         data = mujoco.MjData(model)
         mujoco.mj_forward(model, data)
-        models[model_path] = (model, HomeKinematics(model, data))
+        models[model_path] = (model, HomeKinematics(model, data, natural_posture=True))
         print(f"prepared {model_path} in {time.monotonic() - started:.1f}s", flush=True)
     return models[model_path]
 

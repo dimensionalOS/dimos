@@ -63,6 +63,10 @@ logger = setup_logger()
 class ClassicalSimSpec(ApartmentSimSpec, Protocol):
     def save_classical_state(self) -> str: ...
     def classical_carry_posture(self) -> list[list[float]]: ...
+    def classical_init_posture(self) -> dict[str, Any]: ...
+    def classical_move_arm(
+        self, arm: str, target: list[list[float]], linear: bool
+    ) -> list[list[float]]: ...
     def classical_align(
         self, index: int, arm: str, target: list[list[float]]
     ) -> list[list[float]]: ...
@@ -522,12 +526,64 @@ class R1ProClassicalSim(R1ProApartmentSim):
     def classical_carry_posture(self) -> list[list[float]]:
         """Prepare compact hands for navigation and guard every held object during motion."""
         scene = self._snapshot()
+        initial = scene.inventory()
         points = ClassicalGraspPlanner(scene).carry_posture()
+        self._guard_posture_motion(scene, initial, "carry preparation")
+        return points
+
+    @rpc
+    def classical_init_posture(self) -> dict[str, Any]:
+        """Plan the recorded startup torso/arms without moving the base or opening hands."""
+        tray = self.tray_state()
+        if tray["held"] or tray["finger_contacts"]:
+            raise RuntimeError("Put down the tray before returning the arms and torso to init")
+        scene = self._snapshot()
+        initial = scene.inventory()
+        points = ClassicalGraspPlanner(scene).init_posture()
+        self._guard_posture_motion(scene, initial, "init preparation")
+        return dict(waypoints=points, target_joints=scene.arms["right"].home[:18].tolist())
+
+    def _guard_posture_motion(
+        self, scene: PrimitiveSceneState, initial: list[dict[str, Any]], preparation: str
+    ) -> None:
+        """Accept a checked path only if its start and cargo still match the live scene."""
         assert self._engine is not None
         with self._engine._lock:
-            self._transport_initial = scene.inventory()
+            if self._error:
+                raise RuntimeError(self._error)
+            self._state(self._engine).validate(initial, arm="right", selected=-1)
+            # Planning runs outside the physics lock. A settled grip or base
+            # that moved meanwhile cannot safely execute this path's start.
+            joint_ids = [scene.model.joint(name).qposadr[0] for name in R1PRO_PICK_PLACE_JOINTS]
+            base_ids = [scene.model.joint(name).qposadr[0] for name in VIRTUAL_BASE_JOINTS]
+            joint_drift = self._engine.data.qpos[joint_ids] - scene.data.qpos[joint_ids]
+            base_drift = self._engine.data.qpos[base_ids] - scene.data.qpos[base_ids]
+            if (
+                np.max(np.abs(joint_drift)) > 0.005
+                or np.linalg.norm(base_drift[:2]) > 0.005
+                or abs(np.arctan2(np.sin(base_drift[2]), np.cos(base_drift[2]))) > 0.005
+            ):
+                raise RuntimeError(f"Robot moved during {preparation}; replan before execution")
+            self._transport_initial = initial
             self._active = None
             self._initial = None
+
+    @rpc
+    def classical_move_arm(
+        self, arm: str, target: list[list[float]], linear: bool
+    ) -> list[list[float]]:
+        """Check a standalone arm motion against the measured scene and all held cargo."""
+        if arm not in ARMS:
+            raise ValueError("Choose left or right")
+        tray = self.tray_state()
+        if tray["held"] or tray["finger_contacts"]:
+            raise RuntimeError("Use tray handling while the hands contact the tray")
+        scene = self._snapshot()
+        initial = scene.inventory()
+        points = ClassicalGraspPlanner(scene).move_arm(
+            cast("Arm", arm), np.asarray(target, dtype=float), linear=linear
+        )
+        self._guard_posture_motion(scene, initial, "arm motion preparation")
         return points
 
     @rpc

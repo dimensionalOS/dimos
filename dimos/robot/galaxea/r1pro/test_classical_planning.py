@@ -17,7 +17,16 @@
 import numpy as np
 import pytest
 
-from dimos.robot.galaxea.r1pro.classical_planning import preserves_cargo_tilt
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.galaxea.r1pro.classical_planning import (
+    _ApartmentCollisionWorld,
+    preserves_cargo_tilt,
+)
 
 
 @pytest.mark.parametrize(
@@ -28,3 +37,35 @@ def test_carry_gate_preserves_existing_tilt_and_rejects_new_tipping(initial, cur
     assert (
         preserves_cargo_tilt(np.cos(np.deg2rad(initial)), np.cos(np.deg2rad(current))) is expected
     )
+
+
+def test_rrt_edges_check_intermediate_states_in_the_posture_policy_world(mocker):
+    planner = mocker.Mock()
+    planner.kinematics.world.get_prepared_model.return_value.joint_space = JointSpace(
+        (
+            JointCoordinate(
+                name="joint",
+                mechanism_type="revolute",
+                topology=CoordinateTopology.INTERVAL,
+                lower=-2,
+                upper=2,
+                max_velocity=10,
+                max_acceleration=10,
+            ),
+        )
+    )
+    world = _ApartmentCollisionWorld(planner, 0, "left")
+    check = mocker.patch.object(
+        world, "check_config_collision_free", side_effect=[True, True, False]
+    )
+
+    assert not world.check_edge_collision_free(
+        JointState(name=["joint"], position=[0]),
+        JointState(name=["joint"], position=[0.2]),
+        step_size=0.05,
+    )
+
+    assert [call.args[0].position[0] for call in check.call_args_list] == pytest.approx(
+        [0, 0.05, 0.1]
+    )
+    planner.kinematics.world.check_edge_collision_free.assert_not_called()

@@ -209,10 +209,15 @@ class _PinkSolverCore:
             damping=self.config.damping,
             safety_break=self.config.safety_break,
             constraints=constraints or None,
+            limits=self._qp_limits(configuration),
             **self.config.solver_kwargs,
         )
         self._after_solve(tasks, velocity, dt)
         configuration.integrate_inplace(velocity, dt)
+
+    def _qp_limits(self, configuration: pink.Configuration) -> Sequence[pink.limits.Limit] | None:
+        """Allow robot-specific inequalities; None retains Pink's default limits."""
+        return None
 
     def _locked_joint_constraints(
         self,

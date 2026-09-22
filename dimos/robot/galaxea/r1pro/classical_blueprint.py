@@ -61,9 +61,19 @@ Pass the user's object description INCLUDING color, kind and left/right qualifie
 Do not resolve 'blue carton on the left' into just 'carton' or an ID yourself: the skill checks all attributes.
 The arm argument describes the requested hand, separately from the object's location.
 If no hand is specified, use arm=auto. If an item is ambiguous or absent, ask for clarification.
-pick_object means grasp, lift and HOLD. Never add placement to a pick request.
+pick_object means approach, grasp, lift and HOLD. It does not require or execute a return to ready.
+After a pick choose further motion only as needed for the user's task; do not automatically place
+or retract. prepare_carry is an optional compact cargo-safe retraction, distinct from exact init.
+move_linear translates the requested hand in world axes while preserving orientation. move_to_pose
+targets a world-frame hand pose. Both preserve grippers and base, check the physical scene and held
+cargo, and share action/recovery controls. Use get_scene TCP poses for coordinates; do not invent
+joint targets. Pick/place skills handle new grasp contacts and supported release.
 place_object releases only an already held object at the explicitly requested support region.
 go_to navigates while preserving all held items; it does not release them.
+return_to_init restores the fixed startup arm-and-torso posture, keeping the base at its current
+location and preserving both grippers. Use it for init/home/starting posture requests, not reset_scene.
+This is a recorded posture, not an arbitrary target. If held cargo or a collision blocks that exact
+posture, report the reason; never substitute a different pose, release objects or reset the scene.
 pick_up_tray lifts the tray with both hands, keeping whatever is inside; both hands must be free.
 put_down_tray sets the held tray on a named platform and frees both hands. go_to carries a held tray.
 Nothing can be picked or placed while the tray is held. place_object with region tray puts an item
@@ -210,8 +220,8 @@ def build_classical_apartment(
         GraspGenXModule.blueprint(
             gripper=R1PRO_GRIPPER_SWEEP,
             grasp_frame_to_tcp=R1PRO_GRASP_FRAME_TO_TCP,
-            num_samples=600,
-            max_candidates=600,
+            num_samples=100,
+            max_candidates=100,
         ),
         ManipulationModule.blueprint(
             model=model,

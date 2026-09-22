@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from itertools import groupby
+from itertools import groupby, pairwise
 import time
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -28,6 +28,7 @@ from numpy.typing import NDArray
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.galaxea.r1pro.classical_motion import CLASSICAL_MOTION_SPEED_SCALE
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_JOINTS
 from dimos.robot.galaxea.r1pro.tray_task import tray_state
 
@@ -156,11 +157,20 @@ def run_tray_motion(
         ]
         duration = 0.0
         for waypoint in group:
+            target = list(waypoint["positions"])
+            displacement = np.abs(np.asarray(target) - points[-1].positions)
+            transit = max(
+                waypoint["seconds"] / CLASSICAL_MOTION_SPEED_SCALE,
+                float(np.max(displacement[:18])) / 2.0,
+                float(np.max(displacement[18:])) / 0.25,
+            )
             for hold in (0.0, 1.0):
-                duration += waypoint["seconds"] if hold == 0.0 else hold
+                # These commands contain no base joints. Only transit is
+                # accelerated; every contact/settling hold keeps its duration.
+                duration += transit if hold == 0.0 else hold
                 points.append(
                     TrajectoryPoint(
-                        positions=list(waypoint["positions"]),
+                        positions=target,
                         velocities=[0.0] * len(joints),
                         time_from_start=duration,
                     )
@@ -198,6 +208,9 @@ def _execute(
     cargo: set[str],
 ) -> dict[str, Any]:
     pause(0)
+    initial = sim.primitive_state()
+    if initial["error"]:
+        raise RuntimeError(initial["error"])
     accepted = control.execute_trajectory(
         JointTrajectory(joint_names=joints, points=points), TRAY_TASK
     )
@@ -206,14 +219,64 @@ def _execute(
     report["motion_started"] = True
     stage: dict[str, Any] = dict(phase=name, samples=0)
     report.setdefault("tray_stages", []).append(stage)
-    start = time.monotonic()
+    start = float(initial["sim_time"])
+    stamp = start
+    wall_start = fresh = progress = time.monotonic()
+    previous = np.array(
+        [initial["joint_positions"][joint] for joint in joints]
+        + [initial["joint_commands"][joint] for joint in joints],
+        dtype=float,
+    )
+    previous_speed = (
+        max(abs(value) for value in initial.get("joint_velocities", {}).values())
+        if initial.get("joint_velocities")
+        else 0.0
+    )
+    progress_threshold = np.array(([1e-4] * 18 + [1e-5] * 2) * 2)
     duration = points[-1].time_from_start
+    stage["command_duration_s"] = duration
     quiet_since: float | None = None
     try:
-        while time.monotonic() - start < 2 * duration + 10:
+        while True:
             state = sim.primitive_state()
             if state["error"]:
                 raise RuntimeError(state["error"])
+            now = time.monotonic()
+            sim_time = float(state["sim_time"])
+            elapsed = sim_time - start
+            commanded_elapsed = now - wall_start
+            if sim_time < stamp:
+                raise RuntimeError("Simulation clock moved backwards during tray execution")
+            if sim_time > stamp:
+                fresh, stamp = now, sim_time
+            if now - fresh > 10.0:
+                raise RuntimeError("Simulation stopped updating during tray execution")
+            if elapsed > duration + 25.0:
+                raise RuntimeError(f"{name} failed to reach and settle at its target")
+            measured = np.array(
+                [state["joint_positions"][joint] for joint in joints]
+                + [state["joint_commands"][joint] for joint in joints],
+                dtype=float,
+            )
+            holding = any(
+                first.time_from_start <= commanded_elapsed < last.time_from_start
+                and first.positions == last.positions
+                for first, last in pairwise(points)
+            )
+            speed = (
+                max(abs(value) for value in state.get("joint_velocities", {}).values())
+                if state.get("joint_velocities")
+                else 0.0
+            )
+            if (
+                holding
+                or np.any(np.abs(measured - previous) > progress_threshold)
+                or speed < previous_speed - 1e-4
+            ):
+                progress, previous = now, measured
+                previous_speed = speed
+            elif now - progress > 30.0:
+                raise RuntimeError("Tray trajectory stopped making measured or commanded progress")
             tray = sim.tray_state()
             stage["samples"] += 1
             if tray["tilt_radians"] > 0.25:
@@ -225,19 +288,18 @@ def _execute(
             unexpected = set(tray["support_geoms"]) - allowed_support
             if unexpected:
                 raise RuntimeError(f"Tray contacted an unexpected surface: {sorted(unexpected)}")
-            if time.monotonic() - start >= duration:
+            if commanded_elapsed >= duration:
                 error = max(
                     abs(state["joint_positions"][n] - target)
                     for n, target in zip(joints[:18], points[-1].positions[:18], strict=True)
                 )
                 if error < 0.05 and tray["velocity_norm"] < 0.03:
-                    quiet_since = time.monotonic() if quiet_since is None else quiet_since
-                    if time.monotonic() - quiet_since > 0.5:
+                    quiet_since = sim_time if quiet_since is None else quiet_since
+                    if sim_time - quiet_since > 0.5:
                         stage["final"] = tray
                         return tray
                 else:
                     quiet_since = None
             pause(0.05)
-        raise RuntimeError(f"{name} failed to reach and settle at its target")
     finally:
         control.cancel_trajectory(TRAY_TASK)

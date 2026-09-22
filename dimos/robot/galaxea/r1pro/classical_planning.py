@@ -18,6 +18,7 @@ The same DimOS IK is used for candidate assessment and Cartesian execution.
 All kinematic object attachments here live only in the planning snapshot.
 """
 
+from collections import Counter
 from dataclasses import dataclass, replace
 from itertools import islice, pairwise
 import time
@@ -33,10 +34,24 @@ from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.galaxea.r1pro.home_kinematics import bounded_joint_positions
+from dimos.robot.galaxea.r1pro.home_kinematics import HomeKinematics, bounded_joint_positions
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_JOINTS
+from dimos.robot.galaxea.r1pro.object_primitive_state import PrimitiveSceneState
 from dimos.robot.galaxea.r1pro.object_primitives import ARMS, Arm, active_indices
 from dimos.robot.galaxea.r1pro.object_reachability import ObjectReachability, stance_candidates
+from dimos.robot.galaxea.r1pro.posture_ik import (
+    NOMINAL_POSTURE,
+    POSTURE_RANK_WEIGHT,
+    posture_error,
+    posture_is_valid,
+)
+from dimos.utils.logging_config import setup_logger
+
+GRASP_FEASIBLE_STANCES = 3
+CARRY_PLANNING_SECONDS = 20.0
+CARRY_HOME_TOLERANCE = 0.03
+CARRY_MIN_ELBOW_FLEXION = np.deg2rad(45)
+logger = setup_logger()
 
 
 def preserves_cargo_tilt(initial_up_z: float, current_up_z: float) -> bool:
@@ -44,6 +59,26 @@ def preserves_cargo_tilt(initial_up_z: float, current_up_z: float) -> bool:
     initial_tilt = float(np.arccos(np.clip(initial_up_z, -1, 1)))
     limit = min(np.deg2rad(15), max(np.deg2rad(5), initial_tilt + np.deg2rad(2)))
     return bool(current_up_z >= np.cos(limit))
+
+
+def carry_ready_joints(joints: NDArray[Any], home: NDArray[Any], loaded: set[Arm]) -> bool:
+    """Ready means home torso/empty arms and bent loaded elbows, not just reachable."""
+    if not posture_is_valid(joints):
+        return False
+    columns = list(range(4))
+    for side in ARMS:
+        arm_columns = list(active_indices(side))[:-1]
+        if side not in loaded:
+            columns.extend(arm_columns)
+        elif joints[arm_columns[3]] > -CARRY_MIN_ELBOW_FLEXION:
+            return False
+    return bool(np.max(np.abs(joints[columns] - home[columns])) <= CARRY_HOME_TOLERANCE)
+
+
+def carry_yaw(initial: NDArray[Any], home: NDArray[Any]) -> float:
+    """Nearest home wrist heading obtainable by rotating only about gravity."""
+    relative = home @ initial.T
+    return float(np.arctan2(relative[1, 0] - relative[0, 1], relative[0, 0] + relative[1, 1]))
 
 
 @dataclass(frozen=True)
@@ -60,11 +95,20 @@ class ClassicalGraspPlan:
     manipulability: float
     cost: float
     refinement: str = "graspgenx"
+    posture_error: float = 0.0
 
 
 class ClassicalGraspPlanner(ObjectReachability):
     allow_target_contact: bool = False
     sweep_error: str = ""
+
+    def __init__(
+        self, scene: PrimitiveSceneState, *, kinematics: HomeKinematics | None = None
+    ) -> None:
+        kinematics = kinematics or HomeKinematics(scene.model, scene.data, natural_posture=True)
+        if not kinematics.natural_posture:
+            raise ValueError("Classical grasp planning requires the R1Pro posture policy")
+        super().__init__(scene, kinematics=kinematics)
 
     def _joint_margin(self, arm: Arm, joints: NDArray[Any]) -> float:
         margins = []
@@ -127,6 +171,9 @@ class ClassicalGraspPlanner(ObjectReachability):
         count = max(2, int(np.ceil(np.max(np.abs(goal - start)) / 0.025)))
         for t in np.linspace(0, 1, count + 1):
             self.probe.qpos[self.qids] = start + t * (goal - start)
+            if not posture_is_valid(self.probe.qpos[self.qids]):
+                self.sweep_error = "R1Pro posture envelope violated"
+                return False
             self._forward()
             collisions = self._collisions(selected=selected, arm=arm)
             if collisions:
@@ -165,6 +212,19 @@ class ClassicalGraspPlanner(ObjectReachability):
             orientations[other] = Quaternion.from_rotation_matrix(
                 transform @ site.xmat.reshape(3, 3)
             )
+        seed = None
+        if neutral_seed:
+            # Start with the bounded measured seed. Raw measurements in an
+            # already-loaded wrist can sit just outside the conservative IK
+            # margin and reject every candidate for the other hand.
+            measured_seed = self.kinematics.seed(self.probe)
+            positions = dict(zip(measured_seed.name, measured_seed.position, strict=True))
+            for column in active_indices(arm)[:-1]:
+                positions[R1PRO_PICK_PLACE_JOINTS[column]] = float(NOMINAL_POSTURE[column])
+            seed = JointState(
+                name=measured_seed.name,
+                position=[positions[name] for name in measured_seed.name],
+            )
         result = self.kinematics.solve(
             self.probe,
             targets,
@@ -173,14 +233,7 @@ class ClassicalGraspPlanner(ObjectReachability):
             position_tolerance=0.0002,
             orientation_tolerance=0.008,
             max_attempts=1,
-            seed=(
-                JointState(
-                    name=list(R1PRO_PICK_PLACE_JOINTS[:18]),
-                    position=self.scene.arms[arm].home[:18].tolist(),
-                )
-                if neutral_seed
-                else None
-            ),
+            seed=seed,
         )
         result[-2:] = self.probe.qpos[self.qids[-2:]]
         return result
@@ -298,7 +351,9 @@ class ClassicalGraspPlanner(ObjectReachability):
                 # contact, rather than unsupported ownership, authorizes this
                 # planning attachment. Live physics must prove the actual lift.
                 self._attach(i, arm)
-        self.allow_target_contact = True
+        # A generic free-arm move may use an index held by the other hand.
+        # Do not replace that measured contact owner with the moving hand.
+        self.allow_target_contact = self.rows[index]["held_by"] in (None, arm)
         if self._collisions(selected=index, arm=arm):
             raise RuntimeError("Measured local manipulation start is obstructed")
 
@@ -315,7 +370,7 @@ class ClassicalGraspPlanner(ObjectReachability):
         for torso in (False, True):
             self.initialize_probe(pose)
             try:
-                ready = self.solve_pose(arm, pregrasp, torso=torso)
+                ready = self.solve_pose(arm, pregrasp, torso=torso, neutral_seed=True)
                 self.probe.qpos[self.qids] = ready
                 self._forward()
                 if self._collisions(selected=index, arm=arm):
@@ -324,6 +379,9 @@ class ClassicalGraspPlanner(ObjectReachability):
                 self.allow_target_contact = True
                 self.segment(arm, index, tcp)
                 self._check_closure(index, arm)
+                posture = max(
+                    posture_error(ready, arm), posture_error(self.probe.qpos[self.qids], arm)
+                )
                 columns = list(active_indices(arm))[:-1]
                 joints = self.probe.qpos[self.qids[columns]]
                 lower = np.array(
@@ -352,10 +410,16 @@ class ClassicalGraspPlanner(ObjectReachability):
                 lifted = tcp.copy()
                 lifted[:3, 3] += [0, 0, 0.12]
                 self.segment(arm, index, lifted)
+                posture = max(posture, posture_error(self.probe.qpos[self.qids], arm))
                 distance = float(np.linalg.norm(pose[:2] - self.transport.start[:2]))
                 yaw = abs(float(pose[2] - self.transport.start[2]))
                 cost = (
-                    distance + 0.15 * yaw + 0.3 * (1 - confidence) - 0.5 * margin - manipulability
+                    distance
+                    + 0.15 * yaw
+                    + 0.3 * (1 - confidence)
+                    - 0.5 * margin
+                    - manipulability
+                    + POSTURE_RANK_WEIGHT * posture
                 )
                 return ClassicalGraspPlan(
                     arm,
@@ -369,6 +433,7 @@ class ClassicalGraspPlanner(ObjectReachability):
                     margin,
                     manipulability,
                     cost,
+                    posture_error=posture,
                 )
             except RuntimeError as exc:
                 failures.append(str(exc))
@@ -545,7 +610,14 @@ class ClassicalGraspPlanner(ObjectReachability):
             points.append([values[name] for name in R1PRO_PICK_PLACE_JOINTS[:18]] + grippers)
         return points
 
-    def transfer_path(self, index: int, arm: Arm, target: NDArray[Any]) -> list[list[float]]:
+    def transfer_path(
+        self,
+        index: int,
+        arm: Arm,
+        target: NDArray[Any],
+        *,
+        allow_target_contact: bool = True,
+    ) -> list[list[float]]:
         """Stage held cargo with Cartesian IK, preserving its attitude and the other hand.
 
         An unconstrained joint-space search struggles with the narrow set of
@@ -556,7 +628,9 @@ class ClassicalGraspPlanner(ObjectReachability):
         for clearance in (0.0, 0.06, 0.12):
             for torso in (False, True):
                 self.initialize_local_probe(index, arm)
-                self.allow_target_contact = True
+                self.allow_target_contact = allow_target_contact and self.rows[index][
+                    "held_by"
+                ] in (None, arm)
                 site = self.probe.site(f"{arm}_tcp")
                 start = np.eye(4)
                 start[:3, :3] = site.xmat.reshape(3, 3)
@@ -604,47 +678,278 @@ class ClassicalGraspPlanner(ObjectReachability):
                     failures.append(str(exc))
         raise RuntimeError("No clear upright transfer corridor: " + "; ".join(failures))
 
-    def carry_posture(self) -> list[list[float]]:
-        """Retract hands for travel while preserving measured grasp orientations."""
+    def move_arm(self, arm: Arm, target: NDArray[Any], *, linear: bool) -> list[list[float]]:
+        """Plan an explicit world-frame TCP move while preserving every held object.
+
+        This does not acquire or release objects. A linear move preserves the
+        current wrist orientation; a pose move may use raised transfer corridors.
+        Both use the existing posture, collision and cargo-tilt policy.
+        """
+        if arm not in ARMS:
+            raise ValueError("Choose left or right")
+        target = np.asarray(target, dtype=float)
+        if (
+            target.shape != (4, 4)
+            or not np.isfinite(target).all()
+            or not np.allclose(target[3], [0, 0, 0, 1], atol=1e-8, rtol=0)
+            or not np.allclose(target[:3, :3].T @ target[:3, :3], np.eye(3), atol=1e-6, rtol=0)
+            or abs(float(np.linalg.det(target[:3, :3])) - 1) > 1e-6
+        ):
+            raise ValueError("TCP target must be a finite rigid 4x4 world-frame transform")
+        for row in self.rows:
+            if not row["held_by"] and (row["grasped"] or row["contacting_arms"]):
+                raise RuntimeError(
+                    f"Cannot move while {row['object']} has an unverified or supported grasp"
+                )
+        index = next((i for i, row in enumerate(self.rows) if row["held_by"] == arm), 0)
+        measured = self.initial.qpos[self.qids].copy()
+        command = np.array(
+            [float(self.scene.data.actuator(n).ctrl[0]) for n in R1PRO_PICK_PLACE_JOINTS]
+        )
+        bias = command[:18] - measured[:18]
+        if not np.isfinite(command).all() or not np.isfinite(measured).all():
+            raise RuntimeError("Measured robot state and commands must be finite")
+        if np.max(np.abs(bias)) > 0.03:
+            raise RuntimeError("Robot must settle before planning an arm move")
+        self.initialize_local_probe(index, arm)
+        self.allow_target_contact = False
+        points = (
+            self.segment(arm, index, target)
+            if linear
+            else self.transfer_path(index, arm, target, allow_target_contact=False)
+        )
+        # Transfer planning also serves pick/place, which permits selected
+        # contact. Explicit motion skills must not gain that permission.
+        self.initialize_local_probe(index, arm)
+        self.allow_target_contact = False
+        for point in points:
+            goal = np.asarray(point, dtype=float).copy()
+            goal[:18] -= bias
+            goal[18:] = measured[18:]
+            if not self._sweep(goal, index, arm):
+                raise RuntimeError(f"Arm move sweep rejected: {self.sweep_error}")
+            point[18:] = command[18:].tolist()
+        return points
+
+    def init_posture(self) -> list[list[float]]:
+        """Plan to the recorded startup joints, without resetting the scene or base.
+
+        Both gripper commands remain unchanged. Unlike carry preparation, this
+        has one fixed joint-space goal: an unsafe loaded-hand endpoint is an
+        explicit failure, never silently replaced by a different carry posture.
+        """
+        for row in self.rows:
+            if not row["held_by"] and (row["grasped"] or row["contacting_arms"]):
+                raise RuntimeError(
+                    f"Cannot return to init while {row['object']} has an unverified or "
+                    "supported grasp; finish the pick or release it safely first"
+                )
         held = [
             (i, cast("Arm", row["held_by"])) for i, row in enumerate(self.rows) if row["held_by"]
         ]
-        index: int
-        arm: Arm
-        if held:
-            index, arm = held[0]
-        else:
-            index, arm = 0, "right"
-        hands = list(ARMS)
-        failures = []
-        for forward, lateral in ((0.28, 0.28), (0.32, 0.30), (0.36, 0.32)):
-            self.initialize_local_probe(index, arm)
-            self.allow_target_contact = bool(held)
-            base = self.probe.body("base_link")
-            rotation, origin = base.xmat.reshape(3, 3).copy(), base.xpos.copy()
-            try:
-                for side in hands:
-                    site = self.probe.site(f"{side}_tcp")
-                    tcp = np.eye(4)
-                    tcp[:3, :3] = site.xmat.reshape(3, 3)
-                    tcp[:3, 3] = origin + rotation @ np.array(
-                        [forward, lateral if side == "left" else -lateral, 0]
-                    )
-                    tcp[2, 3] = max(0.95, float(site.xpos[2]))
-                    joints = self.solve_pose(side, tcp, torso=True, preserve_other=True)
-                    self.probe.qpos[self.qids] = joints
-                    self._forward()
-                if self._collisions(selected=index, arm=arm):
-                    raise RuntimeError("Carrying posture is obstructed")
-                return self.posture_path(
-                    index,
-                    arm,
-                    self.probe.qpos[self.qids].tolist(),
-                    allow_target_contact=bool(held),
+        index, arm = held[0] if held else (0, "right")
+        measured = self.initial.qpos[self.qids].copy()
+        command = np.array(
+            [float(self.scene.data.actuator(n).ctrl[0]) for n in R1PRO_PICK_PLACE_JOINTS]
+        )
+        bias = command[:18] - measured[:18]
+        if np.max(np.abs(bias)) > 0.03:
+            raise RuntimeError("Robot must settle before planning a return to init")
+        if not posture_is_valid(measured):
+            raise RuntimeError("Measured init-move start violates the R1Pro posture envelope")
+        home = np.asarray(self.scene.arms[arm].home, dtype=float)[:20].copy()
+        if home.shape != (20,) or not np.isfinite(home).all():
+            raise RuntimeError("The recorded startup joint position is unavailable")
+        if not posture_is_valid(home):
+            raise RuntimeError("The recorded startup position violates the R1Pro posture envelope")
+
+        self.initialize_local_probe(index, arm)
+        self.allow_target_contact = False
+        self.probe.qpos[self.qids[:18]] = home[:18]
+        self._forward()
+        for cargo, _ in held:
+            name = self.scene.layout.objects[cargo].name
+            initial_up_z = self.initial.body(name).xmat[8]
+            goal_up_z = self.probe.body(name).xmat[8]
+            if not preserves_cargo_tilt(initial_up_z, goal_up_z):
+                tilt = float(np.rad2deg(np.arccos(np.clip(goal_up_z, -1, 1))))
+                raise RuntimeError(
+                    f"Exact init position would tip held {name} to {tilt:.1f} degrees; "
+                    "place it safely before returning to init"
                 )
-            except RuntimeError as exc:
-                failures.append(str(exc))
+        collisions = self._collisions(selected=index, arm=arm)
+        if collisions:
+            raise RuntimeError(f"The fixed init position is obstructed: {collisions}")
+        if np.max(np.abs(measured[:18] - home[:18])) <= 0.005:
+            return [command.tolist()]
+
+        points = self.posture_path(index, arm, home.tolist(), allow_target_contact=False)
+        # Plan in measured joint space, then preserve the small steady-state
+        # actuator bias so loaded joints actually settle at the home target.
+        for point in points:
+            point[:18] = (np.asarray(point[:18]) + bias).tolist()
+            point[18:] = command[18:].tolist()
+        points[0] = command.tolist()
+        return points
+
+    def carry_posture(self, *, seconds: float = CARRY_PLANNING_SECONDS) -> list[list[float]]:
+        """Return to the ready posture without opening hands or tipping their cargo.
+
+        Empty arms and the torso follow their recorded home joints. Loaded
+        hands follow Cartesian corridors to their home TCPs: changing yaw
+        about gravity is safe, but pitch and roll retain the measured grasp.
+        A joint-space RRT cannot reliably find this narrow upright manifold.
+        """
+        held = [
+            (i, cast("Arm", row["held_by"])) for i, row in enumerate(self.rows) if row["held_by"]
+        ]
+        index, arm = held[0] if held else (0, "right")
+        if not posture_is_valid(self.initial.qpos[self.qids]):
+            raise RuntimeError("Measured carrying start violates the R1Pro posture envelope")
+        command = np.array(
+            [float(self.scene.data.actuator(n).ctrl[0]) for n in R1PRO_PICK_PLACE_JOINTS]
+        )
+        if np.max(np.abs(command[:18] - self.initial.qpos[self.qids[:18]])) > 0.03:
+            raise RuntimeError("Cargo must settle before planning a return to ready")
+        home = np.asarray(self.scene.arms[arm].home).copy()
+        home_data = mujoco.MjData(self.model)
+        home_data.qpos[:] = self.initial.qpos
+        home_data.qpos[self.qids[:18]] = home[:18]
+        mujoco.mj_forward(self.model, home_data)
+        home_targets = {side: home_data.site(f"{side}_tcp").xpos.copy() for _, side in held}
+        self.initialize_local_probe(index, arm)
+        base_rotation = self.probe.body("base_link").xmat.reshape(3, 3)
+        compact = carry_ready_joints(self.initial.qpos[self.qids], home, {s for _, s in held})
+        for _, side in held:
+            offset = base_rotation.T @ (self.probe.site(f"{side}_tcp").xpos - home_targets[side])
+            compact = compact and bool(
+                -0.02 <= offset[0] <= 0.10 and abs(offset[1]) <= 0.04 and abs(offset[2]) <= 0.02
+            )
+        if compact:
+            return [command.tolist()]
+        if not held:
+            return self.posture_path(index, arm, home.tolist(), allow_target_contact=False)
+
+        # Small outward alternatives leave space for wide cargo; do not force
+        # every hold up to an arbitrary height or preserve an empty hand's pose.
+        failures: list[str] = []
+        deadline = time.monotonic() + seconds
+        for forward, lateral in ((0.0, 0.0), (0.04, 0.0), (0.08, 0.02)):
+            for clearance in (0.0, 0.06, 0.12):
+                for align_yaw in (True, False):
+                    if time.monotonic() >= deadline:
+                        last_failure = failures[-1] if failures else "no corridor evaluated"
+                        raise RuntimeError(
+                            f"Return-to-ready search exhausted its {seconds:g}s "
+                            f"budget; last failure: {last_failure}"
+                        )
+                    try:
+                        return self._carry_corridor(
+                            held,
+                            home,
+                            home_data,
+                            home_targets,
+                            forward=forward,
+                            lateral=lateral,
+                            clearance=clearance,
+                            align_yaw=align_yaw,
+                            deadline=deadline,
+                        )
+                    except RuntimeError as exc:
+                        failures.append(str(exc))
         raise RuntimeError("No clear compact carrying posture: " + "; ".join(failures))
+
+    def _carry_corridor(
+        self,
+        held: list[tuple[int, Arm]],
+        home: NDArray[Any],
+        home_data: mujoco.MjData,
+        home_targets: dict[Arm, NDArray[Any]],
+        *,
+        forward: float,
+        lateral: float,
+        clearance: float,
+        align_yaw: bool,
+        deadline: float,
+    ) -> list[list[float]]:
+        index, arm = held[0]
+        self.initialize_local_probe(index, arm)
+        start = self.probe.qpos[self.qids].copy()
+        command = np.array(
+            [float(self.scene.data.actuator(name).ctrl[0]) for name in R1PRO_PICK_PLACE_JOINTS]
+        )
+        bias = command[:18] - start[:18]
+        if np.max(np.abs(bias)) > 0.03:
+            raise RuntimeError("Cargo must settle before planning a return to ready")
+        base = self.probe.body("base_link")
+        base_rotation, origin = base.xmat.reshape(3, 3).copy(), base.xpos.copy()
+        transform = self.reference_rotation @ base_rotation.T
+        starts, rotations, goals, yaws = {}, {}, {}, {}
+        for _, side in held:
+            site = self.probe.site(f"{side}_tcp")
+            starts[side] = site.xpos.copy()
+            rotations[side] = site.xmat.reshape(3, 3).copy()
+            goals[side] = home_targets[side] + base_rotation @ np.array(
+                [forward, lateral if side == "left" else -lateral, 0.0]
+            )
+            yaws[side] = (
+                carry_yaw(rotations[side], home_data.site(f"{side}_tcp").xmat.reshape(3, 3))
+                if align_yaw
+                else 0.0
+            )
+        loaded = {side for _, side in held}
+        home_columns = list(range(4))
+        for side in ARMS:
+            if side not in loaded:
+                home_columns.extend(active_indices(side)[:-1])
+        count = max(
+            2,
+            int(np.ceil(np.max(np.abs(home[home_columns] - start[home_columns])) / 0.025)),
+            *(
+                int(np.ceil((np.linalg.norm(goals[s] - starts[s]) + 2 * clearance) / 0.006))
+                for s in loaded
+            ),
+            *(int(np.ceil(abs(yaws[s]) / 0.04)) for s in loaded),
+        )
+        points = [command.tolist()]
+        for t in np.linspace(0, 1, count + 1)[1:]:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Return-to-ready corridor exceeded the planning budget")
+            before = self.probe.qpos[self.qids].copy()
+            self.probe.qpos[self.qids[home_columns]] = start[home_columns] + t * (
+                home[home_columns] - start[home_columns]
+            )
+            mujoco.mj_forward(self.model, self.probe)
+            targets: dict[str, NDArray[Any]] = {}
+            orientations: dict[str, Quaternion] = {}
+            for side in loaded:
+                xyz = starts[side] + t * (goals[side] - starts[side])
+                xyz[2] += clearance * np.sin(np.pi * t)
+                targets[side] = self.reference_position + transform @ (xyz - origin)
+                rotation = Rotation.from_rotvec([0, 0, t * yaws[side]]).as_matrix()
+                orientations[side] = Quaternion.from_rotation_matrix(
+                    transform @ rotation @ rotations[side]
+                )
+            goal = self.kinematics.solve(
+                self.probe,
+                targets,
+                orientations=orientations,
+                allow_torso=False,
+                position_tolerance=0.0002,
+                orientation_tolerance=0.008,
+                max_attempts=1,
+            )
+            self.probe.qpos[self.qids] = before
+            self._forward()
+            if np.max(np.abs(goal - before)) > 0.20:
+                raise RuntimeError("Return-to-ready IK is discontinuous")
+            if not self._sweep(goal, index, arm):
+                raise RuntimeError(f"Return-to-ready sweep rejected: {self.sweep_error}")
+            command[:18] = goal[:18] + bias
+            points.append(command.tolist())
+        if not carry_ready_joints(self.probe.qpos[self.qids], home, loaded):
+            raise RuntimeError("Return-to-ready endpoint has not reached a compact posture")
+        return points
 
     def rank(
         self,
@@ -664,10 +969,14 @@ class ClassicalGraspPlanner(ObjectReachability):
             if arm in ("auto", side) and not any(r["held_by"] == side for r in self.rows)
         ]
         results = []
+        attempted = 0
+        feasible = 0
+        rejections: Counter[str] = Counter()
         target = np.asarray(self.rows[index]["position"])
         for side in hands:
             deadline = time.monotonic() + seconds_per_arm
-            found = 0
+            side_results = []
+            feasible_stances = 0
             current_rotation = self.initial.site(f"{side}_tcp").xmat.reshape(3, 3)
             proposals = []
             for matrix, score in zip(poses, scores, strict=True):
@@ -712,21 +1021,41 @@ class ClassicalGraspPlanner(ObjectReachability):
                 if len(diverse) >= 24:
                     break
             for base in self._body_poses(target, side):
+                found_at_base = 0
                 # Bound each body pose's allocation so a bad dock does not
                 # exhaust the entire reachability search on hundreds of grasps.
                 for _, tcp, score, refinement in diverse[:12]:
                     if time.monotonic() > deadline:
                         break
+                    attempted += 1
                     try:
                         result = self.evaluate_grasp(index, side, tcp, base, score)
-                    except (RuntimeError, ValueError):
+                    except (RuntimeError, ValueError) as exc:
+                        rejections[str(exc)] += 1
                         continue
-                    results.append(replace(result, refinement=refinement))
-                    found += 1
-                    if found >= max_results:
+                    result = replace(result, refinement=refinement)
+                    side_results.append(result)
+                    feasible += 1
+                    found_at_base += 1
+                    if found_at_base >= max_results:
                         break
-                if time.monotonic() > deadline or found >= max_results:
+                feasible_stances += bool(found_at_base)
+                if time.monotonic() > deadline or feasible_stances >= GRASP_FEASIBLE_STANCES:
                     break
+            results.extend(sorted(side_results, key=lambda result: result.cost)[:max_results])
+
+        logger.info(
+            "Grasp approach-and-lift assessment finished",
+            object_index=index,
+            hands=hands,
+            source_candidates=len(poses),
+            attempted=attempted,
+            feasible=feasible,
+            returned=len(results),
+            rejection_reasons=dict(rejections.most_common(5)),
+        )
+        # A verified lift is a pick. Carrying, exact home and placement are
+        # separate situation-dependent motions, not universal grasp filters.
         return sorted(results, key=lambda result: result.cost)
 
 
@@ -744,10 +1073,34 @@ class _ApartmentCollisionWorld:
     def __getattr__(self, name: str) -> Any:
         return getattr(self.planner.kinematics.world, name)
 
+    def check_edge_collision_free(
+        self, start: JointState, end: JointState, step_size: float = 0.05
+    ) -> bool:
+        """Keep RRT edges in this policy/collision world, not the delegated SDK world."""
+        if step_size <= 0:
+            raise ValueError("Collision step size must be positive")
+        space = self.planner.kinematics.world.get_prepared_model().joint_space.select(
+            tuple(start.name)
+        )
+        end_values = dict(zip(end.name, end.position, strict=True))
+        q_start = np.asarray(start.position)
+        q_end = np.array([end_values[name] for name in start.name])
+        steps = max(1, int(np.ceil(np.max(np.abs(space.delta(q_start, q_end))) / step_size)))
+        return all(
+            self.check_config_collision_free(
+                JointState(
+                    name=start.name, position=space.interpolate(q_start, q_end, float(t)).tolist()
+                )
+            )
+            for t in np.linspace(0, 1, steps + 1)
+        )
+
     def check_config_collision_free(self, state: JointState) -> bool:
         planner = self.planner
         for name, value in zip(state.name, state.position, strict=True):
             planner.probe.joint(name).qpos[0] = value
+        if not posture_is_valid(planner.probe.qpos[planner.qids]):
+            return False
         planner._forward()
         if planner._collisions(selected=self.index, arm=self.arm):
             return False

@@ -24,6 +24,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.spatial.transform import Rotation
 
 from dimos.agents.annotation import skill
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
@@ -31,9 +32,6 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.manipulation_spec import ExecutionStatus, ManipulationSpec
-from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
-    JointTrajectoryGenerator,
-)
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -49,6 +47,7 @@ from dimos.robot.galaxea.r1pro.apartment_route import (
     CLASSICAL_TRACKING_LIMIT_M,
     navigation_tracking_error,
 )
+from dimos.robot.galaxea.r1pro.classical_motion import joint_trajectory
 from dimos.robot.galaxea.r1pro.classical_selection import color_name, resolve_classical_object
 from dimos.robot.galaxea.r1pro.classical_sim import ClassicalSimSpec
 from dimos.robot.galaxea.r1pro.classical_tray import run_tray_motion
@@ -193,21 +192,21 @@ class R1ProClassicalSkills(Module):
                     joint_names=joints,
                     points=[
                         TrajectoryPoint(positions=start, time_from_start=0.0),
+                        TrajectoryPoint(positions=opened, time_from_start=0.4),
                         TrajectoryPoint(positions=opened, time_from_start=0.8),
-                        TrajectoryPoint(positions=opened, time_from_start=1.2),
                     ],
                 )
                 report["motion_started"] = True
                 opening_result = self._control.execute_trajectory(trajectory, f"primitive_{arm}")
                 if opening_result.status is not TrajectoryExecutionStatus.ACCEPTED:
                     raise RuntimeError(f"Recovery gripper opening was rejected: {opening_result}")
-                self._pause(1.3)
+                self._pause(0.9)
                 stopped = self._control.cancel_trajectory(f"primitive_{arm}")
                 if not stopped.safe:
                     raise RuntimeError("Cannot confirm recovery gripper stopped")
                 plan = self._manipulation.plan_to_joints(
                     {f"{arm}_arm": JointState(name=joints[:-1], position=recovery["home"][:-1])},
-                    speed_scale=0.25,
+                    speed_scale=0.5,
                 )
                 if not plan.succeeded or plan.plan is None:
                     raise RuntimeError(f"Recovery planning failed: {plan.message}")
@@ -216,26 +215,97 @@ class R1ProClassicalSkills(Module):
                 result = self._manipulation.execute(blocking=False, plan_id=plan.plan.plan_id)
                 if result.status is not ExecutionStatus.ACCEPTED:
                     raise RuntimeError(f"Recovery was rejected: {result}")
-                deadline = time.monotonic() + 60
+                initial = self._sim.primitive_state()
+                sim_start = stamp = float(initial["sim_time"])
+                fresh = progressed = time.monotonic()
+                previous = np.asarray([initial["joint_positions"][n] for n in joints[:-1]])
                 while True:
                     self._pause(0.05)
                     result = self._manipulation.wait_for_execution(timeout=0.01)
                     if result.succeeded:
                         break
-                    if (
-                        result.status
-                        not in (
-                            ExecutionStatus.EXECUTING,
-                            ExecutionStatus.ACCEPTED,
-                            ExecutionStatus.TIMED_OUT,
-                        )
-                        or time.monotonic() > deadline
+                    if result.status not in (
+                        ExecutionStatus.EXECUTING,
+                        ExecutionStatus.ACCEPTED,
+                        ExecutionStatus.TIMED_OUT,
                     ):
                         raise RuntimeError(f"Recovery failed: {result}")
+                    state = self._sim.primitive_state()
+                    now = time.monotonic()
+                    sim_time = float(state["sim_time"])
+                    if sim_time < stamp:
+                        raise RuntimeError("Simulation clock moved backwards during recovery")
+                    if sim_time > stamp:
+                        fresh, stamp = now, sim_time
+                    current = np.asarray([state["joint_positions"][n] for n in joints[:-1]])
+                    if np.max(np.abs(current - previous)) > 1e-4:
+                        progressed, previous = now, current
+                    if now - fresh > 10:
+                        raise RuntimeError("Simulation stopped updating during recovery")
+                    if now - progressed > 30:
+                        raise RuntimeError("Recovery made no measured arm progress for 30 s")
+                    if sim_time - sim_start > plan.plan.trajectory.duration + 25:
+                        raise RuntimeError("Recovery exceeded its simulation-time settling budget")
                 self._pause(0.5)
             report["recovered"] = self._sim.finish_primitive_recovery()
 
         return self._start("recover", operation, recovery=True)
+
+    @skill
+    def return_to_init(self) -> str:
+        """Restore the fixed startup arm-and-torso posture, keeping the base here.
+
+        Preserve both grippers and held objects. This is not a scene reset. If the exact
+        startup posture would collide or tip held cargo, report why without substituting
+        a different posture or automatically placing/releasing the object.
+        """
+        tray = self._sim.tray_state()
+        if tray["held"] or tray["finger_contacts"]:
+            return json.dumps(
+                dict(accepted=False, reason="Put down the tray before returning to init")
+            )
+
+        def operation(report: dict[str, Any]) -> None:
+            self._stop_control()
+            self._phase("return_to_init", report)
+            before = self._sim.primitive_state()
+            if before["error"]:
+                raise RuntimeError(before["error"])
+            held = dict(before["held_objects"])
+            base = np.asarray(before["base_pose"], dtype=float)
+            plan = self._sim.classical_init_posture()
+            target = np.asarray(plan["target_joints"], dtype=float)
+            report["init_posture"] = dict(target_joints=target.tolist(), verified=False)
+            self._drive(plan["waypoints"], report)
+            self._pause(0.5)
+            after = self._sim.primitive_state()
+            if after["error"]:
+                raise RuntimeError(after["error"])
+            if after["held_objects"] != held:
+                raise RuntimeError("Cargo ownership changed while returning to init")
+            measured = np.asarray(
+                [after["joint_positions"][name] for name in R1PRO_PICK_PLACE_JOINTS[:18]]
+            )
+            error = float(np.max(np.abs(measured - target)))
+            if not np.isfinite(error) or error > 0.02:
+                raise RuntimeError(
+                    f"Measured arms/torso did not reach the fixed init posture ({error:.4f} rad)"
+                )
+            base_error = np.asarray(after["base_pose"], dtype=float) - base
+            base_error[2] = np.arctan2(np.sin(base_error[2]), np.cos(base_error[2]))
+            if (
+                not np.all(np.isfinite(base_error))
+                or np.linalg.norm(base_error[:2]) > 0.005
+                or abs(base_error[2]) > 0.005
+            ):
+                raise RuntimeError("Base moved while returning arms and torso to init")
+            self._sim.finish_object_navigation()
+            report["init_posture"].update(
+                verified=True, measured_joints=measured.tolist(), held_objects=held
+            )
+            self._phase("at_init", report)
+
+        return self._start("return_to_init", operation)
 
     @skill
     def reset_scene(self) -> str:
@@ -248,6 +318,130 @@ class R1ProClassicalSkills(Module):
             self._pause(0.8)
 
         return self._start("reset", operation, recovery=True)
+
+    @skill
+    def prepare_carry(self) -> str:
+        """Retract to a compact cargo-safe pose without moving the base or opening hands.
+
+        Optional after a pick, depending on the next task; not the exact startup joints.
+        """
+
+        def operation(report: dict[str, Any]) -> None:
+            self._stop_control()
+            tray = self._sim.tray_state()
+            if tray["held"] or tray["finger_contacts"]:
+                raise RuntimeError("Use tray handling while the hands contact the tray")
+            self._prepare_carry(report)
+            self._sim.finish_object_navigation()
+            self._phase("holding", report)
+
+        return self._start("prepare_carry", operation)
+
+    def _move_arm(
+        self,
+        name: str,
+        arm: str,
+        target_from_current: Callable[[NDArray[Any]], NDArray[Any]],
+        *,
+        linear: bool,
+    ) -> str:
+        if arm not in ARMS:
+            return json.dumps(dict(accepted=False, reason="Choose left or right"))
+
+        def operation(report: dict[str, Any]) -> None:
+            self._stop_control()
+            self._phase(name, report)
+            before = self._sim.primitive_state()
+            if before["error"]:
+                raise RuntimeError(before["error"])
+            held = dict(before["held_objects"])
+            base = np.asarray(before["base_pose"], dtype=float)
+            target = target_from_current(np.asarray(before["tcp_poses"][arm], dtype=float))
+            report["arm_motion"] = dict(arm=arm, target=target.tolist(), linear=linear)
+            points = self._sim.classical_move_arm(arm, target.tolist(), linear)
+            self._drive(points, report)
+            after = self._sim.primitive_state()
+            if after["error"]:
+                raise RuntimeError(after["error"])
+            if after["held_objects"] != held:
+                raise RuntimeError("Cargo ownership changed during arm motion")
+            actual = np.asarray(after["tcp_poses"][arm], dtype=float)
+            position_error = float(np.linalg.norm(actual[:3, 3] - target[:3, 3]))
+            angle_error = float(Rotation.from_matrix(target[:3, :3].T @ actual[:3, :3]).magnitude())
+            if (
+                not np.isfinite([position_error, angle_error]).all()
+                or position_error > 0.005
+                or angle_error > 0.02
+            ):
+                raise RuntimeError(
+                    f"Measured hand missed target: {position_error:.4f} m, {angle_error:.4f} rad"
+                )
+            base_error = np.asarray(after["base_pose"], dtype=float) - base
+            base_error[2] = np.arctan2(np.sin(base_error[2]), np.cos(base_error[2]))
+            if (
+                not np.isfinite(base_error).all()
+                or np.linalg.norm(base_error[:2]) > 0.005
+                or abs(base_error[2]) > 0.005
+            ):
+                raise RuntimeError("Base moved during arm-only motion")
+            self._sim.finish_object_navigation()
+            report["arm_motion"].update(
+                verified=True, position_error_m=position_error, angle_error_rad=angle_error
+            )
+            self._phase("holding", report)
+
+        return self._start(name, operation)
+
+    @skill
+    def move_linear(self, arm: str, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0) -> str:
+        """Translate one hand along a checked straight line in world axes, distances in metres.
+
+        Keep its orientation, both gripper commands, cargo and base position. No release,
+        new grasp or placement; use pick_object/place_object for contact with a support.
+        """
+        delta = np.asarray([dx, dy, dz], dtype=float)
+        if not np.isfinite(delta).all():
+            return json.dumps(dict(accepted=False, reason="Displacement must be finite"))
+
+        def target(current: NDArray[Any]) -> NDArray[Any]:
+            result = current.copy()
+            result[:3, 3] += delta
+            return result
+
+        return self._move_arm("move_linear", arm, target, linear=True)
+
+    @skill
+    def move_to_pose(
+        self,
+        arm: str,
+        x: float,
+        y: float,
+        z: float,
+        roll: float | None = None,
+        pitch: float | None = None,
+        yaw: float | None = None,
+    ) -> str:
+        """Move one hand to world XYZ in metres, optionally world roll/pitch/yaw in radians.
+
+        Omitted angles retain their current values. Choose a checked transfer corridor;
+        keep base, both grippers and cargo. Not a pick/place or permission to tip cargo.
+        """
+        values = [x, y, z, *[v for v in (roll, pitch, yaw) if v is not None]]
+        if not np.isfinite(values).all():
+            return json.dumps(dict(accepted=False, reason="Pose values must be finite"))
+
+        def target(current: NDArray[Any]) -> NDArray[Any]:
+            result = current.copy()
+            result[:3, 3] = [x, y, z]
+            if any(v is not None for v in (roll, pitch, yaw)):
+                angles = Rotation.from_matrix(current[:3, :3]).as_euler("xyz")
+                for i, value in enumerate((roll, pitch, yaw)):
+                    if value is not None:
+                        angles[i] = value
+                result[:3, :3] = Rotation.from_euler("xyz", angles).as_matrix()
+            return result
+
+        return self._move_arm("move_to_pose", arm, target, linear=False)
 
     @rpc
     def stop(self) -> None:
@@ -357,6 +551,32 @@ class R1ProClassicalSkills(Module):
                 )
             )
 
+    def _prepare_carry(
+        self,
+        report: dict[str, Any],
+        *,
+        phase: str = "prepare_carry",
+        expected_held: dict[str, str | None] | None = None,
+    ) -> None:
+        """Retract without base motion or release; verify both hands before declaring ready."""
+        self._phase(phase, report)
+        self._pause(0)
+        before = self._sim.primitive_state()
+        if before["error"]:
+            raise RuntimeError(before["error"])
+        held = dict(before["held_objects"])
+        if expected_held is not None and held != expected_held:
+            raise RuntimeError("Cargo ownership changed before retracting to the carrying posture")
+        points = self._sim.classical_carry_posture()
+        self._drive(points, report)
+        self._pause(0.5)
+        after = self._sim.primitive_state()
+        if after["error"]:
+            raise RuntimeError(after["error"])
+        if after["held_objects"] != held:
+            raise RuntimeError("Cargo ownership changed while retracting to the carrying posture")
+        report["carry_posture"] = dict(verified=True, held_objects=held, waypoints=len(points))
+
     def _navigate(
         self,
         destination: str,
@@ -371,10 +591,7 @@ class R1ProClassicalSkills(Module):
             self._phase("navigate", report)
             plan = self._sim.prepare_tray_navigation(destination)
         else:
-            self._phase("prepare_carry", report)
-            carry = self._sim.classical_carry_posture()
-            if carry:
-                self._drive(carry, report)
+            self._prepare_carry(report)
             self._phase("navigate", report)
             plan = self._sim.prepare_object_navigation(destination, arm, stance)
         report["navigation"] = plan
@@ -567,24 +784,35 @@ class R1ProClassicalSkills(Module):
             # staging and contacts before proceeding to the next phase.
             points = [points[0], points[0]]
         carrying = any(row.get("held_by") for row in before.get("objects", []))
-        generator = JointTrajectoryGenerator(
-            num_joints=20,
-            max_velocity=([0.08] * 4 + [0.25] * 14 if carrying else [0.6] * 18) + [0.05, 0.05],
-            max_acceleration=([0.15] * 4 + [0.5] * 14 if carrying else [1.5] * 18) + [0.2, 0.2],
-            points_per_segment=8,
+        active = before.get("active")
+        placing_arm = (
+            active[1]
+            if active
+            and active[0] == "place"
+            and report.get("phase") in ("lower_to_support", "release", "retreat")
+            else None
         )
-        trajectory = generator.generate(points)
-        trajectory.joint_names = list(R1PRO_PICK_PLACE_JOINTS)
+        # A supported object is no longer "held_by" even before the pads
+        # release it. The selected placement uses the two-pad contact guard
+        # below until release; every other held object keeps its ownership.
+        protected_cargo = {
+            row["index"]: row["held_by"]
+            for row in before.get("objects", [])
+            if row.get("held_by") and row["held_by"] != placing_arm
+        }
+        trajectory = joint_trajectory(points, carrying=carrying)
         self._pause(0)
         accepted = self._control.execute_trajectory(trajectory, "joint_trajectory")
         if accepted.status is not TrajectoryExecutionStatus.ACCEPTED:
             raise RuntimeError(f"Cartesian trajectory rejected: {accepted}")
         report["motion_started"] = True
         duration = trajectory.points[-1].time_from_start
-        # The apartment's contact solver can run slower than wall time. Give
-        # loaded mechanisms time to settle without relaxing endpoint checks.
-        deadline = time.monotonic() + duration + 25
-        active = before.get("active")
+        started = time.monotonic()
+        sim_start = before.get("sim_time")
+        progressed = started
+        last_joints: NDArray[Any] | None = None
+        last_commands: NDArray[Any] | None = None
+        last_velocity = float("inf")
         protected_grasp = None
         if active and report.get("phase") in ("lift", "preplace", "lower_to_support"):
             side = active[1]
@@ -602,13 +830,17 @@ class R1ProClassicalSkills(Module):
             if report.get("phase") in ("stage_pregrasp", "approach", "preplace", "lower_to_support")
             else 0.01
         )
-        while time.monotonic() < deadline:
+        while True:
             self._pause(0.05)
             state = self._sim.primitive_state()
             if state["error"]:
                 raise RuntimeError(state["error"])
+            if state["sim_time"] < max(stamp, sim_start if sim_start is not None else stamp):
+                raise RuntimeError("Simulation clock moved backwards during Cartesian execution")
             if state["sim_time"] > stamp:
                 fresh, stamp = time.monotonic(), state["sim_time"]
+                if sim_start is None:
+                    sim_start = stamp
                 error = max(
                     abs(state["joint_positions"][n] - points[-1][i])
                     for i, n in enumerate(R1PRO_PICK_PLACE_JOINTS[:18])
@@ -616,6 +848,26 @@ class R1ProClassicalSkills(Module):
                 velocities = state.get("joint_velocities", {})
                 moving = max(abs(velocities.get(n, 0.0)) for n in R1PRO_PICK_PLACE_JOINTS[:18])
                 commands = state.get("joint_commands")
+                joints = np.asarray([state["joint_positions"][n] for n in R1PRO_PICK_PLACE_JOINTS])
+                command_values = (
+                    None
+                    if commands is None
+                    else np.asarray([commands[n] for n in R1PRO_PICK_PLACE_JOINTS])
+                )
+                if (
+                    last_joints is None
+                    or np.max(np.abs(joints - last_joints)) > 1e-4
+                    or (
+                        command_values is not None
+                        and (
+                            last_commands is None
+                            or np.max(np.abs(command_values - last_commands)) > 1e-5
+                        )
+                    )
+                    or moving < last_velocity - 1e-4
+                ):
+                    progressed = fresh
+                    last_joints, last_commands, last_velocity = joints, command_values, moving
                 delivered = (
                     commands is None
                     or max(
@@ -636,10 +888,16 @@ class R1ProClassicalSkills(Module):
                     max_joint_velocity=float(moving),
                     commands_delivered=bool(delivered),
                     stable_samples=stable,
+                    wall_elapsed_s=time.monotonic() - started,
+                    sim_elapsed_s=stamp - sim_start,
+                    planned_duration_s=duration,
                 )
             if protected_grasp is not None and not state["objects"][protected_grasp]["grasped"]:
                 raise RuntimeError("Selected object lost two-finger contact during transfer")
-            if time.monotonic() - fresh > 2:
+            for index, side in protected_cargo.items():
+                if state["objects"][index]["held_by"] != side:
+                    raise RuntimeError("Held object lost contact or changed hands during transfer")
+            if time.monotonic() - fresh > 10:
                 raise RuntimeError("Simulation stopped updating during Cartesian execution")
             task_state = self._control.task_invoke("joint_trajectory", "get_state", {})
             if task_state not in (TrajectoryState.EXECUTING, TrajectoryState.COMPLETED):
@@ -657,7 +915,16 @@ class R1ProClassicalSkills(Module):
                     )
                 )
                 return
-        raise RuntimeError("Measured Cartesian trajectory did not finish")
+            # Physics may run slower than real time: a moving robot must not
+            # fail just because wall time exceeded the nominal trajectory.
+            if sim_start is not None and stamp - sim_start > duration + 25:
+                raise RuntimeError(
+                    "Measured Cartesian trajectory did not settle within its simulation-time budget"
+                )
+            if time.monotonic() - progressed > 30 and time.monotonic() - started > duration:
+                raise RuntimeError(
+                    "Cartesian motion stalled: no joint, command or settling progress for 30 s"
+                )
 
     def _line(
         self, index: int, arm: str, target: list[list[float]], report: dict[str, Any]
@@ -763,6 +1030,7 @@ class R1ProClassicalSkills(Module):
                 ),
                 regions=list(state["defined_regions"]),
                 base_pose=[round(float(v), 3) for v in state["base_pose"]],
+                tcp_poses=state.get("tcp_poses", {}),
                 sim_time=round(float(state["sim_time"]), 1),
                 error=state["error"],
                 action=self._status(),
@@ -777,7 +1045,9 @@ class R1ProClassicalSkills(Module):
 
     @skill
     def pick_object(self, object: str = "nearest", arm: str = "auto") -> str:
-        """Approach, grasp, lift and HOLD the requested item with GraspGenX and DimOS.
+        """Approach, grasp and lift the item, then HOLD it without opening either hand.
+
+        Return/retraction is a separate choice, not a prerequisite or part of this action.
 
         Args:
             object: Exact ID or combined attributes, e.g. blue carton on the left.
@@ -808,7 +1078,8 @@ class R1ProClassicalSkills(Module):
             options = self._assess_pick(index, candidates, arm)
             if not options:
                 raise RuntimeError(
-                    "No GraspGenX candidate has a clear approach and lift with the requested hand"
+                    "No checked approach/grasp/lift plan for the requested hand; "
+                    "see assessment-worker.log for collision, reach or IK rejection details"
                 )
             chosen = options[0]
             side = chosen["arm"]
@@ -842,6 +1113,7 @@ class R1ProClassicalSkills(Module):
             final = self._sim.primitive_state()
             if final["held_objects"][side] != f"object_{index + 1}" or not final["complete"]:
                 raise RuntimeError("The selected object did not survive the verified lift")
+            report["lift_verified"] = True
             self._phase("holding", report)
 
         return self._start("pick", operation)
