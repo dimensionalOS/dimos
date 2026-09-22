@@ -14,7 +14,8 @@
 
 from typing import Protocol
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos_generated.geometry_msgs.msg import PoseStamped
+
 from dimos.navigation.base import NavigationState
 from dimos.spec.utils import Spec
 

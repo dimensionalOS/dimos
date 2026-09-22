@@ -876,3 +876,18 @@ Open `build/message-codegen/demo/evidence/navigation-lcm.svg` and
 `navigation-zenoh.svg` to inspect the planned route. Module threads, subscriptions,
 and transport sessions stop automatically; remove the two SVGs to clean up output.
 `test_navigation.py` runs this same demo as a bounded subprocess E2E check.
+
+### Basic follower and exact odometry history
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_odometry_history.py
+```
+
+This hardware-free, fixed-step simulation passes a generated CDR path through the
+basic follower's control step, applies its generated Twist commands, and checks
+its generated arrival Bool. Each simulated Odometry sample passes through CDR
+and the real OdometryHist handler. The demo checks consecutive nanosecond stamps
+and true-height Rerun geometry, then exports the reference and traveled paths to
+`build/message-codegen/demo/evidence/odometry-history.svg`. Open that file for
+visual review; remove it to clean up the demo output. This exercises control
+steps directly; it does not start a robot or the follower's timed control thread.

@@ -976,3 +976,27 @@ optional PyTorch, which is absent. The old recorded voxel tests still depend on
 LegacyPickleStore/Go2Moment fixtures; replacing those recordings remains part of
 the full cutover. These limitations do not affect the verified direct voxel →
 CostMapper → navigation transport demo, and do not complete stage 4.
+
+### Generated basic follower and odometry history (runtime cutover in progress)
+
+The basic path follower, public navigation protocol, and OdometryHist now use
+generated messages. TF lookups retain the generated PoseStamped shape. History
+uses integer nanoseconds for publication throttling and copies source headers
+and nested poses into generated Path output. Its Rerun override constructs the
+archetype directly, retaining the actual Z coordinate.
+
+- `history-combined-tests.log`: 97 checks passed across follower/history, map
+  producers, navigation, occupancy, geometry, and the two-transport module E2E.
+- `history-mypy.log`: four production/demo modules passed.
+- Nine focused follower/history tests cover TF mount composition and lookup
+  throttling, generated velocity/arrival/empty-path behavior, one-nanosecond
+  publication intervals at epoch time, copy isolation, bounded history, frame
+  overrides, replay reset to zero, and Rerun path coordinates.
+- `demo_odometry_history.py`: fixed-step simulation reached x=1.700 within the
+  basic follower's 0.3 m tolerance, emitted zero Twist on arrival, and retained
+  35 history poses stamped 1700000000123456789 through 1700000000123456823 ns.
+  The generated Rerun line retains z=0.25 m. The SVG review artifact is
+  `build/message-codegen/demo/evidence/odometry-history.svg`.
+
+Exploration and patrol consumers still require generated-message conversion.
+This checkpoint does not complete the runtime or viewer acceptance gates.

@@ -12,9 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    Vector3,
+)
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Bool, Header
+
 from dimos.navigation.basic_path_follower.module import BasicPathFollower, lookahead_distance
 from dimos.protocol.tf.tf import MultiTBuffer
 
@@ -36,7 +47,7 @@ class FakeTF(MultiTBuffer):
         time_tolerance: float | None = None,
         *,
         forward_tolerance: float = 0.0,
-    ) -> Transform | None:
+    ) -> TransformStamped | None:
         self.gets += 1
         return super().get(
             parent_frame,
@@ -50,23 +61,19 @@ class FakeTF(MultiTBuffer):
         pass
 
 
-def _mount() -> Transform:
-    return Transform(
-        translation=Vector3(0.0, 0.0, MOUNT_Z),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
+def _mount() -> TransformStamped:
+    return TransformStamped(
+        header=Header(frame_id="base_link", stamp=Time(sec=1)),
         child_frame_id="mid360_link",
-        ts=1.0,
+        transform=Transform(translation=Vector3(z=MOUNT_Z), rotation=Quaternion(w=1)),
     )
 
 
-def _odom_edge() -> Transform:
-    return Transform(
-        translation=Vector3(1.0, 2.0, 3.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="odom",
+def _odom_edge() -> TransformStamped:
+    return TransformStamped(
+        header=Header(frame_id="odom", stamp=Time(sec=1)),
         child_frame_id="mid360_link",
-        ts=1.0,
+        transform=Transform(translation=Vector3(x=1, y=2, z=3), rotation=Quaternion(w=1)),
     )
 
 
@@ -79,7 +86,7 @@ def test_lookup_pose_steers_from_the_tf_base_pose() -> None:
     try:
         pose = module._lookup_pose()
         assert pose is not None
-        assert abs(pose.position.z - (3.0 - MOUNT_Z)) < 1e-9
+        assert abs(pose.pose.position.z - (3.0 - MOUNT_Z)) < 1e-9
     finally:
         module.stop()
 
@@ -121,3 +128,31 @@ def test_lookahead_scales_in_linear_region() -> None:
 
 def test_lookahead_clamped_at_ceiling() -> None:
     assert lookahead_distance(2.0, 1.5, 0.4, 1.5) == 1.5
+
+
+def test_generated_path_produces_velocity_and_arrival():
+    module = BasicPathFollower()
+    commands = []
+    arrivals = []
+    module.nav_cmd_vel.subscribe(lambda value: commands.append(Twist.decode(value.encode())))
+    module.goal_reached.subscribe(lambda value: arrivals.append(Bool.decode(value.encode())))
+    try:
+        path = Path(
+            poses=[
+                PoseStamped(pose=Pose(position=Point(x=x), orientation=Quaternion(w=1)))
+                for x in [0, 1, 2]
+            ]
+        )
+        module._on_path(Path.decode(path.encode()))
+        waypoints = module._waypoints
+        assert waypoints is not None
+        module._step(path.poses[0], waypoints)
+        assert commands[-1].linear.x > 0
+        assert not arrivals
+        module._step(path.poses[-1], waypoints)
+        assert commands[-1] == Twist()
+        assert arrivals[-1].data
+        module._on_path(Path())
+        assert module._waypoints is None
+    finally:
+        module.stop()

@@ -19,7 +19,10 @@ from threading import Event, RLock, Thread
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Bool
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 from numpy.typing import NDArray
 from reactivex.disposable import Disposable
@@ -28,11 +31,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry import quaternion_euler
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
 
@@ -121,7 +120,9 @@ class BasicPathFollower(Module):
                 self._waypoints = None
             self.nav_cmd_vel.publish(Twist())
             return
-        waypoints = np.array([[p.position.x, p.position.y] for p in path.poses], dtype=np.float32)
+        waypoints = np.array(
+            [[p.pose.position.x, p.pose.position.y] for p in path.poses], dtype=np.float32
+        )
         with self._lock:
             self._waypoints = waypoints
 
@@ -144,20 +145,20 @@ class BasicPathFollower(Module):
             self._stop_event.wait(max(0.0, period - elapsed))
 
     def _step(self, pose: PoseStamped, waypoints: NDArray[np.float32]) -> None:
-        position = np.array([pose.position.x, pose.position.y], dtype=np.float32)
+        position = np.array([pose.pose.position.x, pose.pose.position.y], dtype=np.float32)
         if float(np.linalg.norm(waypoints[-1] - position)) < self.config.goal_tolerance:
             self.nav_cmd_vel.publish(Twist())
             with self._lock:
                 if self._waypoints is waypoints:
                     self._waypoints = None
-            self.goal_reached.publish(Bool(True))
+            self.goal_reached.publish(Bool(data=True))
             logger.info("Goal reached")
             return
 
         target = self._lookahead_point(waypoints, position)
         yaw_error = angle_diff(
             math.atan2(target[1] - position[1], target[0] - position[0]),
-            pose.orientation.euler[2],
+            quaternion_euler(pose.pose.orientation)[2],
         )
 
         angular = max(
@@ -165,7 +166,7 @@ class BasicPathFollower(Module):
             min(self.config.max_angular, self.config.heading_gain * yaw_error),
         )
         linear = self.config.speed * max(0.0, math.cos(yaw_error))
-        self.nav_cmd_vel.publish(Twist(Vector3(linear, 0, 0), Vector3(0, 0, angular)))
+        self.nav_cmd_vel.publish(Twist(linear=Vector3(x=linear), angular=Vector3(z=angular)))
 
     def _lookahead_point(
         self, waypoints: NDArray[np.float32], position: NDArray[np.float32]
