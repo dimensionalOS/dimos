@@ -22,11 +22,17 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Any
 
+from aiortc import RTCRtpSender
 from aiortc.mediastreams import VIDEO_CLOCK_RATE, VIDEO_TIME_BASE, VideoStreamTrack
 import av
+import numpy as np
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 _AV_FORMAT_MAP = {
     ImageFormat.BGR: "bgr24",
@@ -35,6 +41,23 @@ _AV_FORMAT_MAP = {
     ImageFormat.RGBA: "rgba",
     ImageFormat.GRAY: "gray",
 }
+
+
+def prefer_video_codec(pc: Any, codec: str) -> None:
+    """Put `codec` (e.g. "h264") first in every video transceiver's codec
+    preferences. Best-effort: an unknown codec keeps aiortc's default order,
+    so a misconfigured knob cannot kill the connection."""
+    want = f"video/{codec}".lower()
+    caps = RTCRtpSender.getCapabilities("video")
+    preferred = [c for c in caps.codecs if c.mimeType.lower() == want]
+    if not preferred:
+        logger.warning("video codec %r not in local capabilities; using defaults", codec)
+        return
+    rest = [c for c in caps.codecs if c.mimeType.lower() != want]
+    for transceiver in pc.getTransceivers():
+        if transceiver.kind == "video":
+            transceiver.setCodecPreferences(preferred + rest)
+            logger.info("video codec preference: %s first", want)
 
 
 class CameraVideoTrack(VideoStreamTrack):
@@ -55,6 +78,7 @@ class CameraVideoTrack(VideoStreamTrack):
         self._armed = False
         self._first_mono: float | None = None
         self._new_frame = asyncio.Event()
+        self._dropped: set[ImageFormat] = set()
 
     def arm(self) -> None:
         """Discard buffered frames; start delivering from now.
@@ -82,15 +106,39 @@ class CameraVideoTrack(VideoStreamTrack):
         except RuntimeError:
             return
 
+    def _to_av(self, img: Image) -> av.VideoFrame | None:
+        """None, logged once per source format, for what neither to_rgb() nor
+        av takes (DEPTH float32, a malformed array). Never raises: recv() runs
+        in aiortc's sender task, which ends the track on an exception."""
+        try:
+            frame = img if img.format in _AV_FORMAT_MAP else img.to_rgb()
+            data = frame.data
+            h, w = data.shape[:2]
+            if h % 2 or w % 2:
+                # libx264 takes yuv420p, whose chroma planes are half-size: an
+                # odd width or height fails avcodec_open2 in aiortc's sender
+                # task, past this guard. The last row/column is cropped.
+                data = np.ascontiguousarray(data[: h - h % 2, : w - w % 2])
+            return av.VideoFrame.from_ndarray(data, format=_AV_FORMAT_MAP[frame.format])
+        except Exception as e:
+            if img.format not in self._dropped:
+                self._dropped.add(img.format)
+                logger.warning(
+                    "video track: dropping %s/%s frames: %s", img.format.value, img.data.dtype, e
+                )
+            return None
+
     async def recv(self) -> av.VideoFrame:
-        # Wait (no busy-poll) for a fresh, post-arm frame.
+        # Wait (no busy-poll) for a fresh, post-arm frame that converts.
         while True:
             await self._new_frame.wait()
             self._new_frame.clear()
             if self._armed and self._latest is not None and self._frame_seq > self._consumed_seq:
                 img = self._latest
                 self._consumed_seq = self._frame_seq
-                break
+                frame = self._to_av(img)
+                if frame is not None:
+                    break
 
         # Monotonic (not wall) clock so PTS never goes backward on an NTP/clock
         # step — aiortc requires non-decreasing PTS.
@@ -99,7 +147,6 @@ class CameraVideoTrack(VideoStreamTrack):
             self._first_mono = now
         pts = int((now - self._first_mono) * VIDEO_CLOCK_RATE)
 
-        frame = av.VideoFrame.from_ndarray(img.data, format=_AV_FORMAT_MAP.get(img.format, "bgr24"))
         frame.pts = pts
         frame.time_base = VIDEO_TIME_BASE
         return frame
