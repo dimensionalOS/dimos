@@ -33,6 +33,14 @@ const IMAGE_QUAD_H = 0.34;            // 16:9-ish
 // Photo markers hang at the height the camera actually was; a recording whose odom
 // starts metres off the floor would otherwise float them all in the air.
 const PERF_WINDOW = 240;
+// The longest gap between rAF callbacks that can still be a RENDERED frame. Anything
+// above this is the browser having paused the loop -- a hidden tab, an occluded window, a
+// sleeping machine -- and `timeMs - _lastTickMs` then measures the pause, not the work.
+// Seen live: `median_ms` bit-identical at 8.34000015258789 across six reports 20 s apart
+// while `p95_ms` climbed 4003 -> 4071 -> 8002, which is a ring holding one real burst and
+// a handful of wake-ups. Cosmetic in the readout and NOT cosmetic in the governor, which
+// medians the last 90 samples and would step quality down to the floor on them.
+const MAX_RENDERED_FRAME_MS = 1000;
 // Quality steps down when the median frame is slow, back up after a settled spell.
 const QUALITY_LEVELS = [
     { voxel_fraction: 1.0, voxel_range_m: Infinity, quad_budget: 24, foveation: 0.0, resolution: 1.0 },
@@ -479,7 +487,10 @@ export class WorldScene {
     _tick(timeMs) {
         viewportHeight.value = viewportHeightPx(this.three);
         const frameMs = this._lastTickMs ? timeMs - this._lastTickMs : 0;
-        if (frameMs > 0) {
+        // A pause is not a slow frame. `_lastTickMs` still advances below, so the next
+        // real frame is measured from now rather than from before the pause.
+        const hidden = typeof document !== 'undefined' && document.hidden;
+        if (frameMs > 0 && frameMs <= MAX_RENDERED_FRAME_MS && !hidden) {
             this._frameSamples[this._frameSampleCursor] = frameMs;
             this._frameSampleCursor = (this._frameSampleCursor + 1) % PERF_WINDOW;
             this._frameSampleCount = Math.min(this._frameSampleCount + 1, PERF_WINDOW);
