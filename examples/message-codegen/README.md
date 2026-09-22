@@ -930,3 +930,14 @@ This terminal demo forwards a stamped click through CDR, shows teleop overriding
 navigation, then shows navigation resuming after cooldown. It uses in-process
 module callbacks and CDR output round trips; it does not actuate a robot or
 exercise network discovery. No output files require cleanup.
+
+### Generated visual-servo commands
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_visual_servo.py
+```
+
+This terminal demo decodes generated CameraInfo and prints CDR-decoded velocity
+commands for four synthetic detections: far away, at target distance, too close,
+and right of center. It needs no camera, robot, or ROS installation and writes no
+files. It exercises the 2D controller, not the complete person-follow pipeline.

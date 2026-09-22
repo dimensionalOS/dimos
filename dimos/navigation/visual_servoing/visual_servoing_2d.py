@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo
 import numpy as np
-
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 
 
 class VisualServoing2D:
@@ -91,7 +89,7 @@ class VisualServoing2D:
         estimated_distance = self._estimate_distance(bbox)
 
         if estimated_distance is None:
-            return Twist.zero()
+            return Twist()
 
         # Calculate distance error (positive = too far, need to move forward)
         distance_error = estimated_distance - self._target_distance
@@ -120,8 +118,8 @@ class VisualServoing2D:
             linear_x = max(linear_x, 0.1)
 
         return Twist(
-            linear=Vector3(linear_x, 0.0, 0.0),
-            angular=Vector3(0.0, 0.0, angular_z),
+            linear=Vector3(x=linear_x),
+            angular=Vector3(z=angular_z),
         )
 
     def _get_normalized_x(self, pixel_x: float) -> float:
@@ -135,8 +133,8 @@ class VisualServoing2D:
         Returns:
             Normalized x coordinate (tan of angle from optical center)
         """
-        fx = self._camera_info.K[0]  # focal length x
-        cx = self._camera_info.K[2]  # optical center x
+        fx = self._camera_info.k[0]  # focal length x
+        cx = self._camera_info.k[2]  # optical center x
         return (pixel_x - cx) / fx
 
     def _estimate_distance(self, bbox: tuple[float, float, float, float]) -> float | None:
@@ -161,7 +159,7 @@ class VisualServoing2D:
             return None
 
         # Pinhole camera model: distance = (real_width * fx) / pixel_width
-        fx = self._camera_info.K[0]  # focal length x in pixels
+        fx = self._camera_info.k[0]  # focal length x in pixels
         estimated_distance = (self._assumed_object_width * fx) / bbox_width
 
         return estimated_distance

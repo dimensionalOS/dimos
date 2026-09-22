@@ -1051,3 +1051,13 @@ keyword fields. Existing cancellation behavior is unchanged.
 - Mypy passed for the movement module and its demo.
 - `demo_movement.py` printed the preserved click timestamp, teleop suppression,
   and navigation resumption and completed its assertions.
+
+### Generated 2D visual-servo controller
+
+VisualServoing2D uses generated CameraInfo's lowercase `k` intrinsic matrix and
+returns generated Twist values. Five parameterized checks passed for forward,
+stationary, reverse, turning, and invalid-width detections after CDR decoding.
+The terminal `demo_visual_servo.py` passed all four visible scenario assertions;
+mypy passed for controller and demo. Person-follow and security-demo callers,
+and their detection/cloud pipelines, remain part of the unfinished coordinated
+runtime cutover; these controller checks do not establish their acceptance.
