@@ -23,10 +23,11 @@ from __future__ import annotations
 import math
 import time
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Header
+
+from dimos.msgs.time import time_from_seconds
 from dimos.navigation.dannav.holonomic_tc.module import (
     DanHolonomicTCConfig,
     _HolonomicPathFollower,
@@ -34,15 +35,13 @@ from dimos.navigation.dannav.holonomic_tc.module import (
 
 
 def _yaw_quaternion(yaw_rad: float) -> Quaternion:
-    return Quaternion(0.0, 0.0, math.sin(yaw_rad / 2.0), math.cos(yaw_rad / 2.0))
+    return Quaternion(x=0.0, y=0.0, z=math.sin(yaw_rad / 2.0), w=math.cos(yaw_rad / 2.0))
 
 
 def _pose_stamped(x: float, y: float, yaw_rad: float, *, ts: float = 1.0) -> PoseStamped:
     return PoseStamped(
-        ts=ts,
-        frame_id="map",
-        position=[x, y, 0.0],
-        orientation=_yaw_quaternion(yaw_rad),
+        header=Header(stamp=time_from_seconds(ts), frame_id="map"),
+        pose=Pose(position=Point(x=x, y=y), orientation=_yaw_quaternion(yaw_rad)),
     )
 
 
@@ -56,7 +55,7 @@ def _path_from_points(points: list[tuple[float, float]]) -> Path:
             prev_point = points[index - 1]
             yaw = math.atan2(point[1] - prev_point[1], point[0] - prev_point[0])
         poses.append(_pose_stamped(point[0], point[1], yaw))
-    return Path(frame_id="map", poses=poses)
+    return Path(header=Header(frame_id="map"), poses=poses)
 
 
 def _make_follower(**overrides: object) -> _HolonomicPathFollower:
@@ -81,7 +80,7 @@ def _closed_loop_max_planar_speed(
 
     def _on_cmd_vel(cmd: Twist) -> None:
         nonlocal latest_cmd
-        latest_cmd = Twist(cmd)
+        latest_cmd = Twist.decode(cmd.encode())
         commanded_speeds.append(_planar_speed_m_s(cmd))
 
     cmd_sub = core.cmd_vel.subscribe(_on_cmd_vel)

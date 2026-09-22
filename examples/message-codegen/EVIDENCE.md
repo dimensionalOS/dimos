@@ -1228,3 +1228,19 @@ and CDR round-trip output). Mypy passed for all three production modules.
 `0.00000002m` position error, printing intermediate decoded velocity commands.
 This verifies the tracking core only; path-controller and live module conversion
 remain part of the ongoing coordinated runtime cutover.
+
+### Generated holonomic path follower and module
+
+Converted PathDistancer, HolonomicPathController, and DanHolonomicTC to generated
+nested PoseStamped/Path, Twist, and Bool messages. Removed their legacy message
+imports and copy constructors. Velocity estimation subtracts integer nanosecond
+timestamps before conversion and owns its previous-pose snapshot.
+
+The three closed-loop follower cases (straight-line deceleration, right-angle
+speed cap, initial rotation), two run-envelope cases, and four module lifecycle
+cases passed. Module input test transport now CDR-round-trips each value. A
+separate regression passed for a one-nanosecond interval at epoch 1700000000
+and mutation of the caller's previous pose. Mypy passed for all three changed
+production modules. The threaded `demo_holonomic_path.py` arrived at `(0.926, 0)`
+within its 0.08m goal tolerance and printed a final zero command. Network
+transport behavior is outside this focused demo's scope.

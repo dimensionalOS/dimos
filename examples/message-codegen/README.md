@@ -1046,3 +1046,15 @@ at the target. Reference poses, measured poses, and limited velocity commands
 round-trip through generated CDR codecs each tick. This exercises the tracking
 law and limiter, without a transport, path planner, hardware, or ROS install.
 No processes or output files require cleanup.
+
+### Threaded holonomic path following
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_holonomic_path.py
+```
+
+The real follower thread drives a synthetic robot along a one-metre path,
+prints decoded velocity and position, reports arrival, and publishes zero
+velocity. Path, odometry, and commands use generated CDR round-trips. The demo
+closes its thread and subscriptions automatically; it needs no robot or ROS.
+This is an in-process control demo, not network transport verification.

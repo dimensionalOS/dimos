@@ -18,10 +18,9 @@ from dataclasses import dataclass
 import math
 from typing import cast
 
+from dimos_generated.nav_msgs.msg import Path
 import numpy as np
 from numpy.typing import NDArray
-
-from dimos.msgs.nav_msgs.Path import Path
 
 
 @dataclass(frozen=True)
@@ -136,7 +135,7 @@ class PathDistancer:
     _cumulative_dists: NDArray[np.float64]
 
     def __init__(self, path: Path) -> None:
-        self._path = np.array([[p.position.x, p.position.y] for p in path.poses])
+        self._path = np.array([[p.pose.position.x, p.pose.position.y] for p in path.poses])
         self._cumulative_dists = _make_cumulative_distance_array(self._path)
 
     @property
