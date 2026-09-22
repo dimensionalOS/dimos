@@ -11,13 +11,17 @@ The registered blueprint starts the viewer, MCP server, and MCP agent together:
 ```bash
 uv run dimos run memory-world-agent \
   --store-path recording.db \
-  --dataset recording.db \
   --background-mode passthrough
 ```
 
-The recording is opened twice: the viewer reads it, and a recording player
-replays its lidar and tf into the ray tracing mapper and the MLS planner, so
-the voxel map and the routes come from the same modules a robot runs.
+The map comes from the recording: a one-time run of `memory-world-map` replays
+the recording's lidar and tf into the ray tracing mapper the Go2 runs and
+records the map it builds. The agent blueprint then loads that map at once and
+feeds it, with the robot's final pose, to the MLS planner.
+
+```bash
+uv run dimos run memory-world-map --store-path recording.db --dataset recording.db
+```
 
 Set the API key required by the configured model, then run `uv run dimos
 humancli` in another terminal. The agent analyzes mem2 streams in a time-limited
@@ -26,7 +30,7 @@ include highlighted regions and points, historical evidence paths, supporting
 image observations, and the route the MLS planner finds from the robot's last
 recorded pose to a navigation goal.
 
-Useful configuration flags include `--speed` (replay rate), `--max-points`,
+Useful configuration flags include `--max-points`,
 `--map-z-min`, `--map-z-max`, `--n-image-markers`, and
 `--background-mode {black,passthrough}`.
 

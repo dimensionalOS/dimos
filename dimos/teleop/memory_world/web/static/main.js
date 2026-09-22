@@ -74,13 +74,9 @@ diag('module_load');
 // the two can never come from different versions of the cache.
 const assetVersion = new URL(import.meta.url).search;
 
-let ReplayController = null;
-let replay = null;
-
 try {
     const mod = await import(`/static_mw/scene.js${assetVersion}`);
     WorldScene = mod.WorldScene;
-    ReplayController = (await import(`/static_mw/replay.js${assetVersion}`)).ReplayController;
     diag('scene_module_loaded');
 } catch (err) {
     diag('scene_module_failed', { error: String(err && err.message || err) });
@@ -291,41 +287,10 @@ function sendViewerPose() {
     }
 }
 
-// The replay index is served once the server has built (or found) the diff
-// streams in the recording; until then it answers 503, so keep asking.
-async function startReplay() {
-    if (!ReplayController || !scene) return;
-    replay = new ReplayController({
-        scene,
-        baseUrl: window.location.pathname.replace(/\/$/, ''),
-        diag,
-        ui: {
-            bar: document.getElementById('timeline'),
-            scrub: document.getElementById('scrub'),
-            playBtn: document.getElementById('playBtn'),
-            timeLabel: document.getElementById('timeLabel'),
-            exitBtn: document.getElementById('exitReplayBtn'),
-        },
-    });
-    const owner = scene;
-    scene.onTick = () => replay.tick();
-    scene.onQualityChange = () => replay.refill();
-    for (let attempt = 0; attempt < 60 && scene === owner; attempt++) {
-        try {
-            await replay.load();
-            return;
-        } catch (e) {
-            if (attempt === 0) diag('replay_waiting', { error: String(e.message || e) });
-            await new Promise((resolve) => setTimeout(resolve, 5000));
-        }
-    }
-}
-
 /** Enter VR when a headset is present, otherwise fall back to the flat viewer. */
 async function startViewer() {
     buildScene();
     startPerfReadout();
-    void startReplay();
     // ?flat skips WebXR even where a headset is present: plain WebGL in a window.
     const wantFlat = new URLSearchParams(window.location.search).has('flat');
     if (navigator.xr && !wantFlat) {
@@ -339,7 +304,7 @@ async function startViewer() {
         diag('vr_unavailable_using_desktop', { error: 'navigator.xr missing' });
     }
     document.body.classList.add('desktop-view');
-    // With a keyboard the conversation gets its own panel; the HUD keeps the replay frame.
+    // With a keyboard the conversation gets its own panel instead of the HUD answer.
     const chatShown = !document.body.classList.contains('touch');
     document.body.classList.toggle('chat-open', chatShown);
     scene.answerOnHud = !chatShown;
@@ -599,8 +564,6 @@ async function disconnect() {
         perfReadoutTimer = null;
     }
     perfEl.style.display = 'none';
-    document.getElementById('timeline').hidden = true;
-    replay = null;
     document.body.classList.remove('desktop-view', 'chat-open');
     chatLogEl.textContent = '';
     setAgentIdle(true);
@@ -623,11 +586,6 @@ window.app = {
     jumpTo: (index = 0) => scene && scene._lastResultPoints.length > index
         && !scene.viewFrom(index) && scene.focusOn(scene._lastResultPoints[index].position),
     hud: () => scene && scene.toggleHud(),
-    // Timeline replay: seek to an absolute time / scan index, read the state, play.
-    replay: () => replay,
-    seek: (ts) => replay && replay.seek(ts),
-    seekScan: (scan) => replay && replay.seekScan(scan),
-    replayState: () => replay && replay.state(),
     // Stand where the camera behind the i-th answer stood (also key P, cycling).
     viewFrom: (index = 0) => scene && scene.viewFrom(index),
     // Pin a quality level (0 = everything, 4 = least) or null for automatic.

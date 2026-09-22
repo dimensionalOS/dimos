@@ -364,17 +364,14 @@ def test_mapper_snapshots_become_the_timeline(memory_world: MemoryWorldModule) -
     memory_world._on_global_map(_map([[0, 0, 0], [2, 0, 0]], 11.5))
     memory_world._fold_snapshot()
 
-    index = memory_world._replay_index_json()
-    assert index["scans"] == [10.0, 11.5]
-    assert [keyframe["scan"] for keyframe in index["keyframes"]] == [0, 1]
-    assert index["complete"] is False
-    assert memory_world._replay_progress == "recording"
-    assert memory_world._ensure_replay().segment(1)[0]["scans"] == [
-        {"index": 1, "ts": 11.5, "n": 2}
-    ]
+    store = memory_world._ensure_store()
+    assert [obs.ts for obs in store.streams["voxel_diff"]] == [10.0, 11.5]
+    assert store.streams["voxel_keyframe"].count() == 2
+    assert memory_world._map_progress == "recording"
+    assert memory_world._map_complete is False
 
 
-def test_a_timeline_covering_the_recording_is_kept_across_starts(tmp_path: Path) -> None:
+def test_a_stored_map_covering_the_recording_loads_at_once(tmp_path: Path) -> None:
     db_path = tmp_path / "recording.db"
     store = SqliteStore(path=str(db_path))
     store.start()
@@ -387,17 +384,21 @@ def test_a_timeline_covering_the_recording_is_kept_across_starts(tmp_path: Path)
         first._fold_snapshot()
         first._on_global_map(_map([[0, 0, 0], [1, 0, 0]], 11.0))
         first._fold_snapshot()
-        assert first._replay_index_json()["complete"] is True
     finally:
         first.stop()
 
     second = MemoryWorldModule(store_path=str(db_path))
     try:
-        second._open_replay()
-        assert second._replay_progress == "ready"
+        sent: list[bytes | str] = []
+        second._broadcast = sent.append  # type: ignore[method-assign]
+        second._open_map()
+
+        assert second._map_progress == "ready"
+        assert second._cached_cloud is not None and second._cached_cloud[0]["n"] == 2
+        assert any(isinstance(raw, bytes) for raw in sent)
+
         second._on_global_map(_map([[5, 5, 5]], 10.0))
         second._fold_snapshot()
         assert second._recorder is None
-        assert second._replay_index_json()["scans"] == [10.0, 11.0]
     finally:
         second.stop()

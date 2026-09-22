@@ -16,8 +16,9 @@
 
 On WebSocket connect we:
 
-1. Push the latest voxel map from the ray tracing mapper as one binary frame
-   (positions + per-point RGB), and again whenever the mapper grows it.
+1. Push the recording's map as one binary frame (positions + per-point RGB):
+   the stored final map at once when an earlier run mapped the recording,
+   otherwise the ray tracing mapper's map, again whenever it grows.
 2. Sample the ``color_image`` stream and push each capture pose as a
    Street-View-style marker. The headset can later pinch one to surface the
    image at that location.
@@ -34,7 +35,7 @@ the server is a data push plus diagnostics.
 from __future__ import annotations
 
 import asyncio
-from collections import OrderedDict, deque
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import functools
@@ -50,9 +51,8 @@ from typing import Annotated, Any, Literal, TypeVar
 import uuid
 
 import cv2
-from fastapi import HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import HTMLResponse, Response
+from fastapi import HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import BaseMessage
 import numpy as np
@@ -68,8 +68,12 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.memory.store.base import Store
 from dimos.memory.transform import throttle
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.teleop.memory_world.messages import (
     MSG_IMAGE_POSES,
     MSG_IMAGE_THUMBNAIL,
@@ -88,8 +92,13 @@ from dimos.teleop.memory_world.query import (
     MemoryQueryResult,
 )
 from dimos.teleop.memory_world.recording import detect_streams, open_recording
-from dimos.teleop.memory_world.replay import ReplayRecorder, VoxelReplay
-from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix
+from dimos.teleop.memory_world.replay import (
+    ReplayRecorder,
+    final_map,
+    timeline_end,
+    timeline_matches,
+)
+from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix, quaternion_from_matrix
 from dimos.teleop.memory_world.visual_search import (
     SIGLIP2_MODEL_NAME,
     PatchHit,
@@ -191,6 +200,13 @@ def _serialized(method: Callable[..., T]) -> Callable[..., T]:
 
 # A timeline whose last snapshot is this close to the recording's end counts as complete.
 REPLAY_COMPLETE_MARGIN_S = 15.0
+# The stored map stands in for a live mapper: republished often at first so a
+# planner that starts later still gets it, then rarely. Its tf, the robot's
+# final pose, is published at the rate a robot would.
+MAP_PUBLISH_WARMUP_S = 60.0
+MAP_PUBLISH_WARMUP_INTERVAL_S = 10.0
+MAP_PUBLISH_INTERVAL_S = 60.0
+TF_PUBLISH_INTERVAL_S = 0.5
 HEIGHT_COLOR_STOPS = np.array([[120.0, 20.0, 150.0], [40.0, 80.0, 235.0], [120.0, 245.0, 255.0]])
 
 
@@ -277,14 +293,12 @@ class MemoryWorldConfig(ModuleConfig):
     # hits must land to be the same object.
     locate_frames: int = PydanticField(default=12, ge=1)
     object_radius_m: float = PydanticField(default=0.75, gt=0.0)
-    # ---- timeline replay ------------------------------------------------------
-    # Keyframe and per-scan diff streams written into the recording once (see
-    # replay.py); the viewer scrubs by fetching one keyframe's segment at a
-    # time. A longer interval means fewer, larger segments.
+    # ---- the stored map -------------------------------------------------------
+    # The mapper's snapshots are written into the recording once as keyframe
+    # and diff streams (see replay.py). A later run loads the map they end on.
     replay_keyframe_interval_s: float = PydanticField(default=30.0, gt=0.0)
-    # The camera frame shown while scrubbing, fetched one at a time.
-    replay_frame_max_size: int = 480
-    replay_frame_jpeg_quality: int = 60
+    # The frame whose final recorded pose stands in for the robot's position.
+    robot_frame: str = "base_link"
 
 
 class MemoryWorldModule(Module):
@@ -297,6 +311,10 @@ class MemoryWorldModule(Module):
 
     global_map: In[PointCloud2]
     path: In[NavPath]
+    # The stored map and the robot's final pose, published for the planner
+    # when no mapper runs.
+    map: Out[PointCloud2]
+    tf: Out[TFMessage]
     # The agent's conversation, shared with the human CLI: its messages come in,
     # a viewer's typed questions go out.
     agent: In[BaseMessage]
@@ -328,19 +346,14 @@ class MemoryWorldModule(Module):
         self._whisper: Any = None
         self._tf_tree_cache: TfTree | None = None
         self._tf_missing = False
-        self._replay: VoxelReplay | None = None
         self._recorder: ReplayRecorder | None = None
-        self._replay_complete = False
-        self._replay_opened = False
-        self._replay_floor = 0.0
-        self._replay_frames_json: list[float] | None = None
-        self._replay_lock = threading.Lock()
-        # The store's sqlite connection is not safe to read from two threads
-        # at once, and a scrubbing viewer fetches segments and frames together.
-        self._replay_read_lock = threading.Lock()
-        self._replay_progress = "not started"
-        self._replay_index: dict[str, Any] | None = None
-        self._replay_frames: OrderedDict[int, tuple[bytes, dict[str, Any]]] = OrderedDict()
+        self._map_complete = False
+        self._map_opened = False
+        self._map_lock = threading.Lock()
+        # The store's sqlite connection is not safe to read from two threads at once.
+        self._store_read_lock = threading.Lock()
+        self._map_progress = "not started"
+        self._map_publisher: threading.Thread | None = None
         self._camera_hfov_deg: float | None = None
         self._active_query_result: dict[str, Any] | None = None
         self._active_query_images: list[tuple[dict[str, Any], bytes]] = []
@@ -404,57 +417,6 @@ class MemoryWorldModule(Module):
         @app.websocket(self.config.ws_route)  # type: ignore[misc]
         async def ws_world(ws: WebSocket) -> None:
             await self._handle_ws(ws)
-
-        # Replay segments are int16 grids and uint32 slots: they halve under gzip.
-        app.add_middleware(GZipMiddleware, minimum_size=1024)
-
-        @app.get(f"{self.config.client_route}/replay/index")  # type: ignore[misc]
-        async def memory_world_replay_index() -> dict[str, Any]:
-            """Scan and keyframe stamps: everything the viewer needs to seek."""
-            try:
-                return await asyncio.to_thread(self._replay_read, self._replay_index_json)
-            except Exception as error:
-                raise HTTPException(
-                    status_code=503, detail=f"replay {self._replay_progress}"
-                ) from error
-
-        @app.get(f"{self.config.client_route}/replay/segment/{{number}}")  # type: ignore[misc]
-        async def memory_world_replay_segment(number: int, request: Request) -> Response:
-            """One keyframe plus the diffs up to the next, see VoxelReplay.segment.
-
-            Segments are gzipped once when first built: compressing a megabyte
-            per request cost more than sending it.
-            """
-            replay = await asyncio.to_thread(self._ensure_replay)
-            if not 0 <= number < len(replay.index.keyframe_scan):
-                raise HTTPException(status_code=404, detail="no such segment")
-            start, end = replay.index.segment_scans(number)
-            headers = self._replay_cache_headers(replay, f"{number}-{end - start}")
-            if request.headers.get("if-none-match") == headers["ETag"]:
-                return Response(status_code=304, headers=headers)
-            raw, gzipped = await asyncio.to_thread(
-                self._replay_read, replay.encoded_segment, number
-            )
-            if "gzip" in request.headers.get("accept-encoding", ""):
-                headers["Content-Encoding"] = "gzip"
-                return Response(
-                    content=gzipped, media_type="application/octet-stream", headers=headers
-                )
-            return Response(content=raw, media_type="application/octet-stream", headers=headers)
-
-        @app.get(f"{self.config.client_route}/replay/frame")  # type: ignore[misc]
-        async def memory_world_replay_frame(t: float, request: Request) -> Response:
-            """The camera frame nearest *t* as JPEG; its pose rides in a header."""
-            replay = await asyncio.to_thread(self._ensure_replay)
-            found = await asyncio.to_thread(self._replay_read, self._replay_frame, t)
-            if found is None:
-                raise HTTPException(status_code=404, detail="no frame near that time")
-            jpeg, meta = found
-            headers = self._replay_cache_headers(replay, meta["ts"])
-            if request.headers.get("if-none-match") == headers["ETag"]:
-                return Response(status_code=304, headers=headers)
-            headers["X-Camera-Pose"] = json.dumps(meta)
-            return Response(content=jpeg, media_type="image/jpeg", headers=headers)
 
         @app.post(f"{self.config.client_route}/voice")  # type: ignore[misc]
         async def memory_world_voice(audio: UploadFile) -> dict[str, Any]:
@@ -664,7 +626,7 @@ class MemoryWorldModule(Module):
             first = self._cached_cloud is None
             self._cached_cloud = packed
         if first:
-            logger.info("first map from the mapper: n=%d", packed[0]["n"])
+            logger.info("first map to the viewers: n=%d", packed[0]["n"])
         self._send_map(self._broadcast, packed)
 
     @staticmethod
@@ -683,7 +645,6 @@ class MemoryWorldModule(Module):
             stride = xyz.shape[0] // self.config.max_points + 1
             xyz = xyz[::stride]
         positions = np.ascontiguousarray(xyz.astype(np.float32))
-        # Lidar has no RGB, so always height-color.
         rgb = self._height_colors(positions)
         header = self._cloud_header(positions)
         return header, positions.tobytes() + rgb.tobytes()
@@ -1295,63 +1256,51 @@ class MemoryWorldModule(Module):
                 )
         return self._camera_hfov_deg
 
-    # ---- timeline replay -----------------------------------------------------
+    # ---- the stored map --------------------------------------------------------
 
-    def _ensure_replay(self) -> VoxelReplay:
-        """The recorded timeline, or LookupError until the mapper has produced one."""
-        with self._replay_lock:
-            if self._replay is None:
-                raise LookupError(f"replay {self._replay_progress}")
-            return self._replay
-
-    def _open_replay(self) -> None:
-        """Keep the timeline of an earlier run when it covers the whole recording."""
+    def _open_map(self) -> None:
+        """Show the map of an earlier run at once when its timeline covers the whole recording."""
         store = self._ensure_store()
-        with self._replay_lock:
-            if self._replay_opened:
+        with self._map_lock:
+            if self._map_opened:
                 return
-            self._replay_opened = True
-            self._replay_progress = "waiting for the mapper"
-            if not VoxelReplay.matches(
+            self._map_opened = True
+            self._map_progress = "waiting for the mapper"
+            if not timeline_matches(
                 store,
                 voxel_size=self.config.voxel_size,
                 keyframe_interval_s=self.config.replay_keyframe_interval_s,
             ):
                 return
-            replay = VoxelReplay(store, z_min=self.config.map_z_min, z_max=self.config.map_z_max)
-            if not replay.covers(self._recording_end() - REPLAY_COMPLETE_MARGIN_S):
+            if timeline_end(store) < self._recording_end() - REPLAY_COMPLETE_MARGIN_S:
                 return
-            self._replay = replay
-            self._replay_complete = True
-            self._replay_floor = self._floor_of(replay.keyframes.last().data.points_f32())
-            self._replay_progress = "ready"
-            logger.info("timeline from an earlier run covers the recording, keeping it")
+            with self._store_read_lock:
+                centers, _ = final_map(store, self.config.voxel_size)
+            self._map_complete = True
+            self._map_progress = "ready"
+        logger.info("map from an earlier run covers the recording: %d voxels", len(centers))
+        with self._map_push_lock:
+            self._latest_map = centers
+        self._push_map()
+        self._start_map_publisher(centers)
 
     def _record_snapshot(self, xyz: np.ndarray, ts: float) -> None:
         """Fold a mapper snapshot into the timeline, unless a complete one is on disk."""
-        self._open_replay()
-        with self._replay_lock:
-            if self._replay_complete:
+        self._open_map()
+        with self._map_lock:
+            if self._map_complete:
                 return
             store = self._ensure_store()
-            with self._replay_read_lock:
+            with self._store_read_lock:
                 if self._recorder is None:
                     self._recorder = ReplayRecorder(
                         store,
                         voxel_size=self.config.voxel_size,
                         keyframe_interval_s=self.config.replay_keyframe_interval_s,
                     )
-                    self._replay_progress = "recording"
+                    self._map_progress = "recording"
                     logger.info("recording the mapper's timeline into %s", self.config.store_path)
-                keyframe = self._recorder.add_snapshot(xyz, ts)
-                if keyframe:
-                    self._replay_floor = self._floor_of(xyz)
-                if self._replay is None:
-                    self._replay = VoxelReplay(
-                        store, z_min=self.config.map_z_min, z_max=self.config.map_z_max
-                    )
-                else:
-                    self._replay.extend(ts, keyframe)
+                self._recorder.add_snapshot(xyz, ts)
 
     def _recording_end(self) -> float:
         """Stamp of the last lidar scan, or infinity without a lidar stream."""
@@ -1360,72 +1309,61 @@ class MemoryWorldModule(Module):
             return math.inf
         return float(store.streams[self.config.lidar_stream_name].last().ts)
 
-    @staticmethod
-    def _floor_of(points: np.ndarray) -> float:
-        return float(np.percentile(points[:, 2], 7)) if len(points) else 0.0
-
-    @staticmethod
-    def _replay_cache_headers(replay: VoxelReplay, key: object) -> dict[str, str]:
-        """Browsers revalidate against the build stamp, so a rebuilt timeline is never stale."""
-        built_at = replay.index.stream_tags["built_at"]
-        return {"ETag": f'"{built_at}-{key}"', "Cache-Control": "no-cache"}
-
-    def _replay_read(self, fn: Any, *args: Any) -> Any:
-        """Run one store-reading replay call at a time."""
-        with self._replay_read_lock:
-            return fn(*args)
-
-    def _replay_index_json(self) -> dict[str, Any]:
-        """Scan and keyframe stamps plus what the viewer needs to draw and seek."""
-        replay = self._ensure_replay()
-        store = self._ensure_store()
-        if self._replay_frames_json is None:
-            # Listing every camera stamp is a pass over the image stream, so once.
-            frames: list[float] = []
-            if self.config.image_stream_name in store.list_streams():
-                images = store.streams[self.config.image_stream_name]
-                frames = [round(float(obs.ts), 4) for obs in images]
-            self._replay_frames_json = frames
-        payload = replay.index.to_json()
-        payload["complete"] = self._replay_complete or replay.covers(
-            self._recording_end() - REPLAY_COMPLETE_MARGIN_S
-        )
-        payload["frames"] = self._replay_frames_json
-        payload["hfov_deg"] = self._camera_hfov()
-        payload["height"] = {
-            "floor": self._replay_floor,
-            "span": float(self.config.height_ramp_span_m),
-        }
-        payload["colors"] = (HEIGHT_COLOR_STOPS / 255.0).round(4).tolist()
-        return payload
-
-    def _replay_frame(self, ts: float) -> tuple[bytes, dict[str, Any]] | None:
-        """JPEG and camera pose of the image nearest *ts*, kept in a small LRU."""
-        images = self._ensure_store().streams[self.config.image_stream_name]
-        candidates = list(images.at(ts, tolerance=0.25))
-        if not candidates:
+    def _final_robot_pose(self) -> np.ndarray | None:
+        """world_T_robot at the end of the recording, from tf."""
+        tree = self._tf_tree()
+        if tree is None:
             return None
-        obs = min(candidates, key=lambda o: abs(float(o.ts) - ts))
-        key = int(obs.id)
-        cached = self._replay_frames.get(key)
-        if cached is not None:
-            self._replay_frames.move_to_end(key)
-            return cached
-        jpeg = self._encode_jpeg(
-            obs.data, self.config.replay_frame_max_size, self.config.replay_frame_jpeg_quality
-        )
-        meta: dict[str, Any] = {"ts": round(float(obs.ts), 4), "hfov_deg": self._camera_hfov()}
-        camera = self._camera_pose_of(obs)
-        if camera is not None:
-            meta.update(
-                position=[float(v) for v in camera[:3, 3]],
-                forward=[float(v) for v in camera[:3, 2]],
-                up=[float(v) for v in -camera[:3, 1]],
+        span = tree.span(self.config.world_frame, self.config.robot_frame)
+        if span is None:
+            return None
+        return self._frame_pose_at(self.config.robot_frame, span[1])
+
+    def _start_map_publisher(self, centers: np.ndarray) -> None:
+        """Feed the planner the stored map and the robot's final pose, as a robot would."""
+        if self.map.transport is None and self.tf.transport is None:
+            return
+        pose = self._final_robot_pose()
+        if pose is None:
+            logger.warning(
+                "no final %r pose in tf; the planner has no start", self.config.robot_frame
             )
-        self._replay_frames[key] = (jpeg, meta)
-        while len(self._replay_frames) > 600:
-            self._replay_frames.popitem(last=False)
-        return jpeg, meta
+        else:
+            logger.info("robot's final pose stands at %s", _xyz_text(tuple(pose[:3, 3])))
+        self._map_publisher = threading.Thread(
+            target=self._publish_stored_map,
+            args=(centers, pose),
+            daemon=True,
+            name="MemoryWorldMapPublisher",
+        )
+        self._map_publisher.start()
+
+    def _publish_stored_map(self, centers: np.ndarray, pose: np.ndarray | None) -> None:
+        started = time.monotonic()
+        last_map = -math.inf
+        transform = None
+        if pose is not None:
+            translation = Vector3(*(float(v) for v in pose[:3, 3]))
+            rotation = Quaternion(*quaternion_from_matrix(pose[:3, :3]))
+            transform = (translation, rotation)
+        while not self._stopping:
+            now = time.time()
+            if transform is not None and self.tf.transport is not None:
+                self.tf.publish(
+                    TFMessage(
+                        Transform(
+                            *transform, self.config.world_frame, self.config.robot_frame, ts=now
+                        )
+                    )
+                )
+            warm = time.monotonic() - started < MAP_PUBLISH_WARMUP_S
+            interval = MAP_PUBLISH_WARMUP_INTERVAL_S if warm else MAP_PUBLISH_INTERVAL_S
+            if self.map.transport is not None and time.monotonic() - last_map >= interval:
+                self.map.publish(
+                    PointCloud2.from_numpy(centers, frame_id=self.config.world_frame, timestamp=now)
+                )
+                last_map = time.monotonic()
+            time.sleep(TF_PUBLISH_INTERVAL_S)
 
     def _frame_pose_at(self, frame: str, ts: float) -> np.ndarray | None:
         """world_T_frame at *ts* from tf, or None."""
@@ -1689,17 +1627,17 @@ class MemoryWorldModule(Module):
 
         Each step is a pass over the recording; run together they starve each
         other (on an mcap every pass decompresses the image chunks), so the
-        world cache goes first, the replay second and the slow SigLIP index
+        stored map goes first, the world cache second and the slow SigLIP index
         last. A client that connects mid-way waits on the world cache lock.
         """
+        try:
+            self._open_map()
+        except Exception:
+            logger.exception("loading the stored map failed")
         try:
             self._ensure_world_cache()
         except Exception:
             logger.exception("world cache build failed")
-        try:
-            self._open_replay()
-        except Exception:
-            logger.exception("opening the recorded timeline failed")
         if self.config.build_image_index_on_start:
             self._build_visual_index()
 
@@ -1710,6 +1648,9 @@ class MemoryWorldModule(Module):
         if self._snapshot_thread is not None:
             self._snapshot_thread.join(timeout=5)
             self._snapshot_thread = None
+        if self._map_publisher is not None:
+            self._map_publisher.join(timeout=3)
+            self._map_publisher = None
         with self._map_push_lock:
             if self._map_push_timer is not None:
                 self._map_push_timer.cancel()

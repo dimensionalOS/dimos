@@ -94,19 +94,65 @@ Do not claim that a visualization was shown unless the tool succeeds.
 
 # Go2 recordings root their tf tree at odom.
 WORLD_FRAME = "odom"
-# A replay may run faster than the mapper. The mapper queues every scan and keeps
-# the transforms for all of them, so lagging behind delays the map instead of holing it.
 REPLAY_QUEUE_DEPTH = 20_000
 REPLAY_TF_WINDOW_S = 7_200.0
 VOXEL_SIZE = 0.08
 
+# The planner and the memory world share the topics a robot's mapper would
+# publish on: the memory world publishes the stored map and the robot's final
+# pose itself, so routes plan from the first second.
 memory_world_agent = autoconnect(
-    # The recording stands in for the robot: PointLIO's sensor-frame scans and
-    # the tf tree feed the same mapper and planner the Go2 runs.
-    RecordingPlayer.blueprint(stream="pointlio_lidar", speed=1.0),
+    # Stairs come out sparse from a single walk, and the defaults leave the
+    # landing the robot ends on as its own surface island. A wider closing
+    # radius, no wall clearance and a taller step keep the flights connected.
+    MLSPlannerNative.blueprint(
+        world_frame=WORLD_FRAME,
+        base_frame="base_link",
+        voxel_size=VOXEL_SIZE,
+        robot_height=ROBOT_HEIGHT,
+        start_z_offset_m=BASE_LINK_HEIGHT,
+        surface_closing_radius=1.0,
+        wall_clearance_m=0.0,
+        step_threshold_m=0.4,
+        viz_publish_hz=0.0,
+    ),
+    MovementManager.blueprint(),
+    # The memory world's own search decides what is a match, so the container
+    # accepts whatever it returns.
+    NavigationSkillContainer.blueprint(similarity_threshold=0.0),
+    # Outdoor walks with stairs span far more height than the indoor defaults.
+    MemoryWorldModule.blueprint(
+        voxel_size=VOXEL_SIZE,
+        world_frame=WORLD_FRAME,
+        lidar_stream_name="pointlio_lidar",
+        map_z_min=-1.0,
+        map_z_max=5.0,
+        height_ramp_span_m=5.0,
+        max_points=2_000_000,
+    ).remappings(
+        [
+            (MemoryWorldModule, "map", "global_map"),
+            (MemoryWorldModule, "global_map", "global_map_unused"),
+        ]
+    ),
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=MEMORY_WORLD_SYSTEM_PROMPT),
+).global_config(
+    n_workers=8,
+    # zenoh 1.10 peers that start together can poison each other's dial and never
+    # link. Without gossip each native dials its peers once and links every time.
+    zenoh_gossip=False,
+)
+
+# Maps a recording once: the recording stands in for the robot, PointLIO's
+# sensor-frame scans and the tf tree feed the same mapper the Go2 runs, and the
+# memory world records the mapper's snapshots into the recording. Run it on a
+# recording without a map, then the agent blueprint loads that map at once.
+memory_world_map = autoconnect(
+    RecordingPlayer.blueprint(stream="pointlio_lidar", speed=4.0),
     # Replaying faster than real time only helps while the mapper keeps up.
-    # Once it falls behind the tf window, every scan is dropped for want of
-    # a pose, so the ray budget matches a live robot's.
+    # Its scan queue and tf window hold a whole recording, so lagging behind
+    # delays the map instead of holing it.
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE,
         world_frame=WORLD_FRAME,
@@ -121,25 +167,6 @@ memory_world_agent = autoconnect(
         max_health=5,
         support_min=4,
     ),
-    # Stairs come out sparse from a single walk, and the defaults leave the
-    # landing the robot ends on as its own surface island. A wider closing
-    # radius, no wall clearance and a taller step keep the flights connected.
-    MLSPlannerNative.blueprint(
-        world_frame=WORLD_FRAME,
-        base_frame="base_link",
-        voxel_size=VOXEL_SIZE,
-        robot_height=ROBOT_HEIGHT,
-        start_z_offset_m=BASE_LINK_HEIGHT,
-        surface_closing_radius=1.0,
-        wall_clearance_m=0.0,
-        step_threshold_m=0.4,
-        viz_publish_hz=0.0,
-    ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
-    MovementManager.blueprint(),
-    # The memory world's own search decides what is a match, so the container
-    # accepts whatever it returns.
-    NavigationSkillContainer.blueprint(similarity_threshold=0.0),
-    # Outdoor walks with stairs span far more height than the indoor defaults.
     MemoryWorldModule.blueprint(
         voxel_size=VOXEL_SIZE,
         world_frame=WORLD_FRAME,
@@ -148,12 +175,8 @@ memory_world_agent = autoconnect(
         map_z_max=5.0,
         height_ramp_span_m=5.0,
         max_points=2_000_000,
+        build_image_index_on_start=False,
+    ).remappings(
+        [(MemoryWorldModule, "map", "map_unused"), (MemoryWorldModule, "tf", "tf_unused")]
     ),
-    McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=MEMORY_WORLD_SYSTEM_PROMPT),
-).global_config(
-    n_workers=8,
-    # zenoh 1.10 peers that start together can poison each other's dial and never
-    # link. Without gossip each native dials its peers once and links every time.
-    zenoh_gossip=False,
-)
+).global_config(n_workers=8, zenoh_gossip=False)
