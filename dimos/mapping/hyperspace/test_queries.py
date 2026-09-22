@@ -394,7 +394,7 @@ def test_one_stray_patch_cannot_be_a_place() -> None:
     assert stray in everything, "the gate has to be droppable, or a short recording answers nothing"
 
 
-def test_the_patch_path_answers_end_to_end_over_a_fake_search() -> None:
+def test_the_patch_path_answers_end_to_end_over_a_fake_search(tmp_path) -> None:
     """Run `_fill_from_patches` for real, because its bugs are never in the arithmetic.
 
     Twice now this path has been broken by a name rather than a number -- `found.arrived`
@@ -440,8 +440,10 @@ def test_the_patch_path_answers_end_to_end_over_a_fake_search() -> None:
             return [("m", "stream")]
 
     module = Hyperspace.__new__(Hyperspace)
-    module.config = HyperspaceConfig(db_path="unused")
-    # `store` is a property that would open a database; the fake search never reads it.
+    # A REAL PATH, because `_fill_from_patches` hands `self.store` to the search and the
+    # `store` property then opens whatever `db_path` names. Pointed at a bare "unused" it
+    # created a 12 KB sqlite file in the working directory on every run.
+    module.config = HyperspaceConfig(db_path=str(tmp_path / "patches.db"))
     module._store = None
     module.live = Live()
 
