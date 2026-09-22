@@ -43,10 +43,10 @@ use crate::dds::{runtime, topics, types};
 use crate::h264::{Depacketizer, RtpClock};
 use crate::rtp;
 
-/// The optical frame, which the H.264 stream shares with `camera_info`.
+/// The optical frame the two camera streams share with `camera_info`. The videohub JPEG
+/// reply names no frame of its own, and `front_camera` is the mount, z up: a pinhole
+/// logged there tips the image on its back.
 const CAMERA_FRAME: &str = "camera_optical";
-/// The videohub JPEG reply names no frame.
-const JPEG_FRAME: &str = "front_camera";
 /// The body IMU and the legs report in the body frame.
 const BODY_FRAME: &str = "base_link";
 /// The first 12 of LowState's 20 motors, in Unitree order.
@@ -761,7 +761,7 @@ impl DdsLoop {
                         header: Header {
                             seq: 0,
                             stamp: time_of_secs(now_secs()),
-                            frame_id: JPEG_FRAME.to_string(),
+                            frame_id: CAMERA_FRAME.to_string(),
                         },
                         format: "jpeg".to_string(),
                         data: data.to_vec(),
