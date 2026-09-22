@@ -24,9 +24,13 @@ const micBtn = document.getElementById('micBtn');
 const orbitBtn = document.getElementById('orbitBtn');
 const embedBtn = document.getElementById('embedBtn');
 const searchNote = document.getElementById('searchNote');
-const askForm = document.getElementById('askBar');
-const askInput = document.getElementById('askInput');
-const askBtn = document.getElementById('askBtn');
+const chatEl = document.getElementById('chat');
+const chatLogEl = document.getElementById('chatLog');
+const chatStateEl = document.getElementById('chatState');
+const chatForm = document.getElementById('chatForm');
+const chatInput = document.getElementById('chatInput');
+const chatBtn = document.getElementById('chatBtn');
+const chatMic = document.getElementById('chatMic');
 const logEl = document.getElementById('log');
 const backgroundMode = document.body.dataset.backgroundMode || 'black';
 
@@ -236,7 +240,6 @@ function handleControl(msg) {
             // which persists; the status line is transient and gets overwritten by the next
             // thing that happens. Printing the answer in both showed it twice on screen.
             setStatus('Answer ready — places highlighted');
-            askBtn.disabled = false;
             break;
         case 'route':
             if (results) results.setRoute(msg);
@@ -244,6 +247,16 @@ function handleControl(msg) {
         case 'voice_transcript':
             setStatus(`Heard: “${msg.text}” — searching…`);
             if (scene) scene.setHeardText(msg.text);
+            break;
+        case 'chat':
+            appendChat(msg);
+            break;
+        case 'chat_history':
+            chatLogEl.textContent = '';
+            for (const entry of msg.entries || []) appendChat(entry);
+            break;
+        case 'agent_idle':
+            setAgentIdle(Boolean(msg.idle));
             break;
         case 'index_status':
             applyIndexStatus(msg);
@@ -488,6 +501,8 @@ async function startViewer() {
     // `connected` gates the phone's chrome: the status line is worth reading while the
     // world is still coming up and noise once it is there.
     document.body.classList.add('connected');
+    // With a keyboard the conversation gets its own panel; a phone has no room for it.
+    document.body.classList.toggle('chat-open', !document.body.classList.contains('touch'));
     scene.startDesktop(sendViewerPose);
     setStatus('Desktop view — click to look, WASD to walk');
 }
@@ -587,14 +602,14 @@ async function startRecording() {
         sendRecording(new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' }));
     };
     mine.start();
-    micBtn.classList.add('recording');
+    for (const button of [micBtn, chatMic]) button.classList.add('recording');
     setStatus('Listening…');
     diag('voice_recording_started');
 }
 
 function stopRecording() {
     micPress += 1;  // no start still waiting on a prompt belongs to a held button now
-    micBtn.classList.remove('recording');
+    for (const button of [micBtn, chatMic]) button.classList.remove('recording');
     // Let go of it HERE, not when `onstop` eventually arrives. `stop()` only queues that
     // event, so a press arriving in between found `recorder` still set and turned itself
     // away -- and the stale `onstop` then cleared the reference without starting anything.
@@ -701,7 +716,6 @@ async function ask(text, span) {
     if (!text) return null;
     const session = ws;  // the answer belongs to this connection only, and there must be one
     if (!session) return null;
-    askBtn.disabled = true;
     // The previous answer stops being the answer the moment another question is asked --
     // not when a new result arrives, because a question that FAILS never brings one and
     // its predecessor stayed on screen. Through the nav, which owns the pictures and the
@@ -728,26 +742,123 @@ async function ask(text, span) {
     } catch (e) {
         if (ws === session) setStatus(`Question failed: ${e.message || e}`);
         return null;
-    } finally {
-        if (ws === session) askBtn.disabled = false;
     }
 }
 
-askForm.addEventListener('submit', (event) => {
+// ---- the agent's conversation -------------------------------------------------
+//
+// From andrew/feat/vr_demo. The server forwards the rows the human CLI prints: what was
+// asked, each tool call and its result, and the reply. Typing here does NOT go through
+// `ask()` above -- that one blocks on an HTTP round trip and returns only the
+// conclusion, which is what the old one-line ask bar could show. This publishes the
+// question to the agent and lets every step come back on its own.
+
+const TOOL_ARGS_CHARS = 160;
+
+function escapeHtml(text) {
+    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function inlineMarkdown(text) {
+    return escapeHtml(text)
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/(^|[^*\w])\*(?!\*)([^*]+?)\*(?![*\w])/g, '$1<em>$2</em>');
+}
+
+// The markdown a model writes, as HTML: bold, italics, code, and lists. Escaped first,
+// so a recording that contains a `<script>` in a label cannot become one here.
+function renderMarkdown(text) {
+    const html = [];
+    let list = null;
+    for (const raw of String(text).split('\n')) {
+        const line = raw.trimEnd();
+        const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+        const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+        const item = bullet || numbered;
+        const kind = bullet ? 'ul' : 'ol';
+        if (item && list !== kind) {
+            if (list) html.push(`</${list}>`);
+            html.push(`<${kind}>`);
+            list = kind;
+        } else if (!item && list) {
+            html.push(`</${list}>`);
+            list = null;
+        }
+        if (item) html.push(`<li>${inlineMarkdown(item[1])}</li>`);
+        else if (line) html.push(`<div>${inlineMarkdown(line)}</div>`);
+        else html.push('<div class="gap"></div>');
+    }
+    if (list) html.push(`</${list}>`);
+    return html.join('');
+}
+
+function appendChat(entry) {
+    const row = document.createElement('div');
+    row.className = `msg ${entry.role}`;
+    if (entry.role === 'tool_call') {
+        const args = entry.args || '';
+        const short = args.length > TOOL_ARGS_CHARS ? `${args.slice(0, TOOL_ARGS_CHARS)}…` : args;
+        const argsEl = document.createElement('span');
+        argsEl.className = 'args';
+        argsEl.textContent = short;
+        row.append(`▶ ${entry.name}(`, argsEl, ')');
+        if (short !== args) {
+            row.classList.add('expandable');
+            row.title = 'Click to expand';
+            row.addEventListener('click', () => {
+                const open = row.classList.toggle('open');
+                argsEl.textContent = open ? args : short;
+            });
+        }
+    } else if (entry.role === 'tool_result') {
+        row.textContent = `↳ ${entry.text}`;
+        if (entry.ok === false) row.classList.add('failed');
+    } else {
+        const who = document.createElement('span');
+        who.className = 'who';
+        who.textContent = entry.role;
+        const body = document.createElement('div');
+        body.innerHTML = renderMarkdown(entry.text || '');
+        row.append(who, body);
+    }
+    // Only follow the tail if the reader is already at it: scrolling back to read a tool
+    // result must not be yanked away by the next row.
+    const follow = chatLogEl.scrollTop + chatLogEl.clientHeight >= chatLogEl.scrollHeight - 24;
+    chatLogEl.appendChild(row);
+    if (follow) chatLogEl.scrollTop = chatLogEl.scrollHeight;
+}
+
+function setAgentIdle(idle) {
+    chatEl.classList.toggle('thinking', !idle);
+    chatStateEl.textContent = idle ? 'idle' : 'thinking…';
+}
+
+chatForm.addEventListener('submit', (event) => {
     event.preventDefault();
-    void ask(askInput.value);
-    askInput.blur();
+    const text = chatInput.value.trim();
+    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+    // The places and pictures on screen belong to the previous question.
+    if (results) results.clear();
+    ws.send(encodeText('ask', { text }));
+    chatInput.value = '';
+    setAgentIdle(false);
+    diag('ask', { text });
 });
 
 /** Whether you can ask at all: the frame index has to hold vectors. */
 function applyAskAvailability() {
     const connected = !!ws;
     const canAsk = !!indexStatus.present;
-    askInput.disabled = !connected || !canAsk;
-    askInput.placeholder = canAsk
+    chatInput.disabled = !connected || !canAsk;
+    chatBtn.disabled = !connected || !canAsk;
+    chatInput.placeholder = canAsk
         ? 'Ask the recording, e.g. where did I see a chair'
         : 'Search not ready — see the menu';
-    micBtn.classList.toggle('hidden', !connected || !canAsk);
+    // Both mics, one implementation: the panel's and the chat form's.
+    for (const button of [micBtn, chatMic]) {
+        button.classList.toggle('hidden', !connected || !canAsk);
+    }
 }
 
 // ---- the lidar height band ----------------------------------------------------
@@ -936,7 +1047,7 @@ window.addEventListener('keydown', (event) => {
         return;
     }
     if (typing) return;
-    if (event.code === 'Slash') { event.preventDefault(); askInput.focus(); return; }
+    if (event.code === 'Slash') { event.preventDefault(); chatInput.focus(); return; }
     if (tour && tour.active) {
         // Space always advances the tour. The arrows do too -- EXCEPT on a hands-on
         // station, whose whole text is "the controls are back": it prints
@@ -1054,9 +1165,11 @@ document.getElementById('cameraBtn').addEventListener('click', () => {
     if (scene) scene.stepQueryImage();  // the same filtered step the P key takes
 });
 
-micBtn.addEventListener('pointerdown', startRecording);
-micBtn.addEventListener('pointerup', stopRecording);
-micBtn.addEventListener('pointerleave', stopRecording);
+for (const button of [micBtn, chatMic]) {
+    button.addEventListener('pointerdown', startRecording);
+    button.addEventListener('pointerup', stopRecording);
+    button.addEventListener('pointerleave', stopRecording);
+}
 
 // ---- UI handlers -----------------------------------------------------------
 
@@ -1075,7 +1188,8 @@ async function connect() {
         // over the wire, but the PAGE keeps its own copy -- the typed question, the
         // places, the route and the evidence photos all survive a disconnect, so a
         // reconnect used to come back to someone else's answer with no query behind it.
-        askInput.value = '';
+        chatInput.value = '';
+        chatLogEl.textContent = '';
         if (results) results.clear();
         connectBtn.classList.add('hidden');
         disconnectBtn.classList.remove('hidden');
@@ -1136,10 +1250,12 @@ async function disconnect() {
     timeline.classList.remove('loading', 'replaying');
     orbitBtn.textContent = 'Orbit frame';  // the next world names its frame again
     hudBtn.textContent = 'Show map';       // a fresh scene starts with the minimap hidden
-    askBtn.disabled = false;               // a question in flight stops owning it
     if (replay) replay.dispose();
     replay = null;
-    document.body.classList.remove('desktop-view');
+    document.body.classList.remove('desktop-view', 'chat-open');
+    chatLogEl.textContent = '';
+    setAgentIdle(true);
+    chatStateEl.textContent = 'not connected';
     connectBtn.classList.remove('hidden');
     connectBtn.disabled = false;
     disconnectBtn.classList.add('hidden');

@@ -27,7 +27,6 @@ import contextlib
 import gzip
 import io
 import json
-import math
 from pathlib import Path
 import threading
 import time
@@ -49,7 +48,12 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.memory.store.base import Store
 from dimos.memory.transform import throttle
 from dimos.teleop.memory_world.answers import NavigateRequest, WorldAnswers
-from dimos.teleop.memory_world.clients import ClientConn, RevalidatedStaticFiles
+from dimos.teleop.memory_world.chat import WorldChat
+from dimos.teleop.memory_world.clients import (
+    ClientConn,
+    ClientMessages,
+    RevalidatedStaticFiles,
+)
 from dimos.teleop.memory_world.embed import EmbeddingJob
 from dimos.teleop.memory_world.messages import (
     MSG_IMAGE_POSES,
@@ -96,23 +100,6 @@ from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 
 logger = setup_logger()
-
-
-def _is_finite_number(value: Any) -> bool:
-    """True for a real number the viewer can be at, False for anything else.
-
-    Two different exceptions have escaped this guard and killed the websocket loop:
-    `np.isfinite` raises TypeError on a python int wider than int64, and `math.isfinite`
-    raises OverflowError converting one to a float. Swapping the first for the second
-    fixed the first input and not the second. A guard whose whole job is to reject bad
-    input must not raise on any of it.
-    """
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return False
-    try:
-        return math.isfinite(float(value))
-    except (OverflowError, ValueError, TypeError):
-        return False
 
 
 STATIC_DIR = Path(__file__).parent / "web" / "static"
@@ -282,7 +269,9 @@ class MemoryWorldConfig(ModuleConfig):
     marker_sharp_cache_size: int = PydanticField(default=96, gt=0)
 
 
-class MemoryWorldModule(WorldAnswers, ReplayServing, VisualAnswers, WorldCache, Module):
+class MemoryWorldModule(
+    WorldAnswers, WorldChat, ClientMessages, ReplayServing, VisualAnswers, WorldCache, Module
+):
     """VR memory-world module.
 
     See :mod:`dimos.teleop.memory_world` for the architectural overview.
@@ -299,6 +288,7 @@ class MemoryWorldModule(WorldAnswers, ReplayServing, VisualAnswers, WorldCache, 
         self._cached_cloud: tuple[dict[str, Any], bytes] | None = None
         self._map_xyz: np.ndarray | None = None
         self._init_answers()
+        self._init_chat()
         self._cached_image_poses: tuple[dict[str, Any], bytes] | None = None
         # Per-pose JPEG thumbnails parallel to image_poses indices.
         self._cached_thumbnails: list[bytes] | None = None
@@ -519,6 +509,13 @@ class MemoryWorldModule(WorldAnswers, ReplayServing, VisualAnswers, WorldCache, 
             if not transcript:
                 return {"transcript": "", "answer": "Nothing was said"}
             self._broadcast(encode_text("voice_transcript", text=transcript))
+            # Spoken and typed questions must reach the same place. This called
+            # `find_in_memory` directly, which is the similarity lookup -- so the mic
+            # could only ever search for a phrase, while the chat box could be asked to
+            # go somewhere. The answer arrives on the `agent` stream and is drawn in the
+            # transcript like any other, so there is nothing to return but what was heard.
+            if self._ask_in_chat(transcript):
+                return {"transcript": transcript, "answer": "", "engine": "agent"}
             outcome = await asyncio.to_thread(self.find_in_memory, transcript)
             return {
                 "transcript": transcript,
@@ -665,6 +662,9 @@ class MemoryWorldModule(WorldAnswers, ReplayServing, VisualAnswers, WorldCache, 
 
             conn.send_threadsafe(encode_text("ready"))
             conn.send_threadsafe(encode_text("index_status", **self._index_status()))
+            transcript, agent_is_idle = self._chat_state()
+            conn.send_threadsafe(encode_text("chat_history", entries=transcript))
+            conn.send_threadsafe(encode_text("agent_idle", idle=agent_is_idle))
             with self._clients_lock:  # under the lock: no newer answer slips in
                 if self._active_query_result is not None:
                     conn.send_threadsafe(encode_text("query_result", **self._active_query_result))
@@ -1300,55 +1300,6 @@ class MemoryWorldModule(WorldAnswers, ReplayServing, VisualAnswers, WorldCache, 
         segments, _ = self.whisper.transcribe(samples, language="en")
         return " ".join(segment.text for segment in segments).strip()
 
-    def _on_client_message(self, conn: ClientConn, msg: dict[str, Any]) -> None:
-        kind = msg.get("type")
-        if kind == "ping":
-            conn.send_threadsafe(encode_text("pong"))
-        elif kind == "diag":
-            logger.info(
-                "[client/diag] %s %s",
-                msg.get("event", "?"),
-                {k: v for k, v in msg.items() if k not in ("type", "event")},
-            )
-        elif kind == "viewer_pose":
-            position = msg.get("position")
-            if (
-                isinstance(position, list)
-                and len(position) == 3
-                and all(_is_finite_number(value) for value in position)
-            ):
-                with self._clients_lock:
-                    self._viewer_position = (
-                        float(position[0]),
-                        float(position[1]),
-                        float(position[2]),
-                    )
-        elif kind in (
-            "locomote",
-            "yaw",
-            "teleport_aim",
-            "teleport_commit",
-            "teleport_cancel",
-            "scale_delta",
-            "reset_view",
-            "toggle_images",
-            "toggle_cloud",
-            "voice_start",
-            "voice_stop",
-        ):
-            # Gestures the client handles itself, echoed here only as telemetry.
-            # Debug-level so they don't spam the console (scale_delta fires every frame).
-            #
-            # Every kind `main.js`'s `dispatchGesture` forwards belongs in this tuple, or
-            # the warning below fires on ordinary traffic: push-to-talk sends
-            # `voice_start`/`voice_stop` on every mic press, and each one was logged as an
-            # unknown message -- which teaches an operator to ignore the warning that
-            # exists to catch a genuinely unrecognised one. The test beside this reads the
-            # list out of `main.js` so the two cannot drift apart again.
-            logger.debug("[client] %s", kind)
-        else:
-            logger.warning("[client] unknown msg kind=%r full=%r", kind, msg)
-
     # ---- lifecycle ---------------------------------------------------------
 
     @rpc
@@ -1406,6 +1357,8 @@ class MemoryWorldModule(WorldAnswers, ReplayServing, VisualAnswers, WorldCache, 
             self.config.listen_host,
             self.config.server_port,
         )
+        for watching in self._watch_the_agent():
+            self.register_disposable(watching)
         self._prepare_thread = threading.Thread(
             target=self._prepare, daemon=True, name="MemoryWorldPrepare"
         )
