@@ -56,7 +56,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import BaseMessage
 import numpy as np
-from pydantic import Field as PydanticField
+from pydantic import Field as PydanticField, ValidationError
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -90,6 +90,7 @@ from dimos.teleop.memory_world.query import (
     HighlightPath,
     HighlightPoint,
     MemoryQueryResult,
+    validation_summary,
 )
 from dimos.teleop.memory_world.recording import detect_streams, open_recording
 from dimos.teleop.memory_world.replay import (
@@ -859,6 +860,10 @@ class MemoryWorldModule(Module):
             )
         try:
             result = MemoryQueryResult.model_validate_json(encoded)
+        except ValidationError as exc:
+            return SkillResult.fail(
+                "EXECUTION_FAILED", f"Invalid memory result: {validation_summary(exc)}"
+            )
         except Exception as exc:
             return SkillResult.fail("EXECUTION_FAILED", f"Invalid memory result: {exc}")
 

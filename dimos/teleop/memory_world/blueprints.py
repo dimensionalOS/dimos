@@ -83,6 +83,8 @@ The dictionary requires `answer` and may include:
 - `regions`: objects with `points`, `label`, `color`, and `opacity`
 - `evidence_paths`: objects with `points`, `label`, and `color`
 - `points`: objects with `position`, `label`, and `color`
+
+A `color` is a hex string such as "#ff8800". Leave it out to get the default.
 - `observation_ids`: color_image observation IDs supporting the answer
 
 All geometry uses world-frame meters and every point has exactly three coordinates.

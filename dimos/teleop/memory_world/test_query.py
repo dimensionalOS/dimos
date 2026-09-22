@@ -44,6 +44,25 @@ def memory_world(tmp_path: Path) -> Iterator[MemoryWorldModule]:
     module.stop()
 
 
+def test_colors_accept_names_and_rgb_triples() -> None:
+    from dimos.teleop.memory_world.query import HighlightPoint, HighlightRegion, validation_summary
+
+    assert HighlightPoint(position=(0, 0, 0), color="orange").color == "#ffa500"
+    assert HighlightPoint(position=(0, 0, 0), color=[1, 0.65, 0]).color == "#ffa600"
+    assert HighlightPoint(position=(0, 0, 0), color=(255, 0, 0)).color == "#ff0000"
+    assert HighlightRegion(points=[(0, 0, 0)] * 3, color="#ABCDEF").color == "#abcdef"
+    with pytest.raises(ValidationError) as error:
+        MemoryQueryResult(
+            answer="x",
+            points=[{"position": (0, 0, 0), "color": "not a color"} for _ in range(4)],
+            regions=[{"points": [(0, 0, 0)] * 3, "opacity": 7}],
+        )
+    summary = validation_summary(error.value)
+    assert summary.count("points.*.color") == 1
+    assert "(4 of them)" in summary
+    assert "regions.*.opacity" in summary
+
+
 def test_memory_query_result_validates_spatial_geometry() -> None:
     result = MemoryQueryResult.model_validate(
         {
@@ -63,7 +82,7 @@ def test_memory_query_result_validates_spatial_geometry() -> None:
     "result",
     [
         {"answer": "bad point", "focus_point": [float("nan"), 0, 0]},
-        {"answer": "bad color", "points": [{"position": [0, 0, 0], "color": "red"}]},
+        {"answer": "bad color", "points": [{"position": [0, 0, 0], "color": "reddish"}]},
         {"answer": "too many points", "points": [{"position": [0, 0, 0]}] * 129},
     ],
 )

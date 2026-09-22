@@ -433,6 +433,43 @@ async function sendRecording(blob) {
 
 const TOOL_ARGS_CHARS = 160;
 
+function escapeHtml(text) {
+    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function inlineMarkdown(text) {
+    return escapeHtml(text)
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/(^|[^*\w])\*(?!\*)([^*]+?)\*(?![*\w])/g, '$1<em>$2</em>');
+}
+
+// The markdown a model writes, as HTML: bold, italics, code, and lists.
+function renderMarkdown(text) {
+    const html = [];
+    let list = null;
+    for (const raw of String(text).split('\n')) {
+        const line = raw.trimEnd();
+        const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+        const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+        const item = bullet || numbered;
+        const kind = bullet ? 'ul' : 'ol';
+        if (item && list !== kind) {
+            if (list) html.push(`</${list}>`);
+            html.push(`<${kind}>`);
+            list = kind;
+        } else if (!item && list) {
+            html.push(`</${list}>`);
+            list = null;
+        }
+        if (item) html.push(`<li>${inlineMarkdown(item[1])}</li>`);
+        else if (line) html.push(`<div>${inlineMarkdown(line)}</div>`);
+        else html.push('<div class="gap"></div>');
+    }
+    if (list) html.push(`</${list}>`);
+    return html.join('');
+}
+
 function appendChat(entry) {
     const row = document.createElement('div');
     row.className = `msg ${entry.role}`;
@@ -458,7 +495,9 @@ function appendChat(entry) {
         const who = document.createElement('span');
         who.className = 'who';
         who.textContent = entry.role;
-        row.append(who, entry.text || '');
+        const body = document.createElement('div');
+        body.innerHTML = renderMarkdown(entry.text || '');
+        row.append(who, body);
     }
     const follow = chatLogEl.scrollTop + chatLogEl.clientHeight >= chatLogEl.scrollHeight - 24;
     chatLogEl.appendChild(row);

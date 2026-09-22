@@ -16,13 +16,47 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from PIL import ImageColor
+from pydantic import BaseModel, BeforeValidator, Field, ValidationError
 
 FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
 Point3 = tuple[FiniteFloat, FiniteFloat, FiniteFloat]
-Color = Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")]
+
+
+def _to_hex(value: object) -> object:
+    """A CSS color name, a hex string, or an RGB triple in 0-1 or 0-255, as #rrggbb."""
+    if isinstance(value, str):
+        try:
+            r, g, b = ImageColor.getrgb(value.strip())[:3]
+        except ValueError:
+            return value
+        return f"#{r:02x}{g:02x}{b:02x}"
+    if isinstance(value, Sequence) and len(value) == 3:
+        channels = [float(v) for v in value]
+        scale = 255.0 if max(channels) > 1.0 else 1.0
+        r, g, b = (round(min(max(v, 0.0), scale) / scale * 255) for v in channels)
+        return f"#{r:02x}{g:02x}{b:02x}"
+    return value
+
+
+Color = Annotated[str, BeforeValidator(_to_hex), Field(pattern=r"^#[0-9a-fA-F]{6}$")]
+
+
+def validation_summary(error: ValidationError) -> str:
+    """Every distinct complaint once, with the fields it applies to, instead of one line per item."""
+    groups: dict[tuple[str, str], list[str]] = {}
+    for item in error.errors():
+        loc = [str(part) for part in item["loc"]]
+        shape = ".".join("*" if part.isdigit() else part for part in loc)
+        groups.setdefault((shape, item["msg"]), []).append(".".join(loc))
+    lines = []
+    for (shape, msg), fields in groups.items():
+        where = shape if len(fields) == 1 else f"{shape} ({len(fields)} of them)"
+        lines.append(f"{where}: {msg}")
+    return "; ".join(lines)
 
 
 class HighlightPath(BaseModel):

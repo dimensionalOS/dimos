@@ -18,6 +18,7 @@ from collections import deque
 from datetime import datetime, timedelta
 import json
 import os
+import re
 import sys
 import textwrap
 import threading
@@ -76,6 +77,18 @@ STOP_FINALIZE_DELAY = 1.0
 def _format_elapsed(delta: timedelta) -> str:
     total = int(delta.total_seconds())
     return f"{total // 60:02d}:{total % 60:02d}"
+
+
+_MARKDOWN_BOLD = re.compile(r"\*\*(.+?)\*\*")
+_MARKDOWN_CODE = re.compile(r"`([^`]+)`")
+_MARKDOWN_ITALIC = re.compile(r"(?<![*\w])\*(?!\*)([^*]+?)\*(?![*\w])")
+
+
+def _markdown_to_markup(line: str) -> str:
+    """The inline markdown a model writes, as Rich markup. A span must close on the same line."""
+    line = _MARKDOWN_CODE.sub(r"[cyan]\1[/cyan]", line)
+    line = _MARKDOWN_BOLD.sub(r"[bold]\1[/bold]", line)
+    return _MARKDOWN_ITALIC.sub(r"[italic]\1[/italic]", line)
 
 
 def _split_tool_message(content: Any) -> tuple[str, str] | None:
@@ -570,6 +583,7 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
 
         # Split content into lines first (respecting explicit newlines)
         lines = content.split("\n")
+        style = _markdown_to_markup if sender == "agent" else (lambda text: text)
 
         before = len(self.chat_log.lines)  # type: ignore[union-attr]
         for line_idx, line in enumerate(lines):
@@ -580,9 +594,9 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
                     line, width=text_width, initial_indent="", subsequent_indent=""
                 )
                 if wrapped:
-                    self.chat_log.write(prefix + f"[{color}]{wrapped[0]}[/{color}]")  # type: ignore[union-attr]
+                    self.chat_log.write(prefix + f"[{color}]{style(wrapped[0])}[/{color}]")  # type: ignore[union-attr]
                     for wrapped_line in wrapped[1:]:
-                        self.chat_log.write(indent + f"│ [{color}]{wrapped_line}[/{color}]")  # type: ignore[union-attr]
+                        self.chat_log.write(indent + f"│ [{color}]{style(wrapped_line)}[/{color}]")  # type: ignore[union-attr]
                 else:
                     # Empty line
                     self.chat_log.write(prefix)  # type: ignore[union-attr]
@@ -593,7 +607,7 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
                 )
                 if wrapped:
                     for wrapped_line in wrapped:
-                        self.chat_log.write(indent + f"│ [{color}]{wrapped_line}[/{color}]")  # type: ignore[union-attr]
+                        self.chat_log.write(indent + f"│ [{color}]{style(wrapped_line)}[/{color}]")  # type: ignore[union-attr]
                 else:
                     # Empty line
                     self.chat_log.write(indent + "│")  # type: ignore[union-attr]
