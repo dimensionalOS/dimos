@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Wire contract for dimos_control_msgs.ControlValues.
+"""Wire contract for control_msgs.ControlValues.
 
 The byte-identity test is the load-bearing one: everything downstream of this
 PR assumes the wrapper is a drop-in for the generated type on the wire.
@@ -20,11 +20,11 @@ PR assumes the wrapper is a drop-in for the generated type on the wire.
 
 import time
 
-from dimos_lcm.dimos_control_msgs import ControlValues as LCMControlValues
+from dimos_lcm.control_msgs import ControlValues as LCMControlValues
 import pytest
 
 from dimos.core.transport import LCMTransport, ZenohTransport
-from dimos.msgs.dimos_control_msgs.ControlValues import ControlValues
+from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.helpers import resolve_msg_type
 from dimos.msgs.protocol import DimosMsg
 
@@ -204,15 +204,28 @@ def test_as_dict_duplicate_names_keep_the_last_value() -> None:
     assert frame.values == [1.0, 2.0]
 
 
+def test_repr_names_every_field() -> None:
+    """A logged frame shows the epoch and sequence, which is what debugging needs."""
+    text = repr(
+        ControlValues(
+            "arm", source_ts=1.5, epoch=7, sequence=3, interface_names=["a"], values=[2.0]
+        )
+    )
+
+    assert text.startswith("ControlValues(")
+    for fragment in ("source='arm'", "source_ts=1.5", "epoch=7", "sequence=3", "['a']", "[2.0]"):
+        assert fragment in text, fragment
+
+
 def test_satisfies_dimos_msg_protocol() -> None:
     """The wrapper is usable anywhere dimos.msgs.protocol.DimosMsg is required."""
     assert isinstance(ControlValues("arm"), DimosMsg)
-    assert ControlValues.msg_name == "dimos_control_msgs.ControlValues"
+    assert ControlValues.msg_name == "control_msgs.ControlValues"
 
 
 def test_resolve_msg_type_returns_the_wrapper() -> None:
     """Name resolution prefers the wrapper over the generated type."""
-    assert resolve_msg_type("dimos_control_msgs.ControlValues") is ControlValues
+    assert resolve_msg_type("control_msgs.ControlValues") is ControlValues
 
 
 def test_transports_accept_the_type() -> None:

@@ -31,13 +31,13 @@ from __future__ import annotations
 import math
 import time
 
-from dimos_lcm.dimos_control_msgs import ControlValues as LCMControlValues
+from dimos_lcm.control_msgs import ControlValues as LCMControlValues
 
 
 class ControlValues:
     """Values for a set of named interfaces, stamped by one publisher."""
 
-    msg_name = "dimos_control_msgs.ControlValues"
+    msg_name = "control_msgs.ControlValues"
 
     source: str
     source_ts: float
