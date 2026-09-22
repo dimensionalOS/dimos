@@ -1,0 +1,236 @@
+{
+  "vectors": [
+    {
+      "name": "pose_stamped",
+      "encoding": "geometry_msgs/msg/PoseStamped.cdr.v1",
+      "schema": {
+        "type": "geometry_msgs/msg/PoseStamped",
+        "definition": "# A Pose with reference coordinate frame and timestamp\n\nstd_msgs/Header header\nPose pose\n================================================================================\nMSG: builtin_interfaces/Time\n# This message communicates ROS Time defined here:\n# https://design.ros2.org/articles/clock_and_time.html\n\n# The seconds component, valid over all int32 values.\nint32 sec\n\n# The nanoseconds component, valid in the range [0, 1e9), to be added to the seconds component. \n# e.g.\n# The time -1.7 seconds is represented as {sec: -2, nanosec: 3e8}\n# The time 1.7 seconds is represented as {sec: 1, nanosec: 7e8}\nuint32 nanosec\n================================================================================\nMSG: geometry_msgs/Point\n# This contains the position of a point in free space\nfloat64 x\nfloat64 y\nfloat64 z\n================================================================================\nMSG: geometry_msgs/Pose\n# A representation of pose in free space, composed of position and orientation.\n\nPoint position\nQuaternion orientation\n================================================================================\nMSG: geometry_msgs/Quaternion\n# This represents an orientation in free space in quaternion form.\n\nfloat64 x 0\nfloat64 y 0\nfloat64 z 0\nfloat64 w 1\n================================================================================\nMSG: std_msgs/Header\n# Standard metadata for higher-level stamped data types.\n# This is generally used to communicate timestamped data\n# in a particular coordinate frame.\n\n# Two-integer timestamp that is expressed as seconds and nanoseconds.\nbuiltin_interfaces/Time stamp\n\n# Transform frame with which this data is associated.\nstring frame_id\n"
+      },
+      "value": {
+        "header": {
+          "stamp": {
+            "sec": 1757400000,
+            "nanosec": 500000123
+          },
+          "frame_id": "map"
+        },
+        "pose": {
+          "position": {
+            "x": 1.5,
+            "y": -2.5,
+            "z": 0.25
+          },
+          "orientation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.6,
+            "w": 0.8
+          }
+        }
+      },
+      "payload_b64": "AAEAAMDLv2h7Zc0dBAAAAG1hcAAAAAAAAAD4PwAAAAAAAATAAAAAAAAA0D8AAAAAAAAAAAAAAAAAAAAAMzMzMzMz4z+amZmZmZnpPw==",
+      "big_endian_b64": "AAAAAGi/y8AdzWV7AAAABG1hcAA/+AAAAAAAAMAEAAAAAAAAP9AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP+MzMzMzMzM/6ZmZmZmZmg=="
+    },
+    {
+      "name": "custom_segments",
+      "encoding": "dimos_msgs/msg/LineSegments3D.cdr.v1",
+      "schema": {
+        "type": "dimos_msgs/msg/LineSegments3D",
+        "definition": "# Copyright 2026 Dimensional Inc.\n# SPDX-License-Identifier: Apache-2.0\n\n# Weighted segments in a common coordinate frame.\nstd_msgs/Header header\nLineSegment3D[] segments\n================================================================================\nMSG: builtin_interfaces/Time\n# This message communicates ROS Time defined here:\n# https://design.ros2.org/articles/clock_and_time.html\n\n# The seconds component, valid over all int32 values.\nint32 sec\n\n# The nanoseconds component, valid in the range [0, 1e9), to be added to the seconds component. \n# e.g.\n# The time -1.7 seconds is represented as {sec: -2, nanosec: 3e8}\n# The time 1.7 seconds is represented as {sec: 1, nanosec: 7e8}\nuint32 nanosec\n================================================================================\nMSG: dimos_msgs/LineSegment3D\n# Copyright 2026 Dimensional Inc.\n# SPDX-License-Identifier: Apache-2.0\n\ngeometry_msgs/Point start\ngeometry_msgs/Point end\nfloat64 weight 1.0\n================================================================================\nMSG: geometry_msgs/Point\n# This contains the position of a point in free space\nfloat64 x\nfloat64 y\nfloat64 z\n================================================================================\nMSG: std_msgs/Header\n# Standard metadata for higher-level stamped data types.\n# This is generally used to communicate timestamped data\n# in a particular coordinate frame.\n\n# Two-integer timestamp that is expressed as seconds and nanoseconds.\nbuiltin_interfaces/Time stamp\n\n# Transform frame with which this data is associated.\nstring frame_id\n"
+      },
+      "value": {
+        "header": {
+          "stamp": {
+            "sec": 1757400000,
+            "nanosec": 500000123
+          },
+          "frame_id": "map"
+        },
+        "segments": [
+          {
+            "start": {
+              "x": 1.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "end": {
+              "x": 0.0,
+              "y": 2.0,
+              "z": 0.0
+            },
+            "weight": 4.0
+          }
+        ]
+      },
+      "payload_b64": "AAEAAMDLv2h7Zc0dBAAAAG1hcAABAAAAAAAAAAAAAAAAAPA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAABBA",
+      "big_endian_b64": "AAAAAGi/y8AdzWV7AAAABG1hcAAAAAABAAAAAD/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAQAAAAAAAA"
+    },
+    {
+      "name": "image",
+      "encoding": "sensor_msgs/msg/Image.cdr.v1",
+      "schema": {
+        "type": "sensor_msgs/msg/Image",
+        "definition": "# This message contains an uncompressed image\n# (0, 0) is at top-left corner of image\n\nstd_msgs/Header header # Header timestamp should be acquisition time of image\n                             # Header frame_id should be optical frame of camera\n                             # origin of frame should be optical center of cameara\n                             # +x should point to the right in the image\n                             # +y should point down in the image\n                             # +z should point into to plane of the image\n                             # If the frame_id here and the frame_id of the CameraInfo\n                             # message associated with the image conflict\n                             # the behavior is undefined\n\nuint32 height                # image height, that is, number of rows\nuint32 width                 # image width, that is, number of columns\n\n# The legal values for encoding are in file include/sensor_msgs/image_encodings.hpp\n# If you want to standardize a new string format, join\n# ros-users@lists.ros.org and send an email proposing a new encoding.\n\nstring encoding       # Encoding of pixels -- channel meaning, ordering, size\n                      # taken from the list of strings in include/sensor_msgs/image_encodings.hpp\n\nuint8 is_bigendian    # is this data bigendian?\nuint32 step           # Full row length in bytes\nuint8[] data          # actual matrix data, size is (step * rows)\n================================================================================\nMSG: builtin_interfaces/Time\n# This message communicates ROS Time defined here:\n# https://design.ros2.org/articles/clock_and_time.html\n\n# The seconds component, valid over all int32 values.\nint32 sec\n\n# The nanoseconds component, valid in the range [0, 1e9), to be added to the seconds component. \n# e.g.\n# The time -1.7 seconds is represented as {sec: -2, nanosec: 3e8}\n# The time 1.7 seconds is represented as {sec: 1, nanosec: 7e8}\nuint32 nanosec\n================================================================================\nMSG: std_msgs/Header\n# Standard metadata for higher-level stamped data types.\n# This is generally used to communicate timestamped data\n# in a particular coordinate frame.\n\n# Two-integer timestamp that is expressed as seconds and nanoseconds.\nbuiltin_interfaces/Time stamp\n\n# Transform frame with which this data is associated.\nstring frame_id\n"
+      },
+      "value": {
+        "header": {
+          "stamp": {
+            "sec": 1757400000,
+            "nanosec": 500000123
+          },
+          "frame_id": "map"
+        },
+        "height": 1,
+        "width": 2,
+        "encoding": "rgb8",
+        "is_bigendian": 0,
+        "step": 6,
+        "data": [
+          0,
+          1,
+          2,
+          253,
+          254,
+          255
+        ]
+      },
+      "payload_b64": "AAEAAMDLv2h7Zc0dBAAAAG1hcAABAAAAAgAAAAUAAAByZ2I4AAAAAAYAAAAGAAAAAAEC/f7/",
+      "big_endian_b64": "AAAAAGi/y8AdzWV7AAAABG1hcAAAAAABAAAAAgAAAAVyZ2I4AAAAAAAAAAYAAAAGAAEC/f7/"
+    },
+    {
+      "name": "imu",
+      "encoding": "sensor_msgs/msg/Imu.cdr.v1",
+      "schema": {
+        "type": "sensor_msgs/msg/Imu",
+        "definition": "# This is a message to hold data from an IMU (Inertial Measurement Unit)\n#\n# Accelerations should be in m/s^2 (not in g's), and rotational velocity should be in rad/sec\n#\n# If the covariance of the measurement is known, it should be filled in (if all you know is the\n# variance of each measurement, e.g. from the datasheet, just put those along the diagonal)\n# A covariance matrix of all zeros will be interpreted as \"covariance unknown\", and to use the\n# data a covariance will have to be assumed or gotten from some other source\n#\n# If you have no estimate for one of the data elements (e.g. your IMU doesn't produce an\n# orientation estimate), please set element 0 of the associated covariance matrix to -1\n# If you are interpreting this message, please check for a value of -1 in the first element of each\n# covariance matrix, and disregard the associated estimate.\n\nstd_msgs/Header header\n\ngeometry_msgs/Quaternion orientation\nfloat64[9] orientation_covariance # Row major about x, y, z axes\n\ngeometry_msgs/Vector3 angular_velocity\nfloat64[9] angular_velocity_covariance # Row major about x, y, z axes\n\ngeometry_msgs/Vector3 linear_acceleration\nfloat64[9] linear_acceleration_covariance # Row major x, y z\n================================================================================\nMSG: builtin_interfaces/Time\n# This message communicates ROS Time defined here:\n# https://design.ros2.org/articles/clock_and_time.html\n\n# The seconds component, valid over all int32 values.\nint32 sec\n\n# The nanoseconds component, valid in the range [0, 1e9), to be added to the seconds component. \n# e.g.\n# The time -1.7 seconds is represented as {sec: -2, nanosec: 3e8}\n# The time 1.7 seconds is represented as {sec: 1, nanosec: 7e8}\nuint32 nanosec\n================================================================================\nMSG: geometry_msgs/Quaternion\n# This represents an orientation in free space in quaternion form.\n\nfloat64 x 0\nfloat64 y 0\nfloat64 z 0\nfloat64 w 1\n================================================================================\nMSG: geometry_msgs/Vector3\n# This represents a vector in free space.\n\n# This is semantically different than a point.\n# A vector is always anchored at the origin.\n# When a transform is applied to a vector, only the rotational component is applied.\n\nfloat64 x\nfloat64 y\nfloat64 z\n================================================================================\nMSG: std_msgs/Header\n# Standard metadata for higher-level stamped data types.\n# This is generally used to communicate timestamped data\n# in a particular coordinate frame.\n\n# Two-integer timestamp that is expressed as seconds and nanoseconds.\nbuiltin_interfaces/Time stamp\n\n# Transform frame with which this data is associated.\nstring frame_id\n"
+      },
+      "value": {
+        "header": {
+          "stamp": {
+            "sec": 1757400000,
+            "nanosec": 500000123
+          },
+          "frame_id": "map"
+        },
+        "orientation": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 1.0
+        },
+        "orientation_covariance": [
+          0.0,
+          1.0,
+          2.0,
+          3.0,
+          4.0,
+          5.0,
+          6.0,
+          7.0,
+          8.0
+        ],
+        "angular_velocity": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "angular_velocity_covariance": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "linear_acceleration": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "linear_acceleration_covariance": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "payload_b64": "AAEAAMDLv2h7Zc0dBAAAAG1hcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwPwAAAAAAAAAAAAAAAAAA8D8AAAAAAAAAQAAAAAAAAAhAAAAAAAAAEEAAAAAAAAAUQAAAAAAAABhAAAAAAAAAHEAAAAAAAAAgQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+      "big_endian_b64": "AAAAAGi/y8AdzWV7AAAABG1hcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/8AAAAAAAAAAAAAAAAAAAP/AAAAAAAABAAAAAAAAAAEAIAAAAAAAAQBAAAAAAAABAFAAAAAAAAEAYAAAAAAAAQBwAAAAAAABAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+    },
+    {
+      "name": "joints",
+      "encoding": "sensor_msgs/msg/JointState.cdr.v1",
+      "schema": {
+        "type": "sensor_msgs/msg/JointState",
+        "definition": "# This is a message that holds data to describe the state of a set of torque controlled joints.\n#\n# The state of each joint (revolute or prismatic) is defined by:\n#  * the position of the joint (rad or m),\n#  * the velocity of the joint (rad/s or m/s) and\n#  * the effort that is applied in the joint (Nm or N).\n#\n# Each joint is uniquely identified by its name\n# The header specifies the time at which the joint states were recorded. All the joint states\n# in one message have to be recorded at the same time.\n#\n# This message consists of a multiple arrays, one for each part of the joint state.\n# The goal is to make each of the fields optional. When e.g. your joints have no\n# effort associated with them, you can leave the effort array empty.\n#\n# All arrays in this message should have the same size, or be empty.\n# This is the only way to uniquely associate the joint name with the correct\n# states.\n\nstd_msgs/Header header\n\nstring[] name\nfloat64[] position\nfloat64[] velocity\nfloat64[] effort\n================================================================================\nMSG: builtin_interfaces/Time\n# This message communicates ROS Time defined here:\n# https://design.ros2.org/articles/clock_and_time.html\n\n# The seconds component, valid over all int32 values.\nint32 sec\n\n# The nanoseconds component, valid in the range [0, 1e9), to be added to the seconds component. \n# e.g.\n# The time -1.7 seconds is represented as {sec: -2, nanosec: 3e8}\n# The time 1.7 seconds is represented as {sec: 1, nanosec: 7e8}\nuint32 nanosec\n================================================================================\nMSG: std_msgs/Header\n# Standard metadata for higher-level stamped data types.\n# This is generally used to communicate timestamped data\n# in a particular coordinate frame.\n\n# Two-integer timestamp that is expressed as seconds and nanoseconds.\nbuiltin_interfaces/Time stamp\n\n# Transform frame with which this data is associated.\nstring frame_id\n"
+      },
+      "value": {
+        "header": {
+          "stamp": {
+            "sec": 1757400000,
+            "nanosec": 500000123
+          },
+          "frame_id": "map"
+        },
+        "name": [
+          "joint_a",
+          "joint_b"
+        ],
+        "position": [
+          1.5,
+          -2.5
+        ],
+        "velocity": [],
+        "effort": []
+      },
+      "payload_b64": "AAEAAMDLv2h7Zc0dBAAAAG1hcAACAAAACAAAAGpvaW50X2EACAAAAGpvaW50X2IAAgAAAAAAAAAAAPg/AAAAAAAABMAAAAAAAAAAAA==",
+      "big_endian_b64": "AAAAAGi/y8AdzWV7AAAABG1hcAAAAAACAAAACGpvaW50X2EAAAAACGpvaW50X2IAAAAAAj/4AAAAAAAAwAQAAAAAAAAAAAAAAAAAAA=="
+    },
+    {
+      "name": "int64",
+      "encoding": "std_msgs/msg/Int64.cdr.v1",
+      "schema": {
+        "type": "std_msgs/msg/Int64",
+        "definition": "# This was originally provided as an example message.\n# It is deprecated as of Foxy\n# It is recommended to create your own semantically meaningful message.\n# However if you would like to continue using this please use the equivalent in example_msgs.\n\nint64 data\n"
+      },
+      "value": {
+        "data": "-9007199254740993"
+      },
+      "payload_b64": "AAEAAP///////9//",
+      "big_endian_b64": "AAAAAP/f////////"
+    },
+    {
+      "name": "empty",
+      "encoding": "std_msgs/msg/Empty.cdr.v1",
+      "schema": {
+        "type": "std_msgs/msg/Empty",
+        "definition": "\n"
+      },
+      "value": {},
+      "payload_b64": "AAEAAAA=",
+      "big_endian_b64": "AAAAAAA="
+    },
+    {
+      "name": "string",
+      "encoding": "std_msgs/msg/String.cdr.v1",
+      "schema": {
+        "type": "std_msgs/msg/String",
+        "definition": "# This was originally provided as an example message.\n# It is deprecated as of Foxy\n# It is recommended to create your own semantically meaningful message.\n# However if you would like to continue using this please use the equivalent in example_msgs.\n\nstring data\n"
+      },
+      "value": {
+        "data": "robot 🦾 café"
+      },
+      "payload_b64": "AAEAABEAAAByb2JvdCDwn6a+IGNhZsOpAA==",
+      "big_endian_b64": "AAAAAAAAABFyb2JvdCDwn6a+IGNhZsOpAA=="
+    }
+  ]
+}

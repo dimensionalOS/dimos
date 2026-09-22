@@ -103,9 +103,9 @@ def derive_lcm_type(dimos_type: type[DimosMsg]) -> type[Any]:
     if len(parts) != 2:
         raise ValueError(f"Invalid msg_name format: {msg_name}, expected 'package.MessageName'")
 
-    lcm_type = lcm_msg_type(msg_name)
-    _lcm_type_cache[msg_name] = lcm_type
-    return lcm_type
+    msg_type = lcm_msg_type(msg_name)
+    _lcm_type_cache[msg_name] = msg_type
+    return msg_type
 
 
 def derive_ros_type(dimos_type: type[DimosMsg]) -> type[ROSMessage]:
@@ -291,9 +291,9 @@ def _create_ros_instance_for_lcm_msg(lcm_msg: Any, ros_type_hint: str) -> Any:
         return ros_type()
 
     # Fallback: try to derive from LCM type
-    lcm_type = type(lcm_msg)
-    module_name = lcm_type.__module__  # e.g., "dimos_lcm.std_msgs.Header"
-    class_name = lcm_type.__name__
+    msg_type = type(lcm_msg)
+    module_name = msg_type.__module__  # e.g., "dimos_lcm.std_msgs.Header"
+    class_name = msg_type.__name__
     parts = module_name.split(".")
     if len(parts) >= 2:
         package = parts[1]  # e.g., "std_msgs"
@@ -301,7 +301,7 @@ def _create_ros_instance_for_lcm_msg(lcm_msg: Any, ros_type_hint: str) -> Any:
         ros_type = getattr(ros_module, class_name)
         return ros_type()
 
-    raise ValueError(f"Cannot determine ROS type for LCM message: {lcm_type}")
+    raise ValueError(f"Cannot determine ROS type for LCM message: {msg_type}")
 
 
 def dimos_to_ros(msg: DimosMsg, ros_type: type[ROSMessage]) -> ROSMessage:
@@ -322,9 +322,9 @@ def dimos_to_ros(msg: DimosMsg, ros_type: type[ROSMessage]) -> ROSMessage:
 
     if msg_name in COMPLEX_TYPES:
         # Complex: dimos → encode → decode LCM → copy to ROS
-        lcm_type = derive_lcm_type(type(msg))
+        msg_type = derive_lcm_type(type(msg))
         lcm_bytes = msg.lcm_encode()
-        lcm_msg = lcm_type.lcm_decode(lcm_bytes)
+        lcm_msg = msg_type.lcm_decode(lcm_bytes)
         ros_msg = ros_type()
         _copy_lcm_to_ros_recursive(lcm_msg, ros_msg)
         return ros_msg
@@ -353,8 +353,8 @@ def ros_to_dimos(msg: Any, dimos_type: type[DimosMsg]) -> DimosMsg:
 
     if msg_name in COMPLEX_TYPES:
         # Complex: ROS → LCM → encode → decode → dimos
-        lcm_type = derive_lcm_type(dimos_type)
-        lcm_msg = lcm_type()
+        msg_type = derive_lcm_type(dimos_type)
+        lcm_msg = msg_type()
         _copy_ros_to_lcm_recursive(msg, lcm_msg)
         return dimos_type.lcm_decode(lcm_msg.lcm_encode())
 

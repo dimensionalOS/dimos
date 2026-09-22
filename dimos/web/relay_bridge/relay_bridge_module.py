@@ -49,17 +49,15 @@ import time
 from typing import Any, Literal, TypeVar
 import webbrowser
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos_generated.nav_msgs.msg import OccupancyGrid
+from dimos_generated.sensor_msgs.msg import Image
 from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.generic import finite_number
 from dimos.utils.logging_config import setup_logger
 
@@ -1214,7 +1212,7 @@ class RelayBridgeModule(Module):
             self._teleop_zero("release")
             return
         self._teleop_driving = True
-        self.tele_cmd_vel.publish(Twist(linear=Vector3(vx, vy, 0.0), angular=Vector3(0.0, 0.0, wz)))
+        self.tele_cmd_vel.publish(Twist(linear=Vector3(x=vx, y=vy), angular=Vector3(z=wz)))
 
     def _on_wire_stop(self, msg: WireStop) -> None:
         """E-stop: unconditional zero, even from idle - it must also cancel

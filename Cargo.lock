@@ -648,16 +648,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dimos-lcm"
-version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#04d78e8622500244123ba9cefa4c51b4cb454549"
-dependencies = [
- "byteorder",
- "socket2 0.5.10",
- "tokio",
-]
-
-[[package]]
 name = "dimos-lcm-transport"
 version = "0.1.0"
 dependencies = [
@@ -736,7 +726,7 @@ dependencies = [
 name = "dimos-module"
 version = "0.1.0"
 dependencies = [
- "dimos-lcm",
+ "dimos-lcm-transport",
  "dimos-module-macros",
  "lcm-msgs",
  "nalgebra",

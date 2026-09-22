@@ -5,7 +5,7 @@
 // manifest.
 
 import type { ChannelSpec, DecoderRegistry, Session } from "@dimos/sdk";
-import { createDecoderRegistry, isLcmSchema } from "@dimos/sdk";
+import { cdrHasSequences, createDecoderRegistry, isCdrSchema } from "@dimos/sdk";
 import type { PanelSpec } from "@dimos/shared";
 import { getPanel } from "./panels/registry.tsx";
 
@@ -17,18 +17,15 @@ export const cockpitDecoders = createDecoderRegistry();
 // subscribed only when a panel this build can render binds them.
 const PANEL_ONLY_ENCODINGS = new Set(["jpeg.v1", "costmap.zlib.v1"]);
 
-/** Channels only a panel may subscribe: the encodings above, and a *.lcm.v1
+/** Channels only a panel may subscribe: the encodings above, and a *.cdr.v1
  * channel whose schema has a variable-length array (a point cloud, a scan, a
  * path): every frame costs the message's full size, far more than the channel
  * table's preview is worth. A bounded message (a pose, an odometry)
  * subscribes like json.v1 so the table can show it. */
 function panelOnly(spec: ChannelSpec): boolean {
   if (PANEL_ONLY_ENCODINGS.has(spec.encoding)) return true;
-  const lcm = spec.params.lcm;
-  return isLcmSchema(lcm) &&
-    Object.values(lcm.structs).some((rows) =>
-      rows.some(([, , dims]) => dims !== null && dims.some((d) => typeof d === "string"))
-    );
+  const cdr = spec.params.cdr;
+  return isCdrSchema(cdr) && cdrHasSequences(cdr);
 }
 
 /** True when this build can put the channel to use: rx only, it has a

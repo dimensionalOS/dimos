@@ -49,6 +49,7 @@ def generate(
         lines = [
             "// Generated from ROS2 .msg definitions. Do not edit.",
             "#include <pybind11/pybind11.h>",
+            "#include <pybind11/operators.h>",
             "#include <pybind11/stl.h>",
             '#include "messages.hpp"',
             '#include "dimos_python.hpp"',
@@ -63,6 +64,7 @@ def generate(
                     f'auto package = py::hasattr(root, "{message.package}") ? root.attr("{message.package}").cast<py::module_>() : root.def_submodule("{message.package}");',
                     'auto module = py::hasattr(package, "msg") ? package.attr("msg").cast<py::module_>() : package.def_submodule("msg");',
                     f'auto cls = py::class_<{native}>(module, "{message.short_name}", py::dynamic_attr(), py::module_local());',
+                    "cls.def(py::self == py::self).def(py::self != py::self);",
                     f"cls.def(py::init([](py::kwargs kwargs) {{ {native} value{{}};",
                     "for (auto item : kwargs) { auto key = py::cast<std::string>(item.first);",
                 ]

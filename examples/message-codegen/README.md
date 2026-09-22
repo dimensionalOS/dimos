@@ -240,3 +240,58 @@ explicit helper conversion from ROS Duration. The generated classes carry data
 and codecs; helpers do not add methods or compatibility properties to them.
 This is preparation for stage 4, whose runtime consumer cutover is still in
 progress.
+
+The typed transport demo exercises DimOS's actual transport classes. It sends a
+custom weighted-segment message and a 921,600-byte RGB image through LCM, two
+separate Zenoh sessions connected by loopback TCP, and CPU shared memory:
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_pubsub.py
+```
+
+Use `--backend lcm`, `--backend zenoh`, or `--backend shm` to select one path.
+The demo chooses temporary ports and topics and closes its sessions, sockets,
+threads, and shared-memory handles on exit. It prints the received custom field,
+pixel count, and exact source timestamp. This is a transport demonstration;
+the complete three-language blueprint and live viewer cutover remain stage-4
+acceptance work. LCM limits its physical channel name, including the type suffix,
+to 63 UTF-8 bytes; overlong names fail explicitly before sending.
+
+### Browser schema decoding during the runtime cutover
+
+After building the generated Python module, regenerate the shared vectors:
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python -m dimos.web.relay_bridge.gen_cdr_fixtures
+cd web
+deno install
+cd sdk
+deno task fixture --host 127.0.0.1
+```
+
+Open `http://127.0.0.1:5174/demo_cdr.html`. Select `custom_segments` to inspect the
+nested endpoints, weight, and exact timestamp. Select `image` to see the decoded
+pixels, and switch byte order to verify both generated encodings. Each selection
+uses the SDK's actual decoder registry and the complete schema from its manifest
+record. The viewer has no generated message bindings. Stop Vite with Ctrl-C.
+This is a fixture-based browser demonstration; live three-language blueprint
+integration remains a separate acceptance gate.
+
+Automated checks for this part of the cutover:
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/pytest \
+  dimos/core/test_cdr_transport.py \
+  dimos/protocol/pubsub/impl/webrtc/test_transport.py \
+  dimos/web/test_cdr_codec.py dimos/web/test_codecs.py dimos/web/test_cockpit.py \
+  dimos/web/relay_bridge/test_map_codecs.py \
+  dimos/web/relay_bridge/test_costmap_encoding.py \
+  dimos/msgs/test_generated_views.py -o addopts='' -q
+cd web/sdk
+deno task test
+deno task check
+cd ../cockpit
+deno task test
+deno task check
+```

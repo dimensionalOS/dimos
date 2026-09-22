@@ -1,5 +1,5 @@
 // Payload decoder registry. resolve(spec) finds a manifest channel's decoder:
-// a registered encoding id, the *.json.vN convention, or a *.lcm.v1 decoder
+// a registered encoding id, the *.json.vN convention, or a *.cdr.v1 decoder
 // compiled from the schema the robot put in the channel's params. An encoding
 // without a decoder is not an error: the channel renders as "unsupported"
 // (forward compatibility with newer bridges). Binary decoders (h264.v1, ...)
@@ -11,7 +11,7 @@ import type { ChannelSpec, FrameHeader } from "@dimos/shared";
 import { costmapDecoder } from "./costmap.ts";
 import { jpegDecoder } from "./jpeg.ts";
 import { jsonDecoder } from "./json.ts";
-import { LCM_ENCODING_RE, lcmDecoderFor } from "./lcm.ts";
+import { CDR_ENCODING_RE, cdrDecoderFor } from "./cdr.ts";
 
 export interface Decoded {
   value: unknown;
@@ -23,9 +23,9 @@ export type Decoder = (payload: Uint8Array, header: FrameHeader) => Decoded;
 
 export class DecoderRegistry {
   #decoders = new Map<string, Decoder>();
-  // Compiled *.lcm.v1 decoders per adopted manifest record (null: params.lcm
+  // Compiled *.cdr.v1 decoders per adopted manifest record (null: params.cdr
   // unusable); entries die with the manifest object that carried them.
-  #lcm = new WeakMap<ChannelSpec, Decoder | null>();
+  #cdr = new WeakMap<ChannelSpec, Decoder | null>();
 
   /** Duplicate registration is an error unless `replace` is set. */
   register(encoding: string, decoder: Decoder, opts: { replace?: boolean } = {}): void {
@@ -45,16 +45,16 @@ export class DecoderRegistry {
   }
 
   /** The decoder for a manifest channel: get(spec.encoding) first (registered
-   * ids and the JSON convention win), else a *.lcm.v1 decoder compiled once
-   * from the schema in spec.params.lcm. */
+   * ids and the JSON convention win), else a *.cdr.v1 decoder compiled once
+   * from the schema in spec.params.cdr. */
   resolve(spec: ChannelSpec): Decoder | undefined {
     const known = this.get(spec.encoding);
     if (known !== undefined) return known;
-    if (!LCM_ENCODING_RE.test(spec.encoding)) return undefined;
-    let compiled = this.#lcm.get(spec);
+    if (!CDR_ENCODING_RE.test(spec.encoding)) return undefined;
+    let compiled = this.#cdr.get(spec);
     if (compiled === undefined) {
-      compiled = lcmDecoderFor(spec.params.lcm);
-      this.#lcm.set(spec, compiled);
+      compiled = cdrDecoderFor(spec.params.cdr);
+      this.#cdr.set(spec, compiled);
     }
     return compiled ?? undefined;
   }

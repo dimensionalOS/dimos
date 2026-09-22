@@ -20,9 +20,10 @@ import re
 import threading
 from typing import Any
 
+from dimos.msgs.helpers import resolve_msg_type
 from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.encoders import (
-    LCMEncoderMixin,
+    CDREncoderMixin,
     PickleEncoderMixin,
 )
 from dimos.protocol.pubsub.patterns import Glob
@@ -36,7 +37,7 @@ logger = setup_logger()
 @dataclass
 class Topic:
     topic: str | re.Pattern[str] | Glob
-    lcm_type: type[DimosMsg] | None = None
+    msg_type: type[DimosMsg] | None = None
 
     @property
     def is_pattern(self) -> bool:
@@ -51,25 +52,23 @@ class Topic:
         return self.topic
 
     def __str__(self) -> str:
-        if self.lcm_type is None:
+        if self.msg_type is None:
             return self.pattern
-        return f"{self.pattern}#{self.lcm_type.msg_name}"
+        return f"{self.pattern}#{self.msg_type.msg_name}"
 
     @staticmethod
-    def from_channel_str(channel: str, default_lcm_type: type[DimosMsg] | None = None) -> Topic:
+    def from_channel_str(channel: str, default_msg_type: type[DimosMsg] | None = None) -> Topic:
         """Create Topic from channel string.
 
-        Channel format: /topic#module.ClassName
-        Falls back to default_lcm_type if type cannot be parsed.
+        Channel format: /topic#package/msg/Type.
+        A supplied type applies only to channels without a type suffix.
         """
-        from dimos.msgs.helpers import resolve_msg_type
-
         if "#" not in channel:
-            return Topic(topic=channel, lcm_type=default_lcm_type)
+            return Topic(topic=channel, msg_type=default_msg_type)
 
         topic_str, type_name = channel.rsplit("#", 1)
-        lcm_type = resolve_msg_type(type_name)
-        return Topic(topic=topic_str, lcm_type=lcm_type or default_lcm_type)
+        msg_type = resolve_msg_type(type_name)
+        return Topic(topic=topic_str, msg_type=msg_type)
 
 
 class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
@@ -89,6 +88,10 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
             return
 
         topic_str = str(topic) if isinstance(topic, Topic) else topic
+        if "\0" in topic_str or len(topic_str.encode("utf-8")) > 63:
+            raise ValueError(
+                "LCM channel (including type suffix) must fit in 63 bytes and contain no NUL"
+            )
         self.l.publish(topic_str, message)
 
     def subscribe_all(self, callback: Callable[[bytes, Topic], Any]) -> Callable[[], None]:
@@ -115,11 +118,11 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
             def handler(channel: str, msg: bytes) -> None:
                 if not alive or channel == "LCM_SELF_TEST":
                     return
-                callback(msg, Topic.from_channel_str(channel, topic.lcm_type))
+                callback(msg, Topic.from_channel_str(channel, topic.msg_type))
 
             pattern_str = str(topic)
-            if not pattern_str.endswith("*"):
-                pattern_str = f"{pattern_str}(#.*)?"
+            if topic.msg_type is None:
+                pattern_str = f"(?:{pattern_str})(#.*)?"
 
             lcm_subscription = self.l.subscribe(pattern_str, handler)
         else:
@@ -149,7 +152,7 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
 
 
 class LCM(  # type: ignore[misc]
-    LCMEncoderMixin,
+    CDREncoderMixin,
     LCMPubSubBase,
 ): ...
 

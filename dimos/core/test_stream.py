@@ -142,7 +142,7 @@ class SpyLCMTransport(LCMTransport):
     active_subscribers: int = 0
 
     def __reduce__(self):
-        return (SpyLCMTransport, (self.topic.topic, self.topic.lcm_type))
+        return (SpyLCMTransport, (self.topic.topic, self.topic.msg_type))
 
     def __init__(self, topic: str, type: type, **kwargs) -> None:
         super().__init__(topic, type, **kwargs)

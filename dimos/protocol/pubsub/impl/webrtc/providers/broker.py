@@ -104,7 +104,7 @@ class BrokerProvider(AsyncProviderBase):
 
     Inbound (operator → robot): ``cmd_unreliable`` + ``state_reliable``;
     subscribers get the bytes of the channel matching their topic, and typed
-    demux by LCM fingerprint happens at the transport layer. Outbound
+    demux by explicit frame type happens at the transport layer. Outbound
     (robot → operator): ``publish()`` on ``state_reliable_back`` /
     ``map_unreliable``; while no operator is connected the channel doesn't
     exist and messages drop, which is normal pubsub behaviour. Media rides the
@@ -654,7 +654,7 @@ class BrokerProvider(AsyncProviderBase):
 
     def subscribe(self, topic: str, callback: Callable[[bytes, str], None]) -> Callable[[], None]:
         """Subscribers receive the bytes of the inbound channel matching
-        their topic; the transport layer filters by LCM fingerprint."""
+        their topic; the transport layer filters by explicit frame channel and type."""
         if not self.is_connected:
             self.start()
         with self._lock:

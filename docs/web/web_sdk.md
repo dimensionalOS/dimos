@@ -114,7 +114,7 @@ function Pose({ session }) {
 
 ## Exposing your own channels
 
-So far the page could only subscribe to the bridge's built-in channels (`odom`, `color_image`, `global_costmap`). `cockpit(channels=[...])` exposes any typed stream without a panel. A `Channel` names a stream and its Python type. The defaults matter here: a dimOS message type is sent as its LCM bytes and decoded in the browser without any registration, a plain dataclass or JSON value is sent as JSON, and an `Image` needs an explicit encoding. Every parameter is on the [Bridge](/docs/web/bridge.md#exposing-a-stream-with-channel) page.
+So far the page could only subscribe to the bridge's built-in channels (`odom`, `color_image`, `global_costmap`). `cockpit(channels=[...])` exposes any typed stream without a panel. A `Channel` names a stream and its Python type. The defaults matter here: a dimOS message type is sent as its CDR bytes and decoded in the browser without any registration, a plain dataclass or JSON value is sent as JSON, and an `Image` needs an explicit encoding. Every parameter is on the [Bridge](/docs/web/bridge.md#exposing-a-stream-with-channel) page.
 
 The example package below adds a `health` stream from a module of our own to the Go2. The [next section](#a-custom-binary-encoding) adds the Go2's lidar with a custom binary encoding.
 
@@ -227,7 +227,7 @@ The page opens automatically and the health line updates once a second.
 
 ## A custom binary encoding
 
-The Go2's `lidar` stream is a `PointCloud2`. Its default LCM encoding costs 16 bytes per point at the full rate. This step sends a quarter of the points as bare (x, y) pairs instead and draws them as a live 2D scatter. It adds an encoder and a channel on the robot side, and a decoder and a canvas on the page.
+The Go2's `lidar` stream is a `PointCloud2`. Its default CDR encoding costs 16 bytes per point at the full rate. This step sends a quarter of the points as bare (x, y) pairs instead and draws them as a live 2D scatter. It adds an encoder and a channel on the robot side, and a decoder and a canvas on the page.
 
 In `web.py`, the encoder and the second channel:
 
@@ -254,7 +254,7 @@ def encode_lidar_xy(msg: PointCloud2) -> EncodedPayload:
 
 `autoconnect` wires `lidar` to the driver's `lidar: Out[PointCloud2]` already inside `unitree_go2`. An encoder returns `bytes`, an `EncodedPayload` (payload plus a small JSON meta mapping sent in the frame header), or `None` to skip a sample. Because dimOS modules live in different processes, codec functions must be importable by name (the registry ships them by reference). A function defined inline in a script or a lambda is rejected.
 
-In `index.html`, the decoder and the canvas. `json.v1`, any `*.json.vN` and any `*.lcm.v1` encoding decode automatically, but `lidar.xy.v1` is opaque bytes to the SDK, so the page registers the matching decoder and passes it to `connect()` in place of the bare `connect()` above:
+In `index.html`, the decoder and the canvas. `json.v1`, any `*.json.vN` and any `*.cdr.v1` encoding decode automatically, but `lidar.xy.v1` is opaque bytes to the SDK, so the page registers the matching decoder and passes it to `connect()` in place of the bare `connect()` above:
 
 ```html
 <canvas id="lidar" width="400" height="400" style="border: 1px solid #888"></canvas>
@@ -357,7 +357,7 @@ A `ChannelSnapshot` is what `subscribe()` callbacks receive: `slot` (or `null` b
 
 `createDecoderRegistry()` returns a registry with the built-ins. `register(encoding, decoder, { replace? })` adds one. Registering a taken id throws unless `replace: true` is passed. Each session owns its registry (`connect({ decoders })`), so two apps on one page cannot clobber each other.
 
-A decoder is `(payload: Uint8Array, header: FrameHeader) => { value, preview? }`. The session picks one per manifest channel: a registered `encoding` id first, then the `*.json.vN` convention (JSON-decoded without registration), then `*.lcm.v1` (a dimOS message decoded with the LCM schema the robot put in the channel's `params.lcm`, compiled once per manifest).
+A decoder is `(payload: Uint8Array, header: FrameHeader) => { value, preview? }`. The session picks one per manifest channel: a registered `encoding` id first, then the `*.json.vN` convention (JSON-decoded without registration), then `*.cdr.v1` (a dimOS message decoded with the ROS2 schema the robot put in the channel's `params.cdr`, compiled once per manifest).
 
 Built-in ids:
 
@@ -366,9 +366,9 @@ Built-in ids:
 | `jpeg.v1` | The raw JPEG bytes (`Uint8Array`). Wrap them in a `Blob` to decode them: `createImageBitmap(new Blob([bytes], { type: "image/jpeg" }))` for a canvas, or `URL.createObjectURL(blob)` for an `<img>` (revoke the URL once the image is shown). |
 | `costmap.zlib.v1` | `{ bytes, w, h, res, origin }` with the cells still deflated. `await inflateCostmap(value)` returns the `w * h` cells. |
 | `json.v1` (and any `*.json.vN`) | The parsed JSON value. |
-| `*.lcm.v1` | A plain object with the LCM fields in wire order (the `*_length` count fields included). Nested structs are plain objects, `byte[]` is a `Uint8Array` and `int8_t[]` an `Int8Array` viewing the frame (a view pins the whole frame, `slice()` copies it out), other primitive arrays are typed arrays, and `int64_t` is a `bigint` (`JSON.stringify` throws on it). |
+| `*.cdr.v1` | A plain object with generated ROS2 fields, including nested `header.stamp.sec/nanosec`. Primitive arrays use typed arrays where supported by Foxglove’s CDR reader; 64-bit integers are `bigint` (`JSON.stringify` needs a replacer). |
 
-A frame that would expand into more than 100k struct, string or boolean array elements is reported as oversized instead of decoded, like an oversized `json.v1` payload. A page that needs more registers `lcmDecoder(schema, { maxArrayElements })` for that encoding (the schema is the channel's `params.lcm` in the manifest).
+The SDK uses Foxglove’s ROS2 parser and CDR reader with the complete definition in `params.cdr`. It rejects invalid XCDR1 headers, truncated payloads, and trailing bytes. Variable-length array channels require an explicit subscription or a bound cockpit panel.
 
 An encoding with no decoder is not an error. The channel still counts frames and its value stays unset. A throwing decoder bumps `decodeErrors` and `decodeFailing` and keeps the last good value. Keep decoders synchronous and cheap, they run on the ingest path. Panel-paced work (inflate, draw) belongs in the consumer.
 

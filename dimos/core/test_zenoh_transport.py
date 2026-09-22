@@ -19,6 +19,7 @@ import threading
 from types import SimpleNamespace
 from typing import cast
 
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 from pydantic import ValidationError
 import pytest
@@ -39,7 +40,6 @@ from dimos.core.transport import (
     pLCMTransport,
     pZenohTransport,
 )
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,
     QOS_NEVER_DROP,
@@ -49,15 +49,22 @@ from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 
 class TypedMsg:
-    """A fake typed message with lcm_encode for testing."""
+    """A generated-message codec contract for transport selection tests."""
+
+    msg_name = "test_msgs/msg/TypedMsg"
+    schema = ""
 
     @staticmethod
-    def lcm_encode() -> bytes:
+    def encode() -> bytes:
         return b""
+
+    @staticmethod
+    def decode(data: bytes):
+        return TypedMsg()
 
 
 class UntypedMsg:
-    """A message without lcm_encode. Triggers pickle transport."""
+    """A Python-only message without a generated codec contract."""
 
     pass
 
@@ -189,7 +196,7 @@ def test_zenoh_transport_broadcast_and_subscribe(retry_until, session_pool, coll
     t.start()
     t.subscribe(collector.callback)
 
-    test_img = Image(np.zeros((2, 2, 3), dtype=np.uint8))
+    test_img = Image(width=2, height=2, step=6, encoding="rgb8", data=np.zeros(12, dtype=np.uint8))
     retry_until(collector.event, lambda: t.broadcast(None, test_img))
     assert isinstance(collector.received[0], Image)
     t.stop()
@@ -228,7 +235,7 @@ def test_zenoh_transport_pickle_preserves_topic_qos() -> None:
     t = ZenohTransport(ZenohTopic("dimos/camera/color", Image, qos=QOS_LATEST_WINS))
     t2 = pickle.loads(pickle.dumps(t))
     assert type(t2) is ZenohTransport
-    assert t2.topic == t.topic  # topic, lcm_type and qos all round-trip
+    assert t2.topic == t.topic  # topic, msg_type and qos all round-trip
 
 
 def test_pzenoh_transport_pickle_preserves_topic_qos() -> None:

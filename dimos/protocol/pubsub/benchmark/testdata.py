@@ -38,7 +38,7 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic as LC
 from dimos.protocol.pubsub.impl.memory import Memory
 from dimos.protocol.pubsub.impl.shmpubsub import (
     BytesSharedMemory,
-    LCMSharedMemory,
+    CDRSharedMemory,
     PickleSharedMemory,
 )
 
@@ -74,7 +74,7 @@ def lcm_pubsub_channel() -> Generator[LCM, None, None]:
 
 
 def lcm_msggen(size: int) -> tuple[LCMTopic, Image]:
-    topic = LCMTopic(topic="benchmark/lcm", lcm_type=Image)
+    topic = LCMTopic(topic="benchmark/lcm", msg_type=Image)
     return (topic, make_data_image(size))
 
 
@@ -172,9 +172,9 @@ testcases.append(
 
 
 @contextmanager
-def shm_lcm_pubsub_channel() -> Generator[LCMSharedMemory, None, None]:
-    """SharedMemory with LCM binary encoding - no pickle overhead."""
-    shm_pubsub = LCMSharedMemory(prefer="cpu", default_capacity=12 * 1024 * 1024)
+def shm_lcm_pubsub_channel() -> Generator[CDRSharedMemory, None, None]:
+    """SharedMemory with CDR encoding - no pickle overhead."""
+    shm_pubsub = CDRSharedMemory(prefer="cpu", default_capacity=12 * 1024 * 1024)
     shm_pubsub.start()
     yield shm_pubsub
     shm_pubsub.stop()

@@ -38,23 +38,22 @@ const odom = spec();
 const jpeg = spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" });
 const costmap = spec({ ch: "global_costmap", encoding: "costmap.zlib.v1", delivery: "latest" });
 const future = spec({ ch: "voxels", encoding: "voxels.bin.v9", delivery: "latest" });
-const lcm = spec({
-  ch: "lcm_pose",
-  encoding: "geometry_msgs.PoseStamped.lcm.v1",
+const cdr = spec({
+  ch: "cdr_pose",
+  encoding: "t/msg/P.cdr.v1",
   params: {
-    lcm: { type: "t.P", fp: "0011223344556677", structs: { "t.P": [["x", "double", null]] } },
+    cdr: { type: "t/msg/P", definition: "float64 x" },
   },
 });
-const lcmBroken = spec({ ch: "lcm_bad", encoding: "t.Q.lcm.v1", params: {} });
+const cdrBroken = spec({ ch: "cdr_bad", encoding: "t/msg/Q.cdr.v1", params: {} });
 // A variable-length array: every frame costs the message's full size.
-const lcmCloud = spec({
-  ch: "lcm_cloud",
-  encoding: "sensor_msgs.PointCloud2.lcm.v1",
+const cdrCloud = spec({
+  ch: "cdr_cloud",
+  encoding: "t/msg/C.cdr.v1",
   params: {
-    lcm: {
-      type: "t.C",
-      fp: "0011223344556677",
-      structs: { "t.C": [["n", "int32_t", null], ["data", "byte", ["n"]]] },
+    cdr: {
+      type: "t/msg/C",
+      definition: "uint8[] data",
     },
   },
 });
@@ -67,15 +66,15 @@ describe("subscribableChannels", () => {
     expect(subscribableChannels([future], [])).toEqual([]);
   });
 
-  it("subscribes bounded *.lcm.v1 schemas by itself, bulk ones only through a panel", () => {
-    expect(channelSubscribable(lcm, [])).toBe(true);
-    expect(channelSubscribable(lcm, [videoPanel])).toBe(true);
-    expect(channelSubscribable(lcmCloud, [])).toBe(false);
-    const cloudPanel = panel({ id: "cloud", kind: "video", channels: ["lcm_cloud"] });
-    expect(channelSubscribable(lcmCloud, [cloudPanel])).toBe(true);
+  it("subscribes bounded *.cdr.v1 schemas by itself, bulk ones only through a panel", () => {
+    expect(channelSubscribable(cdr, [])).toBe(true);
+    expect(channelSubscribable(cdr, [videoPanel])).toBe(true);
+    expect(channelSubscribable(cdrCloud, [])).toBe(false);
+    const cloudPanel = panel({ id: "cloud", kind: "video", channels: ["cdr_cloud"] });
+    expect(channelSubscribable(cdrCloud, [cloudPanel])).toBe(true);
     // No schema in params: nothing can decode it, so nothing subscribes.
-    expect(channelSubscribable(lcmBroken, [])).toBe(false);
-    expect(subscribableChannels([lcm, lcmCloud, lcmBroken], [])).toEqual([lcm]);
+    expect(channelSubscribable(cdrBroken, [])).toBe(false);
+    expect(subscribableChannels([cdr, cdrCloud, cdrBroken], [])).toEqual([cdr]);
   });
 
   it("never subscribes tx channels", () => {

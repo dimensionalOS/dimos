@@ -129,3 +129,42 @@ sign-in in the isolated browser; no credentials were entered. Its decoding
 libraries pass independently, but that does not establish application UI
 acceptance. Rerun's direct-file screen capture also needs final confirmation
 of pose visualization and complete semantic playback before task 3.5 is closed.
+
+## Runtime transports and browser cutover (2026-09-21)
+
+The runtime work is still in progress. This evidence covers typed transports,
+web schema decoding, and the migrated built-in web adapters; it does not establish
+that all DimOS consumers or native SDKs have completed the cutover.
+
+- `demo_pubsub.py`: generated `LineSegments3D` and 921,600-byte `Image` exchanged
+  over raw LCM, separate loopback TCP Zenoh sessions, and CPU shared memory.
+  Decoded bytes and integer nanosecond timestamps matched on every path.
+- Typed pub/sub pattern, core CDR transport, and CLI checks: 67 passed. A glob
+  subscription regression was fixed: `/sensor/*` must match the logical topic
+  before the slash-separated `#package/msg/Type` suffix.
+- WebRTC plus core transport checks: 34 passed. Explicit data-frame channel/type
+  routing distinguishes `Point` and `Vector3` despite their identical CDR layouts.
+  Truncated, trailing, raw/unframed, foreign-type, foreign-channel, and wrong-codec
+  frames are dropped; the next valid frame is delivered.
+- Python web codecs: 48 passed. Cockpit authoring plus generated array/helper
+  checks: 94 passed. Costmap and map codec checks: 17 passed.
+- Browser SDK: 322 passed. Cockpit: 154 passed. Both TypeScript checks passed.
+  The CDR decoder uses pinned Foxglove parser/serialization libraries. Fixtures
+  cover standard and custom messages in both byte orders, raw images, fixed and
+  dynamic arrays, empty messages, Unicode, and integers beyond JavaScript's safe
+  number range. Former LCM codecs and their browser fixtures were removed.
+- Chromium opened `demo_cdr.html` and displayed the generated custom message's
+  endpoints, weight 4, and `stamp.nanosec = 500000123`. Switching to the image
+  and big-endian CDR displayed both pixels. Reading the rendered canvas yielded
+  RGBA `[0, 1, 2, 255, 253, 254, 255, 255]` as expected.
+  Screenshots: ignored `build/message-codegen/viewers/cdr-browser-custom.png`
+  and `cdr-browser-image.png`. Browser recording:
+  `/tmp/dimos-cdr-browser-harness/agent-workspace/recordings/session-20260921-192504`
+  (6 frames). The task-owned browser and Vite server were stopped afterward.
+
+The combined Python runtime/web subset passed 318 tests before adding the explicit
+WebRTC sequence regression; that WebRTC file then passed all 29 tests. The final
+SDK and cockpit runs remained 322 and 154 tests, with both type checks passing.
+Mypy passed on 12 changed runtime/helper/codec modules. The external packaging
+relay and installed typing check also passed after making the bundled generator
+a regular package so an installed DimOS cannot shadow it.

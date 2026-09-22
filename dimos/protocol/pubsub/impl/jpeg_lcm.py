@@ -24,22 +24,22 @@ from __future__ import annotations
 from typing import cast
 
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.pubsub.encoders import DecodingError, LCMTopicProto, PubSubEncoderMixin
+from dimos.protocol.pubsub.encoders import DecodingError, PubSubEncoderMixin, TypedTopicProto
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase
 
 
-class JpegEncoderMixin(PubSubEncoderMixin[LCMTopicProto, Image, bytes]):
+class JpegEncoderMixin(PubSubEncoderMixin[TypedTopicProto, Image, bytes]):
     """Encoder mixin for DimosMsg using JPEG encoding (for images)."""
 
-    def encode(self, msg: Image, _: LCMTopicProto) -> bytes:
+    def encode(self, msg: Image, _: TypedTopicProto) -> bytes:
         return msg.lcm_jpeg_encode()
 
-    def decode(self, msg: bytes, topic: LCMTopicProto) -> Image:
+    def decode(self, msg: bytes, topic: TypedTopicProto) -> Image:
         if topic.topic == "LCM_SELF_TEST":
             raise DecodingError("Ignoring LCM_SELF_TEST topic")
-        if topic.lcm_type is None:
-            raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no lcm_type")
-        return cast("type[Image]", topic.lcm_type).lcm_jpeg_decode(msg)
+        if topic.msg_type is None:
+            raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no msg_type")
+        return cast("type[Image]", topic.msg_type).lcm_jpeg_decode(msg)
 
 
 class JpegLCM(  # type: ignore[misc]

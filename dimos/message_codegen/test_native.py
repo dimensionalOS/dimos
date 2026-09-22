@@ -79,6 +79,19 @@ def test_sequence_and_nested_edits_survive_serialization():
     assert decoded.reading.temperature == 37.5
 
 
+def test_value_equality_compares_nested_fields_and_arrays():
+    first = Telemetry(hops=[1, 2], payload=b"pixels")
+    second = Telemetry.decode(first.encode())
+
+    assert first == second
+    second.reading.temperature += 1
+    assert first != second
+    second.reading.temperature = first.reading.temperature
+    second.hops[1] = 3
+    assert first != second
+    assert first != Image()
+
+
 def test_numpy_views_are_readonly_and_share_native_storage():
     value = Image(data=np.arange(16, dtype=np.uint8))
     first = value.data.view()

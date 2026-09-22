@@ -50,6 +50,13 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
 )
 from dimos.stream.audio.base import AudioEvent
 from dimos.utils.logging_config import setup_logger
+from dimos.web.relay_bridge.protocol import (
+    FrameHeader,
+    ProtocolError,
+    decode_data_frame,
+    encode_data_frame,
+    peek_data_frame_lengths,
+)
 
 logger = setup_logger()
 
@@ -156,7 +163,7 @@ class LCMTransport(PubSubTransport[T]):
         self._started = False
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (LCMTransport, (self.topic.topic, self.topic.lcm_type))
+        return (LCMTransport, (self.topic.topic, self.topic.msg_type))
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
@@ -182,7 +189,7 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
         super().__init__(topic, type)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (JpegLcmTransport, (self.topic.topic, self.topic.lcm_type))
+        return (JpegLcmTransport, (self.topic.topic, self.topic.msg_type))
 
     def start(self) -> None:
         self.lcm.start()
@@ -229,26 +236,36 @@ class pSHMTransport(PubSubTransport[T]):
 class SHMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(topic)
+    def __init__(self, topic: str, msg_type: type[DimosMsg] | None = None, **kwargs: Any) -> None:
+        self._base_topic = topic
+        self._msg_type = msg_type
+        super().__init__(str(LCMTopic(topic, msg_type)))
         self.shm = BytesSharedMemory(**kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (
             functools.partial(SHMTransport, default_capacity=self.shm.config.default_capacity),
-            (self.topic,),
+            (self._base_topic, self._msg_type),
         )
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
             self.start()
 
-        self.shm.publish(self.topic, msg)
+        payload = cast("DimosMsg", msg).encode() if self._msg_type is not None else msg
+        self.shm.publish(self.topic, payload)
 
-    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] | None = None) -> None:  # type: ignore[override]
+    def subscribe(
+        self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
+    ) -> Callable[[], None]:
         if not self._started:
             self.start()
-        return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type, return-value]
+        msg_type = self._msg_type
+        if msg_type is None:
+            return self.shm.subscribe(self.topic, lambda msg, topic: callback(cast("T", msg)))
+        return self.shm.subscribe(
+            self.topic, lambda msg, topic: callback(cast("T", msg_type.decode(msg)))
+        )
 
     def start(self) -> None:
         self.shm.start()
@@ -380,8 +397,8 @@ class WebRTCTransport(PubSubTransport[M]):
     also be used directly with an explicit ``config``. Two modes:
 
     * **Raw bytes** (``msg_type=None``): messages pass through as ``bytes``.
-    * **Typed LCM** (``msg_type=SomeMsg``): LCM-encoded on ``broadcast()``,
-      LCM-decoded on ``subscribe()`` (foreign types on the shared channel are skipped) — so multiple
+    * **Typed CDR** (``msg_type=SomeMsg``): CDR in the shared browser data-frame
+      format, with channel and type metadata checked before decoding. Multiple
       transports sharing one multiplexed DataChannel each receive only
       their own message type.
 
@@ -408,6 +425,7 @@ class WebRTCTransport(PubSubTransport[M]):
         self._msg_type = msg_type
         self._config = config or self._config_cls(**config_kwargs)
         self._pubsub: WebRTCPubSub | None = None
+        self._frame_sequence = 0
         # Guards first-use init: concurrent subscribe()/broadcast() must not
         # construct two WebRTCPubSub wrappers (one would silently orphan any
         # subscribe_all state). Never pickled — __reduce__ rebuilds via the
@@ -421,7 +439,25 @@ class WebRTCTransport(PubSubTransport[M]):
         if not self._started:
             self.start()
         assert self._pubsub is not None
-        data = msg.lcm_encode() if self._msg_type is not None else msg
+        data: bytes | M
+        if self._msg_type is not None:
+            if msg.msg_name != self._msg_type.msg_name:
+                raise ValueError("message type does not match declared WebRTC channel type")
+            with self._init_lock:
+                sequence = self._frame_sequence
+                self._frame_sequence += 1
+            data = encode_data_frame(
+                FrameHeader(
+                    ch=self.topic,
+                    seq=sequence,
+                    ts=time.time(),
+                    delivery="latest",
+                    meta={"type": self._msg_type.msg_name, "encoding": "cdr"},
+                ),
+                msg.encode(),
+            )
+        else:
+            data = msg
         self._pubsub.publish(self.topic, data)  # type: ignore[arg-type]
 
     def subscribe(
@@ -435,12 +471,20 @@ class WebRTCTransport(PubSubTransport[M]):
             msg_type = self._msg_type
 
             def _typed_cb(data: bytes, _topic: str) -> None:
-                # The channel is multiplexed (e.g. the browser sends Twists and
-                # Poses on cmd_unreliable); lcm_decode verifies the wire
-                # fingerprint and raises on other types — skip those.
                 try:
-                    msg = msg_type.lcm_decode(data)
-                except ValueError:
+                    lengths = peek_data_frame_lengths(data)
+                    if lengths is None or lengths[2] != len(data):
+                        return
+                    frame = decode_data_frame(data)
+                    meta = frame.header.meta or {}
+                    if (
+                        frame.header.ch != self.topic
+                        or meta.get("encoding") != "cdr"
+                        or meta.get("type") != msg_type.msg_name
+                    ):
+                        return
+                    msg = msg_type.decode(frame.payload)
+                except (ProtocolError, ValueError):
                     return
                 callback(msg)  # type: ignore[arg-type]
 
@@ -587,7 +631,7 @@ class CloudflareAudioTransport(WebRTCAudioTransport):
 
 
 class ZenohTransport(PubSubTransport[T]):
-    """Zenoh transport with LCM encoding for typed DimosMsg.
+    """Zenoh transport with CDR encoding for typed DimosMsg.
 
     Accepts either a plain topic string plus message type, or a full
     `ZenohTopic` carrying per-topic settings: `ZenohTransport(ZenohTopic("bla",

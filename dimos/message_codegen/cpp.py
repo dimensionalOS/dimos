@@ -253,6 +253,16 @@ def generate(messages: tuple[Message, ...]) -> str:
             else:
                 default = "{" + literal(field.default, field.type.name) + "}"
             lines.append(f"{type_name(field.type)} {identifier(field.name)}{default};")
+        equal = (
+            " && ".join(
+                f"this->{identifier(field.name)} == other.{identifier(field.name)}"
+                for field in message.fields
+            )
+            or "true"
+        )
+        other = " other" if message.fields else ""
+        lines.append(f"bool operator==(const {name}&{other}) const {{ return {equal}; }}")
+        lines.append(f"bool operator!=(const {name}& other) const {{ return !(*this == other); }}")
         lines.append("void validate() const {")
         lines.extend(validation(message))
         lines.extend(["}", f'static constexpr const char* msg_name = "{message.name}";', "};", "}"])

@@ -38,7 +38,7 @@ def lcm(lcm_url: str) -> Iterator[LCM]:
 # Publishes a series of transforms representing a robot kinematic chain
 # to actual LCM messages, rerun running in parallel should render this
 def test_publish_transforms(lcm: LCM) -> None:
-    topic = Topic(topic="/tf", lcm_type=TFMessage)
+    topic = Topic(topic="/tf", msg_type=TFMessage)
     collector = CallbackCollector(2)
     lcm.subscribe(topic, collector)
 

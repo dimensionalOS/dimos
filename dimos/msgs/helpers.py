@@ -16,7 +16,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 import importlib
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+
+from dimos.message_codegen.registry import message_types
 
 if TYPE_CHECKING:
     from dimos.msgs.protocol import DimosMsg
@@ -26,39 +28,11 @@ def lcm_msg_type(msg_name: str) -> type[Any]:
     """The generated dimos_lcm class of a '<package>.<Type>' name. ImportError
     when the wheel has no such message."""
     package, name = msg_name.split(".")
-    lcm_type: type[Any] = getattr(importlib.import_module(f"dimos_lcm.{package}.{name}"), name)
-    return lcm_type
+    msg_type: type[Any] = getattr(importlib.import_module(f"dimos_lcm.{package}.{name}"), name)
+    return msg_type
 
 
 @lru_cache(maxsize=256)
 def resolve_msg_type(type_name: str) -> type[DimosMsg] | None:
-    """Resolve a message type name to its class.
-
-    Args:
-        type_name: Type name in format "module.ClassName" (e.g., "geometry_msgs.Vector3")
-
-    Returns:
-        The message class or None if not found.
-    """
-    try:
-        module_name, class_name = type_name.rsplit(".", 1)
-    except ValueError:
-        return None
-
-    # Try different import paths
-    # First try the direct submodule path (e.g., dimos.msgs.geometry_msgs.Quaternion)
-    # then fall back to parent package (for dimos_lcm or other packages)
-    import_paths = [
-        f"dimos.msgs.{module_name}.{class_name}",
-        f"dimos.msgs.{module_name}",
-        f"dimos_lcm.{module_name}",
-    ]
-
-    for path in import_paths:
-        try:
-            module = importlib.import_module(path)
-            return getattr(module, class_name)  # type: ignore[no-any-return]
-        except (ImportError, AttributeError):
-            continue
-
-    return None
+    """Resolve a qualified package/msg/Type through installed schema providers."""
+    return cast("type[DimosMsg] | None", message_types().get(type_name))

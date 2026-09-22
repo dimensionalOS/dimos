@@ -18,12 +18,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use dimos_lcm::{Lcm, LcmOptions};
+use dimos_lcm_transport::{Lcm, LcmOptions};
 use url::Url;
 
 use crate::transport::{Dispatch, Transport};
 
-/// LCM UDP multicast transport. Wraps `dimos_lcm::Lcm`.
+/// LCM UDP multicast transport. Wraps `dimos_lcm_transport::Lcm`.
 ///
 /// The multicast socket receives every channel, so `subscribe` registers a
 /// callback locally and one recv loop routes each message by channel.
@@ -184,12 +184,12 @@ mod tests {
     fn ttl_is_optional() {
         let options = options_from_url("udpm://239.255.76.67:7712");
         assert_eq!(options.port, 7712);
-        assert_eq!(options.ttl, dimos_lcm::LcmOptions::default().ttl);
+        assert_eq!(options.ttl, dimos_lcm_transport::LcmOptions::default().ttl);
     }
 
     #[test]
     fn an_unusable_url_leaves_the_defaults() {
-        let defaults = dimos_lcm::LcmOptions::default();
+        let defaults = dimos_lcm_transport::LcmOptions::default();
         for url in [
             "tcp://127.0.0.1:7667",
             "udpm://not-an-ip:7667?ttl=42",

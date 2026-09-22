@@ -29,7 +29,7 @@ import uuid
 import numpy as np
 import numpy.typing as npt
 
-from dimos.protocol.pubsub.encoders import LCMEncoderMixin, PickleEncoderMixin
+from dimos.protocol.pubsub.encoders import CDREncoderMixin, PickleEncoderMixin
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 from dimos.protocol.pubsub.shm.ipc_factory import CpuShmChannel, FrameChannel
 from dimos.protocol.pubsub.spec import PubSub
@@ -332,7 +332,7 @@ class PickleSharedMemory(
     ...
 
 
-class LCMSharedMemoryPubSubBase(PubSub[Topic, Any]):
+class TypedSharedMemoryPubSubBase(PubSub[Topic, Any]):
     """SharedMemory pubsub that uses LCM Topic type, delegating to SharedMemoryPubSubBase."""
 
     def __init__(self, **kwargs: Any) -> None:
@@ -360,10 +360,10 @@ class LCMSharedMemoryPubSubBase(PubSub[Topic, Any]):
         return self._shm.reconfigure(str(topic), capacity=capacity)
 
 
-class LCMSharedMemory(  # type: ignore[misc]
-    LCMEncoderMixin,
-    LCMSharedMemoryPubSubBase,
+class CDRSharedMemory(  # type: ignore[misc]
+    CDREncoderMixin,
+    TypedSharedMemoryPubSubBase,
 ):
-    """SharedMemory pubsub that uses LCM binary encoding (no pickle overhead)."""
+    """SharedMemory pubsub that uses CDR encoding (no pickle overhead)."""
 
     ...

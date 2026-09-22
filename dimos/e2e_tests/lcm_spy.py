@@ -35,7 +35,7 @@ def _wire_topic(channel: str) -> ZenohTopic:
     ZenohTopic is an LCM Topic plus zenoh's key expression, so both buses take it.
     """
     parsed = Topic.from_channel_str(transport_topic(channel))
-    return ZenohTopic(parsed.topic, parsed.lcm_type)
+    return ZenohTopic(parsed.topic, parsed.msg_type)
 
 
 class LcmSpy:

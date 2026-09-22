@@ -6,7 +6,7 @@ description = "Rust native module SDK for dimos NativeModule framework"
 license = "Apache-2.0"
 
 [dependencies]
-dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-lcm-transport = { path = "../dimos-lcm-transport", version = "0.1.0" }
 dimos-module-macros = { version = "=0.1.0", path = "../dimos-module-macros" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 nalgebra = "0.35.0"

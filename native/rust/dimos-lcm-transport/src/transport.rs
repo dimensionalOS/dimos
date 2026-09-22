@@ -131,6 +131,12 @@ impl Lcm {
     /// Publish encoded message data on the given channel.
     pub async fn publish(&self, channel: &str, data: &[u8]) -> io::Result<()> {
         let channel_bytes = channel.as_bytes();
+        if channel_bytes.len() > 63 || channel_bytes.contains(&0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "LCM channel must fit in 63 bytes and contain no NUL",
+            ));
+        }
         let total = SHORT_HEADER_SIZE + channel_bytes.len() + 1 + data.len();
         let seqno = SEQ.fetch_add(1, Ordering::Relaxed);
 
@@ -315,6 +321,20 @@ impl Lcm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn invalid_channels_are_rejected_before_sending() {
+        let lcm = Lcm::with_options(LcmOptions {
+            port: 0,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        for channel in ["x".repeat(64), "é".repeat(32), "invalid\0channel".into()] {
+            let error = lcm.publish(&channel, b"payload").await.unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        }
+    }
 
     const TEST_CHANNEL_LEN: usize = 13; // "/test_channel"
     const FIRST_PAYLOAD: usize = MAX_DATAGRAM_SIZE - FRAGMENT_HEADER_SIZE - TEST_CHANNEL_LEN - 1;
