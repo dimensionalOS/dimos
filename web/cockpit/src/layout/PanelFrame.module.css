@@ -1,0 +1,128 @@
+.frame,
+.frameMax {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+.frameMax {
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.6), 0 24px 64px rgba(0, 0, 0, 0.7);
+  inset: 8px;
+  position: fixed;
+  width: auto;
+  z-index: 10;
+}
+
+.head {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex: none;
+  gap: 8px;
+  height: 26px;
+  justify-content: space-between;
+  padding: 0 4px 0 10px;
+}
+
+.title {
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.controls {
+  align-items: center;
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.badge,
+.badgeStale {
+  align-items: center;
+  color: var(--fg-muted);
+  display: inline-flex;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.badge::before,
+.badgeStale::before {
+  background: var(--fg-faint);
+  border-radius: 50%;
+  content: "";
+  height: 6px;
+  width: 6px;
+}
+
+.badge[data-state="live"]::before {
+  background: var(--ok);
+  box-shadow: 0 0 6px var(--ok);
+}
+
+.badgeStale[data-state="stale"] {
+  color: var(--warn);
+}
+
+.badgeStale[data-state="stale"]::before {
+  background: var(--warn);
+}
+
+.badgeStale[data-state="error"] {
+  color: var(--danger);
+}
+
+.badgeStale[data-state="error"]::before {
+  background: var(--danger);
+}
+
+.maxButton {
+  align-items: center;
+  background: none;
+  border: none;
+  border-radius: var(--radius-s);
+  color: var(--fg-muted);
+  cursor: pointer;
+  display: inline-flex;
+  height: 20px;
+  justify-content: center;
+  opacity: 0.4;
+  padding: 0;
+  transition: background var(--dur), color var(--dur), opacity var(--dur);
+  width: 20px;
+}
+
+.head:hover .maxButton,
+.maxButton:focus-visible,
+.frameMax .maxButton {
+  opacity: 1;
+}
+
+.maxButton:hover {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+
+.body {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+}

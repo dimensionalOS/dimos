@@ -1,8 +1,6 @@
----
-title: "CLI Reference"
----
+# CLI Reference
 
-The `dimos` CLI manages the full lifecycle of a dimOS robot stack — start, stop, inspect, and interact.
+The `dimos` CLI manages the full lifecycle of a dimOS robot stack: start, stop, inspect, and interact.
 
 ## Global Options
 
@@ -20,6 +18,10 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
 | `--replay-db` | TEXT | `go2_short` | Replay memory SQLite database name |
 | `--replay-exit` / `--no-replay-exit` | bool | `False` | Exit once every replay stream finishes |
+| `--record [sqlite\|mcap]` | `sqlite\|mcap` | off | Record selected streams to one artifact; bare `--record` means SQLite ([Recording](/docs/usage/recording.md)) |
+| `--record-engine` | `python\|rust` | `python` | Recording implementation; Rust is experimental and never selected implicitly |
+| `--record-topics` | TEXT | `*` | Comma-separated globs on stream names to record |
+| `--record-encoding-threads` | INT | unset (Rust uses `4`) | Native encoding workers; valid only with `--record-engine rust` |
 | `--new-memory` / `--no-new-memory` | bool | `False` | Clear persistent memory on start |
 | `--viewer` | `rerun\|none` | `rerun` | Visualization backend |
 | `--rerun-open` | `native\|web\|both\|none` | `native` | How to open the Rerun viewer |
@@ -28,7 +30,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--memory-limit` | TEXT | `auto` | Rerun viewer memory limit |
 | `--mcp-port` | INT | `9990` | MCP server port |
 | `--mcp-host` | TEXT | `127.0.0.1` | MCP server bind address |
-| `--transport` | `lcm\|zenoh` | platform-dependent | Transport backend for streams, RPC, and TF. Defaults to `zenoh` on macOS, otherwise `lcm`. Set `DIMOS_TRANSPORT` (env var or `.env`) to switch every process at once. Standalone CLIs like `humancli`, `agentspy`, and `dtop`, which also accept `--transport`. |
+| `--transport` | `lcm\|zenoh` | `zenoh` | Transport backend for streams, RPC, and TF. Zenoh is the default on every platform and is pinned to localhost until you pass `--robot-ip` or enable scouting. Set `DIMOS_TRANSPORT` (env var or `.env`) to switch every process at once. Standalone CLIs like `humancli`, `agentspy`, and `dtop`, which also accept `--transport`. |
 | `--dtop` / `--no-dtop` | bool | `False` | Enable live resource monitor overlay |
 | `--obstacle-avoidance` / `--no-obstacle-avoidance` | bool | `True` | Enable obstacle avoidance |
 | `--detection-model` | `qwen\|moondream` | `moondream` | Vision model for object detection |
@@ -44,6 +46,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--mujoco-global-map-from-pointcloud` | TEXT | `None` | Generate map from point cloud |
 | `--mujoco-start-pos` | TEXT | `-1.0, 1.0` | MuJoCo robot start position |
 | `--mujoco-steps-per-frame` | INT | `7` | MuJoCo simulation steps per frame |
+| `--mujoco-shadows` | `auto\|on\|off` | `auto` | MuJoCo shadow mapping. `auto` benchmarks one shadowed render at startup and disables shadows when it exceeds 30% of the video frame budget; `on` and `off` skip the benchmark |
 
 ### Configuration Precedence
 
@@ -77,6 +80,8 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...] [--<
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
 | `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--voxelgridmapper.voxel-size=1` |
+| `--local-relay` | Start a relay on this machine and open the cockpit in the browser (see [Web](/docs/web/index.md)) |
+| `--relay-url` | Connect the robot to a relay started elsewhere, by its HTTP URL; `--relay-ca` adds a private CA and `RELAY_KEY` the robot's key (see [Bridge](/docs/web/bridge.md#robot-side-options)) |
 | `--help` | Display the run options and available blueprint configuration flags |
 
 Dynamic values accept both `--field=value` and `--field value`. A shorthand is
@@ -95,7 +100,11 @@ dimos run unitree-go2-agentic --daemon
 # Replay with Rerun viewer
 dimos --replay --viewer rerun run unitree-go2
 
-# Replay Big Office (on Linux use --transport=zenoh; on macOS Zenoh is default when installed)
+# Record every stream of a run, then replay it
+dimos --record --simulation run unitree-go2
+dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
+
+# Replay Big Office (Zenoh is the default transport)
 dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go2
 
 # Real robot
@@ -123,10 +132,10 @@ derived from the installed Python distribution name by lowercasing it and collap
 runs of `-`, `_`, and `.` into `-`. The local blueprint name is the entry point name
 and must be lowercase kebab-case, for example `keyboard-teleop`.
 
-On macOS, heavy replay workloads can be unreliable over LCM UDP, so the default transport resolves to `zenoh`; you can still force either path explicitly with `--transport=lcm` or `--transport=zenoh`.
+Heavy replay workloads can be unreliable over LCM UDP, which is one reason `zenoh` is the default transport; you can still force either path explicitly with `--transport=lcm` or `--transport=zenoh`.
 
 When `--daemon` is used, the process:
-1. Builds and starts all modules (foreground — you see errors)
+1. Builds and starts all modules (foreground, so you see errors)
 2. Runs a health check (polls worker PIDs)
 3. Forks to background, writes a run registry entry
 4. Prints run ID, PID, log path, and MCP endpoint
@@ -144,6 +153,20 @@ This auto-generates `dimos/robot/all_blueprints.py` for built-in blueprints. Ext
 packages do not edit that file; they expose blueprints through Python package entry
 points. See [blueprints](/docs/usage/blueprints.md) for composition and external
 publishing details.
+
+### `dimos graph`
+
+Render a Blueprint's stream flow as a Graphviz SVG without starting the Blueprint or
+opening its runtime transports. RPC relationships are hidden by default; pass `--rpc`
+to include RPC contracts and their declared Spec methods as dashed edges.
+
+```bash
+dimos graph unitree-go2-agentic
+dimos graph unitree-go2-agentic --rpc --output go2-agentic.svg
+```
+
+The default output is `<blueprint>.svg` in the current directory. Graphviz's `dot`
+executable must be installed.
 
 ### `dimos shell`
 
@@ -308,9 +331,9 @@ dimos show-config
 
 ### `dimos cache clean`
 
-Remove caches generated by dimOS, including prepared URDFs, cooked scene
-meshes, the ament index, and the auto-downloaded Deno runtime. All of these live
-under the platform-specific dimOS cache directory.
+Remove caches generated by dimOS, including downloaded robot assets, prepared
+URDFs, cooked scene meshes, the ament index, and the auto-downloaded Deno
+runtime. All of these live under the platform-specific dimOS cache directory.
 
 ```bash
 dimos cache clean
@@ -333,6 +356,21 @@ dimos spy --transport zenoh   # filter to one transport (repeatable flag)
 dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
 ```
 
+### `dimos login`
+
+Device-code sign-in for the hosted platform; `dimos logout` and `dimos whoami` manage the stored key.
+
+### `dimos data`
+
+Upload recordings (or any file) to hosted storage and pull them back. See [Cloud data](/docs/usage/cloud_data.md).
+
+| Subcommand | Description |
+|------------|-------------|
+| `upload [PATH\|latest] [--since 1h] [--robot ID] [--kind KIND] [--chunk MB]` | Upload; no argument means the newest recording |
+| `ls` | List uploads: id, date, kind, blueprint, topics, size, state |
+| `pull [ID-PREFIX\|latest] [--dest PATH]` | Download to `downloads/`, sha256-verified |
+| `status ID` / `quota` | Upload state and parts on server / storage quota |
+
 ## Agent & MCP Commands
 
 ### `dimos agent-send`
@@ -343,11 +381,11 @@ Send a text message to the running agent via LCM.
 dimos agent-send "walk forward 2 meters"
 ```
 
-Works with any agentic blueprint — does not require MCP. Publishes directly to the `/human_input` LCM topic.
+Works with any agentic blueprint. Does not require MCP. Publishes directly to the `/human_input` LCM topic.
 
 ### `dimos mcp`
 
-Interact with the running MCP server. **Requires a blueprint that includes `McpServer`** — for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcp-port` / `--mcp-host` to override).
+Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcp-port` / `--mcp-host` to override).
 
 To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `McpClient.blueprint()` (LLM agent that fetches tools from the server):
 
@@ -380,24 +418,25 @@ Returns JSON with tool names, descriptions, and parameter schemas.
 Call a skill by name.
 
 ```bash
-dimos mcp call <tool_name> [--arg key=value ...] [--json-args '{}']
+dimos mcp call <tool_name> [--arg key=value ...] [--json-args '{}'] [--timeout SECONDS]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--arg`, `-a` | Arguments as `key=value` pairs (repeatable) |
 | `--json-args`, `-j` | Arguments as a JSON string |
+| `--timeout`, `-t` | Seconds to wait for the tool. Default is `mcp_timeout` (30). The client cuts off a skill that runs longer. |
 
 ```bash
-dimos mcp call relative_move --arg forward=0.5
-dimos mcp call relative_move --json-args '{"forward": 2.0, "left": 0, "degrees": 0}'
+dimos mcp call move_to --arg x=3.2 --arg y=-0.5
+dimos mcp call move_to --json-args '{"x": 2.0, "y": 0, "relative": true}'
 dimos mcp call observe
 dimos mcp call land
 ```
 
 #### `dimos mcp status`
 
-Show MCP server status — PID, uptime, deployed modules, skill count.
+Show MCP server status: PID, uptime, deployed modules, skill count.
 
 ```bash
 dimos mcp status
@@ -441,7 +480,7 @@ agentspy
 
 ### `dtop`
 
-Live resource monitor TUI — CPU, memory, and process stats. Can also be activated during a run with `--dtop`:
+Live resource monitor TUI: CPU, memory, and process stats. The cockpit shows the same data on its Stats tab (`Stats()` in `cockpit(pages=[...])`), which switches the monitor on by itself. Can also be activated during a run with `--dtop`:
 
 ```bash
 dimos --dtop run unitree-go2

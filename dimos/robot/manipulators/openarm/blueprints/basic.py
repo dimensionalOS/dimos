@@ -16,53 +16,58 @@
 
 from __future__ import annotations
 
-from dimos.control.components import HardwareComponent
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.robot.manipulators.common.blueprints import trajectory_task
+from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.openarm.config import (
-    LEFT_CAN,
-    OPENARM_ADAPTER_KWARGS,
-    RIGHT_CAN,
+    OPENARM_ARM_JOINTS,
+    openarm_bimanual_model_config,
     openarm_hardware,
 )
 
 
-def openarm_task(hw: HardwareComponent) -> TaskConfig:
-    return trajectory_task(hw)
+def _trajectory_task() -> TaskConfig:
+    return TaskConfig(
+        name=JOINT_TRAJECTORY_TASK_NAME,
+        type="trajectory",
+        joint_names=list(OPENARM_ARM_JOINTS),
+        priority=10,
+        params={"start_position_tolerance": 0.05},
+    )
 
 
-mock_left = openarm_hardware(side="left")
-mock_right = openarm_hardware(side="right")
+class _OpenArmCoordinatorConfig(ControlCoordinatorConfig):
+    """OpenArm deployment configuration requiring an explicit bus pair."""
 
-coordinator_openarm_mock = ControlCoordinator.blueprint(
-    hardware=[mock_left, mock_right],
-    tasks=[trajectory_task(mock_left, mock_right)],
+    left_can_port: str | None = None
+    right_can_port: str | None = None
+
+
+class _OpenArmCoordinator(ControlCoordinator):
+    """Select mock or explicitly addressed dual-CAN OpenArm hardware."""
+
+    config: _OpenArmCoordinatorConfig
+
+    def _setup_from_config(self) -> None:
+        self.config.hardware = [
+            openarm_hardware(
+                left_can_port=self.config.left_can_port,
+                right_can_port=self.config.right_can_port,
+            )
+        ]
+        super()._setup_from_config()
+
+
+openarm_planner_coordinator = autoconnect(
+    planner(model=openarm_bimanual_model_config()),
+    _OpenArmCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        tasks=[_trajectory_task()],
+    ),
 )
 
-left_hw = openarm_hardware(
-    side="left",
-    address=LEFT_CAN,
-    adapter_type="openarm",
-    adapter_kwargs=OPENARM_ADAPTER_KWARGS,
-)
-right_hw = openarm_hardware(
-    side="right",
-    address=RIGHT_CAN,
-    adapter_type="openarm",
-    adapter_kwargs=OPENARM_ADAPTER_KWARGS,
-)
-
-coordinator_openarm_left = ControlCoordinator.blueprint(
-    hardware=[left_hw],
-    tasks=[openarm_task(left_hw)],
-)
-
-coordinator_openarm_right = ControlCoordinator.blueprint(
-    hardware=[right_hw],
-    tasks=[openarm_task(right_hw)],
-)
-
-coordinator_openarm_bimanual = ControlCoordinator.blueprint(
-    hardware=[left_hw, right_hw],
-    tasks=[trajectory_task(left_hw, right_hw)],
+coordinator_openarm = _OpenArmCoordinator.blueprint(
+    instance_name="ControlCoordinator",
+    tasks=[_trajectory_task()],
 )

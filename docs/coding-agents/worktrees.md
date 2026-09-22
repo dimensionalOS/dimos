@@ -2,7 +2,7 @@
 
 `bin/worktree` creates a fully-provisioned git worktree (uv venv + `uv sync
 --all-groups`, `.envrc` symlink, direnv allow) so `mypy`/`pytest`/hooks work
-immediately — handy for forking off parallel work.
+immediately. Handy for forking off parallel work.
 
 ```sh skip
 bin/worktree new feat/ivan/foo              # new branch off current HEAD -> ../dimos-foo

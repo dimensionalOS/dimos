@@ -8,6 +8,12 @@ from dimos.memory.store.sqlite import SqliteStore
 store = SqliteStore(path="/tmp/memory_readme.db")
 ```
 
+## Experimental native recording
+
+The Rust-backed SQLite and MCAP recorder is being evaluated under
+[`dimos.experimental.memory`](../experimental/memory/README.md). Its import path
+and configuration may change before promotion to the stable Memory API.
+
 
 ```python session=memory ansi=false
 logs = store.stream("logs", str)
@@ -31,7 +37,7 @@ print(logs.summary())
 
 <!--Result:-->
 ```
-Stream("logs"): 3 items, 1970-01-01 00:00:01 — 1970-01-01 00:00:03 (2.0s)
+Stream("logs"): 3 items, 1970-01-01 00:00:01 to 1970-01-01 00:00:03 (2.0s)
 ```
 
 ## Filters

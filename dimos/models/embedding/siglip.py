@@ -53,11 +53,6 @@ class SigLIPModel(EmbeddingModel, HuggingFaceModel):
     def _processor(self) -> SiglipProcessor:
         return SiglipProcessor.from_pretrained(self.config.model_name, use_fast=True)
 
-    @property
-    def logit_scale(self) -> float:
-        """Trained sigmoid temperature: exp of the model's raw logit scale."""
-        return float(self._model.logit_scale.exp())
-
     @overload
     def embed(self, image: Image, /) -> Embedding: ...
     @overload

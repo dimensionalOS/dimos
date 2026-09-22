@@ -17,9 +17,11 @@
 from __future__ import annotations
 
 from dimos.agents.annotation import skill
+from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.skill_result import SkillResult
 from dimos.core.module import Module
 from dimos.manipulation.manipulation_spec import (
+    UNCONFIRMED_STOP,
     CommandResult,
     ExecutionResult,
     ManipulationSpec,
@@ -90,6 +92,24 @@ class ManipulationSkills(Module):
         return self._execution_result(self.manipulation.execute(blocking=True))
 
     @skill
+    def cancel(self) -> SkillResult[ManipulationSkillError]:
+        """Stop the active motion or planning attempt, leaving the arm where it is."""
+        result = self.manipulation.cancel()
+        if result.status in UNCONFIRMED_STOP:
+            # The coordinator never confirmed the arm stopped. Reporting success
+            # lets a caller branch straight into its next motion command.
+            return SkillResult.fail("EXECUTION_FAILED", result.message)
+        return SkillResult.ok(result.message or "Cancelled")
+
+    @skill
+    def reset(self) -> SkillResult[ManipulationSkillError]:
+        """Stop any motion and return to IDLE. Use after a motion fails."""
+        result = self.manipulation.reset()
+        if not result.succeeded:
+            return SkillResult.fail("EXECUTION_FAILED", result.message)
+        return SkillResult.ok(result.message)
+
+    @skill
     def get_robot_state(
         self, planning_group: PlanningGroupID | None = None
     ) -> SkillResult[ManipulationSkillError]:
@@ -107,7 +127,7 @@ class ManipulationSkills(Module):
             return SkillResult.fail("ROBOT_NOT_FOUND", f"Unknown group: {planning_group}")
         return SkillResult.ok(f"{planning_group}: {state!r}")
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     def move_to_pose(
         self,
         x: float,
@@ -157,7 +177,7 @@ class ManipulationSkills(Module):
             return failure
         return self._execution_result(self.manipulation.execute(blocking=True))
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     def move_to_joints(
         self,
         joints: str,
@@ -166,7 +186,7 @@ class ManipulationSkills(Module):
         """Move one planning group to comma-separated joint positions.
 
         Args:
-            joints: Comma-separated joint positions in radians.
+            joints: Comma-separated positions in each joint's native coordinate.
             planning_group: Opaque planning-group ID. Omit when only one group exists.
         """
 
@@ -192,7 +212,7 @@ class ManipulationSkills(Module):
             return failure
         return self._execution_result(self.manipulation.execute(blocking=True))
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     def go_home(
         self, planning_group: PlanningGroupID | None = None
     ) -> SkillResult[ManipulationSkillError]:
@@ -202,10 +222,10 @@ class ManipulationSkills(Module):
             planning_group: Opaque planning-group ID. Omit when only one group exists.
         """
 
-        self.manipulation.set_gripper_position(0.85, planning_group)
+        self.manipulation.set_gripper_position(1.0, planning_group)
         return self._move_to_preset("home", planning_group)
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     def go_init(
         self, planning_group: PlanningGroupID | None = None
     ) -> SkillResult[ManipulationSkillError]:
@@ -217,16 +237,16 @@ class ManipulationSkills(Module):
 
         return self._move_to_preset("init", planning_group)
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     def set_gripper(
         self,
         position: float,
         planning_group: PlanningGroupID | None = None,
     ) -> SkillResult[ManipulationSkillError]:
-        """Set the gripper opening in metres.
+        """Set the gripper opening as a fraction of its travel.
 
         Args:
-            position: Gripper opening in metres.
+            position: 0.0 = fully closed, 1.0 = fully open.
             planning_group: Opaque planning-group ID. Omit when only one gripper exists.
         """
 
@@ -234,7 +254,7 @@ class ManipulationSkills(Module):
             self.manipulation.set_gripper_position(position, planning_group)
         )
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     def open_gripper(
         self, planning_group: PlanningGroupID | None = None
     ) -> SkillResult[ManipulationSkillError]:
@@ -244,9 +264,9 @@ class ManipulationSkills(Module):
             planning_group: Opaque planning-group ID. Omit when only one gripper exists.
         """
 
-        return self._command_result(self.manipulation.set_gripper_position(0.85, planning_group))
+        return self._command_result(self.manipulation.set_gripper_position(1.0, planning_group))
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     def close_gripper(
         self, planning_group: PlanningGroupID | None = None
     ) -> SkillResult[ManipulationSkillError]:

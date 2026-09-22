@@ -46,6 +46,21 @@ def test_help_does_not_import_heavy_deps() -> None:
     assert result.returncode == 0, f"Heavy deps leaked into GlobalConfig import:\n{result.stderr}"
 
 
+def test_cli_import_does_not_pull_ipython() -> None:
+    """Importing the CLI must not drag in IPython (~1700 modules, ~1.3s)."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import dimos.cli.dimos; assert 'IPython' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, f"IPython leaked into CLI import:\n{result.stderr}"
+
+
 def test_help_startup_time() -> None:
     """`dimos --help` must finish in under {HELP_TIMEOUT_SECONDS}s."""
     start = time.monotonic()

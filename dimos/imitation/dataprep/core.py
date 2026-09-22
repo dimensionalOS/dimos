@@ -113,6 +113,16 @@ class Episode(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class IncompleteEpisode(BaseModel):
+    start_ts: float
+    task_label: str | None = None
+
+
+class EpisodeReport(BaseModel):
+    episodes: list[Episode] = Field(default_factory=list)
+    incomplete: list[IncompleteEpisode] = Field(default_factory=list)
+
+
 class Sample(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -179,13 +189,20 @@ def extract_episodes(store: SqliteStore, cfg: EpisodeExtractor) -> list[Episode]
 
     RANGES: emit one Episode per (start, end) tuple in `cfg.ranges`.
     """
+    return inspect_episodes(store, cfg).episodes
+
+
+def inspect_episodes(store: SqliteStore, cfg: EpisodeExtractor) -> EpisodeReport:
+    """Extract completed episodes and retain any recording left open at EOF."""
     if cfg.extractor == "ranges":
         if not cfg.ranges:
-            return []
-        return [
-            Episode(id=f"ep_{i:06d}", start_ts=t0, end_ts=t1)
-            for i, (t0, t1) in enumerate(cfg.ranges)
-        ]
+            return EpisodeReport()
+        return EpisodeReport(
+            episodes=[
+                Episode(id=f"ep_{i:06d}", start_ts=t0, end_ts=t1)
+                for i, (t0, t1) in enumerate(cfg.ranges)
+            ]
+        )
 
     # episode_status (default)
     status_stream: Stream[Any, Any] = store.stream(cfg.status_stream)
@@ -232,8 +249,12 @@ def extract_episodes(store: SqliteStore, cfg: EpisodeExtractor) -> list[Episode]
             _commit(ts, success=False, label=pending_label or label)
         # "init" and unknown events are no-ops.
 
-    # Anything still pending at end-of-stream is dropped (state-machine spec).
-    return episodes
+    incomplete = (
+        [IncompleteEpisode(start_ts=pending_start_ts, task_label=pending_label)]
+        if pending_start_ts is not None
+        else []
+    )
+    return EpisodeReport(episodes=episodes, incomplete=incomplete)
 
 
 def iter_episode_samples(

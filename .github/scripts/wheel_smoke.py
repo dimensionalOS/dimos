@@ -25,7 +25,9 @@ import json
 from pathlib import Path
 import urllib.request
 
-from dimos.navigation.replanning_a_star.min_cost_astar_ext import min_cost_astar_cpp  # noqa: F401
+from dimos.navigation.go2.replanning_a_star.min_cost_astar_ext import (
+    min_cost_astar_cpp,  # noqa: F401
+)
 from dimos.web.relay_bridge import locate
 from dimos.web.relay_bridge.relay_process import RelayProcess
 
@@ -35,6 +37,8 @@ REQUIRED = (
     "relay/main.ts",
     "shared/protocol.ts",
     "cockpit/dist/index.html",
+    "sdk/deno.json",
+    "sdk/dist/sdk.js",
 )
 
 # First start in a fresh container downloads Deno plus the relay's jsr deps.
@@ -66,6 +70,13 @@ def main() -> None:
             index = resp.read()
         if index != (dist / "cockpit" / "dist" / "index.html").read_bytes():
             raise SystemExit("/ did not serve the packaged Cockpit index.html")
+        with urllib.request.urlopen(f"{base}/sdk.js", timeout=30) as resp:
+            sdk_js = resp.read()
+            acao = resp.headers.get("Access-Control-Allow-Origin")
+        if sdk_js != (dist / "sdk" / "dist" / "sdk.js").read_bytes():
+            raise SystemExit("/sdk.js did not serve the packaged SDK bundle")
+        if acao != "*":
+            raise SystemExit(f"/sdk.js missing the local CORS header (got {acao!r})")
     print("wheel smoke ok")
 
 

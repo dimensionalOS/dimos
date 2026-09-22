@@ -217,6 +217,8 @@ class TickLoop:
 
         with self._hardware_lock:
             for hw in self._hardware.values():
+                if not hw.ready_for_control():
+                    continue
                 try:
                     state = hw.read_state()
                     for joint_name, joint_state in state.items():
@@ -249,6 +251,8 @@ class TickLoop:
         with self._hardware_lock:
             for hw_id, hw in self._hardware.items():
                 if not isinstance(hw, ConnectedWholeBody):
+                    continue
+                if not hw.ready_for_control():
                     continue
                 read_imu = getattr(hw.adapter, "read_imu", None)
                 if not callable(read_imu):
@@ -405,11 +409,18 @@ class TickLoop:
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
     ) -> None:
         """Write commands to all hardware interfaces."""
+        hardware = self._hardware
         with self._hardware_lock:
             for hw_id, (positions, mode) in hw_commands.items():
-                if hw_id in self._hardware:
+                if hw_id in hardware:
+                    if not hardware[hw_id].ready_for_control():
+                        continue
                     try:
-                        self._hardware[hw_id].write_command(positions, mode)
+                        accepted = hardware[hw_id].write_command(positions, mode)
+                        if not accepted:
+                            logger.error(
+                                f"Hardware {hw_id} rejected {mode.name} command from control task"
+                            )
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
 

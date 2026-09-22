@@ -43,7 +43,10 @@ OPTIONAL_VENDOR_MODULES = {
 }
 
 # Subpackages containing an adapter.py that intentionally register nothing.
-UNREGISTERED_ADAPTER_DIRS: set[str] = set()
+UNREGISTERED_ADAPTER_DIRS = {
+    # Abstract base used by concrete Damiao robot packages.
+    "dimos.hardware.whole_body.damiao",
+}
 
 # Every name each registry must declare. Removing a name from a manifest is a
 # conscious change: update this set in the same PR.
@@ -52,7 +55,6 @@ EXPECTED_NAMES = {
         "a750",
         "galaxea_a1z",
         "mock",
-        "openarm",
         "piper",
         "sim_mujoco",
         "xarm",
@@ -64,7 +66,15 @@ EXPECTED_NAMES = {
         "transport_ros",
         "unitree_go2",
     },
-    "whole_body": {"sim_mujoco_g1", "transport_lcm", "transport_ros"},
+    "whole_body": {
+        "dual_openyam_damiao",
+        "mock_whole_body",
+        "openarm_damiao",
+        "openyam_damiao",
+        "sim_mujoco_g1",
+        "transport_lcm",
+        "transport_ros",
+    },
 }
 
 FAMILIES = [
@@ -131,7 +141,7 @@ def test_every_sim_whole_body_module_is_declared() -> None:
     declared_modules = {path.split(":", 1)[0] for path in manifest.ADAPTER_FACTORIES.values()}
     for root in pkg.__path__:
         for mod_file in sorted(Path(root).glob("*.py")):
-            if mod_file.name.startswith(("_", ".")):
+            if mod_file.name.startswith(("_", ".", "test_")):
                 continue
             mod_name = f"dimos.simulation.adapters.whole_body.{mod_file.stem}"
             assert mod_name in declared_modules, (

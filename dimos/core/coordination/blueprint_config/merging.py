@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import difflib
+import json
 from typing import Any
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
@@ -98,7 +99,19 @@ def merge_environment(
     def set_coerced(path: tuple[str, ...], raw_name: str, value: str) -> None:
         identity = _environment_identity(path)
         target = targets.get(identity) if identity is not None else None
-        coerced = value if target is None else coerce_environment_value(value, target, raw_name)
+        if target is not None:
+            coerced = coerce_environment_value(value, target, raw_name)
+        elif value.lstrip().startswith(("[", "{")):
+            # A leaf the schema does not enumerate (inside a dataclass field) still
+            # takes a sequence or object as JSON.
+            try:
+                coerced = json.loads(value)
+            except json.JSONDecodeError as error:
+                raise BlueprintConfigError(
+                    f"Environment variable {raw_name} contains invalid JSON: {error.msg}."
+                ) from error
+        else:
+            coerced = value
         deep_set(env_source, path, coerced)
 
     for raw_name, value in environ.items():

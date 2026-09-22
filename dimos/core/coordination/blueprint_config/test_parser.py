@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -53,6 +54,21 @@ class SecondaryModule(Module):
     config: SecondaryConfig
 
 
+@dataclass(frozen=True)
+class Body:
+    length: float
+    max_speed: float
+    rows: tuple[tuple[float, float], ...]
+
+
+class BodyConfig(ModuleConfig):
+    body: Body = Body(length=1.0, max_speed=0.5, rows=((1.0, 2.0),))
+
+
+class BodyModule(Module):
+    config: BodyConfig
+
+
 class ProviderConfig(BaseModel):
     api_key: str
     retries: int = 1
@@ -66,6 +82,28 @@ class ConfigurableTransport(Transport[bytes]):
 
     def subscribe(self, callback: Any, selfstream: Stream[bytes] | None = None) -> Any:
         return lambda: None
+
+
+def test_sparse_dataclass_override_completes_from_the_default() -> None:
+    parsed = BlueprintConfigParser(BodyModule.blueprint()).parse(
+        [], environ={"BODYMODULE__BODY__MAX_SPEED": "0.6"}
+    )
+
+    body = parsed.module_kwargs("bodymodule")["body"]
+    assert body == {"length": 1.0, "max_speed": 0.6, "rows": ((1.0, 2.0),)}
+
+    # A blueprint-pinned body is what gets overlaid, not the class default, and a
+    # sequence leaf takes JSON.
+    pinned = BodyModule.blueprint(body=Body(length=2.0, max_speed=0.4, rows=()))
+    parsed = BlueprintConfigParser(pinned).parse(
+        [], environ={"BODYMODULE__BODY__MAX_SPEED": "0.6", "BODYMODULE__BODY__ROWS": "[[3, 4]]"}
+    )
+
+    assert parsed.module_kwargs("bodymodule")["body"] == {
+        "length": 2.0,
+        "max_speed": 0.6,
+        "rows": ((3.0, 4.0),),
+    }
 
 
 def test_parse_supports_value_forms_types_nested_defaults_and_last_wins() -> None:
@@ -152,11 +190,17 @@ def test_global_short_name_is_reserved_when_module_field_collides() -> None:
             "module-value",
             "--replay=false",
             "--no-obstacle-avoidance",
+            "--record",
+            "sqlite",
+            "--record-topics",
+            "lidar,odom",
         ],
         environ={},
     )
 
     assert parsed.global_config_values()["robot_ip"] == "192.0.2.10"
+    assert parsed.global_config_values()["record"] == "sqlite"
+    assert parsed.global_config_values()["record_topics"] == "lidar,odom"
     assert parsed.global_config_values()["replay"] is False
     assert parsed.global_config_values()["obstacle_avoidance"] is False
     assert parsed.module_kwargs("collisionmodule") == {"robot_ip": "module-value"}

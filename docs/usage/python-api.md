@@ -1,11 +1,9 @@
----
-title: "Python API"
----
+# Python API
 
 The `Dimos` class is the main entry point for using dimOS from Python. There are two modes:
 
-1. **Local** — `Dimos()` creates and runs modules in the current process.
-2. **Remote** — `Dimos.connect()` connects to an already-running instance.
+1. **Local**: `Dimos()` creates and runs modules in the current process.
+2. **Remote**: `Dimos.connect()` connects to an already-running instance.
 
 ## Local mode
 
@@ -20,7 +18,7 @@ app = Dimos(n_workers=8)
 app.run("unitree-go2-agentic")
 
 # Call skills.
-app.skills.relative_move(forward=2.0)
+app.skills.move_to(x=2.0, relative=True)
 
 # List all available skills.
 print(app.skills)
@@ -51,9 +49,37 @@ app.GO2Connection.move(Twist(linear=(0, 0, 0), angular=(0, 0, -1)), duration=0.0
 app.GO2Connection.move(Twist(linear=(1, 0, 0), angular=(0, 0, 0)), duration=0.05)
 ```
 
+## Manipulation SDK
+
+See the [manipulation Python guide](/docs/capabilities/manipulation/python_api.md)
+for arm control from scripts or `dimos shell`, including setup, motion, and
+failure handling.
+
 ## Discovering modules and RPCs
 
 Discovery works in both local and remote mode:
+
+For a typed capability, pass a Spec Protocol to `app.find_module_by_spec()`. dimOS matches
+advertised RPC names and method signatures, using the same compliance checks as
+blueprint Spec injection:
+
+```python skip
+from typing import Protocol
+
+from dimos.spec.utils import Spec
+
+class PingSpec(Spec, Protocol):
+    def ping(self) -> str: ...
+
+ping = app.find_module_by_spec(PingSpec)
+print(ping.ping())
+```
+
+Exactly one deployed module must match. If several match, select one with
+`app.find_module_by_spec(PingSpec, instance_name="robot0/ping")`. No match raises
+`LookupError`; ambiguity raises `ValueError`. The deployed module class must be
+importable in the client to inspect its signatures. Spec lookup returns the same
+proxy as name lookup and does not change connection ownership.
 
 ```python skip
 # Live structured records for exact deployed instances.
@@ -132,7 +158,7 @@ app = Dimos.connect()
 # Everything works the same as local mode
 print(app)                     # <Dimos(remote=True, modules=[...])>
 print(app.skills)              # list all skills
-app.skills.relative_move(forward=2.0)
+app.skills.move_to(x=2.0, relative=True)
 app.stop()  # closes the connection (does NOT stop the remote process)
 ```
 
@@ -181,10 +207,10 @@ Hot-restart (`app.restart(MyModule)`) reloads the module's source, so the body o
 - Adding or removing module-ref / Spec declarations (`_thing: SomeSpec`).
 - Changing the blueprint's set of modules.
 
-If you find yourself needing data from an existing module that isn't on its `Out` streams, the canonical fix is to add an `Out[T]` to that module and restart the daemon — don't spin up a parallel connection to the underlying hardware.
+If you find yourself needing data from an existing module that isn't on its `Out` streams, the canonical fix is to add an `Out[T]` to that module and restart the daemon. Don't spin up a parallel connection to the underlying hardware.
 
 ### Operational gotchas
 
 - `--daemon` does not detach right away. Background it with `&` or `nohup` if you want the terminal back.
-- `dimos stop` reads its target from a registry under `$XDG_STATE_HOME/dimos/runs`. If the registry file is removed but the process is alive, `dimos stop` won't see it — kill the PID directly (find it with `ps aux | grep "dimos.*--daemon"`).
-- `load_blueprint` over LCM has a 120s RPC timeout. If it raises `TimeoutError` after that long, the module may still have been deployed and started — check the daemon log for the `Deployed module` entry before assuming failure.
+- `dimos stop` reads its target from a registry under `$XDG_STATE_HOME/dimos/runs`. If the registry file is removed but the process is alive, `dimos stop` won't see it. Kill the PID directly (find it with `ps aux | grep "dimos.*--daemon"`).
+- `load_blueprint` over LCM has a 120s RPC timeout. If it raises `TimeoutError` after that long, the module may still have been deployed and started. Check the daemon log for the `Deployed module` entry before assuming failure.

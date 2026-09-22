@@ -19,6 +19,7 @@ from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
+from dimos.agents.skills.visual_servoing.query import get_object_bbox_from_image
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
@@ -28,8 +29,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
-from dimos.navigation.navigation_spec import NavigationInterfaceSpec
-from dimos.navigation.visual.query import get_object_bbox_from_image
+from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
 from dimos.perception.experimental.object_tracking_spec import ObjectTrackingSpec
 from dimos.perception.experimental.spatial_memory_spec import SpatialMemorySpec
 from dimos.types.robot_location import RobotLocation
@@ -114,8 +114,8 @@ class NavigationSkillContainer(Module):
     # TODO(capabilities): this skill is `instant`, so the `movement` hold is
     # released the moment the call returns even though the tagged-location and
     # semantic-map paths only fire set_goal() and keep navigating. Make it
-    # `background` and close the hold when the robot actually stops -- the
-    # planner already emits a goal-reached signal (see PatrollingModule) -- so
+    # `background` and close the hold when the robot actually stops (the
+    # planner already emits a goal-reached signal, see PatrollingModule) so
     # patrol/follow/explore can't start over an active navigation goal.
     @skill(uses=[CAP_MOVEMENT])
     def navigate_with_text(self, query: str) -> str:

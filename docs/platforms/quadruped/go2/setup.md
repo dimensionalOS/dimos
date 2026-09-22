@@ -1,6 +1,6 @@
-# Unitree Go2 — Setup
+# Unitree Go2 Setup
 
-Full autonomous navigation, mapping, and agentic control on a real Go2 — no ROS required.
+Full autonomous navigation, mapping, and agentic control on a real Go2. No ROS required.
 
 ## Requirements
 
@@ -10,17 +10,10 @@ Full autonomous navigation, mapping, and agentic control on a real Go2 — no RO
 
 ## Install
 
-First, install system dependencies for your platform:
-- [Ubuntu](/docs/installation/ubuntu.md)
-- [macOS](/docs/installation/osx.md)
-- [Nix](/docs/installation/nix.md)
-
-Then install dimOS:
+Use the [official installer](/docs/installation/index.md), then follow its environment activation command:
 
 ```bash
-uv venv --python "3.12"
-source .venv/bin/activate
-uv pip install 'dimos[base,unitree]'
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
 ## Run on Your Go2
@@ -29,7 +22,7 @@ uv pip install 'dimos[base,unitree]'
 
 Use `dimos go2tool` to provision wifi and find the robot's IP. Skip if the robot is already on your network and you know its IP.
 
-1. Power on the Go2 — it advertises over BLE immediately.
+1. Power on the Go2. It advertises over BLE immediately.
 
 2. Provision wifi (one-time per network):
 
@@ -81,7 +74,7 @@ That's it. dimOS connects via WebRTC (no jailbreak required), starts the full na
 
 | Module | What It Does |
 |--------|-------------|
-| **GO2Connection** | WebRTC connection to the robot — streams LiDAR, video, odometry |
+| **GO2Connection** | WebRTC connection to the robot. Streams LiDAR, video, odometry |
 | **VoxelGridMapper** | Builds a 3D voxel map using column-carving (CUDA accelerated) |
 | **CostMapper** | Converts 3D map → 2D costmap via terrain slope analysis |
 | **ReplanningAStarPlanner** | Continuous A* path planning with dynamic replanning |
@@ -113,4 +106,4 @@ humancli
 > explore the space
 ```
 
-The agent subscribes to camera, LiDAR, and spatial memory streams — it sees what the robot sees.
+The agent subscribes to camera, LiDAR, and spatial memory streams. It sees what the robot sees.

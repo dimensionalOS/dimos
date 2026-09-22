@@ -16,6 +16,9 @@
 
 from contextlib import contextmanager
 from dataclasses import replace
+from itertools import pairwise
+import math
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -26,10 +29,19 @@ pytest.importorskip("roboplan.toppra")
 
 from dimos.manipulation.planning.groups.models import (
     PlanningGroup,
+    PlanningGroupDefinition,
     PlanningGroupSelection,
 )
+from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
 from dimos.manipulation.planning.spec.models import PlanningResult
+from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.trajectory_generator.config import (
     RoboPlanTOPPRAParametrizationConfig,
 )
@@ -42,6 +54,7 @@ from dimos.manipulation.planning.trajectory_generator.roboplan_toppra_parametriz
 from dimos.manipulation.planning.world.roboplan_model import RoboPlanGroup, RoboPlanModel
 from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 pytestmark = pytest.mark.self_hosted
 
@@ -59,6 +72,10 @@ class _Scene:
         maximum = np.finfo(np.float64).max if self.unbounded_acceleration else 4.0
         return np.asarray([-6.0, -maximum]), np.asarray([6.0, maximum])
 
+    def getJointGroupInfo(self, group_name: str) -> SimpleNamespace:
+        assert group_name == "composite"
+        return SimpleNamespace(has_continuous_dofs=False)
+
 
 class _World(RoboPlanWorld):
     def __init__(self, model: RoboPlanModel) -> None:
@@ -68,10 +85,36 @@ class _World(RoboPlanWorld):
     def parametrization_model(self):
         yield self.model
 
+    def get_prepared_model(self):
+        return SimpleNamespace(
+            joint_space=JointSpace(
+                (
+                    JointCoordinate(
+                        name="left/a",
+                        mechanism_type="revolute",
+                        topology=CoordinateTopology.INTERVAL,
+                        lower=-1.0,
+                        upper=1.0,
+                        max_velocity=2.0,
+                        max_acceleration=6.0,
+                    ),
+                    JointCoordinate(
+                        name="right/b",
+                        mechanism_type="revolute",
+                        topology=CoordinateTopology.INTERVAL,
+                        lower=-1.0,
+                        upper=1.0,
+                        max_velocity=1.0,
+                        max_acceleration=4.0,
+                    ),
+                )
+            )
+        )
+
 
 def _model(*, unbounded_acceleration: bool = False) -> RoboPlanModel:
     group = RoboPlanGroup(
-        group_ids=("left/arm", "right/arm"),
+        group_ids=("left_arm", "right_arm"),
         name="composite",
         native_names=("native_b", "native_a"),
         public_names=("right/b", "left/a"),
@@ -79,9 +122,6 @@ def _model(*, unbounded_acceleration: bool = False) -> RoboPlanModel:
     return RoboPlanModel(
         scene=_Scene(unbounded_acceleration=unbounded_acceleration),
         groups={frozenset(group.group_ids): group},
-        legacy_group_ids={},
-        native_joint_by_global={},
-        native_link_by_robot={},
         all_group=group,
     )
 
@@ -95,19 +135,13 @@ def _selection_and_result(
     }
     groups_by_name = {
         "left/a": PlanningGroup(
-            id="left/arm",
-            robot_name="left",
-            group_name="arm",
+            id="left_arm",
             joint_names=("left/a",),
-            local_joint_names=("a",),
             base_link="base",
         ),
         "right/b": PlanningGroup(
-            id="right/arm",
-            robot_name="right",
-            group_name="arm",
+            id="right_arm",
             joint_names=("right/b",),
-            local_joint_names=("b",),
             base_link="base",
         ),
     }
@@ -248,6 +282,49 @@ def test_cached_group_preserves_each_request_joint_order(
     assert reversed_order.trajectory.joint_names == ["right/b", "left/a"]
 
 
+def test_roboplan_toppra_parametrizes_unbounded_planar_base(tmp_path: Path) -> None:
+    model_path = tmp_path / "planar-base.urdf"
+    model_path.write_text('<robot name="planar-base" version="1.2"><link name="body"/></robot>')
+    planar_base = PlanarBaseDefinition(
+        velocity_limits=(1.0, 1.0, 2.0),
+        acceleration_limits=(2.0, 2.0, 4.0),
+    )
+    config = RobotModelConfig(
+        model=RobotModel.from_file(model_path).with_planar_base(planar_base),
+        joint_names=list(planar_base.joint_names),
+        base_link=planar_base.root_link,
+        planning_groups=[
+            PlanningGroupDefinition(
+                "moving_base",
+                planar_base.joint_names,
+                planar_base.root_link,
+            )
+        ],
+    )
+    world = RoboPlanWorld()
+    world.load_model(prepare_robot_model(config))
+    world.finalize()
+    selection = PlanningGroupRegistry(config.planning_groups).select(("moving_base",))
+    start = [0.0, 0.0, math.pi - 0.1]
+    goal = [6.0, -6.0, math.pi + 0.1]
+    result = PlanningResult(
+        status=PlanningStatus.SUCCESS,
+        path=[
+            JointState(name=list(selection.joint_names), position=start),
+            JointState(name=list(selection.joint_names), position=goal),
+        ],
+    )
+
+    plan = RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig()).materialize_plan(
+        world, selection, result
+    )
+
+    positions = [point.positions for point in plan.trajectory.points]
+    assert positions[0] == pytest.approx(start)
+    assert positions[-1] == pytest.approx(goal)
+    assert max(abs(current[2] - previous[2]) for previous, current in pairwise(positions)) < math.pi
+
+
 def test_roboplan_parametrizer_rejects_incompatible_world(
     mocker: MockerFixture,
 ) -> None:
@@ -268,7 +345,7 @@ def test_roboplan_parametrizer_reports_missing_generated_group() -> None:
 
     with pytest.raises(
         TrajectoryParametrizationError,
-        match=r"RoboPlan has no generated group for \['left/arm', 'right/arm'\]",
+        match=r"RoboPlan has no generated group for \['left_arm', 'right_arm'\]",
     ):
         RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig()).materialize_plan(
             _World(model), selection, result

@@ -1,9 +1,9 @@
----
-title: "Manipulation"
----
+# Manipulation
 
 Motion planning and teleoperation for robotic manipulators. RoboPlan provides
 the default world and native path planner.
+
+For typed client RPCs, see [Manipulation from Python](/docs/capabilities/manipulation/python_api.md).
 
 ## Quick Start
 
@@ -15,15 +15,31 @@ dimos run keyboard-teleop-a750
 
 ### Keyboard Teleop (single command)
 
-Each blueprint launches the full stack — keyboard UI, mock controller, IK solver, and Drake visualization:
+Each blueprint launches the full stack: keyboard UI, mock controller, IK solver, and Drake visualization:
 
 ```bash
 dimos run keyboard-teleop-a750    # A-750 6-DOF
+dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
+dimos run r1pro-planar-preview # R1 Pro mobile bimanual planning preview + fake hardware
 dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
+dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
 ```
+
+OpenYAM is exposed as one whole-body device with six angular arm joints and a
+normalized gripper joint. `arm/gripper` uses `0.0` for fully closed and `1.0`
+for fully open; it does not use meters. Hardware activation calibrates both
+mechanical endpoints, so clear the gripper jaws and workspace before startup.
+The gripper has no default startup target and moves only after joint control has
+an explicit target.
+
+OpenArm follows the same whole-body model with both arms and both grippers in
+one device: fourteen angular joints (`left_arm/joint1..7`,
+`right_arm/joint1..7`) plus two normalized gripper joints (`left_arm/gripper`,
+`right_arm/gripper`). The keyboard jogs the left arm while the right arm holds
+its pose; keyboard gripper bindings are a follow-up.
 
 Open the Meshcat URL printed in the terminal (default `http://localhost:7000`) to see the robot.
 
@@ -58,26 +74,32 @@ dimos run xarm7-planner-coordinator \
   --kinematics.dt=0.02
 ```
 
-The same nested shorthand applies to blueprints that instantiate
-`PickAndPlaceModule`:
+The same nested shorthand applies to the `ManipulationModule` composed by
+pick-and-place blueprints:
 
 ```bash
 dimos run xarm-perception-sim \
   --kinematics.backend=pink
 ```
 
-Then use the IPython client:
+Then open an attached Python shell in a second terminal:
 
-```bash
-python -m dimos.manipulation.planning.examples.manipulation_client
+```bash skip
+dimos shell
 ```
+
+Import the SDK and reuse the shell's connected `app`:
 
 ```python skip
-joints()                # Get current joints
-plan([0.1] * 7)         # Plan to target
-preview()               # Preview in Meshcat
-execute()               # Execute via coordinator
+from dimos.manipulation.sdk import Arm
+
+arm = Arm.from_app(app)
+arm.joints()
+arm.pose()
 ```
+
+The [Python guide](/docs/capabilities/manipulation/python_api.md) walks through
+joint, pose, linear, and gripper commands.
 
 ### Planning backend selection
 
@@ -148,8 +170,8 @@ velocities bypasses path parametrization and retains its existing timing after
 canonical validation. TOPP-RA follows the collision-checked geometric path
 without corner blending; collision checking remains the planner's concern.
 Explicit configuration overrides the world-based default.
-RoboPlan model composition preserves authored acceleration limits and inserts a
-temporary global `2.0 rad/s²` fallback where they are absent. Formal per-joint
+RoboPlan model preparation preserves authored acceleration limits and inserts a
+temporary default `2.0 rad/s²` limit where they are absent. Formal per-joint
 acceleration overrides will replace this fallback.
 
 The Viser panel's **Next plan speed** slider provides runtime speed tuning from
@@ -186,11 +208,6 @@ from dimos.manipulation.planning.planners.roboplan_config import (
 )
 
 path_config = RoboPlanCartesianPathConfig()
-
-module.plan_cartesian_targets(
-    {"arm/manipulator": (current_tcp_pose, goal_tcp_pose)},
-    path_config,
-)
 ```
 
 The default `time_optimal` mode returns the TOPP-RA trajectory constrained by
@@ -224,8 +241,8 @@ handling. RoboPlan 0.6 removed the former `limit_ratio_tolerance` and
 `max_attempts_per_step` settings.
 
 Cartesian path planning remains a low-level internal capability in this
-release. `ManipulationModule.plan_cartesian_targets()` accepts an ordered
-waypoint sequence for each target planning group. A sequence contains only
+release. The internal generator accepts an ordered waypoint sequence for each
+target planning group. A sequence contains only
 `PoseStamped` absolute waypoints or only `Transform` displacements relative to
 the planning start, and begins at the current TCP pose or identity transform.
 RoboPlan plans all target groups simultaneously. The Viser panel constructs a
@@ -235,8 +252,8 @@ tool, or CLI motion command yet.
 ### Cartesian control IK
 
 Cartesian, keyboard EEF-twist, and engagement-relative teleop IK tasks use the
-direct URDF/Xacro model from `RobotModelConfig`. The configuration supplies
-package paths, Xacro arguments, the named end-effector frame, and
+portable `RobotModel` from `RobotModelConfig`. The model owns source loading,
+package paths, and Xacro arguments; the configuration supplies the named end-effector frame and
 coordinator-to-model joint mapping. Invalid models, frames, or mappings fail at
 startup; teleop configuration does not use a separate model path or numeric
 end-effector joint ID.
@@ -271,15 +288,37 @@ after clear.
 Validate Cartesian, twist, and teleop behavior in simulation or replay before
 hardware use.
 
-Install the manipulation dependencies:
+Start with the [official installer](/docs/installation/index.md); its default extras include manipulation. To add manipulation to an existing developer environment:
 
 ```bash
 uv sync --extra manipulation --inexact
 ```
 
-The `manipulation` extra includes RoboPlan via `roboplan` from PyPI.
-The `--inexact` flag preserves other extras already installed in your current
-environment.
+The `manipulation` extra bundles control, planning, perception (including
+EdgeTAM), agents/MCP, web interfaces, visualization, and MuJoCo simulation.
+It includes RoboPlan via `roboplan` from PyPI. No previously installed extras
+are needed.
+
+| Extra | Use it for |
+|-------|------------|
+| `control` | Coordinators, arm SDKs, Cartesian IK, and keyboard input |
+| `planning` | Control plus RoboPlan/Drake planning and Viser visualization |
+| `manipulation` | Planning plus perception, agents, web, and simulation |
+
+For a smaller installation, use `uv sync --extra planning --inexact` or
+`uv sync --extra control --inexact`. Add `--no-default-groups` to omit contributor test
+dependencies. For a new library installation, pass `--mode library --extras manipulation` to the official installer.
+The `--inexact` flag preserves additional packages already installed in your
+environment. The bundle supplies its own dependencies without requiring `misc`.
+Embedding models and unrelated utilities remain available through `misc`.
+
+Python extras do not install native RealSense binaries, vendor SDK setup,
+system libraries, or robot/model assets. Follow the hardware-specific setup
+instructions. Agentic blueprints require provider credentials; the default
+EdgeTAM backend requires CUDA or MPS. The bundle includes CPU ONNX inference;
+specialized CUDA backends, dataset export (`learning`), and DDS remain
+separate extras. GraspGenX prepares its own isolated Python environment on first use. Linux x86_64 is the primary supported bundle platform; backend
+and hardware wheel availability still limits macOS and ARM installations.
 
 Safety behavior for unsupported RoboPlan features:
 
@@ -314,6 +353,15 @@ uv run dimos run xarm7-planner-coordinator \
   --visualization.backend=viser
 ```
 
+Viser binds to `127.0.0.1` by default. To expose it on the network, opt in
+explicitly with the nested host override:
+
+```bash
+uv run dimos run xarm7-planner-coordinator \
+  -o manipulationmodule.visualization.backend=viser \
+  -o manipulationmodule.visualization.host=0.0.0.0
+```
+
 Blueprint example:
 
 ```python skip
@@ -321,7 +369,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule, Manipulat
 
 manipulation = ManipulationModule.blueprint(
     config=ManipulationModuleConfig(
-        robots=[...],
+        model=robot_model,
         visualization={
             "backend": "viser",
             "host": "127.0.0.1",
@@ -361,27 +409,26 @@ failure leaves the plan unavailable. Preview and execution use RoboPlan's
 original synchronized timestamps and velocities.
 
 External manipulation visualizers are initialized from a backend-neutral
-`VisualizationSession` after the planning world has added its robots. The
-session contains static `PlanningSceneInfo` metadata: world robot IDs,
-`RobotModelConfig` values, and resolved planning groups. Runtime joint state is
+`VisualizationSession` after the planning world has loaded its model. The
+session contains static `PlanningSceneInfo` metadata: the `RobotModelConfig`
+and resolved planning groups. Runtime joint state is
 then pushed through `VisualizationStateFrame` updates so renderers do not poll
 world/module state or own freshness policy. Embedded Meshcat visualization does
 not need extra setup because it observes the Drake world directly.
 
 Previews use the stored synchronized `JointTrajectory` from the generated plan.
-Viser projects the globally named trajectory into robot-local preview ghosts and
-plays the stored timestamped points directly; optional preview duration only
-scales the stored delays. Execution projects that same accepted trajectory into
-each robot's local joint order while preserving timestamps and velocities; it
-does not regenerate or retime it. Execute freshness is enforced by the
+Viser plays the stored canonical trajectory directly; optional preview duration
+only scales the stored delays. Execution forwards that same accepted trajectory
+with unchanged joint names, ordering, timestamps, and velocities; it does not
+regenerate or retime it. Execute freshness is enforced by the
 manipulation module/operator immediately before dispatch, not by Viser-side
 telemetry snapshots.
 
 ### Perception + Agent
 
 ```bash
-# Coordinator + perception + manipulation + LLM agent (single command)
-XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
+# Arm + camera + manipulation + LLM agent (single command)
+dimos run xarm-grasp-agent --xarm7-ip <ip>
 ```
 
 For a simulation walkthrough, see [Agentic xArm simulation](/docs/capabilities/manipulation/agentic.md).
@@ -398,9 +445,33 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
                           JointState ────────────→ (visualization)
 ```
 
-- **KeyboardTeleopModule** — Pygame UI publishing routed spatial EEF twist intent
-- **ControlCoordinator** — 100Hz control loop with mock or real hardware adapters
-- **ManipulationModule** — world backend, optional visualization, RRT motion planning, obstacle management
+- **KeyboardTeleopModule**: Pygame UI publishing routed spatial EEF twist intent
+- **ControlCoordinator**: 100Hz control loop with mock or real hardware adapters
+- **ManipulationModule**: world backend, optional visualization, RRT motion planning, obstacle management
+
+### Streaming pose-target control
+
+`CartesianIKTask` and `TeleopIKTask` are sibling leaves over the shared
+`PoseTargetIKTask` control core. Their configuration uses a `RobotModelConfig`,
+explicit controlled `joint_names`, and named target frames. The common core
+warm-starts one bounded Pink update from live coordinator joint state on each
+tick; it does not require a planning world or expose planning groups to the
+coordinator.
+
+Cartesian IK accepts one absolute robot-frame target. Teleoperation IK accepts one or
+two controller-to-frame bindings and owns engagement, reference capture,
+relative target mapping, and optional per-hand gripper commands. The
+coordinator only routes the distinct left/right pose streams by task name and
+arbitrates the resulting joint command.
+
+### Robot-specific Pink task stacks
+
+For robot-specific control feel, subclass `PinkPoseTargetSolver`, override its
+task-construction hooks, and pass the class through `solver_type`. The
+coordinator constructs a fresh stateful solver for every control task. See
+[Pink IK Configuration and Tuning](/docs/capabilities/manipulation/pink_ik_tuning.md)
+for the supported hooks, objective tuning, command bounds, and hardware test
+order.
 
 Internally, planning code depends on `WorldSpec` for world, collision, and
 kinematics behavior. Meshcat preview and publishing are exposed separately
@@ -428,8 +499,9 @@ planner is locked for its whole native call.
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
 | `dual-xarm6-planner-coordinator` | Dual XArm6 planning with mock coordinator hardware |
-| `xarm-perception` | XArm7 + RealSense camera for perception |
-| `xarm-perception-agent` | XArm7 perception + LLM agent |
+| `r1pro-planar-preview` | R1 Pro planar-base, torso, and bimanual planning preview with fake hardware |
+| [`xarm-grasp`](/docs/capabilities/manipulation/xarm-grasp.md) | XArm7 grasping stack, on hardware or in MuJoCo |
+| `xarm-grasp-agent` | The grasping stack + LLM agent |
 | `xarm-perception-sim` | XArm7 simulation perception stack |
 | [`xarm-perception-sim-agent`](/docs/capabilities/manipulation/agentic.md) | XArm7 simulation perception stack + LLM agent |
 
@@ -437,10 +509,10 @@ planner is locked for its whole native call.
 
 | Robot | DOF | Teleop | Planning | Perception |
 |-------|-----|--------|----------|------------|
-| [A-750](/docs/capabilities/manipulation/a750.md) | 6 | Y | Y | — |
-| [Galaxea A1Z](/docs/capabilities/manipulation/a1z.md) | 6 | Y | Y | — |
-| Piper | 6 | Y | Y | — |
-| XArm6 | 6 | Y | Y | — |
+| [A-750](/docs/capabilities/manipulation/a750.md) | 6 | Y | Y | N |
+| [Galaxea A1Z](/docs/capabilities/manipulation/a1z.md) | 6 | Y | Y | N |
+| Piper | 6 | Y | Y | N |
+| XArm6 | 6 | Y | Y | N |
 | XArm7 | 7 | Y | Y | Y |
 
 ## Adding a Custom Arm
@@ -458,7 +530,7 @@ planner is locked for its whole native call.
 | [`robot/manipulators/piper/blueprints/basic.py`](/dimos/robot/manipulators/piper/blueprints/basic.py) | Piper coordinator blueprint |
 | [`robot/manipulators/piper/blueprints/teleop.py`](/dimos/robot/manipulators/piper/blueprints/teleop.py) | Piper teleop blueprints |
 | [`robot/manipulators/xarm/blueprints/basic.py`](/dimos/robot/manipulators/xarm/blueprints/basic.py) | XArm coordinator and planner blueprints |
-| [`robot/manipulators/xarm/blueprints/perception.py`](/dimos/robot/manipulators/xarm/blueprints/perception.py) | XArm perception blueprint |
+| [`robot/manipulators/xarm/blueprints/grasp.py`](/dimos/robot/manipulators/xarm/blueprints/grasp.py) | XArm grasping blueprints, hardware or MuJoCo |
 | [`teleop/keyboard/keyboard_teleop_module.py`](/dimos/teleop/keyboard/keyboard_teleop_module.py) | Keyboard teleop module |
 | [`planning/world/drake_world.py`](/dimos/manipulation/planning/world/drake_world.py) | Drake physics backend |
 | [`planning/world/roboplan_world.py`](/dimos/manipulation/planning/world/roboplan_world.py) | RoboPlan scene, state, and collision backend |

@@ -1,7 +1,4 @@
----
-title: "Piper Integration"
-description: "Connect and run a Piper arm with dimOS manipulation and teleoperation blueprints."
----
+# Piper Integration
 
 ## Optional SLCAN setup
 
@@ -21,20 +18,20 @@ Piper uses SocketCAN at 1,000,000 bit/s. For the default vendor setup, use
 the dimOS CLI to configure an existing CAN interface and bring it up:
 
 ```bash
-dimos piper can-activate can0
+dimos hardware can setup can0
 ```
 
 For a non-default bitrate, pass `--bitrate` explicitly:
 
 ```bash
-dimos piper can-activate can0 --bitrate 500000
+dimos hardware can setup can0 --bitrate 500000
 ```
 
-The command asks for confirmation before requesting sudo. Verify the interface
-before starting a blueprint:
+The command prints each privileged operation before requesting sudo. Verify the
+interface before starting a blueprint:
 
 ```bash
-ip link show can0
+dimos hardware can status can0
 ```
 
 ## Run a Piper blueprint
@@ -51,10 +48,10 @@ For keyboard Cartesian teleoperation, use:
 dimos --can-port can0 run keyboard-teleop-piper
 ```
 
-The Quest teleoperation composition is available as:
+The WebXR teleoperation composition is available as:
 
 ```bash
-dimos --can-port can0 run teleop-quest-piper
+dimos --can-port can0 run teleop-webxr-piper
 ```
 
 Note that ommitting the `--can-port` argument will fallback the control coordinator to use fake hardware adapter. This is good for testing.

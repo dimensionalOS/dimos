@@ -18,7 +18,6 @@ from collections.abc import Callable
 import sys
 from typing import TypedDict
 
-from IPython import start_ipython
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
@@ -168,6 +167,10 @@ def shell() -> None:
     except RuntimeError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
+
+    # Import here, not at the top: IPython pulls ~1700 modules (~1.3s) and must
+    # load only when the shell actually opens, not on every CLI startup.
+    from IPython import start_ipython
 
     try:
         _print_shell_banner()

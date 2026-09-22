@@ -31,6 +31,7 @@ recursive-include dimos/web/dimos_interface/api *.py *.html
 graft web
 prune web/node_modules
 prune web/cockpit/node_modules
+prune web/sdk/node_modules
 
 # Exclude development files
 exclude .gitignore

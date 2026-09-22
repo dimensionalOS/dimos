@@ -1,0 +1,717 @@
+/* Dimensional docs theme.
+ *
+ * The palette comes from the mintlify config the site used to run on
+ * (docs.json: primary #1682a3, appearance dark), and dark is the only
+ * scheme, so there is no light variant to keep in step. The layout
+ * work is all about the middle column: material caps content at 61rem, which
+ * leaves a thin ribbon of text on a wide screen. */
+
+:root {
+  --dim-brand: #1682a3;
+  --dim-brand-bright: #3ba3c4;
+  --dim-brand-deep: #0f6480;
+
+  --md-primary-fg-color: var(--dim-brand);
+  --md-primary-fg-color--light: var(--dim-brand-bright);
+  --md-primary-fg-color--dark: var(--dim-brand-deep);
+  --md-accent-fg-color: var(--dim-brand-bright);
+
+  /* Rounding and hairlines, applied consistently to every raised surface. */
+  --dim-radius: 0.75rem;
+  --dim-radius-sm: 0.375rem;
+  --dim-radius-lg: 1rem;
+  --dim-radius-pill: 9999px;
+  --dim-hairline: color-mix(in srgb, var(--md-default-fg-color) 12%, transparent);
+  --dim-nav-title: #ffffff;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: var(--dim-brand);
+  --md-accent-fg-color: var(--dim-brand-bright);
+  --md-typeset-a-color: var(--dim-brand-bright);
+
+  /* Cooler, deeper ground than material's default slate. */
+  --md-default-bg-color: #0d1117;
+  --md-default-bg-color--light: #11161f;
+  --md-code-bg-color: #131923;
+  --md-footer-bg-color: #0a0e14;
+  --md-footer-bg-color--dark: #080b10;
+}
+
+/* ---------------------------------------------------------------- layout */
+
+/* Let the page breathe on a wide screen, but stop short of a line length
+ * nobody can track back from. Sidebars are fixed, so the middle column takes
+ * every pixel this cap frees up. */
+.md-grid {
+  max-width: min(84rem, 100%);
+}
+
+/* Reading measure only applies to prose. Code, tables, and figures keep the
+ * full column, which is the point of widening it. */
+.md-typeset > p,
+.md-typeset > ul,
+.md-typeset > ol,
+.md-typeset > blockquote {
+  max-width: 52rem;
+}
+
+/* A little more room for the nav tree; deep paths like
+ * usage/sensor_streams/temporal_alignment stop wrapping. */
+@media screen and (min-width: 76.25em) {
+  .md-sidebar--primary {
+    width: 13.5rem;
+  }
+  .md-sidebar--secondary {
+    width: 12rem;
+  }
+}
+
+/* Below 1220px material drops the table of contents entirely; give the
+ * content the space that frees up rather than keeping the old gutters. */
+@media screen and (max-width: 76.1875em) {
+  .md-content {
+    margin-right: 0;
+  }
+}
+
+.md-sidebar__scrollwrap {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--md-default-fg-color) 15%, transparent) transparent;
+}
+
+.md-sidebar__scrollwrap:hover,
+.md-sidebar__scrollwrap:focus-within {
+  scrollbar-color: color-mix(in srgb, var(--md-default-fg-color) 28%, transparent) transparent;
+}
+
+/* ----------------------------------------------------------- typography */
+
+.md-typeset {
+  font-size: 0.78rem;
+  line-height: 1.7;
+}
+
+.md-typeset h1 {
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset h2 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-top: 2.2em;
+  padding-top: 0.6em;
+  border-top: 1px solid var(--dim-hairline);
+}
+
+.md-typeset h3,
+.md-typeset h4 {
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+/* ---------------------------------------------------------------- chrome */
+
+.md-header {
+  border-bottom: 1px solid var(--dim-hairline);
+  box-shadow: none;
+  backdrop-filter: blur(8px);
+  background-color: color-mix(in srgb, var(--md-default-bg-color) 85%, transparent);
+  color: var(--md-default-fg-color);
+}
+
+.md-header__title {
+  font-weight: 600;
+}
+
+/* The wordmark already says Dimensional; material printing the site name
+ * next to it reads as a stutter. The current page title still slides in
+ * on scroll. */
+.md-header__topic:first-child {
+  display: none;
+}
+
+/* The wordmark is pixel art; scale it crisp instead of smoothed. */
+.md-header__button.md-logo img {
+  image-rendering: pixelated;
+}
+
+.md-tabs {
+  background-color: transparent;
+  border-bottom: 1px solid var(--dim-hairline);
+}
+
+.md-search__form {
+  border-radius: var(--dim-radius-sm);
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 7%, transparent);
+}
+
+.md-search__form:hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 11%, transparent);
+}
+
+/* Material pins the sidebar title ("Dimensional") and paints an opaque
+ * page-coloured halo under it to mask rows scrolling past. The halo is
+ * invisible until a row has a background — the active pill — whose top it
+ * slices off. A downward-only fade plus a real gap masks the same scroll
+ * without painting over the first row. */
+nav.md-nav--primary > label.md-nav__title {
+  margin-bottom: 0.5rem;
+  box-shadow: 0 0.3rem 0.3rem -0.15rem var(--md-default-bg-color);
+}
+
+/* Section headings in the sidebar ("Getting Started", "Capabilities", ...).
+ * Material renders these at link size and link weight, which buries them in
+ * the list of pages underneath. They are the top level of the map: give them
+ * full-contrast colour and enough size to scan by. */
+.md-nav--primary .md-nav__item--section > .md-nav__link,
+.md-nav--primary .md-nav__item--section > label.md-nav__link,
+/* navigation.indexes folds a section's index page into the heading, which
+ * wraps the link in a container one level deeper. */
+.md-nav--primary .md-nav__item--section > .md-nav__container > .md-nav__link {
+  color: var(--dim-nav-title);
+  font-family: var(--md-code-font-family);
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  opacity: 1;
+}
+
+/* The table of contents heading matches. */
+.md-nav--secondary > .md-nav__title {
+  font-family: var(--md-code-font-family);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+/* A rule above each top-level section, so Platforms and Development read as
+ * separate parts of the map rather than one long list. */
+.md-nav--primary > .md-nav__list > .md-nav__item--section {
+  margin-top: 1.2em;
+  padding-top: 1.2em;
+  border-top: 1px solid var(--dim-hairline);
+}
+
+.md-nav--primary > .md-nav__list > .md-nav__item--section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.md-nav--primary .md-nav__item--section > .md-nav__container {
+  align-items: baseline;
+}
+
+/* Nested groups (Installation, Streams, Unitree Go2) sit a step down. */
+.md-nav--primary .md-nav__item--nested > .md-nav__link {
+  color: var(--md-default-fg-color);
+  font-weight: 600;
+}
+
+.md-nav--primary .md-nav__title {
+  color: var(--dim-nav-title);
+  font-family: var(--md-code-font-family);
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.md-nav__link--active,
+.md-nav__link:focus,
+.md-nav__link:hover {
+  color: var(--md-accent-fg-color);
+}
+
+.md-nav__item .md-nav__link--active {
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------- raised surfaces */
+
+.md-typeset pre > code,
+.md-typeset .highlight,
+.md-typeset .highlighttable {
+  border-radius: var(--dim-radius);
+}
+
+.md-typeset .highlight {
+  border: 1px solid var(--dim-hairline);
+  overflow: hidden;
+}
+
+.md-typeset code {
+  border-radius: var(--dim-radius-sm);
+  font-size: 0.85em;
+}
+
+.md-typeset :is(.admonition, details) {
+  border: 1px solid var(--dim-hairline);
+  border-left-width: 3px;
+  border-radius: var(--dim-radius);
+  box-shadow: none;
+  font-size: 0.76rem;
+}
+
+/* Material's js wraps every table in .md-typeset__table for scrolling, and on
+ * screen that wrapper is inline-block: a shrink-to-fit box, so width: 100% on
+ * the table inside resolves against its content rather than the page. Making
+ * the wrapper a full-width block is what actually lets a table span. The
+ * scrollwrap around it keeps overflow-x, so wide tables still scroll. */
+.md-typeset__table {
+  display: block;
+  width: 100%;
+}
+
+/* Material lets a table shrink to its content, which strands a three-column
+ * table against the left edge of a wide page. Docs tables read better spanning
+ * the column they sit in. */
+.md-typeset table:not([class]) {
+  border: 1px solid var(--dim-hairline);
+  border-radius: var(--dim-radius);
+  overflow: hidden;
+  font-size: 0.72rem;
+  width: 100%;
+  /* Material sets display: inline-block here, which stops the element being a
+   * table box: the rows get an anonymous shrink-to-fit box instead, so the
+   * width above applied to the outer box while tbody stayed at its content
+   * width and percentage cells resolved against that. Material's own
+   * `.md-typeset__table table { display: table }` is meant to undo it but
+   * loses on specificity to the `:not([class])` rule that set it. */
+  display: table;
+}
+
+/* A table whose cells declare widths is a layout, not data: honour those
+ * widths rather than re-apportioning the columns by content. */
+.md-typeset table:not([class]):has(td[width]) {
+  table-layout: fixed;
+}
+
+/* The readme lays its hardware and capability grids out as html tables with
+ * headings inside the cells. Material's heading and paragraph margins are
+ * sized for a page, and inside a cell they read as broken row spacing. */
+.md-typeset table:not([class]) :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 0.4em;
+  padding: 0;
+  border: none;
+  font-size: 0.85rem;
+  line-height: 1.3;
+}
+
+.md-typeset table:not([class]) :is(p, ul, ol) {
+  margin: 0.3em 0;
+}
+
+/* Material pads cells at .9375em/1.25em, sized for prose tables. The readme
+ * grids are five columns of short labels, where that padding plus the page
+ * line-height leaves rows mostly empty. */
+.md-typeset table:not([class]) :is(td, th) {
+  padding: 0.5em 0.8em;
+  line-height: 1.5;
+  vertical-align: top;
+}
+
+/* The readme sizes its grid columns with a 1px transparent spacer gif, which
+ * still occupies a line box of its own here. */
+.md-typeset table:not([class]) img[height="1"] {
+  display: block;
+  margin: 0;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 5%, transparent);
+  font-weight: 600;
+}
+
+.md-typeset img,
+.md-typeset svg {
+  border-radius: var(--dim-radius-sm);
+  max-width: 100%;
+}
+
+/* Generated diagrams and plots are authored with a transparent ground so they
+ * sit on either scheme; keep it that way. */
+.md-typeset img[src$=".svg"] {
+  background: transparent;
+}
+
+/* md-babel writes program output into ```results blocks: same monospace, but
+ * clearly not source you should copy. */
+.md-typeset .language-results {
+  opacity: 0.9;
+}
+
+.md-typeset .language-results > code {
+  color: var(--md-default-fg-color--light);
+}
+
+/* --------------------------------------------------------------- cards */
+
+.md-typeset .grid.cards > ul > li,
+.md-typeset .grid > .card {
+  border: 1px solid var(--dim-hairline);
+  border-radius: var(--dim-radius);
+  box-shadow: none;
+  transition:
+    border-color 150ms,
+    transform 150ms,
+    box-shadow 150ms;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--md-accent-fg-color);
+  transform: translateY(-2px);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--md-accent-fg-color) 22%, transparent);
+}
+
+/* --------------------------------------------------------------- footer */
+
+.md-footer {
+  border-top: 1px solid var(--dim-hairline);
+}
+
+/* ------------------------------------------------------- interactive chrome
+ *
+ * The shape language for anything interactive: a pill for anything you click,
+ * a 1px ring instead of a shadow on anything raised, and colour and transform
+ * as the only transitions. */
+
+/* Search reads as a control rather than a slot in the header bar. */
+.md-search__form {
+  border-radius: var(--dim-radius-pill);
+  border: 1px solid var(--dim-hairline);
+  transition: border-color 150ms, background-color 150ms;
+}
+
+.md-search__form:hover,
+.md-search__input:focus ~ .md-search__form,
+[data-md-toggle="search"]:checked ~ .md-header .md-search__form {
+  border-color: color-mix(in srgb, var(--md-accent-fg-color) 55%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--md-accent-fg-color) 25%, transparent);
+}
+
+::selection {
+  background-color: color-mix(in srgb, var(--dim-brand-bright) 40%, transparent);
+}
+
+@media screen and (min-width: 60em) {
+  .md-search__output {
+    border-radius: var(--dim-radius);
+    margin-top: 0.3rem;
+    border: 1px solid var(--dim-hairline);
+    overflow: hidden;
+  }
+}
+
+/* Nav rows become hit targets you can see. Material only recolours the text,
+ * which on a list this long gives no sense of where the pointer is. */
+.md-nav--primary .md-nav__link {
+  border-radius: var(--dim-radius-sm);
+  padding: 0.25em 0.5em;
+  margin: 0 -0.5em;
+  transition: background-color 120ms, color 120ms;
+}
+
+.md-nav--primary .md-nav__link:hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 7%, transparent);
+}
+
+.md-nav--primary .md-nav__link--active,
+.md-nav--primary .md-nav__link--active:hover {
+  background-color: color-mix(in srgb, var(--md-accent-fg-color) 15%, transparent);
+  color: var(--md-accent-fg-color);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--md-accent-fg-color) 30%, transparent),
+    0 0 12px color-mix(in srgb, var(--md-accent-fg-color) 12%, transparent);
+}
+
+/* Section headings are labels, not rows: keep the pill off them. */
+.md-nav--primary .md-nav__item--section > .md-nav__link,
+.md-nav--primary .md-nav__item--section > label.md-nav__link {
+  background-color: transparent;
+  margin-left: 0;
+  padding-left: 0;
+}
+
+/* The table of contents gets a matching active marker. */
+.md-nav--secondary .md-nav__link {
+  transition: color 120ms;
+}
+
+.md-nav--secondary .md-nav__link--active {
+  color: var(--md-accent-fg-color);
+  font-weight: 600;
+}
+
+/* Admonitions: a soft tinted panel, not a stripe down the left. The tint is
+ * derived from whatever colour material assigned the type, so note, warning
+ * and danger stay distinguishable without a per-type rule each. */
+/* Each type carries one accent; border, fill, title, and icon derive from
+ * it. Geometry and mix levels match devin's callouts measured in dark mode:
+ * flat fill of the accent over the ground, a solid darker border, 16px
+ * radius. Horizontal padding must stay 0.6rem to match the title's -0.6rem
+ * bleed. info keeps the brand cyan. */
+.md-typeset :is(.admonition, details) {
+  --dim-adm: var(--dim-brand-bright);
+  border: 1px solid color-mix(in srgb, var(--dim-adm) 40%, var(--md-default-bg-color));
+  border-left-width: 1px;
+  border-radius: 0.8rem;
+  background-color: color-mix(in srgb, var(--dim-adm) 16%, var(--md-default-bg-color));
+  padding: 0.4rem 0.6rem;
+}
+
+.md-typeset :is(.admonition, details):is(.note) {
+  --dim-adm: #6c8cff;
+}
+
+.md-typeset :is(.admonition, details):is(.tip, .hint, .success, .check, .done) {
+  --dim-adm: #3fbf6f;
+}
+
+.md-typeset :is(.admonition, details):is(.warning, .caution, .attention) {
+  --dim-adm: #ffb224;
+}
+
+.md-typeset :is(.admonition, details):is(.danger, .error, .failure, .bug) {
+  --dim-adm: #ff6b6b;
+}
+
+/* Material indents the title past its icon but leaves the body on the
+ * container edge; align the body under the title text instead. */
+.md-typeset :is(.admonition, details) > :not(.admonition-title, summary) {
+  margin-left: 1.4rem;
+}
+
+/* Selectors carry three classes so they outrank material's per-type
+ * .md-typeset .info > .admonition-title background band. */
+.md-typeset .admonition > .admonition-title,
+.md-typeset details > summary {
+  background-color: transparent;
+  color: var(--dim-adm);
+  font-weight: 600;
+}
+
+/* Title padding, paragraph margin, and container padding stack into a hole
+ * between title and body; collapse it. Admonitions only: a details summary
+ * needs its own bottom padding while the box is closed. */
+.md-typeset .admonition > .admonition-title {
+  padding-bottom: 0;
+}
+
+.md-typeset .admonition > .admonition-title + * {
+  margin-top: 0.3em;
+}
+
+/* The summary row owns the vertical rhythm of a closed details box. */
+.md-typeset details {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.md-typeset .admonition > .admonition-title::before,
+.md-typeset details > summary::before {
+  background-color: var(--dim-adm);
+}
+
+.md-typeset :is(.admonition-title, summary)::before {
+  border-radius: var(--dim-radius-sm);
+}
+
+/* details is a control, so its summary row should respond like one. */
+.md-typeset details > summary {
+  border-radius: var(--dim-radius);
+  transition: background-color 120ms;
+}
+
+.md-typeset details > summary:hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 5%, transparent);
+}
+
+/* Buttons. `[text](url){ .md-button }` in markdown, used for the calls to
+ * action on landing pages. Material ships a square outline; make it a pill
+ * with a filled primary and an outlined secondary. */
+.md-typeset .md-button {
+  border-radius: var(--dim-radius-pill);
+  border-width: 1px;
+  padding: 0.45em 1.1em;
+  font-weight: 600;
+  font-size: 0.72rem;
+  transition: background-color 150ms, border-color 150ms, transform 150ms;
+}
+
+.md-typeset .md-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--md-accent-fg-color) 35%, transparent);
+}
+
+.md-typeset .md-button--primary {
+  background-color: var(--dim-brand);
+  border-color: var(--dim-brand);
+  color: #fff;
+}
+
+.md-typeset .md-button--primary:hover {
+  background-color: var(--dim-brand-bright);
+  border-color: var(--dim-brand-bright);
+}
+
+/* Code block actions (copy button): a bare icon, no slab behind it. Quiet
+ * until hovered; a check for a moment after copying (the class is toggled
+ * in overrides/main.html), replacing material's snackbar. */
+.md-typeset .md-code__nav,
+.md-typeset :hover > .md-code__nav {
+  background-color: transparent;
+  padding: 0.1rem;
+}
+
+.md-code__button.dim-copied,
+.md-code__button.dim-copied:hover {
+  color: var(--md-accent-fg-color);
+}
+
+.md-code__button.dim-copied[data-md-type="copy"]::after {
+  -webkit-mask-image: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 7 9 19l-5.5-5.5 1.41-1.41L9 16.17 19.59 5.59z"/></svg>');
+  mask-image: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 7 9 19l-5.5-5.5 1.41-1.41L9 16.17 19.59 5.59z"/></svg>');
+}
+
+/* The "Copied to clipboard" snackbar; the check on the button says it. */
+.md-dialog {
+  display: none;
+}
+
+/* A named code block gets a header strip, so the filename reads as a label on
+ * the block rather than a caption floating above it. */
+.md-typeset .highlight span.filename {
+  border-bottom: 1px solid var(--dim-hairline);
+  border-radius: var(--dim-radius) var(--dim-radius) 0 0;
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 5%, transparent);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* Header buttons (edit page, repo, theme) as round targets. */
+.md-header__button {
+  border-radius: var(--dim-radius-pill);
+  transition: background-color 120ms;
+}
+
+.md-header__button:hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 10%, transparent);
+  opacity: 1;
+}
+
+/* The page as markdown: a menu beside the edit button, for readers that
+ * would rather copy the page into an agent than read it here. The markup
+ * is overrides/main.html; the markdown it offers is written by hooks.py. */
+.dim-markdown {
+  position: relative;
+}
+
+.dim-markdown__toggle {
+  display: flex;
+  align-items: center;
+  color: inherit;
+  cursor: pointer;
+  transition: color 120ms;
+}
+
+.dim-markdown__toggle:hover,
+.dim-markdown--open .dim-markdown__toggle {
+  color: var(--md-accent-fg-color);
+}
+
+/* The chevron is a hint that this one opens, not a second icon. */
+.dim-markdown__toggle svg:last-child {
+  width: 0.8rem;
+  height: 0.8rem;
+  margin-left: -0.1rem;
+}
+
+.dim-markdown__menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 3;
+  margin-top: 0.3rem;
+  padding: 0.25rem;
+  border: 1px solid var(--dim-hairline);
+  border-radius: var(--dim-radius);
+  background-color: var(--md-default-bg-color--light);
+}
+
+.dim-markdown--open .dim-markdown__menu {
+  display: block;
+}
+
+.dim-markdown__menu > :is(a, button) {
+  display: block;
+  width: 100%;
+  padding: 0.35rem 0.7rem;
+  border-radius: var(--dim-radius-sm);
+  color: var(--md-default-fg-color);
+  font-size: 0.68rem;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms, color 120ms;
+}
+
+.dim-markdown__menu > :is(a, button):hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 7%, transparent);
+  color: var(--md-accent-fg-color);
+}
+
+/* Tabs, when a site turns them on, read as pills rather than underlines. */
+.md-tabs__link {
+  border-radius: var(--dim-radius-pill);
+  padding: 0.25em 0.75em;
+  margin: 0.2em 0.1em;
+  opacity: 1;
+  transition: background-color 120ms, color 120ms;
+}
+
+.md-tabs__link:hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 8%, transparent);
+}
+
+.md-tabs__link--active {
+  background-color: color-mix(in srgb, var(--md-accent-fg-color) 18%, transparent);
+  color: var(--md-accent-fg-color);
+}
+
+/* Prev/next: two cards you aim at, which is what material's bare text links
+ * are standing in for. */
+.md-footer__link {
+  border: 1px solid var(--dim-hairline);
+  border-radius: var(--dim-radius);
+  padding: 0.8rem 1rem;
+  margin: 0.4rem;
+  opacity: 1;
+  transition: border-color 150ms, background-color 150ms;
+}
+
+.md-footer__link:hover {
+  border-color: var(--md-accent-fg-color);
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 4%, transparent);
+}
+
+.md-footer__title {
+  background-color: transparent;
+}
+
+/* Copy the shape onto the two remaining raised surfaces so nothing is left at
+ * the old radius. */
+.md-typeset .tabbed-set > .tabbed-labels > label {
+  border-radius: var(--dim-radius-sm) var(--dim-radius-sm) 0 0;
+  transition: background-color 120ms, color 120ms;
+}
+
+.md-typeset .tabbed-set > .tabbed-labels > label:hover {
+  background-color: color-mix(in srgb, var(--md-default-fg-color) 6%, transparent);
+}

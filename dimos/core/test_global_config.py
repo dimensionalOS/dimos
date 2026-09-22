@@ -12,7 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
+from pydantic import ValidationError
+import pytest
+
 from dimos.core.global_config import GlobalConfig
+
+
+@pytest.mark.parametrize("robot_ips", [None, "", "   ", " , , "])
+def test_processed_robot_ips_rejects_empty_configuration(robot_ips: str | None) -> None:
+    config = GlobalConfig(robot_ips=robot_ips)
+
+    with pytest.raises(ValueError, match="ROBOT_IPS.*--robot-ips"):
+        config.processed_robot_ips  # noqa: B018
+
+
+def test_processed_robot_ips_strips_whitespace_and_ignores_empty_entries() -> None:
+    config = GlobalConfig(robot_ips=" 192.0.2.10, ,192.0.2.11, ")
+
+    assert config.processed_robot_ips == ("192.0.2.10", "192.0.2.11")
 
 
 class TestGlobalConfigSecurityDefaults:
@@ -23,3 +42,33 @@ class TestGlobalConfigSecurityDefaults:
         assert config.listen_host == "127.0.0.1", (
             f"listen_host must default to 127.0.0.1, got {config.listen_host}"
         )
+
+
+def test_python_is_the_default_engine_without_rust_thread_configuration() -> None:
+    config = GlobalConfig.model_validate({})
+
+    assert config.record_engine == "python"
+    assert config.record_encoding_threads is None
+
+
+def test_mcap_requires_rust() -> None:
+    with pytest.raises(ValidationError, match="MCAP recording requires --record-engine rust"):
+        GlobalConfig.model_validate({"record": "mcap"})
+
+    assert GlobalConfig.model_validate({"record": "mcap", "record_engine": "rust"}).record == "mcap"
+
+
+def test_encoding_threads_require_rust() -> None:
+    with pytest.raises(ValidationError, match="valid only with --record-engine rust"):
+        GlobalConfig.model_validate({"record_encoding_threads": 8})
+
+    config = GlobalConfig.model_validate({"record_engine": "rust", "record_encoding_threads": 8})
+    assert config.record_encoding_threads == 8
+
+
+def test_dotenv_is_ignored_under_pytest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / ".env").write_text("ROBOT_IP=192.0.2.17\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ROBOT_IP", raising=False)
+
+    assert GlobalConfig().robot_ip is None

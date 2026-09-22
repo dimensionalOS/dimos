@@ -20,14 +20,17 @@ dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
 
 from collections.abc import Callable, Iterator
 import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 from reactivex import Subject
 
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 
@@ -180,6 +183,33 @@ def test_publish_tf_on_by_default(connection: Callable[[bool], GO2Connection]) -
     conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
     assert conn.tf.publish.call_count == 1
     assert conn.odom.publish.call_count == 1
+
+
+class _StopLoopError(Exception):
+    pass
+
+
+def test_camera_info_is_restamped_on_each_publish(
+    connection: Callable[[bool], GO2Connection], mocker: MockerFixture
+) -> None:
+    """A frozen stamp collapses a recording's camera_info onto one instant before the run."""
+    conn = connection(publish_tf=True)
+    conn.camera_info = MagicMock()
+    conn.camera_info_static = CameraInfo(frame_id="camera_optical", ts=1.0)
+
+    def sleep(_seconds: float) -> None:
+        if conn.camera_info.publish.call_count >= 2:
+            raise _StopLoopError
+
+    mocker.patch.object(go2_conn.time, "sleep", side_effect=sleep)
+    before = time.time()
+    with pytest.raises(_StopLoopError):
+        conn.publish_camera_info()
+
+    published = [call.args[0] for call in conn.camera_info.publish.call_args_list]
+    assert [info.ts >= before for info in published] == [True, True]
+    assert [info.frame_id for info in published] == [conn.camera_info_static.frame_id] * 2
+    assert conn.camera_info_static.ts == 1.0
 
 
 def test_odom_to_tf_prefixed() -> None:

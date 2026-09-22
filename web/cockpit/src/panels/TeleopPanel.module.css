@@ -1,0 +1,94 @@
+.pad,
+.padArmed {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  justify-content: safe center;
+  line-height: 1.2;
+  outline: none;
+  padding: 5px 8px;
+  transition: border-color var(--dur), box-shadow var(--dur);
+  width: 100%;
+}
+
+.pad:focus-visible,
+.padArmed:focus-visible {
+  outline: none;
+}
+
+.padArmed {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-ring), 0 0 14px var(--accent-soft);
+  cursor: default;
+}
+
+.banner {
+  font-size: 11px;
+}
+
+.hint {
+  color: var(--fg-muted);
+}
+
+.armed {
+  color: var(--accent);
+}
+
+.stopped {
+  color: var(--danger);
+}
+
+.cluster {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.keyRow {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+}
+
+.key,
+.keyDown {
+  align-items: center;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-s);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.45);
+  color: var(--fg-muted);
+  display: flex;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  height: 24px;
+  justify-content: center;
+  transition: background var(--dur), color var(--dur), transform var(--dur);
+  width: 24px;
+}
+
+.keyDown {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: none;
+  color: var(--on-accent);
+  transform: translateY(1px);
+}
+
+.readout {
+  color: var(--fg-muted);
+  display: flex;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  gap: 10px;
+}
+
+.boost {
+  color: var(--warn);
+}

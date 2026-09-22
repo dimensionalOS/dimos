@@ -30,17 +30,16 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import global_config
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
-_E2E_PORT = 13032
-
 
 @pytest.fixture()
 def server(wait_for_server: Any) -> RerunWebSocketServer:
     original_port = global_config.rerun_websocket_server_port
-    global_config.update(rerun_websocket_server_port=_E2E_PORT)
+    # Port 0: bind an ephemeral port so parallel test workers never collide.
+    global_config.update(rerun_websocket_server_port=0)
     try:
         module = RerunWebSocketServer()
         module.start()
-        wait_for_server(_E2E_PORT)
+        wait_for_server(module.bound_port)
         yield module
         module.stop()
     finally:
@@ -70,7 +69,7 @@ class TestViewerProtocolE2E:
 
         try:
             _send_messages(
-                _E2E_PORT,
+                server.bound_port,
                 [
                     {
                         "type": "click",
@@ -104,7 +103,7 @@ class TestViewerProtocolE2E:
 
         try:
             _send_messages(
-                _E2E_PORT,
+                server.bound_port,
                 [
                     {"type": "heartbeat", "timestamp_ms": 1000},
                     {"type": "heartbeat", "timestamp_ms": 2000},
@@ -153,7 +152,7 @@ class TestViewerProtocolE2E:
 
         try:
             _send_messages(
-                _E2E_PORT,
+                server.bound_port,
                 [
                     {
                         "type": "click",
@@ -166,7 +165,7 @@ class TestViewerProtocolE2E:
                 ],
             )
             _send_messages(
-                _E2E_PORT,
+                server.bound_port,
                 [
                     {
                         "type": "click",
@@ -197,7 +196,7 @@ class TestViewerBinaryConnectMode:
             [
                 "dimos-viewer",
                 "--connect",
-                f"--ws-url=ws://127.0.0.1:{_E2E_PORT}/ws",
+                f"--ws-url=ws://127.0.0.1:{server.bound_port}/ws",
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

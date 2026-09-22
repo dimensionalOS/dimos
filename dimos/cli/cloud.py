@@ -14,12 +14,12 @@
 
 """Dimensional cloud auth: `dimos login` / `dimos logout` / `dimos whoami`.
 
-Device-code flow (RFC 8628 shaped) against login.dimensional.org — built for robots:
+Device-code flow (RFC 8628 shaped) against api.dimensional.org — built for robots:
 no browser or clipboard needed on this machine. The CLI prints an 8-character code,
 you approve it from any signed-in browser (laptop, phone), and the minted API key is
-stored in the system keyring, falling back to a 0600 file (`CREDENTIALS_PATH`) on
-headless machines with no keyring backend. `DIMOS_API_KEY` (via GlobalConfig)
-overrides any stored login.
+stored in the system keyring, falling back to a plain-text 0600 file
+(`CREDENTIALS_PATH`, just the key) on headless machines with no keyring
+backend. `DIMOS_API_KEY` (via GlobalConfig) overrides any stored login.
 """
 
 import json
@@ -47,7 +47,9 @@ def _base() -> str:
 
 def _post(path: str, **params: str | int) -> dict[str, Any]:
     url = f"{_base()}{path}?" + urllib.parse.urlencode(params)
-    with urllib.request.urlopen(urllib.request.Request(url, method="POST")) as r:
+    with urllib.request.urlopen(
+        urllib.request.Request(url, method="POST"), timeout=global_config.dimos_http_timeout
+    ) as r:
         return cast("dict[str, Any]", json.load(r))
 
 
@@ -62,28 +64,27 @@ def _keyring() -> ModuleType | None:
         return None
 
 
-def _store(creds: dict[str, str]) -> str:
-    """Persist credentials; returns a human-readable location for the login message."""
-    blob = json.dumps(creds)
+def _store(key: str) -> str:
+    """Persist the API key; returns a human-readable location for the login message."""
     if kr := _keyring():
-        kr.set_password(_KEYRING_SERVICE, _KEYRING_USER, blob)
+        kr.set_password(_KEYRING_SERVICE, _KEYRING_USER, key)
         return "system keyring"
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     # No keyring backend (typical on robots): owner-only file, the same convention
     # gh / aws / kubectl use for exactly this situation.
     fd = os.open(CREDENTIALS_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
-        f.write(blob)
+        f.write(key + "\n")
     return str(CREDENTIALS_PATH)
 
 
-def _load() -> dict[str, str] | None:
+def _load() -> str | None:
     if kr := _keyring():
-        if blob := kr.get_password(_KEYRING_SERVICE, _KEYRING_USER):
-            return cast("dict[str, str]", json.loads(blob))
+        if key := kr.get_password(_KEYRING_SERVICE, _KEYRING_USER):
+            return cast("str", key)
     try:
-        return cast("dict[str, str]", json.loads(CREDENTIALS_PATH.read_text()))
-    except (OSError, ValueError):
+        return CREDENTIALS_PATH.read_text().strip() or None
+    except OSError:
         return None
 
 
@@ -103,8 +104,7 @@ def api_key() -> str | None:
     """The credential for cloud calls: DIMOS_API_KEY first, then the stored login."""
     if global_config.dimos_api_key:
         return global_config.dimos_api_key
-    creds = _load()
-    return creds.get("api_key") if creds else None
+    return _load()
 
 
 def login() -> None:
@@ -117,7 +117,7 @@ def login() -> None:
         time.sleep(d["interval"])
         r = _post("/auth/token", device_code=d["device_code"])
         if r["status"] == "ok":
-            where = _store({"api_key": r["api_key"], "email": r["email"]})
+            where = _store(r["api_key"])
             typer.echo(f"Logged in as {r['email']} (key {r['key_id']}…, stored in {where})")
             return
         if r["status"] in ("denied", "expired"):
@@ -128,9 +128,9 @@ def login() -> None:
 
 
 def logout() -> None:
-    """Forget the stored key. Revoke it fully at login.dimensional.org/keys."""
+    """Forget the stored key. The key itself stays valid until revoked in the console."""
     if _forget():
-        typer.echo(f"Logged out. Revoke the key at {_base()}/keys.")
+        typer.echo("Logged out. The key stays valid until you revoke it in the console.")
     else:
         typer.echo("Not logged in.")
 
@@ -145,7 +145,7 @@ def whoami() -> None:
         f"{_base()}/auth/whoami", headers={"Authorization": f"Bearer {key}"}
     )
     try:
-        with urllib.request.urlopen(req) as r:
+        with urllib.request.urlopen(req, timeout=global_config.dimos_http_timeout) as r:
             who = json.load(r)
     except urllib.error.HTTPError as e:
         typer.echo(

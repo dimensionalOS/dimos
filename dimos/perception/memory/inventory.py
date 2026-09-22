@@ -19,7 +19,7 @@ computed at query time over the recording - no ingest pass, no persisted
 instance table. Existence is decoupled from naming and the ordering is a
 constraint, not a preference: propose (EdgeTAM automatic masks), lift
 (masked depth to world supports), associate (hard constraints before any
-score), and only then name (OmDet-Turbo, labels as metadata). Labels and
+score), and only then name (OWLv2, labels as metadata). Labels and
 appearance never enter association; position and same-frame co-occurrence
 decide everything, which is what keeps two identical objects two instances.
 
@@ -61,7 +61,7 @@ if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
 
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
-    from dimos.perception.detection.detectors.omdet import OmDetDetector
+    from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
     from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
     from dimos.protocol.tf.tf import TFLookup
 
@@ -676,11 +676,11 @@ def _name_and_suppress(
     tracks: list[_Track],
     tracks_2d: list[_Track2D],
     store: Any,
-    detector: OmDetDetector,
+    detector: Owlv2Detector,
     vocabulary: NamingVocabulary,
     policy: InventoryPolicy,
 ) -> None:
-    """OmDet naming per instance on keyframes, person/hand suppressing observations.
+    """OWLv2 naming per instance on keyframes, person/hand suppressing observations.
 
     Runs after association by construction: association consumed unnamed
     supports, so per-view label instability cannot starve existence or split
@@ -705,7 +705,7 @@ def _name_and_suppress(
     queries, starts, canonical = _flatten(vocabulary)
     all_ts = sorted(set(frame_members) | set(frame_members_2d))
     logger.info(
-        f"naming: OmDet over {len(all_ts)} keyframes, "
+        f"naming: OWLv2 over {len(all_ts)} keyframes, "
         f"{len(canonical)} groups of {len(queries)} queries"
     )
     for ts in all_ts:
@@ -766,7 +766,7 @@ def inventory(
     store: Any,
     *,
     segmenter: EdgeTAMImageSegmenter,
-    detector: OmDetDetector,
+    detector: Owlv2Detector,
     naming_vocabulary: NamingVocabulary,
     after: float | None = None,
     before: float | None = None,

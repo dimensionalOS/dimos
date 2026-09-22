@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,25 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
+"""Tests for direct canonical trajectory execution."""
 
-from threading import Event, Thread
 from unittest.mock import MagicMock
 
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.manipulation.execution_manager import (
-    ExecutionTarget,
-    PlanExecutionManager,
-)
-from dimos.manipulation.manipulation_spec import ExecutionResult, ExecutionStatus
+from dimos.manipulation.execution_manager import PlanExecutionManager
+from dimos.manipulation.manipulation_spec import ExecutionStatus
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -39,318 +36,222 @@ from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 
 
-def _target(
-    robot_name: str = "arm",
-    *,
-    model_joint_names: tuple[str, ...] = ("j1", "j2"),
-    coordinator_to_model: dict[str, str] | None = None,
-) -> ExecutionTarget:
-    return ExecutionTarget.from_coordinator_mapping(
-        robot_name=robot_name,
-        model_joint_names=model_joint_names,
-        coordinator_to_model=coordinator_to_model or {},
-    )
-
-
 def _plan(
-    joint_names: tuple[str, ...] = ("arm/j1", "arm/j2"),
-    *,
+    names: tuple[str, ...] = ("left/j1", "right/j1"),
     status: PlanningStatus = PlanningStatus.SUCCESS,
 ) -> GeneratedPlan:
-    width = len(joint_names)
-    trajectory = JointTrajectory(
-        joint_names=list(joint_names),
-        points=[
-            TrajectoryPoint(
-                positions=[0.0] * width,
-                velocities=[0.0] * width,
-                time_from_start=0.0,
-            ),
-            TrajectoryPoint(
-                positions=[1.0] * width,
-                velocities=[0.0] * width,
-                time_from_start=1.0,
-            ),
-        ],
-    )
+    points = [
+        TrajectoryPoint(positions=[0.0] * len(names), time_from_start=0.0),
+        TrajectoryPoint(positions=[1.0] * len(names), time_from_start=1.0),
+    ]
     return GeneratedPlan(
-        group_ids=("arm/manipulator",),
-        trajectory=trajectory,
-        path=[
-            JointState(name=list(joint_names), position=[0.0] * width),
-            JointState(name=list(joint_names), position=[1.0] * width),
-        ],
+        group_ids=("both_arms",),
+        trajectory=JointTrajectory(joint_names=list(names), points=points),
+        path=[JointState(name=list(names), position=point.positions) for point in points],
         status=status,
     )
 
 
 def _coordinator() -> MagicMock:
+    """A coordinator whose tasks accept everything, answering per invoked method."""
     coordinator = MagicMock(spec=ControlCoordinator)
-    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
-        TrajectoryExecutionStatus.ACCEPTED
-    )
-    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
-        TrajectoryCancellationStatus.ALREADY_STOPPED
-    )
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
+    coordinator.get_joint_positions.return_value = {}
+
+    def invoke(task: str, method: str, args: dict | None = None):
+        if method == "execute":
+            return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+        if method == "cancel":
+            return TrajectoryCancellationResult(TrajectoryCancellationStatus.ALREADY_STOPPED)
+        return TrajectoryStatus(state=TrajectoryState.IDLE)
+
+    coordinator.task_invoke.side_effect = invoke
     return coordinator
 
 
-def _manager(
-    *targets: ExecutionTarget, coordinator: MagicMock | None = None
-) -> PlanExecutionManager:
+def _dispatched(coordinator: MagicMock, task: str) -> JointTrajectory:
+    """The trajectory a task was asked to execute."""
+    for call in coordinator.task_invoke.call_args_list:
+        if call.args[0] == task and call.args[1] == "execute":
+            return call.args[2]["trajectory"]
+    raise AssertionError(f"{task} was never asked to execute")
+
+
+def _manager(coordinator: MagicMock | None = None) -> PlanExecutionManager:
     return PlanExecutionManager(
-        targets=targets or (_target(),),
-        coordinator=coordinator if coordinator is not None else _coordinator(),
+        joint_names=("left/j1", "left/j2", "right/j1"),
+        coordinator=coordinator or _coordinator(),
         default_timeout=1.0,
     )
 
 
-def test_execution_target_inverts_coordinator_mapping() -> None:
-    target = _target(coordinator_to_model={"hardware/a": "j1", "hardware/b": "j2"})
-
-    assert dict(target.model_to_coordinator) == {
-        "j1": "hardware/a",
-        "j2": "hardware/b",
-    }
-
-
-@pytest.mark.parametrize(
-    ("model_joint_names", "mapping", "message"),
-    [
-        ((), {}, "invalid local model joints"),
-        (("j1", "j1"), {}, "duplicate local model joints"),
-        (("arm/j1",), {}, "invalid local model joints"),
-        (("j1",), {"hardware/a": "missing"}, "unknown model joint"),
-        (
-            ("j1", "j2"),
-            {"hardware/a": "j1", "hardware/b": "j1"},
-            "Multiple coordinator joints",
-        ),
-    ],
-)
-def test_execution_target_rejects_invalid_configuration(
-    model_joint_names: tuple[str, ...],
-    mapping: dict[str, str],
-    message: str,
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        _target(model_joint_names=model_joint_names, coordinator_to_model=mapping)
+def test_manager_rejects_empty_or_duplicate_model_joint_names() -> None:
+    with pytest.raises(ValueError, match="non-empty and unique"):
+        PlanExecutionManager(joint_names=(), coordinator=_coordinator(), default_timeout=1.0)
+    with pytest.raises(ValueError, match="non-empty and unique"):
+        PlanExecutionManager(
+            joint_names=("j1", "j1"), coordinator=_coordinator(), default_timeout=1.0
+        )
 
 
-def test_manager_requires_unique_robot_targets() -> None:
-    with pytest.raises(ValueError, match="unique robot names"):
-        _manager(_target(), _target())
-
-
-def test_execute_maps_all_robots_into_one_trajectory() -> None:
+def test_execute_forwards_same_canonical_trajectory_object_unchanged() -> None:
     coordinator = _coordinator()
-    manager = _manager(
-        _target(
-            "left",
-            model_joint_names=("j1",),
-            coordinator_to_model={"left_hw/j1": "j1"},
-        ),
-        _target(
-            "right",
-            model_joint_names=("j1",),
-            coordinator_to_model={"right_hw/j1": "j1"},
-        ),
-        coordinator=coordinator,
-    )
-    plan = _plan(("left/j1", "right/j1"))
-
-    result = manager.execute(plan, blocking=False)
-
+    plan = _plan()
+    result = _manager(coordinator).execute(plan, blocking=False)
     assert result.status is ExecutionStatus.ACCEPTED
-    coordinator.execute_trajectory.assert_called_once()
-    trajectory = coordinator.execute_trajectory.call_args.args[0]
-    assert trajectory.joint_names == ["left_hw/j1", "right_hw/j1"]
-    assert trajectory.points == plan.trajectory.points
-    assert trajectory.timestamp == plan.trajectory.timestamp
-
-
-def test_execute_preserves_single_robot_subset() -> None:
-    coordinator = _coordinator()
-    manager = _manager(
-        _target("left", model_joint_names=("j1", "j2")),
-        _target("right", model_joint_names=("j1",)),
-        coordinator=coordinator,
-    )
-
-    result = manager.execute(_plan(("left/j2",)), blocking=False)
-
-    assert result.status is ExecutionStatus.ACCEPTED
-    trajectory = coordinator.execute_trajectory.call_args.args[0]
-    assert trajectory.joint_names == ["j2"]
-    assert trajectory.points[0].positions == [0.0]
+    assert _dispatched(coordinator, JOINT_TRAJECTORY_TASK_NAME) is plan.trajectory
 
 
 @pytest.mark.parametrize(
     ("plan", "message"),
     [
         (_plan(status=PlanningStatus.NO_SOLUTION), "status is not successful"),
-        (_plan(("not-global",)), "not globally named"),
-        (_plan(("unknown/j1",)), "unknown execution robot"),
-        (_plan(("arm/missing",)), "is not configured"),
+        (_plan(("unknown",)), "unknown joints"),
     ],
 )
-def test_execute_rejects_unmappable_plan_before_rpc(
-    plan: GeneratedPlan,
-    message: str,
-) -> None:
+def test_execute_rejects_invalid_plan_before_rpc(plan: GeneratedPlan, message: str) -> None:
     coordinator = _coordinator()
-    manager = _manager(coordinator=coordinator)
-
-    result = manager.execute(plan)
-
+    result = _manager(coordinator).execute(plan, blocking=False)
     assert result.status is ExecutionStatus.REJECTED
     assert message in result.message
-    coordinator.execute_trajectory.assert_not_called()
+    coordinator.task_invoke.assert_not_called()
 
 
-def test_execute_rejects_cross_robot_mapping_collision() -> None:
+def test_execute_preserves_coordinator_rejection() -> None:
     coordinator = _coordinator()
-    manager = _manager(
-        _target(
-            "left",
-            model_joint_names=("j1",),
-            coordinator_to_model={"shared/j1": "j1"},
-        ),
-        _target(
-            "right",
-            model_joint_names=("j1",),
-            coordinator_to_model={"shared/j1": "j1"},
-        ),
-        coordinator=coordinator,
+    rejection = TrajectoryExecutionResult(
+        TrajectoryExecutionStatus.INVALID_TRAJECTORY, "specific rejection"
     )
-
-    result = manager.execute(_plan(("left/j1", "right/j1")))
-
+    coordinator.task_invoke.side_effect = lambda *_a, **_k: rejection
+    result = _manager(coordinator).execute(_plan(), blocking=False)
     assert result.status is ExecutionStatus.REJECTED
-    assert "duplicate coordinator joints" in result.message
-    coordinator.execute_trajectory.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    "status",
-    [
-        TrajectoryExecutionStatus.NO_TRAJECTORY_TASK,
-        TrajectoryExecutionStatus.INVALID_TRAJECTORY,
-        TrajectoryExecutionStatus.START_STATE_UNAVAILABLE,
-        TrajectoryExecutionStatus.START_STATE_MISMATCH,
-    ],
-)
-def test_execute_preserves_coordinator_rejection(status: TrajectoryExecutionStatus) -> None:
-    coordinator = _coordinator()
-    coordinator_result = TrajectoryExecutionResult(status, "specific rejection")
-    coordinator.execute_trajectory.return_value = coordinator_result
-    manager = _manager(coordinator=coordinator)
-
-    result = manager.execute(_plan())
-
-    assert result.status is ExecutionStatus.REJECTED
-    assert result.message == "specific rejection"
-    assert result.coordinator_result is coordinator_result
+    assert result.coordinator_result is rejection
 
 
 def test_execute_rpc_failure_is_uncertain() -> None:
     coordinator = _coordinator()
-    coordinator.execute_trajectory.side_effect = TimeoutError("timed out")
-
-    result = _manager(coordinator=coordinator).execute(_plan())
-
+    coordinator.task_invoke.side_effect = TimeoutError("timed out")
+    result = _manager(coordinator).execute(_plan(), blocking=False)
     assert result.status is ExecutionStatus.UNCERTAIN
     assert "timed out" in result.message
 
 
-@pytest.mark.parametrize(
-    ("status", "jtt_state", "expected"),
-    [
-        (
-            TrajectoryCancellationStatus.CANCELLED,
-            TrajectoryState.ABORTED,
-            ExecutionStatus.ABORTED,
-        ),
-        (
-            TrajectoryCancellationStatus.ALREADY_STOPPED,
-            TrajectoryState.IDLE,
-            ExecutionStatus.NO_EXECUTION,
-        ),
-        (
-            TrajectoryCancellationStatus.NO_TRAJECTORY_TASK,
-            TrajectoryState.IDLE,
-            ExecutionStatus.NO_EXECUTION,
-        ),
-    ],
-)
-def test_cancel_preserves_coordinator_semantics(
-    status: TrajectoryCancellationStatus,
-    jtt_state: TrajectoryState,
-    expected: ExecutionStatus,
-) -> None:
-    coordinator = _coordinator()
-    coordinator_result = TrajectoryCancellationResult(status, "cancel result")
-    coordinator.cancel_trajectory.return_value = coordinator_result
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=jtt_state)
-
-    result = _manager(coordinator=coordinator).cancel()
-
-    assert result.status is expected
+def test_cancel_without_a_run_reports_no_execution() -> None:
+    result = _manager(_coordinator()).cancel()
+    assert result.status is ExecutionStatus.NO_EXECUTION
 
 
-def test_cancel_rpc_failure_is_uncertain() -> None:
-    coordinator = _coordinator()
-    coordinator.cancel_trajectory.side_effect = TimeoutError("timed out")
-
-    result = _manager(coordinator=coordinator).cancel()
-
-    assert result.status is ExecutionStatus.UNCERTAIN
-    assert "timed out" in result.message
+BASE = ("base/x", "base/y", "base/yaw")
 
 
-def test_cancel_waits_for_in_flight_execute_then_cancels() -> None:
-    coordinator = _coordinator()
-    execute_started = Event()
-    release_execute = Event()
+class _WholeBody:
+    """A coordinator running a joint trajectory task and a base trajectory task."""
 
-    def execute_trajectory(_trajectory: JointTrajectory) -> TrajectoryExecutionResult:
-        execute_started.set()
-        if not release_execute.wait(timeout=1.0):
-            raise TimeoutError("test did not release execute RPC")
-        return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+    def __init__(self) -> None:
+        self.states = {
+            JOINT_TRAJECTORY_TASK_NAME: TrajectoryState.EXECUTING,
+            "base_traj": TrajectoryState.EXECUTING,
+        }
+        self.errors: dict[str, str] = {}
+        self.execute_results: dict[str, TrajectoryExecutionResult] = {}
+        self.dispatched: dict[str, JointTrajectory] = {}
+        self.cancellations: dict[str, TrajectoryCancellationResult] = {}
+        self.coordinator = _coordinator()
+        self.coordinator.task_invoke.side_effect = self._task_invoke
 
-    coordinator.execute_trajectory.side_effect = execute_trajectory
-    manager = _manager(coordinator=coordinator)
-    execute_results: list[ExecutionResult] = []
-    cancel_results: list[ExecutionResult] = []
+    def _task_invoke(self, task, method, args=None):
+        if method == "execute":
+            self.dispatched[task] = args["trajectory"]
+            return self.execute_results.get(
+                task, TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+            )
+        if method == "cancel":
+            self.states[task] = TrajectoryState.ABORTED
+            return self.cancellations.get(
+                task, TrajectoryCancellationResult(TrajectoryCancellationStatus.CANCELLED)
+            )
+        return TrajectoryStatus(state=self.states[task], error=self.errors.get(task, ""))
 
-    execute_thread = Thread(
-        target=lambda: execute_results.append(manager.execute(_plan(), blocking=False))
+    def manager(self) -> PlanExecutionManager:
+        return PlanExecutionManager(
+            joint_names=("left/j1", *BASE),
+            coordinator=self.coordinator,
+            default_timeout=1.0,
+            poll_interval=0.01,
+            bindings={JOINT_TRAJECTORY_TASK_NAME: ["left/j1"], "base_traj": list(BASE)},
+        )
+
+
+def test_whole_body_plan_splits_into_joint_and_base_columns() -> None:
+    robot = _WholeBody()
+    manager = robot.manager()
+    plan = _plan(("base/yaw", "left/j1", "base/x", "base/y"))
+
+    assert manager.execute(plan, blocking=False).status is ExecutionStatus.ACCEPTED
+
+    assert robot.dispatched[JOINT_TRAJECTORY_TASK_NAME].joint_names == ["left/j1"]
+    assert robot.dispatched["base_traj"].joint_names == list(BASE)
+    assert [p.time_from_start for p in robot.dispatched["base_traj"].points] == [0.0, 1.0]
+    robot.states = dict.fromkeys(robot.states, TrajectoryState.COMPLETED)
+    assert manager.wait().status is ExecutionStatus.COMPLETED
+
+
+@pytest.mark.parametrize("failing", [JOINT_TRAJECTORY_TASK_NAME, "base_traj"])
+def test_a_failing_leg_cancels_the_other_without_a_caller_polling(failing: str, wait_until) -> None:
+    robot = _WholeBody()
+    manager = robot.manager()
+    manager.execute(_plan(("left/j1", *BASE)), blocking=False)
+
+    robot.states[failing] = TrajectoryState.ABORTED
+    robot.errors[failing] = "preempted by teleop"
+    wait_until(lambda: manager.status is ExecutionStatus.ABORTED, timeout=2.0)
+
+    assert manager.status is ExecutionStatus.ABORTED
+    assert set(robot.states.values()) == {TrajectoryState.ABORTED}
+    assert "preempted by teleop" in manager.wait().message
+
+
+def test_a_refused_part_cancels_the_parts_already_dispatched() -> None:
+    robot = _WholeBody()
+    robot.execute_results["base_traj"] = TrajectoryExecutionResult(
+        TrajectoryExecutionStatus.INVALID_TRAJECTORY, "too fast"
     )
-    cancel_thread = Thread(target=lambda: cancel_results.append(manager.cancel()))
-    execute_thread.start()
-    execute_was_started = execute_started.wait(timeout=1.0)
-    cancel_was_started = False
-    cancel_called_before_release = False
-    try:
-        if execute_was_started:
-            cancel_thread.start()
-            cancel_was_started = True
-            cancel_called_before_release = coordinator.cancel_trajectory.called
-    finally:
-        release_execute.set()
-        execute_thread.join(timeout=1.0)
-        if cancel_was_started:
-            cancel_thread.join(timeout=1.0)
 
-    assert execute_was_started
-    assert not execute_thread.is_alive()
-    assert cancel_was_started
-    assert not cancel_thread.is_alive()
-    assert not cancel_called_before_release
-    assert len(execute_results) == 1
-    assert execute_results[0].status is ExecutionStatus.ACCEPTED
-    assert len(cancel_results) == 1
-    assert cancel_results[0].status is ExecutionStatus.NO_EXECUTION
-    coordinator.cancel_trajectory.assert_called_once_with()
+    result = robot.manager().execute(_plan(("left/j1", *BASE)), blocking=False)
+
+    assert result.status is ExecutionStatus.REJECTED
+    assert "too fast" in result.message
+    assert robot.states[JOINT_TRAJECTORY_TASK_NAME] is TrajectoryState.ABORTED
+
+
+def test_a_refused_part_is_uncertain_when_the_others_cannot_be_confirmed_stopped() -> None:
+    robot = _WholeBody()
+    robot.execute_results["base_traj"] = TrajectoryExecutionResult(
+        TrajectoryExecutionStatus.INVALID_TRAJECTORY, "too fast"
+    )
+    robot.cancellations[JOINT_TRAJECTORY_TASK_NAME] = TrajectoryCancellationResult(
+        TrajectoryCancellationStatus.UNCERTAIN
+    )
+
+    result = robot.manager().execute(_plan(("left/j1", *BASE)), blocking=False)
+
+    assert result.status is ExecutionStatus.UNCERTAIN
+    assert "could not cancel" in result.message
+
+
+def test_a_poll_from_a_finished_run_does_not_disturb_the_next_one() -> None:
+    """A task poll that outlives its run must not cancel or overwrite the next."""
+    robot = _WholeBody()
+    manager = robot.manager()
+    manager.execute(_plan(("left/j1", *BASE)), blocking=False)
+    manager.cancel()
+
+    robot.states = dict.fromkeys(robot.states, TrajectoryState.EXECUTING)
+    assert manager.execute(_plan(("left/j1", *BASE)), blocking=False).status is (
+        ExecutionStatus.ACCEPTED
+    )
+
+    manager._poll(run_id=1)
+    manager.close()
+
+    assert manager.status is ExecutionStatus.ACCEPTED
+    assert set(robot.states.values()) == {TrajectoryState.EXECUTING}

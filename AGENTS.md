@@ -9,8 +9,8 @@ The agentic operating system for generalist robotics. `Modules` communicate via 
 ## Quick Start
 
 ```bash
-# Install
-uv sync --extra all
+# Set up the current checkout, including test and lint dependencies
+bash scripts/install.sh --mode dev --project-dir .
 
 # List all runnable blueprints
 dimos list
@@ -44,7 +44,7 @@ dimos restart          # stop + re-run with same original args
 | `xarm-perception-agent` | xArm | real | gpt-5.6-luna | ✓ | Manipulation + perception + agent |
 | `xarm-perception-sim-agent` | xArm | sim | gpt-5.6-luna | ✓ | Manipulation + perception + agent, sim |
 | `xarm7-planner-coordinator` | xArm7 | real | — | — | Trajectory planner coordinator |
-| `teleop-quest-xarm7` | xArm7 | real | — | — | Quest VR teleop |
+| `teleop-webxr-xarm7` | xArm7 | real | — | — | WebXR teleop |
 | `dual-xarm6-planner-coordinator` | xArm6×2 | mock | — | — | Dual-arm motion planner |
 
 Run `dimos list` for the full list.
@@ -223,7 +223,7 @@ Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simul
 | `dimos restart [--force]` | Stop + re-exec with original args |
 | `dimos list` | List all non-demo blueprints |
 | `dimos show-config` | Print resolved GlobalConfig values |
-| `dimos cache clean [--yes]` | Remove regenerable DimOS caches after confirmation |
+| `dimos cache clean [--yes] [--force]` | Remove DimOS caches; preserve robot Git work unless forced |
 | `dimos log [-f] [-n N] [--json] [-r <run-id>]` | View per-run logs |
 | `dimos mcp list-tools / call / status / modules` | MCP tools (requires McpServer in blueprint) |
 | `dimos agent-send "<text>"` | Send text to the running agent via LCM |
@@ -395,5 +395,6 @@ CI asserts the file is current — if it's stale, CI fails. Externally packaged 
 - Configuration: `docs/usage/configuration.md`
 - Testing: `docs/development/testing.md`
 - CLI / dimos run: `docs/usage/cli.md`
+- Web (cockpit, web SDK, relay): `docs/web/index.md`
 - LFS data: `docs/development/large_file_management.md`
 - Agent system: `docs/capabilities/agents/`

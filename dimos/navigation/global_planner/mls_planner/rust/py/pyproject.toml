@@ -1,0 +1,10 @@
+[build-system]
+requires = ["maturin>=1,<2"]
+build-backend = "maturin"
+
+[project]
+name = "dimos-mls-planner"
+version = "0.1.0"
+
+[tool.maturin]
+module-name = "dimos_mls_planner"

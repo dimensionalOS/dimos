@@ -66,7 +66,6 @@ class PlanStatus(str, Enum):
     PLANNING = "planning"
     FRESH = "fresh"
     STALE = "stale"
-    EXECUTING = "executing"
     FAILED = "failed"
 
 
@@ -98,7 +97,6 @@ class FeasibilityState:
 @dataclass
 class PanelPlanState:
     status: PlanStatus = PlanStatus.NONE
-    robot: str | None = None
     group_ids: tuple[PlanningGroupID, ...] = ()
     target_sequence_id: int = 0
     plan: GeneratedPlan | None = None
@@ -106,7 +104,6 @@ class PanelPlanState:
 
 @dataclass
 class PanelState:
-    selected_robot: str | None = None
     selected_group_ids: tuple[PlanningGroupID, ...] = ()
     planning_mode: PlanningMode = PlanningMode.JOINT_SPACE
     selection_epoch: int = 0
@@ -208,7 +205,6 @@ class PanelState:
 class TargetEvaluationRequest:
     sequence_id: int
     source: PreviewSource
-    robot_name: str | None = None
     selection_epoch: int = 0
     group_ids: tuple[PlanningGroupID, ...] = ()
     pose: Pose | None = None

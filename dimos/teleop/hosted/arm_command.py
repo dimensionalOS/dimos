@@ -14,7 +14,7 @@
 
 """Operator command/E-STOP plane for the hosted arm — the arm analog of
 Go2CommandModule. Actuation runs through the ControlCoordinator over LCM;
-VR poses, browser EE-twists, and the gripper/E-STOP JSON plane arrive here
+WebXR poses, browser EE-twists, and the gripper/E-STOP JSON plane arrive here
 from the broker."""
 
 from __future__ import annotations
@@ -32,18 +32,19 @@ from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
-from dimos.teleop.quest.quest_extensions import ArmTeleopModule
-from dimos.teleop.quest.quest_teleop_module import QuestTeleopConfig
-from dimos.teleop.quest.quest_types import Hand
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
+from dimos.teleop.webxr.controller_types import Hand
+from dimos.teleop.webxr.extensions import ArmTeleopModule
+from dimos.teleop.webxr.module import WebXRTeleopConfig
+from dimos.utils.generic import finite_number
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-class ArmCommandConfig(QuestTeleopConfig):
+class ArmCommandConfig(WebXRTeleopConfig):
     cmd_stale_after_sec: float = 0.5
     enable_ui_scaling: bool = False
 
@@ -61,7 +62,7 @@ class ArmCommandModule(ArmTeleopModule):
     robot_state: Out[bytes]
 
     ee_twist_command: Out[TwistStamped]
-    gripper_command: Out[Bool]
+    gripper_command: Out[Float32]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -203,7 +204,8 @@ class ArmCommandModule(ArmTeleopModule):
         elif kind == "teleop_scale":
             self._handle_teleop_scale(msg)
         elif kind == "gripper" and not self._estopped:
-            self.gripper_command.publish(Bool(data=bool(msg.get("closed", False))))
+            opening = 0.0 if bool(msg.get("closed", False)) else 1.0
+            self.gripper_command.publish(Float32(data=opening))
 
     def _send_ack(self, nonce: Any, ok: bool) -> None:
         try:
@@ -218,8 +220,8 @@ class ArmCommandModule(ArmTeleopModule):
             self._send_ack(nonce, False)
             return
         try:
-            self._set_translation_scale(float(msg["scale"]))
-        except (KeyError, TypeError, ValueError):
+            self._set_translation_scale(finite_number(msg.get("scale"), "scale"))
+        except ValueError:
             self._send_ack(nonce, False)
             return
         self._send_ack(nonce, True)

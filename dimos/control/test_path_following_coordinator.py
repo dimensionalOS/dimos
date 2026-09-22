@@ -25,15 +25,16 @@ from dimos.control.benchmarking.paths import straight_rotate
 from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
 from dimos.control.coordinator import TaskConfig
 from dimos.control.path_following_coordinator import PathFollowingCoordinator
-from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.registry import control_task_registry
+from dimos.control.tick_loop import TickLoop
 from dimos.msgs.std_msgs.Float32 import Float32
 
 JOINTS = make_twist_base_joints("go2")
 
 
 @pytest.fixture
-def coordinator(mocker) -> Any:
+def coordinator(mocker, request) -> Any:
+    task_type = getattr(request, "param", "holonomic_pose_follower")
     mocker.patch("dimos.control.coordinator.TickLoop")
     coord = PathFollowingCoordinator(
         publish_joint_state=False,
@@ -48,7 +49,7 @@ def coordinator(mocker) -> Any:
         tasks=[
             TaskConfig(
                 name="follower",
-                type="holonomic_pose_follower",
+                type=task_type,
                 joint_names=JOINTS,
                 priority=10,
                 params={"speed": 0.5},
@@ -73,21 +74,26 @@ def _emit(taps: dict[str, list], stream: str, msg: Any) -> None:
         cb(msg)
 
 
-def test_published_path_reaches_the_follower_and_arms_it(coordinator):
+@pytest.mark.parametrize(
+    "coordinator",
+    ["holonomic_pose_follower", "rpp_path_follower", "path_follower"],
+    indirect=True,
+)
+def test_published_path_arms_the_follower_through_the_tick_loop(coordinator):
     coord, taps = coordinator
-    follower = coord.get_task("follower")
-
     _emit(taps, "path", straight_rotate(length=2.0))
-    state = CoordinatorState(
-        joints=JointStateSnapshot(
-            joint_positions=dict.fromkeys(JOINTS, 0.0),
-            joint_velocities=dict.fromkeys(JOINTS, 0.0),
-        ),
-        t_now=0.0,
-        dt=0.1,
-    )
-    follower.compute(state)
-    assert follower.get_state() == "tracking"
+
+    # A real tick, not a hand-called compute(): the loop skips inactive tasks.
+    TickLoop(
+        tick_rate=100.0,
+        hardware=coord._hardware,
+        hardware_lock=coord._hardware_lock,
+        tasks=coord._tasks,
+        task_lock=coord._task_lock,
+        joint_to_hardware=coord._joint_to_hardware,
+    )._tick()
+
+    assert coord.get_task("follower").get_state() != "idle"
 
 
 def test_published_speed_retunes_the_follower(coordinator):

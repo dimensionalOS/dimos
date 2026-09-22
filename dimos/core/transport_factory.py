@@ -35,6 +35,9 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
 )
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
+from dimos.protocol.service.lcmservice import LCMConfig
+from dimos.protocol.service.spec import SessionConfig
+from dimos.protocol.service.zenohservice import ZenohConfig
 
 if TYPE_CHECKING:
     from dimos.core.transport import PubSubTransport
@@ -57,17 +60,28 @@ def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
 # publisher. Matched by message type since that is what makes them high-rate.
 _LATEST_WINS_TYPES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")
 # Low-rate channels where a drop loses something that never comes back: a whole
-# turn of agent/human conversation, or a one-shot robot action verb.
-_NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle", "command")
+# turn of agent/human conversation, a one-shot robot action verb, or a
+# push-to-talk chunk (one gap discards the whole utterance).
+_NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle", "command", "audio_in")
 
 
-def default_zenoh_qos(name: str, msg_type: type | None = None) -> ZenohQoS | None:
-    """Default publisher QoS for a logical channel; None = zenoh defaults."""
-    if getattr(msg_type, "msg_name", None) in _LATEST_WINS_TYPES:
+def zenoh_key_expr(name: str, msg_name: str) -> str:
+    """The zenoh key expression a typed channel lands on."""
+    return f"dimos/{name.lstrip('/')}/{msg_name}"
+
+
+def default_zenoh_qos_for(name: str, msg_name: str) -> ZenohQoS | None:
+    """Default publisher QoS from a channel name and message type name."""
+    if msg_name in _LATEST_WINS_TYPES:
         return QOS_LATEST_WINS
     if name.lstrip("/") in _NEVER_DROP_CHANNELS:
         return QOS_NEVER_DROP
     return None
+
+
+def default_zenoh_qos(name: str, msg_type: type | None = None) -> ZenohQoS | None:
+    """Default publisher QoS for a logical channel; None = zenoh defaults."""
+    return default_zenoh_qos_for(name, getattr(msg_type, "msg_name", ""))
 
 
 def make_transport(
@@ -139,3 +153,14 @@ def apply_transport_arg(argv: list[str], *, g: GlobalConfig = global_config) -> 
 def rpc_backend(g: GlobalConfig = global_config) -> type[RPCSpec]:
     """Return the RPC class (`LCMRPC` or `ZenohRPC`) for the active backend."""
     return ZenohRPC if g.transport == "zenoh" else LCMRPC
+
+
+def session_config(g: GlobalConfig = global_config) -> SessionConfig:
+    """Session settings for the active backend, derived from the global config."""
+    match g.transport:
+        case "zenoh":
+            return ZenohConfig()
+        case "lcm":
+            return LCMConfig()
+        case unknown:
+            raise ValueError(f"no session config for transport {unknown!r}")

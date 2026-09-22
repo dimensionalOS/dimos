@@ -1,16 +1,17 @@
----
-title: "Native Modules"
----
+# Native Modules
 
-Prerequisite for this is to understand dimos [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
+Prerequisite for this is to understand dimOS [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
 
-Native modules let you wrap **any executable** as a first-class dimOS module, given it speaks LCM.
+Native modules let you wrap **any executable** as a first-class dimOS module, given it speaks LCM or zenoh.
 
-Python will handle blueprint wiring, lifecycle, and logging. Native binary handles the actual computation, publishing and subscribing directly on LCM.
+Python will handle blueprint wiring, lifecycle, and logging. Native binary handles the actual computation, publishing and subscribing directly on the transport.
 
-Python module **never touches the pubsub data**. It just passes configuration and LCM topic to use via CLI args to your executable.
+Python module **never touches the pubsub data**. It just passes configuration and the topics to use via CLI args to your executable.
 
-On how to speak LCM with the rest of dimos, you can read our [LCM intro](/docs/usage/lcm.md)
+To learn how to communicate with the rest of dimOS over LCM, read our [LCM intro](/docs/usage/lcm.md).
+
+An experimental Python runtime with an isolated dependency environment is
+available in [`dimos/experimental/isolated_python/README.md`](/dimos/experimental/isolated_python/README.md).
 
 ## Defining a native module
 
@@ -92,7 +93,7 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 
 ### Auto CLI arg generation
 
-Any field you add to your config subclass automatically becomes a `--name value` CLI arg. Fields from `NativeModuleConfig` itself (like `executable`, `extra_args`, `cwd`) are **not** passed — they're for Python-side orchestration only.
+Any field you add to your config subclass automatically becomes a `--name value` CLI arg. Fields from `NativeModuleConfig` itself (like `executable`, `extra_args`, `cwd`) are **not** passed. They're for Python-side orchestration only.
 
 ```python skip
 from pydantic import Field
@@ -180,7 +181,7 @@ Malformed lines fall back to plain text logging.
 
 ## Writing the C++ side
 
-The header-only C++ SDK lives at [native/cpp/](/native/cpp/). Set `stdin_config: bool = True` in the Python config. Topics and config then arrive as one JSON line on stdin instead of CLI args. A module includes `dimos/native.hpp`, subclasses `Module`, and calls `run_with_transport<M>()` from `main()`:
+The header-only C++ SDK lives at [native/cpp/](/native/cpp/). Set `stdin_config: bool = True` in the Python config. Topics, config, and the transport's `session` and `qos` blocks then arrive as one JSON line on stdin instead of CLI args. A module includes `dimos/native.hpp`, subclasses `Module`, and calls `run_with_transport<M>()` from `main()`:
 
 ```cpp
 #include "dimos/native.hpp"
@@ -223,8 +224,9 @@ int main() {
 
 The config is a plain aggregate struct. `config.parse<PongConfig>()` reflects over its fields (via PFR, C++20), so the struct declaration is the whole contract: every field is required, unknown fields are rejected, and there is no limit on field count. Python owns all defaults and always sends every field. Add a `void validate() const` method for range checks. It runs automatically after parsing. Input handlers run serialized on the dispatch thread. Each output publishes through its own worker, so a slow channel only stalls itself. A source-style module with no inputs (a sensor driver) overrides `handle()` with its own loop and `setup()`/`teardown()` for device lifecycle.
 
+`run_with_transport` reads `DIMOS_TRANSPORT`, which the coordinator sets from the global `transport` setting, and opens LCM or zenoh. The zenoh side is built on [zenoh-c](https://github.com/eclipse-zenoh/zenoh-c) and [zenoh-cpp](https://github.com/eclipse-zenoh/zenoh-cpp), reads the same `session` and `qos` blocks the Rust SDK reads, and waits for the dialed endpoints to link before the module starts, so a C++ module behaves like a Rust one on either transport.
 
-A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/native-modules/cpp/), and [`dimos/hardware/sensors/lidar/livox/cpp/main.cpp`](/dimos/hardware/sensors/lidar/livox/cpp/main.cpp) is a real driver example.
+A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/native-modules/cpp/), and [`dimos/hardware/sensors/lidar/fastlio2/cpp/main.cpp`](/dimos/hardware/sensors/lidar/fastlio2/cpp/main.cpp) is a real driver example.
 
 ## Examples
 
@@ -232,7 +234,7 @@ For language interop examples (subscribing to dimOS topics from C++, TypeScript,
 
 ### Livox Mid-360 Module
 
-The Livox Mid-360 LiDAR driver is a complete example at [`dimos/hardware/sensors/lidar/livox/module.py`](/dimos/hardware/sensors/lidar/livox/module.py):
+The Livox Mid-360 LiDAR driver is a complete example at [`dimos/hardware/sensors/lidar/livox/module.py`](/dimos/hardware/sensors/lidar/livox/module.py), wrapping a Rust binary:
 
 ```python skip
 from dimos.core.stream import Out
@@ -242,15 +244,15 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.spec import perception
 
 class Mid360Config(NativeModuleConfig):
-    cwd: str | None = "cpp"
-    executable: str = "result/bin/mid360_native"
-    build_command: str | None = "nix build .#mid360_native"
-    host_ip: str = "192.168.1.5"
+    cwd: str | None = "rust"
+    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mid360_native")
+    build_command: str | None = "cargo build --release"
+    host_ip: str | None = None  # auto-detected on the lidar's subnet
     lidar_ip: str = "192.168.1.155"
     frequency: float = 10.0
     enable_imu: bool = True
     frame_id: str = "lidar_link"
-    # ... SDK port configuration
+    # ... pcap replay and SDK port configuration
 
 class Mid360(NativeModule, perception.Lidar, perception.IMU):
     config: Mid360Config
@@ -289,7 +291,9 @@ If the executable already exists, the build step is skipped entirely.
 
 ### Faster builds via the Cachix substituter
 
-CI pre-builds the `cmu_nav` native modules and pushes the Nix store paths to the `dimensionalos` Cachix cache. Opt in locally to skip cold compiles when the cache has them:
+Nix-built native modules can be substituted from the `dimensionalos` Cachix
+cache (the same substituter CI uses) instead of compiled from source. Opt in
+locally to skip cold compiles when the cache has them:
 
 ```
 # ~/.config/nix/nix.conf  (single-user)  or  /etc/nix/nix.conf  (multi-user)

@@ -39,8 +39,8 @@ from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.manipulators.xarm.blueprints.teleop import (
     coordinator_teleop_xarm6,
     coordinator_teleop_xarm7,
@@ -166,8 +166,8 @@ teleop_hosted_xarm6 = (
         HostedStatsModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
         coordinator_teleop_xarm6,
-        FrontCamera.blueprint(camera_name="front", enable_depth=False, enable_pointcloud=False),
-        WristCamera.blueprint(camera_name="wrist", enable_depth=False, enable_pointcloud=False),
+        FrontCamera.blueprint(frame_id="front", enable_depth=False, enable_pointcloud=False),
+        WristCamera.blueprint(frame_id="wrist", enable_depth=False, enable_pointcloud=False),
     )
     .remappings(
         [
@@ -198,8 +198,8 @@ teleop_hosted_xarm7 = (
         HostedStatsModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
         coordinator_teleop_xarm7,
-        FrontCamera.blueprint(camera_name="front", enable_depth=False, enable_pointcloud=False),
-        WristCamera.blueprint(camera_name="wrist", enable_depth=False, enable_pointcloud=False),
+        FrontCamera.blueprint(frame_id="front", enable_depth=False, enable_pointcloud=False),
+        WristCamera.blueprint(frame_id="wrist", enable_depth=False, enable_pointcloud=False),
     )
     .remappings(
         [

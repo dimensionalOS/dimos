@@ -17,10 +17,12 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+import math
 from pathlib import Path
 
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.manipulation.planning.groups.models import (
     PlanningGroup,
@@ -28,14 +30,22 @@ from dimos.manipulation.planning.groups.models import (
     PlanningGroupSelection,
 )
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
-from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
+from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner, TreeNode
+from dimos.manipulation.planning.planners.selected_joint_space import SelectedJointSpace
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import LoadedRobotModel, PlanarBaseDefinition, RobotModel
 
 
 def _pose() -> PoseStamped:
@@ -44,11 +54,8 @@ def _pose() -> PoseStamped:
 
 def _group(name: str, joints: tuple[str, ...]) -> PlanningGroup:
     return PlanningGroup(
-        id=f"arm/{name}",
-        robot_name="arm",
-        group_name=name,
+        id=name,
         joint_names=tuple(f"arm/{joint}" for joint in joints),
-        local_joint_names=joints,
         base_link="base",
         tip_link="tool",
     )
@@ -61,36 +68,129 @@ class _World:
         self.current = current or [0.0, 0.0, 0.7]
         self.projected_states: list[JointState] = []
         self.config = RobotModelConfig(
-            name="arm",
-            model_path=Path("robot.urdf"),
+            model=RobotModel.from_file(Path("robot.urdf")),
             base_pose=_pose(),
-            joint_names=["joint_a", "joint_b", "gripper"],
+            joint_names=["arm/joint_a", "arm/joint_b", "arm/gripper"],
             base_link="base",
             planning_groups=[
-                PlanningGroupDefinition("arm", ("joint_a", "joint_b"), "base", "tool")
+                PlanningGroupDefinition("arm", ("arm/joint_a", "arm/joint_b"), "base", "tool")
             ],
         )
+        self.prepared = PreparedRobotModel(
+            config=self.config,
+            description=LoadedRobotModel("<robot/>", Path("robot.urdf"), {}),
+            joint_space=JointSpace(
+                tuple(
+                    JointCoordinate(
+                        name=name,
+                        mechanism_type="revolute",
+                        topology=CoordinateTopology.INTERVAL,
+                        lower=-1.0,
+                        upper=1.0,
+                        max_velocity=1.0,
+                        max_acceleration=2.0,
+                    )
+                    for name in self.config.joint_names
+                )
+            ),
+            planning_groups=(),
+        )
 
-    def get_robot_ids(self) -> list[str]:
-        return ["robot"]
-
-    def get_robot_config(self, robot_id: str) -> RobotModelConfig:
-        return self.config
+    def get_prepared_model(self) -> PreparedRobotModel:
+        return self.prepared
 
     def scratch_context(self) -> nullcontext[None]:
         return nullcontext(None)
 
-    def get_joint_state(self, ctx: object, robot_id: str) -> JointState:
-        return JointState({"name": ["joint_a", "joint_b", "gripper"], "position": self.current})
+    def get_joint_state(self, ctx: object) -> JointState:
+        return JointState(
+            {"name": ["arm/joint_a", "arm/joint_b", "arm/gripper"], "position": self.current}
+        )
 
-    def get_joint_limits(self, robot_id: str) -> tuple[np.ndarray, np.ndarray]:
+    def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
         return np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
 
-    def set_joint_state(self, ctx: object, robot_id: str, joint_state: JointState) -> None:
+    def get_joint_velocity_limits(self) -> np.ndarray:
+        return np.ones(3)
+
+    def set_joint_state(self, ctx: object, joint_state: JointState) -> None:
         self.projected_states.append(joint_state)
 
-    def is_collision_free(self, ctx: object, robot_id: str) -> bool:
+    def is_collision_free(self, ctx: object) -> bool:
         return True
+
+    def check_config_collision_free(self, joint_state: JointState) -> bool:
+        self.projected_states.append(joint_state)
+        return True
+
+
+class _PlanarWorld(_World):
+    def __init__(self) -> None:
+        super().__init__([0.0, 0.0, 0.0])
+        planar = PlanarBaseDefinition(
+            velocity_limits=(2.0, 1.0, 4.0),
+            acceleration_limits=(4.0, 2.0, 8.0),
+        )
+        self.config = RobotModelConfig(
+            model=RobotModel.from_file(Path("robot.urdf")).with_planar_base(planar),
+            base_pose=_pose(),
+            joint_names=list(planar.joint_names),
+            base_link=planar.root_link,
+            planning_groups=[
+                PlanningGroupDefinition("moving_base", planar.joint_names, planar.root_link)
+            ],
+        )
+        self.prepared = PreparedRobotModel(
+            config=self.config,
+            description=LoadedRobotModel("<robot/>", Path("robot.urdf"), {}),
+            joint_space=JointSpace(
+                (
+                    JointCoordinate(
+                        name=planar.joint_names[0],
+                        mechanism_type="prismatic",
+                        topology=CoordinateTopology.LINE,
+                        lower=None,
+                        upper=None,
+                        max_velocity=2.0,
+                        max_acceleration=4.0,
+                    ),
+                    JointCoordinate(
+                        name=planar.joint_names[1],
+                        mechanism_type="prismatic",
+                        topology=CoordinateTopology.LINE,
+                        lower=None,
+                        upper=None,
+                        max_velocity=1.0,
+                        max_acceleration=2.0,
+                    ),
+                    JointCoordinate(
+                        name=planar.joint_names[2],
+                        mechanism_type="continuous",
+                        topology=CoordinateTopology.CIRCLE,
+                        lower=None,
+                        upper=None,
+                        max_velocity=4.0,
+                        max_acceleration=8.0,
+                    ),
+                )
+            ),
+            planning_groups=(),
+        )
+
+    def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
+        return np.full(3, -np.inf), np.full(3, np.inf)
+
+    def get_joint_velocity_limits(self) -> np.ndarray:
+        return np.array([2.0, 1.0, 4.0])
+
+    def get_joint_state(self, ctx: object) -> JointState:
+        return JointState(name=list(self.config.joint_names), position=self.current)
+
+
+class _WallPlanarWorld(_PlanarWorld):
+    def check_config_collision_free(self, joint_state: JointState) -> bool:
+        positions = dict(zip(joint_state.name, joint_state.position, strict=True))
+        return not (abs(positions["base/x"]) < 0.15 and abs(positions["base/y"]) < 1.5)
 
 
 @pytest.mark.parametrize(
@@ -105,12 +205,6 @@ class _World:
         (
             JointState({"name": ["arm/joint_b", "arm/joint_a"], "position": [0.2, 0.1]}),
             JointState({"name": ["arm/joint_b", "arm/joint_a"], "position": [0.4, 0.3]}),
-            [0.1, 0.2],
-            [0.3, 0.4],
-        ),
-        (
-            JointState({"name": ["joint_b", "joint_a"], "position": [0.2, 0.1]}),
-            JointState({"name": ["joint_b", "joint_a"], "position": [0.4, 0.3]}),
             [0.1, 0.2],
             [0.3, 0.4],
         ),
@@ -152,7 +246,7 @@ def test_plan_selected_joint_path_normalizes_target_forms(
             JointState({"name": ["arm/joint_a", "joint_b"], "position": [0.0, 0.0]}),
             JointState({"position": [0.0, 0.0]}),
             PlanningStatus.INVALID_START,
-            "mixes",
+            "missing",
         ),
     ],
 )
@@ -168,7 +262,7 @@ def test_plan_selected_joint_path_rejects_bad_targets(
     assert message in result.message
 
 
-def test_plan_selected_joint_path_rejects_local_names_for_multi_group_selection() -> None:
+def test_plan_selected_joint_path_rejects_noncanonical_names() -> None:
     selection = PlanningGroupSelection.from_groups(
         (_group("arm", ("joint_a",)), _group("gripper", ("gripper",)))
     )
@@ -181,7 +275,7 @@ def test_plan_selected_joint_path_rejects_local_names_for_multi_group_selection(
     )
 
     assert result.status == PlanningStatus.INVALID_START
-    assert "multi-group" in result.message
+    assert "missing" in result.message
 
 
 def test_plan_selected_joint_path_direct_edge_projects_full_state_with_unselected_joints() -> None:
@@ -197,7 +291,10 @@ def test_plan_selected_joint_path_direct_edge_projects_full_state_with_unselecte
 
     assert result.status == PlanningStatus.SUCCESS
     assert world.projected_states
-    assert all(state.name == ["joint_a", "joint_b", "gripper"] for state in world.projected_states)
+    assert all(
+        state.name == ["arm/joint_a", "arm/joint_b", "arm/gripper"]
+        for state in world.projected_states
+    )
     assert all(state.position[2] == 0.77 for state in world.projected_states)
 
 
@@ -221,3 +318,102 @@ def test_plan_cartesian_path_is_explicitly_unsupported() -> None:
     assert result.status == PlanningStatus.UNSUPPORTED
     assert result.path == []
     assert "does not support Cartesian" in result.message
+
+
+def test_planar_selected_space_uses_request_local_domain_and_velocity_metric() -> None:
+    world = _PlanarWorld()
+    group = PlanningGroup("moving_base", tuple(world.config.joint_names), world.config.base_link)
+    space = SelectedJointSpace.from_world(world, PlanningGroupSelection.from_groups((group,)))
+    start = np.array([100.0, -50.0, math.pi - 0.1])
+    goal = np.array([104.0, -48.0, -math.pi + 0.1])
+
+    lower, upper = space.joint_space.finite_sampling_domain(start, goal, margin=2.0)
+
+    assert lower == pytest.approx([98.0, -52.0, -math.pi])
+    assert upper == pytest.approx([106.0, -46.0, math.pi])
+    assert space.joint_space.distance(start, goal) == pytest.approx(
+        math.sqrt((4.0 / 2.0) ** 2 + (2.0 / 1.0) ** 2 + (0.2 / 4.0) ** 2)
+    )
+
+
+def test_planar_direct_path_lifts_yaw_across_wrap_boundary() -> None:
+    world = _PlanarWorld()
+    group = PlanningGroup("moving_base", tuple(world.config.joint_names), world.config.base_link)
+
+    result = RRTConnectPlanner().plan_selected_joint_path(
+        world,
+        PlanningGroupSelection.from_groups((group,)),
+        JointState(position=[0.0, 0.0, math.pi - 0.1]),
+        JointState(position=[0.0, 0.0, -math.pi + 0.1]),
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert result.path is not None
+    assert result.path[-1].position[2] == pytest.approx(math.pi + 0.1)
+
+
+def test_planar_rrt_finds_obstacle_detour(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = _WallPlanarWorld()
+    group = PlanningGroup("moving_base", tuple(world.config.joint_names), world.config.base_link)
+
+    random = np.random.RandomState(7)
+    monkeypatch.setattr(np.random, "uniform", random.uniform)
+    result = RRTConnectPlanner(
+        step_size=0.25,
+        connect_step_size=0.25,
+        goal_tolerance=0.1,
+        collision_step_size=0.05,
+    ).plan_selected_joint_path(
+        world,
+        PlanningGroupSelection.from_groups((group,)),
+        JointState(position=[-2.0, 0.0, 0.0]),
+        JointState(position=[2.0, 0.0, 0.0]),
+        timeout=10.0,
+        max_iterations=2000,
+    )
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert result.path is not None
+    assert any(abs(state.position[1]) >= 1.5 for state in result.path)
+
+
+def test_planar_rrt_counts_connection_growth_against_global_budget(
+    mocker: MockerFixture,
+) -> None:
+    world = _WallPlanarWorld()
+    group = PlanningGroup("moving_base", tuple(world.config.joint_names), world.config.base_link)
+    planner = RRTConnectPlanner()
+    max_iterations = 20
+    connection_growth: list[int] = []
+
+    extend = mocker.patch.object(
+        planner,
+        "_extend_selected_tree",
+        return_value=TreeNode(config=np.zeros(3)),
+    )
+
+    def exhaust_connection_budget(*args: object) -> tuple[None, int]:
+        max_new_nodes = args[-1]
+        assert isinstance(max_new_nodes, int)
+        connection_growth.append(max_new_nodes)
+        return None, max_new_nodes
+
+    mocker.patch.object(
+        planner,
+        "_connect_selected_tree",
+        side_effect=exhaust_connection_budget,
+    )
+
+    result = planner.plan_selected_joint_path(
+        world,
+        PlanningGroupSelection.from_groups((group,)),
+        JointState(position=[-2.0, 0.0, 0.0]),
+        JointState(position=[2.0, 0.0, 0.0]),
+        max_iterations=max_iterations,
+    )
+
+    assert result.status == PlanningStatus.NO_SOLUTION
+    assert result.iterations == extend.call_count + sum(connection_growth)
+    assert result.iterations <= max_iterations

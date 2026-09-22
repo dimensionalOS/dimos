@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Transport selection. The coordinator sets DIMOS_TRANSPORT for every native
-// process, and this SDK implements LCM only.
+// process.
 
 #pragma once
 
@@ -11,17 +11,12 @@
 
 namespace dimos::native {
 
-/// Throw unless `name` is a transport this SDK implements.
+/// Throw unless `name` is a transport the SDK implements.
 inline void require_supported_transport(const std::string& name) {
-    if (name == "lcm") {
+    if (name == "lcm" || name == "zenoh") {
         return;
     }
-    if (name == "zenoh") {
-        throw std::runtime_error(
-            "DIMOS_TRANSPORT=zenoh is not supported by the C++ native SDK (LCM only). "
-            "Set DIMOS_TRANSPORT=lcm, or use a Rust native module for zenoh.");
-    }
-    throw std::runtime_error("DIMOS_TRANSPORT must be 'lcm', got '" + name + "'");
+    throw std::runtime_error("DIMOS_TRANSPORT must be 'lcm' or 'zenoh', got '" + name + "'");
 }
 
 }  // namespace dimos::native

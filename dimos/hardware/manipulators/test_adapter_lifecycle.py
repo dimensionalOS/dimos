@@ -19,14 +19,12 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
-from typing_extensions import override
 
 piper_sdk_module = ModuleType("piper_sdk")
 piper_sdk_module.__dict__["C_PiperInterface_V2"] = lambda **_: None
 sys.modules.setdefault("piper_sdk", piper_sdk_module)
 
 from dimos.hardware.manipulators.a750.adapter import A750Adapter
-from dimos.hardware.manipulators.openarm.adapter import OpenArmAdapter
 from dimos.hardware.manipulators.piper import adapter as piper_adapter
 from dimos.hardware.manipulators.piper.adapter import PiperAdapter
 
@@ -90,7 +88,7 @@ def test_piper_explicit_stop_uses_motion_ctrl_1(piper_sdk: Any) -> None:
 def test_piper_connect_initializes_recovery_enable_zero_pose_and_gripper(
     piper_sdk: Any,
 ) -> None:
-    adapter = PiperAdapter()
+    adapter = PiperAdapter(dof=7)
 
     assert adapter.connect()
     assert piper_sdk.ConnectPort.called
@@ -140,61 +138,18 @@ def test_piper_connect_joint_failure_cleans_up_without_gripper(
 
 
 def test_piper_gripper_uses_sdk_units_and_clamps(piper_sdk: Any) -> None:
-    adapter = _LifecyclePiperAdapter()
+    """The gripper is the trailing entry of the joint array, in metres."""
+    adapter = _LifecyclePiperAdapter(dof=7)
     adapter.use_sdk(piper_sdk)
 
-    assert adapter.write_gripper_position(0.1)
+    assert adapter.get_dof() == 7
+    assert adapter.get_limits().position_upper[-1] == 0.08  # metres, declared
+
+    # 0.1 m exceeds the 0.08 m stroke and clamps at the SDK boundary.
+    assert adapter.write_joint_positions([0.0] * 6 + [0.1])
     assert piper_sdk.gripper_position == 80_000
-    assert adapter.read_gripper_position() == 0.08
+    assert adapter.read_joint_positions()[-1] == 0.08
     assert piper_sdk.GripperCtrl.call_args.args[0] == 80_000
-
-
-class _OpenArmLifecycle:
-    def __init__(self) -> None:
-        self.actions: list[str] = []
-
-    def enable_all(self) -> None:
-        self.actions.append("enable")
-
-    def disable_all(self) -> None:
-        self.actions.append("disable")
-
-
-class _LifecycleOpenArmAdapter(OpenArmAdapter):
-    def __init__(self, lifecycle: _OpenArmLifecycle) -> None:
-        super().__init__()
-        self._lifecycle: _OpenArmLifecycle
-        self._lifecycle = lifecycle
-
-    @override
-    def read_joint_positions(self) -> list[float]:
-        return [0.0] * 7
-
-    @override
-    def _compute_gravity_torques(self, q: list[float]) -> list[float]:
-        return [0.0] * len(q)
-
-    @override
-    def write_enable(self, enable: bool) -> bool:
-        if enable:
-            self._lifecycle.enable_all()
-        else:
-            self._lifecycle.disable_all()
-        return True
-
-    @override
-    def write_stop(self) -> bool:
-        self._lifecycle.actions.append("hold")
-        return True
-
-
-def test_openarm_lifecycle_enables_then_holds_and_disables() -> None:
-    lifecycle = _OpenArmLifecycle()
-    adapter = _LifecycleOpenArmAdapter(lifecycle)
-
-    assert adapter.activate()
-    assert adapter.deactivate()
-    assert lifecycle.actions == ["enable", "hold", "disable"]
 
 
 class _A750Robot:

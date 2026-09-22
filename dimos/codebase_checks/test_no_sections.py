@@ -52,6 +52,9 @@ IGNORED_DIRS = {
     ".tox",
     # third-party vendored code
     "gtsam",
+    # cargo's build dir: gitignored, so CI never sees it, but locally it holds
+    # whole vendored python envs whose stdlib is full of section banners.
+    "target",
 }
 
 # Lines that match section patterns but are actually programmatic / intentional.

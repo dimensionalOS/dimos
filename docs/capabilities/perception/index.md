@@ -1,6 +1,4 @@
----
-title: "Perception"
----
+# Perception
 
 ## Detections
 

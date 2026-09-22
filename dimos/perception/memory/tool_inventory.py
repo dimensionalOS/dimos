@@ -58,7 +58,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.memory.transform import throttle
 from dimos.perception.memory import gates
-from dimos.perception.memory.inventory import DEFAULT_VOCABULARY, NamingVocabulary, inventory
+from dimos.perception.memory.inventory import DEFAULT_VOCABULARY, NamingVocabulary
 from dimos.perception.memory.types import Instance, SupportObservation
 from dimos.utils.data import get_data
 
@@ -261,25 +261,17 @@ def main() -> int:
     else:
         naming_vocabulary = DEFAULT_VOCABULARY
 
-    from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
-    from dimos.perception.detection.detectors.omdet import OmDetDetector
+    from dimos.perception.memory.dandetect import DanDetector
 
-    segmenter = EdgeTAMImageSegmenter()
-    detector = OmDetDetector()
-
-    instances = inventory(
-        store,
-        segmenter=segmenter,
-        detector=detector,
-        naming_vocabulary=naming_vocabulary,
-        after=after,
-        before=before,
-        include_ungrounded=args.include_ungrounded,
-        log_progress=args.log_progress,
-    )
-
-    detector.stop()
-    del segmenter
+    with DanDetector() as dan:
+        instances = dan.inventory(
+            store,
+            naming_vocabulary=naming_vocabulary,
+            after=after,
+            before=before,
+            include_ungrounded=args.include_ungrounded,
+            log_progress=args.log_progress,
+        )
 
     print(f"instances: {len(instances)}")
     for i, instance in enumerate(instances):

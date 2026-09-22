@@ -19,6 +19,7 @@ import hashlib
 import os
 import pathlib
 import platform
+import shutil
 import tempfile
 import threading
 import time
@@ -30,13 +31,18 @@ _worker = os.environ.get("PYTEST_XDIST_WORKER")
 if not _worker:
     os.environ[DIMOS_PYTEST_RUN_ID_ENV] = f"pytest-{uuid.uuid4().hex[:16]}"
 
-# Pin every pytest session to its own LCM bus *before* any dimos module is
-# imported (``LCMConfig`` captures ``LCM_DEFAULT_URL`` at import time), so
+# Pin every pytest session to its own LCM bus and its own zenoh scouting group
+# *before* any dimos module is imported (``LCMConfig`` captures
+# ``LCM_DEFAULT_URL`` at import time), so
 # messages from processes outside the session (a dev ``dimos`` daemon, a
 # leaked DimSim bridge, a concurrent pytest run) can't leak into
 # subscribe_all/pattern tests. It has to be an env var (not just a fixture)
 # because subprocesses spawned by tests (``ModuleCoordinator`` workers, the
 # DimSim Deno bridge) create their own LCM instances and inherit our env.
+#
+# Zenoh needs the same treatment for the same reason: its default discovery is
+# loopback multicast, which every worker and every concurrent session on this
+# machine shares. ``ZENOH_SCOUT_ADDR`` moves each onto its own group.
 #
 # Buckets are seeded with the session run id so concurrent sessions on one
 # machine can't collide. xdist workers mix in the worker name, and also get
@@ -44,7 +50,7 @@ if not _worker:
 # dir (``run_registry`` captures ``XDG_STATE_HOME``), which only collide
 # between parallel workers. Exporting ``LCM_DEFAULT_URL`` yourself opts a
 # single-worker session out of the isolation, deliberately joining it to an
-# external bus.
+# external bus; ``ZENOH_SCOUT_ADDR`` does the same for zenoh.
 
 
 def _lcm_bucket(seed: str) -> int:
@@ -55,10 +61,13 @@ _run_id = os.environ[DIMOS_PYTEST_RUN_ID_ENV]
 if _worker:
     _BUCKET = _lcm_bucket(f"{_run_id}:{_worker}")
     os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
+    os.environ["ZENOH_SCOUT_ADDR"] = f"224.0.0.224:{17700 + _BUCKET}"
     os.environ["MCP_PORT"] = str(20000 + _BUCKET)
     os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix=f"dimos-test-state-{_worker}-")
-elif "LCM_DEFAULT_URL" not in os.environ:
-    os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _lcm_bucket(_run_id)}?ttl=0"
+else:
+    _BUCKET = _lcm_bucket(_run_id)
+    os.environ.setdefault("LCM_DEFAULT_URL", f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0")
+    os.environ.setdefault("ZENOH_SCOUT_ADDR", f"224.0.0.224:{17700 + _BUCKET}")
 
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,
@@ -75,7 +84,7 @@ with suppress(ImportError, ValueError, OSError):
     if soft < target:
         resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 import pytest
 import tqdm
 
@@ -88,7 +97,10 @@ from dimos.utils.testing.waiting import retry_until as _retry_until, wait_until 
 # monitor only re-tunes miniters for smooth interactive rendering, so disable it for tests.
 tqdm.tqdm.monitor_interval = 0
 
-load_dotenv()
+_dotenv = dotenv_values()
+for _key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ALIBABA_API_KEY"):
+    if _dotenv.get(_key):
+        os.environ.setdefault(_key, _dotenv[_key])
 
 
 def _has_ros() -> bool:
@@ -159,6 +171,13 @@ def pytest_sessionstart(session):
     _arm_crash_dumps()
 
 
+def pytest_ignore_collect(collection_path: pathlib.Path) -> bool | None:
+    # Nested Python projects own their dependencies and test invocation.
+    if collection_path.is_dir() and (collection_path / "pyproject.toml").is_file():
+        return True
+    return None
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
@@ -170,7 +189,16 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "web_browser: cockpit browser e2e (playwright chromium); runs in the CI web job",
+        "web_browser: cockpit browser e2e (playwright chromium + firefox); "
+        "runs in the CI web job and the macOS self-hosted-tests job",
+    )
+    config.addinivalue_line(
+        "markers",
+        "bake_e2e: dimos bake e2e (builds rust); runs in the CI rust job",
+    )
+    config.addinivalue_line(
+        "markers",
+        "native_e2e: native module e2e (builds rust); runs in the CI rust job",
     )
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
@@ -180,6 +208,9 @@ def pytest_configure(config):
         "markers",
         "skipif_no_turbojpeg: skip when native libturbojpeg is missing — "
         "except in CI, where it runs anyway so a missing dep fails loudly",
+    )
+    config.addinivalue_line(
+        "markers", "skipif_no_ffmpeg: skip when the ffmpeg binary is missing, except in CI"
     )
     config.addinivalue_line("markers", "skipif_macos_bug: skip known-buggy tests on macOS")
     config.addinivalue_line("markers", "skipif_macos: skip tests not intended to run on macOS")
@@ -196,6 +227,38 @@ def pytest_configure(config):
             os.environ[DIMOS_PYTEST_RUN_ID_ENV],
             env_var=DIMOS_PYTEST_RUN_ID_ENV,
         )
+
+
+def _global_config_guard():
+    from dimos.core.global_config import global_config
+
+    snapshot = global_config.model_dump()
+    yield
+    global_config.update(**snapshot)
+
+
+# Undo global_config mutations when the scope that made them ends. Without
+# the class and module guards, a class-scoped fixture's
+# `global_config.update(viewer="none", n_workers=1)` stays in effect for
+# every later test in the session.
+#
+# A build from a parsed config resets the singleton to the parse's full
+# resolution. With a hermetic parse (environ={}) that reverts mcp_port to
+# its schema default, and every later test on the worker then binds the
+# port every other worker also defaults to.
+@pytest.fixture(autouse=True)
+def _restore_global_config():
+    yield from _global_config_guard()
+
+
+@pytest.fixture(autouse=True, scope="class")
+def _restore_global_config_class():
+    yield from _global_config_guard()
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _restore_global_config_module():
+    yield from _global_config_guard()
 
 
 @pytest.fixture(scope="session")
@@ -238,6 +301,10 @@ def pytest_collection_modifyitems(config, items):
         "skipif_no_turbojpeg": (
             not _has_turbojpeg() and not os.getenv("CI"),
             "native libturbojpeg unavailable",
+        ),
+        "skipif_no_ffmpeg": (
+            shutil.which("ffmpeg") is None and not os.getenv("CI"),
+            "ffmpeg not installed",
         ),
         "skipif_macos_bug": (_is_macos(), "Some tests are buggy on Mac OS"),
         "skipif_macos": (_is_macos(), "Not intended to run on macOS"),
@@ -315,6 +382,12 @@ def monitor_threads(request):
         # https://github.com/huggingface/transformers/issues/29513
         "Thread-auto_conversion",
     ]
+    # Zenoh callback threads belong to a session in the process-wide pool, which
+    # outlives the test that first opened it on purpose -- sharing one session is
+    # the point of the pool, and closing it per test would cut module-scoped
+    # fixtures off from their transports mid-module. They go at interpreter exit.
+    # The name is "Thread-<n> (pyo3-closure)", so this cannot be a prefix match.
+    expected_persistent_thread_infix = "(pyo3-closure)"
 
     def live_new_threads():
         # Threads created during this test that are still running. A thread that
@@ -325,6 +398,8 @@ def monitor_threads(request):
             if t.ident is None or t.ident in before or t.name == "MainThread":
                 continue
             if any(t.name.startswith(prefix) for prefix in expected_persistent_thread_prefixes):
+                continue
+            if expected_persistent_thread_infix in t.name:
                 continue
             if t.is_alive():
                 result.append(t)

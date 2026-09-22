@@ -209,13 +209,14 @@ class MultiTBuffer:
         time_tolerance: float | None = None,
         *,
         forward_tolerance: float = 0.0,
+        warn: bool = True,
     ) -> Transform | None:
         result = self._get(parent_frame, child_frame, time_point, time_tolerance)
         if result is None and forward_tolerance > 0:
             result = self._wait_get(
                 parent_frame, child_frame, time_point, time_tolerance, forward_tolerance
             )
-        if result is None:
+        if result is None and warn:
             logger.warning(
                 f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}'"
             )

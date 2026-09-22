@@ -1,13 +1,9 @@
----
-title: "Remote Teleop"
-sidebarTitle: "dimTELE Remote Teleop"
-description: "Drive robots from anywhere in the world, with low latency, from a browser, phone, or VR headset."
----
+# Remote Teleop
 
 **dimTELE** is hosted teleoperation for dimOS robots: operate them remotely
 from any browser or Quest headset over WebRTC.
 The robot dials out to a hosted broker
-([teleop.dimensionalos.com](https://teleop.dimensionalos.com)), so you don't
+([api.dimensional.org](https://api.dimensional.org)), so you don't
 need to open any inbound ports on the
 robot's network. It works behind a home router, on Wi-Fi, wired LAN, or
 cellular.
@@ -20,7 +16,7 @@ browser**. You never connect to the robot directly.
 1. **The robot dials out.** When you run a `teleop-hosted-go2-*` blueprint, the
    robot opens an outbound WebRTC session to the broker and registers itself.
    Because the robot initiates the connection, no inbound ports or port
-   forwarding are needed — it works from behind any NAT.
+   forwarding are needed. It works from behind any NAT.
 2. **The broker bridges the session.** It sits between the robot and the
    operator, relaying video, the minimap, telemetry, and your commands. It also
    handles login and decides which operators may connect to which robots.
@@ -38,35 +34,36 @@ Once connected, four streams flow continuously:
 | Commands | operator → robot | Drive input, sport commands, nav goals, E-STOP |
 
 All broker-facing modules share a single broker session, so there's exactly
-one video track and one control plane per robot — see
+one video track and one control plane per robot. See
 [How it connects](#how-it-connects) for the channel-level detail.
 
 How low is the latency in practice? With the World Cup on, four Dimensional teammates across the globe; San Francisco, Bangalore, Buenos Aires, and Shanghai played soccer with Go2s hosted in SF, over the public internet.
 
 Below are the latencies recorded:
 
-![Round-trip command latency to robots hosted in San Francisco: ~15 ms from San Francisco, ~114 ms from Bangalore, ~134 ms from Buenos Aires, ~160 ms from Shanghai — every route under the ~200 ms delay of a typical video call](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/teleoperation/assets/latency_four_continents.png)
+![Round-trip command latency to robots hosted in San Francisco: ~15 ms from San Francisco, ~114 ms from Bangalore, ~134 ms from Buenos Aires, ~160 ms from Shanghai. Every route is under the ~200 ms delay of a typical video call](assets/latency_four_continents.png)
 
 ## Quick Start
 
 ```bash
-TRANSPORTS__BROKER__API_KEY=dtk_live_... \
+TRANSPORTS__BROKER__API_KEY=dimos_sk_... \
 dimos run teleop-hosted-go2-transport
 ```
 
 The robot registers with the broker. Open
-[teleop.dimensionalos.com](https://teleop.dimensionalos.com), log in, and your
+the [console Teleop tab](https://console.dimensional.org/console/teleop), sign in, and your
 robot appears under **Available Robots**. Click **Connect** and you're driving.
 
-The API key alone is enough — the broker derives the robot identity from it.
+The API key alone is enough; one key drives the CLI, uploads, and teleop. By
+default, the broker derives the robot identity from the API key.
 `TRANSPORTS__BROKER__ROBOT_ID` / `TRANSPORTS__BROKER__ROBOT_NAME` are optional
 overrides. All broker settings can also be passed on the CLI, e.g.
-`--transports.broker.api-key=dtk_live_...`.
+`--transports.broker.api-key=dimos_sk_...`.
 
 ## Get an API key
 
-1. Visit [teleop.dimensionalos.com](https://teleop.dimensionalos.com) and sign up.
-2. On the dashboard, **API Keys → + New Key**.
+1. Sign in to the [Dimensional console](https://console.dimensional.org/console/keys).
+2. Under **API keys**, click **Create key**.
 3. Copy the key (shown once) and pass it as `TRANSPORTS__BROKER__API_KEY`.
 
 ## Available blueprints
@@ -92,7 +89,7 @@ Once the robot is running and you've clicked **Connect**, here's how to operate 
 
 ### 1. Connect
 
-Open [teleop.dimensionalos.com](https://teleop.dimensionalos.com), find your
+Open the [console Teleop tab](https://console.dimensional.org/console/teleop), find your
 robot under **Available Robots**, and click **Connect**. Video appears once the
 WebRTC session negotiates; the metrics HUD starts populating once telemetry
 arrives. If the robot doesn't show up, confirm the blueprint is still running
@@ -103,13 +100,13 @@ and that the API key matches the one the robot registered with.
 Use **WASD** on a desktop keyboard (or the thumbsticks in VR) to
 drive: `W`/`S` forward/back, `A`/`D` strafe, and turn with the yaw controls.
 Hold **Shift** for 2× speed, **Ctrl** for half speed. Drive input streams
-continuously and stops the instant you release — the robot treats a released
+continuously and stops the instant you release. The robot treats a released
 key as "stop," so it never keeps coasting on a dropped packet.
 
 ### 3. Navigate with the minimap
 
 The minimap shows the robot's costmap and live pose. **Click any point** on it
-to send a navigation goal — the robot plans a path and drives there on its own,
+to send a navigation goal. The robot plans a path and drives there on its own,
 avoiding obstacles. Give a manual drive command at any time and it takes over
 immediately, cancelling the plan. There's also a **cancel** control to stop
 navigating without driving manually.
@@ -118,15 +115,15 @@ navigating without driving manually.
 
 The command bar exposes the robot's allow-listed actions:
 
-- **Stand / sit / recover** — `RecoveryStand`, `StandDown`, `Sit`, and `Damp`
+- **Stand / sit / recover**: `RecoveryStand`, `StandDown`, `Sit`, and `Damp`
   (relax the joints).
-- **Greetings / stretch** — `Hello`, `Stretch`.
-- **Acrobatics** — `FrontJump`, `FrontPounce` — only available when the robot
+- **Greetings / stretch**: `Hello`, `Stretch`.
+- **Acrobatics**: `FrontJump` and `FrontPounce`, only available when the robot
   was launched with `--allow-acrobatics=true`.
-- **Obstacle avoidance** — toggle the onboard avoidance layer on or off.
-- **Rage mode** — toggle the high-agility gait on or off.
-- **Head LED** — set the head light brightness.
-- **Camera** — on multicam robots, pick which camera (or side-by-side view) the
+- **Obstacle avoidance**: toggle the onboard avoidance layer on or off.
+- **Rage mode**: toggle the high-agility gait on or off.
+- **Head LED**: set the head light brightness.
+- **Camera**: on multicam robots, pick which camera (or side-by-side view) the
   video track shows.
 
 Each command is acknowledged, so the UI reflects what the robot actually did,
@@ -135,13 +132,13 @@ not just what you clicked.
 ### 5. E-STOP
 
 The **E-STOP** control is always available. It immediately stops all motion,
-cancels any active navigation, and damps the robot — and it takes priority over
+cancels any active navigation, and damps the robot. It takes priority over
 everything else in flight. Clear it with **estop_clear** (or the equivalent
 control) when you're ready to resume; the robot won't move again until you do.
 
 ## Operator inputs
 
-The browser is modality-agnostic — it streams whatever the device gives it, and
+The browser is modality-agnostic. It streams whatever the device gives it and
 the robot blueprint decides what to do with it.
 
 | Device | Input | Maps to |
@@ -150,10 +147,10 @@ the robot blueprint decides what to do with it.
 | Quest 3 / VR headset | **Left thumbstick** Y → fwd/back, X → strafe; **right thumbstick** X → yaw; grip = boost/slow | same `TwistStamped` path as keyboard |
 
 Shift = 2× speed, Ctrl = ½×. The operator can also send allow-listed sport
-commands (StandDown, RecoveryStand, Sit, Damp, Hello, Stretch, and — gated
-behind `allow_acrobatics` — FrontJump, FrontPounce),
-toggle obstacle avoidance / rage mode / the head LED, pick the camera, E-STOP,
-and click the minimap to navigate.
+commands (StandDown, RecoveryStand, Sit, Damp, Hello, Stretch, plus FrontJump
+and FrontPounce when `allow_acrobatics` is set), toggle obstacle avoidance /
+rage mode / the head LED, pick the camera, E-STOP, and click the minimap to
+navigate.
 
 ## Live metrics HUD
 
@@ -183,13 +180,13 @@ module's config key (module class name, lowercased). Pass a unique field directl
 for example `--telemetry-hz=5`; if a field is ambiguous, qualify it with the
 module key, such as `--hostedstatsmodule.telemetry-hz=5`.
 
-`hostedstatsmodule` — `HostedStatsModule`:
+`hostedstatsmodule` (`HostedStatsModule`):
 
 | Field | Default | Notes |
 |-------|---------|-------|
 | `telemetry_hz` | `3.0` | Robot → operator HUD push rate |
 
-`go2commandmodule` — `Go2CommandModule`:
+`go2commandmodule` (`Go2CommandModule`):
 
 | Field | Default | Notes |
 |-------|---------|-------|
@@ -199,7 +196,7 @@ module key, such as `--hostedstatsmodule.telemetry-hz=5`.
 | `allow_acrobatics` | `false` | Gate FrontJump / FrontPounce etc. |
 | `damp_on_operator_lost` | `false` | Damp the robot when the operator link drops |
 
-`cameramuxmodule` — `CameraMuxModule`:
+`cameramuxmodule` (`CameraMuxModule`):
 
 | Field | Default | Notes |
 |-------|---------|-------|
@@ -207,7 +204,7 @@ module key, such as `--hostedstatsmodule.telemetry-hz=5`.
 | `video_max_width` / `video_max_fps` | `0` (source) | Publish-side caps for constrained uplinks |
 | `cameras` | `["cam1","cam2"]` | Named inputs; first is the boot default view |
 
-`mapcompressmodule` — `MapCompressModule`:
+`mapcompressmodule` (`MapCompressModule`):
 
 | Field | Default | Notes |
 |-------|---------|-------|

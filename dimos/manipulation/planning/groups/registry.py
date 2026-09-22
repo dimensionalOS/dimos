@@ -17,59 +17,36 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING
 
-from dimos.manipulation.planning.groups.discovery import FALLBACK_PLANNING_GROUP_NAME
-from dimos.manipulation.planning.groups.identifiers import (
-    make_global_joint_names,
-    make_planning_group_id,
+from dimos.manipulation.planning.groups.models import (
+    PlanningGroup,
+    PlanningGroupDefinition,
+    PlanningGroupSelection,
 )
-from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
-from dimos.manipulation.planning.spec.models import PlanningGroupID, RobotName
-
-if TYPE_CHECKING:
-    from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.models import PlanningGroupID
 
 
 class PlanningGroupRegistry:
-    """Registry of public planning groups derived from robot configs."""
+    """Registry of public planning groups derived from one model config."""
 
-    def __init__(self, robot_configs: Iterable[RobotModelConfig] = ()) -> None:
+    def __init__(self, definitions: Iterable[PlanningGroupDefinition] = ()) -> None:
         self._groups: dict[PlanningGroupID, PlanningGroup] = {}
-        self._groups_by_robot: dict[RobotName, list[PlanningGroup]] = {}
-        for config in robot_configs:
-            self.add_robot(config)
-
-    def add_robot(self, config: RobotModelConfig) -> None:
-        """Register all planning groups declared by one robot config."""
-        if config.name in self._groups_by_robot:
-            raise ValueError(f"Robot '{config.name}' is already registered")
-
-        robot_groups: list[PlanningGroup] = []
-        for definition in config.planning_groups:
-            group_id = make_planning_group_id(config.name, definition.name)
+        for definition in definitions:
+            group_id = definition.name
             if group_id in self._groups:
                 raise ValueError(f"Planning group '{group_id}' is already registered")
             group = PlanningGroup(
                 id=group_id,
-                robot_name=config.name,
-                group_name=definition.name,
-                joint_names=tuple(make_global_joint_names(config.name, definition.joint_names)),
-                local_joint_names=definition.joint_names,
+                joint_names=definition.joint_names,
                 base_link=definition.base_link,
                 tip_link=definition.tip_link,
                 source=definition.source,
             )
             self._groups[group_id] = group
-            robot_groups.append(group)
-        self._groups_by_robot[config.name] = robot_groups
 
     def list(self) -> tuple[PlanningGroup, ...]:
-        """List planning groups in robot registration order."""
-        groups: list[PlanningGroup] = []
-        for robot_groups in self._groups_by_robot.values():
-            groups.extend(robot_groups)
-        return tuple(groups)
+        """List planning groups in declaration order."""
+        return tuple(self._groups.values())
 
     def get(self, group_id: PlanningGroupID) -> PlanningGroup:
         """Return one planning group by public ID."""
@@ -84,34 +61,19 @@ class PlanningGroupRegistry:
             tuple(self.get(group_id) for group_id in group_ids)
         )
 
-    def groups_for_robot(self, robot_name: RobotName) -> tuple[PlanningGroup, ...]:
-        """Return planning groups for one robot."""
-        return tuple(self._groups_by_robot.get(robot_name, ()))
+    def default_group_id(self) -> PlanningGroupID | None:
+        """Return the sole group ID when selection is unambiguous."""
+        groups = self.list()
+        return groups[0].id if len(groups) == 1 else None
 
-    def default_group_id_for_robot(self, robot_name: RobotName) -> PlanningGroupID | None:
-        """Return the group ID used by robot-scoped joint wrappers.
-
-        Prefer the generated whole-robot fallback group. If a robot only has one
-        configured planning group, use that group as the unambiguous fallback.
-        """
-        group_id = make_planning_group_id(robot_name, FALLBACK_PLANNING_GROUP_NAME)
-        if group_id in self._groups:
-            return group_id
-        robot_groups = self.groups_for_robot(robot_name)
-        if len(robot_groups) == 1:
-            return robot_groups[0].id
-        return None
-
-    def primary_pose_group_id_for_robot(self, robot_name: RobotName) -> PlanningGroupID | None:
-        """Return the unique pose-targetable group ID for robot-scoped wrappers."""
-        pose_groups = [
-            group for group in self.groups_for_robot(robot_name) if group.has_pose_target
-        ]
+    def primary_pose_group_id(self) -> PlanningGroupID | None:
+        """Return the unique pose-targetable group ID."""
+        pose_groups = [group for group in self.list() if group.has_pose_target]
         if not pose_groups:
             return None
         if len(pose_groups) > 1:
             raise ValueError(
-                f"Robot '{robot_name}' has {len(pose_groups)} pose-targetable planning groups; "
+                f"Model has {len(pose_groups)} pose-targetable planning groups; "
                 "use an explicit planning group ID"
             )
         return pose_groups[0].id

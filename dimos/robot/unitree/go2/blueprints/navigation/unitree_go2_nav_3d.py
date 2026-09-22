@@ -31,14 +31,18 @@ from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.memory.module import pose_setter_for
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.basic_path_follower.module import BasicPathFollower
+from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
+from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
-from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
+from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
+from dimos.robot.unitree.go2.constants import (
+    BASE_LINK_HEIGHT,
+    ROBOT_HEIGHT,
+    ROBOT_LENGTH,
+    ROBOT_WIDTH,
+)
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
 from dimos.visualization.vis_module import vis_module
 
@@ -61,7 +65,7 @@ class Go2Mid360Recorder(PointlioRecorder):
 _RECORD = os.getenv("DIMOS_NAV_RECORD", "").lower() in ("1", "true", "yes", "on")
 
 # Opt-in raw-Livox capture: set RECORD_PCAP=1 to also tcpdump the Mid-360 UDP
-# stream into recordings/ (needs DIMOS_MID360_LIDAR_IP).
+# stream into recordings/ (needs the Mid-360's lidar_ip).
 _RECORD_PCAP = os.getenv("RECORD_PCAP", "").lower() in ("1", "true", "yes", "on")
 
 
@@ -156,6 +160,7 @@ unitree_go2_nav_3d = autoconnect(
         world_frame="odom",
         voxel_size=voxel_size,
         robot_height=ROBOT_HEIGHT,
+        start_z_offset_m=BASE_LINK_HEIGHT,
         surface_closing_radius=0.3,
         wall_clearance_m=0.1,
         wall_buffer_m=0.75,
@@ -164,8 +169,7 @@ unitree_go2_nav_3d = autoconnect(
         step_penalty_weight=4.0,
         viz_publish_hz=planner_viz_hz,
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
-    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
-    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
+    BasicPathFollower.blueprint(speed=0.5, heading_gain=1.5, max_angular=1.5),
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
 

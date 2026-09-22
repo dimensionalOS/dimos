@@ -35,7 +35,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.memory.transform import throttle
 from dimos.perception.memory import gates
-from dimos.perception.memory.localize import LocalizeTrace, embed_index, localize
+from dimos.perception.memory.localize import LocalizeTrace
 from dimos.perception.memory.types import Localization
 from dimos.utils.data import get_data
 
@@ -217,53 +217,38 @@ def main() -> int:
     after = lo + args.start
     before = lo + args.start + args.duration if args.duration is not None else hi
 
-    from dimos.models.embedding.siglip import SigLIPModel
-    from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
-    from dimos.perception.detection.detectors.omdet import OmDetDetector
-
-    siglip = SigLIPModel()
-    detector = OmDetDetector()
-    segmenter = EdgeTAMImageSegmenter()
-    index = embed_index(store, siglip, after, before)
+    from dimos.perception.memory.dandetect import DanDetector
 
     traces: list[tuple[str, LocalizeTrace]] = []
     hits = 0
-    if args.multi:
-        qtraces = [LocalizeTrace() for _ in queries]
-        results = localize(
-            store,
-            queries,
-            index=index,
-            siglip=siglip,
-            detector=detector,
-            segmenter=segmenter,
-            require_pose=not args.allow_no_pose,
-            trace=qtraces,
-        )
-        for query, qtrace, hit in zip(queries, qtraces, results, strict=True):
-            if report(query, hit, lo):
-                hits += 1
-                traces.append((query, qtrace))
-    else:
-        for query in queries:
-            trace = LocalizeTrace()
-            hit = localize(
+    with DanDetector() as dan:
+        index = dan.embed(store, after, before)
+        if args.multi:
+            qtraces = [LocalizeTrace() for _ in queries]
+            results = dan.localize(
                 store,
-                query,
+                queries,
                 index=index,
-                siglip=siglip,
-                detector=detector,
-                segmenter=segmenter,
                 require_pose=not args.allow_no_pose,
-                trace=trace,
+                trace=qtraces,
             )
-            if report(query, hit, lo):
-                hits += 1
-                traces.append((query, trace))
-
-    siglip.stop()
-    detector.stop()
-    del segmenter
+            for query, qtrace, hit in zip(queries, qtraces, results, strict=True):
+                if report(query, hit, lo):
+                    hits += 1
+                    traces.append((query, qtrace))
+        else:
+            for query in queries:
+                trace = LocalizeTrace()
+                hit = dan.localize(
+                    store,
+                    query,
+                    index=index,
+                    require_pose=not args.allow_no_pose,
+                    trace=trace,
+                )
+                if report(query, hit, lo):
+                    hits += 1
+                    traces.append((query, trace))
 
     if not hits:
         return 1

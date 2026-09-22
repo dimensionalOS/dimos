@@ -14,80 +14,214 @@
 
 from typing import Any
 
+import pytest
+
+from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.hardware.manipulators.mock.adapter import MockAdapter
-from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
+from dimos.core.global_config import global_config
+from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
     openyam_planner_coordinator,
 )
-from dimos.robot.manipulators.openyam.config import (
-    OPENYAM_DOF,
-    OPENYAM_PACKAGE_PATHS,
-    make_openyam_hardware,
-    make_openyam_model_config,
+from dimos.robot.manipulators.openyam.blueprints.teleop import (
+    keyboard_teleop_openyam,
+    keyboard_teleop_openyam_planner,
+    teleop_webxr_openyam,
 )
+from dimos.robot.manipulators.openyam.config import (
+    OPENYAM_ARM_JOINTS,
+    OPENYAM_DOF,
+    OPENYAM_GRIPPER_JOINT,
+    OPENYAM_HARDWARE_ID,
+    OPENYAM_HOME_JOINTS,
+    OPENYAM_JOINTS,
+    OPENYAM_MODEL_PATH,
+    make_openyam_model_config,
+    openyam_hardware,
+)
+from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
+from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
-    return next(atom.kwargs for atom in blueprint.blueprints if atom.module is module_type)
+    return next(
+        atom.kwargs for atom in blueprint.blueprints if issubclass(atom.module, module_type)
+    )
 
 
 def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
-    return _module_kwargs(blueprint, ControlCoordinator)
+    return next(
+        atom.kwargs for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
+    )
 
 
-def test_openyam_model_config_has_expected_links_and_mapping() -> None:
-    config = make_openyam_model_config(name="arm")
+def test_make_openyam_model_config_uses_canonical_arm_joints(mocker) -> None:
+    download = mocker.patch(
+        "dimos.utils.data.get_data", side_effect=AssertionError("Config must not download models")
+    )
+    config = make_openyam_model_config()
 
-    assert config.joint_names == [f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)]
-    assert config.joint_name_mapping == {
-        f"arm/joint{i}": f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)
-    }
-    assert config.base_link == "yam_base_link"
-    assert config.end_effector_link == "yam_hand_tcp"
-    assert list(config.package_paths) == list(OPENYAM_PACKAGE_PATHS)
-    assert config.gripper_hardware_id == "arm"
-
-
-def test_openyam_mock_hardware_has_gripper() -> None:
-    hardware = make_openyam_hardware("arm")
-
-    assert hardware.adapter_type == "mock"
-    assert hardware.joints == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
-    assert hardware.gripper_joints == ["arm/gripper"]
+    assert config.model.source_path is OPENYAM_MODEL_PATH
+    assert config.joint_names == OPENYAM_ARM_JOINTS
+    assert config.base_link == "base"
+    assert config.planning_groups[0].tip_link == "gripper_tip"
+    assert config.gripper_hardware_id == OPENYAM_HARDWARE_ID
+    assert config.home_joints == OPENYAM_HOME_JOINTS
+    download.assert_not_called()
 
 
-def test_openyam_mock_adapter_set_get_behavior() -> None:
-    positions = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
-    adapter = MockAdapter(dof=OPENYAM_DOF, initial_positions=positions)
+@pytest.mark.self_hosted
+def test_openyam_model_contains_canonical_arm_joints() -> None:
+    config = make_openyam_model_config()
+    model = prepare_robot_model(config).description
 
-    assert adapter.read_joint_positions() == positions
-    updated_positions = [-0.1, -0.2, -0.3, -0.4, -0.5, -0.6]
-    assert adapter.write_joint_positions(updated_positions)
-    assert adapter.read_joint_positions() == updated_positions
-    assert adapter.write_gripper_position(0.25)
-    assert adapter.read_gripper_position() == 0.25
-
-
-def test_openyam_planner_blueprint_preserves_model_config() -> None:
-    blueprint = openyam_planner_coordinator
-    kwargs = _module_kwargs(blueprint, ManipulationModule)
-    config = ManipulationModuleConfig(**kwargs).robots[0]
-
-    assert config.name == "arm"
-    assert config.joint_names == [f"yam_joint{i}" for i in range(1, OPENYAM_DOF + 1)]
-    assert config.end_effector_link == "yam_hand_tcp"
-    assert config.gripper_hardware_id == "arm"
-    task = _coordinator_kwargs(blueprint)["tasks"][0]
-    assert task.type == "trajectory"
-    assert task.joint_names == [f"arm/joint{i}" for i in range(1, OPENYAM_DOF + 1)]
+    assert OPENYAM_MODEL_PATH.parts[-2:] == ("i2rt", "yam.urdf")
+    assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
+        OPENYAM_ARM_JOINTS
+    )
 
 
-def test_openyam_coordinator_blueprint_uses_six_arm_joints() -> None:
-    blueprint = coordinator_openyam
+def test_make_openyam_model_config_preserves_explicit_home() -> None:
+    configured_home = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+
+    config = make_openyam_model_config(home_joints=configured_home)
+
+    assert config.home_joints == configured_home
+
+
+def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
+    tasks = _coordinator_kwargs(teleop_webxr_openyam)["tasks"]
+    teleop = next(task for task in tasks if task.type == "teleop_ik")
+
+    assert teleop.params["pink"].gain == 1.0
+    assert teleop.params["solver_type"] is OpenYamPinkPoseTargetSolver
+    assert teleop.params["max_joint_velocity_rad_s"] == 2.0
+    assert teleop.params["joint_command_filter_cutoff_hz"] == 30.0
+
+
+def test_openyam_hardware_physical_mode_returns_one_whole_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(global_config, "simulation", "")
+    monkeypatch.setattr(global_config, "can_port", "can1")
+
+    hardware = openyam_hardware()
+
+    assert (hardware.hardware_id, hardware.hardware_type, hardware.adapter_type) == (
+        OPENYAM_HARDWARE_ID,
+        HardwareType.WHOLE_BODY,
+        "openyam_damiao",
+    )
+    assert hardware.adapter_kwargs["runtime_config"].bus_devices == {"openyam": "can1"}
+
+
+def test_openyam_hardware_without_can_port_uses_platform_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(global_config, "simulation", "")
+    monkeypatch.setattr(global_config, "can_port", None)
+
+    hardware = openyam_hardware()
+
+    assert hardware.adapter_kwargs["runtime_config"].bus_devices == {}
+
+
+def test_openyam_hardware_simulation_mode_returns_generic_whole_body_mock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(global_config, "simulation", "mujoco")
+
+    hardware = openyam_hardware()
+
+    assert hardware.adapter_type == "mock_whole_body"
+    limits = hardware.limits
+    assert limits is not None
+    assert limits.position_lower == [*([None] * OPENYAM_DOF), 0.0]
+    assert limits.position_upper == [*([None] * OPENYAM_DOF), 1.0]
+
+
+def test_quest_teleop_module_accepts_blueprint_config() -> None:
+    kwargs = _module_kwargs(teleop_webxr_openyam, ArmTeleopModule)
+
+    module = ArmTeleopModule(**kwargs)
+    module.stop()
+
+
+@pytest.mark.parametrize(
+    "blueprint",
+    [
+        coordinator_openyam,
+        openyam_planner_coordinator,
+    ],
+)
+def test_openyam_basic_trajectory_accepts_all_hardware_joints(blueprint: Blueprint) -> None:
     kwargs = _coordinator_kwargs(blueprint)
-    assert len(kwargs["hardware"]) == 1
-    assert len(kwargs["hardware"][0].joints) == OPENYAM_DOF
-    assert kwargs["tasks"][0].joint_names == kwargs["hardware"][0].joints
+
+    assert kwargs["hardware"][0].joints == OPENYAM_JOINTS
+    trajectory = next(task for task in kwargs["tasks"] if task.type == "trajectory")
+    gripper = next(task for task in kwargs["tasks"] if task.type == "gripper")
+
+    assert trajectory.joint_names == OPENYAM_JOINTS
+    assert (gripper.name, gripper.joint_names) == (
+        "openyam_gripper",
+        [OPENYAM_GRIPPER_JOINT],
+    )
+    assert gripper.name == f"{make_openyam_model_config().gripper_hardware_id}_gripper"
+
+
+@pytest.mark.parametrize(
+    "blueprint",
+    [
+        keyboard_teleop_openyam,
+        keyboard_teleop_openyam_planner,
+    ],
+)
+def test_openyam_teleop_blueprints_expose_arm_and_gripper_control(
+    blueprint: Blueprint,
+) -> None:
+    kwargs = _coordinator_kwargs(blueprint)
+    claimed_joints = [task.joint_names for task in kwargs["tasks"]]
+
+    assert kwargs["hardware"][0].joints == OPENYAM_JOINTS
+    assert OPENYAM_ARM_JOINTS in claimed_joints
+    assert all(
+        joints in (OPENYAM_ARM_JOINTS, [OPENYAM_GRIPPER_JOINT], OPENYAM_JOINTS)
+        for joints in claimed_joints
+    )
+
+
+def test_keyboard_teleop_gripper_control_is_independent() -> None:
+    tasks = _coordinator_kwargs(keyboard_teleop_openyam)["tasks"]
+    gripper = next(task for task in tasks if task.name == "openyam_gripper")
+
+    assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
+    assert gripper.type == "gripper"
+
+
+def test_keyboard_teleop_openyam_overrides_planner_trajectory() -> None:
+    tasks = _coordinator_kwargs(keyboard_teleop_openyam_planner)["tasks"]
+    trajectory = next(task for task in tasks if task.type == "trajectory")
+    eef_twist = next(task for task in tasks if task.type == "eef_twist")
+
+    assert trajectory.joint_names == OPENYAM_JOINTS
+    assert eef_twist.priority > trajectory.priority
+
+
+def test_keyboard_teleop_openyam_gripper_task_has_no_extra_params() -> None:
+    tasks = _coordinator_kwargs(keyboard_teleop_openyam)["tasks"]
+    gripper = next(task for task in tasks if task.name == "openyam_gripper")
+
+    assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
+    assert gripper.params == {}
+
+
+def test_webxr_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
+    tasks = _coordinator_kwargs(teleop_webxr_openyam)["tasks"]
+    teleop = next(task for task in tasks if task.type == "teleop_ik")
+    gripper = next(task for task in tasks if task.type == "gripper")
+
+    assert teleop.params["bindings"] == [{"hand": "right", "target_frame": "gripper_tip"}]
+    assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
+    assert gripper.stream_bind == {"gripper_command": "right_gripper_command"}

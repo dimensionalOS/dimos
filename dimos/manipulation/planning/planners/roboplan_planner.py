@@ -33,18 +33,18 @@ except ImportError as exc:
         "Install the manipulation extra before selecting the roboplan backend."
     ) from exc
 
-from dimos.manipulation.planning.groups.models import PlanningGroupSelection
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanCartesianPathConfig,
     RoboPlanPlannerConfig,
 )
+from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.planners.selected_joint_space import normalize_selection_target
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import (
     CartesianTarget,
     PlanningGroupID,
     PlanningResult,
-    WorldRobotID,
 )
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
 from dimos.manipulation.planning.world.roboplan_model import (
@@ -79,47 +79,67 @@ class RoboPlanPlanner:
             raise TypeError("RoboPlanPlanner requires a RoboPlanWorld")
         self._world = world
         self._config = config.model_copy(deep=True)
+        self._shared_rrt = RRTConnectPlanner()
 
     def plan_joint_path(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         start: JointState,
         goal: JointState,
         timeout: float = 10.0,
     ) -> PlanningResult:
-        """Plan using the legacy robot-scoped local-name contract."""
+        """Plan a path for the configured model's canonical joints."""
         if world is not self._world:
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
                 message="RoboPlan-native planner requires its RoboPlanWorld instance",
             )
-        try:
-            q_start = self._world._joint_state_to_q(robot_id, start)
-        except ValueError as exc:
-            return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
-        try:
-            q_goal = self._world._joint_state_to_q(robot_id, goal)
-        except ValueError as exc:
-            return PlanningResult(status=PlanningStatus.INVALID_GOAL, message=str(exc))
-        if not self._world._is_ready():
+        if not self._world.is_ready():
             return PlanningResult(
                 status=PlanningStatus.INVALID_START,
                 message="RoboPlan planning scene is not ready: authoritative state is incomplete",
             )
-        robot = self._world._get_robot(robot_id)
-        group = self._world._legacy_group(robot.config.name)
+        prepared = self._world.get_prepared_model()
+        model_config = prepared.config
+        if not prepared.joint_space.is_interval_only:
+            all_joints = PlanningGroup(
+                id="all",
+                joint_names=tuple(model_config.joint_names),
+                base_link=model_config.base_link,
+            )
+            return self._shared_rrt.plan_selected_joint_path(
+                world,
+                PlanningGroupSelection.from_groups((all_joints,)),
+                start,
+                goal,
+                timeout,
+                5000,
+            )
+        try:
+            q_start = self._world.ordered_joint_positions(start)
+        except ValueError as exc:
+            return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
+        try:
+            q_goal = self._world.ordered_joint_positions(goal)
+        except ValueError as exc:
+            return PlanningResult(status=PlanningStatus.INVALID_GOAL, message=str(exc))
+        if not self._world.is_ready():
+            return PlanningResult(
+                status=PlanningStatus.INVALID_START,
+                message="RoboPlan planning scene is not ready: authoritative state is incomplete",
+            )
+        config = self._world.get_prepared_model().config
+        group = self._world.all_planning_group()
         with self._world.scratch_context() as ctx:
             self._world.set_joint_state(
                 ctx,
-                robot_id,
-                JointState(name=list(robot.config.joint_names), position=q_start.tolist()),
+                JointState(name=list(config.joint_names), position=q_start.tolist()),
             )
             return self._plan_group(
                 ctx,
                 group,
-                dict(zip(robot.config.joint_names, q_start, strict=True)),
-                dict(zip(robot.config.joint_names, q_goal, strict=True)),
+                dict(zip(config.joint_names, q_start, strict=True)),
+                dict(zip(config.joint_names, q_goal, strict=True)),
                 timeout,
                 5000,
             )
@@ -144,7 +164,21 @@ class RoboPlanPlanner:
                 status=PlanningStatus.INVALID_GOAL,
                 message="No planning groups selected",
             )
-        group = self._world._require_model().groups.get(frozenset(selection.group_ids))
+        if not self._world.is_ready():
+            return PlanningResult(
+                status=PlanningStatus.INVALID_START,
+                message="RoboPlan planning scene is not ready: authoritative state is incomplete",
+            )
+        if self._selection_requires_shared_planner(selection):
+            return self._shared_rrt.plan_selected_joint_path(
+                world,
+                selection,
+                start,
+                goal,
+                timeout,
+                max_iterations,
+            )
+        group = self._world.planning_group(selection.group_ids)
         if group is None:
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
@@ -168,6 +202,7 @@ class RoboPlanPlanner:
                 dict(zip(normalized_goal.name, normalized_goal.position, strict=True)),
                 timeout,
                 max_iterations,
+                output_names=selection.joint_names,
             )
 
     def plan_cartesian_path(
@@ -188,6 +223,11 @@ class RoboPlanPlanner:
                 status=PlanningStatus.UNSUPPORTED,
                 message="RoboPlan-native planner requires its RoboPlanWorld instance",
             )
+        if self._selection_requires_shared_planner(selection):
+            return PlanningResult(
+                status=PlanningStatus.UNSUPPORTED,
+                message="Cartesian waypoint planning requires interval-only joint coordinates",
+            )
         validation_error = self._validate_cartesian_request(selection, targets, auxiliary_groups)
         if validation_error is not None:
             return validation_error
@@ -196,7 +236,7 @@ class RoboPlanPlanner:
         except ValueError as exc:
             return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
 
-        group = self._world._require_model().groups.get(frozenset(selection.group_ids))
+        group = self._world.planning_group(selection.group_ids)
         if group is None:
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
@@ -255,13 +295,20 @@ class RoboPlanPlanner:
         """Get planner name."""
         return "RoboPlan"
 
+    def _selection_requires_shared_planner(self, selection: PlanningGroupSelection) -> bool:
+        return (
+            not self._world.get_prepared_model()
+            .joint_space.select(selection.joint_names)
+            .is_interval_only
+        )
+
     def _normalize_selection_start(
         self,
         selection: PlanningGroupSelection,
         start: JointState,
     ) -> JointState:
         """Validate readiness and normalize the request's authoritative start."""
-        if not self._world._is_ready():
+        if not self._world.is_ready():
             raise ValueError(
                 "RoboPlan planning scene is not ready: authoritative state is incomplete"
             )
@@ -350,13 +397,12 @@ class RoboPlanPlanner:
 
     def _apply_selected_state(self, ctx: RoboPlanContext, state: JointState) -> None:
         positions = dict(zip(state.name, state.position, strict=True))
-        for robot_id, robot in self._world._robots.items():
-            q = ctx.q_by_robot[robot_id].copy()
-            for index, local_name in enumerate(robot.config.joint_names):
-                global_name = f"{robot.config.name}/{local_name}"
-                if global_name in positions:
-                    q[index] = positions[global_name]
-            ctx.q_by_robot[robot_id] = q
+        config = self._world.get_prepared_model().config
+        q = ctx.q.copy()
+        for index, name in enumerate(config.joint_names):
+            if name in positions:
+                q[index] = positions[name]
+        ctx.q = q
 
     def _build_cartesian_path(
         self,
@@ -364,7 +410,6 @@ class RoboPlanPlanner:
         selection: PlanningGroupSelection,
         targets: Mapping[PlanningGroupID, CartesianTarget],
     ) -> Any:
-        model = self._world._require_model()
         base_frames: list[str] = []
         tip_frames: list[str] = []
         waypoint_paths: list[list[NDArray[np.float64]]] = []
@@ -384,7 +429,7 @@ class RoboPlanPlanner:
                     f"Cartesian target for '{group.id}' must begin at its current TCP pose"
                 )
             base_frames.append(ROBOPLAN_WORLD_FRAME)
-            tip_frames.append(model.native_link(group.robot_name, group.tip_link))
+            tip_frames.append(self._world.native_link_name(group.tip_link))
             waypoint_paths.append(target_matrices)
         return roboplan_core.CartesianPath(base_frames, tip_frames, waypoint_paths)
 
@@ -515,13 +560,11 @@ class RoboPlanPlanner:
                     position=(q_start + fraction * (q_end - q_start)).tolist(),
                 )
                 self._apply_selected_state(ctx, sample)
-                first_robot_id = next(iter(self._world._robots))
-                if not self._world.is_collision_free(ctx, first_robot_id):
+                if not self._world.is_collision_free(ctx):
                     return False
         if len(path) == 1:
             self._apply_selected_state(ctx, path[0])
-            first_robot_id = next(iter(self._world._robots))
-            return self._world.is_collision_free(ctx, first_robot_id)
+            return self._world.is_collision_free(ctx)
         return True
 
     def _plan_group(
@@ -532,6 +575,8 @@ class RoboPlanPlanner:
         goal_by_name: Mapping[str, float],
         timeout: float,
         max_iterations: int,
+        *,
+        output_names: Sequence[str] | None = None,
     ) -> PlanningResult:
         started = time.time()
         try:
@@ -560,7 +605,7 @@ class RoboPlanPlanner:
                     max_iterations,
                 )
                 result = self._shortcut_native_path(group, result)
-            path = self._path_from_native(group, result)
+            path = self._path_from_native(group, result, output_names=output_names)
         except ValueError as exc:
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
@@ -664,12 +709,25 @@ class RoboPlanPlanner:
         ):
             raise ValueError("RoboPlan path shortcutter changed the goal configuration")
 
-    def _path_from_native(self, group: RoboPlanGroup, result: Any) -> list[JointState]:
+    def _path_from_native(
+        self,
+        group: RoboPlanGroup,
+        result: Any,
+        *,
+        output_names: Sequence[str] | None = None,
+    ) -> list[JointState]:
         result_names = tuple(getattr(result, "joint_names", ()) or group.native_names)
         if set(result_names) != set(group.native_names):
             raise ValueError("RoboPlan path joint names do not match the selected group")
         public_by_native = dict(zip(group.native_names, group.public_names, strict=True))
         source_names = tuple(public_by_native[name] for name in result_names)
+        ordered_output_names = (
+            tuple(output_names) if output_names is not None else group.output_names
+        )
+        if len(ordered_output_names) != len(set(ordered_output_names)) or set(
+            ordered_output_names
+        ) != set(group.public_names):
+            raise ValueError("RoboPlan output joint names do not match the selected group")
         path: list[JointState] = []
         for waypoint in result.positions:
             values = np.asarray(waypoint, dtype=np.float64)
@@ -678,8 +736,8 @@ class RoboPlanPlanner:
             positions = dict(zip(source_names, values, strict=True))
             path.append(
                 JointState(
-                    name=list(group.output_names),
-                    position=[float(positions[name]) for name in group.output_names],
+                    name=list(ordered_output_names),
+                    position=[float(positions[name]) for name in ordered_output_names],
                 )
             )
         return path

@@ -21,12 +21,9 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-import dimos.cli.dimos as dimos_cli
-from dimos.cli.dimos import (
-    _normalize_simulation_argv,
-    _with_relay_bridge,
-    main,
-)
+import dimos.cli.commands.lifecycle as lifecycle
+from dimos.cli.commands.lifecycle import _with_relay_bridge
+from dimos.cli.dimos import main, normalize_argv
 import dimos.cli.spy.run_spy as run_spy
 import dimos.core.coordination.module_coordinator as module_coordinator
 import dimos.core.coordination.process_lifecycle as process_lifecycle
@@ -70,6 +67,9 @@ class RunModuleB(Module):
         # Bare `--simulation` followed by another option, or nothing.
         (["dimos", "--simulation", "-d", "run"], ["dimos", "--simulation", "mujoco", "-d", "run"]),
         (["dimos", "--simulation"], ["dimos", "--simulation", "mujoco"]),
+        (["dimos", "--record", "run", "go2"], ["dimos", "--record", "sqlite", "run", "go2"]),
+        (["dimos", "--record", "sqlite", "run"], ["dimos", "--record", "sqlite", "run"]),
+        (["dimos", "--record", "mcap", "run"], ["dimos", "--record", "mcap", "run"]),
         # Explicit simulator — left untouched.
         (["dimos", "--simulation", "mujoco", "run"], ["dimos", "--simulation", "mujoco", "run"]),
         (["dimos", "--simulation", "dimsim", "run"], ["dimos", "--simulation", "dimsim", "run"]),
@@ -78,8 +78,8 @@ class RunModuleB(Module):
         (["dimos", "run", "go2"], ["dimos", "run", "go2"]),
     ],
 )
-def test_normalize_simulation_argv(argv: list[str], expected: list[str]):
-    assert _normalize_simulation_argv(argv) == expected
+def test_normalize_argv(argv: list[str], expected: list[str]) -> None:
+    assert normalize_argv(argv) == expected
 
 
 def test_global_config_flag_applies_before_subcommand():
@@ -94,6 +94,20 @@ def test_global_config_flag_applies_before_subcommand():
         assert "transport: zenoh" in result.output
     finally:
         global_config.update(transport=original)
+
+
+def test_show_config_masks_secrets():
+    # A config dump gets pasted into chats and bug reports: keys print as ***.
+    original = global_config.relay_key
+    try:
+        result = CliRunner().invoke(
+            main, ["--relay-key", "robot-key-0123456789abcdef", "show-config"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "relay_key: ***" in result.output
+        assert "robot-key-0123456789abcdef" not in result.output
+    finally:
+        global_config.update(relay_key=original)
 
 
 def test_run_composition_leaves_blueprint_alone_when_relay_disabled() -> None:
@@ -176,6 +190,7 @@ def stubbed_run(
 
     class FakeCoordinator:
         n_modules = 1
+        transports: dict[tuple[str, type], Any] = {}
 
         @classmethod
         def build(cls, blueprint: Any, parsed_config: Any = None) -> "FakeCoordinator":
@@ -220,8 +235,8 @@ def stubbed_run(
     monkeypatch.setattr(run_registry, "cleanup_stale", lambda: 0)
     monkeypatch.setattr(run_registry, "generate_run_id", lambda name: f"test-{name}")
     monkeypatch.setattr(process_lifecycle, "spawn_watchdog", lambda *args, **kwargs: None)
-    monkeypatch.setattr(dimos_cli, "install_signal_handlers", lambda *args, **kwargs: None)
-    monkeypatch.setattr(dimos_cli, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(lifecycle, "install_signal_handlers", lambda *args, **kwargs: None)
+    monkeypatch.setattr(lifecycle, "LOG_DIR", tmp_path / "logs")
     monkeypatch.setattr(logging_config, "set_run_log_dir", lambda path: None)
     monkeypatch.setattr(get_all_blueprints, "get_by_name_or_exit", blueprints.__getitem__)
     monkeypatch.setattr(
@@ -235,6 +250,53 @@ def stubbed_run(
         yield recorded
     finally:
         global_config.update(**original_global_config)
+
+
+def test_run_rejects_record_topics_matching_nothing(stubbed_run: dict[str, Any]) -> None:
+    result = CliRunner().invoke(
+        main, ["--record", "sqlite", "--record-topics", "nope", "run", "alpha"]
+    )
+
+    assert result.exit_code == 2
+    assert "matched none of" in result.output
+    assert "blueprint" not in stubbed_run  # failed before build
+
+
+def test_python_recording_rejects_rust_encoding_threads(
+    stubbed_run: dict[str, Any],
+) -> None:
+    result = CliRunner().invoke(
+        main,
+        [
+            "--record",
+            "sqlite",
+            "--record-engine",
+            "python",
+            "--record-encoding-threads",
+            "4",
+            "run",
+            "alpha",
+        ],
+    )
+
+    assert result.exit_code == 2
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "valid only with" in output_plain
+    assert "--record-engine rust" in output_plain
+    assert "blueprint" not in stubbed_run
+
+
+def test_python_mcap_is_rejected_before_build(
+    stubbed_run: dict[str, Any],
+) -> None:
+    result = CliRunner().invoke(
+        main, ["--record", "mcap", "--record-engine", "python", "run", "alpha"]
+    )
+
+    assert result.exit_code == 2
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "MCAP recording requires --record-engine rust" in output_plain
+    assert "blueprint" not in stubbed_run
 
 
 def test_run_parses_spaced_and_equals_config_flags(stubbed_run: dict[str, Any]) -> None:
@@ -307,13 +369,31 @@ def test_qualified_global_relay_flag_is_applied_before_composition(
         observed_relay_values.append((global_config.local_relay, global_config.relay_url))
         return blueprint
 
-    monkeypatch.setattr(dimos_cli, "_with_relay_bridge", compose)
+    monkeypatch.setattr(lifecycle, "_with_relay_bridge", compose)
 
     result = CliRunner().invoke(main, ["run", "alpha", "--g.local-relay=true"])
 
     assert result.exit_code == 0, result.output
     assert observed_relay_values == [(True, None)]
     assert stubbed_run["parsed_config"].global_config["local_relay"] is True
+
+
+def test_run_relay_ca_flag_is_applied_before_composition(
+    stubbed_run: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str | None] = []
+
+    def compose(blueprint: Any) -> Any:
+        observed.append(global_config.relay_ca)
+        return blueprint
+
+    monkeypatch.setattr(lifecycle, "_with_relay_bridge", compose)
+
+    result = CliRunner().invoke(main, ["run", "alpha", "--relay-ca", "/ca.pem"])
+
+    assert result.exit_code == 0, result.output
+    assert observed == ["/ca.pem"]
 
 
 def test_run_rejects_ambiguous_short_config_flag(stubbed_run: dict[str, Any]) -> None:

@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Large E2E tests for manipulation planning groups with a coordinator.
+"""E2E tests for manipulation planning groups with a coordinator.
 
 These tests launch a real ManipulationModule + ControlCoordinator blueprint and
-exercise the public planning RPCs over LCM, matching the self-hosted large-test
-style used by the navigation stack.
+exercise the public planning RPCs.
 """
 
 from __future__ import annotations
@@ -39,12 +38,14 @@ from dimos.manipulation.manipulation_spec import (
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
 
-pytestmark = [pytest.mark.self_hosted_large]
+pytestmark = [pytest.mark.self_hosted]
 
 JOINT_STATE_TOPIC = "/coordinator_joint_state#sensor_msgs.JointState"
-BLUEPRINT = "openarm-mock-planner-coordinator"
-LEFT_GROUP_ID = "left_arm/manipulator"
-RIGHT_GROUP_ID = "right_arm/manipulator"
+BLUEPRINT = "openarm-planner-coordinator"
+LEFT_GROUP_ID = "left_arm"
+RIGHT_GROUP_ID = "right_arm"
+BOTH_GROUP_ID = "both_arms"
+ALL_GROUP_IDS = {LEFT_GROUP_ID, RIGHT_GROUP_ID, BOTH_GROUP_ID}
 
 
 def _wait_for_groups(
@@ -161,7 +162,7 @@ def test_single_arm_plans_and_executes_through_control_coordinator(
     client = RPCClient(None, ManipulationModule)
     coordinator_client = RPCClient(None, ControlCoordinator)
     try:
-        groups = _wait_for_groups(client, {LEFT_GROUP_ID, RIGHT_GROUP_ID})
+        groups = _wait_for_groups(client, ALL_GROUP_IDS)
         left_id = groups[LEFT_GROUP_ID].id
 
         tasks = coordinator_client.list_tasks()
@@ -192,7 +193,7 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
     client = RPCClient(None, ManipulationModule)
     coordinator_client = RPCClient(None, ControlCoordinator)
     try:
-        groups = _wait_for_groups(client, {LEFT_GROUP_ID, RIGHT_GROUP_ID})
+        groups = _wait_for_groups(client, ALL_GROUP_IDS)
         left_id = groups[LEFT_GROUP_ID].id
         right_id = groups[RIGHT_GROUP_ID].id
 
@@ -205,7 +206,7 @@ def test_dual_arm_plans_and_dispatches_both_arms_through_control_coordinator(
         planned = client.plan_to_joints(
             {
                 left_id: _offset_target(snapshot, left_id, 0.02),
-                right_id: _offset_target(snapshot, right_id, -0.02),
+                right_id: _offset_target(snapshot, right_id, 0.02),
             }
         )
         assert planned.succeeded, planned
