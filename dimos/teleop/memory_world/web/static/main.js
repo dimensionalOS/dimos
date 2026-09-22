@@ -37,6 +37,11 @@ let xrRefSpace = null;
 let scene = null;
 let input = null;
 let WorldScene = null;
+let Flight = null;
+let ResultsNav = null;
+let flight = null;
+let results = null;
+let lastFlightTickMs = 0;
 let pendingQueryResult = null;
 let lastViewerPoseSent = 0;
 let perfReadoutTimer = null;
@@ -80,6 +85,8 @@ const assetVersion = new URL(import.meta.url).search;
 try {
     const mod = await import(`/static_mw/scene.js${assetVersion}`);
     WorldScene = mod.WorldScene;
+    Flight = (await import(`/static_mw/flight.js${assetVersion}`)).Flight;
+    ResultsNav = (await import(`/static_mw/results.js${assetVersion}`)).ResultsNav;
     diag('scene_module_loaded');
 } catch (err) {
     diag('scene_module_failed', { error: String(err && err.message || err) });
@@ -176,6 +183,7 @@ function handleControl(msg) {
         case 'query_result':
             if (scene) scene.setQueryResult(msg);
             else pendingQueryResult = msg;
+            if (scene && results) results.setResult(msg);
             setStatus(msg.answer || 'Memory result highlighted');
             break;
         case 'voice_transcript':
@@ -239,9 +247,22 @@ function buildScene() {
     try {
         scene = new WorldScene(diag, backgroundMode);
         diag('scene_constructed');
+        flight = Flight ? new Flight(scene) : null;
+        results = ResultsNav ? new ResultsNav({
+            scene, flight, diag,
+            ui: {
+                bar: document.getElementById('results'),
+                prevBtn: document.getElementById('resultsPrev'),
+                nextBtn: document.getElementById('resultsNext'),
+                counter: document.getElementById('resultsCounter'),
+                label: document.getElementById('resultsLabel'),
+                closeBtn: document.getElementById('resultsClose'),
+            },
+        }) : null;
         flushSceneMsgs();
         if (pendingQueryResult) {
             scene.setQueryResult(pendingQueryResult);
+            if (results) results.setResult(pendingQueryResult);
             pendingQueryResult = null;
         }
         diag('scene_msgs_flushed');
@@ -278,6 +299,14 @@ function startPerfReadout() {
 // to trigger it on its own (window.app.simulateLoad(ms)).
 let simulatedLoadMs = 0;
 
+function perFrameDesktop() {
+    sendViewerPose();
+    const now = performance.now();
+    const dt = lastFlightTickMs ? Math.min((now - lastFlightTickMs) / 1000, 0.1) : 0;
+    lastFlightTickMs = now;
+    if (flight) flight.tick(dt);
+}
+
 function sendViewerPose() {
     if (simulatedLoadMs > 0) {
         const until = performance.now() + simulatedLoadMs;
@@ -311,7 +340,7 @@ async function startViewer() {
     const chatShown = !document.body.classList.contains('touch');
     document.body.classList.toggle('chat-open', chatShown);
     scene.answerOnHud = !chatShown;
-    scene.startDesktop(sendViewerPose);
+    scene.startDesktop(perFrameDesktop);
     setStatus('Desktop view — click to look, WASD to walk');
 }
 
@@ -741,6 +770,8 @@ window.app = {
 // the world is up and only return on hover.
 window.addEventListener('keydown', (event) => {
     if (event.target === chatInput) return;
+    if (event.code === 'ArrowRight' && results && results.count) { event.preventDefault(); results.next(); return; }
+    if (event.code === 'ArrowLeft' && results && results.count) { event.preventDefault(); results.prev(); return; }
     if (event.code === 'KeyH' && document.body.classList.contains('desktop-view')) {
         document.body.classList.toggle('hud-visible');
     }

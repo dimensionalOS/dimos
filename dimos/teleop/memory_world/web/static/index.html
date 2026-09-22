@@ -240,6 +240,26 @@
         body.desktop-view.chat-open #chat { display: flex; }
         body.desktop-view.chat-open #perf { right: calc(var(--chat-w) + 12px); }
         body.desktop-view.chat-open #log { right: calc(var(--chat-w) + 16px); }
+        /* Stepping through the answer's places: a bar at the bottom of the world. */
+        #results {
+            position: absolute;
+            left: 50%;
+            bottom: 18px;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            max-width: min(640px, calc(100% - 32px));
+            padding: 6px 10px;
+            background: rgba(6, 9, 15, 0.88);
+            border: 1px solid var(--accent-soft);
+            z-index: 120;
+        }
+        #results[hidden], body:not(.desktop-view) #results { display: none; }
+        body.desktop-view.chat-open #results { left: calc((100% - var(--chat-w)) / 2); }
+        #resultsCounter { font-size: 14px; font-weight: 700; color: #ff9a6a; white-space: nowrap; }
+        #resultsLabel { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        #results button { padding: 6px 10px; font-size: 12px; clip-path: none; }
         #chatResize {
             position: absolute;
             left: -3px;
@@ -358,6 +378,7 @@
             <b>I</b>  toggle image thumbnails &nbsp; <b>V</b>  toggle voxels<br>
             <b>R</b>  reset view &nbsp; <b>J</b>  jump to the answer &nbsp; <b>P</b>  see it from the camera<br>
             <b>M</b>  hide / show the answer &nbsp; <b>H</b>  keep this menu<br>
+            <b>← →</b>  step through the answer's places<br>
             <b>HOLD TO ASK</b>  speak a question, e.g. "where did I see a chair"
         </div>
     </div>
@@ -367,6 +388,13 @@
         <button id="hudBtn">Hide HUD</button>
         <button id="answerBtn">Answer</button>
         <button id="cameraBtn">Camera</button>
+    </div>
+    <div id="results" hidden>
+        <button id="resultsPrev" title="Previous place (←)">◀</button>
+        <span id="resultsCounter">0 / 0</span>
+        <span id="resultsLabel"></span>
+        <button id="resultsNext" title="Next place (→)">▶</button>
+        <button id="resultsClose" title="Hide this bar">✕</button>
     </div>
     <aside id="chat">
         <div id="chatResize" title="Drag to resize the chat"></div>

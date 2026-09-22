@@ -156,9 +156,11 @@ store.start()
 viewer_position = json.loads(sys.argv[2])
 route = json.loads(sys.argv[3])
 objects = json.loads(sys.argv[4])
+pose_stream = sys.argv[5]
 
-def sample_pose_path(stream_name="pointlio_lidar", max_points=200):
-    # Return a bounded world-frame xyz path from a pose-bearing stream.
+def sample_pose_path(stream_name=None, max_points=200):
+    # Return a bounded world-frame xyz path from a pose-bearing stream, the robot's by default.
+    stream_name = stream_name or pose_stream
     if not isinstance(max_points, int) or not 2 <= max_points <= 2000:
         raise ValueError("max_points must be an integer from 2 through 2000")
     stream = store.streams[stream_name]
@@ -177,6 +179,7 @@ namespace = {{
     "viewer_position": viewer_position,
     "route": route,
     "objects": objects,
+    "pose_stream": pose_stream,
     "sample_pose_path": sample_pose_path,
 }}
 import importlib.util

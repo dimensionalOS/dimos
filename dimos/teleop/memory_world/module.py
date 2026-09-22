@@ -308,6 +308,9 @@ class MemoryWorldConfig(ModuleConfig):
     # tf lookup at the observation's timestamp. Recordings without a tf stream
     # fall back to the pose stamped on each image, read as a body pose.
     tf_stream_name: str = "tf"
+    # The stream whose rows carry the robot's pose. Detected when unset: the
+    # lidar stream, else PointLIO's odometry, else a stream named odom.
+    pose_stream_name: str | None = None
     world_frame: str = "world"
     # The image stream's own frame_id by default.
     camera_optical_frame: str | None = None
@@ -599,7 +602,9 @@ class MemoryWorldModule(Module):
             ("tf", "tf_stream_name"),
         ):
             configured = getattr(self.config, setting)
-            if configured in present or detected[role] is None:
+            # An empty name opts out of the role: the recording has the stream but
+            # it is not to be used.
+            if configured == "" or configured in present or detected[role] is None:
                 continue
             setattr(self.config, setting, detected[role])
             logger.info(
@@ -1775,6 +1780,19 @@ class MemoryWorldModule(Module):
         segments, _ = self.whisper.transcribe(samples, language="en")
         return " ".join(segment.text for segment in segments).strip()
 
+    def _pose_stream_name(self) -> str:
+        """The stream whose rows carry the robot's pose, for trajectory questions."""
+        if self.config.pose_stream_name:
+            return self.config.pose_stream_name
+        store = self._ensure_store()
+        for name in (self.config.lidar_stream_name, "pointlio_odometry", "odom"):
+            if name in store.list_streams():
+                stream = store.streams[name]
+                if stream.count() and stream.first().pose_tuple is not None:
+                    self.config.pose_stream_name = name
+                    return name
+        return self.config.lidar_stream_name
+
     def _run_analysis(
         self,
         code: str,
@@ -1797,6 +1815,7 @@ class MemoryWorldModule(Module):
                 json.dumps(viewer_position),
                 json.dumps(route),
                 json.dumps(self._located_json()),
+                self._pose_stream_name(),
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
