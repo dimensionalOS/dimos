@@ -33,3 +33,8 @@ target_compile_definitions(dimos_native_tests PRIVATE
 
 include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
 doctest_discover_tests(dimos_native_tests)
+
+# Exercise the production lidar message builder without sensor/PCL dependencies.
+add_executable(dimos_lidar_cdr_demo ../../../examples/message-codegen/demo_lidar.cpp)
+target_link_libraries(dimos_lidar_cdr_demo PRIVATE dimos_generated::messages)
+add_test(NAME lidar_generated_cdr COMMAND dimos_lidar_cdr_demo)

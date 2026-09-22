@@ -159,7 +159,12 @@ def generate(messages: tuple[Message, ...], definitions: Definitions) -> str:
             if not message.fields:
                 lines.extend(["#[serde(default)]", "_unused: u8,"])
             lines.extend(
-                ["}", f"impl ::std::default::Default for {name} {{ fn default() -> Self {{ Self {{"]
+                [
+                    "}",
+                    "// Explicit defaults also support .msg defaults and arrays longer than 32.",
+                    "#[allow(clippy::derivable_impls)]",
+                    f"impl ::std::default::Default for {name} {{ fn default() -> Self {{ Self {{",
+                ]
             )
             for field in message.fields:
                 if field.default is not None:

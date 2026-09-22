@@ -18,20 +18,26 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::ffi::{CStr, CString};
-use std::io::Write;
 use std::os::raw::c_void;
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use dimos_generated_messages::builtin_interfaces::msg::Time;
+use dimos_generated_messages::dimos_msgs::msg::ImuInfo;
+use dimos_generated_messages::geometry_msgs::msg::{
+    Quaternion as QuaternionMsg, Vector3 as Vector3Msg,
+};
+use dimos_generated_messages::sensor_msgs::msg::{
+    CameraInfo, Image, Imu, PointCloud2, PointField, RegionOfInterest,
+};
+use dimos_generated_messages::std_msgs::msg::Header;
+use dimos_module::cdr;
 use dimos_module::nalgebra::{
     Isometry3, Matrix3, Quaternion, Rotation3, Translation3, UnitQuaternion, Vector3,
 };
 use dimos_module::{native_config, run_with_transport, Module, Output, Tf, Transform};
-use lcm_msgs::geometry_msgs::{Quaternion as QuaternionMsg, Vector3 as Vector3Msg};
-use lcm_msgs::sensor_msgs::{CameraInfo, Image, Imu, PointCloud2, PointField, RegionOfInterest};
-use lcm_msgs::std_msgs::{Header, Time};
 use realsense_rust::base::{Rs2Extrinsics, Rs2Intrinsics};
 use realsense_rust::config::Config as RsConfig;
 use realsense_rust::context::Context;
@@ -56,9 +62,6 @@ const IMU_CLOCK_WINDOW_SECONDS: i64 = 30;
 const FRAME_TIMEOUT: Duration = Duration::from_secs(1);
 // Body (REP-103) from optical axes, x y z w.
 const OPTICAL_ROTATION: [f64; 4] = [-0.5, 0.5, -0.5, 0.5];
-// lcm-gen fingerprint of sensor_msgs.ImuInfo; it has no generated bindings.
-const IMU_INFO_FINGERPRINT: u64 = 0xe6aa5563f2a33280;
-
 // ---- config, field for field with RealSenseCameraConfig ----
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -170,36 +173,6 @@ impl Config {
     }
 }
 
-// ---- sensor_msgs.ImuInfo, hand-encoded ----
-
-#[derive(Clone)]
-struct ImuInfo {
-    header: Header,
-    gyro_noise_density: f64,
-    gyro_random_walk: f64,
-    accel_noise_density: f64,
-    accel_random_walk: f64,
-    frequency: f64,
-}
-
-impl ImuInfo {
-    fn encode(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(8 + self.header.encoded_size() + 40);
-        buf.write_all(&IMU_INFO_FINGERPRINT.to_be_bytes()).unwrap();
-        self.header.encode_one(&mut buf).unwrap();
-        for v in [
-            self.gyro_noise_density,
-            self.gyro_random_walk,
-            self.accel_noise_density,
-            self.accel_random_walk,
-            self.frequency,
-        ] {
-            buf.write_all(&v.to_be_bytes()).unwrap();
-        }
-        buf
-    }
-}
-
 // ---- module ----
 
 /// What the capture thread learns at start and the tickers publish from.
@@ -250,27 +223,27 @@ struct Outs {
 #[derive(Module)]
 #[module(name = "realsense", setup = start, teardown = stop)]
 struct RealSense {
-    #[output(encode = Image::encode)]
+    #[output(encode = cdr::encode)]
     color_image: Output<Image>,
-    #[output(encode = Image::encode)]
+    #[output(encode = cdr::encode)]
     depth_image: Output<Image>,
-    #[output(encode = Image::encode)]
+    #[output(encode = cdr::encode)]
     infrared_left: Output<Image>,
-    #[output(encode = Image::encode)]
+    #[output(encode = cdr::encode)]
     infrared_right: Output<Image>,
-    #[output(encode = Imu::encode)]
+    #[output(encode = cdr::encode)]
     imu: Output<Imu>,
-    #[output(encode = ImuInfo::encode)]
+    #[output(encode = cdr::encode)]
     imu_info: Output<ImuInfo>,
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     pointcloud: Output<PointCloud2>,
-    #[output(encode = CameraInfo::encode)]
+    #[output(encode = cdr::encode)]
     camera_info: Output<CameraInfo>,
-    #[output(encode = CameraInfo::encode)]
+    #[output(encode = cdr::encode)]
     depth_camera_info: Output<CameraInfo>,
-    #[output(encode = CameraInfo::encode)]
+    #[output(encode = cdr::encode)]
     infrared_left_camera_info: Output<CameraInfo>,
-    #[output(encode = CameraInfo::encode)]
+    #[output(encode = cdr::encode)]
     infrared_right_camera_info: Output<CameraInfo>,
     #[tf]
     tf: Tf,
@@ -360,10 +333,9 @@ fn unix_now() -> f64 {
 fn header(frame_id: &str, ts: f64) -> Header {
     let sec = ts.trunc();
     Header {
-        seq: 0,
         stamp: Time {
             sec: sec as i32,
-            nsec: ((ts - sec) * 1e9) as i32,
+            nanosec: ((ts - sec) * 1e9) as u32,
         },
         frame_id: frame_id.to_string(),
     }
@@ -390,11 +362,11 @@ fn image<K>(
     };
     Image {
         header: header(frame_id, ts),
-        height: frame.height() as i32,
-        width: frame.width() as i32,
+        height: frame.height() as u32,
+        width: frame.width() as u32,
         encoding: encoding.to_string(),
         is_bigendian: 0,
-        step: (frame.width() * bytes_per_pixel) as i32,
+        step: (frame.width() * bytes_per_pixel) as u32,
         data: data.to_vec(),
     }
 }
@@ -411,13 +383,13 @@ fn camera_info(intrinsics: &Rs2Intrinsics, frame_id: &str) -> CameraInfo {
     };
     CameraInfo {
         header: header(frame_id, 0.0),
-        height: intrinsics.height() as i32,
-        width: intrinsics.width() as i32,
+        height: intrinsics.height() as u32,
+        width: intrinsics.width() as u32,
         distortion_model: model.to_string(),
-        D: intrinsics.0.coeffs.iter().map(|&c| c as f64).collect(),
-        K: [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
-        R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-        P: [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
+        d: intrinsics.0.coeffs.iter().map(|&c| c as f64).collect(),
+        k: [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
+        r: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        p: [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
         binning_x: 0,
         binning_y: 0,
         roi: RegionOfInterest {
@@ -677,7 +649,7 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
             // The pair is rectified, so the whole of their offset is along x.
             if let (Some(info), Ok(ext)) = (infra2_info.as_mut(), p2.extrinsics(p1)) {
                 let baseline = (ext.translation()[0] as f64).abs();
-                info.P[3] = -info.P[0] * baseline;
+                info.p[3] = -info.p[0] * baseline;
             }
         }
     }
@@ -937,10 +909,10 @@ fn pointcloud_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs
 }
 
 fn empty_cloud(header: &Header) -> PointCloud2 {
-    let field = |name: &str, offset: i32| PointField {
+    let field = |name: &str, offset: u32| PointField {
         name: name.to_string(),
         offset,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
     PointCloud2 {
@@ -968,8 +940,8 @@ fn rgbd_to_cloud(
     stride: usize,
     depth_trunc_m: f32,
 ) -> PointCloud2 {
-    let (fx, fy) = (info.K[0] as f32, info.K[4] as f32);
-    let (cx, cy) = (info.K[2] as f32, info.K[5] as f32);
+    let (fx, fy) = (info.k[0] as f32, info.k[4] as f32);
+    let (cx, cy) = (info.k[2] as f32, info.k[5] as f32);
     let (w, h) = (rgbd.depth.width as usize, rgbd.depth.height as usize);
     let rgb = &rgbd.color.data;
     if rgb.len() != w * h * 3 || rgbd.depth.data.len() != w * h * 2 {
@@ -1020,13 +992,13 @@ fn rgbd_to_cloud(
             ((c[0] * 255.0) as u32) << 16 | ((c[1] * 255.0) as u32) << 8 | (c[2] * 255.0) as u32;
         data.extend_from_slice(&packed.to_le_bytes());
     }
-    let field = |name: &str, offset: i32| PointField {
+    let field = |name: &str, offset: u32| PointField {
         name: name.to_string(),
         offset,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
-    let n = points.len() as i32;
+    let n = points.len() as u32;
     PointCloud2 {
         header: rgbd.depth.header.clone(),
         height: if n == 0 { 0 } else { 1 },
@@ -1406,10 +1378,9 @@ mod tests {
             accel_random_walk: 4.0,
             frequency: 5.0,
         };
-        let bytes = msg.encode();
-        assert_eq!(&bytes[..8], &IMU_INFO_FINGERPRINT.to_be_bytes());
-        assert_eq!(bytes.len(), 8 + msg.header.encoded_size() + 40);
-        assert_eq!(&bytes[bytes.len() - 8..], &5.0f64.to_be_bytes());
+        let bytes = cdr::encode(&msg).unwrap();
+        assert_eq!(&bytes[..4], &[0, 1, 0, 0]);
+        assert_eq!(cdr::decode::<ImuInfo>(&bytes).unwrap(), msg);
     }
 }
 
@@ -1427,20 +1398,20 @@ mod bench {
         let rgbd = Rgbd {
             color: Image {
                 header: header("f", 0.0),
-                height: h as i32,
-                width: w as i32,
+                height: h as u32,
+                width: w as u32,
                 encoding: "rgb8".into(),
                 is_bigendian: 0,
-                step: (w * 3) as i32,
+                step: (w * 3) as u32,
                 data: vec![128; w * h * 3],
             },
             depth: Image {
                 header: header("f", 0.0),
-                height: h as i32,
-                width: w as i32,
+                height: h as u32,
+                width: w as u32,
                 encoding: "16UC1".into(),
                 is_bigendian: 0,
-                step: (w * 2) as i32,
+                step: (w * 2) as u32,
                 data: depth,
             },
         };
@@ -1463,7 +1434,7 @@ mod bench {
             let cloud = rgbd_to_cloud(&rgbd, &info, 0.001, stride, 5.0);
             let build = t.elapsed();
             let t = std::time::Instant::now();
-            let bytes = cloud.encode();
+            let bytes = cdr::encode(&cloud).unwrap();
             eprintln!(
                 "stride={stride} points={} build={:?} encode={:?} bytes={}",
                 cloud.width,

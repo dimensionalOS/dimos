@@ -14,12 +14,10 @@
 
 from typing import Protocol
 
-from dimos_generated.sensor_msgs.msg import Imu, PointCloud2
+from dimos_generated.nav_msgs.msg import Odometry as OdometryMsg
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image as ImageMsg, Imu, PointCloud2
 
 from dimos.core.stream import Out
-from dimos.msgs.nav_msgs.Odometry import Odometry as OdometryMsg
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image as ImageMsg
 
 
 class Image(Protocol):

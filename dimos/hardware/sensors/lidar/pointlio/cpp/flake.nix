@@ -8,10 +8,6 @@
     livox-sdk.url = "path:../../livox/cpp";
     livox-sdk.inputs.nixpkgs.follows = "nixpkgs";
     livox-sdk.inputs.flake-utils.follows = "flake-utils";
-    dimos-lcm = {
-      url = "github:dimensionalOS/dimos-lcm/main";
-      flake = false;
-    };
     # Standalone Boost.PFR, consumed by the SDK via a FetchContent source override.
     pfr = {
       url = "github:apolukhin/pfr_non_boost/2.3.2";
@@ -29,7 +25,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, zenoh, flake-utils, livox-sdk, dimos-lcm, pfr, fast-lio, lcm-extended, ... }:
+  outputs = { self, nixpkgs, zenoh, flake-utils, livox-sdk, pfr, fast-lio, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         # Overlay fixes for darwin-broken nixpkgs recipes in our transitive
@@ -92,6 +88,7 @@
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
           buildInputs = [
+            (import ../../../../../../native/cpp/messages.nix { inherit pkgs; })
             livox-sdk2
             lcm
             pkgs.glib
@@ -107,7 +104,6 @@
 
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-            "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             "-DFASTLIO_DIR=${fast-lio-patched}"
             "-DLIVOX_COMMON_DIR=${livox-common}"

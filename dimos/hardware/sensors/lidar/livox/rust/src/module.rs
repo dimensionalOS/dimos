@@ -325,9 +325,9 @@ fn cloud_fields(format: PointFormat) -> Vec<PointField> {
         datatype,
         count: 1,
     };
-    let f32t = PointField::FLOAT32 as u8;
-    let u32t = PointField::UINT32 as u8;
-    let u8t = PointField::UINT8 as u8;
+    let f32t = PointField::FLOAT32;
+    let u32t = PointField::UINT32;
+    let u8t = PointField::UINT8;
     let mut fields = vec![
         make_field("x", OFFSET_X, f32t),
         make_field("y", OFFSET_Y, f32t),

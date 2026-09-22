@@ -498,7 +498,7 @@ fn build_pc2_xyzi(points: &[Xyzi], frame_id: &str, stamp: Time) -> PointCloud2 {
     let make_field = |name: &str, off: u32| PointField {
         name: name.into(),
         offset: off,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
     PointCloud2 {
@@ -530,7 +530,7 @@ fn build_pc2_xyz(points: &[(f32, f32, f32)], frame_id: &str, stamp: Time) -> Poi
     let make_field = |name: &str, off: u32| PointField {
         name: name.into(),
         offset: off,
-        datatype: PointField::FLOAT32 as u8,
+        datatype: PointField::FLOAT32,
         count: 1,
     };
     PointCloud2 {

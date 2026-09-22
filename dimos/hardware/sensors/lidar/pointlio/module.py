@@ -35,6 +35,9 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Literal
 
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import Imu, PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import BaseModel, Field
 from reactivex.disposable import Disposable
 
@@ -55,13 +58,7 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_POINT_DATA_PORT,
     SDK_PUSH_MSG_PORT,
 )
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry import transform_from_odometry
 from dimos.spec import perception
 
 # Human-readable enums; the C++ binary (main.cpp) maps these strings to
@@ -183,19 +180,7 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
         )
 
     def _on_odom_for_tf(self, msg: Odometry) -> None:
-        self.tf.publish(
-            TFMessage(
-                Transform(
-                    frame_id=self.frame_id,
-                    child_frame_id=self.config.sensor_frame_id,
-                    translation=Vector3(msg.pose.position),
-                    rotation=Quaternion(msg.pose.orientation),
-                    # Match the odometry ts exactly; no `or time.time()` fallback (a
-                    # real ts of 0.0 must not become wall time).
-                    ts=msg.ts,
-                )
-            )
-        )
+        self.tf.publish(TFMessage(transforms=[transform_from_odometry(msg)]))
 
     @rpc
     def stop(self) -> None:

@@ -17,9 +17,10 @@ mod msg_convert;
 use dim_slam::{
     CameraConfig, DimSlamCore, DimSlamCoreConfig, ImuConfig, InitialStds, SourceConfig,
 };
+use dimos_generated_messages::nav_msgs::msg::Odometry;
+use dimos_generated_messages::sensor_msgs::msg::{CameraInfo, Image, Imu, PointCloud2};
+use dimos_module::cdr;
 use dimos_module::{native_config, run_with_transport, Input, Module, Output, Tf};
-use lcm_msgs::nav_msgs::Odometry;
-use lcm_msgs::sensor_msgs::{CameraInfo, Image, Imu, PointCloud2};
 use msg_convert::{
     tf_lookup, to_camera_model, to_estimate, to_image_frame, to_imu_sample, to_odometry_msg,
     to_point_cloud2, to_transform,
@@ -114,25 +115,25 @@ struct DimSlamConfig {
 #[derive(Module)]
 #[module(setup = init, teardown = report)]
 struct DimSlam {
-    #[input(decode = CameraInfo::decode)]
+    #[input(decode = cdr::decode)]
     camera_info: Input<CameraInfo>,
-    #[input(decode = Image::decode)]
+    #[input(decode = cdr::decode)]
     image: Input<Image>,
     /// rgbd only; unconnected otherwise.
-    #[input(decode = Image::decode)]
+    #[input(decode = cdr::decode)]
     depth_image: Input<Image>,
     /// Only needed when depth has to be reprojected onto the rig camera.
-    #[input(decode = CameraInfo::decode)]
+    #[input(decode = cdr::decode)]
     depth_camera_info: Input<CameraInfo>,
-    #[input(decode = Imu::decode)]
+    #[input(decode = cdr::decode)]
     imu: Input<Imu>,
     /// External odometry sources, told apart by the transform each message carries.
-    #[input(decode = Odometry::decode)]
+    #[input(decode = cdr::decode)]
     odom_sources: Input<Odometry>,
-    #[output(encode = Odometry::encode)]
+    #[output(encode = cdr::encode)]
     odometry: Output<Odometry>,
     /// rgbd only: range-gated depth points, in the depth frame.
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     depth_cloud: Output<PointCloud2>,
     #[tf]
     tf: Tf,
@@ -199,26 +200,47 @@ impl DimSlam {
     }
 
     async fn handle_camera_info(&mut self, info: CameraInfo) {
+        let info = match to_camera_model(info) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(%error, "invalid info message");
+                return;
+            }
+        };
         let Self { slam, tf, .. } = self;
         slam.as_mut()
             .expect("setup ran")
-            .handle_camera_info(to_camera_model(info), &tf_lookup(tf));
+            .handle_camera_info(info, &tf_lookup(tf));
     }
 
     async fn handle_image(&mut self, img: Image) {
+        let img = match to_image_frame(img) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(%error, "invalid img message");
+                return;
+            }
+        };
         let Self { slam, tf, .. } = self;
         slam.as_mut()
             .expect("setup ran")
-            .handle_image(to_image_frame(img), &tf_lookup(tf));
+            .handle_image(img, &tf_lookup(tf));
         self.publish().await;
     }
 
     async fn handle_depth_image(&mut self, img: Image) {
+        let img = match to_image_frame(img) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(%error, "invalid img message");
+                return;
+            }
+        };
         let Self { slam, tf, .. } = self;
         let cloud = slam
             .as_mut()
             .expect("setup ran")
-            .handle_depth_image(to_image_frame(img), &tf_lookup(tf));
+            .handle_depth_image(img, &tf_lookup(tf));
         if let Some(cloud) = cloud {
             self.depth_cloud
                 .publish(&to_point_cloud2(&cloud))
@@ -229,10 +251,17 @@ impl DimSlam {
     }
 
     async fn handle_depth_camera_info(&mut self, info: CameraInfo) {
+        let info = match to_camera_model(info) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!(%error, "invalid info message");
+                return;
+            }
+        };
         self.slam
             .as_mut()
             .expect("setup ran")
-            .handle_depth_camera_info(to_camera_model(info));
+            .handle_depth_camera_info(info);
     }
 
     async fn handle_imu(&mut self, msg: Imu) {

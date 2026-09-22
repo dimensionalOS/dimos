@@ -224,3 +224,37 @@ The Livox live loopback E2E also passed against the released CDR binaries
 Mid-360 handshake, actual UDP sensor traffic, native CDR publication, Python
 schema decoding, a 5 m point ring, per-point deskew offsets, and gravity IMU.
 The physical-sensor recording test remains deselected; no robot was required.
+
+### Remaining lidar and camera native adapters
+
+Point-LIO's Rust suite passed 7 tests after moving to generated CDR. Its point
+reader now preserves deskew offsets for padded organized rows in either byte
+order. RealSense's Rust suite passed 3 tests, including the generated `ImuInfo`
+round trip that replaces its handwritten fingerprint and LCM encoder; its Python
+configuration suite also passed 3. The hardware-free RGBD benchmark built and
+encoded 407,040, 101,760, and 45,280 points at pixel strides 1, 2, and 3.
+These are synthetic conversion checks, not a physical-camera acceptance test.
+
+The dimSLAM Rust adapter passed 7 tests, covering generated odometry/cloud
+conversion, exact and negative timestamps, depth byte-order normalization with
+row padding, BGR-to-RGB conversion, and invalid layouts/backend dimensions.
+The Python camera/lidar declarations and geometry helper passed mypy.
+The new odometry-to-TF helper passed zero, negative, and nanosecond-precise source
+timestamp cases and preserves the message's declared parent/child frames.
+
+The C++ SDK suite passed 77 tests including the production lidar cloud builder.
+Its standalone `dimos_lidar_cdr_demo` visibly decoded two XYZI points in each CDR
+byte order, preserving frame `lidar`, timestamp `1s + 250000000ns`, and intensity
+`0.5`. Output is in `build/message-codegen/demo/evidence/lidar-cpp.txt`.
+
+Both full C++ lidar Nix builds completed successfully with the generated CMake
+package: Point-LIO and FAST-LIO. Their flake inputs/locks and CMake configurations
+no longer fetch `dimos-lcm` headers. The generated package itself built from the
+pinned source definitions in Nix. The root Rust workspace passed `cargo check
+--workspace --locked`; the independently built RealSense and dimSLAM crates
+passed the tests reported above.
+
+Clippy passed with warnings denied for the SDK and migrated root-workspace
+modules, and independently for RealSense and dimSLAM. Generated explicit Default
+implementations retain a targeted lint annotation: the same emitter supports
+nonzero `.msg` defaults and fixed arrays longer than 32 elements.

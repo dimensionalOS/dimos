@@ -370,3 +370,17 @@ This displays an organized cloud with field padding, row padding, and a two-valu
 `pointcloud_xyz` explicitly copies XYZ coordinates. The demo edits a separate
 copy and checks that the borrowed source remains unchanged. No processes or
 viewer windows remain after it exits.
+
+### C++ lidar message construction
+
+The native C++ test build also produces a hardware-free demonstration of the
+production lidar cloud builder:
+
+```bash
+cmake --build build/native-cpp -j 2
+build/native-cpp/tests/dimos_lidar_cdr_demo
+```
+
+It prints the decoded XYZI point count, frame, timestamp, and intensity for both
+CDR byte orders. It also verifies negative timestamp normalization and rejects
+invalid timestamps and negative cloud sizes. The executable exits on its own.

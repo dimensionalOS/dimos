@@ -791,9 +791,9 @@ dependencies = [
 name = "dimos-pointlio"
 version = "0.1.0"
 dependencies = [
+ "dimos-generated-messages",
  "dimos-livox",
  "dimos-module",
- "lcm-msgs",
  "pointlio-core",
  "serde",
  "serde_json",

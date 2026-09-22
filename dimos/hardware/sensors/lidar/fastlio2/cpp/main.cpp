@@ -21,10 +21,8 @@
 #include "point_cloud_utils.hpp"
 
 #include "dimos/native.hpp"
+#include <dimos_generated/messages.hpp>
 
-#include "nav_msgs/Odometry.hpp"
-#include "sensor_msgs/PointCloud2.hpp"
-#include "std_msgs/Header.hpp"
 
 // FAST-LIO (header-only core, compiled sources linked via CMake)
 #include "fast_lio.hpp"
@@ -108,8 +106,8 @@ class FastLio2 : public Module {
 public:
     void build(Builder& builder, Config& config) override {
         cfg_ = config.parse<FastLio2Config>();
-        lidar_ = builder.output<sensor_msgs::PointCloud2>("lidar");
-        odometry_ = builder.output<nav_msgs::Odometry>("odometry");
+        lidar_ = builder.output<sensor_msgs::msg::PointCloud2>("lidar");
+        odometry_ = builder.output<nav_msgs::msg::Odometry>("odometry");
 
         frame_interval_ =
             std::chrono::microseconds(static_cast<int64_t>(1e6 / cfg_.frequency));
@@ -371,7 +369,7 @@ private:
     void publish_pointcloud(const PointCloudXYZI::Ptr& cloud, double ts) {
         int num_points = static_cast<int>(cloud->size());
 
-        sensor_msgs::PointCloud2 pc = make_xyzi_cloud(cfg_.sensor_frame_id, ts, num_points);
+        sensor_msgs::msg::PointCloud2 pc = make_xyzi_cloud(cfg_.sensor_frame_id, ts, num_points);
 
         for (int i = 0; i < num_points; ++i) {
             float* dst = xyzi_point(pc, i);
@@ -386,7 +384,7 @@ private:
 
     // Publish odometry as frame_id (fixed) -> sensor_frame_id (moving sensor).
     void publish_odometry(const custom_messages::Odometry& odom, double ts) {
-        nav_msgs::Odometry msg;
+        nav_msgs::msg::Odometry msg;
         msg.header = make_header(cfg_.frame_id, ts);
         msg.child_frame_id = cfg_.sensor_frame_id;
 
@@ -409,14 +407,14 @@ private:
         msg.twist.twist.angular.x = 0;
         msg.twist.twist.angular.y = 0;
         msg.twist.twist.angular.z = 0;
-        std::memset(msg.twist.covariance, 0, sizeof(msg.twist.covariance));
+        msg.twist.covariance.fill(0);
 
         odometry_.publish(msg);
     }
 
     FastLio2Config cfg_;
-    Output<sensor_msgs::PointCloud2> lidar_;
-    Output<nav_msgs::Odometry> odometry_;
+    Output<sensor_msgs::msg::PointCloud2> lidar_;
+    Output<nav_msgs::msg::Odometry> odometry_;
     std::unique_ptr<FastLio> fast_lio_;
 
     // All four come from config, set in build().
