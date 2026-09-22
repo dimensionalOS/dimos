@@ -664,7 +664,7 @@ dependencies = [
  "crc",
  "dimos-module",
  "etherparse",
- "lcm-msgs",
+ "lcm-msgs 0.1.0 (git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen)",
  "pcap-parser",
  "serde",
  "serde_json",

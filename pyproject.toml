@@ -569,6 +569,7 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5" } # EpisodeStatus is not in the locked PyPI release.
 graspgenx = { git = "https://github.com/NVlabs/GraspGenX.git", rev = "b9429097728cb1c430dd78b92edf17ba318aad03" }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.

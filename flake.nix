@@ -80,6 +80,10 @@
           { vals.pkg=pkgs.uv;                             flags={}; }
           { vals.pkg=pkgs.pre-commit;                   flags={}; }
 
+          ### Rust native modules
+          { vals.pkg=pkgs.cargo;                        flags={}; }
+          { vals.pkg=pkgs.rustc;                        flags={}; }
+
           ### Runtime deps
           { vals.pkg=pkgs.portaudio;                 flags={ldLibraryGroup=true; packageConfGroup=true;}; }
           { vals.pkg=pkgs.ffmpeg_6;                  flags={}; }
@@ -213,7 +217,7 @@
             # Create nvidia-only lib symlinks to avoid glibc conflicts
             NVIDIA_LIBS_DIR="/tmp/nix-nvidia-libs"
             mkdir -p "$NVIDIA_LIBS_DIR"
-            for lib in /usr/lib/libcuda.so* /usr/lib/libnvidia*.so* /usr/lib/x86_64-linux-gnu/libnvidia*.so*; do
+            for lib in /usr/lib/libcuda.so* /usr/lib/libnvidia*.so* /usr/lib/x86_64-linux-gnu/libcuda.so* /usr/lib/x86_64-linux-gnu/libnvidia*.so*; do
               [ -e "$lib" ] && ln -sf "$lib" "$NVIDIA_LIBS_DIR/" 2>/dev/null
             done
           fi
