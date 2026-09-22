@@ -484,14 +484,13 @@
         #answerText[hidden] { display: none; }
         /* A phone screen is mostly UI otherwise. Everything hidden here is reachable from
            the ☰ menu, which is why it can go: Disconnect and the orbit-frame button are in
-           it verbatim, and Show map is the "Minimap + answer panel" checkbox. The status
+           it verbatim. The status
            line is running commentary that the answer panel and the results bar already
            say better, so it stays only until the world is up, and for errors. Answer and
            Camera keep their buttons: nothing in the menu does what they do, and a phone
            has no keyboard to press J or P with. */
         body.touch.connected #status,
         body.touch #orbitBtn,
-        body.touch #hudBtn,
         body.touch #orbitTouchBtn { display: none; }
         body.touch.connected #status.error { display: block; }
         /* On a narrow screen the header stack (title, status, connect row) is tall enough
@@ -637,7 +636,7 @@
             <b>W A S D</b>  walk / strafe &nbsp; <b>Q / E</b>  down / up &nbsp; <b>SHIFT</b> sprint<br>
             <b>I</b>  toggle image thumbnails &nbsp; <b>V</b>  toggle voxels<br>
             <b>R</b>  reset view &nbsp; <b>J</b>  jump to the answer &nbsp; <b>P</b>  see it from the camera<br>
-            <b>M</b>  show / hide the minimap &nbsp; <b>H</b>  keep this menu<br>
+            <b>H</b>  keep this menu<br>
             <b>O</b>  orbit the robot (drag circles it, wheel moves in and out; follows the timeline)<br>
             <b>TIMELINE</b>  drag to scrub the recording, ▶ plays it back, ✕ returns to the full map<br>
             <b>HOLD MIC</b>  in the chat panel, speak a question instead of typing it<br>
@@ -675,7 +674,6 @@
         <label><input type="checkbox" id="layerVoxels" checked> Voxel map</label>
         <label><input type="checkbox" id="layerCubes"> Draw voxels as cubes (not spheres)</label>
         <label><input type="checkbox" id="layerPhotos" checked> Photos</label>
-        <label><input type="checkbox" id="layerHud"> Minimap + answer panel</label>
         <h2>Lidar height</h2>
         <label class="slider">Min <input type="range" id="heightMin"><span id="heightMinVal">—</span></label>
         <label class="slider">Max <input type="range" id="heightMax"><span id="heightMaxVal">—</span></label>
@@ -683,7 +681,7 @@
         <h2>Advanced</h2>
         <button id="menuDisconnectBtn">Disconnect</button>
         <button id="embedBtn" class="hidden">Add SigLIP embeddings (siglipify)</button>
-        <div class="note">Keys: ← → places · N navigate · O orbit · T tour · H menu · I photos · V voxels · M minimap · C chat</div>
+        <div class="note">Keys: ← → places · N navigate · O orbit · T tour · H menu · I photos · V voxels · C chat</div>
     </div>
     <div id="answerText" hidden></div>
     <div id="results" hidden>
@@ -709,7 +707,6 @@
     </div>
     <div id="stick"><div id="stickKnob"></div></div>
     <div id="touchBar">
-        <button id="hudBtn">Show map</button>
         <button id="answerBtn">Answer</button>
         <button id="cameraBtn">Camera</button>
         <button id="orbitTouchBtn">Orbit</button>

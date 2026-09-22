@@ -684,12 +684,8 @@ stickEl.addEventListener('touchmove', moveStick, { passive: false });
 stickEl.addEventListener('touchend', releaseStick);
 stickEl.addEventListener('touchcancel', releaseStick);
 
-const hudBtn = document.getElementById('hudBtn');
-hudBtn.addEventListener('click', () => {
-    if (scene) hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
-});
+
 // The minimap starts hidden, so the button starts as the way to get it back.
-hudBtn.textContent = 'Show map';
 // Take me to the answer: the best photo of the place BEING BROWSED, else that place's
 // marker, else the focus point. The J key and this button both used to ask for index 0 of
 // the UNFILTERED photo list and fall back to _lastResultPoints[0], so after stepping to
@@ -940,13 +936,9 @@ document.getElementById('menuDisconnectBtn').addEventListener('click', () => {
 const layerBoxes = {
     voxels: document.getElementById('layerVoxels'),
     photos: document.getElementById('layerPhotos'),
-    hud: document.getElementById('layerHud'),
 };
 layerBoxes.voxels.addEventListener('change', () => scene && scene._cloudWanted !== layerBoxes.voxels.checked && scene.toggleCloud());
 layerBoxes.photos.addEventListener('change', () => scene && scene._imageQuadGroup.visible !== layerBoxes.photos.checked && scene.toggleImages());
-layerBoxes.hud.addEventListener('change', () => {
-    if (scene && scene._hudPanel.visible !== layerBoxes.hud.checked) hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
-});
 // Whether the conversation is wanted. Survives a reconnect, which the scene and the
 // panel's contents do not. Declared before `showChat` reads it: a `let` after its first
 // use is only safe by accident of call order.
@@ -970,14 +962,12 @@ function syncBoxesFromScene() {
     if (!scene) return;
     layerBoxes.voxels.checked = scene._cloudWanted;
     layerBoxes.photos.checked = scene._imageQuadGroup.visible;
-    layerBoxes.hud.checked = scene._hudPanel.visible;
-    hudBtn.textContent = scene._hudPanel.visible ? 'Hide map' : 'Show map';
 }
 
 /** Apply the boxes to the current scene: they keep their state across a reconnect, the scene does not. */
 function syncLayerBoxes() {
     const wanted = { voxels: layerBoxes.voxels.checked, photos: layerBoxes.photos.checked,
-        hud: layerBoxes.hud.checked };
+    };
     if (!scene) return;
     showChat(chatWanted);
     // Each toggle writes the boxes back; the snapshot keeps the later ones honest.
@@ -988,10 +978,6 @@ function syncLayerBoxes() {
     // matches a fresh scene's default, which is exactly the "Photos off" case, and an
     // answer would then have switched them back on again after every reconnect.
     scene._photosPinnedOff = !wanted.photos;
-    scene._hudOff = !wanted.hud;  // same reason: the toggle below does not always run
-    if (scene._hudPanel && scene._hudPanel.visible !== wanted.hud) {
-        hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
-    }
 }
 const cubesBox = document.getElementById('layerCubes');
 function setVoxelStyle(cubes) {
@@ -1266,7 +1252,6 @@ async function disconnect() {
     timeline.hidden = true;
     timeline.classList.remove('loading', 'replaying');
     orbitBtn.textContent = 'Orbit frame';  // the next world names its frame again
-    hudBtn.textContent = 'Show map';       // a fresh scene starts with the minimap hidden
     if (replay) replay.dispose();
     replay = null;
     document.body.classList.remove('desktop-view', 'chat-open');
@@ -1348,7 +1333,6 @@ window.app = {
         scene.focusOn(points[index].position);
         return true;
     },
-    hud: () => scene && scene.toggleHud(),
     // Search readiness as the server last reported it, and the embed job's state.
     indexStatus: () => indexStatus,
     // Orbit the robot's frame (also key O / the Orbit button); null toggles.
