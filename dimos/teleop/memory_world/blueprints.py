@@ -40,9 +40,13 @@ Pick the tool by the question:
   When the result says `located: false`, nothing was boxed and every place is where X
   was seen FROM; say so and count distinct places, not objects.
 - "Show me the top N images of X": call show_frames_in_memory with the description and N.
+- "Navigate to (x, y)", "go to that position", or any goal you already know the world
+  coordinates of: call navigate_to_position with x, y and the ground z there. Never put
+  coordinates into navigate_with_text; it only matches descriptions of what was seen.
 - "Navigate to X", "go to where you saw X", "plan a route to X": call navigate_with_text
-  with the description. It looks X up in the memory, sets the spot the robot stood on
-  when it saw X as the navigation goal, and the viewer draws the planned route from the
+  with the description. It looks X up in the memory, sets a goal about a metre in front
+  of X (or where the robot stood when it saw X, if X was never measured), and the
+  viewer draws the planned route from the
   robot's last recorded pose. The planner needs a few seconds; if `route` is still None
   in analyze_memory right after, wait and call it again. Report whether a goal was set. Its replies call the memory the "semantic map"; to the user it is the
   recording, so say "the recording" or "where I saw X".
@@ -72,7 +76,10 @@ path = sample_pose_path("pointlio_lidar", max_points=200)
 cloud = store.streams["voxel_keyframe"].last().data.points_f32()  # final lidar map, (N, 3)
 ```
 
-`store.read_stream` does not exist. The robot's trajectory is the pose of every
+`sample_pose_path` takes at most 2000 points; 200 is plenty for drawing and 2000 for
+measuring distance. Poses jitter by a few centimeters and the robot often turns in
+place, so never divide a height change by a horizontal step: measure slope, grade or
+steepness over windows of at least 2 m of horizontal travel. `store.read_stream` does not exist. The robot's trajectory is the pose of every
 `pointlio_lidar` observation. Poses stamped on other streams are in another frame,
 so never use them. Use `sample_pose_path` for whole-trajectory questions.
 "N minutes in" means the recording's start time plus N minutes. To show the frames
@@ -86,11 +93,16 @@ points, or None until navigate_with_text has planned one.
 `objects` lists every object find_in_memory has located so far, each a dict with `label`,
 `position` ([x, y, z] on the object, world frame), `extent` (full sizes along the object's
 own axes, x the long horizontal one), `yaw` (heading of that axis, world radians), `height`
-(meters), `confidence`, `views`, `ts` and `best_frame_id` (a `color_image` observation
-id). Measure and compare objects from it; pass `position`, `extent` and `yaw` straight
-into `boxes`; put the `best_frame_id`s in `observation_ids` to show them.
+(meters), `confidence`, `views`, `seen_from` ([x, y, z] where the robot stood when it saw
+the object, on its trajectory), `ts` and `best_frame_id` (a `color_image` observation id).
+Measure and compare objects from it; pass `position`, `extent` and `yaw` straight into
+`boxes`; put the `best_frame_id`s in `observation_ids` to show them. To navigate to an
+object you have already picked from `objects`, call navigate_to_position with a point
+about a metre in front of its `position` on the line from `seen_from`, at the
+`seen_from` height, with a yaw facing the object; do not search for it again.
 Do not silently catch stream-access errors; let them surface so the tool reports failure.
-The dictionary requires `answer` and may include:
+The dictionary requires `answer`, one plain string (put lists of numbers in the
+geometry fields, not in the answer; anything past 8000 characters is cut), and may include:
 
 - `focus_point`: one world-frame [x, y, z] answer location
 - `boxes`: 3D bounding boxes, objects with `center`, `extent` ([x, y, z] full sizes in
@@ -143,7 +155,8 @@ memory_world_agent = autoconnect(
     # The memory world's own search decides what is a match, so the container
     # accepts whatever it returns.
     NavigationSkillContainer.blueprint(similarity_threshold=0.0),
-    # Outdoor walks with stairs span far more height than the indoor defaults.
+    # Outdoor walks span far more height than the indoor defaults: stairs go
+    # 1.6 m below the start and building faces carry the streets up to 8 m.
     MemoryWorldModule.blueprint(
         voxel_size=VOXEL_SIZE,
         world_frame=WORLD_FRAME,
@@ -151,11 +164,11 @@ memory_world_agent = autoconnect(
         camera_intrinsics=GO2_CAMERA_INTRINSICS,
         camera_distortion=GO2_CAMERA_DISTORTION,
         # OWLv2 scores this wide-angle outdoor camera lower than a RealSense
-        # indoors: on the SF walk real cars top out near 0.46, trees 0.37 and
-        # people 0.36, so the indoor 0.5 refuses all of them.
-        locate_threshold=0.3,
-        map_z_min=-1.0,
-        map_z_max=5.0,
+        # indoors: cars top out near 0.47 and trees 0.44, but people standing
+        # right in front of the robot score 0.17 to 0.22, so 0.3 refuses them.
+        locate_threshold=0.2,
+        map_z_min=-2.0,
+        map_z_max=8.0,
         height_ramp_span_m=5.0,
         max_points=2_000_000,
     ).remappings(
@@ -203,11 +216,11 @@ memory_world_map = autoconnect(
         camera_intrinsics=GO2_CAMERA_INTRINSICS,
         camera_distortion=GO2_CAMERA_DISTORTION,
         # OWLv2 scores this wide-angle outdoor camera lower than a RealSense
-        # indoors: on the SF walk real cars top out near 0.46, trees 0.37 and
-        # people 0.36, so the indoor 0.5 refuses all of them.
-        locate_threshold=0.3,
-        map_z_min=-1.0,
-        map_z_max=5.0,
+        # indoors: cars top out near 0.47 and trees 0.44, but people standing
+        # right in front of the robot score 0.17 to 0.22, so 0.3 refuses them.
+        locate_threshold=0.2,
+        map_z_min=-2.0,
+        map_z_max=8.0,
         height_ramp_span_m=5.0,
         max_points=2_000_000,
         build_image_index_on_start=False,

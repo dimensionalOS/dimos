@@ -46,6 +46,7 @@ convention and an index built any other way is refused.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -476,10 +477,14 @@ class VisualMemoryIndex:
         from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
         target = self.index_stream
+        posed = list(self._posed_frames())
+        if target.count() >= len(range(0, len(posed), stride)):
+            logger.info("index holds all %d frames the stride selects", target.count())
+            return 0
         already_indexed = {obs.data.source_id for obs in target}
         wanted = (
             (obs, pose)
-            for index, (obs, pose) in enumerate(self._posed_frames())
+            for index, (obs, pose) in enumerate(posed)
             if index % stride == 0 and int(obs.id) not in already_indexed
         )
 
@@ -520,10 +525,60 @@ class VisualMemoryIndex:
         """Pull the index into memory now, so the first search does not pay for it."""
         self._load()
 
+    def _cache_path(self) -> Path | None:
+        """Sidecar file holding the pooled grids, beside a recording on disk."""
+        path = getattr(getattr(self.store, "config", None), "path", None)
+        if not path:
+            return None
+        return Path(f"{path}.{self.index_stream_name}.pool{self._pool}.npz")
+
+    def _load_cached(self, path: Path, count: int) -> _LoadedIndex | None:
+        """The sidecar's index when it was written for this many rows of this model."""
+        try:
+            with np.load(path, allow_pickle=False) as saved:
+                if int(saved["count"]) != count or str(saved["model"]) != self.model_name:
+                    return None
+                return _LoadedIndex(
+                    patches=torch.from_numpy(saved["patches"]),
+                    rows=int(saved["rows"]),
+                    cols=int(saved["cols"]),
+                    source_ids=[int(v) for v in saved["source_ids"]],
+                    timestamps=[float(v) for v in saved["timestamps"]],
+                    positions=[tuple(float(v) for v in row) for row in saved["positions"]],  # type: ignore[misc]
+                    orientations=[tuple(float(v) for v in row) for row in saved["orientations"]],  # type: ignore[misc]
+                )
+        except (OSError, KeyError, ValueError):
+            return None
+
+    def _save_cache(self, path: Path, loaded: _LoadedIndex, count: int) -> None:
+        try:
+            np.savez(
+                path,
+                count=count,
+                model=self.model_name,
+                patches=loaded.patches.numpy(),
+                rows=loaded.rows,
+                cols=loaded.cols,
+                source_ids=np.asarray(loaded.source_ids, dtype=np.int64),
+                timestamps=np.asarray(loaded.timestamps, dtype=np.float64),
+                positions=np.asarray(loaded.positions, dtype=np.float64),
+                orientations=np.asarray(loaded.orientations, dtype=np.float64),
+            )
+        except OSError as error:
+            logger.warning("could not write the index cache %s: %s", path, error)
+
     def _load(self) -> _LoadedIndex:
-        """Pooled grids for every posed frame, filled one frame at a time."""
+        """Pooled grids for every posed frame, from the sidecar cache or one frame at a time."""
         if self._loaded is not None:
             return self._loaded
+        cache = self._cache_path()
+        count_now = self.index_stream.count()
+        if cache is not None and cache.is_file():
+            cached = self._load_cached(cache, count_now)
+            if cached is not None:
+                self._loaded = cached
+                logger.info("visual index resident from %s: %d frames", cache.name, count_now)
+                return cached
         patches: torch.Tensor | None = None
         rows = cols = 0
         count = 0
@@ -570,6 +625,8 @@ class VisualMemoryIndex:
             cols,
             self._loaded.patches.numel() * 2 / 1e9,
         )
+        if cache is not None:
+            self._save_cache(cache, self._loaded, count_now)
         return self._loaded
 
     def _full_grid(self, frame: int) -> PatchGrid:

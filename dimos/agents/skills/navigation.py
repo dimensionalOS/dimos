@@ -155,6 +155,25 @@ class NavigationSkillContainer(Module):
 
         return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
 
+    @skill(uses=[CAP_MOVEMENT])
+    def navigate_to_position(self, x: float, y: float, z: float = 0.0, yaw: float = 0.0) -> str:
+        """Navigate to a world-frame position given in meters.
+
+        Args:
+            x: World x in meters.
+            y: World y in meters.
+            z: World z in meters, the ground height there.
+            yaw: Heading to face on arrival, in radians.
+        """
+        if not self._skill_started:
+            raise ValueError(f"{self} has not been started.")
+        goal_pose = PoseStamped(
+            position=make_vector3(x, y, z),
+            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+            frame_id="map",
+        )
+        return self._navigate_to(goal_pose, f"Goal set at ({x:.1f}, {y:.1f}, {z:.1f})")
+
     def _navigate_by_tagged_location(self, query: str) -> str | None:
         robot_location = self._spatial_memory.query_tagged_location(query)
 

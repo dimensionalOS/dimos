@@ -111,10 +111,22 @@ class HighlightPoint(BaseModel):
     yaw: float = 0.0
 
 
+ANSWER_MAX_CHARS = 8_000
+
+
+def _trim_answer(value: object) -> object:
+    """Cut an overlong answer rather than reject the whole result for it."""
+    if isinstance(value, str) and len(value) > ANSWER_MAX_CHARS:
+        return value[: ANSWER_MAX_CHARS - 20].rstrip() + " [answer cut here]"
+    return value
+
+
 class MemoryQueryResult(BaseModel):
     """Textual answer and spatial evidence for one memory query."""
 
-    answer: str = Field(min_length=1, max_length=2_000)
+    answer: Annotated[str, BeforeValidator(_trim_answer)] = Field(
+        min_length=1, max_length=ANSWER_MAX_CHARS
+    )
     focus_point: Point3 | None = None
     regions: list[HighlightRegion] = Field(default_factory=list, max_length=128)
     boxes: list[HighlightBox] = Field(default_factory=list, max_length=64)

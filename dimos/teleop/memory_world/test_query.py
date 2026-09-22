@@ -80,6 +80,12 @@ def test_memory_query_result_validates_spatial_geometry() -> None:
     assert result.evidence_paths[0].color == "#ffd166"
 
 
+def test_an_overlong_answer_is_cut_not_rejected() -> None:
+    result = MemoryQueryResult(answer="x" * 20_000)
+
+    assert result.answer.endswith("[answer cut here]") and len(result.answer) <= 8_000
+
+
 def test_memory_query_result_draws_boxes() -> None:
     result = MemoryQueryResult(
         answer="Boxed",
@@ -332,9 +338,24 @@ def test_locate_objects_boxes_the_frame_and_measures_the_map(tmp_path: Path) -> 
         assert wall_place.extent is not None and wall_place.extent[2] < 1.2
         assert wall_place.camera_position == (0.0, 0.0, 0.0)
         assert module._located_json()[0]["label"] == "wall"
-        goal = _navigation_goal(wall_place)
-        assert (goal["pos_x"], goal["pos_y"], goal["pos_z"]) == (0.0, 0.0, 0.0)
+        goal = _navigation_goal(wall_place, standoff_m=1.0)
+        # One metre short of the wall's near face, on the line from the camera to it.
+        assert goal["pos_z"] == 0.0
+        to_wall = np.hypot(wall_place.position[0] - goal["pos_x"], 6.0 - goal["pos_y"])
+        assert 1.0 < to_wall < 1.0 + max(wall_place.extent[:2]) / 2 + 0.05
         assert abs(goal["rot_z"] - np.arctan2(6.0, wall_place.position[0])) < 0.05
+        close = _navigation_goal(
+            Place(
+                (0.0, 0.5, 0.0),
+                0.9,
+                1,
+                100.0,
+                camera_position=(0.0, 0.0, 0.0),
+                extent=(0.4, 0.4, 1.0),
+            ),
+            standoff_m=1.0,
+        )
+        assert (close["pos_x"], close["pos_y"]) == (0.0, 0.0)
     finally:
         module.stop()
 

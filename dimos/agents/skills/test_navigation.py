@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -145,6 +146,24 @@ def test_start_exploration(agent_setup) -> None:
     )
 
     assert "explor" in history[-1].content.lower()
+
+
+def test_navigate_to_position_sets_a_goal_at_the_coordinates() -> None:
+    goals: list[PoseStamped] = []
+    container = NavigationSkillContainer()
+    container._skill_started = True
+    container._navigation = SimpleNamespace(set_goal=goals.append)  # type: ignore[assignment]
+    try:
+        message = container.navigate_to_position(12.5, -3.0, 0.4, yaw=1.5)
+    finally:
+        container.stop()
+
+    assert "Started navigating" in message and "(12.5, -3.0, 0.4)" in message
+    assert len(goals) == 1
+    goal = goals[0]
+    assert (goal.position.x, goal.position.y, goal.position.z) == (12.5, -3.0, 0.4)
+    assert abs(goal.orientation.to_euler().z - 1.5) < 1e-6
+    assert goal.frame_id == "map"
 
 
 def test_go_to_semantic_location(agent_setup) -> None:

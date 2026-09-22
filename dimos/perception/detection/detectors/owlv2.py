@@ -76,9 +76,13 @@ class Owlv2Detector(HuggingFaceModel):
         """
         pil = PILImage.fromarray(image.to_rgb().data)
         with torch.inference_mode():
-            inputs = self._processor(text=[queries], images=pil, return_tensors="pt").to(
-                self.config.device
-            )
+            inputs = self._processor(
+                text=[queries],
+                images=pil,
+                return_tensors="pt",
+                padding="max_length",
+                truncation=True,
+            ).to(self.config.device)
             outputs = self._model(**inputs)
             results = self._processor.post_process_grounded_object_detection(
                 outputs=outputs,
@@ -124,9 +128,13 @@ class Owlv2Detector(HuggingFaceModel):
         """
         pil = PILImage.fromarray(image.to_rgb().data)
         with torch.inference_mode():
-            inputs = self._processor(text=[queries], images=pil, return_tensors="pt").to(
-                self.config.device
-            )
+            inputs = self._processor(
+                text=[queries],
+                images=pil,
+                return_tensors="pt",
+                padding="max_length",
+                truncation=True,
+            ).to(self.config.device)
             outputs = self._model(**inputs)
             results = self._processor.post_process_grounded_object_detection(
                 outputs=outputs,

@@ -116,6 +116,7 @@ class Found:
             "height": None if self.extent is None else self.extent[2],
             "yaw": None if self.extent is None else self.yaw,
             "seen_from_m": self.depth_m,
+            "seen_from": [float(v) for v in self.world_t_camera[:3, 3]],
             "confidence": self.confidence,
             "views": self.views,
             "ts": self.ts,

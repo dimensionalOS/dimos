@@ -160,20 +160,39 @@ def _list_cap(key: str) -> int:
     )
 
 
-def _navigation_goal(place: Place) -> dict[str, float]:
+def _navigation_goal(place: Place, standoff_m: float = 1.0) -> dict[str, float]:
     """Where to stand for a place, facing it.
 
-    A measured object's position is on the object, inside the map's voxels, so the
-    goal is where the camera stood when it saw it, which the robot has already
-    walked. An unmeasured place is that spot already.
+    A measured object's position is inside the object, so the goal is standoff_m in
+    front of its near face along the line the camera saw it down, at the camera's
+    height. When the camera stood closer than that, its own spot is the goal. An
+    unmeasured place is the camera's spot already.
     """
-    if place.extent is not None and place.camera_position is not None:
-        stand = place.camera_position
-        yaw = float(np.arctan2(place.position[1] - stand[1], place.position[0] - stand[0]))
+    if place.extent is None or place.camera_position is None:
+        return {
+            "pos_x": place.position[0],
+            "pos_y": place.position[1],
+            "pos_z": place.position[2],
+            "rot_z": _heading(place.position, place.orientation),
+        }
+    camera = np.asarray(place.camera_position[:2], dtype=float)
+    centre = np.asarray(place.position[:2], dtype=float)
+    yaw = float(np.arctan2(centre[1] - camera[1], centre[0] - camera[0]))
+    distance = float(np.linalg.norm(centre - camera))
+    # Half the box's depth along the viewing direction, in the box's own frame.
+    along = yaw - place.yaw
+    half_depth = abs(np.cos(along)) * place.extent[0] / 2 + abs(np.sin(along)) * place.extent[1] / 2
+    back = half_depth + standoff_m
+    if distance > back:
+        stand = centre - (centre - camera) / distance * back
     else:
-        stand = place.position
-        yaw = _heading(place.position, place.orientation)
-    return {"pos_x": stand[0], "pos_y": stand[1], "pos_z": stand[2], "rot_z": yaw}
+        stand = camera
+    return {
+        "pos_x": float(stand[0]),
+        "pos_y": float(stand[1]),
+        "pos_z": place.camera_position[2],
+        "rot_z": yaw,
+    }
 
 
 class _RevalidatedStaticFiles(StaticFiles):
@@ -303,7 +322,7 @@ class MemoryWorldConfig(ModuleConfig):
     # Bind on all interfaces by default — the headset connects over Wi-Fi.
     listen_host: str = "0.0.0.0"
     background_mode: Literal["black", "passthrough"] = "black"
-    memory_analysis_max_output_chars: int = PydanticField(default=64_000, gt=0)
+    memory_analysis_max_output_chars: int = PydanticField(default=400_000, gt=0)
     # ---- spoken "where did I see X" search --------------------------------
     # SigLIP 2 per-patch index over the image stream. Building it is the slow
     # part and happens once per recording, in the background, into the
@@ -337,6 +356,8 @@ class MemoryWorldConfig(ModuleConfig):
     locate_threshold: float = PydanticField(default=0.5, gt=0.0, lt=1.0)
     # Narrow each detector box to an EdgeTAM mask before measuring the map under it.
     segment_boxes: bool = True
+    # How far in front of a measured object's near face a navigation goal stands.
+    approach_standoff_m: float = PydanticField(default=1.0, ge=0.0)
     locate_attempts: int = PydanticField(default=2, ge=1)
     locate_max_depth_m: float = PydanticField(default=20.0, gt=0.0)
     # Intrinsics for a recording without a camera_info stream: fx, fy, cx, cy
@@ -1011,14 +1032,15 @@ class MemoryWorldModule(Module):
                 self._index_progress = f"failed: {error}"
                 logger.exception("visual index build failed")
                 return
-            self._index_progress = f"ready ({index.count()} frames)"
-            logger.info("visual index ready: %d frames (+%d new)", index.count(), added)
-        # Warm the index and the text model here, off the request path: cold they
-        # add half a minute to whichever query comes first, the demoed one.
+            self._index_progress = f"loading ({index.count()} frames into memory)"
+            logger.info("visual index built: %d frames (+%d new)", index.count(), added)
+        # Load the index and the text model here, off the request path: cold they
+        # add a minute to whichever query comes first, the demoed one.
         with self._search_lock:
             index.warm()
         index.model.embed_text("warmup")
-        logger.info("search path warm")
+        self._index_progress = f"ready ({index.count()} frames)"
+        logger.info("visual index ready: %d frames", index.count())
 
     def _warm_detectors(self) -> None:
         """Load the detector, the segmenter and Whisper and run each once, off the request path."""
@@ -1210,7 +1232,7 @@ class MemoryWorldModule(Module):
                 "distance": 1.0 - place.similarity,
                 "metadata": [
                     {
-                        **_navigation_goal(place),
+                        **_navigation_goal(place, self.config.approach_standoff_m),
                         "ts": place.ts,
                         "frame_id": place.source_id,
                     }
@@ -1235,7 +1257,7 @@ class MemoryWorldModule(Module):
         writing to, so nothing is served while the build runs.
         """
         progress = self._index_progress
-        if progress.startswith("building"):
+        if progress.startswith(("building", "loading")):
             return SkillResult.fail(
                 "INDEX_NOT_READY",
                 f"The SigLIP index for {self.config.store_path} is still being built "
@@ -1426,8 +1448,24 @@ class MemoryWorldModule(Module):
                 voxel_size=self.config.voxel_size,
                 keyframe_interval_s=self.config.replay_keyframe_interval_s,
             ):
+                logger.warning(
+                    "%s holds no stored map for this voxel size; without a mapper in this "
+                    "blueprint there is no point cloud. Build one with "
+                    "`dimos run memory-world-map --dataset %s --store-path %s`",
+                    self.config.store_path,
+                    self.config.store_path,
+                    self.config.store_path,
+                )
                 return
             if timeline_end(store) < self._recording_end() - REPLAY_COMPLETE_MARGIN_S:
+                logger.warning(
+                    "the stored map in %s ends %.0f s before the recording does; rerun "
+                    "`dimos run memory-world-map --dataset %s --store-path %s` to the end",
+                    self.config.store_path,
+                    self._recording_end() - timeline_end(store),
+                    self.config.store_path,
+                    self.config.store_path,
+                )
                 return
             with self._store_read_lock:
                 centers, _ = final_map(store, self.config.voxel_size)
@@ -1696,6 +1734,7 @@ class MemoryWorldModule(Module):
                 "yaw": place.yaw if place.extent else None,
                 "confidence": place.similarity,
                 "views": place.views,
+                "seen_from": list(place.camera_position or place.position),
                 "ts": place.ts,
                 "best_frame_id": place.source_id,
             }
