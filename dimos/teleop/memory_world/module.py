@@ -139,9 +139,9 @@ class MemoryWorldConfig(ModuleConfig):
     # both the replay's final keyframe and a plain accumulation when the stream is there,
     # because it is the whole map cleared by every scan's rays rather than what one
     # moment's keyframe held or what piling raw returns together happens to produce.
-    # "" turns the preference off. A `<name>_smoothed` companion, which is what
-    # `global_map_smooth` writes, is preferred over the raw stream wherever it exists.
-    global_map_stream_name: str = "global_map"
+    # "" turns it off. This name wins where the recording has it; its `_smoothed`
+    # sibling (`global_map_smooth`'s output) is the fallback, and so is the raw one.
+    global_map_stream_name: str = "global_map_smoothed"
     # True: the scans are already in the world frame (SLAM output), so their poses
     # must not be applied twice. None detects it: a scan frame equal to world_frame or
     # a stitched *corrected* one counts as aligned, map/odom/world count as aligned

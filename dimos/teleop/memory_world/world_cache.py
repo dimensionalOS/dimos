@@ -33,6 +33,13 @@ logger = setup_logger()
 SMOOTHED_SUFFIX = "_smoothed"
 
 
+def _sibling_map_stream(name: str) -> str:
+    """The other half of a `<raw>` / `<raw>_smoothed` pair, given either half."""
+    return (
+        name[: -len(SMOOTHED_SUFFIX)] if name.endswith(SMOOTHED_SUFFIX) else name + SMOOTHED_SUFFIX
+    )
+
+
 class WorldCache:
     """The three builders behind the payloads every viewer gets on connect."""
 
@@ -45,19 +52,22 @@ class WorldCache:
         is the same idea but only as far as the replay got) and far better than a plain
         accumulation, which keeps every reflection and every person who walked past.
 
-        The smoothed companion wins where it exists: a morphological closing fills the
-        doorway-sized holes and the speckle between two sweeps, and it is the same map
-        at the same stamp in the same frame. Every candidate is tried THROUGH the reads
-        below rather than only for its name, so a smoothed stream that is declared but
-        empty, unreadable or unplaceable falls through to the raw one instead of losing
-        the map. Returns the name it read beside the cloud, so the log says which it is.
+        The CONFIGURED stream is tried first and always wins where it exists, so
+        `--memoryworldmodule.global-map-stream-name` names the map and nothing overrules
+        it. Its `<raw>`/`<raw>_smoothed` sibling is the fallback -- a recording carries
+        one, the other, or both, and the default asks for the smoothed one because
+        `global_map_smooth`'s closing fills the doorway-sized holes and the speckle
+        between two sweeps while leaving the map's outline alone. Both are tried THROUGH
+        the reads below rather than matched on the name, so a stream that is declared but
+        empty, unreadable or unplaceable by tf falls through to its sibling instead of
+        losing the map. Returns the name it read beside the cloud, so the log says which.
         """
         configured = self.config.global_map_stream_name
         if not configured:
             return None
         store = self._ensure_store()
         available = store.list_streams()
-        for name in (f"{configured}{SMOOTHED_SUFFIX}", configured):
+        for name in (configured, _sibling_map_stream(configured)):
             if name not in available:
                 continue
             try:
