@@ -14,9 +14,14 @@
 
 """Inspect generated DimOS messages with explicit timestamp and duration helpers."""
 
+from pathlib import Path
+
 from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D, TrajectoryStatus
 from dimos_generated.geometry_msgs.msg import Point
+from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.std_msgs.msg import Header
 
+from dimos.msgs.camera_info import camera_info_from_yaml, intrinsic_matrix
 from dimos.msgs.time import (
     duration_from_seconds,
     time_from_nanoseconds,
@@ -40,6 +45,15 @@ def main() -> None:
     remaining = TrajectoryStatus.decode(status.encode()).time_remaining
     print(f"Trajectory remaining: sec={remaining.sec}, nanosec={remaining.nanosec}")
     print(f"Seconds for a controller API: {to_seconds(remaining)}")
+    calibration = camera_info_from_yaml(
+        Path(__file__).resolve().parents[2] / "dimos/robot/unitree/go2/front_camera_720.yaml",
+        header=Header(frame_id="camera_optical", stamp=message.header.stamp),
+    )
+    restored = CameraInfo.decode(calibration.encode())
+    print(f"Camera calibration: {restored.width}x{restored.height}, {restored.distortion_model}")
+    print(f"Camera source nanoseconds: {to_nanoseconds(restored.header.stamp)}")
+    print(f"Intrinsic matrix (independent NumPy copy):\n{intrinsic_matrix(restored)}")
+    print(f"Distortion coefficients: {list(restored.d)}")
 
 
 if __name__ == "__main__":

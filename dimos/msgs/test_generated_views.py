@@ -27,7 +27,7 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry import yaw
-from dimos.msgs.image import image_from_array, image_to_jpeg, image_view
+from dimos.msgs.image import image_from_array, image_sharpness, image_to_jpeg, image_view
 from dimos.msgs.occupancy import block_max_reduce, occupancy_view
 from dimos.msgs.time import time_from_nanoseconds
 from dimos.web.relay_bridge.builtin_codecs import decode_point, encode_path, encode_pose
@@ -110,3 +110,22 @@ def test_web_pose_path_and_goal_use_nested_ros_fields() -> None:
     assert json.loads(encode_path(Path(poses=[pose]))) == [[2, 3]]
     goal = decode_point({"x": 4, "y": 5})
     assert goal.point == Point(x=4, y=5) and goal.header.frame_id == "world"
+
+
+@pytest.mark.parametrize("encoding", ["rgb8", "bgr8", "rgba8", "bgra8", "mono8"])
+def test_sharpness_prefers_edges_to_blurred_pixels(encoding):
+    mono = ((np.indices((64, 64)).sum(axis=0) % 2) * 255).astype(np.uint8)
+    channels = 1 if encoding == "mono8" else (4 if "a" in encoding else 3)
+    pixels = mono if channels == 1 else np.repeat(mono[:, :, None], channels, axis=2)
+    blurred = cv2.GaussianBlur(pixels, (5, 5), 0)
+    sharp = image_from_array(pixels, encoding=encoding)
+    soft = image_from_array(blurred, encoding=encoding)
+    assert image_sharpness(sharp) > image_sharpness(soft)
+
+
+def test_sharpness_rejects_depth_and_empty_images():
+    depth = image_from_array(np.zeros((2, 2), dtype=np.float32), encoding="32FC1")
+    with pytest.raises(ValueError, match="8-bit visual"):
+        image_sharpness(depth)
+    with pytest.raises(ValueError, match="nonempty"):
+        image_sharpness(Image(encoding="mono8"))

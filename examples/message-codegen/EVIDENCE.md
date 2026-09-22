@@ -367,3 +367,29 @@ includes the production periodic `StaticTfPublisher` for `b → c`; Python publi
 `a → b`, Rust publishes `c → d`, and both language buffers compose `a → d`.
 Both LCM and Zenoh E2E checks passed, including shutdown. This is hardware-free
 message/geometry verification, not physical robot or camera acceptance.
+
+### Camera calibration and webcam cutover
+
+Calibration construction/YAML loading now returns generated CameraInfo values.
+The Go2 YAML helper was moved out of the connection module so the Zenoh-side
+module no longer imports the robot SDK just to obtain calibration. Go2's periodic
+calibration publisher uses integer nanoseconds and leaves its stored template
+unchanged. The broader Go2 connection still has legacy image/cloud/pose paths;
+its two generated perception-interface type mismatches remain to be resolved by
+that consumer migration.
+
+The webcam and CameraModule use generated Image, CameraInfo, and TFMessage values.
+Stereo crops preserve RGB pixels and exact source headers. Metadata uses a shared
+stamp, declared frame names, and independent copies of configured mounts. Image
+sharpness is now an explicit helper used by the existing quality-barrier operator.
+
+Forty-four camera/helper/view tests passed, plus the focused Go2 publication test.
+Checks cover the actual 1280x720 equidistant calibration, CDR round trips, invalid
+matrix dimensions/intrinsics/FOV, synthetic BGR capture and stereo crops, metadata
+frame/stamp consistency, and sharpness ordering across visual encodings. Mypy
+passed on eight changed helper/camera/calibration/demo modules. Physical capture
+and the complete Go2 stack were not run.
+
+`demo_message_helpers.py` visibly prints the decoded calibration matrix and four
+distortion coefficients with source timestamp `1700000000123456789`; output is
+`build/message-codegen/demo/evidence/message-helpers.txt`.

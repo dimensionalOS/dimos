@@ -14,12 +14,12 @@
 
 import copy
 from enum import Enum
-from importlib import resources
 import sys
 from threading import Thread
 import time
 from typing import Any, Protocol
 
+from dimos_generated.sensor_msgs.msg import CameraInfo
 from pydantic import Field
 from reactivex import empty
 from reactivex.disposable import Disposable
@@ -39,11 +39,12 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.time import time_from_nanoseconds
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.go2.camera_calibration import front_camera_calibration
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
@@ -100,16 +101,6 @@ class Go2ConnectionProtocol(Protocol):
     def set_light(self, level: int) -> bool: ...
     def switch_joystick(self, enable: bool = True) -> bool: ...
     def publish_request(self, topic: str, data: dict) -> dict: ...  # type: ignore[type-arg]
-
-
-_FRONT_CAMERA_720_YAML = resources.files("dimos.robot.unitree.go2").joinpath(
-    "front_camera_720.yaml"
-)
-
-
-def _camera_info_static() -> CameraInfo:
-    with resources.as_file(_FRONT_CAMERA_720_YAML) as yaml_path:
-        return CameraInfo.from_yaml(str(yaml_path))
 
 
 def _prefixed(prefix: str | None, name: str) -> str:
@@ -279,7 +270,7 @@ class GO2Connection(Module, Camera, Pointcloud):
     tf: Out[TFMessage]
 
     connection: Go2ConnectionProtocol
-    camera_info_static: CameraInfo = _camera_info_static()
+    camera_info_static: CameraInfo = front_camera_calibration()
     _camera_info_thread: Thread | None = None
     _latest_lowstate: LowStateMsg | None = None
 
@@ -307,11 +298,11 @@ class GO2Connection(Module, Camera, Pointcloud):
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static
 
-        if self.config.frame_id_prefix and self.camera_info_static.frame_id:
+        if self.config.frame_id_prefix and self.camera_info_static.header.frame_id:
             # Copy so the class-level default is not mutated.
             self.camera_info_static = copy.copy(self.camera_info_static)
-            self.camera_info_static.frame_id = _prefixed(
-                self.config.frame_id_prefix, self.camera_info_static.frame_id
+            self.camera_info_static.header.frame_id = _prefixed(
+                self.config.frame_id_prefix, self.camera_info_static.header.frame_id
             )
 
     @rpc
@@ -406,7 +397,9 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     def publish_camera_info(self) -> None:
         while True:
-            self.camera_info.publish(self.camera_info_static.with_ts(time.time()))
+            message = copy.copy(self.camera_info_static)
+            message.header.stamp = time_from_nanoseconds(time.time_ns())
+            self.camera_info.publish(message)
             time.sleep(1.0)
 
     @rpc

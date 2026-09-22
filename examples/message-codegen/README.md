@@ -509,3 +509,26 @@ implementations return `list[TransformStamped]`; `frames_to_edge_transforms`
 constructs them from `(child, parent, xyz, fixed-axis-rpy)` entries. A `None` parent
 marks the root and produces no edge. The publisher supplies current integer
 nanosecond stamps on every cycle.
+
+### Camera calibration and webcam messages
+
+`dimos.msgs.camera_info` constructs generated `CameraInfo` values from pinhole
+intrinsics, field of view, or a ROS calibration YAML file. Construction requires
+an explicit `Header`; message defaults do not invent a capture time. YAML loading
+checks the matrix dimensions and finite values. The generated fields are lowercase
+`k`, `d`, `r`, and `p`. `intrinsic_matrix(info)` returns an independent mutable
+NumPy copy.
+
+The existing helper demo now loads the packaged Go2 calibration, encodes and
+decodes it with CDR, and prints its dimensions, distortion model, matrix,
+coefficients, and exact source timestamp:
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_message_helpers.py
+```
+
+The webcam path emits generated RGB images; stereo slicing happens on pixels
+before message construction. Camera metadata and both TF edges share one exact
+stamp without mutating the configured calibration or mount. Hardware-free tests
+feed known BGR pixels into the capture boundary and verify the decoded RGB crops.

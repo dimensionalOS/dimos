@@ -94,3 +94,29 @@ def image_to_jpeg(msg: Image, quality: int = 75) -> bytes:
     if not ok:
         raise ValueError("JPEG encoding failed")
     return bytes(encoded)
+
+
+def image_sharpness(message: Image) -> float:
+    """Laplacian variance of an 8-bit visual image, downsampled to 160 pixels wide."""
+    pixels = image_view(message)
+    codes = {
+        "rgb8": cv2.COLOR_RGB2GRAY,
+        "bgr8": cv2.COLOR_BGR2GRAY,
+        "rgba8": cv2.COLOR_RGBA2GRAY,
+        "bgra8": cv2.COLOR_BGRA2GRAY,
+    }
+    if message.encoding == "mono8":
+        gray = pixels
+    elif message.encoding in codes:
+        gray = cv2.cvtColor(pixels, codes[message.encoding])
+    else:
+        raise ValueError("Sharpness requires an 8-bit visual image encoding")
+    if gray.size == 0:
+        raise ValueError("Sharpness requires a nonempty image")
+    if message.width > 160:
+        gray = cv2.resize(
+            gray,
+            (160, max(1, round(message.height * 160 / message.width))),
+            interpolation=cv2.INTER_AREA,
+        )
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())

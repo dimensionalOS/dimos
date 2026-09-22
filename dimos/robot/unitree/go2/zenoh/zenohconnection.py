@@ -33,6 +33,7 @@ from typing import Any
 
 from dimos_generated.geometry_msgs.msg import TransformStamped
 from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import CameraInfo
 from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field, field_validator
 from reactivex.disposable import Disposable
@@ -42,15 +43,15 @@ from dimos.core.stream import In, Out
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.geometry import inverse_transform, transform_from_odometry
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
+from dimos.msgs.time import time_from_nanoseconds
 from dimos.protocol.tf.static_tf_publisher import (
     StaticTfPublisher,
     StaticTfPublisherConfig,
     frames_to_edge_transforms,
 )
-from dimos.robot.unitree.go2.connection import _camera_info_static
+from dimos.robot.unitree.go2.camera_calibration import front_camera_calibration
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     CAMERA_XYZ,
     MID360_MOUNT_PRESETS,
@@ -97,7 +98,7 @@ class GO2Zenoh(StaticTfPublisher):
     # Ours: nothing on the robot emits intrinsics.
     camera_info: Out[CameraInfo]
 
-    _camera_info: CameraInfo = _camera_info_static()
+    _camera_info: CameraInfo = front_camera_calibration()
 
     @rpc
     def start(self) -> None:
@@ -190,6 +191,6 @@ class GO2Zenoh(StaticTfPublisher):
     async def _publish_camera_info(self) -> None:
         period = 1.0 / self.config.camera_info_hz
         while self._running:
-            self._camera_info.ts = time.time()
+            self._camera_info.header.stamp = time_from_nanoseconds(time.time_ns())
             self.camera_info.publish(self._camera_info)
             await asyncio.sleep(period)

@@ -19,16 +19,18 @@ dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
 """
 
 from collections.abc import Callable, Iterator
-import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.std_msgs.msg import Header
 import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.time import to_nanoseconds
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 
@@ -118,21 +120,30 @@ def test_camera_info_is_restamped_on_each_publish(
     """A frozen stamp collapses a recording's camera_info onto one instant before the run."""
     conn = connection(publish_tf=True)
     conn.camera_info = MagicMock()
-    conn.camera_info_static = CameraInfo(frame_id="camera_optical", ts=1.0)
+    conn.camera_info_static = CameraInfo(
+        header=Header(frame_id="camera_optical", stamp=Time(sec=1))
+    )
 
     def sleep(_seconds: float) -> None:
         if conn.camera_info.publish.call_count >= 2:
             raise _StopLoopError
 
     mocker.patch.object(go2_conn.time, "sleep", side_effect=sleep)
-    before = time.time()
+    mocker.patch.object(
+        go2_conn.time, "time_ns", side_effect=[1700000000123456789, 1700000000123456790]
+    )
     with pytest.raises(_StopLoopError):
         conn.publish_camera_info()
 
     published = [call.args[0] for call in conn.camera_info.publish.call_args_list]
-    assert [info.ts >= before for info in published] == [True, True]
-    assert [info.frame_id for info in published] == [conn.camera_info_static.frame_id] * 2
-    assert conn.camera_info_static.ts == 1.0
+    assert [to_nanoseconds(info.header.stamp) for info in published] == [
+        1700000000123456789,
+        1700000000123456790,
+    ]
+    assert [info.header.frame_id for info in published] == [
+        conn.camera_info_static.header.frame_id
+    ] * 2
+    assert conn.camera_info_static.header.stamp == Time(sec=1)
 
 
 def test_odom_to_tf_prefixed() -> None:
