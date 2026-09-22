@@ -9,7 +9,7 @@ import { desktopLookAngles, robotToWorldOffset, worldPosToRobotXY } from '/stati
 import { drawAnswer } from '/static_mw/answer_panel.js';
 import { DESKTOP_PITCH_LIMIT, installTouch } from './touch.js';
 import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms, viewportHeight, viewportHeightPx } from '/static_mw/voxel_sprites.js';
-import { ANSWER_PANEL_W, HUD_PANEL_SIZE, placeHud } from '/static_mw/hud.js';
+import { ANSWER_PANEL_W, HUD_PANEL_SIZE, installHudDrag, placeHud } from '/static_mw/hud.js';
 import { addQueryImage, sightLineFor } from '/static_mw/evidence.js';
 import { OrbitControl } from '/static_mw/orbit.js';
 import { IMAGE_LOD_INTERVAL_S, photoMarkerMethods } from './photo_markers.js';
@@ -155,6 +155,11 @@ export class WorldScene {
 
         // Top-down map: shared texture, used twice (ground projection + HUD).
         this._topDownBounds = null;
+
+        // Where the user dragged the HUD to, in the head's yaw frame; null until they do,
+        // and `placeHud`'s own corner until then. `installHudDrag` writes both.
+        this._hudOffset = null;
+        this._hudDragging = false;
 
         // HUD minimap — head-locked panel attached to scene root (not world).
         this._hudGroup = new THREE.Group();
@@ -405,6 +410,7 @@ export class WorldScene {
         window.addEventListener('keyup', (event) => this._onDesktopKey(event, false), { signal });
         window.addEventListener('resize', () => this._resizeDesktopCamera(), { signal });
         installTouch(this, dom);
+        installHudDrag(this, dom, signal);
 
         this.three.setAnimationLoop((time) => {
             this._applyDesktopKeys();

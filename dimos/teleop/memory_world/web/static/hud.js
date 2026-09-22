@@ -13,6 +13,9 @@ const HUD_OFFSET_DOWN = 0.25;
 const HUD_OFFSET_LEFT = 0.32;
 const HUD_FOLLOW_LERP = 0.18;         // damping per frame
 export const ANSWER_PANEL_W = 0.62;          // metres; the canvas behind it is 4:1
+// How close to the edge of the view the panel's centre may be dragged. The panel is
+// wider than it is tall, so this is the half-width that has to stay inside.
+const HUD_EDGE_MARGIN = ANSWER_PANEL_W / 2;
 
 /** Put the HUD where the head can see it, and move its map marker to the viewer. */
 export function placeHud(scene) {
@@ -55,13 +58,18 @@ export function placeHud(scene) {
         scene._answerPanel.scale.setScalar(1);
         scene._cameraPanel.scale.setScalar(1);
     }
+    // Where the user dragged it to, if they have; the computed corner until then, so
+    // the desktop auto-fit above still owns the position nobody has chosen.
+    const placed = scene._hudOffset;
     const target = new THREE.Vector3()
         .copy(headPos)
         .addScaledVector(fwd, HUD_DISTANCE)
-        .addScaledVector(right, -offsetLeft);
-    target.y -= HUD_OFFSET_DOWN;
+        .addScaledVector(right, placed ? placed.right : -offsetLeft);
+    target.y -= placed ? placed.down : HUD_OFFSET_DOWN;
     // Tilt the panel slightly toward the user (downward tilt around X).
-    scene._hudGroup.position.lerp(target, HUD_FOLLOW_LERP);
+    // No damping mid-drag: at 0.18 the panel trails the cursor by enough that it reads
+    // as the drag slipping rather than as smoothing.
+    scene._hudGroup.position.lerp(target, scene._hudDragging ? 1 : HUD_FOLLOW_LERP);
     // Face the user — look at head from panel position, then tilt up a bit.
     scene._hudGroup.lookAt(headPos);
 
@@ -88,4 +96,97 @@ export function placeHud(scene) {
             scene._hudHeading.rotation.z = -robotYaw;
         }
     }
+}
+
+
+/** Half the view's width and height in metres at the distance the HUD hangs at. */
+function viewHalfExtents(scene) {
+    const halfHeight = HUD_DISTANCE * Math.tan(THREE.MathUtils.degToRad(scene.camera.fov) / 2);
+    return [halfHeight * scene.camera.aspect, halfHeight];
+}
+
+/** Let the pointer pick the HUD up and put it somewhere else. Desktop only.
+ *
+ * The panel is head-locked 3D, not a DOM element, so "where it is" is an offset in the
+ * head's yaw frame and a drag has to be measured in those metres rather than in pixels.
+ * At HUD_DISTANCE the view is `2 * halfHeight` metres tall and `clientHeight` pixels
+ * tall, and pixels are square, so one ratio converts both axes.
+ *
+ * The listeners go on `window` in the CAPTURE phase because the canvas already turns a
+ * mousedown into look-drag; capturing on an ancestor is what runs first and lets
+ * `stopPropagation` keep the world still while the panel moves. Registering on the
+ * canvas instead would not have worked -- listeners on the same element fire in
+ * registration order whatever their capture flag says, and look-drag is registered first.
+ */
+export function installHudDrag(scene, dom, signal) {
+    const raycaster = new THREE.Raycaster();
+    let last = null;
+
+    const panelUnder = (event) => {
+        if (scene.three.xr.isPresenting || !scene._hudGroup.visible) return false;
+        const box = dom.getBoundingClientRect();
+        raycaster.setFromCamera(
+            new THREE.Vector2(
+                ((event.clientX - box.left) / box.width) * 2 - 1,
+                -((event.clientY - box.top) / box.height) * 2 + 1,
+            ),
+            scene.camera,
+        );
+        // The whole group, not just the map: the answer panel and the camera view hang
+        // off the same corner, and picking one up should bring its neighbours.
+        return raycaster.intersectObject(scene._hudGroup, true).length > 0;
+    };
+
+    const stop = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+    };
+
+    window.addEventListener('mousedown', (event) => {
+        if (event.button !== 0 || !panelUnder(event)) return;
+        // Start from where it IS, so the first drag does not jump it from the computed
+        // corner to whatever the defaults say.
+        const local = scene._hudGroup.position.clone().sub(scene.camera.position);
+        const right = new THREE.Vector3().setFromMatrixColumn(scene.camera.matrixWorld, 0);
+        right.y = 0;
+        if (right.lengthSq() > 1e-6) right.normalize();
+        scene._hudOffset = scene._hudOffset || { right: local.dot(right), down: -local.y };
+        scene._hudDragging = true;
+        last = { x: event.clientX, y: event.clientY };
+        dom.style.cursor = 'move';
+        stop(event);
+    }, { capture: true, signal });
+
+    window.addEventListener('mousemove', (event) => {
+        if (!scene._hudDragging) return;
+        const [halfWidth, halfHeight] = viewHalfExtents(scene);
+        const metresPerPixel = (2 * halfHeight) / (dom.clientHeight || 1);
+        const clamp = (v, limit) => Math.max(-limit, Math.min(limit, v));
+        scene._hudOffset.right = clamp(
+            scene._hudOffset.right + (event.clientX - last.x) * metresPerPixel,
+            Math.max(0, halfWidth - HUD_EDGE_MARGIN),
+        );
+        scene._hudOffset.down = clamp(
+            scene._hudOffset.down + (event.clientY - last.y) * metresPerPixel,
+            Math.max(0, halfHeight - HUD_PANEL_SIZE / 2),
+        );
+        last = { x: event.clientX, y: event.clientY };
+        stop(event);
+    }, { capture: true, signal });
+
+    window.addEventListener('mouseup', (event) => {
+        if (!scene._hudDragging) return;
+        scene._hudDragging = false;
+        last = null;
+        dom.style.cursor = 'grab';
+        stop(event);
+    }, { capture: true, signal });
+
+    // Put it back. A drag has no other undo, and the canvas reads a double-click as
+    // "give me pointer lock", which over the panel is never what was meant.
+    window.addEventListener('dblclick', (event) => {
+        if (!panelUnder(event)) return;
+        scene._hudOffset = null;
+        stop(event);
+    }, { capture: true, signal });
 }
