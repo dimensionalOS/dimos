@@ -365,9 +365,32 @@
             clip-path: none;
         }
         /* Menu: top right, under the perf readout. */
-        #menuBtn {
+        /* Top-right stack: the chat button, then the hamburger, then the perf readout.
+           The chat is a demo's other half, so it gets a button of its own rather than a
+           line in a menu nobody opens mid-question. */
+        #chatToggle {
             position: absolute;
             top: 12px;
+            right: 12px;
+            z-index: 140;
+            display: none;
+            padding: 8px 12px;
+            font-size: 12px;
+            line-height: 1;
+            letter-spacing: 0.12em;
+            background: rgba(6, 9, 15, 0.82);
+            color: var(--accent);
+            border: 1px solid var(--accent-soft);
+            clip-path: none;
+        }
+        body.desktop-view #chatToggle { display: block; }
+        /* Pressed-in while the panel is up: the button says which state you are in, not
+           which state it would put you in. */
+        body.chat-open #chatToggle { background: var(--accent); color: #04070c; font-weight: 700; }
+        body.desktop-view.chat-open #chatToggle { right: calc(var(--chat-w) + 12px); }
+        #menuBtn {
+            position: absolute;
+            top: 52px;
             right: 12px;
             z-index: 140;
             display: none;
@@ -380,10 +403,10 @@
             clip-path: none;
         }
         body.desktop-view #menuBtn { display: block; }
-        body.desktop-view #perf { top: 52px; }
+        body.desktop-view #perf { top: 92px; }
         #menu {
             position: absolute;
-            top: 52px;
+            top: 92px;
             right: 12px;
             z-index: 140;
             display: none;
@@ -631,6 +654,7 @@
             <button id="chatBtn" type="submit">Ask</button>
         </form>
     </aside>
+    <button id="chatToggle" title="Agent chat (C)" aria-label="Agent chat">AI</button>
     <button id="menuBtn" title="Menu" aria-label="Menu">☰</button>
     <div id="menu">
         <button id="tourBtn" class="primary">Dimos Spatial Reasoning</button>
@@ -652,7 +676,6 @@
         <label><input type="checkbox" id="layerCubes"> Draw voxels as cubes (not spheres)</label>
         <label><input type="checkbox" id="layerPhotos" checked> Photos</label>
         <label><input type="checkbox" id="layerHud"> Minimap + answer panel</label>
-        <label><input type="checkbox" id="layerChat" checked> Agent chat</label>
         <h2>Lidar height</h2>
         <label class="slider">Min <input type="range" id="heightMin"><span id="heightMinVal">—</span></label>
         <label class="slider">Max <input type="range" id="heightMax"><span id="heightMaxVal">—</span></label>

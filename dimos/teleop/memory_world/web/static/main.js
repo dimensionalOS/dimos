@@ -501,7 +501,7 @@ async function startViewer() {
     document.body.classList.add('connected');
     // With a keyboard the conversation gets its own panel; a phone has no room for it,
     // and the menu's box is what says whether it is wanted at all.
-    showChat(layerBoxes.chat.checked);
+    showChat(chatWanted);
     scene.startDesktop(sendViewerPose);
     setStatus('Desktop view — click to look, WASD to walk');
 }
@@ -941,20 +941,24 @@ const layerBoxes = {
     voxels: document.getElementById('layerVoxels'),
     photos: document.getElementById('layerPhotos'),
     hud: document.getElementById('layerHud'),
-    chat: document.getElementById('layerChat'),
 };
 layerBoxes.voxels.addEventListener('change', () => scene && scene._cloudWanted !== layerBoxes.voxels.checked && scene.toggleCloud());
 layerBoxes.photos.addEventListener('change', () => scene && scene._imageQuadGroup.visible !== layerBoxes.photos.checked && scene.toggleImages());
 layerBoxes.hud.addEventListener('change', () => {
     if (scene && scene._hudPanel.visible !== layerBoxes.hud.checked) hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
 });
-layerBoxes.chat.addEventListener('change', () => showChat(layerBoxes.chat.checked));
+// Whether the conversation is wanted. Survives a reconnect, which the scene and the
+// panel's contents do not. Declared before `showChat` reads it: a `let` after its first
+// use is only safe by accident of call order.
+let chatWanted = true;
+const chatToggle = document.getElementById('chatToggle');
+chatToggle.addEventListener('click', () => showChat(!document.body.classList.contains('chat-open')));
 
-/** Show or hide the conversation. A phone has no room for it whatever the box says. */
+/** Show or hide the conversation. A phone never gets it, however it is asked for. */
 function showChat(open) {
     const room = !document.body.classList.contains('touch');
     document.body.classList.toggle('chat-open', open && room);
-    layerBoxes.chat.checked = open;
+    chatWanted = open;
 }
 
 /** The scene changed a layer itself (a key, the tour): the boxes and the map button follow. */
@@ -963,16 +967,15 @@ function syncBoxesFromScene() {
     layerBoxes.voxels.checked = scene._cloudWanted;
     layerBoxes.photos.checked = scene._imageQuadGroup.visible;
     layerBoxes.hud.checked = scene._hudPanel.visible;
-    layerBoxes.chat.checked = document.body.classList.contains('chat-open');
     hudBtn.textContent = scene._hudPanel.visible ? 'Hide map' : 'Show map';
 }
 
 /** Apply the boxes to the current scene: they keep their state across a reconnect, the scene does not. */
 function syncLayerBoxes() {
     const wanted = { voxels: layerBoxes.voxels.checked, photos: layerBoxes.photos.checked,
-        hud: layerBoxes.hud.checked, chat: layerBoxes.chat.checked };
+        hud: layerBoxes.hud.checked };
     if (!scene) return;
-    showChat(wanted.chat);
+    showChat(chatWanted);
     // Each toggle writes the boxes back; the snapshot keeps the later ones honest.
     if (scene._cloudWanted !== wanted.voxels) scene.toggleCloud();
     if (scene._imageQuadGroup && scene._imageQuadGroup.visible !== wanted.photos) scene.toggleImages();
