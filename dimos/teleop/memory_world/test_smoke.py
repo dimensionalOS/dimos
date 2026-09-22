@@ -35,6 +35,7 @@ from dimos.teleop.memory_world.query import ClusterSummary, MemoryQueryResult
 from dimos.teleop.memory_world.route import LETHAL, RoutePlanner
 from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix, quaternion_from_matrix
 from dimos.teleop.memory_world.visual_search import Place, cluster_places, search_phrase
+from dimos.teleop.memory_world.world_cache import WorldCache
 
 VOXEL = 0.1
 BODY_Z = 0.4  # the robot's base height above the floor at z = 0
@@ -330,6 +331,45 @@ def test_an_mcap_goes_to_the_indexer_that_can_read_it(recorded, expect_siglipify
     assert went_to_siglipify is expect_siglipify, (
         f"payload {recorded!r} went to {'siglipify' if went_to_siglipify else 'our indexer'}"
     )
+
+
+def test_the_smoothed_global_map_wins_but_an_empty_one_falls_back_to_the_raw() -> None:
+    """`global_map_smooth` writes `<name>_smoothed`, and that closing is the map to draw.
+
+    The fallback is the half worth testing: preferring the smoothed stream on its NAME
+    alone would take the whole world down whenever one was declared and never written,
+    with a perfectly good raw map sitting beside it in the same recording.
+    """
+
+    def store_of(**clouds: np.ndarray) -> SimpleNamespace:
+        streams = {
+            name: SimpleNamespace(
+                last=lambda points=points: SimpleNamespace(
+                    ts=0.0,
+                    data=SimpleNamespace(points_f32=lambda: points, frame_id="odom"),
+                )
+            )
+            for name, points in clouds.items()
+        }
+        return SimpleNamespace(list_streams=lambda: list(streams), streams=streams)
+
+    def reading(store: SimpleNamespace) -> WorldCache:
+        world = WorldCache()
+        world.config = SimpleNamespace(global_map_stream_name="global_map", world_frame="odom")
+        world._ensure_store = lambda: store
+        return world
+
+    raw = np.zeros((1, 3), dtype=np.float32)
+    smoothed = np.ones((2, 3), dtype=np.float32)
+
+    name, xyz = reading(store_of(global_map=raw, global_map_smoothed=smoothed))._global_map_cloud()
+    assert (name, len(xyz)) == ("global_map_smoothed", 2)
+
+    nothing_written = store_of(global_map=raw, global_map_smoothed=np.empty((0, 3), np.float32))
+    name, xyz = reading(nothing_written)._global_map_cloud()
+    assert (name, len(xyz)) == ("global_map", 1)
+
+    assert reading(store_of(other_map=raw))._global_map_cloud() is None
 
 
 def test_adopting_embeddings_puts_the_planner_s_map_back() -> None:
