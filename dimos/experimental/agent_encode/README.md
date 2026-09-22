@@ -1,14 +1,14 @@
 # Experimental agent encoding
 
 Agent-facing views of sensor messages. Message types keep a thin `agent_encode()`
-entry point and an `AGENT_ENCODE_LEGEND`.
+entry point and an `agent_encode_legend()`; the encoders load on first use.
 
 - `pointcloud/`: queries, fields, renders, picking. Entry: `PointCloud2.agent_encode()`.
 
 ## Point clouds
 
 Overview: [`pointcloud/README.md`](/dimos/experimental/agent_encode/pointcloud/README.md). Agent instructions:
-`legend()` in [`pointcloud/runtime/dispatch.py`](/dimos/experimental/agent_encode/pointcloud/runtime/dispatch.py), served as `PointCloud2.AGENT_ENCODE_LEGEND`.
+`legend()` in [`pointcloud/runtime/dispatch.py`](/dimos/experimental/agent_encode/pointcloud/runtime/dispatch.py), served as `PointCloud2.agent_encode_legend()`.
 
 ## Testing
 

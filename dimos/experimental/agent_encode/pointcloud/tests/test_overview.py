@@ -17,9 +17,10 @@ import json
 import numpy as np
 import pytest
 
+from dimos.experimental.agent_encode.pointcloud import api as pc
 from dimos.experimental.agent_encode.pointcloud.constants import MAX_GRID_CELLS
 from dimos.experimental.agent_encode.pointcloud.handlers.overview import cover
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as P
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 @pytest.fixture
@@ -32,13 +33,15 @@ def levels():
     return np.column_stack((x.ravel(), y.ravel(), z.ravel())).astype(np.float32)
 
 
-def overview(points, tmp_path, *handlers):
-    cloud = P.from_numpy(np.asarray(points, dtype=np.float32), frame_id="map", timestamp=7)
-    return cloud.agent_encode(*handlers, out_dir=tmp_path)["results"]
+def overview(points, tmp_path, requests=None):
+    cloud = PointCloud2.from_numpy(
+        np.asarray(points, dtype=np.float32), frame_id="map", timestamp=7
+    )
+    return cloud.agent_encode(requests, out_dir=tmp_path)["results"]
 
 
 def test_default_reports_both_relief_signs_without_writing_artifacts(levels, tmp_path):
-    cloud = P.from_numpy(levels, frame_id="map", timestamp=7)
+    cloud = PointCloud2.from_numpy(levels, frame_id="map", timestamp=7)
 
     out = cloud.agent_encode(out_dir=tmp_path)
 
@@ -66,8 +69,18 @@ def test_cells_follow_return_spacing_not_extent(levels, tmp_path):
     result = overview(levels, tmp_path)["overview"]
 
     assert result["spacing_m"] == 0.0625
-    assert result["coverage"]["grid"] == {"origin": [0, 0], "shape": [81, 81], "cell_m": 0.125}
-    assert result["lower_surface"]["grid"] == {"origin": [0, 0], "shape": [41, 41], "cell_m": 0.25}
+    assert result["coverage"]["grid"] == {
+        "origin": [0, 0],
+        "shape": [81, 81],
+        "cell_m": 0.125,
+        "limited": False,
+    }
+    assert result["lower_surface"]["grid"] == {
+        "origin": [0, 0],
+        "shape": [41, 41],
+        "cell_m": 0.25,
+        "limited": False,
+    }
 
 
 def test_one_far_return_leaves_nearby_measurements_unchanged(levels, tmp_path):
@@ -100,7 +113,7 @@ def test_empty_and_unsupported_clouds_do_not_claim_level_ground(tmp_path):
     empty = overview(np.empty((0, 3)), tmp_path)["overview"]
     sparse = overview([[0, 0, 0], [10, 10, 1]], tmp_path)
 
-    assert empty["measurement_status"] == "no_returns"
+    assert empty["coverage"] is None and empty["lower_surface"] is None
     assert sparse["overview"]["lower_surface"]["status"] == "insufficient_support"
     assert sparse["overview"]["lower_surface"]["reference_z_m"] is None
     assert sparse["overview"]["lower_surface"]["z_quantiles_m"] == {
@@ -108,7 +121,7 @@ def test_empty_and_unsupported_clouds_do_not_claim_level_ground(tmp_path):
         "p50": None,
         "p90": None,
     }
-    assert "structure" not in sparse["overview"] and "relief" not in sparse["overview"]
+    assert sparse["overview"]["structure"] is None and sparse["overview"]["relief"] is None
     json.dumps(sparse, allow_nan=False)
 
 
@@ -117,7 +130,7 @@ def test_explicit_overview_limits_regions_and_accounts_for_omissions(tmp_path):
     floor = np.column_stack((x.ravel(), y.ravel(), np.zeros(x.size)))
     obstacles = np.array([[x, y, 0.5] for x in (1, 3, 5, 7, 9) for y in (1, 3, 5, 7, 9)])
 
-    out = overview(np.vstack((floor, obstacles)), tmp_path, {"small": P.Overview(max_regions=2)})
+    out = overview(np.vstack((floor, obstacles)), tmp_path, {"small": pc.Overview(max_regions=2)})
 
     structure = out["small"]["structure"]
     assert len(structure["regions"]) == 2
@@ -161,8 +174,8 @@ def test_cover_grows_cells_only_for_the_grid_memory_limit(tmp_path):
     x, y = np.meshgrid(np.linspace(0, 1, 101), np.linspace(0, 1, 101))
     dense = np.column_stack((x.ravel(), y.ravel(), np.zeros(x.size)))
     result = overview(np.vstack((dense, [[16, 16, 0]])), tmp_path)["overview"]
-    assert result["coverage"]["grid"]["limited_by"] == "grid_cell_limit"
-    assert "limited_by" not in result["lower_surface"]["grid"]
+    assert result["coverage"]["grid"]["limited"] is True
+    assert result["lower_surface"]["grid"]["limited"] is False
 
 
 @pytest.mark.parametrize(
@@ -177,6 +190,6 @@ def test_cover_grows_cells_only_for_the_grid_memory_limit(tmp_path):
         {"relief_cell_spacings": 1.5},
     ],
 )
-def test_invalid_recipe_arguments_are_rejected(arguments):
-    with pytest.raises(ValueError, match=next(iter(arguments))):
-        P.Overview(**arguments)
+def test_invalid_recipe_arguments_are_rejected(levels, tmp_path, arguments):
+    result = overview(levels, tmp_path, {"bad": pc.Overview(**arguments)})["bad"]
+    assert result["status"] == "invalid" and next(iter(arguments)) in result["error"]

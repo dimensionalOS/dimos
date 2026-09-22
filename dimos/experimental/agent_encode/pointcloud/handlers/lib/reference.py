@@ -16,31 +16,26 @@
 
 from __future__ import annotations
 
-from dataclasses import fields, is_dataclass
+from collections.abc import Callable
 import hashlib
-import json
-from typing import Any
 
-import numpy as np
+from pydantic import JsonValue
 
-from dimos.experimental.agent_encode.pointcloud import constants, fields as field_nodes
+from dimos.experimental.agent_encode.pointcloud import fields as field_nodes
 from dimos.experimental.agent_encode.pointcloud.render import raster as render
 from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
+from dimos.experimental.agent_encode.pointcloud.runtime.recipe import canonical, describe
 from dimos.experimental.agent_encode.pointcloud.shapes.box import Box
 from dimos.experimental.agent_encode.pointcloud.shapes.cylinder import Cylinder
 from dimos.experimental.agent_encode.pointcloud.shapes.sphere import Sphere
 
 
-def _json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
-
-
-def _small(ref: dict[str, Any]) -> None:
-    if len(_json(ref).encode()) > 8192:
+def _small(ref: dict[str, JsonValue]) -> None:
+    if len(canonical(ref).encode()) > 8192:
         raise ValueError("reference exceeds 8192 bytes; simplify its source recipe")
 
 
-def _bounded(value: Any, depth: int = 0, count: list[int] | None = None) -> None:
+def _bounded(value: object, depth: int = 0, count: list[int] | None = None) -> None:
     count = [0] if count is None else count
     count[0] += 1
     if depth > 80 or count[0] > 4096:
@@ -57,30 +52,7 @@ def _bounded(value: Any, depth: int = 0, count: list[int] | None = None) -> None
         raise ValueError("reference must contain only JSON values")
 
 
-def _spec(node: Any, depth: int = 0) -> Any:
-    if depth > 64:
-        raise ValueError("view recipe exceeds 64 levels")
-    if is_dataclass(node) and not isinstance(node, type):
-        return {
-            "node": type(node).__name__,
-            "args": {
-                f.name: _spec(getattr(node, f.name), depth + 1)
-                for f in fields(node)
-                if f.name not in ("overlays", "mark")
-            },
-        }
-    if isinstance(node, dict):
-        return {k: _spec(v, depth + 1) for k, v in node.items()}
-    if isinstance(node, (tuple, list)):
-        return [_spec(v, depth + 1) for v in node]
-    if isinstance(node, np.generic):
-        return node.item()
-    if isinstance(node, (str, int, float, bool, type(None))):
-        return node
-    raise ValueError("unsupported node in portable view recipe")
-
-
-def _restore(spec: Any) -> Any:
+def _restore(spec: JsonValue) -> object:
     # These imports resolve the handlers -> reference -> handlers dependency. The registry is closed.
     from dimos.experimental.agent_encode.pointcloud.handlers.depth_view import DepthView
     from dimos.experimental.agent_encode.pointcloud.handlers.field_outputs import Map
@@ -109,12 +81,15 @@ def _restore(spec: Any) -> Any:
         field_nodes.Percentile,
         field_nodes.Channel,
         field_nodes.DistanceField,
-        field_nodes.Binary,
+        field_nodes.Difference,
+        field_nodes.And,
+        field_nodes.Or,
+        field_nodes.Not,
         field_nodes.Resample,
         field_nodes.Threshold,
         field_nodes.Components,
     )
-    registry = {cls.__name__: cls for cls in classes}
+    registry: dict[str, Callable[..., object]] = {cls.__name__: cls for cls in classes}
     if isinstance(spec, list):
         return tuple(_restore(v) for v in spec)
     if not isinstance(spec, dict):
@@ -122,40 +97,28 @@ def _restore(spec: Any) -> Any:
     if "schema" in spec:
         # Nested references are opaque JSON; their recipes are restored only by resolve().
         return spec
-    if set(spec) == {"node", "args"}:
-        if spec["node"] not in registry or not isinstance(spec["args"], dict):
+    if "type" in spec:
+        name = spec["type"]
+        if not isinstance(name, str) or name not in registry:
             raise ValueError("unknown portable recipe node")
-        return registry[spec["node"]](**{k: _restore(v) for k, v in spec["args"].items()})
+        args = {k: _restore(v) for k, v in spec.items() if k != "type"}
+        return registry[name](**args)
     return {k: _restore(v) for k, v in spec.items()}
 
 
-def _cloud_digest(ctx: EncodeContext) -> str:
-    root = ctx.root
-    key = ("pick_cloud_digest", id(root.points))
-    if key not in ctx.cache:
-        digest = hashlib.sha256(np.ascontiguousarray(root.points, dtype="<f4").tobytes())
-        digest.update(
-            _json(
-                {"frame": root.cloud.frame_id, "ts": root.cloud.ts, "form": constants.FORM}
-            ).encode()
-        )
-        ctx.cache[key] = digest.hexdigest()
-    return str(ctx.cache[key])
-
-
-def reference(node: Any, ctx: EncodeContext, kind: str = "view") -> dict[str, Any]:
-    payload = {
+def reference(node: object, ctx: EncodeContext, kind: str = "view") -> dict[str, JsonValue]:
+    payload: dict[str, JsonValue] = {
         "schema": f"pointcloud.{kind}/v1",
-        "cloud": _cloud_digest(ctx),
-        "recipe": _spec(node),
+        "cloud": ctx.fingerprint,
+        "recipe": describe(node, omit=("overlays", "mark")),
     }
     _bounded(payload)
-    result = {**payload, "digest": hashlib.sha256(_json(payload).encode()).hexdigest()}
+    result = {**payload, "digest": hashlib.sha256(canonical(payload).encode()).hexdigest()}
     _small(result)
     return result
 
 
-def resolve(ref: Any, ctx: EncodeContext, kind: str = "view") -> Any:
+def resolve(ref: object, ctx: EncodeContext, kind: str = "view") -> object:
     _bounded(ref)
     if not isinstance(ref, dict) or set(ref) != {"schema", "cloud", "recipe", "digest"}:
         raise ValueError("invalid reference envelope")
@@ -163,9 +126,9 @@ def resolve(ref: Any, ctx: EncodeContext, kind: str = "view") -> Any:
     payload = {k: v for k, v in ref.items() if k != "digest"}
     if (
         ref["schema"] != f"pointcloud.{kind}/v1"
-        or ref["digest"] != hashlib.sha256(_json(payload).encode()).hexdigest()
+        or ref["digest"] != hashlib.sha256(canonical(payload).encode()).hexdigest()
     ):
         raise ValueError("reference schema or digest mismatch")
-    if ref["cloud"] != _cloud_digest(ctx):
+    if ref["cloud"] != ctx.fingerprint:
         raise ValueError("stale reference: finite cloud, frame, or timestamp differs")
     return _restore(ref["recipe"])

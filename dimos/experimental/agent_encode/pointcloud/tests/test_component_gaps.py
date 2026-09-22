@@ -92,14 +92,14 @@ def test_default_gap_preserves_original_components_and_metadata(tmp_path):
         {
             "default": Window(Components(mask), (0, 0, 3, 1)),
             "zero": Window(Components(mask, gap_cells=0), (0, 0, 3, 1)),
+            "table": Components(mask),
         },
         out_dir=tmp_path,
     )["results"]
 
-    assert result["default"] == result["zero"]
+    assert {**result["default"], "request": None} == {**result["zero"], "request": None}
     assert result["default"]["values"] == {"label": [[1, 0, 2]]}
-    assert result["default"]["region_count"] == 2
-    assert "gap_cells" not in result["default"]
+    assert result["table"]["region_count"] == 2
 
 
 @pytest.mark.parametrize(
@@ -131,12 +131,12 @@ def test_gap_connections_are_transitive_without_wrapping_grid_boundaries(tmp_pat
     height = HeightField(Grid((0, 0), (5, 2), 1))
     regions = Components(Threshold(height.count, ">", 0), gap_cells=1)
 
-    result = cloud.agent_encode({"labels": Window(regions, (0, 0, 5, 2))}, out_dir=tmp_path)[
-        "results"
-    ]["labels"]
+    out = cloud.agent_encode(
+        {"labels": Window(regions, (0, 0, 5, 2)), "table": regions}, out_dir=tmp_path
+    )["results"]
 
-    assert result["values"] == {"label": [[1, 0, 1, 0, 1], [1, 0, 0, 0, 0]]}
-    assert result["region_count"] == 1
+    assert out["labels"]["values"] == {"label": [[1, 0, 1, 0, 1], [1, 0, 0, 0, 0]]}
+    assert out["table"]["region_count"] == 1
 
 
 @pytest.mark.parametrize("gap_cells", [-1, 5, 1.5, True])

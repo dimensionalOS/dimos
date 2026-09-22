@@ -19,9 +19,11 @@ import math
 
 import numpy as np
 
+from dimos.experimental.agent_encode.pointcloud.shapes.base import Shape
+
 
 @dataclass(frozen=True)
-class Box:
+class Box(Shape):
     """An axis-aligned-in-z box."""
 
     center: tuple[float, float, float]
@@ -53,14 +55,19 @@ class Box:
         d: np.ndarray = np.linalg.norm(outside, axis=1)
         return d
 
-    def shifted(self, dx: float, dy: float) -> Box:
-        cx, cy, cz = self.center
-        return Box((cx + dx, cy + dy, cz), self.size, self.yaw_deg)
+    def chord(self, direction: np.ndarray) -> float:
+        """Length of the longest segment along the unit ``direction`` inside the box."""
+        c, s = math.cos(math.radians(self.yaw_deg)), math.sin(math.radians(self.yaw_deg))
+        along = np.abs(np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]]) @ direction)
+        lengths = np.divide(self.size, along, out=np.full(3, np.inf), where=along > 0)
+        return float(lengths.min())
 
-    def describe(self) -> dict[str, object]:
-        return {
-            "shape": "Box",
-            "center": list(self.center),
-            "size": list(self.size),
-            "yaw_deg": self.yaw_deg,
-        }
+    def anchor(self, z_extent: tuple[float, float]) -> np.ndarray:
+        return np.asarray(self.center, dtype=float)
+
+    def wireframe(self, z_extent: tuple[float, float]) -> list[np.ndarray]:
+        signs = np.array([[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)])
+        c, s = math.cos(math.radians(self.yaw_deg)), math.sin(math.radians(self.yaw_deg))
+        rotation = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+        corners = (signs * np.asarray(self.size) / 2) @ rotation.T + self.anchor(z_extent)
+        return [corners[[i, i ^ bit]] for i in range(8) for bit in (1, 2, 4) if i < i ^ bit]

@@ -15,85 +15,92 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
 import math
-from typing import Any
 
 import numpy as np
 
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
-from dimos.experimental.agent_encode.pointcloud.shapes.box import Box
-from dimos.experimental.agent_encode.pointcloud.shapes.cylinder import Cylinder
-from dimos.experimental.agent_encode.pointcloud.shapes.sphere import Sphere
-
-Shape = Box | Cylinder | Sphere
+from dimos.experimental.agent_encode.pointcloud.render.overlays import Canvas, Overlay
+from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext, Node
+from dimos.experimental.agent_encode.pointcloud.shapes.base import Shape
 
 
 @dataclass(frozen=True)
-class Sweep:
-    """Sample a shape's motion along a heading or a 3D direction.
+class SweepResult:
+    hit: bool
+    distance_m: float | None
+    """How far the shape travelled before first touching a return; None when it reached
+    max_distance untouched."""
+    point_m: tuple[float, float, float] | None
+    """The first return touched."""
+    direction: list[float]
+    """The unit direction of travel."""
+    start_inside: int
+    """Returns already inside the shape before it moved; any gives distance_m 0, so move
+    the shape to sweep past them."""
+    samples_checked: int
 
-    Samples include the start and endpoint; contacts between samples can be missed.
-    The result gives hit (bool), distance_m the shape travelled before first touching
-    a return (null when it reaches max_distance untouched), and point_m [x, y, z] of
-    that first return. start_inside counts the returns already inside the shape
-    before it moves; any gives distance_m 0, so shrink or move the shape to sweep
-    past them.
-    """
+
+@dataclass(frozen=True)
+class Sweep(Overlay):
+    """Sample a shape's motion along a heading or a 3D direction, every ``step_m`` from
+    the start to the endpoint; contacts between samples can be missed."""
 
     shape: Shape
     direction_deg: float | None = None
     """Horizontal heading, degrees from +x toward +y."""
     max_distance: float = 1.0
     step_m: float = 0.05
-    source: Any = None
+    source: Node[np.ndarray] | None = None
     direction: tuple[float, float, float] | None = None
     """A 3D heading (dx, dy, dz) in place of ``direction_deg``; it is normalized."""
 
-    def run(self, ctx: EncodeContext) -> dict[str, Any]:
-        ctx = ctx.select(self.source)
-        if (
-            not math.isfinite(self.step_m)
-            or not math.isfinite(self.max_distance)
-            or self.step_m <= 0
-            or self.max_distance < 0
-        ):
-            raise ValueError(
-                "Sweep needs a finite positive step_m and finite non-negative max_distance"
-            )
-        if self.direction is not None:
-            if self.direction_deg is not None:
-                raise ValueError("Sweep accepts either direction or direction_deg, not both")
-            direction = np.asarray(self.direction, dtype=np.float64)
-            if direction.shape != (3,) or not np.isfinite(direction).all():
-                raise ValueError("direction must contain three finite values")
-            norm = float(np.linalg.norm(direction))
-            if not math.isfinite(norm) or norm == 0:
-                raise ValueError("direction must have a finite nonzero length")
-            direction = direction / norm
-        else:
-            if self.direction_deg is None or not math.isfinite(self.direction_deg):
-                raise ValueError("Sweep requires a finite direction_deg or a 3D direction")
+    @cached_property
+    def unit_direction(self) -> np.ndarray:
+        if self.direction_deg is not None:
             heading = math.radians(self.direction_deg)
-            direction = np.array([math.cos(heading), math.sin(heading), 0.0])
-        thinnest = _thinnest(self.shape)
-        if thinnest < self.step_m:
+            return np.array([math.cos(heading), math.sin(heading), 0.0])
+        direction = np.asarray(self.direction, dtype=np.float64)
+        unit: np.ndarray = direction / np.linalg.norm(direction)
+        return unit
+
+    def draw(self, canvas: Canvas) -> list[str]:
+        geometry = self.shape.draw(canvas)
+        result = canvas.ctx.evaluate(self)
+        if result.point_m is not None and canvas.point(np.asarray(result.point_m), 4, filled=True):
+            geometry.append("point")
+        start = self.shape.anchor(canvas.z_extent)
+        travel = result.distance_m if result.distance_m is not None else self.max_distance
+        canvas.path(np.stack((start, start + self.unit_direction * travel)))
+        return [*geometry, "sweep_segment"]
+
+    def run(self, ctx: EncodeContext) -> SweepResult:
+        if not math.isfinite(self.step_m) or self.step_m <= 0:
+            raise ValueError("step_m must be finite and positive")
+        if not math.isfinite(self.max_distance) or self.max_distance < 0:
+            raise ValueError("max_distance must be finite and non-negative")
+        if self.max_distance / self.step_m > 4096:
+            raise ValueError("Sweep takes at most 4096 steps; raise step_m or shorten max_distance")
+        if (self.direction is None) == (self.direction_deg is None):
+            raise ValueError("Sweep takes exactly one of direction or direction_deg")
+        if self.direction is not None:
+            if len(self.direction) != 3 or not np.isfinite(self.direction).all():
+                raise ValueError("direction must contain three finite values")
+            if not np.any(self.direction):
+                raise ValueError("direction must have a nonzero length")
+        if self.direction_deg is not None and not math.isfinite(self.direction_deg):
+            raise ValueError("direction_deg must be finite")
+        chord = self.shape.chord(self.unit_direction)
+        if chord < self.step_m:
             raise ValueError(
-                f"Sweep shape is {thinnest:g} m thin but steps {self.step_m:g} m, so returns "
-                "between steps are skipped; sweep a body-sized shape, or use Closest for a point"
+                f"Sweep shape is {chord:g} m deep along its travel but steps {self.step_m:g} m, "
+                "so returns between steps are skipped; sweep a body-sized shape, or use "
+                "Closest for a point"
             )
-        out: dict[str, Any] = {
-            "handler": "Sweep",
-            **self.shape.describe(),
-            "direction_deg": self.direction_deg,
-            "max_distance": self.max_distance,
-            "direction": direction.tolist(),
-            "step_m": self.step_m,
-            "method": "sampled",
-            "precision_m": self.step_m,
-            "sampling_note": "Contacts between sampled positions can be missed.",
-        }
+        ctx = ctx.select(self.source)
+        direction = self.unit_direction
         points = ctx.points
-        out["start_inside"] = int(self.shape.contains(points).sum())
+        start_inside = int(self.shape.contains(points).sum())
         steps = math.ceil(self.max_distance / self.step_m)
         for k in range(steps + 1):
             t = min(k * self.step_m, self.max_distance)
@@ -102,28 +109,8 @@ class Sweep:
             if inside.any():
                 hits = points[inside]
                 # The first return reached: the one furthest back along the travel direction.
-                along = hits @ direction
-                first = hits[int(np.argmin(along))]
-                out.update(
-                    hit=True,
-                    distance_m=round(t, 3),
-                    point_m=[round(float(v), 3) for v in first],
-                    status="sampled_hit",
-                    samples_checked=k + 1,
+                x, y, z = (round(float(v), 3) for v in hits[int(np.argmin(hits @ direction))])
+                return SweepResult(
+                    True, round(t, 3), (x, y, z), direction.tolist(), start_inside, k + 1
                 )
-                return out
-        out.update(
-            hit=False,
-            distance_m=None,
-            point_m=None,
-            status="no_sampled_hit",
-            samples_checked=steps + 1,
-        )
-        return out
-
-
-def _thinnest(shape: Any) -> float:
-    """Smallest extent of the swept shape: returns thinner than a step can slip past."""
-    if hasattr(shape, "size"):
-        return float(min(shape.size))
-    return 2.0 * float(shape.radius)
+        return SweepResult(False, None, None, direction.tolist(), start_inside, steps + 1)

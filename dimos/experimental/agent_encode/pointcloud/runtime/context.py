@@ -19,19 +19,24 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
-from functools import cached_property
+from dataclasses import dataclass, field, replace
+import hashlib
+from itertools import count
 import os
 from pathlib import Path
 import tempfile
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol, TypeVar, cast, runtime_checkable
 
 import numpy as np
 
 from dimos.experimental.agent_encode.pointcloud.render import raster as render
+from dimos.experimental.agent_encode.pointcloud.runtime.recipe import canonical, describe
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+T = TypeVar("T")
+T_co = TypeVar("T_co", covariant=True)
 
 
 @dataclass(frozen=True)
@@ -42,33 +47,28 @@ class EncodeContext:
     out_dir: Path
     stem: str
     """File name prefix for anything a handler writes."""
-    cache: dict[tuple[Any, ...], Any] = field(default_factory=dict, compare=False, repr=False)
+    cache: dict[tuple[str, int], object] = field(default_factory=dict, compare=False, repr=False)
+    """Each request's result, by its description and the points it saw."""
+    stems: Iterator[int] = field(default_factory=count, compare=False, repr=False)
+    """Numbers each evaluated request's file names."""
     parent: EncodeContext | None = field(default=None, compare=False, repr=False)
 
     @property
     def root(self) -> EncodeContext:
         return self if self.parent is None else self.parent.root
 
-    def evaluate(self, node: Any) -> Any:
-        """Evaluate a shared request once for this point selection."""
-        key = (id(node), id(self.points))
-        if key not in self.cache:
-            self.cache[("node", id(node))] = node
-            stem_key = ("stem_index", id(node), id(self.points))
-            if stem_key not in self.cache:
-                index = int(self.cache.get(("stem_count",), 0))
-                self.cache[("stem_count",)] = index + 1
-                self.cache[stem_key] = index
-            child = EncodeContext(
-                self.cloud,
-                self.points,
-                self.out_dir,
-                f"{self.stem}_{self.cache[stem_key]:04d}",
-                self.cache,
-                self.root,
+    def evaluate(self, node: Node[T]) -> T:
+        """Evaluate a request once per description for this point selection."""
+        if not isinstance(node, Node):
+            raise TypeError(
+                f"{type(node).__name__} is not a request; shapes and grids go inside one, "
+                "as in Overlap(Box(...))"
             )
+        key = (canonical(describe(node)), id(self.points))
+        if key not in self.cache:
+            child = replace(self, stem=f"{self.stem}_{next(self.stems):04d}", parent=self.root)
             self.cache[key] = node.run(child)
-        return self.cache[key]
+        return cast("T", self.cache[key])
 
     @contextmanager
     def artifact(self, suffix: str) -> Iterator[tuple[Path, Path]]:
@@ -86,33 +86,60 @@ class EncodeContext:
         finally:
             staging.unlink(missing_ok=True)
 
-    def select(self, source: Any) -> EncodeContext:
+    def select(self, source: Node[np.ndarray] | None) -> EncodeContext:
         """Use a field's points, preserving coordinates and the shared evaluation cache."""
         if source is None:
             return self
-        points = self.evaluate(source)
-        if not isinstance(points, np.ndarray) or points.ndim != 2 or points.shape[1] != 3:
-            raise TypeError("source must evaluate to an (N, 3) point array")
-        key = ("cloud", id(points))
-        if key not in self.cache:
-            self.cache[key] = type(self.cloud).from_numpy(
-                points, frame_id=self.cloud.frame_id, timestamp=self.cloud.ts
-            )
-        return EncodeContext(
-            self.cache[key], points, self.out_dir, self.stem, self.cache, self.root
-        )
+        cloud, points = self.evaluate(_Selected(source))
+        return replace(self, cloud=cloud, points=points, parent=self.root)
 
-    @cached_property
+    @property
     def spacing_m(self) -> float:
         """The typical gap between neighbouring returns: the median of each
         return's distance to its nearest neighbour. Renders draw no finer
         than this, so their cells and splats close at the cloud's own
         resolution."""
-        return render.cloud_spacing(self.points)
+        return self.evaluate(_Spacing())
+
+    @property
+    def fingerprint(self) -> str:
+        """SHA-256 of the whole cloud's finite points, frame and timestamp."""
+        return self.root.evaluate(_Fingerprint())
 
 
-class Handler(Protocol):
-    """One request inside ``agent_encode(*handlers)``: a render or a query,
-    fully parameterised by the caller."""
+@runtime_checkable
+class Node(Protocol[T_co]):
+    """A lazy request: a selection, a field, a measurement or a render, fully
+    parameterised by the caller."""
 
-    def run(self, ctx: EncodeContext) -> dict[str, Any]: ...
+    def run(self, ctx: EncodeContext) -> T_co: ...
+
+
+@dataclass(frozen=True)
+class _Selected:
+    source: Node[np.ndarray]
+
+    def run(self, ctx: EncodeContext) -> tuple[PointCloud2, np.ndarray]:
+        points = ctx.evaluate(self.source)
+        if not isinstance(points, np.ndarray) or points.ndim != 2 or points.shape[1] != 3:
+            raise TypeError("source must evaluate to an (N, 3) point array")
+        cloud = type(ctx.cloud).from_numpy(
+            points, frame_id=ctx.cloud.frame_id, timestamp=ctx.cloud.ts
+        )
+        return cloud, points
+
+
+@dataclass(frozen=True)
+class _Spacing:
+    def run(self, ctx: EncodeContext) -> float:
+        return render.cloud_spacing(ctx.points)
+
+
+@dataclass(frozen=True)
+class _Fingerprint:
+    def run(self, ctx: EncodeContext) -> str:
+        digest = hashlib.sha256(np.ascontiguousarray(ctx.points, dtype="<f4").tobytes())
+        digest.update(
+            canonical({"frame": ctx.cloud.frame_id, "ts": describe(ctx.cloud.ts)}).encode()
+        )
+        return digest.hexdigest()

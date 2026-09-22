@@ -18,9 +18,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from dimos.experimental.agent_encode.pointcloud.shapes.base import Shape
+
 
 @dataclass(frozen=True)
-class Sphere:
+class Sphere(Shape):
     """A sphere."""
 
     center: tuple[float, float, float]
@@ -39,9 +41,19 @@ class Sphere:
         """Distance from the sphere surface to each point; 0 inside."""
         return np.maximum(self._from_center(points) - self.radius, 0.0)
 
-    def shifted(self, dx: float, dy: float) -> Sphere:
-        cx, cy, cz = self.center
-        return Sphere((cx + dx, cy + dy, cz), self.radius)
+    def chord(self, direction: np.ndarray) -> float:
+        """Length of the longest segment along any unit ``direction`` inside the sphere."""
+        return 2.0 * self.radius
 
-    def describe(self) -> dict[str, object]:
-        return {"shape": "Sphere", "center": list(self.center), "radius": self.radius}
+    def anchor(self, z_extent: tuple[float, float]) -> np.ndarray:
+        return np.asarray(self.center, dtype=float)
+
+    def wireframe(self, z_extent: tuple[float, float]) -> list[np.ndarray]:
+        angles = np.linspace(0, 2 * np.pi, 49)
+        circle = np.column_stack((np.cos(angles), np.sin(angles))) * self.radius
+        lines = []
+        for a, b in ((0, 1), (0, 2), (1, 2)):
+            points = np.zeros((len(circle), 3))
+            points[:, [a, b]] = circle
+            lines.append(points + self.anchor(z_extent))
+        return lines

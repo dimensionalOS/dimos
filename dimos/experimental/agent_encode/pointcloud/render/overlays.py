@@ -16,14 +16,15 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass
 from itertools import pairwise
-import math
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 from PIL import Image, ImageDraw
+from pydantic import JsonValue
 
 from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
 
@@ -46,153 +47,98 @@ def grid_pixel(
     )
 
 
-def shape_lines(shape: dict[str, Any]) -> list[np.ndarray]:
-    """World-coordinate wireframe paths for the supported geometric shapes."""
-    kind = shape.get("shape")
-    if kind == "Box":
-        half = np.asarray(shape["size"], dtype=float) / 2
-        corners = (
-            np.array([[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)], dtype=float)
-            * half
-        )
-        angle = math.radians(shape.get("yaw_deg", 0.0))
-        c, s = math.cos(angle), math.sin(angle)
-        rotation = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-        corners = corners @ rotation.T + np.asarray(shape["center"])
-        return [corners[[i, i ^ bit]] for i in range(8) for bit in (1, 2, 4) if i < i ^ bit]
-    if kind not in ("Sphere", "Cylinder"):
-        return []
-    angles = np.linspace(0, 2 * math.pi, 49)
-    circle = np.column_stack((np.cos(angles), np.sin(angles))) * shape["radius"]
-    if kind == "Sphere":
-        center = np.asarray(shape["center"])
-        lines = []
-        for a, b in ((0, 1), (0, 2), (1, 2)):
-            points = np.zeros((len(circle), 3))
-            points[:, [a, b]] = circle
-            lines.append(points + center)
-        return lines
-    xy = circle + np.asarray(shape["center"])
-    low, high = shape["z_range"]
-    lower = np.column_stack((xy, np.full(len(xy), low)))
-    upper = np.column_stack((xy, np.full(len(xy), high)))
-    return [lower, upper, *[np.stack((lower[i], upper[i])) for i in (0, 12, 24, 36)]]
+@dataclass(frozen=True)
+class Canvas:
+    """One overlay's pen on a render: its colour and the render's own projection."""
+
+    draw: ImageDraw.ImageDraw
+    project: Project
+    colour: str
+    ctx: EncodeContext
+    """The render's original context; queries evaluate against it."""
+    view_ref: dict[str, JsonValue] | None
+    """The render's reference, so a pick highlights pixels only on its own view."""
+
+    @property
+    def z_extent(self) -> tuple[float, float]:
+        """The cloud's lowest and highest return, where unbounded shapes end."""
+        z = self.ctx.points[:, 2]
+        return (float(z.min()), float(z.max())) if len(z) else (0.0, 0.0)
+
+    def path(self, points: np.ndarray) -> None:
+        for start, end in pairwise(points):
+            a, b = self.project(start), self.project(end)
+            if a is not None and b is not None:
+                self.draw.line((a, b), fill=self.colour, width=2)
+
+    def point(self, point: np.ndarray, radius: int, *, filled: bool) -> bool:
+        """Mark a world point; whether it was in view."""
+        pixel = self.project(point)
+        if pixel is None:
+            return False
+        x, y = pixel
+        box = (x - radius, y - radius, x + radius, y + radius)
+        if filled:
+            self.draw.ellipse(box, fill=self.colour, outline="white")
+        else:
+            self.draw.ellipse(box, outline=self.colour, width=2)
+        return True
+
+
+class Overlay(ABC):
+    """Something a render can draw over its image."""
+
+    @abstractmethod
+    def draw(self, canvas: Canvas) -> list[str]:
+        """Draw onto ``canvas``; the kinds of geometry drawn."""
+
+
+@dataclass(frozen=True)
+class Segment(Overlay):
+    """A polyline through world points."""
+
+    points: tuple[tuple[float, float, float], ...]
+
+    def draw(self, canvas: Canvas) -> list[str]:
+        canvas.path(np.asarray(self.points, dtype=float))
+        return ["segment"]
+
+
+@dataclass(frozen=True)
+class DrawnOverlay:
+    label: str
+    """The overlay's class name."""
+    colour: str
+    geometry: list[str]
+    """What was drawn: shape, point, nearest_segment, sweep_segment, picked_pixels,
+    picked_return, picked_cell_at_min or segment."""
 
 
 def draw_overlays(
     path: Path | str,
-    overlays: tuple[Any, ...],
+    overlays: tuple[Overlay, ...],
     ctx: EncodeContext,
     project: Project,
     *,
-    view_ref: dict[str, Any] | None = None,
+    view_ref: dict[str, JsonValue] | None = None,
     palette: tuple[str, ...] = ("#ff3bcc", "#00cfef", "#f79b24", "#91d52a"),
-) -> list[dict[str, Any]]:
-    """Draw shapes, query contacts, and sweep paths with the render's own projection.
-
-    Queries are evaluated against the original context, honoring each query's source.
-    Overlays take ``palette`` colours in turn; the returned metadata identifies each
-    colour and the query evidence it represents.
-    """
+) -> list[DrawnOverlay]:
+    """Draw each overlay with the render's projection, taking ``palette`` colours in
+    turn; which colour marks which overlay and what it drew."""
     if not overlays:
         return []
     with Image.open(path) as original:
-        canvas = original.convert("RGB")
-    draw = ImageDraw.Draw(canvas)
-    metadata: list[dict[str, Any]] = []
+        image = original.convert("RGB")
+    draw = ImageDraw.Draw(image)
+    drawn: list[DrawnOverlay] = []
     for index, overlay in enumerate(overlays):
-        if isinstance(overlay, dict):
-            result = overlay
-        elif hasattr(overlay, "run"):
-            result = ctx.evaluate(overlay)
-        elif hasattr(overlay, "describe"):
-            result = overlay.describe()
-        else:
-            raise TypeError("overlays must be geometric shapes, query nodes, or query results")
-        if not isinstance(result, dict):
-            raise TypeError("overlay queries must return geometric result dictionaries")
-        colour = palette[index % len(palette)]
-        if None in result.get("z_range", ()):
-            # Unbounded cylinder ends are drawn at the cloud's lowest/highest return.
-            z = ctx.points[:, 2]
-            low, high = result["z_range"]
-            bounded = (
-                float(z.min()) if low is None else low,
-                float(z.max()) if high is None else high,
+        if not isinstance(overlay, Overlay):
+            raise TypeError(
+                f"{type(overlay).__name__} cannot be drawn; overlays are shapes, Overlap, "
+                "Closest, Sweep, Pick or Segment"
             )
-            result = {**result, "z_range": bounded}
-        paths = shape_lines(result)
-        geometry = ["shape"] if paths else []
-        if result.get("handler") == "Pick":
-            # Native-pixel highlights are valid only for the exact referenced view recipe.
-            if view_ref is not None and result.get("view_ref") == view_ref:
-                region = result["pixel_region"]
-                if region.get("uv") is not None:
-                    u, v = region["uv"]
-                    r = region["radius_px"]
-                    draw.rectangle((u - r, v - r, u + r, v + r), outline=colour, width=1)
-                    draw.ellipse((u - 4, v - 4, u + 4, v + 4), outline=colour, width=1)
-                elif region.get("rect") is not None:
-                    u, v, w, h = region["rect"]
-                    draw.rectangle((u, v, u + w - 1, v + h - 1), outline=colour, width=2)
-                else:
-                    draw.polygon([tuple(p) for p in region["polygon"]], outline=colour, width=2)
-                geometry.append("picked_pixels")
-            for hit in result.get("hits", []):
-                pixel = project(np.asarray(hit["point_m"], dtype=float))
-                if pixel is not None:
-                    x, y = pixel
-                    draw.ellipse((x - 3, y - 3, x + 3, y + 3), outline=colour, width=2)
-                    geometry.append("picked_return")
-            grid = result.get("grid")
-            if grid is not None:
-                axes = ["xyz".index(axis) for axis in grid["plane"]]
-                normal = next(i for i in range(3) if i not in axes)
-                for cell in result["cells"]:
-                    if cell["min_m"] is None:
-                        continue
-                    (a, b), (c, d) = cell["bounds_m"]
-                    corners = np.zeros((5, 3))
-                    corners[:, axes] = [[a, b], [c, b], [c, d], [a, d], [a, b]]
-                    corners[:, normal] = cell["min_m"]
-                    paths.append(corners)
-                    geometry.append("picked_cell_at_min")
-        center_values = result.get("center")
-        center = None
-        if center_values is not None:
-            center = np.asarray(center_values, dtype=float)
-            if len(center) == 2:
-                center = np.append(center, np.mean(result.get("z_range", (0.0, 0.0))))
-        point = result.get("point_m")
-        if point is not None:
-            pixel = project(np.asarray(point, dtype=float))
-            if pixel is not None:
-                x, y = pixel
-                draw.ellipse((x - 4, y - 4, x + 4, y + 4), fill=colour, outline="white")
-                geometry.append("point")
-            if center is not None:
-                paths.append(np.stack((center, point)))
-                geometry.append("nearest_segment")
-        if result.get("handler") == "Sweep" and center is not None:
-            direction = np.asarray(result["direction"])
-            distance = result["distance_m"] if result["hit"] else result["max_distance"]
-            paths.append(np.stack((center, center + direction * distance)))
-            geometry.append("sweep_segment")
-        if result.get("segment_m") is not None:
-            paths.append(np.asarray(result["segment_m"], dtype=float))
-            geometry.append("segment")
-        for points in paths:
-            for start, end in pairwise(points):
-                a, b = project(start), project(end)
-                if a is not None and b is not None:
-                    draw.line((a, b), fill=colour, width=2)
-        metadata.append(
-            {
-                "label": result.get("handler", result.get("shape", "geometry")),
-                "colour": colour,
-                "geometry": geometry,
-                "result": result,
-            }
-        )
-    canvas.save(path)
-    return metadata
+        colour = palette[index % len(palette)]
+        geometry = overlay.draw(Canvas(draw, project, colour, ctx, view_ref))
+        drawn.append(DrawnOverlay(type(overlay).__name__, colour, geometry))
+    image.save(path)
+    return drawn

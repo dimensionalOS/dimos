@@ -12,27 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``agent_encode(*handlers)``: run each requested render or query against the
-cloud and return their results in the order asked, plus the legend that
-describes every handler and shape the build offers."""
+"""``agent_encode({name: request})``: run each named render or query against the
+cloud and return its result under that name, plus the legend that describes
+every handler and shape."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 import hashlib
 import json
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
+from pydantic import JsonValue
 
-from dimos.experimental.agent_encode.pointcloud import constants
 from dimos.experimental.agent_encode.pointcloud.fields import FieldData
 from dimos.experimental.agent_encode.pointcloud.handlers.overview import Overview
 from dimos.experimental.agent_encode.pointcloud.render import raster as render
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
+from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext, Node
+from dimos.experimental.agent_encode.pointcloud.runtime.recipe import canonical, describe
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -50,36 +51,7 @@ class EncodeBudget:
             raise ValueError("max_text_bytes must be an integer >= 1024")
 
 
-def _request_spec(value: Any, _depth: int = 0) -> Any:
-    """Return a deterministic JSON-safe description without executing a request."""
-    if _depth > 96:
-        return {"invalid_number": "request nesting exceeds 96 levels"}
-    if is_dataclass(value) and not isinstance(value, type):
-        return {
-            "type": type(value).__name__,
-            **{f.name: _request_spec(getattr(value, f.name), _depth + 1) for f in fields(value)},
-        }
-    if isinstance(value, Mapping):
-        if all(isinstance(key, str) for key in value):
-            return {key: _request_spec(item, _depth + 1) for key, item in value.items()}
-        return {
-            "type": type(value).__name__,
-            "items": [[_request_spec(key), _request_spec(item)] for key, item in value.items()],
-        }
-    if isinstance(value, np.ndarray):
-        return _request_spec(value.tolist())
-    if isinstance(value, np.generic):
-        return _request_spec(value.item())
-    if isinstance(value, (tuple, list)):
-        return [_request_spec(item, _depth + 1) for item in value]
-    if isinstance(value, float) and not math.isfinite(value):
-        return {"invalid_number": "nan" if math.isnan(value) else ("inf" if value > 0 else "-inf")}
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    return {"type": type(value).__name__}
-
-
-def _contains_invalid_number(value: Any) -> bool:
+def _contains_invalid_number(value: JsonValue) -> bool:
     if isinstance(value, Mapping):
         return "invalid_number" in value or any(
             _contains_invalid_number(item) for item in value.values()
@@ -89,8 +61,12 @@ def _contains_invalid_number(value: Any) -> bool:
     return False
 
 
-def _json_safe(value: Any) -> Any:
-    """Normalize handler output to values accepted by strict JSON serialization."""
+def _json_safe(value: object) -> JsonValue:
+    """A result as strict JSON: dataclasses become objects of their fields."""
+    if is_dataclass(value) and not isinstance(value, type):
+        return {f.name: _json_safe(getattr(value, f.name)) for f in fields(value)}
+    if isinstance(value, Path):
+        return str(value)
     if isinstance(value, Mapping):
         if any(not isinstance(key, str) for key in value):
             raise TypeError("JSON result keys must be strings")
@@ -108,43 +84,27 @@ def _json_safe(value: Any) -> Any:
     raise TypeError(f"result contains non-JSON value {type(value).__name__}")
 
 
-def _size(value: Any) -> int:
+def _size(value: JsonValue) -> int:
     return len(json.dumps(value, allow_nan=False, ensure_ascii=True).encode())
 
 
-def _billed(out: dict[str, Any]) -> int:
-    """Response size without the ``request`` echoes, which only restate the caller's input."""
-    results = {
-        name: {k: v for k, v in value.items() if k != "request"}
-        for name, value in out["results"].items()
-    }
-    return _size({**out, "results": results})
+def _envelope(
+    header: dict[str, JsonValue], results: dict[str, dict[str, JsonValue]]
+) -> dict[str, JsonValue]:
+    listed: dict[str, JsonValue] = {**results}
+    return {**header, "results": listed}
 
 
-def _stem(cloud: PointCloud2, points: np.ndarray, requests: Any) -> str:
-    digest = hashlib.sha256()
-    digest.update(np.ascontiguousarray(points, dtype="<f4").tobytes())
-    digest.update(
-        json.dumps(
-            {
-                "frame_id": cloud.frame_id,
-                "ts": _request_spec(cloud.ts),
-                "form": constants.FORM,
-                "requests": _request_spec(requests),
-            },
-            ensure_ascii=True,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    )
-    return f"pointcloud_{digest.hexdigest()[:24]}"
+def _unechoed(result: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    """A result without its ``request`` echo, which only restates the caller's input."""
+    return {k: v for k, v in result.items() if k != "request"}
 
 
-def _centroid(points: np.ndarray) -> list[float] | None:
+def _centroid(points: np.ndarray) -> JsonValue:
     return [round(float(v), 3) for v in points.mean(axis=0)] if len(points) else None
 
 
-def _bounds(points: np.ndarray) -> list[list[float]] | None:
+def _bounds(points: np.ndarray) -> JsonValue:
     return (
         [
             [round(float(v), 3) for v in points.min(axis=0)],
@@ -156,34 +116,25 @@ def _bounds(points: np.ndarray) -> list[list[float]] | None:
 
 
 def _terminal_too_large(
-    out: dict[str, Any], budget: EncodeBudget, response_bytes: int
-) -> dict[str, Any]:
-    minimum = {
-        "schema": out["schema"],
-        "frame_id": out["frame_id"],
-        "ts": out["ts"],
-        "num_points": out["num_points"],
-        "bounds_m": out["bounds_m"],
-        "centroid_m": out["centroid_m"],
-        "form": out["form"],
-        "status": "too_large",
-        "results": {},
-    }
-    terminal: dict[str, Any] = {
-        "schema": out["schema"],
+    header: dict[str, JsonValue], names: list[str], budget: EncodeBudget, response_bytes: int
+) -> dict[str, JsonValue]:
+    minimum = _envelope({**header, "status": "too_large"}, {})
+    terminal: dict[str, JsonValue] = {
+        "schema": header["schema"],
         "status": "too_large",
         "response_bytes": response_bytes,
         "minimum_envelope_bytes": _size(minimum),
         "max_text_bytes": budget.max_text_bytes,
-        "output_count": len(out["results"]),
+        "output_count": len(names),
         "output_names": [],
         "suggestion": "use shorter metadata/output names or split the named request",
     }
+    listed: list[JsonValue] = []
     omitted = 0
-    for name in out["results"]:
-        candidate = {**terminal, "output_names": [*terminal["output_names"], name]}
+    for name in names:
+        candidate = {**terminal, "output_names": [*listed, name]}
         if _size(candidate) <= budget.max_text_bytes:
-            terminal = candidate
+            terminal, listed = candidate, [*listed, name]
         else:
             omitted += 1
     if omitted:
@@ -191,96 +142,86 @@ def _terminal_too_large(
         if _size(candidate) <= budget.max_text_bytes:
             terminal = candidate
     if _size(terminal) > budget.max_text_bytes:
-        terminal = {"schema": out["schema"], "status": "too_large"}
+        terminal = {"schema": header["schema"], "status": "too_large"}
     return terminal
 
 
-def _named(ctx: EncodeContext, requests: Mapping[str, Any], budget: EncodeBudget) -> dict[str, Any]:
+def _named(
+    ctx: EncodeContext, requests: Mapping[str, Node[object]], budget: EncodeBudget
+) -> dict[str, JsonValue]:
     if any(not isinstance(name, str) or not name for name in requests):
         raise ValueError("output names must be nonempty strings")
-    metadata_errors: dict[str, str] = {}
+    metadata_errors: dict[str, JsonValue] = {}
     try:
         timestamp = _json_safe(ctx.cloud.ts)
     except (ValueError, TypeError) as exc:
         timestamp = None
         metadata_errors["ts"] = str(exc)
-    out: dict[str, Any] = {
+    header: dict[str, JsonValue] = {
         "schema": "pointcloud.encode/v2",
         "frame_id": ctx.cloud.frame_id,
         "ts": timestamp,
         "num_points": len(ctx.points),
         "bounds_m": _bounds(ctx.points),
         "centroid_m": _centroid(ctx.points),
-        "form": constants.FORM,
-        "results": {},
     }
     if metadata_errors:
-        out["metadata_errors"] = metadata_errors
+        header["metadata_errors"] = metadata_errors
+    results: dict[str, dict[str, JsonValue]] = {}
     for name, node in requests.items():
-        request = _request_spec(node)
+        request = describe(node)
         try:
             if _contains_invalid_number(request):
                 raise ValueError("request contains a non-finite number")
             result = ctx.evaluate(node)
             if isinstance(result, FieldData):
-                result = {
-                    "grid": result.grid.describe(ctx),
-                    "kind": result.kind,
-                    "channels": list(result.values),
-                    **result.metadata,
-                }
-            if not isinstance(result, dict):
+                result = result.summary()
+            measured = _json_safe(result)
+            if not is_dataclass(result) or not isinstance(measured, dict):
                 raise TypeError("named outputs must be measurements or renders, not selections")
-            result = _json_safe(result)
-            measurement_status = result.pop("status", None)
-            out["results"][name] = {
-                "status": "ok",
-                **result,
-                **({"measurement_status": measurement_status} if measurement_status else {}),
-                "request": request,
-            }
+            results[name] = {"status": "ok", **measured, "request": request}
         except (ValueError, TypeError, OverflowError, OSError, RuntimeError) as exc:
-            out["results"][name] = {
+            results[name] = {
                 "status": "invalid",
                 "error": str(exc),
                 "error_type": type(exc).__name__,
                 "request": request,
             }
 
-    while (response_bytes := _billed(out)) > budget.max_text_bytes:
+    unechoed = {name: _unechoed(result) for name, result in results.items()}
+    while (response_bytes := _size(_envelope(header, unechoed))) > budget.max_text_bytes:
         candidates = [
-            (_size({k: v for k, v in value.items() if k != "request"}), name)
-            for name, value in out["results"].items()
+            (_size(value), name)
+            for name, value in unechoed.items()
             if value.get("status") != "too_large"
         ]
         if not candidates:
-            return _terminal_too_large(out, budget, response_bytes)
+            return _terminal_too_large(header, list(results), budget, response_bytes)
         result_bytes, name = max(candidates)
-        out["results"][name] = {
+        results[name] = unechoed[name] = {
             "status": "too_large",
             "result_bytes": result_bytes,
             "response_bytes": response_bytes,
             "max_text_bytes": budget.max_text_bytes,
             "suggestion": "retry this output with a small Sample first, or a smaller Window; measurement resolution is unchanged",
         }
-    return out
+    return _envelope(header, results)
 
 
 def legend() -> str:
-    """The agent guide, served as ``PointCloud2.AGENT_ENCODE_LEGEND``; text builds
-    append their grid key."""
-    text = (
+    """The agent guide, served as ``PointCloud2.agent_encode_legend()``."""
+    return (
         r"""
 # Point-cloud agent encoding
 
 ```python
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as P
+from dimos.experimental.agent_encode.pointcloud import api as pc
 out = cloud.agent_encode({"name": query, ...})   # one call computes shared work once
 r = out["results"]["name"]                        # read r["status"] first
 ```
 
 `out` holds `frame_id`, `ts`, `num_points`, `bounds_m` (`[[x,y,z]min, [x,y,z]max]`,
-rounded to 0.001 m), `centroid_m` (mean of all returns), `form` and `results`.
+rounded to 0.001 m), `centroid_m` (mean of all returns) and `results`.
 `cloud.agent_encode()` with no query returns `results["overview"]`, a compact first
 look (see `Overview`); `cloud.agent_encode({})` returns the envelope only.
 
@@ -290,7 +231,8 @@ look (see `Overview`); `cloud.agent_encode({})` returns the envelope only.
   +x and turns toward +y; pitch up is positive.
 - `r["status"]` is `ok`, `invalid` (`r["error"]` says what to change) or `too_large`
   (a response holds 16 KB: compute on the grid and read only the answer, never page
-  through rows). The geometric outcome is separate: `r["measurement_status"]`.
+  through rows). A result holds only what was measured; `r["request"]` restates the
+  call.
 - No returns is not free space. An empty cell, `count == 0` or `no_return` is unobserved.
 - Shapes, selections and fields are lazy recipes; only outputs, queries and renders
   return results. Most take `source=` to restrict the returns they see.
@@ -324,14 +266,14 @@ look (see `Overview`); `cloud.agent_encode({})` returns the envelope only.
 | output | `Sample(field, at=[(u,v), ...], fields=None, decimals=None, radius=0)` | Values at points, about 170 B each. `radius` summarises a disc: min/max, and the `distinct` values of masks and labels. |
 | output | `Window(field, cells=(col,row,w,h), fields=None, decimals=None)` | A block of cells as `values[channel][row][col]`, about 7 B per cell. |
 | output | `Overview(max_regions=8, percentile=10, min_count=4, band=(0.15,1.0), relief_m=0.15, cell_spacings=2, relief_cell_spacings=4, relief_gap_cells=1, min_supported_cells=8, min_supported_fraction=0.5)` | The no-argument default, as numbers only. See below. |
-| render | `Map(field, value_range=None, overlays=(), max_side=1024)` | An image of one channel, mask or label grid (`Map(h.max)`, not `Map(h)`) with its colour scale and pixel transform. |
-| render | `DepthView(view=(x,y,z,yaw_deg,pitch_deg), fov_deg=90, size=(768,480), max_depth=None, point_size_m=None, source=None, overlays=())` | A perspective depth image; `colour` gives the log depth scale and its stops. |
-| render | `OccupancyMap(z_range=(lo,hi), max_cells=256, zoom=None or (x,y,r), mark=None or (x,y,yaw_deg), free_radius=0, colour="flat" or "height", grid=None, source=None, overlays=())` | A top-down image. Returns below `z_range` mark a cell free (white), inside it occupied (black, or coloured by height), none unseen (grey); grey lines every metre, `mark` in red. `origin_xy` is the south-west corner and `cell_m` the cell used. |
-| pick | `Pick(view_ref, uv=(u,v) or rect=(u,v,w,h) or polygon=, radius_px=0, max_items=16)` | What lies under pixels of a render you have looked at: depth `hits` with `point_m`, or map `cells` with counts and heights. `measurement_status` is `hit`, `ambiguous`, `no_return` or `outside_image`; `.selection` is a source. |
+| render | `Map(field, value_range=None, overlays=(), max_side=1024)` | An image of one channel, mask or label grid (`Map(h.max)`, not `Map(h)`); grey is no data. The point (a, b) on the grid's plane is at pixel `u = (a - origin[0]) / cell_m * pixels_per_cell - 0.5`, `v = (rows - (b - origin[1]) / cell_m) * pixels_per_cell - 0.5`. |
+| render | `DepthView(view=(x,y,z,yaw_deg,pitch_deg), fov_deg=90, size=(768,480), max_depth=None, point_size_m=None, source=None, overlays=())` | A perspective depth image. `colour.stops` give depths from near to far on a log scale; black is no return along that ray, depth unknown. |
+| render | `OccupancyMap(z_range=(lo,hi), max_cells=256, zoom=None or (x,y,r), mark=None or (x,y,yaw_deg), free_radius=0, colour="flat" or "height", grid=None, source=None, overlays=())` | A top-down image. Returns below `z_range` mark a cell free (white), inside it occupied (black, or coloured by height), none unseen (grey); grey lines every metre, `mark` in red. `origin_xy` is the south-west corner and `cell_m` the cell used; `height_scale.stops` read a height colour. |
+| pick | `Pick(view_ref, uv=(u,v) or rect=(u,v,w,h) or polygon=, radius_px=0, max_items=16)` | What lies under pixels of a render you have looked at: depth `hits` with `point_m`, or map `cells` with the rendered `value` and the returns' `count`, `min_m`, `max_m`. `outcome` is `hit`, `ambiguous`, `no_return`, `outside_image` or `field_value`; `.selection` is a source. |
 | pick | `SelectionRef(selection_ref)` | A pick's returns as a source in a later call on the same cloud. |
 
-Renders return `image` and a `view_ref`. `overlays=` draws shapes, query results or
-`{"segment_m": [[x,y,z], ...]}` paths on them.
+Renders return `image` and a `view_ref`. `overlays=` draws shapes, `Overlap`, `Closest`,
+`Sweep` and `Pick` queries, or `Segment(((x,y,z), ...))` paths on them.
 
 `Overview` sizes its cells from the cloud's own return spacing (`spacing_m`) and reports
 the grids it used. `lower_surface` is the per-cell `percentile` of z; its median is
@@ -345,16 +287,16 @@ weak evidence, and no patch does not prove level ground. Each list holds the lar
 ## Example
 
 ```python
-grid = P.Grid(origin=(-4, -4), shape=(80, 80), cell_m=0.1)
-body = P.Cylinder(center=(0, 0), radius=0.35, z_range=(None, None))
-obstacles = P.Select(include=P.Band("z", 0.15, 1.0), exclude=(body,))
-blocked = P.Threshold(P.HeightField(grid, source=obstacles).count, ">", 0)
-free = P.Threshold(P.DistanceField(grid, source=blocked), ">", 0.3)   # 0.3 m from anything
+grid = pc.Grid(origin=(-4, -4), shape=(80, 80), cell_m=0.1)
+body = pc.Cylinder(center=(0, 0), radius=0.35, z_range=(None, None))
+obstacles = pc.Select(include=pc.Band("z", 0.15, 1.0), exclude=(body,))
+blocked = pc.Threshold(pc.HeightField(grid, source=obstacles).count, ">", 0)
+free = pc.Threshold(pc.DistanceField(grid, source=blocked), ">", 0.3)   # 0.3 m from anything
 out = cloud.agent_encode({
-    "near": P.Closest(P.Cylinder((0, 0), 0, (0.15, 1.0)), source=obstacles),
-    "ahead": P.Sweep(P.Box((0.5, 0, 0.55), (0.1, 0.6, 0.8)), direction_deg=0, max_distance=2.0),
-    "joined": P.Sample(P.Components(free), at=[(0, 0), (2.5, 1.0)], radius=0.15),
-    "map": P.OccupancyMap(z_range=(0.15, 1.0), mark=(0, 0, 0)),
+    "near": pc.Closest(pc.Cylinder((0, 0), 0, (0.15, 1.0)), source=obstacles),
+    "ahead": pc.Sweep(pc.Box((0.5, 0, 0.55), (0.1, 0.6, 0.8)), direction_deg=0, max_distance=2.0),
+    "joined": pc.Sample(pc.Components(free), at=[(0, 0), (2.5, 1.0)], radius=0.15),
+    "map": pc.OccupancyMap(z_range=(0.15, 1.0), mark=(0, 0, 0)),
 })
 for name, r in out["results"].items():
     print(name, r["status"], r.get("error"))
@@ -362,55 +304,21 @@ for name, r in out["results"].items():
 """.strip()
         + "\n"
     )
-    if constants.FORM != "image":
-        text += (
-            "\nText forms are ascii grids. depth ascii: rows top-to-bottom, columns "
-            "left-to-right, digit 0..9 = near..far by ascii_formula, '.' = no return (depth "
-            "unknown, treat as infinity). occupancy ascii: rows run north (top) to south, "
-            "columns west to east, '#' occupied (colour='flat') or digit 0..9 = z_low..z_high "
-            "of the highest return (colour='height'), '.' free, '?' unseen, the mark is drawn "
-            "as ^ > v < for north east south west when given; mark_cell is (column, row) in "
-            "the ascii. "
-        )
-    return text
 
 
 def encode(
     cloud: PointCloud2,
-    *handlers: Any,
+    requests: Mapping[str, Node[object]] | None = None,
     out_dir: str | Path | None = None,
     budget: EncodeBudget | None = None,
-) -> dict[str, Any]:
+) -> dict[str, JsonValue]:
     points = np.asarray(cloud.points_f32(), dtype=np.float32).reshape(-1, 3)
     points = points[np.isfinite(points).all(axis=1)]
-    stem = _stem(cloud, points, handlers)
-    ctx = EncodeContext(cloud=cloud, points=points, out_dir=render.output_dir(out_dir), stem=stem)
-    if not handlers:
-        return _named(ctx, {"overview": Overview()}, budget or EncodeBudget())
-    if len(handlers) == 1 and isinstance(handlers[0], Mapping):
-        return _named(ctx, handlers[0], budget or EncodeBudget())
-    if budget is not None:
-        raise ValueError("budget applies to the named mapping API")
-    results = []
-    for i, handler in enumerate(handlers):
-        if not hasattr(handler, "run"):
-            raise TypeError(
-                f"handler {i} is {type(handler).__name__}, not a query such as P.Overlap(...)"
-            )
-        sub = EncodeContext(
-            cloud=ctx.cloud,
-            points=ctx.points,
-            out_dir=ctx.out_dir,
-            stem=f"{stem}_{i}",
-            cache=ctx.cache,
-        )
-        results.append(handler.run(sub))
-    return {
-        "frame_id": cloud.frame_id,
-        "ts": cloud.ts,
-        "num_points": len(points),
-        "bounds_m": _bounds(points),
-        "centroid_m": _centroid(points),
-        "form": constants.FORM,
-        "results": results,
-    }
+    if requests is None:
+        requests = {"overview": Overview()}
+    if not isinstance(requests, Mapping):
+        raise TypeError("agent_encode takes one {name: request} mapping")
+    ctx = EncodeContext(cloud, points, render.output_dir(out_dir), "pointcloud")
+    digest = hashlib.sha256(f"{ctx.fingerprint}{canonical(describe(requests))}".encode())
+    ctx = replace(ctx, stem=f"pointcloud_{digest.hexdigest()[:24]}")
+    return _named(ctx, requests, budget or EncodeBudget())

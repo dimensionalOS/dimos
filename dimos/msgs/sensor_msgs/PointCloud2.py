@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import functools
 from pathlib import Path
 import struct
@@ -27,36 +28,17 @@ from dimos_lcm.sensor_msgs.PointField import PointField
 from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 
-from dimos.experimental.agent_encode.pointcloud.fields import (
-    Band,
-    Components,
-    DistanceField,
-    Grid,
-    HeightField,
-    Resample,
-    Select,
-    Threshold,
-)
-from dimos.experimental.agent_encode.pointcloud.handlers.closest import Closest
-from dimos.experimental.agent_encode.pointcloud.handlers.depth_view import DepthView
-from dimos.experimental.agent_encode.pointcloud.handlers.field_outputs import Map, Sample, Window
-from dimos.experimental.agent_encode.pointcloud.handlers.occupancy_map import OccupancyMap
-from dimos.experimental.agent_encode.pointcloud.handlers.overlap import Overlap
-from dimos.experimental.agent_encode.pointcloud.handlers.overview import Overview
-from dimos.experimental.agent_encode.pointcloud.handlers.pick import Pick, SelectionRef
-from dimos.experimental.agent_encode.pointcloud.handlers.sweep import Sweep
-from dimos.experimental.agent_encode.pointcloud.runtime import dispatch as agent_encoding
-from dimos.experimental.agent_encode.pointcloud.shapes.box import Box
-from dimos.experimental.agent_encode.pointcloud.shapes.cylinder import Cylinder
-from dimos.experimental.agent_encode.pointcloud.shapes.sphere import Sphere
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
     import open3d as o3d  # type: ignore[import-untyped]
+    from pydantic import JsonValue
     from rerun._baseclasses import Archetype
 
+    from dimos.experimental.agent_encode.pointcloud.runtime.context import Node
+    from dimos.experimental.agent_encode.pointcloud.runtime.dispatch import EncodeBudget
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
 
@@ -362,55 +344,36 @@ class PointCloud2(Timestamped):
     def __str__(self) -> str:
         return f"PointCloud2(frame_id='{self.frame_id}', num_points={len(self)})"
 
-    AGENT_ENCODE_LEGEND = agent_encoding.legend()
-    """Field reference for agent_encode(); delivered once per stream by consumers."""
+    @staticmethod
+    def agent_encode_legend() -> str:
+        """Field reference for agent_encode(); delivered once per stream by consumers."""
+        from dimos.experimental.agent_encode.pointcloud.runtime import dispatch
 
-    # The handler and shape classes agent_encode() accepts, reachable without imports.
-    DepthView = DepthView
-    OccupancyMap = OccupancyMap
-    Overlap = Overlap
-    Overview = Overview
-    Sweep = Sweep
-    Closest = Closest
-    Box = Box
-    Cylinder = Cylinder
-    Sphere = Sphere
-    Select = Select
-    Band = Band
-    Grid = Grid
-    HeightField = HeightField
-    DistanceField = DistanceField
-    Threshold = Threshold
-    Resample = Resample
-    Components = Components
-    Map = Map
-    Pick = Pick
-    SelectionRef = SelectionRef
-    Sample = Sample
-    Window = Window
-    EncodeBudget = agent_encoding.EncodeBudget
+        return dispatch.legend()
 
     def agent_encode(
         self,
-        *handlers: Any,
+        requests: Mapping[str, Node[object]] | None = None,
         out_dir: str | Path | None = None,
-        budget: agent_encoding.EncodeBudget | None = None,
-    ) -> dict[str, Any]:
-        """Describe this cloud for an agent: run each requested handler and
-        return their results in order, or pass one mapping of names to queries
-        for shared lazy fields and named results. ``budget`` bounds the JSON
-        response for the named form without changing measurement resolution.
-        With no handlers, return a compact ``Overview`` of coverage, height-band
-        regions and lower-surface relief; ``agent_encode({})`` returns metadata only.
-        Handlers are renders (``DepthView``,
-        ``OccupancyMap``) or geometric queries (``Overlap``, ``Sweep``,
-        ``Closest``) over shapes (``Box``, ``Cylinder``, ``Sphere``), reachable
-        as ``PointCloud2.<Name>``; explicit requests choose their poses, sizes and bands.
-        ``AGENT_ENCODE_LEGEND`` documents each and shows an example call. Images, when
-        this build produces them, go under ``out_dir`` (default
-        ``$AGENT_ENCODE_DIR``, the current run directory, or the DimOS state directory).
+        budget: EncodeBudget | None = None,
+    ) -> dict[str, JsonValue]:
+        """Describe this cloud for an agent: run each named request in
+        ``requests`` and return its result under that name; requests share lazy
+        fields. ``budget`` bounds the JSON response without changing measurement
+        resolution. With no requests, return a compact ``Overview`` of coverage,
+        height-band regions and lower-surface relief; ``agent_encode({})`` returns
+        metadata only. Requests are renders (``DepthView``, ``OccupancyMap``) or
+        geometric queries (``Overlap``, ``Sweep``, ``Closest``) over shapes
+        (``Box``, ``Cylinder``, ``Sphere``) from
+        ``dimos.experimental.agent_encode.pointcloud.api``;
+        explicit requests choose their poses, sizes and bands.
+        ``agent_encode_legend()`` documents each and shows an example call. Images go
+        under ``out_dir`` (default ``$AGENT_ENCODE_DIR``, the current run directory,
+        or the DimOS state directory).
         """
-        return agent_encoding.encode(self, *handlers, out_dir=out_dir, budget=budget)
+        from dimos.experimental.agent_encode.pointcloud.runtime import dispatch
+
+        return dispatch.encode(self, requests, out_dir=out_dir, budget=budget)
 
     @functools.cached_property
     def center(self) -> Vector3:

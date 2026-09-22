@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FORM = "image"
-"""What this build renders: "image" (PNG files, their paths in the result) or "text"
-(ASCII grids). One per build; there is no caller-side switch, and the legend
-describes only this form."""
-
 MAX_GRID_CELLS = 262144
 """Most cells a ``Grid`` may hold, the encoder's memory guard. ``Grid`` rejects more,
 and the default overview grows its cells to stay within it."""

@@ -15,29 +15,56 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import Literal
 
 import numpy as np
+from pydantic import JsonValue
 from scipy import ndimage
 
-from dimos.experimental.agent_encode.pointcloud import constants
 from dimos.experimental.agent_encode.pointcloud.fields import Grid
 from dimos.experimental.agent_encode.pointcloud.handlers.lib.reference import reference
+from dimos.experimental.agent_encode.pointcloud.handlers.lib.surface import (
+    Contributors,
+    GridSurface,
+    Pickable,
+)
 from dimos.experimental.agent_encode.pointcloud.render import raster as render
-from dimos.experimental.agent_encode.pointcloud.render.overlays import draw_overlays, grid_pixel
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
+from dimos.experimental.agent_encode.pointcloud.render.overlays import (
+    DrawnOverlay,
+    Overlay,
+    draw_overlays,
+    grid_pixel,
+)
+from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext, Node
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 
 
 @dataclass(frozen=True)
-class OccupancyMap:
-    """The top-down occupancy map of the cloud, in this build's form (image or text).
+class OccupancyMapResult:
+    image: Path
+    view_ref: dict[str, JsonValue]
+    spacing_m: float
+    """The typical gap between neighbouring returns."""
+    cell_m: float
+    origin_xy: tuple[float, float]
+    """World position of the south-west corner."""
+    size: tuple[int, int]
+    """(columns, rows)."""
+    occupied_cells: int
+    free_cells: int
+    unseen_cells: int
+    mark_cell: tuple[int, int] | None
+    """The mark's (column, row)."""
+    height_scale: render.ColourScale | None
+    """Heights from the bottom to the top of ``z_range``, when coloured by height."""
+    overlays: list[DrawnOverlay]
 
-    The result gives z_range_m, spacing_m, cell_m, origin_xy (world position of the
-    south-west corner), size [columns, rows], occupied_cells, free_cells,
-    unseen_cells, and mark_cell [column, row] when a mark is given.
-    """
+
+@dataclass(frozen=True)
+class OccupancyMap(Pickable):
+    """The top-down occupancy map of the cloud as an image."""
 
     z_range: tuple[float, float]
     """Absolute z: a return below it marks its cell free, inside it occupied, above it
@@ -52,11 +79,11 @@ class OccupancyMap:
     free_radius: float = 0.0
     """Metres that free spreads. At 0, free cells spread no further than the floor
     returns that made them."""
-    colour: str = "flat"
+    colour: Literal["flat", "height"] = "flat"
     """Occupied cells are black, or with "height" coloured by their highest return over
     ``z_range``, which adds height_scale to read it back."""
-    source: Any = None
-    overlays: tuple[Any, ...] = ()
+    source: Node[np.ndarray] | None = None
+    overlays: tuple[Overlay, ...] = ()
     grid: Grid | None = None
     """An explicit XY grid fixes the origin, resolution, and extent; it cannot be
     combined with ``zoom`` and must fit ``max_cells`` without coarsening."""
@@ -67,26 +94,10 @@ class OccupancyMap:
         to read rooms."""
         return max(1, round(1024 / max(grid.width, grid.height)))
 
-    def _fixed_grid(self, ctx: EncodeContext) -> tuple[OccupancyGrid, np.ndarray | None]:
-        spec = self.grid
-        assert spec is not None
-        spec.describe(ctx)
-        if spec.plane != "xy":
-            raise ValueError("OccupancyMap requires an XY grid")
-        if max(spec.shape) > self.max_cells:
-            raise ValueError("supplied grid exceeds max_cells; request a smaller grid")
-        if self.zoom is not None:
-            raise ValueError("an explicit grid already fixes the extent; omit zoom")
-        if not np.isfinite(self.free_radius) or self.free_radius < 0:
-            raise ValueError("free_radius must be finite and non-negative")
-        if (
-            len(self.z_range) != 2
-            or not np.isfinite(self.z_range).all()
-            or self.z_range[0] > self.z_range[1]
-        ):
-            raise ValueError("z_range must contain finite, ordered endpoints")
-        indices, valid = spec.indices(ctx.points[:, :2])
-        points, indices = ctx.points[valid], indices[valid]
+    def _fixed_grid(self, spec: Grid, ctx: EncodeContext) -> render.OccupancyRaster:
+        spec.check(ctx)
+        all_indices, valid = spec.indices(ctx.points[:, :2])
+        points, indices = ctx.points[valid], all_indices[valid]
         shape = (spec.shape[1], spec.shape[0])
         cells = np.full(shape, CostValues.UNKNOWN, dtype=np.int8)
         below = points[:, 2] < self.z_range[0]
@@ -113,10 +124,10 @@ class OccupancyMap:
             frame_id=ctx.cloud.frame_id,
             ts=ctx.cloud.ts,
         )
-        return grid, heights
+        return render.OccupancyRaster(grid, heights, all_indices)
 
-    def measure(self, ctx: EncodeContext) -> tuple[OccupancyGrid, np.ndarray | None, np.ndarray]:
-        """Build the rendered grid and retain the builder's exact contributor cell indices."""
+    def measure(self, ctx: EncodeContext) -> render.OccupancyRaster:
+        """Build the rendered grid with the builder's exact contributor cell indices."""
         if self.colour not in ("flat", "height"):
             raise ValueError(f"colour must be 'flat' or 'height', not {self.colour!r}")
         if type(self.max_cells) is not int or not 1 <= self.max_cells <= 1024:
@@ -133,90 +144,92 @@ class OccupancyMap:
             len(self.zoom) != 3 or not np.isfinite(self.zoom).all() or self.zoom[2] <= 0
         ):
             raise ValueError("zoom must contain finite x,y and positive radius")
-        if self.grid is None:
-            provenance: dict[str, np.ndarray] = {}
-            grid, heights = render.occupancy_grid(
-                ctx.cloud,
-                ctx.points,
-                z_range=self.z_range,
-                spacing=ctx.spacing_m,
-                max_cells=self.max_cells,
-                free_radius=self.free_radius,
-                zoom=self.zoom,
-                heights=self.colour == "height",
-                _point_cells=provenance,
-            )
-            indices = provenance["indices"]
-        else:
-            grid, heights = self._fixed_grid(ctx)
-            indices, _ = self.grid.indices(ctx.points[:, :2])
-        return grid, heights, indices
+        if self.grid is not None:
+            if self.grid.plane != "xy":
+                raise ValueError("OccupancyMap requires an XY grid")
+            if max(self.grid.shape) > self.max_cells:
+                raise ValueError("supplied grid exceeds max_cells; request a smaller grid")
+            if self.zoom is not None:
+                raise ValueError("an explicit grid already fixes the extent; omit zoom")
+        if self.grid is not None:
+            return self._fixed_grid(self.grid, ctx)
+        return render.occupancy_grid(
+            ctx.cloud,
+            ctx.points,
+            z_range=self.z_range,
+            spacing=ctx.spacing_m,
+            max_cells=self.max_cells,
+            free_radius=self.free_radius,
+            zoom=self.zoom,
+            heights=self.colour == "height",
+        )
 
-    def run(self, ctx: EncodeContext) -> dict[str, Any]:
+    def surface(self, ctx: EncodeContext) -> GridSurface:
+        selected = ctx.select(self.source)
+        raster = self.measure(selected)
+        occupancy = raster.grid
+        grid = Grid(
+            (float(occupancy.origin.position.x), float(occupancy.origin.position.y)),
+            (occupancy.width, occupancy.height),
+            float(occupancy.resolution),
+            frame=ctx.cloud.frame_id,
+        )
+        in_band = selected.points[:, 2] <= self.z_range[1]
+        contributors = Contributors.on(grid, selected.points[in_band], raster.indices[in_band])
+        classification = {
+            CostValues.FREE: "free",
+            CostValues.OCCUPIED: "occupied",
+            CostValues.UNKNOWN: "unseen",
+        }
+
+        def cell_value(col: int, row: int) -> str:
+            return classification[CostValues(int(occupancy.grid[row, col]))]
+
+        return GridSurface(grid, self.pixels_per_cell(occupancy), contributors, cell_value)
+
+    def run(self, ctx: EncodeContext) -> OccupancyMapResult:
         original_ctx = ctx
         ctx = ctx.select(self.source)
-        grid, heights, _ = self.measure(ctx)
-        out: dict[str, Any] = {
-            "handler": "OccupancyMap",
-            "view_ref": reference(self, original_ctx),
-            "z_range_m": list(self.z_range),
-            "spacing_m": round(ctx.spacing_m, 4),
-            "cell_m": round(grid.resolution, 4),
-            "origin_xy": [
-                round(float(grid.origin.position.x), 3),
-                round(float(grid.origin.position.y), 3),
-            ],
-            "size": [grid.width, grid.height],
-            "zoom_m": list(self.zoom) if self.zoom is not None else None,
-            "mark": list(self.mark) if self.mark is not None else None,
-            "free_radius_m": self.free_radius,
-            "colour": self.colour,
-            "occupied_cells": int((grid.grid == CostValues.OCCUPIED).sum()),
-            "free_cells": int((grid.grid == CostValues.FREE).sum()),
-            "unseen_cells": int((grid.grid == CostValues.UNKNOWN).sum()),
-        }
-        if self.grid is not None:
-            out["grid"] = self.grid.describe(ctx)
-            out["cell_m"] = self.grid.cell_m
-            out["origin_xy"] = list(self.grid.origin)
-        if self.mark is not None:
-            out["mark_cell"] = list(render.cell_of(grid, self.mark[0], self.mark[1]))
-        if heights is not None:
-            out["height_scale"] = render.height_scale(self.z_range)
-        if constants.FORM == "image":
-            scale = self.pixels_per_cell(grid)
-            with ctx.artifact("occupancy.png") as (staging, path):
-                render.occupancy_png(
-                    grid,
-                    staging,
-                    mark=self.mark,
-                    heights=heights,
-                    z_range=self.z_range,
-                    scale=scale,
-                )
-                if self.overlays:
-
-                    def project(point: np.ndarray) -> tuple[float, float]:
-                        return grid_pixel(
-                            point,
-                            (0, 1),
-                            (grid.origin.position.x, grid.origin.position.y),
-                            grid.resolution,
-                            grid.height,
-                            scale,
-                        )
-
-                    out["overlays"] = draw_overlays(
-                        staging, self.overlays, original_ctx, project, view_ref=out["view_ref"]
-                    )
-            out["image"] = str(path)
-        else:
-            text, step = render.occupancy_ascii(
-                grid, mark=self.mark, heights=heights, z_range=self.z_range
+        raster = self.measure(ctx)
+        grid = raster.grid
+        scale = self.pixels_per_cell(grid)
+        view_ref = reference(self, original_ctx)
+        overlays: list[DrawnOverlay] = []
+        with ctx.artifact("occupancy.png") as (staging, path):
+            render.occupancy_png(
+                grid,
+                staging,
+                mark=self.mark,
+                heights=raster.heights,
+                z_range=self.z_range,
+                scale=scale,
             )
-            out["ascii"] = text
-            out["ascii_cells_per_char"] = step
-            if self.mark is not None:
-                col, row = out["mark_cell"]
-                out["mark_cell"] = [col // step, row // step]
-        return out
+            if self.overlays:
+
+                def project(point: np.ndarray) -> tuple[float, float]:
+                    return grid_pixel(
+                        point,
+                        (0, 1),
+                        (grid.origin.position.x, grid.origin.position.y),
+                        grid.resolution,
+                        grid.height,
+                        scale,
+                    )
+
+                overlays = draw_overlays(
+                    staging, self.overlays, original_ctx, project, view_ref=view_ref
+                )
+        return OccupancyMapResult(
+            path,
+            view_ref,
+            round(ctx.spacing_m, 4),
+            round(grid.resolution, 4),
+            (round(float(grid.origin.position.x), 3), round(float(grid.origin.position.y), 3)),
+            (grid.width, grid.height),
+            int((grid.grid == CostValues.OCCUPIED).sum()),
+            int((grid.grid == CostValues.FREE).sum()),
+            int((grid.grid == CostValues.UNKNOWN).sum()),
+            render.cell_of(grid, self.mark[0], self.mark[1]) if self.mark is not None else None,
+            render.colour_scale(*self.z_range) if raster.heights is not None else None,
+            overlays,
+        )

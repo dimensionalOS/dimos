@@ -17,21 +17,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
+from pydantic import JsonValue
 
-from dimos.experimental.agent_encode.pointcloud import constants, fields as field_nodes
-from dimos.experimental.agent_encode.pointcloud.handlers.depth_view import depth_data
 from dimos.experimental.agent_encode.pointcloud.handlers.lib.reference import (
-    _json,
-    _spec,
     reference,
     resolve,
 )
-from dimos.experimental.agent_encode.pointcloud.render import raster as render
+from dimos.experimental.agent_encode.pointcloud.handlers.lib.surface import Pickable, PickResult
+from dimos.experimental.agent_encode.pointcloud.render.overlays import Canvas, Overlay
 from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues
 
 
 def _pixels(pick: Pick, width: int, height: int) -> tuple[np.ndarray, bool]:
@@ -89,30 +85,21 @@ def _pixels(pick: Pick, width: int, height: int) -> tuple[np.ndarray, bool]:
     return pixels, False
 
 
-def _cell_points(source: Any, ctx: EncodeContext) -> np.ndarray | None:
-    if isinstance(source, field_nodes.HeightField):
-        return ctx.select(source.source).points
-    if isinstance(source, (field_nodes.Channel, field_nodes.Percentile)):
-        return _cell_points(source.source, ctx)
-    # Derived values may depend on remote cells/returns. Do not claim local contributors.
-    return None
-
-
 @dataclass(frozen=True)
-class Pick:
+class Pick(Overlay):
     """Lazy exact visual measurement of one region of a render, at most 65536 pixels.
 
     The reusable selection includes all selected returns.
     """
 
-    view_ref: Any
+    view_ref: dict[str, JsonValue]
     uv: tuple[int, int] | None = None
     """A top-left native integer pixel index."""
     radius_px: int = 0
     """Selects a clipped square neighbourhood of ``uv``, at most 64."""
     rect: tuple[int, int, int, int] | None = None
     """(u, v, width, height), half-open."""
-    polygon: Any = None
+    polygon: tuple[tuple[float, float], ...] | None = None
     """3..32 vertices; it selects pixel centres by the even-odd rule."""
     max_items: int = 16
     """Reported hits or cells, at most 64."""
@@ -121,188 +108,50 @@ class Pick:
     def selection(self) -> PickSelection:
         return PickSelection(self)
 
-    def _measure(self, ctx: EncodeContext) -> tuple[dict[str, Any], np.ndarray]:
-        if constants.FORM != "image":
-            raise ValueError("Pick requires the image build and native image pixels")
+    def _measure(self, ctx: EncodeContext) -> tuple[PickResult, np.ndarray]:
         if type(self.max_items) is not int or not 1 <= self.max_items <= 64:
             raise ValueError("max_items must be an integer in 1..64")
-        ctx = ctx.root
         node = resolve(self.view_ref, ctx)
-        kind = type(node).__name__
-        if kind == "DepthView":
-            raster, selected = depth_data(node, ctx)
-            width, height = node.size
-            grid = None
-        elif kind == "Map":
-            data = ctx.evaluate(node.source)
-            data.scalar()
-            grid = data.grid
-            scale = node.pixels_per_cell(grid)
-            width, height = grid.shape[0] * scale, grid.shape[1] * scale
-        elif kind == "OccupancyMap":
-            selected = ctx.select(node.source)
-            occupancy, heights, occupancy_indices = node.measure(selected)
-            grid = field_nodes.Grid(
-                (float(occupancy.origin.position.x), float(occupancy.origin.position.y)),
-                (occupancy.width, occupancy.height),
-                float(occupancy.resolution),
-                frame=ctx.cloud.frame_id,
-            )
-            scale = node.pixels_per_cell(occupancy)
-            width, height = grid.shape[0] * scale, grid.shape[1] * scale
-        else:
+        if not isinstance(node, Pickable):
             raise ValueError("view_ref must describe DepthView, Map, or OccupancyMap")
-        pixels, outside = _pixels(self, width, height)
-        out: dict[str, Any] = {
-            "handler": "Pick",
-            "status": "outside_image" if outside else "no_return",
-            "view_ref": self.view_ref,
-            "selection_ref": reference(self.selection, ctx, "selection"),
-            "image_size": [width, height],
-            "selected_pixels": len(pixels),
-            "pixel_region": {
-                "uv": self.uv,
-                "radius_px": self.radius_px,
-                "rect": self.rect,
-                "polygon": self.polygon,
-            },
-        }
-        empty = ctx.points[:0]
+        surface = node.surface(ctx)
+        pixels, outside = _pixels(self, *surface.size)
+        selection_ref = reference(self.selection, ctx, "selection")
         if not len(pixels):
-            return out, empty
-        if kind == "DepthView":
-            ids = raster.point_ids[pixels[:, 1], pixels[:, 0]]
-            unique = np.unique(ids[ids >= 0])
-            hits = []
-            drawn_as = ("no_return", "projected_return", "splat", "filled_pixel")
-            forward = render.as_view(node.view).axes()[0]
-            origin = (
-                np.array(node.view[:3])
-                if isinstance(node.view, (tuple, list))
-                else np.array(
-                    [
-                        render.as_view(node.view).x,
-                        render.as_view(node.view).y,
-                        render.as_view(node.view).z,
-                    ]
-                )
+            empty = PickResult(
+                "outside_image" if outside else "no_return", surface.size, 0, 0, None, selection_ref
             )
-            depths = (selected.points[unique] - origin) @ forward
-            for point_id, depth in zip(
-                unique[: self.max_items], depths[: self.max_items], strict=True
-            ):
-                locations = pixels[ids == point_id]
-                provenance = np.unique(raster.provenance[locations[:, 1], locations[:, 0]])
-                hits.append(
-                    {
-                        "point_id": int(point_id),
-                        "point_m": selected.points[point_id].tolist(),
-                        "forward_depth_m": float(depth),
-                        "projected_uv": raster.projected_uv[point_id].tolist(),
-                        "pixel_provenance": drawn_as[int(provenance[0])]
-                        if len(provenance) == 1
-                        else [drawn_as[int(p)] for p in provenance],
-                        "selected_pixel_count": len(locations),
-                    }
-                )
-            out.update(
-                status="hit" if len(unique) == 1 else ("ambiguous" if len(unique) else "no_return"),
-                hit_count=len(unique),
-                hits=hits,
-                hits_omitted=max(0, len(unique) - self.max_items),
-                depth_span_m=[float(depths.min()), float(depths.max())] if len(unique) else None,
-                point_id_scope="finite returns of the view source, in source order",
-            )
-            if len(unique) == 1:
-                out.update(hits[0])
-            return out, selected.points[unique]
-        assert grid is not None
-        cells = np.unique(
-            np.column_stack((pixels[:, 0] // scale, grid.shape[1] - 1 - pixels[:, 1] // scale)),
-            axis=0,
-        )
-        points = selected.points if kind == "OccupancyMap" else _cell_points(node.source, ctx)
-        keep = None
-        if points is not None:
-            indices = (
-                occupancy_indices
-                if kind == "OccupancyMap"
-                else grid.indices(points.astype(np.float64)[:, grid.axes])[0]
-            )
-            valid = ((indices >= 0) & (indices < grid.shape)).all(axis=1)
-            if kind == "OccupancyMap":
-                valid &= points[:, 2] <= node.z_range[1]
-            cell_mask = np.zeros((grid.shape[1], grid.shape[0]), dtype=bool)
-            cell_mask[cells[:, 1], cells[:, 0]] = True
-            keep = np.zeros(len(points), dtype=bool)
-            keep[valid] = cell_mask[indices[valid, 1], indices[valid, 0]]
-        records = []
-        for col, row in cells[: self.max_items]:
-            lower = np.array(grid.origin) + np.array([col, row]) * grid.cell_m
-            local = empty
-            if points is not None:
-                member = valid & (indices[:, 0] == col) & (indices[:, 1] == row)
-                if kind == "OccupancyMap":
-                    member &= points[:, 2] <= node.z_range[1]
-                local = points[member]
-            entry: dict[str, Any] = {
-                "cell": [int(col), int(row)],
-                "bounds_m": [lower.tolist(), (lower + grid.cell_m).tolist()],
-                "centre_m": (lower + grid.cell_m / 2).tolist(),
-                "count": len(local) if points is not None else None,
-                "min_m": float(local[:, grid.normal].min()) if len(local) else None,
-                "max_m": float(local[:, grid.normal].max()) if len(local) else None,
-                "contributor_scope": "cell_returns"
-                if points is not None
-                else "derived_field_no_local_contributors",
-            }
-            if kind == "Map":
-                value = data.scalar()[row, col]
-                entry.update(
-                    channel=next(iter(data.values)),
-                    value=float(value) if np.isfinite(value) else None,
-                )
-            else:
-                entry.update(
-                    channel="occupancy",
-                    value=int(occupancy.grid[row, col]),
-                    classification={
-                        CostValues.FREE: "free",
-                        CostValues.OCCUPIED: "occupied",
-                        CostValues.UNKNOWN: "unseen",
-                    }[CostValues(int(occupancy.grid[row, col]))],
-                    z_range_m=list(node.z_range),
-                    height_colour_m=float(heights[row, col])
-                    if heights is not None and np.isfinite(heights[row, col])
-                    else None,
-                )
-            records.append(entry)
-        selected_points = points[keep] if points is not None and keep is not None else empty
-        out.update(
-            status="hit"
-            if len(selected_points)
-            else ("field_value" if points is None else "no_return"),
-            grid=grid.describe(ctx),
-            cell_count=len(cells),
-            cells=records,
-            cells_omitted=max(0, len(cells) - self.max_items),
-            selected_return_count=len(selected_points),
-            selection_scope="cell_returns" if points is not None else "none_for_derived_field",
-            bounds_m=[selected_points.min(0).tolist(), selected_points.max(0).tolist()]
-            if len(selected_points)
-            else None,
-        )
-        return out, selected_points
+            return empty, ctx.points[:0]
+        return surface.measure(pixels, self.max_items, selection_ref)
 
-    def computed(self, ctx: EncodeContext) -> tuple[dict[str, Any], np.ndarray]:
-        key = ("pick_measurement", _json(_spec(self)))
-        if key not in ctx.cache:
-            ctx.cache[key] = self._measure(ctx)
-        measured: tuple[dict[str, Any], np.ndarray] = ctx.cache[key]
-        return measured
+    def measured(self, ctx: EncodeContext) -> tuple[PickResult, np.ndarray]:
+        """The result and the selected returns, measured once per call."""
+        return ctx.root.evaluate(_PickMeasurement(self))
 
-    def run(self, ctx: EncodeContext) -> dict[str, Any]:
-        return dict(self.computed(ctx)[0])
+    def run(self, ctx: EncodeContext) -> PickResult:
+        return self.measured(ctx)[0]
+
+    def draw(self, canvas: Canvas) -> list[str]:
+        result = canvas.ctx.evaluate(self)
+        geometry = []
+        # Native-pixel highlights are valid only on the exact referenced view recipe.
+        if canvas.view_ref == self.view_ref:
+            self._draw_region(canvas)
+            geometry.append("picked_pixels")
+        return [*geometry, *result.draw(canvas)]
+
+    def _draw_region(self, canvas: Canvas) -> None:
+        if self.uv is not None:
+            (u, v), r = self.uv, self.radius_px
+            canvas.draw.rectangle((u - r, v - r, u + r, v + r), outline=canvas.colour, width=1)
+            canvas.draw.ellipse((u - 4, v - 4, u + 4, v + 4), outline=canvas.colour, width=1)
+        elif self.rect is not None:
+            u, v, w, h = self.rect
+            canvas.draw.rectangle((u, v, u + w - 1, v + h - 1), outline=canvas.colour, width=2)
+        else:
+            assert self.polygon is not None
+            vertices = [(float(x), float(y)) for x, y in self.polygon]
+            canvas.draw.polygon(vertices, outline=canvas.colour, width=2)
 
 
 @dataclass(frozen=True)
@@ -310,17 +159,25 @@ class PickSelection:
     pick: Pick
 
     def run(self, ctx: EncodeContext) -> np.ndarray:
-        return self.pick.computed(ctx)[1]
+        return self.pick.measured(ctx)[1]
 
 
 @dataclass(frozen=True)
 class SelectionRef:
     """Reopen a Pick result's JSON selection_ref against the exact original cloud."""
 
-    selection_ref: Any
+    selection_ref: dict[str, JsonValue]
 
     def run(self, ctx: EncodeContext) -> np.ndarray:
         node = resolve(self.selection_ref, ctx, "selection")
         if not isinstance(node, PickSelection):
             raise ValueError("selection_ref must describe a pick selection")
         return node.run(ctx.root)
+
+
+@dataclass(frozen=True)
+class _PickMeasurement:
+    pick: Pick
+
+    def run(self, ctx: EncodeContext) -> tuple[PickResult, np.ndarray]:
+        return self.pick._measure(ctx)

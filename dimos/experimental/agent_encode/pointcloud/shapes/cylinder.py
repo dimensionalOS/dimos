@@ -18,9 +18,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from dimos.experimental.agent_encode.pointcloud.shapes.base import Shape
+
 
 @dataclass(frozen=True)
-class Cylinder:
+class Cylinder(Shape):
     """A vertical cylinder."""
 
     center: tuple[float, float]
@@ -54,14 +56,27 @@ class Cylinder:
         d = np.maximum(self._horizontal(points) - self.radius, 0.0)
         return np.where(self._in_band(points), d, np.inf)
 
-    def shifted(self, dx: float, dy: float) -> Cylinder:
-        cx, cy = self.center
-        return Cylinder((cx + dx, cy + dy), self.radius, self.z_range)
+    def chord(self, direction: np.ndarray) -> float:
+        """Length of the longest segment along the unit ``direction`` inside the cylinder."""
+        low, high = self.z_range
+        span = np.inf if low is None or high is None else high - low
+        along = np.array([np.hypot(direction[0], direction[1]), abs(direction[2])])
+        lengths = np.divide(
+            [2.0 * self.radius, span], along, out=np.full(2, np.inf), where=along > 0
+        )
+        return float(lengths.min())
 
-    def describe(self) -> dict[str, object]:
-        return {
-            "shape": "Cylinder",
-            "center": list(self.center),
-            "radius": self.radius,
-            "z_range": list(self.z_range),
-        }
+    def _closed(self, z_extent: tuple[float, float]) -> tuple[float, float]:
+        low, high = self.z_range
+        return (z_extent[0] if low is None else low, z_extent[1] if high is None else high)
+
+    def anchor(self, z_extent: tuple[float, float]) -> np.ndarray:
+        return np.array([*self.center, sum(self._closed(z_extent)) / 2])
+
+    def wireframe(self, z_extent: tuple[float, float]) -> list[np.ndarray]:
+        angles = np.linspace(0, 2 * np.pi, 49)
+        xy = np.column_stack((np.cos(angles), np.sin(angles))) * self.radius + self.center
+        low, high = self._closed(z_extent)
+        lower = np.column_stack((xy, np.full(len(xy), low)))
+        upper = np.column_stack((xy, np.full(len(xy), high)))
+        return [lower, upper, *[np.stack((lower[i], upper[i])) for i in (0, 12, 24, 36)]]

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Literal
 
 import numpy as np
 
@@ -27,6 +27,7 @@ from dimos.experimental.agent_encode.pointcloud.fields import (
     Components,
     Grid,
     HeightField,
+    MeasuredRegion,
     Select,
     Threshold,
 )
@@ -56,15 +57,94 @@ def cover(points: np.ndarray, cell: float) -> tuple[Grid, bool]:
     return Grid((float(origin[0]), float(origin[1])), (int(shape[0]), int(shape[1])), cell), limited
 
 
-def _describe(grid: Grid, limited: bool) -> dict[str, Any]:
-    out: dict[str, Any] = {
-        "origin": list(grid.origin),
-        "shape": list(grid.shape),
-        "cell_m": grid.cell_m,
-    }
-    if limited:
-        out["limited_by"] = "grid_cell_limit"
-    return out
+@dataclass(frozen=True)
+class OverviewGrid:
+    origin: tuple[float, float]
+    shape: tuple[int, int]
+    cell_m: float
+    limited: bool
+    """The cell grew to keep the grid within the encoder's cell limit."""
+
+
+@dataclass(frozen=True)
+class Coverage:
+    grid: OverviewGrid
+    occupied_cells: int
+    observed_xy_area_m2: float
+
+
+@dataclass(frozen=True)
+class Quantiles:
+    p10: float | None
+    p50: float | None
+    p90: float | None
+
+
+@dataclass(frozen=True)
+class LowerSurface:
+    grid: OverviewGrid
+    percentile: float
+    min_returns_per_cell: int
+    supported_cells: int
+    observed_cells: int
+    supported_fraction: float
+    z_quantiles_m: Quantiles
+    reference_z_m: float | None
+    status: Literal["measured", "insufficient_support"]
+
+
+@dataclass(frozen=True)
+class StructureRegion:
+    bounds: list[list[float]]
+    area_m2: float
+
+
+@dataclass(frozen=True)
+class Structure:
+    z_range_m: tuple[float, float]
+    region_count: int
+    observed_area_m2: float
+    regions: list[StructureRegion]
+    omitted_regions: int
+    omitted_area_m2: float
+
+
+@dataclass(frozen=True)
+class ReliefRegion:
+    centroid: list[float]
+    area_m2: float
+    offset_quantiles_m: Quantiles
+
+
+@dataclass(frozen=True)
+class Relief:
+    offset_threshold_m: float
+    region_count: int
+    regions: list[ReliefRegion]
+    omitted_regions: int
+    omitted_area_m2: float
+
+
+@dataclass(frozen=True)
+class OverviewResult:
+    """Everything is None for a cloud with no returns; structure and relief are None
+    without a measured lower surface."""
+
+    span_m: list[float] | None
+    spacing_m: float | None
+    coverage: Coverage | None
+    lower_surface: LowerSurface | None
+    structure: Structure | None
+    relief: Relief | None
+
+
+def _grid(grid: Grid, limited: bool) -> OverviewGrid:
+    return OverviewGrid(grid.origin, grid.shape, grid.cell_m, limited)
+
+
+def _quantiles(values: tuple[float | None, float | None, float | None]) -> Quantiles:
+    p10, p50, p90 = (None if value is None else round(float(value), 3) for value in values)
+    return Quantiles(p10, p50, p90)
 
 
 @dataclass(frozen=True)
@@ -100,7 +180,7 @@ class Overview:
     measured lower surface there is no reference height, so structure and relief are
     left out."""
 
-    def __post_init__(self) -> None:
+    def run(self, ctx: EncodeContext) -> OverviewResult:
         if type(self.max_regions) is not int or not 1 <= self.max_regions <= 64:
             raise ValueError("max_regions must be an integer between 1 and 64")
         if not np.isfinite(self.percentile) or not 0 <= self.percentile <= 100:
@@ -120,10 +200,8 @@ class Overview:
             0 <= self.min_supported_fraction <= 1
         ):
             raise ValueError("min_supported_fraction must be between 0 and 1")
-
-    def run(self, ctx: EncodeContext) -> dict[str, Any]:
         if not len(ctx.points):
-            return {"handler": "Overview", "status": "no_returns"}
+            return OverviewResult(None, None, None, None, None, None)
         points = ctx.points.astype(np.float64)
         # Three significant digits drop float32 noise, so equal clouds get equal cells.
         spacing = float(f"{ctx.spacing_m:.3g}")
@@ -131,16 +209,10 @@ class Overview:
         pooled, pooled_limited = cover(points, self.relief_cell_spacings * spacing)
 
         occupied = int(np.count_nonzero(ctx.evaluate(HeightField(fine)).values["count"]))
-        out: dict[str, Any] = {
-            "handler": "Overview",
-            "span_m": np.round(np.ptp(points, axis=0), 3).tolist(),
-            "spacing_m": spacing,
-            "coverage": {
-                "grid": _describe(fine, fine_limited),
-                "occupied_cells": occupied,
-                "observed_xy_area_m2": round(occupied * fine.cell_m**2, 3),
-            },
-        }
+        span = np.round(np.ptp(points, axis=0), 3).tolist()
+        coverage = Coverage(
+            _grid(fine, fine_limited), occupied, round(occupied * fine.cell_m**2, 3)
+        )
 
         height = HeightField(pooled)
         lower = height.percentile(self.percentile, min_count=self.min_count)
@@ -152,43 +224,42 @@ class Overview:
             len(values) >= self.min_supported_cells and fraction >= self.min_supported_fraction
         )
         reference = float(np.median(values)) if len(values) else None
-        quantiles = np.quantile(values, (0.1, 0.5, 0.9)) if len(values) else (None,) * 3
-        out["lower_surface"] = {
-            "grid": _describe(pooled, pooled_limited),
-            "percentile": self.percentile,
-            "min_returns_per_cell": self.min_count,
-            "supported_cells": len(values),
-            "observed_cells": observed,
-            "supported_fraction": round(fraction, 3),
-            "z_quantiles_m": _quantiles(quantiles),
-            "reference_z_m": None if reference is None else round(reference, 3),
-            "status": "measured" if measured else "insufficient_support",
-        }
+        quantiles = (
+            tuple(np.quantile(values, (0.1, 0.5, 0.9)).tolist()) if len(values) else (None,) * 3
+        )
+        lower_surface = LowerSurface(
+            _grid(pooled, pooled_limited),
+            self.percentile,
+            self.min_count,
+            len(values),
+            observed,
+            round(fraction, 3),
+            _quantiles(quantiles),
+            None if reference is None else round(reference, 3),
+            "measured" if measured else "insufficient_support",
+        )
         if not measured or reference is None:
-            return out
+            return OverviewResult(span, spacing, coverage, lower_surface, None, None)
 
         # Each region is a set of observed cells, never a solid box.
         low, high = reference + self.band[0], reference + self.band[1]
         structure = HeightField(fine, Select(Band("z", low, high, closed=(True, True))))
         table = ctx.evaluate(
             Components(Threshold(structure.count, ">", 0), max_regions=self.max_regions)
-        ).metadata
+        )
         area = fine.cell_m**2
-        shown = sum(region["cells"] for region in table["regions"])
-        out["structure"] = {
-            "z_range_m": [round(low, 3), round(high, 3)],
-            "region_count": table["region_count"],
-            "observed_area_m2": round((shown + table["omitted_cells"]) * area, 3),
-            "regions": [
-                {
-                    "bounds": np.round(region["bounds"], 3).tolist(),
-                    "area_m2": round(region["cells"] * area, 3),
-                }
-                for region in table["regions"]
+        shown = sum(region.cells for region in table.regions)
+        structure_out = Structure(
+            (round(low, 3), round(high, 3)),
+            table.region_count,
+            round((shown + table.omitted_cells) * area, 3),
+            [
+                StructureRegion(np.round(region.bounds, 3).tolist(), round(region.cells * area, 3))
+                for region in table.regions
             ],
-            "omitted_regions": table["omitted_regions"],
-            "omitted_area_m2": round(table["omitted_cells"] * area, 3),
-        }
+            table.omitted_regions,
+            round(table.omitted_cells * area, 3),
+        )
 
         # Rises and drops are labelled apart so adjacent ones cannot merge.
         offset = lower - reference
@@ -200,39 +271,37 @@ class Overview:
                     values=offset,
                     max_regions=self.max_regions,
                 )
-            ).metadata
+            )
             for comparison, value in ((">", self.relief_m), ("<", -self.relief_m))
         ]
-        patches = [region for table in tables for region in table["regions"]]
-        patches.sort(key=lambda region: (-region["cells"], region["centroid"]))
+        patches = [
+            region
+            for table in tables
+            for region in table.regions
+            if isinstance(region, MeasuredRegion)
+        ]
+        patches.sort(key=lambda region: (-region.cells, region.centroid))
         kept, dropped = patches[: self.max_regions], patches[self.max_regions :]
         area = pooled.cell_m**2
-        out["relief"] = {
-            "offset_threshold_m": self.relief_m,
-            "region_count": sum(table["region_count"] for table in tables),
-            "regions": [
-                {
-                    "centroid": np.round(region["centroid"], 3).tolist(),
-                    "area_m2": round(region["cells"] * area, 3),
-                    "offset_quantiles_m": _quantiles((region["p10"], region["p50"], region["p90"])),
-                }
+        relief = Relief(
+            self.relief_m,
+            sum(table.region_count for table in tables),
+            [
+                ReliefRegion(
+                    np.round(region.centroid, 3).tolist(),
+                    round(region.cells * area, 3),
+                    _quantiles((region.p10, region.p50, region.p90)),
+                )
                 for region in kept
             ],
-            "omitted_regions": len(dropped) + sum(table["omitted_regions"] for table in tables),
-            "omitted_area_m2": round(
+            len(dropped) + sum(table.omitted_regions for table in tables),
+            round(
                 (
-                    sum(region["cells"] for region in dropped)
-                    + sum(table["omitted_cells"] for table in tables)
+                    sum(region.cells for region in dropped)
+                    + sum(table.omitted_cells for table in tables)
                 )
                 * area,
                 3,
             ),
-        }
-        return out
-
-
-def _quantiles(values: Any) -> dict[str, float | None]:
-    return {
-        name: None if value is None else round(float(value), 3)
-        for name, value in zip(("p10", "p50", "p90"), values, strict=True)
-    }
+        )
+        return OverviewResult(span, spacing, coverage, lower_surface, structure_out, relief)

@@ -16,8 +16,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, replace
+from typing import Protocol
 
 import numpy as np
 from numpy.typing import NDArray
@@ -27,7 +28,13 @@ from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
 from dimos.experimental.agent_encode.pointcloud import constants
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
+from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext, Node
+
+
+class Region3D(Protocol):
+    """Anything that tests points for membership: a shape or a Band."""
+
+    def contains(self, points: np.ndarray) -> np.ndarray: ...
 
 
 @dataclass(frozen=True)
@@ -70,17 +77,9 @@ class Grid:
     def normal(self) -> int:
         return next(i for i in range(3) if i not in self.axes)
 
-    def describe(self, ctx: EncodeContext) -> dict[str, Any]:
+    def check(self, ctx: EncodeContext) -> None:
         if self.frame is not None and self.frame != ctx.cloud.frame_id:
             raise ValueError("grid frame differs from cloud frame; transform explicitly")
-        return {
-            "frame": ctx.cloud.frame_id,
-            "plane": self.plane,
-            "origin": list(self.origin),
-            "shape": list(self.shape),
-            "cell_m": self.cell_m,
-            "indexing": "[row,column]",
-        }
 
     def centres(self) -> np.ndarray:
         row, col = np.indices((self.shape[1], self.shape[0]))
@@ -99,19 +98,18 @@ class Grid:
 class Select:
     """A lazy selection of returns: the include shapes, less the exclude shapes."""
 
-    include: Any = ()
-    """Shapes to intersect; none means all returns."""
-    exclude: Any = ()
-    """Shapes whose returns are then removed."""
-    source: Any = None
+    include: Region3D | tuple[Region3D, ...] = ()
+    """Shapes or bands to intersect; none means all returns."""
+    exclude: Region3D | tuple[Region3D, ...] = ()
+    """Shapes or bands whose returns are then removed."""
+    source: Node[np.ndarray] | None = None
 
     def run(self, ctx: EncodeContext) -> np.ndarray:
         ctx = ctx.select(self.source)
         keep = np.ones(len(ctx.points), dtype=bool)
-        for shapes, invert in ((self.include, False), (self.exclude, True)):
-            sequence = (shapes,) if hasattr(shapes, "contains") else shapes
-            for shape in sequence:
-                inside = shape.contains(ctx.points)
+        for regions, invert in ((self.include, False), (self.exclude, True)):
+            for region in regions if isinstance(regions, tuple) else (regions,):
+                inside = region.contains(ctx.points)
                 keep &= ~inside if invert else inside
         selected: np.ndarray = ctx.points[keep]
         return selected
@@ -145,39 +143,117 @@ class Band:
         return keep
 
 
-@dataclass
+@dataclass(frozen=True)
+class FieldSummary:
+    """A computed field as a named output reports it; the cells stay internal."""
+
+    grid: Grid
+    channels: list[str]
+
+
+@dataclass(frozen=True)
 class FieldData:
     """Internal computed fields."""
 
     grid: Grid
     values: dict[str, np.ndarray]
     """Non-finite numeric values mean missing evidence."""
-    metadata: dict[str, Any] = field(default_factory=dict)
-    kind: str = "field"
 
     def scalar(self) -> np.ndarray:
         if len(self.values) != 1:
             raise ValueError("choose a field channel, for example height.min")
         return next(iter(self.values.values()))
 
+    def summary(self) -> FieldSummary:
+        return FieldSummary(self.grid, list(self.values))
 
-class FieldNode:
+
+@dataclass(frozen=True)
+class Mask(FieldData):
+    """Cells of 1, 0, or NaN for no data."""
+
+
+@dataclass(frozen=True)
+class Region:
+    id: int
+    cells: int
+    centroid: tuple[float, float]
+    bounds: tuple[tuple[float, float], tuple[float, float]]
+
+
+@dataclass(frozen=True)
+class MeasuredRegion(Region):
+    """A region with equal-weight statistics of the ``values`` field over its finite
+    cells; all None when it has none."""
+
+    valid_cells: int
+    min: float | None
+    p10: float | None
+    p50: float | None
+    p90: float | None
+    max: float | None
+
+
+@dataclass(frozen=True)
+class LabelsSummary(FieldSummary):
+    region_count: int
+    regions: list[Region]
+    omitted_regions: int
+    omitted_cells: int
+
+
+@dataclass(frozen=True)
+class Labels(FieldData):
+    """Connected-component labels, 0 outside every region."""
+
+    region_count: int
+    regions: list[Region]
+    """The listed regions, largest first when ``max_regions`` limits them."""
+    omitted_regions: int
+    omitted_cells: int
+
+    def summary(self) -> LabelsSummary:
+        return LabelsSummary(
+            self.grid,
+            list(self.values),
+            self.region_count,
+            self.regions,
+            self.omitted_regions,
+            self.omitted_cells,
+        )
+
+
+@dataclass(frozen=True)
+class DistancesSummary(FieldSummary):
+    target_count: int
+
+
+@dataclass(frozen=True)
+class Distances(FieldData):
+    target_count: int
+    """With none, every distance is missing: no targets is not free space."""
+
+    def summary(self) -> DistancesSummary:
+        return DistancesSummary(self.grid, list(self.values), self.target_count)
+
+
+class FieldNode(ABC):
     """A lazy field supporting arithmetic and three-state mask composition."""
 
-    def run(self, ctx: EncodeContext) -> FieldData:
-        raise NotImplementedError
+    @abstractmethod
+    def run(self, ctx: EncodeContext) -> FieldData: ...
 
-    def __sub__(self, other: Any) -> Binary:
-        return Binary(self, other, "sub")
+    def __sub__(self, other: FieldNode | float) -> Difference:
+        return Difference(self, other)
 
-    def __and__(self, other: Any) -> Binary:
-        return Binary(self, other, "and")
+    def __and__(self, other: FieldNode) -> And:
+        return And(self, other)
 
-    def __or__(self, other: Any) -> Binary:
-        return Binary(self, other, "or")
+    def __or__(self, other: FieldNode) -> Or:
+        return Or(self, other)
 
-    def __invert__(self) -> Binary:
-        return Binary(self, None, "not")
+    def __invert__(self) -> Not:
+        return Not(self)
 
 
 @dataclass(frozen=True)
@@ -189,7 +265,7 @@ class HeightField(FieldNode):
     """
 
     grid: Grid
-    source: Any = None
+    source: Node[np.ndarray] | None = None
 
     @property
     def min(self) -> Channel:
@@ -208,7 +284,7 @@ class HeightField(FieldNode):
         return Percentile(self, q, min_count)
 
     def run(self, ctx: EncodeContext) -> FieldData:
-        self.grid.describe(ctx)
+        self.grid.check(ctx)
         points = ctx.select(self.source).points.astype(np.float64)
         ij, inside = self.grid.indices(points[:, self.grid.axes])
         ij, points = ij[inside], points[inside]
@@ -223,10 +299,6 @@ class HeightField(FieldNode):
         return FieldData(
             self.grid,
             {"count": count, "min": low.reshape(ny, nx), "max": high.reshape(ny, nx)},
-            {
-                "coordinate": "xyz"[self.grid.normal],
-                "units": {"count": "returns", "min": "m", "max": "m"},
-            },
         )
 
 
@@ -243,25 +315,16 @@ class Percentile(FieldNode):
     min_count: int
     """Cells with fewer selected returns are missing."""
 
-    def __post_init__(self) -> None:
+    def run(self, ctx: EncodeContext) -> FieldData:
         if not np.isfinite(self.q) or not 0 <= self.q <= 100:
             raise ValueError("q must be finite and between 0 and 100")
         if type(self.min_count) is not int or self.min_count <= 0:
             raise ValueError("min_count must be a positive integer")
-
-    def run(self, ctx: EncodeContext) -> FieldData:
         height = ctx.evaluate(self.source)
         grid = height.grid
         count = height.values["count"].ravel()
         # Percentiles share sorting; extrema and counts never require it.
-        key = ("height_percentile_order", id(self.source), id(ctx.points))
-        if key not in ctx.cache:
-            points = ctx.select(self.source.source).points.astype(np.float64)
-            ij, inside = grid.indices(points[:, grid.axes])
-            index = ij[inside, 1] * grid.shape[0] + ij[inside, 0]
-            values = points[inside, grid.normal]
-            ctx.cache[key] = values[np.lexsort((values, index))]
-        ordered = ctx.cache[key]
+        ordered = ctx.evaluate(_SortedByCell(self.source))
         supported = count >= self.min_count
         starts = np.cumsum(count) - count
         position = (count[supported] - 1) * (self.q / 100)
@@ -274,14 +337,23 @@ class Percentile(FieldNode):
         return FieldData(
             grid,
             {"percentile": values.reshape(grid.shape[1], grid.shape[0])},
-            {
-                "coordinate": height.metadata["coordinate"],
-                "units": {"percentile": "m"},
-                "q": self.q,
-                "min_count": self.min_count,
-                "method": "linear",
-            },
         )
+
+
+@dataclass(frozen=True)
+class _SortedByCell:
+    """A height field's selected coordinates, sorted by cell and then by value."""
+
+    source: HeightField
+
+    def run(self, ctx: EncodeContext) -> np.ndarray:
+        grid = self.source.grid
+        points = ctx.select(self.source.source).points.astype(np.float64)
+        ij, inside = grid.indices(points[:, grid.axes])
+        index = ij[inside, 1] * grid.shape[0] + ij[inside, 0]
+        values = points[inside, grid.normal]
+        ordered: np.ndarray = values[np.lexsort((values, index))]
+        return ordered
 
 
 @dataclass(frozen=True)
@@ -291,31 +363,27 @@ class Channel(FieldNode):
 
     def run(self, ctx: EncodeContext) -> FieldData:
         value = ctx.evaluate(self.source)
-        return FieldData(
-            value.grid, {self.name: value.values[self.name]}, value.metadata, value.kind
-        )
+        return replace(value, values={self.name: value.values[self.name]})
 
 
 @dataclass(frozen=True)
 class DistanceField(FieldNode):
     """Cell-centre distances to selected projected returns or true mask-cell centres.
 
-    Empty target sets produce null distances and status=no_targets, never free space.
+    Empty target sets produce null distances, never free space.
     """
 
     grid: Grid
-    source: Any = None
+    source: FieldNode | Node[np.ndarray] | None = None
     """The targets. Those outside the grid still participate when this is a selection."""
 
-    def run(self, ctx: EncodeContext) -> FieldData:
-        self.grid.describe(ctx)
-        metric = "projected_return_distance"
+    def run(self, ctx: EncodeContext) -> Distances:
+        self.grid.check(ctx)
         if isinstance(self.source, FieldNode):
             mask = ctx.evaluate(self.source)
-            if mask.kind != "mask" or mask.grid != self.grid:
+            if not isinstance(mask, Mask) or mask.grid != self.grid:
                 raise ValueError("distance mask must be on the same grid")
             targets = self.grid.centres()[mask.scalar() == 1]
-            metric = "true_cell_centre_distance"
         else:
             targets = ctx.select(self.source).points[:, self.grid.axes]
         nx, ny = self.grid.shape
@@ -323,65 +391,96 @@ class DistanceField(FieldNode):
         if len(targets):
             values, _ = cKDTree(targets).query(self.grid.centres().reshape(-1, 2), workers=1)
             distance = values.reshape(ny, nx)
-        return FieldData(
-            self.grid,
-            {"distance_m": distance},
-            {
-                "metric": metric,
-                "units": {"distance_m": "m"},
-                "status": "ok" if len(targets) else "no_targets",
-            },
+        return Distances(self.grid, {"distance_m": distance}, len(targets))
+
+
+def _same_grid(left: FieldData, right: FieldData) -> None:
+    if right.grid != left.grid:
+        raise ValueError(
+            "field grids differ; put one on the other's grid with Resample(field, grid)"
         )
 
 
+def _masks(ctx: EncodeContext, left: FieldNode, right: FieldNode) -> tuple[Mask, Mask]:
+    a, b = ctx.evaluate(left), ctx.evaluate(right)
+    if not isinstance(a, Mask) or not isinstance(b, Mask):
+        raise ValueError("& and | combine two masks")
+    _same_grid(a, b)
+    return a, b
+
+
 @dataclass(frozen=True)
-class Binary(FieldNode):
+class Difference(FieldNode):
+    """``left - right``: a field less another field or a number."""
+
     left: FieldNode
-    right: Any
-    operation: str
+    right: FieldNode | float
 
     def run(self, ctx: EncodeContext) -> FieldData:
         left = ctx.evaluate(self.left)
-        a = left.scalar()
-        right = ctx.evaluate(self.right) if isinstance(self.right, FieldNode) else None
-        if right is not None and right.grid != left.grid:
-            raise ValueError(
-                "field grids differ; put one on the other's grid with Resample(field, grid)"
-            )
-        b = right.scalar() if right is not None else float(self.right or 0)
-        kind = "field"
-        if self.operation == "not":
-            if left.kind != "mask":
-                raise ValueError("~ requires a mask")
-            out = np.where(np.isfinite(a), 1 - a, np.nan)
-            return FieldData(left.grid, {"value": out}, {"operation": "not"}, "mask")
-        if self.operation == "sub":
-            out = a - b
-        else:
-            if left.kind != "mask" or right is None or right.kind != "mask":
-                raise ValueError("and/or require two masks")
-            kind = "mask"
-            missing = ~np.isfinite(a) | ~np.isfinite(b)
-            if self.operation == "and":
-                out = np.where((a == 0) | (b == 0), 0, np.where(missing, np.nan, 1))
-            elif self.operation == "or":
-                out = np.where((a == 1) | (b == 1), 1, np.where(missing, np.nan, 0))
-            else:
-                raise ValueError("unsupported binary operation")
-        return FieldData(left.grid, {"value": out}, {"operation": self.operation}, kind)
+        if isinstance(self.right, FieldNode):
+            right = ctx.evaluate(self.right)
+            _same_grid(left, right)
+            return FieldData(left.grid, {"value": left.scalar() - right.scalar()})
+        return FieldData(left.grid, {"value": left.scalar() - float(self.right)})
+
+
+@dataclass(frozen=True)
+class And(FieldNode):
+    """``left & right``: 0 where either is 0, else missing where either is, else 1."""
+
+    left: FieldNode
+    right: FieldNode
+
+    def run(self, ctx: EncodeContext) -> Mask:
+        left, right = _masks(ctx, self.left, self.right)
+        a, b = left.scalar(), right.scalar()
+        missing = ~np.isfinite(a) | ~np.isfinite(b)
+        out = np.where((a == 0) | (b == 0), 0, np.where(missing, np.nan, 1))
+        return Mask(left.grid, {"value": out})
+
+
+@dataclass(frozen=True)
+class Or(FieldNode):
+    """``left | right``: 1 where either is 1, else missing where either is, else 0."""
+
+    left: FieldNode
+    right: FieldNode
+
+    def run(self, ctx: EncodeContext) -> Mask:
+        left, right = _masks(ctx, self.left, self.right)
+        a, b = left.scalar(), right.scalar()
+        missing = ~np.isfinite(a) | ~np.isfinite(b)
+        out = np.where((a == 1) | (b == 1), 1, np.where(missing, np.nan, 0))
+        return Mask(left.grid, {"value": out})
+
+
+@dataclass(frozen=True)
+class Not(FieldNode):
+    """``~mask``: 1 and 0 swap; missing stays missing."""
+
+    source: FieldNode
+
+    def run(self, ctx: EncodeContext) -> Mask:
+        mask = ctx.evaluate(self.source)
+        if not isinstance(mask, Mask):
+            raise ValueError("~ requires a mask")
+        a = mask.scalar()
+        return Mask(mask.grid, {"value": np.where(np.isfinite(a), 1 - a, np.nan)})
 
 
 @dataclass(frozen=True)
 class Resample(FieldNode):
     """Put a field on another grid: each target cell takes the value of the source
     cell containing its centre. No interpolation; centres outside the source grid
-    are null. Masks stay masks, so fields from different grids can be combined."""
+    are null. Masks stay masks, so fields from different grids can be combined; labels
+    keep their source's region table."""
 
     source: FieldNode
     grid: Grid
 
     def run(self, ctx: EncodeContext) -> FieldData:
-        self.grid.describe(ctx)
+        self.grid.check(ctx)
         data = ctx.evaluate(self.source)
         if data.grid.plane != self.grid.plane:
             raise ValueError("Resample needs grids on the same plane")
@@ -391,15 +490,7 @@ class Resample(FieldNode):
             out = np.full(inside.shape, np.nan)
             out[inside] = array[ij[inside][:, 1], ij[inside][:, 0]]
             values[name] = out
-        return FieldData(
-            self.grid,
-            values,
-            {
-                **{k: v for k, v in data.metadata.items() if k != "regions"},
-                "resampled_from": data.grid.describe(ctx),
-            },
-            data.kind,
-        )
+        return replace(data, grid=self.grid, values=values)
 
 
 @dataclass(frozen=True)
@@ -408,7 +499,7 @@ class Threshold(FieldNode):
     comparison: str
     value: float
 
-    def run(self, ctx: EncodeContext) -> FieldData:
+    def run(self, ctx: EncodeContext) -> Mask:
         functions = {
             ">": np.greater,
             ">=": np.greater_equal,
@@ -422,19 +513,7 @@ class Threshold(FieldNode):
         data = ctx.evaluate(self.source)
         values = data.scalar()
         mask = np.where(np.isfinite(values), functions[self.comparison](values, self.value), np.nan)
-        return FieldData(
-            data.grid, {"mask": mask}, {"comparison": self.comparison, "value": self.value}, "mask"
-        )
-
-
-def _statistics(values: NDArray[np.float64]) -> dict[str, Any]:
-    """Equal-weight statistics of a region's finite cells; all null when it has none."""
-    finite = values[np.isfinite(values)]
-    names = ("min", "p10", "p50", "p90", "max")
-    if not len(finite):
-        return {"valid_cells": 0, **dict.fromkeys(names)}
-    numbers = np.quantile(finite, (0, 0.1, 0.5, 0.9, 1), method="linear")
-    return {"valid_cells": len(finite), **dict(zip(names, numbers.tolist(), strict=True))}
+        return Mask(data.grid, {"mask": mask})
 
 
 @dataclass(frozen=True)
@@ -457,7 +536,7 @@ class Components(FieldNode):
     """Keeps the largest regions in the table (cells, then id) and counts the rest;
     labels always cover every region."""
 
-    def run(self, ctx: EncodeContext) -> FieldData:
+    def run(self, ctx: EncodeContext) -> Labels:
         if self.connectivity not in (4, 8):
             raise ValueError("connectivity must be 4 or 8")
         if type(self.gap_cells) is not int or not 0 <= self.gap_cells <= 4:
@@ -467,16 +546,13 @@ class Components(FieldNode):
         ):
             raise ValueError("max_regions must be a positive integer or None")
         data = ctx.evaluate(self.source)
-        if data.kind != "mask":
+        if not isinstance(data, Mask):
             raise ValueError("Components requires a mask")
         values = data.scalar()
         measured = None
         if self.values is not None:
             field = ctx.evaluate(self.values)
-            if field.grid != data.grid:
-                raise ValueError(
-                    "field grids differ; put one on the other's grid with Resample(field, grid)"
-                )
+            _same_grid(data, field)
             measured = field.scalar().astype(np.float64)
         labels, count = ndimage.label(
             values == 1, ndimage.generate_binary_structure(2, 1 if self.connectivity == 4 else 2)
@@ -487,44 +563,33 @@ class Components(FieldNode):
         order = np.arange(count)
         if self.max_regions is not None:
             order = np.lexsort((order, -sizes))[: self.max_regions]
-        regions = []
+        regions: list[Region] = []
         centres = data.grid.centres()
         found = ndimage.find_objects(labels)
+        half = data.grid.cell_m / 2
         for index in order:
             label, slices = int(index) + 1, found[index]
             mask = labels[slices] == label
             xy = centres[slices][mask]
-            region = {
-                "id": label,
-                "cells": int(mask.sum()),
-                "centroid": xy.mean(0).tolist(),
-                "bounds": [
-                    (xy.min(0) - data.grid.cell_m / 2).tolist(),
-                    (xy.max(0) + data.grid.cell_m / 2).tolist(),
-                ],
-            }
+            low, high = xy.min(0) - half, xy.max(0) + half
+            geometry = Region(
+                label,
+                int(mask.sum()),
+                (float(xy[:, 0].mean()), float(xy[:, 1].mean())),
+                ((float(low[0]), float(low[1])), (float(high[0]), float(high[1]))),
+            )
             if measured is not None:
-                region.update(_statistics(measured[slices][mask]))
-            regions.append(region)
-        omitted = {}
-        if self.max_regions is not None:
-            omitted = {
-                "omitted_regions": int(count - len(order)),
-                "omitted_cells": int(sizes.sum() - sizes[order].sum()),
-            }
+                geometry = _measured(geometry, measured[slices][mask])
+            regions.append(geometry)
         result = labels.astype(float)
         result[~np.isfinite(values)] = np.nan
-        return FieldData(
+        return Labels(
             data.grid,
             {"label": result},
-            {
-                "connectivity": self.connectivity,
-                **({"gap_cells": self.gap_cells} if self.gap_cells else {}),
-                "region_count": int(count),
-                **omitted,
-                "regions": regions,
-            },
-            "regions",
+            region_count=int(count),
+            regions=regions,
+            omitted_regions=int(count - len(order)),
+            omitted_cells=int(sizes.sum() - sizes[order].sum()),
         )
 
     def _link_gaps(self, labels: NDArray[np.int32], count: int) -> tuple[NDArray[np.int32], int]:
@@ -555,3 +620,15 @@ class Components(FieldNode):
         canonical[np.argsort(first_component)] = np.arange(1, group_count + 1)
         lookup = np.concatenate((np.zeros(1, dtype=np.int32), canonical[groups]))
         return lookup[labels], int(group_count)
+
+
+def _measured(region: Region, values: NDArray[np.float64]) -> MeasuredRegion:
+    finite = values[np.isfinite(values)]
+    if not len(finite):
+        return MeasuredRegion(
+            **vars(region), valid_cells=0, min=None, p10=None, p50=None, p90=None, max=None
+        )
+    low, p10, p50, p90, high = np.quantile(finite, (0, 0.1, 0.5, 0.9, 1), method="linear").tolist()
+    return MeasuredRegion(
+        **vars(region), valid_cells=len(finite), min=low, p10=p10, p50=p50, p90=p90, max=high
+    )

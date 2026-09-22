@@ -22,9 +22,6 @@ it, so a render from inside the space can be placed on the map of the whole
 space. Every height is absolute z in the cloud's frame; nothing here
 estimates a floor.
 
-A build produces one form, set by ``constants.FORM``: images (PNGs written to
-disk) or text (ASCII grids).
-
 Conventions: x east, y north, z up. Yaw 0 looks along +x, positive yaw turns
 toward +y (counter-clockwise from above). Pitch positive looks up.
 """
@@ -35,7 +32,7 @@ from dataclasses import dataclass
 import math
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -94,21 +91,6 @@ class DepthRaster:
     projected_uv: np.ndarray
 
 
-def depth_image(
-    points: np.ndarray,
-    view: View,
-    *,
-    fov_deg: float,
-    size: tuple[int, int],
-    max_depth: float | None,
-    point_size_m: float | None,
-) -> tuple[np.ndarray, tuple[float, float] | None]:
-    raster = depth_raster(
-        points, view, fov_deg=fov_deg, size=size, max_depth=max_depth, point_size_m=point_size_m
-    )
-    return raster.depth, raster.widths
-
-
 def depth_raster(
     points: np.ndarray,
     view: View,
@@ -126,8 +108,7 @@ def depth_raster(
     neighbour in the cloud (or ``point_size_m`` for every return when given),
     so a dense cloud renders finely and a sparse one still closes into
     surfaces; the nearest return wins wherever squares overlap. A square
-    reaches at most ``max_splat_px`` pixels from its return. Remaining
-    one-pixel holes are closed from their nearest neighbour."""
+    reaches at most ``max_splat_px`` pixels from its return."""
     width, height = size
     if any(type(n) is not int or not 1 <= n <= 2048 for n in size) or width * height > 2097152:
         raise ValueError("depth size must be positive integers <=2048 and <=2097152 pixels")
@@ -231,56 +212,15 @@ def cloud_spacing(points: np.ndarray) -> float:
     return float(np.median(point_spacing(points if len(points) else lone)))
 
 
-def _close_holes(depth: np.ndarray) -> np.ndarray:
-    """A pixel with no return takes the nearest depth among its 8 neighbours
-    when at least one has a return. One pass: seams close, open sky stays."""
-    padded = np.pad(depth, 1, constant_values=np.inf)
-    stacked = np.stack(
-        [
-            padded[1 + dy : 1 + dy + depth.shape[0], 1 + dx : 1 + dx + depth.shape[1]]
-            for dy in (-1, 0, 1)
-            for dx in (-1, 0, 1)
-        ]
-    )
-    filled = stacked.min(axis=0)
-    return np.where(np.isinf(depth), filled, depth)
-
-
-def depth_ascii(
-    depth: np.ndarray, *, max_depth: float | None, shape: tuple[int, int] = (64, 16)
-) -> str:
-    """The depth image as ``shape`` (columns, rows) of text: nearest return per
-    block, digit 0..9 near..far over the colour range (see :func:`colour_range`)."""
-    near, far = colour_range(depth, max_depth)
-    cols, rows = shape
-    height, width = depth.shape
-    lines = []
-    for r in range(rows):
-        r0 = r * height // rows
-        r1 = max((r + 1) * height // rows, r0 + 1)
-        chars = []
-        for c in range(cols):
-            c0 = c * width // cols
-            c1 = max((c + 1) * width // cols, c0 + 1)
-            nearest = float(depth[r0:r1, c0:c1].min())
-            if math.isinf(nearest):
-                chars.append(".")
-            else:
-                chars.append(
-                    str(min(9, int(9 * float(depth_fraction(np.array([nearest]), near, far)[0]))))
-                )
-        lines.append("".join(chars))
-    return "\n".join(lines)
-
-
-def _turbo() -> np.ndarray | None:
-    """256 x 3 uint8 colour table, or None when matplotlib is unavailable."""
+def colour_table() -> tuple[str, np.ndarray]:
+    """The name and 256 x 3 uint8 rows of the colour table: matplotlib turbo, or a
+    black-to-white ramp without matplotlib."""
     try:
         from matplotlib import colormaps
     except ImportError:
-        return None
+        return "grey", np.repeat(np.arange(256, dtype=np.uint8)[:, None], 3, axis=1)
     table = colormaps["turbo"](np.linspace(0.0, 1.0, 256))[:, :3]
-    return (table * 255).astype(np.uint8)
+    return "matplotlib turbo", (table * 255).astype(np.uint8)
 
 
 def colour_range(depth: np.ndarray, max_depth: float | None) -> tuple[float, float]:
@@ -307,63 +247,66 @@ def depth_fraction(depth: np.ndarray, near: float, far: float) -> np.ndarray:
     return clipped
 
 
-def colour_scale(near: float, far: float, stops: int = 5) -> dict[str, Any]:
-    """How to read depth off the image: the colour table's name, the colour at
-    the near and far ends, evenly spaced stops with their depths, and the
-    formula. ``f`` is a pixel colour's position along the table from the near
-    colour (0) to the far colour (1)."""
-    table = _turbo()
-    near = max(near, 0.05)
-    out: dict[str, Any] = {
-        "scale": "matplotlib turbo, reversed" if table is not None else "grey, near = bright",
-        "formula": "depth_m = near_m * (far_m / near_m) ** f; f = 0 at colour_near, 1 at colour_far, log spaced",
-        "near_m": round(near, 2),
-        "far_m": round(far, 2),
-        "colour_none": [0, 0, 0],
-        "none_means": "no return along that pixel's ray: open space, nothing within sensing range, or never observed; depth unknown, treat as infinity",
-    }
-    if table is not None:
-        out["colour_near"] = [int(v) for v in table[255]]
-        out["colour_far"] = [int(v) for v in table[0]]
-        out["stops"] = []
-        for i in range(stops):
-            f = i / (stops - 1)
-            out["stops"].append(
-                {
-                    "f": round(f, 2),
-                    "rgb": [int(v) for v in table[round(255 * (1.0 - f))]],
-                    "depth_m": round(near * (far / near) ** f, 2),
-                }
-            )
-    return out
+@dataclass(frozen=True)
+class ColourStop:
+    value: float
+    rgb: tuple[int, int, int]
+
+
+@dataclass(frozen=True)
+class ColourScale:
+    """How to read a value off an image's colours."""
+
+    table: str
+    """The colour table: matplotlib turbo, or grey without matplotlib."""
+    stops: list[ColourStop]
+    """Evenly spaced along the table, from the first colour to the last."""
+
+
+def colour_scale(
+    first: float, last: float, *, log: bool = False, reverse: bool = False, stops: int = 5
+) -> ColourScale:
+    """``stops`` colours from ``first`` to ``last``, spaced linearly or on a log scale;
+    ``reverse`` runs the table from its end."""
+    name, table = colour_table()
+    out = []
+    for i in range(stops):
+        f = i / (stops - 1)
+        value = first * (last / first) ** f if log else first + (last - first) * f
+        row = table[round(255 * (1.0 - f if reverse else f))]
+        out.append(ColourStop(round(value, 3), (int(row[0]), int(row[1]), int(row[2]))))
+    return ColourScale(name, out)
 
 
 def depth_png(
     depth: np.ndarray, path: Path, *, max_depth: float | None
 ) -> tuple[Path, tuple[float, float]]:
     """Near is red through yellow and green to blue at the far end of the
-    colour range; no return is black. Falls back to grey (near = bright)
-    without matplotlib. Returns the path and the colour range in metres."""
+    colour range, or bright to dark without matplotlib; no return is black. Returns the path and the colour range in metres."""
     hit = np.isfinite(depth)
     near, far = colour_range(depth, max_depth)
     fraction = np.zeros(depth.shape, dtype=np.float32)
     fraction[hit] = depth_fraction(depth[hit], near, far)
-    table = _turbo()
-    if table is None:
-        shade = np.zeros(depth.shape, dtype=np.uint8)
-        shade[hit] = (255 * (1.0 - fraction[hit])).astype(np.uint8)
-        image = Image.fromarray(shade, mode="L")
-    else:
-        index = (255 * (1.0 - fraction)).astype(np.uint8)
-        rgb = table[index]
-        rgb[~hit] = 0
-        image = Image.fromarray(rgb, mode="RGB")
+    _, table = colour_table()
+    rgb = table[(255 * (1.0 - fraction)).astype(np.uint8)]
+    rgb[~hit] = 0
+    image = Image.fromarray(rgb, mode="RGB")
     path.parent.mkdir(parents=True, exist_ok=True)
     image.save(path)
     return path, (round(near, 2), round(far, 2))
 
 
 # -- occupancy ------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OccupancyRaster:
+    grid: OccupancyGrid
+    heights: np.ndarray | None
+    """The highest return inside the band per cell, NaN where none, in the grid's row
+    order; None unless requested."""
+    indices: np.ndarray
+    """Each return's (column, row) cell."""
 
 
 def occupancy_grid(
@@ -376,18 +319,15 @@ def occupancy_grid(
     free_radius: float,
     zoom: tuple[float, float, float] | None = None,
     heights: bool = False,
-    _point_cells: dict[str, np.ndarray] | None = None,
-) -> tuple[OccupancyGrid, np.ndarray | None]:
+) -> OccupancyRaster:
     """The mapping stack's general occupancy of the cloud over the absolute
     band ``z_range``: a return below it marks its cell free, inside it
     occupied, above it is ignored; free cells spread ``free_radius`` metres.
     The whole cloud by default; ``zoom`` (x, y, radius) crops a square. The
     cell is ``spacing`` (the typical gap between neighbouring returns) and
-    grows when the map would need more than ``max_cells`` on a side. With
-    ``heights``, also the highest return inside the band per cell (NaN where
-    none), in the grid's row order."""
+    grows when the map would need more than ``max_cells`` on a side."""
 
-    def build(resolution: float) -> tuple[OccupancyGrid, np.ndarray | None]:
+    def build(resolution: float) -> OccupancyRaster:
         grid = general_occupancy(
             cloud,
             resolution=resolution,
@@ -396,35 +336,27 @@ def occupancy_grid(
             mark_free_radius=free_radius,
         )
         top = cell_heights(grid, points, z_range) if heights else None
-        indices = None
-        if _point_cells is not None:
-            indices = (
-                (
-                    points.astype(np.float64)[:, :2]
-                    - [grid.origin.position.x, grid.origin.position.y]
-                )
-                / grid.resolution
-            ).astype(np.int64)
-            indices = np.clip(indices, [0, 0], [grid.width - 1, grid.height - 1])
+        indices = (
+            (points.astype(np.float64)[:, :2] - [grid.origin.position.x, grid.origin.position.y])
+            / grid.resolution
+        ).astype(np.int64)
+        indices = np.clip(indices, [0, 0], [grid.width - 1, grid.height - 1])
         if zoom is not None:
             cropped = crop(grid, zoom[0], zoom[1], zoom[2])
             c0 = round((cropped.origin.position.x - grid.origin.position.x) / grid.resolution)
             r0 = round((cropped.origin.position.y - grid.origin.position.y) / grid.resolution)
             if top is not None:
                 top = top[r0 : r0 + cropped.height, c0 : c0 + cropped.width]
-            if indices is not None:
-                indices -= [c0, r0]
+            indices -= [c0, r0]
             grid = cropped
-        if _point_cells is not None and indices is not None:
-            _point_cells["indices"] = indices
-        return grid, top
+        return OccupancyRaster(grid, top, indices)
 
-    grid, top = build(spacing)
-    side = max(grid.width, grid.height)
+    raster = build(spacing)
+    side = max(raster.grid.width, raster.grid.height)
     if side > max_cells:
         # The builder pads the cloud's extent; size the cell from what it produced.
-        grid, top = build(spacing * side / max_cells)
-    return grid, top
+        raster = build(spacing * side / max_cells)
+    return raster
 
 
 def cell_heights(
@@ -453,33 +385,6 @@ def height_fraction(heights: np.ndarray, z_range: tuple[float, float]) -> np.nda
     span = max(hi - lo, 1e-6)
     f: np.ndarray = np.clip((heights - lo) / span, 0.0, 1.0)
     return f
-
-
-def height_scale(z_range: tuple[float, float], stops: int = 5) -> dict[str, Any]:
-    """How to read a height off a colour='height' map: the colour at the low
-    and high ends of the band, evenly spaced stops with their heights, and
-    the formula. ``f`` is a pixel colour's position along the table from
-    colour_low (0) to colour_high (1)."""
-    table = _turbo()
-    lo, hi = z_range
-    out: dict[str, Any] = {
-        "scale": "matplotlib turbo" if table is not None else "grey, high = bright",
-        "formula": "z_m = z_low_m + f * (z_high_m - z_low_m); f = 0 at colour_low, 1 at colour_high, linear",
-        "z_low_m": lo,
-        "z_high_m": hi,
-    }
-    if table is not None:
-        out["colour_low"] = [int(v) for v in table[0]]
-        out["colour_high"] = [int(v) for v in table[255]]
-        out["stops"] = [
-            {
-                "f": round(i / (stops - 1), 2),
-                "rgb": [int(v) for v in table[round(255 * i / (stops - 1))]],
-                "z_m": round(lo + (hi - lo) * i / (stops - 1), 2),
-            }
-            for i in range(stops)
-        ]
-    return out
 
 
 def crop(grid: OccupancyGrid, x: float, y: float, radius: float) -> OccupancyGrid:
@@ -518,58 +423,6 @@ def cell_of(grid: OccupancyGrid, x: float, y: float) -> tuple[int, int]:
     return col, row
 
 
-def heading_char(yaw_deg: float) -> str:
-    yaw = yaw_deg % 360.0
-    if yaw < 45.0 or yaw >= 315.0:
-        return ">"
-    if yaw < 135.0:
-        return "^"
-    if yaw < 225.0:
-        return "<"
-    return "v"
-
-
-def occupancy_ascii(
-    grid: OccupancyGrid,
-    *,
-    mark: tuple[float, float, float] | None = None,
-    heights: np.ndarray | None = None,
-    z_range: tuple[float, float] | None = None,
-    max_cols: int = 64,
-) -> tuple[str, int]:
-    """The map as text and the thinning step used. Blocks of ``step`` cells
-    become one character: '#' if any is occupied (or, with ``heights`` and
-    ``z_range``, a digit 0..9 for the highest return in the block), '.' if
-    any is free, else '?'. ``mark`` (x, y, yaw_deg) is drawn as a heading
-    arrow."""
-    cells = grid_north_up(grid)
-    rows, cols = cells.shape
-    step = max(1, math.ceil(cols / max_cols))
-    mark_col, mark_row = cell_of(grid, mark[0], mark[1]) if mark is not None else (-1, -1)
-    digits = None
-    if heights is not None and z_range is not None:
-        digits = np.flipud(height_fraction(heights, z_range))
-    lines = []
-    for r in range(0, rows, step):
-        chars = []
-        for c in range(0, cols, step):
-            block = cells[r : r + step, c : c + step]
-            if mark is not None and r <= mark_row < r + step and c <= mark_col < c + step:
-                chars.append(heading_char(mark[2]))
-            elif (block == CostValues.OCCUPIED).any():
-                if digits is None:
-                    chars.append("#")
-                else:
-                    top = np.nanmax(digits[r : r + step, c : c + step])
-                    chars.append(str(min(9, int(9 * float(top)))) if np.isfinite(top) else "#")
-            elif (block == CostValues.FREE).any():
-                chars.append(".")
-            else:
-                chars.append("?")
-        lines.append("".join(chars))
-    return "\n".join(lines), step
-
-
 def occupancy_png(
     grid: OccupancyGrid,
     path: Path,
@@ -588,14 +441,11 @@ def occupancy_png(
     rgb = np.full((*cells.shape, 3), 190, dtype=np.uint8)
     rgb[cells == CostValues.FREE] = 255
     rgb[cells == CostValues.OCCUPIED] = 0
-    table = _turbo()
     if heights is not None and z_range is not None:
+        _, table = colour_table()
         fraction = np.flipud(height_fraction(heights, z_range))
         painted = (cells == CostValues.OCCUPIED) & np.isfinite(fraction)
-        if table is not None:
-            rgb[painted] = table[(255 * fraction[painted]).astype(np.uint8)]
-        else:
-            rgb[painted] = (255 * fraction[painted]).astype(np.uint8)[:, None]
+        rgb[painted] = table[(255 * fraction[painted]).astype(np.uint8)]
     big = np.repeat(np.repeat(rgb, scale, axis=0), scale, axis=1)
     canvas = Image.fromarray(big, mode="RGB")
     draw = ImageDraw.Draw(canvas)

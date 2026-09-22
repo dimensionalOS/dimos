@@ -17,6 +17,7 @@ import json
 import numpy as np
 import pytest
 
+from dimos.experimental.agent_encode.pointcloud import api as pc
 from dimos.experimental.agent_encode.pointcloud.fields import (
     Band,
     Components,
@@ -109,7 +110,7 @@ def test_table_without_options_is_unchanged(strip, tmp_path):
         "centroid": [3.5, 0.5],
         "bounds": [[3, 0], [4, 1]],
     }
-    assert "omitted_regions" not in out and "omitted_cells" not in out
+    assert out["omitted_regions"] == 0 and out["omitted_cells"] == 0
 
 
 def test_empty_mask_has_no_regions_and_nothing_omitted(tmp_path):
@@ -151,14 +152,14 @@ def test_invalid_region_limit_is_rejected(max_regions, strip, tmp_path):
 def test_view_reference_roundtrips_components_with_values(strip, tmp_path):
     height = HeightField(Grid((0, 0), (9, 1), 1))
     regions = Components(Threshold(height.count, ">", 0), values=height.min, max_regions=2)
-    view = strip.agent_encode({"view": PointCloud2.Map(regions, max_side=90)}, out_dir=tmp_path)[
-        "results"
-    ]["view"]
+    view = strip.agent_encode({"view": pc.Map(regions, max_side=90)}, out_dir=tmp_path)["results"][
+        "view"
+    ]
     reference = json.loads(json.dumps(view["view_ref"]))
 
-    picked = strip.agent_encode(
-        {"picked": PointCloud2.Pick(reference, uv=(55, 5))}, out_dir=tmp_path
-    )["results"]["picked"]
+    picked = strip.agent_encode({"picked": pc.Pick(reference, uv=(55, 5))}, out_dir=tmp_path)[
+        "results"
+    ]["picked"]
 
     assert picked["status"] == "ok"
     assert picked["cells"][0]["value"] == 3
