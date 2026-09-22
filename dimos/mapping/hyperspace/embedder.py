@@ -163,6 +163,55 @@ class SigLIP2PatchesConfig(SigLIPModelConfig):
     tiles: tuple[int, int] | None = None
 
 
+# The `torch.library.Library` handle deregisters its implementations when it is collected,
+# so the one we install has to outlive the call that made it.
+_mps_antialias_fallback: list[Any] = []
+
+
+def ensure_mps_antialias(device: str) -> None:
+    """Give MPS an `aten::_upsample_bilinear2d_aa`, by running that one op on the CPU.
+
+    A NaFlex checkpoint resizes its position grid per image, inside transformers'
+    `Siglip2VisionEmbeddings.resize_positional_embeddings`, with an antialiased bilinear
+    interpolate. Torch has no Metal kernel for it, so on MPS the forward pass raises
+    `NotImplementedError` mid-run and every NaFlex member is unusable on a Mac.
+
+    `PYTORCH_ENABLE_MPS_FALLBACK=1` is the documented cure but cannot be used from here:
+    torch reads it when it is imported, and by the time any of this runs the answer is
+    already fixed. Registering the single op works afterwards, and it keeps every OTHER
+    missing-op failure loud, which the env var would not.
+
+    The round trip costs almost nothing -- it is one position grid per forward pass, not
+    the image. MEASURED on an M-series Mac over 30 848x480 frames, the three-member
+    default trio runs at 189 ms a frame this way against 5686 ms with the models
+    themselves on the CPU.
+    """
+    if device != "mps" or _mps_antialias_fallback:
+        return
+    probe = torch.empty(1, 1, 2, 2, device=device)
+    try:
+        functional.interpolate(probe, size=(1, 1), mode="bilinear", antialias=True)
+        return  # this torch has the kernel, or was started with the env var set
+    except NotImplementedError:
+        pass
+
+    def on_cpu(
+        tensor: torch.Tensor,
+        size: Any,
+        align_corners: bool,
+        scales_h: float | None = None,
+        scales_w: float | None = None,
+    ) -> torch.Tensor:
+        done = torch.ops.aten._upsample_bilinear2d_aa(
+            tensor.cpu(), size, align_corners, scales_h, scales_w
+        )
+        return done.to(tensor.device)
+
+    library = torch.library.Library("aten", "IMPL")
+    library.impl("_upsample_bilinear2d_aa", on_cpu, "MPS")
+    _mps_antialias_fallback.append(library)
+
+
 class SigLIP2Patches(SigLIPModel):
     """SigLIP2 that also returns one text-aligned embedding per image patch."""
 
@@ -185,6 +234,7 @@ class SigLIP2Patches(SigLIPModel):
     def _model(self) -> Any:  # type: ignore[override]
         self._ensure_cuda_initialized()
         if self.naflex:
+            ensure_mps_antialias(self.config.device)
             from transformers import Siglip2Model, Siglip2TextModel, Siglip2VisionModel
 
             loaders = {"both": Siglip2Model, "vision": Siglip2VisionModel, "text": Siglip2TextModel}
