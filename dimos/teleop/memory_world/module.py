@@ -76,7 +76,6 @@ from dimos.teleop.memory_world.messages import (
     MSG_ODOM_TRAIL,
     MSG_POINT_CLOUD,
     MSG_QUERY_IMAGE,
-    MSG_TOP_DOWN_MAP,
     decode_text,
     encode_binary,
     encode_text,
@@ -244,11 +243,6 @@ class MemoryWorldConfig(ModuleConfig):
     camera_time_offset_s: float = 0.0
     # The camera's path is drawn as a polyline sampled from tf.
     n_trail_samples: int = 400
-    # Top-down density map for the HUD minimap. Computed
-    # from the same point cloud — Z-slab histogram into a square image.
-    map_image_size: int = 512
-    map_z_min_floor: float = 0.05  # avoid floor speckle
-    map_z_max_floor: float = 1.8
     client_route: str = "/memory_world"
     ws_route: str = "/ws_memory_world"
     # Bind on all interfaces by default — the headset connects over Wi-Fi.
@@ -322,7 +316,6 @@ class MemoryWorldModule(Module):
         # Per-pose JPEG thumbnails parallel to image_poses indices.
         self._cached_thumbnails: list[bytes] | None = None
         self._cached_odom: tuple[dict[str, Any], bytes] | None = None
-        self._cached_top_down: tuple[dict[str, Any], bytes] | None = None
         self._viewer_position: tuple[float, float, float] | None = None
         self._visual_index: VisualMemoryIndex | None = None
         self._index_lock = threading.Lock()
@@ -582,11 +575,11 @@ class MemoryWorldModule(Module):
             assert self._cached_image_poses is not None
             assert self._cached_odom is not None
             with self._world_cache_lock:
-                cloud, top_down = self._cached_cloud, self._cached_top_down
+                cloud = self._cached_cloud
             # Before the mapper's first emission there is no map yet; it
             # reaches this client with the next push.
             if cloud is not None:
-                self._send_map(conn.send_threadsafe, cloud, top_down)
+                self._send_map(conn.send_threadsafe, cloud)
 
             poses_header, poses_payload = self._cached_image_poses
             conn.send_threadsafe(encode_binary(MSG_IMAGE_POSES, poses_header, poses_payload))
@@ -667,27 +660,18 @@ class MemoryWorldModule(Module):
         packed = self._pack_cloud(xyz)
         if packed is None:
             return
-        top_down = self._build_top_down_map(packed)
         with self._world_cache_lock:
             first = self._cached_cloud is None
             self._cached_cloud = packed
-            self._cached_top_down = top_down
         if first:
             logger.info("first map from the mapper: n=%d", packed[0]["n"])
-        self._send_map(self._broadcast, packed, top_down)
+        self._send_map(self._broadcast, packed)
 
     @staticmethod
-    def _send_map(
-        send: Callable[[bytes | str], None],
-        cloud: tuple[dict[str, Any], bytes],
-        top_down: tuple[dict[str, Any], bytes] | None,
-    ) -> None:
+    def _send_map(send: Callable[[bytes | str], None], cloud: tuple[dict[str, Any], bytes]) -> None:
         header, payload = cloud
         send(encode_text("world_summary", **header))
         send(encode_binary(MSG_POINT_CLOUD, header, payload))
-        if top_down is not None:
-            map_header, map_payload = top_down
-            send(encode_binary(MSG_TOP_DOWN_MAP, map_header, map_payload))
 
     def _pack_cloud(self, xyz: np.ndarray) -> tuple[dict[str, Any], bytes] | None:
         """Clip a world-frame cloud to the height slab, cap it, and pack it for the wire."""
@@ -817,60 +801,6 @@ class MemoryWorldModule(Module):
         bgr = img.to_bgr().to_opencv() if hasattr(img, "to_bgr") else img
         ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
         return buf.tobytes() if ok else b""
-
-    def _build_top_down_map(
-        self, cloud: tuple[dict[str, Any], bytes]
-    ) -> tuple[dict[str, Any], bytes] | None:
-        """Render a top-down density map from the same point cloud shown in VR.
-
-        The client shows it as the GTA-style HUD minimap.
-        """
-        cloud_header, cloud_payload = cloud
-        n = int(cloud_header.get("n", 0))
-        xyz = np.frombuffer(cloud_payload, dtype=np.float32, count=n * 3).reshape(n, 3)
-        if xyz is None or xyz.size == 0:
-            return None
-
-        z = xyz[:, 2]
-        m = (z >= self.config.map_z_min_floor) & (z <= self.config.map_z_max_floor)
-        xy = xyz[m, :2]
-        if xy.size == 0:
-            xy = xyz[:, :2]
-
-        x_min, x_max = float(xy[:, 0].min()), float(xy[:, 0].max())
-        y_min, y_max = float(xy[:, 1].min()), float(xy[:, 1].max())
-        cx, cy = (x_min + x_max) / 2, (y_min + y_max) / 2
-        half = max(x_max - x_min, y_max - y_min) / 2 * 1.05
-        x_min, x_max, y_min, y_max = cx - half, cx + half, cy - half, cy + half
-
-        size = int(self.config.map_image_size)
-        hist, _, _ = np.histogram2d(
-            xy[:, 0], xy[:, 1], bins=size, range=[[x_min, x_max], [y_min, y_max]]
-        )
-        density_scale = max(float(np.percentile(hist, 99)), 1.0)
-        norm = np.clip(hist / density_scale, 0.0, 1.0)
-        gray = (norm.T * 255).astype(np.uint8)
-        gray = np.flipud(gray)
-        # Light cyan walls on dark navy background — matches the world theme.
-        rgb = np.zeros((size, size, 3), dtype=np.uint8)
-        rgb[..., 0] = (gray.astype(np.uint16) * 76 // 255).astype(np.uint8)
-        rgb[..., 1] = (gray.astype(np.uint16) * 217 // 255).astype(np.uint8)
-        rgb[..., 2] = (gray.astype(np.uint16) * 255 // 255).astype(np.uint8)
-        ok, buf = cv2.imencode(
-            ".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), [int(cv2.IMWRITE_JPEG_QUALITY), 85]
-        )
-        if not ok:
-            return None
-        header = {
-            "x_min": x_min,
-            "x_max": x_max,
-            "y_min": y_min,
-            "y_max": y_max,
-            "width_px": size,
-            "height_px": size,
-        }
-        logger.info("built top-down map: %dx%d bounds=%s", size, size, header)
-        return header, buf.tobytes()
 
     def _build_trail(self) -> tuple[dict[str, Any], bytes]:
         """The camera's path as a small polyline, sampled from tf."""

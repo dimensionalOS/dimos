@@ -11,7 +11,6 @@ import {
     MSG_ODOM_TRAIL,
     MSG_POINT_CLOUD,
     MSG_QUERY_IMAGE,
-    MSG_TOP_DOWN_MAP,
     decodeBinary,
     decodeText,
     encodeText,
@@ -142,7 +141,6 @@ function applySceneMsg(m) {
     if (m.kind === 'point_cloud') scene.setPointCloud(m.header, m.payload);
     else if (m.kind === 'image_poses') scene.setImagePoses(m.header, m.payload);
     else if (m.kind === 'odom_trail') scene.setOdomTrail(m.header, m.payload);
-    else if (m.kind === 'top_down_map') scene.setTopDownMap(m.header, m.payload);
     else if (m.kind === 'image_thumbnail') scene.addImageThumbnail(m.header.index, m.payload);
     else if (m.kind === 'query_image') scene.addQueryImage(m.header, m.payload);
 }
@@ -158,7 +156,6 @@ function handleBinary(buffer) {
     if (msgType === MSG_POINT_CLOUD) kind = 'point_cloud';
     else if (msgType === MSG_IMAGE_POSES) kind = 'image_poses';
     else if (msgType === MSG_ODOM_TRAIL) kind = 'odom_trail';
-    else if (msgType === MSG_TOP_DOWN_MAP) kind = 'top_down_map';
     else if (msgType === MSG_IMAGE_THUMBNAIL) kind = 'image_thumbnail';
     else if (msgType === MSG_QUERY_IMAGE) kind = 'query_image';
     else { log(`unknown bin type ${msgType}`); return; }
@@ -342,7 +339,7 @@ async function startViewer() {
         diag('vr_unavailable_using_desktop', { error: 'navigator.xr missing' });
     }
     document.body.classList.add('desktop-view');
-    // With a keyboard the conversation gets its own panel; the HUD keeps the map.
+    // With a keyboard the conversation gets its own panel; the HUD keeps the replay frame.
     const chatShown = !document.body.classList.contains('touch');
     document.body.classList.toggle('chat-open', chatShown);
     scene.answerOnHud = !chatShown;
@@ -554,7 +551,7 @@ stickEl.addEventListener('touchcancel', releaseStick);
 
 const hudBtn = document.getElementById('hudBtn');
 hudBtn.addEventListener('click', () => {
-    if (scene) hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
+    if (scene) hudBtn.textContent = scene.toggleHud() ? 'Hide HUD' : 'Show HUD';
 });
 document.getElementById('answerBtn').addEventListener('click', () => window.app.jumpTo(0));
 document.getElementById('cameraBtn').addEventListener('click', () => {

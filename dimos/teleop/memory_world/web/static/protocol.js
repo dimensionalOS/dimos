@@ -10,7 +10,6 @@
 export const MSG_POINT_CLOUD = 0x01;
 export const MSG_IMAGE_POSES = 0x02;
 export const MSG_ODOM_TRAIL = 0x03;
-export const MSG_TOP_DOWN_MAP = 0x04;
 export const MSG_IMAGE_THUMBNAIL = 0x05;
 export const MSG_QUERY_IMAGE = 0x06;
 

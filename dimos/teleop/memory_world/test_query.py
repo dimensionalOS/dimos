@@ -106,17 +106,6 @@ def test_pack_cloud_clips_to_the_height_slab_and_caps_points(
     assert memory_world._pack_cloud(np.asarray([[0, 0, 9.0]], dtype=np.float32)) is None
 
 
-def test_top_down_map_uses_the_rendered_cloud(memory_world: MemoryWorldModule) -> None:
-    positions = np.asarray([[10.0, 20.0, 0.5], [14.0, 22.0, 0.5]], dtype=np.float32)
-    colors = np.zeros((2, 3), dtype=np.uint8)
-    built = memory_world._build_top_down_map(({"n": 2}, positions.tobytes() + colors.tobytes()))
-
-    assert built is not None
-    header, _payload = built
-    assert (header["x_min"] + header["x_max"]) / 2 == pytest.approx(12.0)
-    assert (header["y_min"] + header["y_max"]) / 2 == pytest.approx(21.0)
-
-
 def test_start_initializes_only_memory_world_server(
     memory_world: MemoryWorldModule, mocker: pytest_mock.MockerFixture
 ) -> None:

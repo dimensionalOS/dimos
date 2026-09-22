@@ -54,9 +54,7 @@ export function isTypingTarget(element) {
 }
 const TOUCH_LOOK_SENSITIVITY = 0.006;         // radians per CSS pixel of one-finger drag
 const TOUCH_WALK_GAIN = 40;                   // two-finger drag: a screen-height sweep = full stick x40
-// GTA-style HUD minimap — head-locked, sits at lower-left of view.
-const HUD_PANEL_SIZE = 0.22;          // metres (square)
-const HUD_MARKER_RADIUS = 0.008;
+// Head-locked HUD (answer text and replay frame), lower-left of view.
 const HUD_DISTANCE = 0.55;            // metres in front of head
 const HUD_OFFSET_DOWN = 0.25;
 const HUD_OFFSET_LEFT = 0.32;
@@ -183,41 +181,9 @@ export class WorldScene {
         this._queryImageMeshes = [];                  // their quads, so one can be shown alone
         this._queryImageCursor = -1;
 
-        // Top-down map texture for the HUD minimap.
-        this._topDownTex = null;
-        this._topDownBounds = null;
-
-        // HUD minimap — head-locked panel attached to scene root (not world).
+        // Head-locked HUD attached to the scene root (not the world).
         this._hudGroup = new THREE.Group();
         this.scene.add(this._hudGroup);
-        this._hudPanelMat = new THREE.MeshBasicMaterial({
-            color: 0x182a40,
-            transparent: true,
-            opacity: 0.85,
-            side: THREE.DoubleSide,
-        });
-        this._hudPanel = new THREE.Mesh(
-            new THREE.PlaneGeometry(HUD_PANEL_SIZE, HUD_PANEL_SIZE),
-            this._hudPanelMat,
-        );
-        this._hudGroup.add(this._hudPanel);
-        this._hudMarker = new THREE.Mesh(
-            new THREE.CircleGeometry(HUD_MARKER_RADIUS, 16),
-            new THREE.MeshBasicMaterial({ color: 0xff3344 }),
-        );
-        // Marker is child of the panel — its local XY is mm in panel space.
-        this._hudPanel.add(this._hudMarker);
-        this._hudMarker.position.z = 0.001;           // avoid z-fight
-        // Heading needle (small line in front of marker showing camera forward).
-        this._hudHeading = new THREE.Line(
-            new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(0, 0, 0),
-                new THREE.Vector3(0, 0.04, 0),
-            ]),
-            new THREE.LineBasicMaterial({ color: 0xff3344 }),
-        );
-        this._hudPanel.add(this._hudHeading);
-        this._hudHeading.position.z = 0.001;
 
         const answerCanvas = document.createElement('canvas');
         answerCanvas.width = 1024;
@@ -233,7 +199,7 @@ export class WorldScene {
                 side: THREE.DoubleSide,
             }),
         );
-        this._answerPanel.position.set(0, 0.2, 0.002);
+        this._answerPanel.position.set(0, 0, 0.002);
         this._answerPanel.visible = false;
         // A flat viewer with a chat panel reads answers there instead.
         this.answerOnHud = true;
@@ -245,7 +211,7 @@ export class WorldScene {
             new THREE.PlaneGeometry(CAMERA_PANEL_W, CAMERA_PANEL_W * 9 / 16),
             new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, side: THREE.DoubleSide }),
         );
-        this._cameraPanel.position.set(0, 0.2 + ANSWER_PANEL_H / 2 + CAMERA_PANEL_W * 9 / 32 + 0.02, 0.002);
+        this._cameraPanel.position.set(0, ANSWER_PANEL_H / 2 + CAMERA_PANEL_W * 9 / 32 + 0.02, 0.002);
         this._cameraPanel.visible = false;
         this._hudGroup.add(this._cameraPanel);
         // Accent green so it reads against the orange trail and the blue map.
@@ -484,7 +450,7 @@ export class WorldScene {
         };
     }
 
-    /** Hide or show the head-locked HUD: minimap and answer text together. */
+    /** Hide or show the head-locked HUD: answer text and replay frame. */
     toggleHud() {
         this._hudGroup.visible = !this._hudGroup.visible;
         this.diag('hud_toggle', { visible: this._hudGroup.visible });
@@ -663,31 +629,6 @@ export class WorldScene {
         this._hudGroup.position.lerp(target, HUD_FOLLOW_LERP);
         // Face the user — look at head from panel position, then tilt up a bit.
         this._hudGroup.lookAt(headPos);
-
-        // Update marker dot position to where the camera is *in world*.
-        // We need the camera's robot-frame XY. Camera is at headPos in three-world;
-        // un-apply worldGroup transform + frameRotate to get robot frame.
-        if (this._topDownBounds) {
-            const robotXY = this._worldPosToRobotXY(headPos);
-            if (robotXY) {
-                const uv = this._robotXYToHudUV(robotXY[0], robotXY[1]);
-                // Panel is HUD_PANEL_SIZE wide centred at (0,0). Map u,v in [0,1]
-                // to [-S/2, S/2].
-                const s = HUD_PANEL_SIZE;
-                this._hudMarker.position.x = (uv[0] - 0.5) * s;
-                this._hudMarker.position.y = (0.5 - uv[1]) * s;
-                this._hudHeading.position.copy(this._hudMarker.position);
-                // Rotate heading needle to match camera yaw in robot frame.
-                // robot forward = world fwd transformed back. Easier: yaw
-                // in three world is atan2(fwd.x, fwd.z) but we want yaw in
-                // the *map* (robot) frame. After frame-rotate (rx = -90°),
-                // robot +X is three +X; robot +Y is three -Z. So robot yaw =
-                // atan2(world_fwd_x, -world_fwd_z) ... rendered on a Y-up
-                // panel where +X is right and +Y is up (map north = robot +Y).
-                const robotYaw = Math.atan2(fwd.x, -fwd.z);
-                this._hudHeading.rotation.z = -robotYaw;
-            }
-        }
     }
 
     _worldPosToRobotXY(worldPos) {
@@ -704,14 +645,6 @@ export class WorldScene {
         const rz = sn * dx + c * dz;
         // Un-apply frame-rotate (R_x(-π/2)): three (x, y, z) -> robot (x, -z, y).
         return [rx, -rz];
-    }
-
-    _robotXYToHudUV(rx, ry) {
-        // u = (rx - x_min) / (x_max - x_min); v same for ry but flipped.
-        const b = this._topDownBounds;
-        const u = (rx - b.x_min) / Math.max(b.x_max - b.x_min, 1e-6);
-        const v = 1.0 - (ry - b.y_min) / Math.max(b.y_max - b.y_min, 1e-6);
-        return [Math.max(0, Math.min(1, u)), Math.max(0, Math.min(1, v))];
     }
 
     _walk(stickX, stickY, up, dt) {
@@ -1480,33 +1413,6 @@ export class WorldScene {
         this._answerTexture.needsUpdate = true;
         this._answerPanel.visible = this.answerOnHud;
         this._hudGroup.visible = true; // a new answer is worth un-hiding the HUD for
-    }
-
-    setTopDownMap(header, jpegArrayBuffer) {
-        const blob = new Blob([jpegArrayBuffer], { type: 'image/jpeg' });
-        createImageBitmap(blob).then((bitmap) => {
-            const tex = new THREE.Texture(bitmap);
-            tex.colorSpace = THREE.SRGBColorSpace;
-            tex.needsUpdate = true;
-            this._topDownTex = tex;
-            this._topDownBounds = header;
-
-            // The HUD minimap shows the texture with V flipped, since the
-            // image's row 0 is at y_max after the flipud on the server.
-            const hudTex = tex.clone();
-            hudTex.needsUpdate = true;
-            hudTex.colorSpace = THREE.SRGBColorSpace;
-            hudTex.repeat.y = -1;
-            hudTex.offset.y = 1;
-            this._hudPanelMat.color.set(0xffffff);
-            this._hudPanelMat.map = hudTex;
-            this._hudPanelMat.opacity = 0.95;
-            this._hudPanelMat.needsUpdate = true;
-
-            this.diag('top_down_map_loaded', { w: header.x_max - header.x_min, h: header.y_max - header.y_min });
-        }).catch((e) => {
-            this.diag('top_down_decode_failed', { error: String(e.message || e) });
-        });
     }
 
     setOdomTrail(header, payloadArrayBuffer) {
