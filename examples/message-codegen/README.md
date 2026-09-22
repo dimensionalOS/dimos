@@ -561,3 +561,16 @@ and their composed camera frame. The robot-local frames receive `robot0/`; the
 source parent stays `odom`. Timestamp `1746565669448350564` survives unchanged.
 The live WebRTC connection deliberately supplies a host-arrival header instead,
 matching its previous timing policy with integer-nanosecond precision.
+
+### Generated-message storage and module replay
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_storage_replay.py
+```
+
+The demo records custom weighted segments to SQLite and a ROS2-profile MCAP,
+reopens both by their stored type/schema, and replays SQLite through a real
+module's `Out` port. It prints weights `4, 5, 6` and consecutive source nanoseconds
+starting at `1700000000123456789`. Temporary recordings are removed automatically.
+This checks Python storage and replay; the Rust recorder cutover is still pending.

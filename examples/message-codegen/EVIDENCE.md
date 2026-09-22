@@ -455,3 +455,43 @@ open, as do recorder and legacy-fixture cutovers.
 The cumulative Python/Rust coordinator TF demo was rerun on both LCM and Zenoh:
 **2 E2E tests passed** in 8.68 seconds, including changing transform lookups and
 clean worker shutdown. Log: `build/message-codegen/unitree-pose-tf-e2e.log`.
+
+### Python storage codecs and generated-message replay
+
+Generated messages now select CDR instead of falling through to pickle. SQLite
+persists/reconstructs `cdr` or `lz4+cdr`; old `lcm`, `lz4+lcm`, and private `jpeg`
+codec IDs are rejected. The obsolete Python LCM and JPEG storage codecs are
+removed. Raw/depth Image values remain lossless; compressed images are explicit
+CompressedImage values stored through the same CDR codec.
+
+The generic MCAP reader resolves installed types from `cdr`/`ros2msg` schema names.
+Unknown schemas remain raw bytes, and Python payload-module metadata does not
+trigger imports. Duplicate compatible channels on a topic aggregate counts;
+conflicting schemas/timing policies and stream-name collisions are rejected.
+Generic dataset opening now uses McapStore, leaving the robot-specific DDS preset
+available for callers that explicitly choose it.
+
+TransportRecorder now accepts generated-message contracts and reads source time
+from Header. A zero source stamp is preserved; unstamped values use receipt time.
+Observation pose conversion accepts generated nested PoseStamped/TransformStamped
+and returns generated values. Replay ports use the recorded generated class
+directly; the old rich-subclass-to-base-type substitution is removed.
+
+**47 focused tests passed**, covering exact values/bytes after SQLite reopening,
+raw/depth/compressed images, codec reconstruction and obsolete-ID rejection,
+MCAP schema discovery/time ordering, pose metadata, recorder timestamps, and real
+module replay. Log: `build/message-codegen/storage-cdr-tests.log`.
+Tests ran with `--noconftest` because the memory conftest eagerly imports optional
+CLIP/PyTorch dependencies. Two broader checks were deselected after their imports
+failed: Rust-recorder delegation needs PyTorch, and the full Rerun blueprint needs
+Numba. They are not counted as passing. Seven changed production modules passed
+mypy. Checking the demo's full import graph additionally hits the installed MCAP
+writer's `from .__init__ import __version__`, which mypy reports as duplicate
+module names; the demo itself was executed successfully.
+
+`demo_storage_replay.py` passed: SQLite and MCAP both returned weights `[4, 5, 6]`,
+and module ports replayed stamps `1700000000123456789` through
+`1700000000123456791`. Output is
+`build/message-codegen/demo/evidence/storage-replay.txt`. Temporary files and module
+resources were cleaned up. The Rust recorder and remaining legacy fixtures still
+need conversion; this does not close stage 4 or stage 5 acceptance.

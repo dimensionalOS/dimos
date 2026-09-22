@@ -142,7 +142,7 @@ class TestImportReplay:
         video_replay: LegacyPickleStore[Any],
     ) -> None:
         threshold = video_replay.first_timestamp()
-        lidar = session.stream("lidar", PointCloud2, codec="lz4+lcm")
+        lidar = session.stream("lidar", PointCloud2, codec="lz4+cdr")
 
         count = 0
         skipped = 0

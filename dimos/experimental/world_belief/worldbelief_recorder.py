@@ -85,7 +85,7 @@ class WorldBeliefRecorder(Recorder):
     def _prepare_streams(self) -> None:
         super()._prepare_streams()
         depth = self.config.stream_remapping.get("depth_image", "depth_image")
-        self.store.stream(depth, Image, codec="lz4+lcm")
+        self.store.stream(depth, Image, codec="lz4+cdr")
 
     @pose_setter_for("coordinator_joint_state")
     async def _proprio_pose(self, msg: Any) -> Any:

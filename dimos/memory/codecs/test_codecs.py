@@ -12,207 +12,107 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Grid tests for Codec implementations.
+"""Storage uses generated CDR without altering message fields or image pixels."""
 
-Runs roundtrip encode→decode tests across every codec, verifying data preservation.
-"""
-
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
-
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.sensor_msgs.msg import CompressedImage, Image
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 
-from dimos.memory.codecs.base import Codec, codec_for
-from dimos.memory.codecs.jpeg import JpegCodec
-from dimos.memory.codecs.lcm import LcmCodec
+from dimos.memory.codecs.base import codec_for, codec_from_id, codec_id
+from dimos.memory.codecs.cdr import CdrCodec
+from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.codecs.pickle import PickleCodec
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from dimos.msgs.protocol import DimosMsg
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.type.observation import Observation
+from dimos.msgs.geometry import transform_from_pose
+from dimos.msgs.image import image_from_array, image_to_jpeg, image_view
 
 
-@dataclass
-class Case:
-    name: str
-    codec: Codec[Any]
-    values: list[Any]
-    eq: Callable[[Any, Any], bool] | None = None  # custom equality: (original, decoded) -> bool
-
-
-def _lcm_values() -> list[DimosMsg]:
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
-    return [
-        PoseStamped(
-            ts=1.0,
-            frame_id="map",
-            position=Vector3(1.0, 2.0, 3.0),
-            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        ),
-        PoseStamped(ts=0.5, frame_id="odom"),
-    ]
-
-
-def _pickle_case() -> Case:
-    from dimos.memory.codecs.pickle import PickleCodec
-
-    return Case(
-        name="pickle",
-        codec=PickleCodec(),
-        values=[42, "hello", b"raw bytes", {"key": "value"}],
+@pytest.fixture(params=["pose", "image", "depth", "compressed"])
+def message(request):
+    header = Header(frame_id="sensor", stamp=Time(sec=1700000000, nanosec=123456789))
+    if request.param == "pose":
+        return PoseStamped(header=header, pose=Pose(position=Point(x=1.25, y=-2.5, z=3.75)))
+    if request.param == "depth":
+        return image_from_array(
+            np.array([[0, 1, 65535]], dtype=np.uint16), encoding="16UC1", header=header
+        )
+    image = image_from_array(
+        np.full((8, 8, 3), [20, 80, 140], dtype=np.uint8), encoding="rgb8", header=header
     )
+    if request.param == "compressed":
+        return CompressedImage(
+            header=header, format="rgb8; jpeg compressed bgr8", data=image_to_jpeg(image)
+        )
+    return image
 
 
-def _lcm_case() -> Case:
-    from dimos.memory.codecs.lcm import LcmCodec
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-
-    return Case(
-        name="lcm",
-        codec=LcmCodec(PoseStamped),
-        values=_lcm_values(),
-    )
-
-
-def _lz4_pickle_case() -> Case:
-    from dimos.memory.codecs.lz4 import Lz4Codec
-    from dimos.memory.codecs.pickle import PickleCodec
-
-    return Case(
-        name="lz4+pickle",
-        codec=Lz4Codec(PickleCodec()),
-        values=[42, "hello", b"raw bytes", {"key": "value"}, list(range(1000))],
-    )
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_codec_roundtrip_and_reconstruction_preserve_generated_value(message, wrapped):
+    codec = Lz4Codec(CdrCodec(type(message))) if wrapped else codec_for(type(message))
+    name = codec_id(codec)
+    assert name == ("lz4+cdr" if wrapped else "cdr")
+    restored = codec_from_id(name, f"{type(message).__module__}.{type(message).__qualname__}")
+    encoded = codec.encode(message)
+    decoded = restored.decode(encoded)
+    assert decoded == message
+    assert decoded.header.stamp.nanosec == 123456789
+    if not wrapped:
+        assert encoded == message.encode()
+    if isinstance(message, Image):
+        np.testing.assert_array_equal(image_view(decoded), image_view(message))
 
 
-def _lz4_lcm_case() -> Case:
-    from dimos.memory.codecs.lcm import LcmCodec
-    from dimos.memory.codecs.lz4 import Lz4Codec
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-
-    return Case(
-        name="lz4+lcm",
-        codec=Lz4Codec(LcmCodec(PoseStamped)),
-        values=_lcm_values(),
-    )
-
-
-def _jpeg_eq(original: Any, decoded: Any) -> bool:
-    """JPEG is lossy and normalizes to RGB — check shape, frame_id, RGB tag, and color closeness.
-
-    Compares against ``original.to_rgb()`` because the codec normalizes everything to RGB on
-    the wire (so a BGR-tagged input comes back RGB-tagged with channels swapped accordingly).
-    """
-    import numpy as np
-
-    if decoded.data.shape != original.data.shape:
-        return False
-    if decoded.frame_id != original.frame_id:
-        return False
-    if decoded.format != ImageFormat.RGB:
-        return False
-    expected = original.to_rgb().data
-    return bool(np.mean(np.abs(decoded.data.astype(float) - expected.astype(float))) < 5)
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_sqlite_reopen_uses_cdr_and_preserves_exact_message(message, wrapped, tmp_path):
+    path = tmp_path / "messages.db"
+    with SqliteStore(path=str(path)) as store:
+        stream = store.stream("samples", type(message), codec="lz4+cdr" if wrapped else "cdr")
+        stream.append(message, ts=12.5)
+    with SqliteStore(path=str(path), must_exist=True) as store:
+        observation = store.stream("samples").first()
+        assert observation.ts == 12.5
+        assert observation.data == message
+        assert observation.data.encode() == message.encode()
 
 
-def _turbojpeg_available() -> bool:
-    try:
-        from turbojpeg import TurboJPEG
-
-        TurboJPEG()  # fail fast if native lib is missing
-    except (ImportError, RuntimeError):
-        return False
-    return True
+@pytest.mark.parametrize("identifier", ["lcm", "lz4+lcm", "jpeg"])
+def test_obsolete_storage_codecs_are_rejected(identifier):
+    with pytest.raises(ValueError, match="Unknown codec"):
+        codec_from_id(identifier, "builtins.dict")
 
 
-def _jpeg_case() -> Case | None:
-    if not _turbojpeg_available():
-        return None
-
-    import numpy as np
-
-    # smooth gradients survive lossy jpeg within the eq tolerance
-    frames = []
-    for shift in (0, 90, 180):
-        arr = np.zeros((48, 64, 3), np.uint8)
-        arr[..., 0] = np.linspace(0, 255, 64, dtype=np.uint8)
-        arr[..., 1] = np.linspace(0, 255, 48, dtype=np.uint8)[:, None]
-        arr[..., 2] = shift
-        frames.append(Image(data=arr, format=ImageFormat.RGB, frame_id="cam", ts=1.0))
-
-    return Case(
-        name="jpeg",
-        codec=JpegCodec(quality=95),
-        values=frames,
-        eq=_jpeg_eq,
-    )
+def test_cdr_requires_a_generated_message_type():
+    with pytest.raises(TypeError, match="not a generated CDR"):
+        codec_from_id("cdr", "builtins.dict")
 
 
-_case_factories = {
-    "pickle": _pickle_case,
-    "lcm": _lcm_case,
-    "lz4+pickle": _lz4_pickle_case,
-    "lz4+lcm": _lz4_lcm_case,
-    "jpeg": _jpeg_case,
-}
-
-case_params: list[Any] = ["pickle", "lcm", "lz4+pickle", "lz4+lcm"]
-if _turbojpeg_available():
-    case_params.append("jpeg")
+def test_cdr_malformed_payload_raises():
+    with pytest.raises((ValueError, RuntimeError)):
+        CdrCodec(PoseStamped).decode(b"bad")
 
 
-@pytest.fixture
-def case(request: pytest.FixtureRequest) -> Case:
-    resolved = _case_factories[request.param]()
-    if resolved is None:
-        pytest.skip(f"no usable data for the {request.param} case")
-    return resolved
+@pytest.mark.parametrize("value", [42, "hello", b"raw bytes", {"key": "value"}])
+def test_python_objects_keep_the_explicit_python_storage_path(value):
+    codec = codec_for(type(value))
+    assert isinstance(codec, PickleCodec)
+    assert codec.decode(codec.encode(value)) == value
 
 
-@pytest.mark.parametrize("case", case_params, indirect=True)
-class TestCodecRoundtrip:
-    """Every codec must perfectly roundtrip its values."""
-
-    def test_roundtrip_preserves_value(self, case: Case) -> None:
-        eq = case.eq or (lambda a, b: a == b)
-        for value in case.values:
-            encoded = case.codec.encode(value)
-            assert isinstance(encoded, bytes)
-            decoded = case.codec.decode(encoded)
-            assert eq(value, decoded), f"Roundtrip failed for {value!r}: got {decoded!r}"
-
-    def test_encode_returns_nonempty_bytes(self, case: Case) -> None:
-        for value in case.values:
-            encoded = case.codec.encode(value)
-            assert len(encoded) > 0, f"Empty encoding for {value!r}"
-
-    def test_different_values_produce_different_bytes(self, case: Case) -> None:
-        encodings = [case.codec.encode(v) for v in case.values]
-        assert len(set(encodings)) > 1, "All values encoded to identical bytes"
+@pytest.mark.parametrize("stamped_transform", [False, True])
+def test_observation_pose_metadata_accepts_nested_generated_values(stamped_transform):
+    pose = PoseStamped(header=Header(frame_id="world"), pose=Pose(position=Point(x=1, y=2, z=3)))
+    value = transform_from_pose(pose, child_frame_id="base") if stamped_transform else pose
+    observation = Observation(id=0, ts=-0.5, pose=value, _data="payload")
+    assert observation.pose_tuple == (1, 2, 3, 0, 0, 0, 1)
+    assert observation.pose == pose.pose
+    assert observation.pose_stamped.pose == pose.pose
+    assert observation.pose_stamped.header.stamp == Time(sec=-1, nanosec=500000000)
 
 
-class TestCodecFor:
-    """codec_for() auto-selects the right codec."""
-
-    def test_none_returns_pickle(self) -> None:
-        assert isinstance(codec_for(None), PickleCodec)
-
-    def test_unknown_type_returns_pickle(self) -> None:
-        assert isinstance(codec_for(dict), PickleCodec)
-
-    def test_lcm_type_returns_lcm(self) -> None:
-        assert isinstance(codec_for(PoseStamped), LcmCodec)
-
-    def test_image_type_returns_jpeg(self) -> None:
-        pytest.importorskip("turbojpeg")
-        from dimos.memory.codecs.jpeg import JpegCodec
-
-        assert isinstance(codec_for(Image), JpegCodec)
+def test_cdr_rejects_a_message_of_the_wrong_type():
+    with pytest.raises(TypeError, match="Expected geometry_msgs/msg/PoseStamped"):
+        CdrCodec(PoseStamped).encode(Image())

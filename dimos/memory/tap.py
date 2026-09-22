@@ -33,9 +33,12 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.std_msgs.msg import Header
+
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.time import to_seconds
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -105,14 +108,18 @@ class TransportRecorder:
         """Subscribe *transport* and record into stream *name*; returns the unsubscribe."""
         if not matching(self._topics, [name]):
             return None
-        if not hasattr(stream_type, "lcm_encode"):
+        if not all(
+            hasattr(stream_type, member) for member in ("encode", "decode", "msg_name", "schema")
+        ):
             logger.info("--record: %s (%s) is not a dimos message type, skipped", name, stream_type)
             return None
         stream: Stream[Any] = self.store.stream(name, stream_type)
 
         def on_msg(msg: Any) -> None:
             try:
-                self._queue.put_nowait((stream, msg, getattr(msg, "ts", None) or time.time()))
+                header = getattr(msg, "header", None)
+                timestamp = to_seconds(header.stamp) if isinstance(header, Header) else time.time()
+                self._queue.put_nowait((stream, msg, timestamp))
             except queue.Full:
                 self.dropped += 1
                 if self.dropped % 1000 == 1:

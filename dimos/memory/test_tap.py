@@ -16,6 +16,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Twist
+from dimos_generated.std_msgs.msg import Header
 import pytest
 from pytest_mock import MockerFixture
 
@@ -24,7 +26,7 @@ from dimos.core.stream import Transport
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.time import time_from_seconds
 
 
 class _Transport(Transport[Any]):
@@ -57,12 +59,12 @@ def test_taps_matching_dimos_streams(tmp_path: Path) -> None:
     unsub = rec.tap("odom", PoseStamped, odom)
     assert rec.tap("goal", PoseStamped, goal) is None  # filtered out
     assert rec.tap("lidar", dict, raw) is None  # not a dimos message type
-    odom.publish(PoseStamped(ts=1.0))
-    odom.publish(PoseStamped(ts=2.0))
-    goal.publish(PoseStamped(ts=3.0))
+    odom.publish(PoseStamped(header=Header(stamp=time_from_seconds(1.0))))
+    odom.publish(PoseStamped(header=Header(stamp=time_from_seconds(2.0))))
+    goal.publish(PoseStamped(header=Header(stamp=time_from_seconds(3.0))))
     assert unsub is not None
     unsub()
-    odom.publish(PoseStamped(ts=4.0))
+    odom.publish(PoseStamped(header=Header(stamp=time_from_seconds(4.0))))
     rec.close()
     store.stop()
 
@@ -83,9 +85,9 @@ def test_full_queue_drops_and_counts(tmp_path: Path, monkeypatch: pytest.MonkeyP
     rec._writer.join()
     odom = _Transport()
     rec.tap("odom", PoseStamped, odom)
-    odom.publish(PoseStamped(ts=1.0))
-    odom.publish(PoseStamped(ts=2.0))
-    odom.publish(PoseStamped(ts=3.0))
+    odom.publish(PoseStamped(header=Header(stamp=time_from_seconds(1.0))))
+    odom.publish(PoseStamped(header=Header(stamp=time_from_seconds(2.0))))
+    odom.publish(PoseStamped(header=Header(stamp=time_from_seconds(3.0))))
     assert rec.dropped == 2
     assert len(warnings) == 1
     store.stop()
@@ -99,7 +101,7 @@ def test_append_failure_does_not_kill_writer(tmp_path: Path) -> None:
     odom = _Transport()
     rec.tap("odom", PoseStamped, odom)
     odom.publish("not a PoseStamped")  # append raises TypeError inside the writer
-    odom.publish(PoseStamped(ts=2.0))
+    odom.publish(PoseStamped(header=Header(stamp=time_from_seconds(2.0))))
     rec.close()  # returns: the writer is still draining
     store.stop()
 
@@ -145,3 +147,29 @@ def test_recording_delegates_to_rust_session(
     make_plan.assert_called_once_with(transports)
     create_session.assert_called_once_with("plan")
     session.stop.assert_called_once_with()
+
+
+def test_zero_source_stamp_and_unstamped_arrival_time_are_distinct(tmp_path, monkeypatch):
+    monkeypatch.setattr(tap.time, "time", lambda: 123.5)
+    path = tmp_path / "time.db"
+    pose_transport, twist_transport = _Transport(), _Transport()
+    with SqliteStore(path=str(path)) as store:
+        recorder = TransportRecorder(store)
+        subscriptions = []
+        try:
+            subscriptions.append(recorder.tap("pose", PoseStamped, pose_transport))
+            subscriptions.append(recorder.tap("twist", Twist, twist_transport))
+            pose_transport.publish(PoseStamped())
+            twist_transport.publish(Twist())
+        finally:
+            for unsubscribe in subscriptions:
+                assert unsubscribe is not None
+                unsubscribe()
+            recorder.close()
+    with SqliteStore(path=str(path), must_exist=True) as store:
+        pose = store.stream("pose").first()
+        twist = store.stream("twist").first()
+        assert pose.ts == 0.0
+        assert pose.data == PoseStamped()
+        assert twist.ts == 123.5
+        assert twist.data == Twist()

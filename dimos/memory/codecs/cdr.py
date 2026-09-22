@@ -20,10 +20,14 @@ if TYPE_CHECKING:
     from dimos.msgs.protocol import DimosMsg
 
 
-class LcmCodec:
-    """Codec for DimosMsg types — uses lcm_encode/lcm_decode."""
+class CdrCodec:
+    """Store a generated message as its transport-neutral CDR bytes."""
 
     def __init__(self, msg_type: type[DimosMsg]) -> None:
+        if not all(
+            hasattr(msg_type, member) for member in ("encode", "decode", "msg_name", "schema")
+        ):
+            raise TypeError(f"{msg_type!r} is not a generated CDR message type")
         self._msg_type = msg_type
 
     @property
@@ -32,7 +36,9 @@ class LcmCodec:
         return self._msg_type
 
     def encode(self, value: DimosMsg) -> bytes:
-        return value.lcm_encode()
+        if not isinstance(value, self._msg_type):
+            raise TypeError(f"Expected {self._msg_type.msg_name}, got {type(value).__name__}")
+        return value.encode()
 
     def decode(self, data: bytes) -> DimosMsg:
-        return self._msg_type.lcm_decode(data)
+        return self._msg_type.decode(data)

@@ -75,23 +75,20 @@ mcap_recorder = SensorRecorder.blueprint(
 )
 ```
 
-MCAP stores each stream's selected `lcm`, `jpeg`, or `lz4+lcm` representation
-in indexed Zstd chunks. Source time is the MCAP publish time and recorder
-reception time is the log time. JPEG channels decode automatically. Supply
-trusted codecs explicitly for LCM channels instead of trusting artifact
-metadata:
+The Python reader now expects standard ROS2-profile CDR channels with embedded
+`ros2msg` schemas. Installed generated message packages supply the decoders:
 
 ```python
-from dimos.memory.codecs.lcm import LcmCodec
-from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.store.mcap import McapStore
-from dimos.msgs.sensor_msgs.Imu import Imu
 
-store = McapStore(
-    path="session.mcap",
-    codecs={"imu": Lz4Codec(LcmCodec(Imu))},
-)
+store = McapStore(path="session.mcap")
 ```
+
+The Rust writer's schema/codec conversion is still in progress on this branch.
+The capture examples above require that remaining work; the Python storage and
+replay demo in `examples/message-codegen/demo_storage_replay.py` exercises the
+new format now. Old private LCM/JPEG storage envelopes are no longer decoded by
+the Python store.
 
 Append mode remains unsupported for MCAP.
 
