@@ -127,12 +127,32 @@ def test_object_points_keep_the_box_median_surface_and_drop_the_background() -> 
 
 
 def test_box_from_points_lands_in_the_world_frame() -> None:
-    points = np.array([[-1.0, 0.5, 6.0], [1.0, -0.5, 6.5]])
+    # A 2 m wide, 1 m tall, 0.5 m deep slab in front of the camera.
+    points = np.array(
+        [[x, y, z] for x in np.linspace(-1.0, 1.0, 9) for y in (0.5, -0.5) for z in (6.0, 6.5)]
+    )
     box = box_from_points(points, WORLD_T_CAMERA, 6.2, trim_percentile=0.0)
 
     assert box.centre == pytest.approx((0.0, 6.25, 0.0))
     assert box.extent == pytest.approx((2.0, 0.5, 1.0))
-    assert box.depth_m == 6.2 and box.pixels == 2
+    assert box.yaw == pytest.approx(0.0, abs=1e-6)
+    assert box.depth_m == 6.2 and box.pixels == len(points)
+
+
+def test_box_turns_to_the_objects_long_axis() -> None:
+    # A 4 x 1.5 m car footprint parked at 30 degrees to the world axes.
+    yaw = np.radians(30.0)
+    local = np.array(
+        [[x, y, z] for x in np.linspace(-2.0, 2.0, 17) for y in (-0.75, 0.75) for z in (0.0, 1.4)]
+    )
+    world = local.copy()
+    world[:, 0] = np.cos(yaw) * local[:, 0] - np.sin(yaw) * local[:, 1] + 10.0
+    world[:, 1] = np.sin(yaw) * local[:, 0] + np.cos(yaw) * local[:, 1] - 5.0
+    box = box_from_points(world, np.eye(4), 8.0, trim_percentile=0.0)
+
+    assert box.yaw == pytest.approx(yaw, abs=1e-3)
+    assert box.extent == pytest.approx((4.0, 1.5, 1.4), abs=1e-3)
+    assert box.centre == pytest.approx((10.0, -5.0, 0.7), abs=1e-3)
 
 
 def test_a_box_measured_on_the_ground_is_refused() -> None:

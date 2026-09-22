@@ -52,12 +52,14 @@ DEPTH_RENDER_SCALE = 2
 
 @dataclass(frozen=True)
 class Box3D:
-    """An axis-aligned box in the world frame, with what it was measured from."""
+    """A box in the world frame, upright and turned by yaw about z, with what it was measured from."""
 
     centre: tuple[float, float, float]
+    # Full sizes along the box's own axes: x is its long horizontal axis.
     extent: tuple[float, float, float]
     pixels: int
     depth_m: float
+    yaw: float = 0.0
 
 
 @dataclass
@@ -99,6 +101,8 @@ class Found:
     box2d: tuple[float, float, float, float]
     world_t_camera: np.ndarray = field(repr=False)
     views: int = 1
+    # Heading of the box's long horizontal axis, world radians.
+    yaw: float = 0.0
 
     @property
     def placed(self) -> bool:
@@ -110,6 +114,7 @@ class Found:
             "position": list(self.centre),
             "extent": None if self.extent is None else list(self.extent),
             "height": None if self.extent is None else self.extent[2],
+            "yaw": None if self.extent is None else self.yaw,
             "seen_from_m": self.depth_m,
             "confidence": self.confidence,
             "views": self.views,
@@ -317,16 +322,46 @@ def _world_points(points: np.ndarray, world_t_camera: np.ndarray) -> np.ndarray:
 
 
 def _box_of(moved: np.ndarray, depth_m: float, trim_percentile: float) -> Box3D:
-    low = np.percentile(moved, trim_percentile, axis=0)
-    high = np.percentile(moved, 100.0 - trim_percentile, axis=0)
-    centre = (low + high) / 2.0
+    """The upright box around world points, turned to the points' long horizontal axis."""
+    yaw = _principal_yaw(moved[:, :2])
+    cos, sin = np.cos(-yaw), np.sin(-yaw)
+    local = moved.copy()
+    local[:, 0] = cos * moved[:, 0] - sin * moved[:, 1]
+    local[:, 1] = sin * moved[:, 0] + cos * moved[:, 1]
+    low = np.percentile(local, trim_percentile, axis=0)
+    high = np.percentile(local, 100.0 - trim_percentile, axis=0)
+    mid = (low + high) / 2.0
     extent = high - low
+    centre = (
+        float(np.cos(yaw) * mid[0] - np.sin(yaw) * mid[1]),
+        float(np.sin(yaw) * mid[0] + np.cos(yaw) * mid[1]),
+        float(mid[2]),
+    )
     return Box3D(
-        centre=(float(centre[0]), float(centre[1]), float(centre[2])),
+        centre=centre,
         extent=(float(extent[0]), float(extent[1]), float(extent[2])),
         pixels=len(moved),
         depth_m=float(depth_m),
+        yaw=float(yaw),
     )
+
+
+def _principal_yaw(xy: np.ndarray) -> float:
+    """Heading of the points' longest horizontal axis, in (-pi/2, pi/2]."""
+    if len(xy) < 3:
+        return 0.0
+    centered = xy - xy.mean(axis=0)
+    cov = centered.T @ centered
+    if not np.isfinite(cov).all() or np.allclose(cov, 0.0):
+        return 0.0
+    values, vectors = np.linalg.eigh(cov)
+    axis = vectors[:, int(np.argmax(values))]
+    yaw = float(np.arctan2(axis[1], axis[0]))
+    if yaw <= -np.pi / 2:
+        yaw += np.pi
+    elif yaw > np.pi / 2:
+        yaw -= np.pi
+    return yaw
 
 
 @dataclass(frozen=True)
@@ -552,6 +587,7 @@ def merge_looks(
                 query=query,
                 centre=box.centre,
                 extent=box.extent,
+                yaw=box.yaw,
                 depth_m=best.depth_m,
                 confidence=best.confidence,
                 frame_id=best.look.frame_id,

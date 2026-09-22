@@ -80,8 +80,10 @@ class HighlightBox(BaseModel):
     """An axis-aligned world-frame box rendered as a wireframe with a faint fill."""
 
     center: Point3
-    # Full x, y, z size in metres.
+    # Full sizes in metres along the box's own axes.
     extent: Point3
+    # Heading of the box's x axis, world radians about z.
+    yaw: float = 0.0
     label: str = Field(default="", max_length=120)
     color: Color = "#22dd88"
     opacity: float = Field(default=0.12, ge=0.0, le=1.0)
@@ -106,6 +108,7 @@ class HighlightPoint(BaseModel):
     # Full x, y, z size in metres of the object's box around the point; the viewer
     # repaints the voxels inside it instead of the ball.
     extent: Point3 | None = None
+    yaw: float = 0.0
 
 
 class MemoryQueryResult(BaseModel):

@@ -1280,11 +1280,14 @@ class MemoryWorldModule(Module):
                     + ")",
                     radius=self.config.object_radius_m if place.extent is not None else None,
                     extent=place.extent,
+                    yaw=place.yaw,
                 )
                 for place in places
             ],
             boxes=[
-                HighlightBox(center=place.position, extent=place.extent, label=phrase)
+                HighlightBox(
+                    center=place.position, extent=place.extent, yaw=place.yaw, label=phrase
+                )
                 for place in places
                 if place.extent is not None
             ],
@@ -1592,6 +1595,7 @@ class MemoryWorldModule(Module):
                 camera_position=tuple(float(v) for v in item.world_t_camera[:3, 3]),  # type: ignore[arg-type]
                 views=item.views,
                 extent=item.extent,
+                yaw=item.yaw,
             )
             for item in found
         ]
@@ -1689,6 +1693,7 @@ class MemoryWorldModule(Module):
                 "position": list(place.position),
                 "extent": list(place.extent) if place.extent else None,
                 "height": place.extent[2] if place.extent else None,
+                "yaw": place.yaw if place.extent else None,
                 "confidence": place.similarity,
                 "views": place.views,
                 "ts": place.ts,

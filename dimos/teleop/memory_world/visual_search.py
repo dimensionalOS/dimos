@@ -136,6 +136,8 @@ class Place:
     views: int = 1
     # The object's box size in meters, when a detector measured it.
     extent: tuple[float, float, float] | None = None
+    # Heading of the extent's x axis in world radians, for measured places.
+    yaw: float = 0.0
 
 
 @dataclass(frozen=True)

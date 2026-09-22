@@ -944,13 +944,16 @@ export class WorldScene {
             const [px, py, pz] = point.position;
             const r2 = point.radius * point.radius;
             const half = point.extent ? point.extent.map((e) => e / 2 + VOXEL_HIGHLIGHT_MARGIN_M) : null;
+            const cosYaw = Math.cos(-(point.yaw || 0)), sinYaw = Math.sin(-(point.yaw || 0));
             const paint = new THREE.Color(order === 0 ? VOXEL_HIGHLIGHT_FOCUS_COLOR : VOXEL_HIGHLIGHT_COLOR);
             for (let i = 0; i < d.n; i++) {
                 const dx = d.positions[i * 3] - px;
                 const dy = d.positions[i * 3 + 1] - py;
                 const dz = d.positions[i * 3 + 2] - pz;
+                const lx = cosYaw * dx - sinYaw * dy;
+                const ly = sinYaw * dx + cosYaw * dy;
                 const inside = half
-                    ? Math.abs(dx) <= half[0] && Math.abs(dy) <= half[1] && Math.abs(dz) <= half[2]
+                    ? Math.abs(lx) <= half[0] && Math.abs(ly) <= half[1] && Math.abs(dz) <= half[2]
                     : dx * dx + dy * dy + dz * dz <= r2;
                 if (inside) {
                     d.paint[i * 3] = paint.r; d.paint[i * 3 + 1] = paint.g; d.paint[i * 3 + 2] = paint.b;
@@ -1163,12 +1166,14 @@ export class WorldScene {
                 color, transparent: true, opacity: box.opacity ?? 0.12, depthWrite: false, side: THREE.DoubleSide,
             }));
             fill.position.set(...box.center);
+            fill.rotation.z = box.yaw || 0;
             this._highlightGroup.add(fill);
             const edges = new THREE.LineSegments(
                 new THREE.EdgesGeometry(geometry),
                 new THREE.LineBasicMaterial({ color }),
             );
             edges.position.set(...box.center);
+            edges.rotation.z = box.yaw || 0;
             this._highlightGroup.add(edges);
         }
 

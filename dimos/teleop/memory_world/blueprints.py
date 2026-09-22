@@ -84,15 +84,18 @@ within 0.8 m of the trajectory between 0.2 and 1.6 m above the ground when measu
 widths, clearance or ceilings. `route` is the planner's current route as world [x, y, z]
 points, or None until navigate_with_text has planned one.
 `objects` lists every object find_in_memory has located so far, each a dict with `label`,
-`position` ([x, y, z] on the object, world frame), `extent`, `height` (meters), `confidence`,
-`views`, `ts` and `best_frame_id` (a `color_image` observation id). Measure and compare
-objects from it; put the `best_frame_id`s in `observation_ids` to show them.
+`position` ([x, y, z] on the object, world frame), `extent` (full sizes along the object's
+own axes, x the long horizontal one), `yaw` (heading of that axis, world radians), `height`
+(meters), `confidence`, `views`, `ts` and `best_frame_id` (a `color_image` observation
+id). Measure and compare objects from it; pass `position`, `extent` and `yaw` straight
+into `boxes`; put the `best_frame_id`s in `observation_ids` to show them.
 Do not silently catch stream-access errors; let them surface so the tool reports failure.
 The dictionary requires `answer` and may include:
 
 - `focus_point`: one world-frame [x, y, z] answer location
 - `boxes`: 3D bounding boxes, objects with `center`, `extent` ([x, y, z] full sizes in
-  meters), `label`, and `color`. This is the only way to draw a box; never build one
+  meters along the box's own axes), `yaw` (heading of its x axis, world radians) `label`,
+  and `color`. This is the only way to draw a box; never build one
   from `regions`, which are flat floor polygons filled at one height.
 - `regions`: flat floor polygons with `points`, `label`, `color`, and `opacity`
 - `evidence_paths`: objects with `points`, `label`, and `color`
