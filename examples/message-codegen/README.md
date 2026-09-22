@@ -357,3 +357,16 @@ Its source package bundles the parser, generator, schemas, and licenses. Cargo
 requires Python 3.10+ during the build (`DIMOS_CODEGEN_PYTHON` can select it);
 the resulting Rust binaries need neither Python nor ROS. Verify the actual source
 archive with `cargo package -p dimos-generated-messages --allow-dirty --offline`.
+
+### Point-cloud layouts
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_pointcloud.py
+```
+
+This displays an organized cloud with field padding, row padding, and a two-value
+`tags` field, in both byte orders. The helper borrows a read-only structured view;
+`pointcloud_xyz` explicitly copies XYZ coordinates. The demo edits a separate
+copy and checks that the borrowed source remains unchanged. No processes or
+viewer windows remain after it exits.

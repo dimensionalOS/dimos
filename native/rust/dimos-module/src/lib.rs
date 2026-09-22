@@ -22,6 +22,7 @@ pub mod host;
 pub mod lcm;
 pub mod log;
 pub mod module;
+pub mod pointcloud;
 pub mod tf;
 pub mod transport;
 pub mod workers;

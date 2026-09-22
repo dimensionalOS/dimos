@@ -17,11 +17,17 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::mls_planner::{Config, Planner, RegionBounds};
 use crate::voxel::{surface_point_xyz, VoxelKey};
+use dimos_generated_messages::builtin_interfaces::msg::Time;
+use dimos_generated_messages::dimos_msgs::msg::{LineSegment3D, LineSegments3D};
+use dimos_generated_messages::geometry_msgs::msg::{
+    Point, PointStamped, Pose, PoseStamped, Quaternion,
+};
+use dimos_generated_messages::nav_msgs::msg::Path;
+use dimos_generated_messages::sensor_msgs::msg::{PointCloud2, PointField};
+use dimos_generated_messages::std_msgs::msg::Header;
+use dimos_module::cdr;
+use dimos_module::pointcloud::xyz_points as extract_xyz;
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
-use lcm_msgs::geometry_msgs::{Point, PointStamped, Pose, PoseStamped, Quaternion};
-use lcm_msgs::nav_msgs::Path;
-use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
 use tokio::sync::Notify;
 use tracing::{debug, warn};
 
@@ -47,32 +53,31 @@ enum MapUpdate {
 #[derive(Module)]
 #[module(name = "mls_planner", setup = spawn_worker, teardown = stop_worker)]
 pub struct MlsPlanner {
-    #[input(decode = PointCloud2::decode, handler = on_global_map)]
+    #[input(decode = cdr::decode, handler = on_global_map)]
     global_map: Input<PointCloud2>,
 
-    #[input(decode = PointCloud2::decode, handler = on_local_map)]
+    #[input(decode = cdr::decode, handler = on_local_map)]
     local_map: Input<PointCloud2>,
 
-    #[input(decode = PoseStamped::decode, handler = on_region_bounds)]
+    #[input(decode = cdr::decode, handler = on_region_bounds)]
     region_bounds: Input<PoseStamped>,
 
-    #[input(decode = PointStamped::decode, handler = on_goal)]
+    #[input(decode = cdr::decode, handler = on_goal)]
     goal: Input<PointStamped>,
 
     #[tf]
     tf: Tf,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     surface_map: Output<PointCloud2>,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     nodes: Output<PointCloud2>,
 
-    // The wire payload is a Path. dimos names the channel LineSegments3D.
-    #[output(encode = Path::encode, msg = "LineSegments3D")]
-    node_edges: Output<Path>,
+    #[output(encode = cdr::encode)]
+    node_edges: Output<LineSegments3D>,
 
-    #[output(encode = Path::encode)]
+    #[output(encode = cdr::encode)]
     path: Output<Path>,
 
     #[config]
@@ -174,7 +179,7 @@ struct Worker {
     config: Config,
     surface_map: Output<PointCloud2>,
     nodes: Output<PointCloud2>,
-    node_edges: Output<Path>,
+    node_edges: Output<LineSegments3D>,
     path: Output<Path>,
 }
 
@@ -216,7 +221,9 @@ impl Worker {
         if let Some((surface, node_cloud, edges)) = messages {
             publish_cloud(&self.surface_map, &surface).await;
             publish_cloud(&self.nodes, &node_cloud).await;
-            publish_path(&self.node_edges, &edges).await;
+            if let Err(error) = self.node_edges.publish(&edges).await {
+                warn!(%error, "edge segments failed to publish");
+            }
             *last_viz_at = Some(now);
         }
     }
@@ -286,7 +293,10 @@ impl Worker {
         true
     }
 
-    fn build_graph_messages(&self, planner: &Planner) -> (PointCloud2, PointCloud2, Path) {
+    fn build_graph_messages(
+        &self,
+        planner: &Planner,
+    ) -> (PointCloud2, PointCloud2, LineSegments3D) {
         let voxel_size = self.config.voxel_size;
         let frame = &self.config.world_frame;
         let graph = planner.graph();
@@ -304,7 +314,7 @@ impl Worker {
         let node_points: Vec<Xyz> = graph.nodes.iter().map(|n| n.pos).collect();
         let node_cloud = build_pc2_xyz(&node_points, frame, now());
 
-        let edges = build_segments_path(planner.edge_segments(), voxel_size, frame, now());
+        let edges = build_segments(planner.edge_segments(), voxel_size, frame, now());
         (surface, node_cloud, edges)
     }
 
@@ -364,7 +374,7 @@ fn is_at_goal(start: Xyz, goal: Xyz, tol: f32) -> bool {
 }
 
 fn same_stamp(a: &Time, b: &Time) -> bool {
-    a.sec == b.sec && a.nsec == b.nsec
+    a.sec == b.sec && a.nanosec == b.nanosec
 }
 
 async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
@@ -395,13 +405,12 @@ fn now() -> Time {
         .unwrap_or_default();
     Time {
         sec: dur.as_secs().min(i32::MAX as u64) as i32,
-        nsec: dur.subsec_nanos() as i32,
+        nanosec: dur.subsec_nanos(),
     }
 }
 
 fn header(frame_id: &str, stamp: Time) -> Header {
     Header {
-        seq: 0,
         stamp,
         frame_id: frame_id.into(),
     }
@@ -448,30 +457,37 @@ fn build_path_from_waypoints(waypoints: &[(f32, f32, f32)], frame_id: &str, stam
     }
 }
 
-/// Emit edges as alternating PoseStamped pairs with orientation.w carrying
-/// the per-edge cost.
-fn build_segments_path(
+/// Emit explicit endpoints and weights in the dedicated custom message.
+fn build_segments(
     segments: Vec<(VoxelKey, VoxelKey, f32)>,
     voxel_size: f32,
     frame_id: &str,
     stamp: Time,
-) -> Path {
-    let mut poses: Vec<PoseStamped> = Vec::with_capacity(segments.len() * 2);
-    for (a, b, cost) in segments {
-        let pa = surface_point_xyz(a.0, a.1, a.2, voxel_size);
-        let pb = surface_point_xyz(b.0, b.1, b.2, voxel_size);
-        poses.push(pose_stamped(pa, cost as f64, frame_id, stamp.clone()));
-        poses.push(pose_stamped(pb, cost as f64, frame_id, stamp.clone()));
-    }
-    Path {
+) -> LineSegments3D {
+    let point = |key: VoxelKey| {
+        let (x, y, z) = surface_point_xyz(key.0, key.1, key.2, voxel_size);
+        Point {
+            x: x as f64,
+            y: y as f64,
+            z: z as f64,
+        }
+    };
+    LineSegments3D {
         header: header(frame_id, stamp),
-        poses,
+        segments: segments
+            .into_iter()
+            .map(|(a, b, cost)| LineSegment3D {
+                start: point(a),
+                end: point(b),
+                weight: cost as f64,
+            })
+            .collect(),
     }
 }
 
 /// Like `build_pc2_xyz` plus an `intensity` float carrying the cell's wall clearance.
 fn build_pc2_xyzi(points: &[Xyzi], frame_id: &str, stamp: Time) -> PointCloud2 {
-    let n = points.len() as i32;
+    let n = points.len() as u32;
     let mut data = Vec::with_capacity(points.len() * 16);
     for &(x, y, z, i) in points {
         data.extend_from_slice(&x.to_le_bytes());
@@ -479,7 +495,7 @@ fn build_pc2_xyzi(points: &[Xyzi], frame_id: &str, stamp: Time) -> PointCloud2 {
         data.extend_from_slice(&z.to_le_bytes());
         data.extend_from_slice(&i.to_le_bytes());
     }
-    let make_field = |name: &str, off: i32| PointField {
+    let make_field = |name: &str, off: u32| PointField {
         name: name.into(),
         offset: off,
         datatype: PointField::FLOAT32 as u8,
@@ -504,14 +520,14 @@ fn build_pc2_xyzi(points: &[Xyzi], frame_id: &str, stamp: Time) -> PointCloud2 {
 }
 
 fn build_pc2_xyz(points: &[(f32, f32, f32)], frame_id: &str, stamp: Time) -> PointCloud2 {
-    let n = points.len() as i32;
+    let n = points.len() as u32;
     let mut data = Vec::with_capacity(points.len() * 12);
     for &(x, y, z) in points {
         data.extend_from_slice(&x.to_le_bytes());
         data.extend_from_slice(&y.to_le_bytes());
         data.extend_from_slice(&z.to_le_bytes());
     }
-    let make_field = |name: &str, off: i32| PointField {
+    let make_field = |name: &str, off: u32| PointField {
         name: name.into(),
         offset: off,
         datatype: PointField::FLOAT32 as u8,
@@ -530,75 +546,39 @@ fn build_pc2_xyz(points: &[(f32, f32, f32)], frame_id: &str, stamp: Time) -> Poi
     }
 }
 
-struct ExtractError(&'static str);
-impl std::fmt::Display for ExtractError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
-    }
-}
-
-fn extract_xyz(msg: &PointCloud2) -> Result<Vec<(f32, f32, f32)>, ExtractError> {
-    let mut x_off: Option<usize> = None;
-    let mut y_off: Option<usize> = None;
-    let mut z_off: Option<usize> = None;
-    for f in &msg.fields {
-        if f.datatype != PointField::FLOAT32 as u8 {
-            continue;
-        }
-        match f.name.as_str() {
-            "x" => x_off = Some(f.offset as usize),
-            "y" => y_off = Some(f.offset as usize),
-            "z" => z_off = Some(f.offset as usize),
-            _ => {}
-        }
-    }
-    let xo = x_off.ok_or(ExtractError("missing float32 x field"))?;
-    let yo = y_off.ok_or(ExtractError("missing float32 y field"))?;
-    let zo = z_off.ok_or(ExtractError("missing float32 z field"))?;
-
-    let n = (msg.width as usize) * (msg.height as usize);
-    let step = msg.point_step as usize;
-    if step == 0 {
-        return Err(ExtractError("point_step is 0"));
-    }
-    if msg.data.len() < n * step {
-        return Err(ExtractError(
-            "data buffer shorter than width*height*point_step",
-        ));
-    }
-    if xo + 4 > step || yo + 4 > step || zo + 4 > step {
-        return Err(ExtractError(
-            "xyz field offsets do not fit within point_step",
-        ));
-    }
-    if msg.is_bigendian {
-        return Err(ExtractError("big-endian point data not supported"));
-    }
-
-    let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        let base = i * step;
-        let x = read_f32_le(&msg.data, base + xo);
-        let y = read_f32_le(&msg.data, base + yo);
-        let z = read_f32_le(&msg.data, base + zo);
-        if x.is_finite() && y.is_finite() && z.is_finite() {
-            out.push((x, y, z));
-        }
-    }
-    Ok(out)
-}
-
-#[inline]
-fn read_f32_le(buf: &[u8], off: usize) -> f32 {
-    let bytes: [u8; 4] = buf[off..off + 4]
-        .try_into()
-        .expect("bounds checked by caller");
-    f32::from_le_bytes(bytes)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graph_edges_encode_explicit_endpoints_and_cost() {
+        let stamp = Time {
+            sec: 1700000000,
+            nanosec: 123456789,
+        };
+        let message = build_segments(vec![((0, 1, 2), (2, 3, 4), 3.5)], 0.5, "map", stamp.clone());
+        let decoded: LineSegments3D = cdr::decode(&cdr::encode(&message).unwrap()).unwrap();
+        assert_eq!(decoded.header.frame_id, "map");
+        assert_eq!(decoded.header.stamp, stamp);
+        assert_eq!(decoded.segments.len(), 1);
+        assert_eq!(
+            decoded.segments[0].start,
+            Point {
+                x: 0.25,
+                y: 0.75,
+                z: 1.5
+            }
+        );
+        assert_eq!(
+            decoded.segments[0].end,
+            Point {
+                x: 1.25,
+                y: 1.75,
+                z: 2.5
+            }
+        );
+        assert_eq!(decoded.segments[0].weight, 3.5);
+    }
 
     #[test]
     fn is_at_goal_respects_tolerance_and_ignores_z() {
@@ -629,12 +609,12 @@ mod tests {
 
     #[test]
     fn stamps_paired_only_when_both_present_and_stamps_match() {
-        let s = Time { sec: 2, nsec: 3 };
+        let s = Time { sec: 2, nanosec: 3 };
         let b = bounds_at(s.clone());
         let c = cloud_at(s);
         assert!(stamps_paired(Some(&b), Some(&c)));
 
-        let other = cloud_at(Time { sec: 2, nsec: 4 });
+        let other = cloud_at(Time { sec: 2, nanosec: 4 });
         assert!(!stamps_paired(Some(&b), Some(&other)));
 
         assert!(!stamps_paired(Some(&b), None));

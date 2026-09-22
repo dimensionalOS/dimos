@@ -18,10 +18,12 @@ use crate::live::{LiveConfig, LiveSource, Ports};
 use crate::pcap::PcapSource;
 use crate::pipeline::{imu_records, Frame, ImuRecord, PacketSource};
 use crate::wire::{DataPacket, DataType};
+use dimos_generated_messages::builtin_interfaces::msg::Time;
+use dimos_generated_messages::geometry_msgs::msg::{Quaternion, Vector3};
+use dimos_generated_messages::sensor_msgs::msg::{Imu, PointCloud2, PointField};
+use dimos_generated_messages::std_msgs::msg::Header;
+use dimos_module::cdr;
 use dimos_module::{native_config, Module, Output};
-use lcm_msgs::geometry_msgs::{Quaternion, Vector3};
-use lcm_msgs::sensor_msgs::{Imu, PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -95,10 +97,10 @@ enum PointFormat {
 }
 
 impl PointFormat {
-    fn point_step(self) -> i32 {
+    fn point_step(self) -> u32 {
         match self {
-            PointFormat::Full => (OFFSET_FULL_LINE + 1) as i32,
-            PointFormat::Minimal | PointFormat::Legacy => (OFFSET_FOURTH + 4) as i32,
+            PointFormat::Full => (OFFSET_FULL_LINE + 1) as u32,
+            PointFormat::Minimal | PointFormat::Legacy => (OFFSET_FOURTH + 4) as u32,
         }
     }
 }
@@ -121,10 +123,10 @@ impl Config {
 #[derive(Module)]
 #[module(name = "mid360", setup = start, handle = wait, teardown = stop)]
 pub struct Mid360 {
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     lidar: Output<PointCloud2>,
 
-    #[output(encode = Imu::encode)]
+    #[output(encode = cdr::encode)]
     imu: Output<Imu>,
 
     #[config]
@@ -273,10 +275,9 @@ fn run_pipeline(
 
 fn header(frame_id: &str, ts_ns: u64) -> Header {
     Header {
-        seq: 0,
         stamp: Time {
             sec: (ts_ns / 1_000_000_000) as i32,
-            nsec: (ts_ns % 1_000_000_000) as i32,
+            nanosec: (ts_ns % 1_000_000_000) as u32,
         },
         frame_id: frame_id.to_string(),
     }
@@ -320,7 +321,7 @@ const OFFSET_FULL_LINE: usize = 21;
 fn cloud_fields(format: PointFormat) -> Vec<PointField> {
     let make_field = |name: &str, offset: usize, datatype: u8| PointField {
         name: name.into(),
-        offset: offset as i32,
+        offset: offset as u32,
         datatype,
         count: 1,
     };
@@ -370,7 +371,7 @@ fn cloud_message(format: PointFormat, frame_id: &str, frame: &Frame) -> PointClo
         }
     }
 
-    let point_count = frame.points.len() as i32;
+    let point_count = frame.points.len() as u32;
     PointCloud2 {
         header: header(frame_id, frame.start_ns),
         height: 1,
@@ -416,7 +417,7 @@ mod tests {
         assert_eq!(cloud.width, 2);
         assert_eq!(cloud.header.frame_id, "lidar_link");
         assert_eq!(cloud.header.stamp.sec, 1_700_000_000);
-        assert_eq!(cloud.header.stamp.nsec, 123_000_000);
+        assert_eq!(cloud.header.stamp.nanosec, 123_000_000);
         let names: Vec<&str> = cloud.fields.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(
             names,
@@ -467,7 +468,7 @@ mod tests {
         };
         let msg = imu_message("imu_link", &record);
         assert_eq!(msg.header.stamp.sec, 5);
-        assert_eq!(msg.header.stamp.nsec, 500_000_000);
+        assert_eq!(msg.header.stamp.nanosec, 500_000_000);
         assert_eq!(msg.orientation_covariance[0], -1.0);
         assert_eq!(msg.orientation.w, 1.0);
         assert_eq!(msg.angular_velocity.z, 0.3);

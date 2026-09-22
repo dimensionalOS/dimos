@@ -31,6 +31,7 @@ import os
 import sys
 from typing import TYPE_CHECKING, Any, Literal
 
+from dimos_generated.sensor_msgs.msg import Imu, PointCloud2
 from pydantic import Field, field_validator
 
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -49,8 +50,6 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_POINT_DATA_PORT,
     SDK_PUSH_MSG_PORT,
 )
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec import perception
 
 

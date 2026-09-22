@@ -201,3 +201,26 @@ zenoh: 921,600 image bytes and source nanoseconds=1700000000123456789 match
 Full output and process logs are under `build/message-codegen/demo/evidence`.
 This does not complete the native consumer, Nix build matrix, coordinator
 blueprint, or live Rerun migration; stage 4 remains open.
+
+### Lidar and mapping message consumers
+
+After switching their generated fields and codecs, the Livox Rust suite passed
+24 tests, voxel mapping passed 60, and the MLS planner passed 94. The planner's
+new regression checks that graph endpoints and cost survive CDR in explicit
+`LineSegments3D` fields. The SDK suite passed 146 tests after extracting the shared
+point-cloud reader, including padded organized rows, mixed float32/float64 XYZ,
+both byte orders, malformed layouts, and nonfinite-coordinate filtering.
+
+The Python structured point-cloud helper passed 21 tests; together with the
+Livox configuration tests, the focused Python run passed 26. The helper and
+three native Python module declarations passed mypy with the generated stubs.
+`demo_pointcloud.py` displayed both byte orders with organized shape `(2, 1)`,
+row/point strides `(32, 20)`, and preserved two-value tags. Editing its explicit
+copy left the borrowed source unchanged. Output is recorded in
+`build/message-codegen/demo/evidence/pointcloud-layouts.txt`.
+
+The Livox live loopback E2E also passed against the released CDR binaries
+(`test_live_loopback_handshake_and_stream`, 3.03 s). It exercised the virtual
+Mid-360 handshake, actual UDP sensor traffic, native CDR publication, Python
+schema decoding, a 5 m point ring, per-point deskew offsets, and gravity IMU.
+The physical-sensor recording test remains deselected; no robot was required.

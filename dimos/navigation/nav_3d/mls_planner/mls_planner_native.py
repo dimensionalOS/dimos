@@ -16,15 +16,15 @@
 
 from __future__ import annotations
 
+from dimos_generated.dimos_msgs.msg import LineSegments3D
+from dimos_generated.geometry_msgs.msg import PointStamped, PoseStamped
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
+
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):

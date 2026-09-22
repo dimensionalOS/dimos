@@ -684,9 +684,9 @@ name = "dimos-livox"
 version = "0.1.0"
 dependencies = [
  "crc",
+ "dimos-generated-messages",
  "dimos-module",
  "etherparse",
- "lcm-msgs",
  "pcap-parser",
  "serde",
  "serde_json",
@@ -724,8 +724,8 @@ name = "dimos-mls-planner"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "dimos-generated-messages",
  "dimos-module",
- "lcm-msgs",
  "rayon",
  "serde",
  "tokio",
@@ -821,8 +821,8 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "arrayvec",
+ "dimos-generated-messages",
  "dimos-module",
- "lcm-msgs",
  "nalgebra",
  "rayon",
  "serde",

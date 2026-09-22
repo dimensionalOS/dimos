@@ -30,6 +30,7 @@ import struct
 import subprocess
 import time
 
+from dimos_generated.sensor_msgs.msg import Imu, PointCloud2
 import lcm as lcm_module
 import pytest
 
@@ -42,8 +43,7 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_POINT_DATA_PORT,
 )
 from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360Config
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_view, pointcloud_xyz
 from dimos.utils.data import get_data
 
 _RELEASE = DIMOS_PROJECT_ROOT / "target" / "release"
@@ -172,13 +172,13 @@ def _collect(
             raw[topic].append(data)
 
         msg_type = topics[topic]
-        lc.subscribe(f"{topic}#sensor_msgs.{msg_type.__name__}", on_msg)
+        lc.subscribe(f"{topic}#{msg_type.msg_name}", on_msg)
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         if all(len(raw[topic]) >= count for topic, count in enough.items()):
             break
         lc.handle_timeout(200)
-    return {topic: [topics[topic].lcm_decode(data) for data in raw[topic]] for topic in topics}
+    return {topic: [topics[topic].decode(data) for data in raw[topic]] for topic in topics}
 
 
 def _magnitude(sample: Imu) -> float:
@@ -187,12 +187,11 @@ def _magnitude(sample: Imu) -> float:
 
 
 def _assert_cloud_shape(cloud: PointCloud2, min_points: int) -> None:
-    assert cloud.frame_id == "lidar_link"
-    points, _ = cloud.as_numpy()
+    assert cloud.header.frame_id == "lidar_link"
+    points = pointcloud_xyz(cloud)
     assert len(points) > min_points
     # Full point format carries per-point deskew offsets within one frame.
-    offsets = cloud.offset_times_u32()
-    assert offsets is not None
+    offsets = pointcloud_view(cloud)["offset_time"]
     assert offsets.max() < 150_000_000, "offsets exceed one frame interval"
 
 
@@ -209,8 +208,8 @@ def test_real_capture_replay_publishes_streams(spawn: Spawn) -> None:
     )
     blob = {
         "topics": {
-            "lidar": "/e2e_real_lidar#sensor_msgs.PointCloud2",
-            "imu": "/e2e_real_imu#sensor_msgs.Imu",
+            "lidar": "/e2e_real_lidar#sensor_msgs/msg/PointCloud2",
+            "imu": "/e2e_real_imu#sensor_msgs/msg/Imu",
         },
         "config": config.to_config_dict(),
         "session": {"id": "pointlio-e2e", "links": []},
@@ -234,7 +233,7 @@ def test_real_capture_replay_publishes_streams(spawn: Spawn) -> None:
     median = magnitudes[len(magnitudes) // 2]
     assert 5.0 < median < 15.0, f"median accel magnitude {median}"
     assert imus[0].orientation_covariance[0] == -1.0
-    assert imus[0].frame_id == "imu_link"
+    assert imus[0].header.frame_id == "imu_link"
 
 
 @pytest.mark.native_e2e
@@ -263,8 +262,8 @@ def test_live_loopback_handshake_and_stream(spawn: Spawn, synth_pcap: Path) -> N
     )
     driver_blob = {
         "topics": {
-            "lidar": "/e2e_live_lidar#sensor_msgs.PointCloud2",
-            "imu": "/e2e_live_imu#sensor_msgs.Imu",
+            "lidar": "/e2e_live_lidar#sensor_msgs/msg/PointCloud2",
+            "imu": "/e2e_live_imu#sensor_msgs/msg/Imu",
         },
         "config": config.to_config_dict(),
         "session": {"id": "pointlio-e2e", "links": []},
@@ -289,7 +288,7 @@ def test_live_loopback_handshake_and_stream(spawn: Spawn, synth_pcap: Path) -> N
 
     # The synthetic capture is a 5 m ring at z ~1 m, so a decode regression
     # in scaling or field layout shows up as broken geometry here.
-    points, _ = clouds[len(clouds) // 2].as_numpy()
+    points = pointcloud_xyz(clouds[len(clouds) // 2])
     radii = sorted(math.hypot(x, y) for x, y, _z in points)
     assert abs(radii[len(radii) // 2] - 5.0) < 0.1, f"median ring radius {radii[len(radii) // 2]}"
     z_values = sorted(z for _x, _y, z in points)
@@ -299,4 +298,4 @@ def test_live_loopback_handshake_and_stream(spawn: Spawn, synth_pcap: Path) -> N
     sample = imus[len(imus) // 2]
     assert abs(_magnitude(sample) - GRAVITY_MS2) < 1e-3
     assert sample.orientation_covariance[0] == -1.0
-    assert sample.frame_id == "imu_link"
+    assert sample.header.frame_id == "imu_link"

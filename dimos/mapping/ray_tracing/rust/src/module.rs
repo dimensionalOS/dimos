@@ -16,38 +16,43 @@ use std::time::Duration;
 
 use crate::mapper::{Mapper, Pose};
 use crate::voxel_ray_tracer::Config;
+use dimos_generated_messages::builtin_interfaces::msg::Time;
+use dimos_generated_messages::geometry_msgs::msg::{
+    Point, Pose as PoseMsg, PoseStamped, Quaternion,
+};
+use dimos_generated_messages::sensor_msgs::msg::{PointCloud2, PointField};
+use dimos_generated_messages::std_msgs::msg::Header;
+use dimos_module::cdr;
+use dimos_module::pointcloud::xyz_points as extract_xyz;
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
-use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
-use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
-use lcm_msgs::std_msgs::{Header, Time};
 use tracing::warn;
 
 #[derive(Module)]
 #[module(name = "ray_tracing", setup = init_mapper)]
 pub struct RayTracingVoxelMap {
-    #[input(decode = PointCloud2::decode, handler = on_lidar)]
+    #[input(decode = cdr::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
 
     // World-frame points a sensor knows to be empty. Their voxels are deleted
     // outright, reaching space ray tracing cannot clear.
-    #[input(decode = PointCloud2::decode, handler = on_voxel_clear_mask)]
+    #[input(decode = cdr::decode, handler = on_voxel_clear_mask)]
     voxel_clear_mask: Input<PointCloud2>,
 
     #[tf]
     tf: Tf,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     global_map: Output<PointCloud2>,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     local_map: Output<PointCloud2>,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = cdr::encode)]
     local_map_fine: Output<PointCloud2>,
 
     // Cylinder bounds of the local map. Position is the center, orientation holds
     // radius, z_min, z_max. Stamped like local_map so consumers pair them.
-    #[output(encode = PoseStamped::encode)]
+    #[output(encode = cdr::encode)]
     region_bounds: Output<PoseStamped>,
 
     #[config]
@@ -134,7 +139,6 @@ impl RayTracingVoxelMap {
         if let Some(c) = region {
             let bounds_msg = PoseStamped {
                 header: Header {
-                    seq: 0,
                     stamp: stamp.clone(),
                     frame_id: out_frame_id.to_string(),
                 },
@@ -230,76 +234,10 @@ impl RayTracingVoxelMap {
 const TF_WAIT_TIMEOUT: Duration = Duration::from_millis(50);
 
 fn time_secs(t: &Time) -> f64 {
-    t.sec as f64 + t.nsec as f64 * 1e-9
+    t.sec as f64 + t.nanosec as f64 * 1e-9
 }
 
-struct ExtractError(&'static str);
-impl std::fmt::Display for ExtractError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
-    }
-}
-
-fn extract_xyz(msg: &PointCloud2) -> Result<Vec<(f32, f32, f32)>, ExtractError> {
-    let mut x_off: Option<usize> = None;
-    let mut y_off: Option<usize> = None;
-    let mut z_off: Option<usize> = None;
-    for f in &msg.fields {
-        if f.datatype != PointField::FLOAT32 as u8 {
-            continue;
-        }
-        match f.name.as_str() {
-            "x" => x_off = Some(f.offset as usize),
-            "y" => y_off = Some(f.offset as usize),
-            "z" => z_off = Some(f.offset as usize),
-            _ => {}
-        }
-    }
-    let xo = x_off.ok_or(ExtractError("missing float32 x field"))?;
-    let yo = y_off.ok_or(ExtractError("missing float32 y field"))?;
-    let zo = z_off.ok_or(ExtractError("missing float32 z field"))?;
-
-    let n = (msg.width as usize) * (msg.height as usize);
-    let step = msg.point_step as usize;
-    if step == 0 {
-        return Err(ExtractError("point_step is 0"));
-    }
-    if msg.data.len() < n * step {
-        return Err(ExtractError(
-            "data buffer shorter than width*height*point_step",
-        ));
-    }
-    if xo + 4 > step || yo + 4 > step || zo + 4 > step {
-        return Err(ExtractError(
-            "xyz field offsets do not fit within point_step",
-        ));
-    }
-    if msg.is_bigendian {
-        return Err(ExtractError("big-endian point data not supported"));
-    }
-
-    let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        let base = i * step;
-        let x = read_f32_le(&msg.data, base + xo);
-        let y = read_f32_le(&msg.data, base + yo);
-        let z = read_f32_le(&msg.data, base + zo);
-        if x.is_finite() && y.is_finite() && z.is_finite() {
-            out.push((x, y, z));
-        }
-    }
-    Ok(out)
-}
-
-#[inline]
-fn read_f32_le(buf: &[u8], off: usize) -> f32 {
-    let bytes: [u8; 4] = buf[off..off + 4]
-        .try_into()
-        .expect("bounds checked by caller");
-    f32::from_le_bytes(bytes)
-}
-
-fn write_point(data: &mut Vec<u8>, n: &mut i32, x: f32, y: f32, z: f32) {
+fn write_point(data: &mut Vec<u8>, n: &mut u32, x: f32, y: f32, z: f32) {
     data.extend_from_slice(&x.to_le_bytes());
     data.extend_from_slice(&y.to_le_bytes());
     data.extend_from_slice(&z.to_le_bytes());
@@ -307,8 +245,8 @@ fn write_point(data: &mut Vec<u8>, n: &mut i32, x: f32, y: f32, z: f32) {
     *n += 1;
 }
 
-fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2 {
-    let make_field = |name: &str, off: i32| PointField {
+fn make_cloud(data: Vec<u8>, n: u32, frame_id: &str, stamp: Time) -> PointCloud2 {
+    let make_field = |name: &str, off: u32| PointField {
         name: name.into(),
         offset: off,
         datatype: PointField::FLOAT32 as u8,
@@ -316,7 +254,6 @@ fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2
     };
     PointCloud2 {
         header: Header {
-            seq: 0,
             stamp,
             frame_id: frame_id.into(),
         },
@@ -336,10 +273,10 @@ fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2
     }
 }
 
-/// Pack flat (x, y, z) triples into an LCM cloud message.
+/// Pack flat (x, y, z) triples into a generated PointCloud2 message.
 fn points_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
     let mut data = Vec::with_capacity((points.len() / 3) * 16);
-    let mut n: i32 = 0;
+    let mut n: u32 = 0;
     for p in points.as_chunks::<3>().0 {
         write_point(&mut data, &mut n, p[0], p[1], p[2]);
     }
