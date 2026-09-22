@@ -34,7 +34,7 @@ the server is a data push plus diagnostics.
 from __future__ import annotations
 
 import asyncio
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import functools
@@ -54,16 +54,18 @@ from fastapi import HTTPException, Request, UploadFile, WebSocket, WebSocketDisc
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
+from langchain_core.messages import BaseMessage
 import numpy as np
 from pydantic import Field as PydanticField
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
+from dimos.agents.utils import ChatEntry, chat_entries
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
 from dimos.memory.store.base import Store
 from dimos.memory.transform import throttle
 from dimos.msgs.nav_msgs.Path import Path as NavPath
@@ -111,6 +113,8 @@ logger = setup_logger()
 STATIC_DIR = Path(__file__).parent / "web" / "static"
 MAX_QUERY_FRAMES = 12
 ROUTE_LIFT_M = 0.08
+# Chat rows replayed to a viewer that connects mid-conversation.
+CHAT_HISTORY = 400
 
 
 def _xyz_text(position: tuple[float, float, float]) -> str:
@@ -299,10 +303,17 @@ class MemoryWorldModule(Module):
 
     global_map: In[PointCloud2]
     path: In[NavPath]
+    # The agent's conversation, shared with the human CLI: its messages come in,
+    # a viewer's typed questions go out.
+    agent: In[BaseMessage]
+    agent_idle: In[bool]
+    human_input: Out[str]
 
     def __init__(self, **kwargs: Any) -> None:
         self._world_clients: set[_ClientConn] = set()
         self._clients_lock = threading.Lock()
+        self._chat_history: deque[ChatEntry] = deque(maxlen=CHAT_HISTORY)
+        self._agent_is_idle = True
 
         self._store: Store | None = None
         # Cached payloads so reconnects are cheap.
@@ -593,6 +604,10 @@ class MemoryWorldModule(Module):
             conn.send_threadsafe(encode_text("ready"))
             with self._clients_lock:
                 active_query_result = self._active_query_result
+                chat_history = list(self._chat_history)
+                agent_is_idle = self._agent_is_idle
+            conn.send_threadsafe(encode_text("chat_history", entries=chat_history))
+            conn.send_threadsafe(encode_text("agent_idle", idle=agent_is_idle))
             if active_query_result is not None:
                 conn.send_threadsafe(encode_text("query_result", **active_query_result))
                 for header, jpeg in self._active_query_images:
@@ -1670,8 +1685,35 @@ class MemoryWorldModule(Module):
             # Client-side view gestures, echoed only as telemetry. Debug-level
             # so they don't spam the console (scale_delta fires every frame).
             logger.debug("[client] %s", kind)
+        elif kind == "ask":
+            text = msg.get("text")
+            if isinstance(text, str) and text.strip():
+                self._ask(conn, text.strip())
         else:
             logger.warning("[client] unknown msg kind=%r full=%r", kind, msg)
+
+    # ---- chat with the agent ---------------------------------------------
+
+    def _ask(self, conn: _ClientConn, text: str) -> None:
+        """Send a viewer's typed question to the agent, the way the human CLI does."""
+        if self.human_input.transport is None:
+            conn.send_threadsafe(encode_text("error", message="no agent is connected"))
+            return
+        with self._clients_lock:
+            self._agent_is_idle = False
+        self.human_input.publish(text)
+
+    def _on_agent_message(self, msg: BaseMessage) -> None:
+        entries = chat_entries(msg)
+        with self._clients_lock:
+            self._chat_history.extend(entries)
+        for entry in entries:
+            self._broadcast(encode_text("chat", **entry))
+
+    def _on_agent_idle(self, idle: bool) -> None:
+        with self._clients_lock:
+            self._agent_is_idle = bool(idle)
+        self._broadcast(encode_text("agent_idle", idle=bool(idle)))
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -1691,6 +1733,10 @@ class MemoryWorldModule(Module):
             self.register_disposable(Disposable(self.global_map.subscribe(self._on_global_map)))
         if self.path.transport is not None:
             self.register_disposable(Disposable(self.path.subscribe(self._on_path)))
+        if self.agent.transport is not None:
+            self.register_disposable(Disposable(self.agent.subscribe(self._on_agent_message)))
+        if self.agent_idle.transport is not None:
+            self.register_disposable(Disposable(self.agent_idle.subscribe(self._on_agent_idle)))
         self._web_server_thread = threading.Thread(
             target=self._web_server.run,
             kwargs={"ssl": True, "ssl_certs_dir": DIMOS_PROJECT_ROOT / "assets" / "teleop_certs"},

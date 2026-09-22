@@ -36,7 +36,7 @@ from textual.strip import Strip
 from textual.widgets import Input, RichLog, Static
 
 from dimos.agents.mcp import tool_stream
-from dimos.agents.utils import message_text
+from dimos.agents.utils import message_text, summarize_tool_result
 from dimos.cli import theme
 from dimos.core.transport_factory import apply_transport_arg, make_transport
 from dimos.utils.generic import truncate_display_string
@@ -76,22 +76,6 @@ STOP_FINALIZE_DELAY = 1.0
 def _format_elapsed(delta: timedelta) -> str:
     total = int(delta.total_seconds())
     return f"{total // 60:02d}:{total % 60:02d}"
-
-
-def _summarize_tool_result(content: Any) -> str:
-    """A skill's result as its message line; anything else as it came."""
-    if not isinstance(content, str):
-        return str(content)
-    try:
-        result = json.loads(content)
-    except ValueError:
-        return content
-    if not isinstance(result, dict) or "message" not in result:
-        return content
-    message = str(result["message"])
-    if result.get("success") is False:
-        return f"{result.get('error_code') or 'failed'}: {message}"
-    return message
 
 
 def _split_tool_message(content: Any) -> tuple[str, str] | None:
@@ -522,7 +506,7 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
             self._tool_call_anchors[call_id] = strips
 
     def _write_tool_result(self, timestamp: str, content: str, call_id: str | None) -> None:
-        text = f"{TOOL_RESULT_MARKER} {_summarize_tool_result(content)}"
+        text = f"{TOOL_RESULT_MARKER} {summarize_tool_result(content)}"
         anchor = self._tool_call_anchors.pop(call_id, None) if call_id else None
         if anchor is None:
             # No matching call on screen (e.g. a lookout continuation) -> append.

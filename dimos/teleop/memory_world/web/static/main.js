@@ -22,6 +22,11 @@ const connectBtn = document.getElementById('connectBtn');
 const disconnectBtn = document.getElementById('disconnectBtn');
 const micBtn = document.getElementById('micBtn');
 const logEl = document.getElementById('log');
+const chatEl = document.getElementById('chat');
+const chatLogEl = document.getElementById('chatLog');
+const chatStateEl = document.getElementById('chatState');
+const chatForm = document.getElementById('chatForm');
+const chatInput = document.getElementById('chatInput');
 const backgroundMode = document.body.dataset.backgroundMode || 'black';
 
 let ws = null;
@@ -181,6 +186,16 @@ function handleControl(msg) {
             setStatus(`Heard: “${msg.text}” — searching…`);
             if (scene) scene.setHeardText(msg.text);
             break;
+        case 'chat':
+            appendChat(msg);
+            break;
+        case 'chat_history':
+            chatLogEl.textContent = '';
+            for (const entry of msg.entries || []) appendChat(entry);
+            break;
+        case 'agent_idle':
+            setAgentIdle(Boolean(msg.idle));
+            break;
         case 'error':
             setStatus(`Server error: ${msg.message || 'unknown'}`);
             break;
@@ -327,6 +342,10 @@ async function startViewer() {
         diag('vr_unavailable_using_desktop', { error: 'navigator.xr missing' });
     }
     document.body.classList.add('desktop-view');
+    // With a keyboard the conversation gets its own panel; the HUD keeps the map.
+    const chatShown = !document.body.classList.contains('touch');
+    document.body.classList.toggle('chat-open', chatShown);
+    scene.answerOnHud = !chatShown;
     scene.startDesktop(sendViewerPose);
     setStatus('Desktop view — click to look, WASD to walk');
 }
@@ -445,6 +464,59 @@ async function sendRecording(blob) {
     }
 }
 
+// ---- chat with the agent ----------------------------------------------------
+//
+// The server forwards the agent's conversation, the same rows the human CLI
+// shows: what was asked, each tool call and its result, and the reply.
+
+const TOOL_ARGS_CHARS = 160;
+
+function appendChat(entry) {
+    const row = document.createElement('div');
+    row.className = `msg ${entry.role}`;
+    if (entry.role === 'tool_call') {
+        const args = entry.args || '';
+        const short = args.length > TOOL_ARGS_CHARS ? `${args.slice(0, TOOL_ARGS_CHARS)}…` : args;
+        const argsEl = document.createElement('span');
+        argsEl.className = 'args';
+        argsEl.textContent = short;
+        row.append(`▶ ${entry.name}(`, argsEl, ')');
+        if (short !== args) {
+            row.classList.add('expandable');
+            row.title = 'Click to expand';
+            row.addEventListener('click', () => {
+                const open = row.classList.toggle('open');
+                argsEl.textContent = open ? args : short;
+            });
+        }
+    } else if (entry.role === 'tool_result') {
+        row.textContent = `↳ ${entry.text}`;
+        if (entry.ok === false) row.classList.add('failed');
+    } else {
+        const who = document.createElement('span');
+        who.className = 'who';
+        who.textContent = entry.role;
+        row.append(who, entry.text || '');
+    }
+    const follow = chatLogEl.scrollTop + chatLogEl.clientHeight >= chatLogEl.scrollHeight - 24;
+    chatLogEl.appendChild(row);
+    if (follow) chatLogEl.scrollTop = chatLogEl.scrollHeight;
+}
+
+function setAgentIdle(idle) {
+    chatEl.classList.toggle('thinking', !idle);
+    chatStateEl.textContent = idle ? 'idle' : 'thinking…';
+}
+
+chatForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const text = chatInput.value.trim();
+    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(encodeText('ask', { text }));
+    chatInput.value = '';
+    setAgentIdle(false);
+});
+
 // ---- touch controls ---------------------------------------------------------
 
 const stickEl = document.getElementById('stick');
@@ -532,7 +604,10 @@ async function disconnect() {
     perfEl.style.display = 'none';
     document.getElementById('timeline').hidden = true;
     replay = null;
-    document.body.classList.remove('desktop-view');
+    document.body.classList.remove('desktop-view', 'chat-open');
+    chatLogEl.textContent = '';
+    setAgentIdle(true);
+    chatStateEl.textContent = 'not connected';
     connectBtn.classList.remove('hidden');
     connectBtn.disabled = false;
     disconnectBtn.classList.add('hidden');
@@ -578,6 +653,7 @@ window.app = {
 // H pins the desktop menu and perf readout, which otherwise fade out once
 // the world is up and only return on hover.
 window.addEventListener('keydown', (event) => {
+    if (event.target === chatInput) return;
     if (event.code === 'KeyH' && document.body.classList.contains('desktop-view')) {
         document.body.classList.toggle('hud-visible');
     }

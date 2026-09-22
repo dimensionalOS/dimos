@@ -47,6 +47,11 @@ const DESKTOP_PITCH_LIMIT = 1.45;             // just under 90deg, avoids gimbal
 const DESKTOP_SPRINT_MULTIPLIER = 3.0;
 const DESKTOP_SCALE_STEP = 1.08;              // per wheel notch
 const DESKTOP_MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE']);
+
+/** True while the keyboard belongs to a text field, such as the chat box. */
+export function isTypingTarget(element) {
+    return Boolean(element && (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA' || element.isContentEditable));
+}
 const TOUCH_LOOK_SENSITIVITY = 0.006;         // radians per CSS pixel of one-finger drag
 const TOUCH_WALK_GAIN = 40;                   // two-finger drag: a screen-height sweep = full stick x40
 // GTA-style HUD minimap — head-locked, sits at lower-left of view.
@@ -230,6 +235,8 @@ export class WorldScene {
         );
         this._answerPanel.position.set(0, 0.2, 0.002);
         this._answerPanel.visible = false;
+        // A flat viewer with a chat panel reads answers there instead.
+        this.answerOnHud = true;
         this._hudGroup.add(this._answerPanel);
 
         // Replay: the camera frame at the scrubbed time, head-locked above the
@@ -431,6 +438,7 @@ export class WorldScene {
     }
 
     _onDesktopKey(event, isDown) {
+        if (isTypingTarget(event.target)) return;
         this._desktopSprint = event.shiftKey;
         if (DESKTOP_MOVE_KEYS.has(event.code)) {
             event.preventDefault();
@@ -1470,7 +1478,7 @@ export class WorldScene {
         if (line && lines.length < 4) lines.push(line);
         lines.slice(0, 4).forEach((text, i) => ctx.fillText(text, 42, 62 + i * 50));
         this._answerTexture.needsUpdate = true;
-        this._answerPanel.visible = true;
+        this._answerPanel.visible = this.answerOnHud;
         this._hudGroup.visible = true; // a new answer is worth un-hiding the HUD for
     }
 

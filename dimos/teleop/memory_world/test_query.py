@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from langchain_core.messages import AIMessage, HumanMessage
 import numpy as np
 from pydantic import ValidationError
 import pytest
@@ -229,6 +230,47 @@ def test_viewer_pose_accepts_only_finite_xyz(memory_world: MemoryWorldModule) ->
         {"type": "viewer_pose", "position": [float("nan"), 5, 6]},
     )
     assert memory_world._viewer_position == (1.0, 2.5, 3.0)
+
+
+def test_agent_messages_reach_every_viewer_and_the_history(
+    memory_world: MemoryWorldModule,
+) -> None:
+    sent: list[str] = []
+    memory_world._broadcast = sent.append  # type: ignore[method-assign]
+    reply = AIMessage(
+        content="On it.",
+        tool_calls=[{"name": "find_in_memory", "args": {"query": "car"}, "id": "call_1"}],
+    )
+
+    memory_world._on_agent_message(HumanMessage(content="Where is the car?"))
+    memory_world._on_agent_message(reply)
+    memory_world._on_agent_idle(False)
+
+    assert [json.loads(raw)["type"] for raw in sent] == ["chat", "chat", "chat", "agent_idle"]
+    assert json.loads(sent[2])["name"] == "find_in_memory"
+    assert [entry["role"] for entry in memory_world._chat_history] == [
+        "human",
+        "agent",
+        "tool_call",
+    ]
+    assert memory_world._agent_is_idle is False
+
+
+def test_a_typed_question_goes_to_the_agent(memory_world: MemoryWorldModule) -> None:
+    replies: list[str] = []
+    conn = SimpleNamespace(send_threadsafe=replies.append)
+
+    memory_world._on_client_message(conn, {"type": "ask", "text": "  How far did you walk? "})  # type: ignore[arg-type]
+
+    assert json.loads(replies[0]) == {"type": "error", "message": "no agent is connected"}
+
+    asked: list[str] = []
+    memory_world.human_input = SimpleNamespace(transport=object(), publish=asked.append)  # type: ignore[assignment]
+    memory_world._on_client_message(conn, {"type": "ask", "text": "  How far did you walk? "})  # type: ignore[arg-type]
+    memory_world._on_client_message(conn, {"type": "ask", "text": "   "})  # type: ignore[arg-type]
+
+    assert asked == ["How far did you walk?"]
+    assert memory_world._agent_is_idle is False
 
 
 def test_planner_path_becomes_the_route_of_the_active_answer(

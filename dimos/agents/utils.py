@@ -13,8 +13,10 @@
 # limitations under the License.
 
 from datetime import datetime
+import json
 from typing import Any
 
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
 
 from dimos.utils.logging_config import setup_logger
@@ -45,6 +47,71 @@ def message_text(content: object) -> str:
         ]
         return "\n".join(texts).strip()
     return str(content) if content else ""
+
+
+def summarize_tool_result(content: object) -> str:
+    """A skill's result as its message line; anything else as it came."""
+    if not isinstance(content, str):
+        return str(content)
+    try:
+        result = json.loads(content)
+    except ValueError:
+        return content
+    if not isinstance(result, dict) or "message" not in result:
+        return content
+    message = str(result["message"])
+    if result.get("success") is False:
+        return f"{result.get('error_code') or 'failed'}: {message}"
+    return message
+
+
+def _tool_result_ok(content: object) -> bool:
+    if not isinstance(content, str):
+        return True
+    try:
+        result = json.loads(content)
+    except ValueError:
+        return True
+    return not (isinstance(result, dict) and result.get("success") is False)
+
+
+ChatEntry = dict[str, Any]
+
+
+def chat_entries(msg: BaseMessage) -> list[ChatEntry]:
+    """A message as the rows a chat view shows: text by role, then one row per tool call."""
+    entries: list[ChatEntry] = []
+    if isinstance(msg, HumanMessage):
+        text = message_text(msg.content)
+        if text:
+            entries.append({"role": "human", "text": text})
+    elif isinstance(msg, SystemMessage):
+        text = message_text(msg.content)
+        if text:
+            entries.append({"role": "system", "text": text})
+    elif isinstance(msg, ToolMessage):
+        entries.append(
+            {
+                "role": "tool_result",
+                "text": summarize_tool_result(msg.content),
+                "ok": _tool_result_ok(msg.content),
+                "call_id": msg.tool_call_id,
+            }
+        )
+    elif isinstance(msg, AIMessage):
+        text = message_text(msg.content)
+        if text:
+            entries.append({"role": "agent", "text": text})
+        for call in msg.tool_calls:
+            entries.append(
+                {
+                    "role": "tool_call",
+                    "name": call.get("name") or "unknown",
+                    "args": json.dumps(call.get("args") or {}, separators=(",", ":")),
+                    "call_id": call.get("id"),
+                }
+            )
+    return entries
 
 
 def pretty_print_langchain_message(msg: BaseMessage) -> None:
