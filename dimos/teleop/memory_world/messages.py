@@ -28,7 +28,9 @@ from typing import Any
 MSG_POINT_CLOUD = 0x01
 MSG_IMAGE_POSES = 0x02
 MSG_ODOM_TRAIL = 0x03
-MSG_TOP_DOWN_MAP = 0x04
+# 0x04 was MSG_TOP_DOWN_MAP, removed 2026-09-22 with the minimap that was its only
+# consumer. RETIRED, not free: a browser holding a cached build still knows 0x04, and
+# handing it something else under that byte is worse than leaving the number unused.
 MSG_IMAGE_THUMBNAIL = 0x05
 MSG_QUERY_IMAGE = 0x06  # the frame behind one answer, with the camera pose that took it
 

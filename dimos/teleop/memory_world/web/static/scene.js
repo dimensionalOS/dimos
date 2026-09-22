@@ -1353,12 +1353,6 @@ export class WorldScene {
         if (!this._hudGroupPinnedOff) this._hudGroup.visible = true;  // it lives here
     }
 
-    setTopDownMap() {
-        // The top-down map was the minimap's texture and nothing else drew it, so this
-        // accepts the frame the server still sends and does nothing with it. Kept as a
-        // method because the message router calls it by name.
-    }
-
     setOdomTrail(header, payloadArrayBuffer) {
         const n = header.n | 0;
         if (n < 2) return;

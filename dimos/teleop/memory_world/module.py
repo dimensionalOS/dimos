@@ -61,7 +61,6 @@ from dimos.teleop.memory_world.messages import (
     MSG_ODOM_TRAIL,
     MSG_POINT_CLOUD,
     MSG_QUERY_IMAGE,
-    MSG_TOP_DOWN_MAP,
     decode_text,
     encode_binary,
     encode_text,
@@ -173,14 +172,6 @@ class MemoryWorldConfig(ModuleConfig):
     # The frame the viewer's orbit mode circles, sent per replay scan. Falls
     # back to the camera frame when tf does not know it.
     orbit_frame: str = "base_link"
-    # Top-down density map, a Z-slab histogram of the same point cloud into a square
-    # image. Still computed and sent; nothing has drawn it since the minimap went.
-    map_image_size: int = 512
-    # The top-down map is a footprint, so it takes the middle of whatever
-    # height range the cloud spans — percentiles, not metres, so it works on
-    # one storey or several.
-    map_z_low_percentile: float = PydanticField(default=10.0, ge=0.0, le=100.0)
-    map_z_high_percentile: float = PydanticField(default=90.0, ge=0.0, le=100.0)
     client_route: str = "/memory_world"
     # Bind on all interfaces by default — the headset connects over Wi-Fi.
     listen_host: str = "0.0.0.0"
@@ -293,7 +284,6 @@ class MemoryWorldModule(
         # Per-pose JPEG thumbnails parallel to image_poses indices.
         self._cached_thumbnails: list[bytes] | None = None
         self._cached_odom: tuple[dict[str, Any], bytes] | None = None
-        self._cached_top_down: tuple[dict[str, Any], bytes] | None = None
         self._viewer_position: tuple[float, float, float] | None = None
         self._visual_index: VisualMemoryIndex | None = None
         self._lidar_world_aligned_cache: bool | None = None
@@ -608,14 +598,12 @@ class MemoryWorldModule(
     ]:
         """Build the cloud, top-down map, markers and trail once, whoever asks first.
 
-        Returns (cloud, top-down map, image poses, thumbnails, trail) as one
+        Returns (cloud, image poses, thumbnails, trail) as one
         snapshot taken under the lock: a reopen clears the fields meanwhile.
         """
         with self._world_cache_lock:
             if self._cached_cloud is None:
                 self._cached_cloud = self._build_cloud()
-            if self._cached_top_down is None:
-                self._cached_top_down = self._build_top_down_map(self._cached_cloud)
             if self._cached_image_poses is None:
                 with self._store_lock:  # walks the image stream
                     self._cached_image_poses, self._cached_thumbnails = self._build_image_poses()
@@ -624,7 +612,6 @@ class MemoryWorldModule(
                     self._cached_odom = self._build_trail()
             return (
                 self._cached_cloud,
-                self._cached_top_down,
                 self._cached_image_poses,
                 self._cached_thumbnails,
                 self._cached_odom,
@@ -636,16 +623,10 @@ class MemoryWorldModule(
                 conn.send_threadsafe(
                     encode_text("status", message="Building the map from the recording…")
                 )
-            cloud, top_down, poses, thumbnails, odom = self._ensure_world_cache()
+            cloud, poses, thumbnails, odom = self._ensure_world_cache()
             cloud_header, cloud_payload = cloud
             conn.send_threadsafe(encode_text("world_summary", **cloud_header))
             conn.send_threadsafe(encode_binary(MSG_POINT_CLOUD, cloud_header, cloud_payload))
-
-            # Send the top-down map next. Nothing draws it since the minimap was
-            # removed; the client's `setTopDownMap` takes it and does nothing.
-            if top_down is not None:
-                map_header, map_payload = top_down
-                conn.send_threadsafe(encode_binary(MSG_TOP_DOWN_MAP, map_header, map_payload))
 
             poses_header, poses_payload = poses
             conn.send_threadsafe(encode_binary(MSG_IMAGE_POSES, poses_header, poses_payload))
@@ -847,7 +828,7 @@ class MemoryWorldModule(
             self._camera_hfov_deg = None
             self._camera_frame_cache = None
             self._cached_cloud = self._cached_image_poses = self._cached_thumbnails = None
-            self._cached_odom = self._cached_top_down = self._map_xyz = None
+            self._cached_odom = self._map_xyz = None
             self._route_planner = None
             self._orbit_cache.clear()
             if old is not None:
