@@ -1244,3 +1244,13 @@ and mutation of the caller's previous pose. Mypy passed for all three changed
 production modules. The threaded `demo_holonomic_path.py` arrived at `(0.926, 0)`
 within its 0.08m goal tolerance and printed a final zero command. Network
 transport behavior is outside this focused demo's scope.
+
+### Generated local-planner gating and smoothing
+
+DanLocalPlanner and its replan gate now consume generated PointStamped,
+PoseStamped, and Path. Seven tests passed with CDR-decoded inputs, covering
+progress-based commits, fresh/stale goals, cancellation, empty-path stop,
+disabled gating, and smoothing with exact sec/nanosec header preservation.
+Mypy passed for the production module. The cumulative holonomic path demo now
+runs this gate first: it prints 10 resampled poses and suppression of a duplicate
+replan, then the threaded follower arrives at `(0.926, 0)` and publishes zero.

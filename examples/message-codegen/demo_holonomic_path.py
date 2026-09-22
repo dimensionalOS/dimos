@@ -23,6 +23,7 @@ from dimos_generated.std_msgs.msg import Header
 
 from dimos.msgs.time import time_from_nanoseconds
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTCConfig, _HolonomicPathFollower
+from dimos.navigation.dannav.local_planner.module import DanLocalPlannerConfig, _ReplanGate
 
 
 def main() -> None:
@@ -62,8 +63,18 @@ def main() -> None:
         ],
     )
     try:
+        gate = _ReplanGate(
+            DanLocalPlannerConfig(lock_replan=0.5, resample_spacing_m=0.1, smoothing_window=3)
+        )
+        gate.on_odom(odometry(0))
+        committed = gate.on_planner_path(Path.decode(path.encode()))
+        assert committed is not None
+        assert gate.on_planner_path(Path.decode(path.encode())) is None
+        print(
+            f"Local planner committed {len(committed.poses)} resampled poses; duplicate replan held"
+        )
         core.handle_odom(odometry(0))
-        core.start_planning(Path.decode(path.encode()))
+        core.start_planning(Path.decode(committed.encode()))
         for tick in range(300):
             if stopped:
                 break

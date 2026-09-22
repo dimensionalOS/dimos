@@ -1058,3 +1058,7 @@ prints decoded velocity and position, reports arrival, and publishes zero
 velocity. Path, odometry, and commands use generated CDR round-trips. The demo
 closes its thread and subscriptions automatically; it needs no robot or ROS.
 This is an in-process control demo, not network transport verification.
+
+The holonomic path demo also exercises `DanLocalPlanner`'s core: it smooths and
+resamples the incoming CDR path and visibly suppresses a duplicate replan inside
+the configured commit window before starting the follower.

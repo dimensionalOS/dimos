@@ -36,6 +36,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import PointStamped, PoseStamped
+from dimos_generated.nav_msgs.msg import Path
 import numpy as np
 from numpy.typing import NDArray
 from reactivex.disposable import Disposable
@@ -44,10 +46,6 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.dannav.geometry.path_distancer import PathDistancer
 from dimos.utils.logging_config import setup_logger
 
@@ -98,7 +96,7 @@ class _ReplanGate:
         self._anchor_progress_m: float = 0.0
 
     def on_odom(self, odom: PoseStamped) -> None:
-        self._robot_xy = np.array([odom.position.x, odom.position.y], dtype=float)
+        self._robot_xy = np.array([odom.pose.position.x, odom.pose.position.y], dtype=float)
 
     def on_goal(self, goal: PointStamped) -> None:
         """Arm or disarm the fresh-click commit.
@@ -108,11 +106,11 @@ class _ReplanGate:
         drops the committed path). ``DanLocalPlanner`` does not touch
         ``stop_movement``.
         """
-        if math.isnan(goal.x) or math.isnan(goal.y):
+        if math.isnan(goal.point.x) or math.isnan(goal.point.y):
             self._armed_goal = None
             self._drop_committed()
             return
-        self._armed_goal = np.array([goal.x, goal.y], dtype=float)
+        self._armed_goal = np.array([goal.point.x, goal.point.y], dtype=float)
 
     def on_planner_path(self, path: Path) -> Path | None:
         """Return the path to forward, or ``None`` to suppress it.
@@ -171,7 +169,7 @@ class _ReplanGate:
         if self._cfg.resample_spacing_m <= 0.0 or len(path.poses) == 0:
             return path
         last = path.poses[-1]
-        goal_pose = Pose(last.position, last.orientation)
+        goal_pose = last.pose
         return smooth_resample_path(
             path, goal_pose, self._cfg.resample_spacing_m, self._cfg.smoothing_window
         )
@@ -201,7 +199,10 @@ class _ReplanGate:
 def _ends_near(path: Path, goal_xy: NDArray[np.float64], tolerance_m: float) -> bool:
     """True when ``path``'s last pose is within ``tolerance_m`` of ``goal_xy``."""
     end = path.poses[-1]
-    return float(math.hypot(end.x - goal_xy[0], end.y - goal_xy[1])) <= tolerance_m
+    return (
+        float(math.hypot(end.pose.position.x - goal_xy[0], end.pose.position.y - goal_xy[1]))
+        <= tolerance_m
+    )
 
 
 class DanLocalPlanner(Module):
