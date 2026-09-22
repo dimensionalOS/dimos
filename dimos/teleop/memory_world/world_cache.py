@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import cv2
 import numpy as np
 
 from dimos.teleop.memory_world.visual_search import body_style_quaternion
@@ -347,72 +346,3 @@ class WorldCache:
         except Exception:
             logger.exception("failed to build image poses")
             return ({"n": 0, "timestamps": [], "ids": []}, b""), []
-
-    def _build_top_down_map(
-        self, cloud: tuple[dict[str, Any], bytes]
-    ) -> tuple[dict[str, Any], bytes] | None:
-        """Render a top-down density map from the same point cloud shown in VR.
-
-        NOTHING DRAWS THIS ANY MORE. It fed the HUD minimap, deleted 2026-09-22, and
-        before that a ground-pasted texture that hid the voxels you stood among. The
-        server still computes it and still sends MSG_TOP_DOWN_MAP, and `setTopDownMap`
-        on the client is a no-op that accepts it. Left in place deliberately rather than
-        ripped out at the same time as the panel: it is cheap, and a top-down view is the
-        obvious thing to want back. Delete both ends together if it is still unused.
-        """
-        cloud_header, cloud_payload = cloud
-        n = int(cloud_header.get("n", 0))
-        xyz = np.frombuffer(cloud_payload, dtype=np.float32, count=n * 3).reshape(n, 3)
-        if xyz.size == 0:
-            return None
-
-        z = xyz[:, 2]
-        low = float(np.percentile(z, self.config.map_z_low_percentile))
-        high = float(np.percentile(z, self.config.map_z_high_percentile))
-        m = (z >= low) & (z <= high)
-        xy = xyz[m, :2]
-        if xy.size == 0:
-            xy = xyz[:, :2]
-
-        x_min, x_max = float(xy[:, 0].min()), float(xy[:, 0].max())
-        y_min, y_max = float(xy[:, 1].min()), float(xy[:, 1].max())
-        cx, cy = (x_min + x_max) / 2, (y_min + y_max) / 2
-        # Floored at half a metre, because a cloud whose points all share one XY -- one
-        # voxel survived the height filter, a recording of almost nothing -- makes both
-        # spans zero, and then the header says x_min == x_max. `np.histogram2d` does NOT
-        # agree: it expands a zero-width range to the value plus or minus 0.5 and draws
-        # the mass in the MIDDLE of the picture, while `_robotXYToHudUV` divides by
-        # `max(x_max - x_min, 1e-6)` and clamps, putting the viewer's marker in the
-        # bottom-left corner. Half a metre is exactly the window numpy picks, so the two
-        # sides agree on the degenerate map the same way they agree on every other one.
-        half = max(max(x_max - x_min, y_max - y_min) / 2 * 1.05, 0.5)
-        x_min, x_max, y_min, y_max = cx - half, cx + half, cy - half, cy + half
-
-        size = int(self.config.map_image_size)
-        hist, _, _ = np.histogram2d(
-            xy[:, 0], xy[:, 1], bins=size, range=[[x_min, x_max], [y_min, y_max]]
-        )
-        density_scale = max(float(np.percentile(hist, 99)), 1.0)
-        norm = np.clip(hist / density_scale, 0.0, 1.0)
-        gray = (norm.T * 255).astype(np.uint8)
-        gray = np.flipud(gray)
-        # Light cyan walls on dark navy background — matches the world theme.
-        rgb = np.zeros((size, size, 3), dtype=np.uint8)
-        rgb[..., 0] = (gray.astype(np.uint16) * 76 // 255).astype(np.uint8)
-        rgb[..., 1] = (gray.astype(np.uint16) * 217 // 255).astype(np.uint8)
-        rgb[..., 2] = (gray.astype(np.uint16) * 255 // 255).astype(np.uint8)
-        ok, buf = cv2.imencode(
-            ".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), [int(cv2.IMWRITE_JPEG_QUALITY), 85]
-        )
-        if not ok:
-            return None
-        header = {
-            "x_min": x_min,
-            "x_max": x_max,
-            "y_min": y_min,
-            "y_max": y_max,
-            "width_px": size,
-            "height_px": size,
-        }
-        logger.info("built top-down map: %dx%d bounds=%s", size, size, header)
-        return header, buf.tobytes()
