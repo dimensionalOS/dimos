@@ -16,8 +16,20 @@
 
 import math
 
-from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
 from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
+from numpy.typing import NDArray
+from scipy.spatial.transform import Rotation
 
 
 def yaw(rotation: Quaternion) -> float:
@@ -37,5 +49,78 @@ def transform_from_odometry(message: Odometry) -> TransformStamped:
         transform=Transform(
             translation=Vector3(x=position.x, y=position.y, z=position.z),
             rotation=message.pose.pose.orientation,
+        ),
+    )
+
+
+def quaternion_from_euler(roll: float, pitch: float, yaw: float) -> Quaternion:
+    """Convert fixed-axis XYZ angles in radians to a normalized ROS quaternion."""
+    if not all(math.isfinite(value) for value in (roll, pitch, yaw)):
+        raise ValueError("Euler angles must be finite")
+    x, y, z, w = Rotation.from_euler("xyz", [roll, pitch, yaw]).as_quat()
+    return Quaternion(x=x, y=y, z=z, w=w)
+
+
+def _rotation(quaternion: Quaternion) -> Rotation:
+    values = [quaternion.x, quaternion.y, quaternion.z, quaternion.w]
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("Quaternion components must be finite")
+    # SciPy rejects zero norm and normalizes non-unit input.
+    return Rotation.from_quat(values)
+
+
+def _translation(transform: Transform) -> NDArray[np.float64]:
+    translation = transform.translation
+    values = np.array([translation.x, translation.y, translation.z], dtype=np.float64)
+    if not np.isfinite(values).all():
+        raise ValueError("Translation components must be finite")
+    return values
+
+
+def _transform(translation: NDArray[np.float64], rotation: Rotation) -> Transform:
+    x, y, z, w = rotation.as_quat()
+    return Transform(
+        translation=Vector3(x=translation[0], y=translation[1], z=translation[2]),
+        rotation=Quaternion(x=x, y=y, z=z, w=w),
+    )
+
+
+def compose_transforms(first: TransformStamped, second: TransformStamped) -> TransformStamped:
+    """Compose A←B and B←C, preserving A's exact source stamp in the A←C result.
+
+    Inputs are copied into a new value. The shared frame must match; callers
+    querying a time-varying chain are responsible for choosing each edge's time.
+    """
+    if first.child_frame_id != second.header.frame_id:
+        raise ValueError(
+            f"Cannot compose frames {first.child_frame_id!r} and {second.header.frame_id!r}"
+        )
+    rotation = _rotation(first.transform.rotation)
+    translation = _translation(first.transform) + rotation.apply(_translation(second.transform))
+    return TransformStamped(
+        header=first.header,
+        child_frame_id=second.child_frame_id,
+        transform=_transform(translation, rotation * _rotation(second.transform.rotation)),
+    )
+
+
+def inverse_transform(message: TransformStamped) -> TransformStamped:
+    """Return B←A from A←B, swapping frame names and preserving the exact stamp."""
+    rotation = _rotation(message.transform.rotation).inv()
+    return TransformStamped(
+        header=Header(stamp=message.header.stamp, frame_id=message.child_frame_id),
+        child_frame_id=message.header.frame_id,
+        transform=_transform(-rotation.apply(_translation(message.transform)), rotation),
+    )
+
+
+def pose_from_transform(message: TransformStamped) -> PoseStamped:
+    """Copy the child frame's pose in the parent frame into a generated PoseStamped."""
+    translation = message.transform.translation
+    return PoseStamped(
+        header=message.header,
+        pose=Pose(
+            position=Point(x=translation.x, y=translation.y, z=translation.z),
+            orientation=message.transform.rotation,
         ),
     )

@@ -423,8 +423,8 @@ DIMOS_TRANSPORT=zenoh PYTHONPATH=.:build/message-codegen/demo/cpp/build \
 The Python worker publishes `a → b → c` using generated `TransformStamped`
 messages, and the Rust broadcaster publishes `c → d`. The Rust listener prints
 `x=1.5` and changing `y=cos(t), z=sin(t)` for the composed `a → d` transform.
-Generated quaternions follow ROS message defaults (all zeros); this example
-explicitly sets `w=1` for identity rotations. Stop with Ctrl-C; the coordinator
+The pinned ROS quaternion definition defaults `w=1`; generated types preserve
+that identity rotation, and this example also sets it explicitly. Stop with Ctrl-C; the coordinator
 stops both native processes and its Python workers.
 
 The automated check runs the same blueprint, verifies four changing composed
@@ -474,3 +474,30 @@ PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/pytest \
 
 This finite demo exercises coordinator deployment, remapping, native startup,
 and generated streams. Live Rerun/browser integration remains a later addition.
+
+### Generated TF values and geometry helpers
+
+The live TF buffer and recorded-stream lookup return generated
+`geometry_msgs/msg/TransformStamped` values. Read the parent frame and timestamp
+from `value.header`, the child from `value.child_frame_id`, and the translation
+and quaternion from `value.transform`. The separate helpers in
+`dimos.msgs.geometry` compose, invert, or convert those values:
+
+```python
+from dimos.msgs.geometry import compose_transforms, inverse_transform, pose_from_transform
+
+world_to_tool = compose_transforms(world_to_arm, arm_to_tool)
+tool_to_world = inverse_transform(world_to_tool)
+world_pose = pose_from_transform(world_to_tool)
+```
+
+Composition requires matching intermediate frame names and preserves the first
+edge's exact source stamp. Inversion swaps frames and preserves the stamp. The
+TF time index uses integer nanoseconds and owns snapshots of received transforms;
+mutating a received value or a lookup result cannot change buffered history.
+Float-second lookup arguments remain for existing timing APIs.
+
+The Python/Rust TF demo above now logs the composed transform from both Python
+and Rust. Its automated check verifies both results. Robot-specific publishers
+and downstream consumers are being converted to these fields as part of the
+remaining runtime cutover.

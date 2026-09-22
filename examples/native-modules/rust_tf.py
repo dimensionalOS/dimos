@@ -40,6 +40,9 @@ from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO
 from dimos.msgs.time import time_from_nanoseconds
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 _RUST_DIR = Path(__file__).parent / "rust"
 # The crate is a workspace member, so cargo builds into the repo-root target dir.
@@ -84,6 +87,15 @@ class TfProducer(Module):
                     ]
                 )
             )
+            composed = self.tfbuffer.get("a", "d", warn=False)
+            if composed is not None:
+                position = composed.transform.translation
+                logger.info(
+                    "Python TF lookup",
+                    x=position.x,
+                    y=position.y,
+                    z=position.z,
+                )
             await asyncio.sleep(0.1)
 
     @rpc

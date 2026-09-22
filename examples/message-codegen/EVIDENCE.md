@@ -324,3 +324,26 @@ discovery. Keep that finding open for the final runtime checks. Logs are
 
 This completes the three-language coordinator portion of the human demo;
 live Rerun/browser image and pose integration is still required for task 4.10.
+
+### Generated Python TF and recorded-stream lookup
+
+The live TF buffer and `StreamTF` now use generated `TransformStamped` and
+`TFMessage` values. Composition/inversion/Euler conversion live in geometry
+helpers backed by the existing SciPy dependency, outside generated classes.
+The time index keys transforms by integer nanoseconds, snapshots incoming data,
+and returns independent lookup values.
+
+The migrated TF suite and geometry helper suite passed 68 checks together:
+live/in-memory/SQLite lookup parity, composition/inversion, nearest-time and
+retention behavior, exact/negative timestamps, distinct adjacent nanoseconds,
+copy independence, and invalid rotations/frames. Mypy passed on the TF buffer,
+recorded-stream lookup, geometry helpers, and native TF demo. The coordinator
+TF check passed on both LCM and Zenoh, now verifying Python and Rust composition
+of the same chain.
+
+Correction to the earlier quaternion diagnosis: the pinned Jazzy
+`geometry_msgs/msg/Quaternion.msg` defines `w=1`; the generated default is an
+identity rotation. A zero quaternion must be constructed explicitly to test
+rejection. The initial missing TF replies were not evidence of a zero default.
+Robot-specific publishers and other legacy convenience-class consumers remain
+to be updated; this is not completion of task 4.2 or 4.6.

@@ -28,6 +28,7 @@ import pytest
 
 _ROOT = Path(__file__).resolve().parents[2]
 _LOOKUP = re.compile(r"tf lookup .* x=(\S+) y=(\S+) z=(\S+)\n")
+_PYTHON_LOOKUP = re.compile(r"Python TF lookup x=(\S+) y=(\S+) z=(\S+)\n")
 
 
 @pytest.mark.native_e2e
@@ -88,4 +89,11 @@ def test_python_and_rust_compose_generated_tf_through_coordinator(backend, tmp_p
         assert x == pytest.approx(1.5)
         assert y * y + z * z == pytest.approx(1.0)
     assert max(sample[1] for sample in samples) - min(sample[1] for sample in samples) > 0.1
+    python_samples = [
+        tuple(map(float, match.groups())) for match in _PYTHON_LOOKUP.finditer(transcript)
+    ]
+    assert python_samples, transcript
+    for x, y, z in python_samples:
+        assert x == pytest.approx(1.5)
+        assert y * y + z * z == pytest.approx(1.0)
     assert process.returncode == 0, transcript
