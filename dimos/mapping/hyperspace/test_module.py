@@ -25,9 +25,10 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 import typer
 
-from dimos.mapping.hyperspace import cli, patches as hs, segmenter as seg
+from dimos.mapping.hyperspace import cli, embedder, patches as hs, segmenter as seg
 from dimos.mapping.hyperspace.ingest import (
     COMPLETE_STREAM,
     KEYFRAME_STREAM,
@@ -552,6 +553,61 @@ def test_member_specs_and_tags() -> None:
     assert member_tag("google/siglip2-base-patch16-naflex@576") == "base-patch16-naflex-576"
     assert member_tag("/models/siglip2-so400m-patch16-384") == "so400m-patch16-384"
     assert member_tag("google/siglip2-base-patch16-224#2x3") == "base-patch16-224-2x3"
+
+
+def test_naflex_on_metal_gets_its_missing_resize() -> None:
+    """A NaFlex member resizes its position grid with an antialiased bilinear, which
+    torch has no Metal kernel for, so before this the forward pass raised mid-run and
+    NaFlex was unusable on a Mac. `PYTORCH_ENABLE_MPS_FALLBACK=1` cannot fix it from
+    inside the process -- torch reads that when it is imported."""
+    installed = len(embedder._mps_antialias_fallback)
+    embedder.ensure_mps_antialias("cpu")
+    embedder.ensure_mps_antialias("cuda")
+    assert len(embedder._mps_antialias_fallback) == installed, "only Metal is missing the kernel"
+
+    if not torch.backends.mps.is_available():
+        pytest.skip("no Metal device")
+
+    embedder.ensure_mps_antialias("mps")
+    on_metal = torch.nn.functional.interpolate(
+        torch.arange(64, dtype=torch.float32, device="mps").reshape(1, 1, 8, 8),
+        size=(4, 4),
+        mode="bilinear",
+        antialias=True,
+    )
+    on_cpu = torch.nn.functional.interpolate(
+        torch.arange(64, dtype=torch.float32).reshape(1, 1, 8, 8),
+        size=(4, 4),
+        mode="bilinear",
+        antialias=True,
+    )
+    assert on_metal.device.type == "mps", "the answer comes back where the caller left it"
+    assert on_metal.cpu().numpy() == pytest.approx(on_cpu.numpy())
+
+
+def test_every_module_can_say_no_to_metal_in_its_config() -> None:
+    """`allow_mps=False` is the way out for a stack whose parent process touches Metal.
+
+    There is no probe for that case -- see `pick_device` -- so the way out has to be a
+    setting, and it has to be one a blueprint can set: all three modules carry it, on by
+    default, and each hands it to the same chooser.
+    """
+    import torch
+
+    from dimos.mapping.hyperspace.module import (
+        HyperspaceConfig,
+        HyperspacePatchesConfig,
+        pick_device,
+    )
+
+    for config in [HyperspaceConfig, HyperspacePatchesConfig]:
+        assert config.model_fields["allow_mps"].default is True, config.__name__
+
+    if not torch.backends.mps.is_available() or torch.cuda.is_available():
+        pytest.skip("the rest only says anything on an Apple machine with no CUDA")
+    assert pick_device("auto") == "mps"
+    assert pick_device("auto", allow_mps=False) == "cpu"
+    assert pick_device("mps", allow_mps=False) == "mps", "a named device still wins"
 
 
 def test_tiles_cover_the_frame_exactly_and_stitch_back() -> None:

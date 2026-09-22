@@ -73,6 +73,33 @@ logger = setup_logger()
 
 
 def pick_device(device: str, *, allow_mps: bool = True) -> str:
+    """The fastest device this process can actually use. One answer for the whole package.
+
+    Anything but "auto" is returned verbatim, so a caller can always name its own device.
+    `allow_mps=False` keeps "auto" off Metal without naming a device -- see the last
+    paragraph for the one stack that needs it.
+
+    APPLE SILICON IS INCLUDED, and it used to be excluded. MEASURED 2026-09-15: the query
+    module runs OWLv2 on MPS inside a real dimos forkserver worker and answers sf_office's
+    "a chair" in 10.7 s, against ~140 s on the CPU -- and finds the same place. The blanket
+    ban that cost that came from `b0d3047904`, "Metal asserts in a forkserver child", which
+    turns out to be half of the rule. The whole rule, three repeats each way:
+
+        parent never compiles a Metal kernel -> the worker's MPS works      (exit 0, 3/3)
+        parent compiles ONE 64x64 matmul on mps first -> the worker aborts  (SIGABRT, 3/3)
+
+    Importing torch, `mps.is_available()`, even `torch.empty(1, device="mps")` are all
+    harmless; it takes a real kernel compile in the parent. A `dimos run` parent starts
+    workers and does not run models, so the working case is the normal one.
+
+    There is deliberately no probe. The failure is an abort rather than an exception, so it
+    cannot be caught, and a forked probe cannot answer it either: a fork of a worker cannot
+    reach MTLCompilerService whether the worker is poisoned or not, so such a probe says
+    "no" even when MPS would have worked (measured, both directions). So a stack whose
+    parent process does touch Metal says so with `allow_mps=False`, which every module
+    carries as a config field -- or names its device outright, which still wins over all
+    of this.
+    """
     if device != "auto":
         return device
     import torch
@@ -104,6 +131,11 @@ class HyperspacePatchesConfig(MemoryModuleConfig):
     model_name: str = SIGLIP2_MODEL_NAME
     # "auto" = cuda if available, else cpu (never mps inside a worker, see start()).
     device: str = "auto"
+    # Let "auto" pick Metal on Apple silicon. Off is for the one stack that breaks it: a
+    # parent process that compiles a Metal kernel before its workers start leaves every
+    # worker unable to reach MTLCompilerService, and the worker aborts rather than raising.
+    # `pick_device` has the measurement. Naming `device` outright ignores this entirely.
+    allow_mps: bool = True
     # Frame the quality gate measures camera motion against.
     motion_reference_frame: str = "odom"
     # Never embed frames closer together than this (s), which is also the ceiling on
@@ -201,10 +233,9 @@ class HyperspacePatches(MemoryModule):
     def start(self) -> None:
         # Everything the handlers need exists before Module.start binds them:
         # frames arrive the moment the ports connect.
-        # "auto" never picks MPS: Metal asserts inside dimos's forkserver
-        # workers on macOS (MPSKernelDAG.mm failed assertion) and the worker
-        # dies without a traceback. Pass device="mps" to try anyway.
-        device = pick_device(self.config.device, allow_mps=False)
+        # "auto" includes Metal on Apple silicon; `pick_device` carries the measurement
+        # and the one parent-process condition that breaks it. `allow_mps=False` opts out.
+        device = pick_device(self.config.device, allow_mps=self.config.allow_mps)
         specs = self.config.models or [self.config.model_name]
         logger.info(f"hyperspace patches: loading {specs} on {device}")
         self.model = self.register_disposable(PatchEnsemble(specs, device=device, towers="vision"))
@@ -294,6 +325,11 @@ class HyperspaceConfig(MemoryModuleConfig):
     model_name: str = SIGLIP2_MODEL_NAME
     # "auto" = cuda if available, else cpu (never mps, see start()).
     device: str = "auto"
+    # Let "auto" pick Metal on Apple silicon. Off is for the one stack that breaks it: a
+    # parent process that compiles a Metal kernel before its workers start leaves every
+    # worker unable to reach MTLCompilerService, and the worker aborts rather than raising.
+    # `pick_device` has the measurement. Naming `device` outright ignores this entirely.
+    allow_mps: bool = True
     # Ensemble stores: how the members' cell scores combine ("min", "2nd",
     # "mean") and the threshold on the pooled score. See QueryConfig.
     pool: str = "min"
@@ -332,14 +368,11 @@ class HyperspaceConfig(MemoryModuleConfig):
     # Where the detector runs. Separate from `device`, which is the text towers':
     # the towers are small enough for a cpu and OWLv2 is not.
     #
-    # ON APPLE SILICON THIS IS THE CPU AND AN ITEM QUERY IS NOT DEMOABLE. `start()` picks
-    # the device with `allow_mps=False`, because OWLv2 on MPS dies without a traceback, so
-    # a Mac runs the detector on its CPU. MEASURED on grocery.db, two members, second
-    # passes: an item query took 143.7 s and 138.2 s, against 5.98 s for the same shape of
-    # query on an RTX 5070. About 25x. The heatmap and area paths use no detector and were
-    # 1.0 s on the same machine, so it is the detector and nothing else.
+    # "auto" now includes Apple silicon -- see `pick_device`, which carries the measurement
+    # and the one condition that breaks it. An item query that took 143.7 s on this Mac's
+    # CPU takes 10.7 s on its GPU, which is the difference between demoable and not.
     #
-    # Two consequences worth knowing before anyone plans a demo around this:
+    # If a stack does hit the Metal case and falls back to the CPU, two things follow:
     # * A 140 s query does not survive the RPC layer. `ModuleConfig.default_rpc_timeout`
     #   and `rpc_timeouts` are 120 s, so `rpc_timeouts={"start_item_query": 600.0}` is
     #   needed -- and an MCP client in front of that may have a cap of its own.
@@ -465,7 +498,7 @@ class Hyperspace(MemoryModule):
         """
         from dimos.mapping.hyperspace.detect import DetectConfig
 
-        device = pick_device(self.config.owl_device, allow_mps=False)
+        device = pick_device(self.config.owl_device, allow_mps=self.config.allow_mps)
         self.live = LiveQuery(
             self.store,
             LiveConfig(
@@ -596,7 +629,7 @@ class Hyperspace(MemoryModule):
         if built is not None:
             return built
 
-        device = pick_device(self.config.device, allow_mps=False)
+        device = pick_device(self.config.device, allow_mps=self.config.allow_mps)
         logger.info(f"hyperspace query: loading text towers {self._specs} on {device}")
         self.model = self.register_disposable(
             PatchEnsemble(self._specs, device=device, towers="text")
