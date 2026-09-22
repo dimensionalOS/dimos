@@ -17,6 +17,9 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
 from dimos.manipulation.planning.groups.discovery import (
@@ -34,7 +37,6 @@ from dimos.manipulation.planning.groups.utils import (
     normalize_joint_target,
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import JointDescription, RobotModel
 
 
@@ -165,8 +167,8 @@ def test_normalize_joint_target_accepts_exact_or_unnamed_target() -> None:
         JointState(name=["left/j1", "left/j2"], position=[1.0, 2.0]),
     )
     unnamed = normalize_joint_target(group, JointState(position=[3.0, 4.0]))
-    assert named.name == ["left/j1", "left/j2"]
-    assert unnamed.name == ["left/j1", "left/j2"]
+    assert list(named.name) == ["left/j1", "left/j2"]
+    assert list(unnamed.name) == ["left/j1", "left/j2"]
     with pytest.raises(ValueError, match="missing joints"):
         normalize_joint_target(
             group,
@@ -177,10 +179,26 @@ def test_normalize_joint_target_accepts_exact_or_unnamed_target() -> None:
 def test_state_projection_requires_exact_canonical_names() -> None:
     state = JointState(name=["right/j1", "left/j2", "left/j1"], position=[3.0, 2.0, 1.0])
     projected = filter_joint_state_to_selected_joints(state, ("left/j1", "right/j1"))
-    assert projected.name == ["left/j1", "right/j1"]
-    assert projected.position == [1.0, 3.0]
+    assert list(projected.name) == ["left/j1", "right/j1"]
+    assert list(projected.position) == [1.0, 3.0]
     assert joint_state_to_ordered_positions(
         state, joint_names=("left/j1", "left/j2", "right/j1")
     ).tolist() == [1.0, 2.0, 3.0]
     with pytest.raises(ValueError, match="missing"):
         filter_joint_state_to_selected_joints(state, ("missing",))
+
+
+def test_projection_and_target_normalization_copy_source_header():
+    group = PlanningGroup("arm", ("arm/a", "arm/b"), "base", "tool")
+    source = JointState(
+        header=Header(stamp=Time(sec=-1, nanosec=999999999), frame_id="robot"),
+        name=["arm/b", "arm/a"],
+        position=[2.0, 1.0],
+    )
+    projected = filter_joint_state_to_selected_joints(source, ["arm/a"])
+    normalized = normalize_joint_target(group, source)
+    assert projected.header == normalized.header == source.header
+    assert list(projected.position) == [1.0]
+    assert list(normalized.position) == [1.0, 2.0]
+    source.header.frame_id = "changed"
+    assert projected.header.frame_id == normalized.header.frame_id == "robot"

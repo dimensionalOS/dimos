@@ -699,3 +699,29 @@ Logs: `build/message-codegen/base-control-cdr-tests.log`,
 `build/message-codegen/demo/evidence/base-transport.txt`. No hardware motion was
 performed. Legacy benchmark/trajectory/pose consumers outside this adapter path
 remain pending in the broader runtime cutover.
+
+### Manipulation planning consumes generated JointState
+
+Planning-group projection/target normalization, joint-space validation, planning
+protocol/model declarations, and RobotStateMonitor now use generated JointState.
+Projection and normalization explicitly copy the source Header instead of
+inventing a new timestamp. RobotStateMonitor preserves that header when syncing
+its reordered state into the world and invoking callbacks; arrival-time freshness
+tracking remains separate. Generated sequence data is converted explicitly at
+the NumPy joint-space boundary.
+
+**47 tests passed** across planning groups, planning specs/model validation, and
+the state monitor. Added checks cover negative/epoch source stamps, header copy
+isolation, reordered positions/velocities, incomplete feedback, and stopped
+monitor behavior. Six production/demo modules pass mypy. The yourdfpy 0.0.60
+dependency was installed to run model-validation tests rather than omit them.
+
+The hardware-free planning demo passed: generated CDR feedback selected left-arm
+positions `[-0.2, 0.3]`, normalized target `[0.1, 0.5]`, validated joint limits,
+and retained source nanoseconds `1700000000123456789`. Logs:
+`build/message-codegen/planning-joints-cdr-tests.log` and
+`build/message-codegen/demo/evidence/planning-joints.txt`.
+
+Planner backend implementations, manipulation module entry points, and the
+interactive manipulation visualizer still have legacy message consumers. These
+checks do not claim the full manipulation stack is converted.

@@ -29,9 +29,9 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -147,6 +147,7 @@ class RobotStateMonitor:
                 try:
                     # Create JointState for world sync (API uses JointState)
                     joint_state = JointState(
+                        header=msg.header,
                         name=self._joint_names,
                         position=positions.tolist(),
                     )

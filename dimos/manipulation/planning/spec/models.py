@@ -28,6 +28,7 @@ from dimos.manipulation.planning.spec.enums import (
 )
 
 if TYPE_CHECKING:
+    from dimos_generated.sensor_msgs.msg import JointState
     import numpy as np
     from numpy.typing import NDArray
 
@@ -35,7 +36,6 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.validation import PreparedRobotModel
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.msgs.sensor_msgs.JointState import JointState
     from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 

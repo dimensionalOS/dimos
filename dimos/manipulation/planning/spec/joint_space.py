@@ -23,13 +23,13 @@ from itertools import pairwise
 import math
 from typing import Annotated, Literal
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import Self
 
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.trigonometry import angle_diff
 
 
@@ -137,7 +137,7 @@ class JointSpace:
     def from_joint_state(self, state: JointState) -> NDArray[np.float64]:
         """Extract and validate this space's coordinates from a named state."""
         if not state.name:
-            return self.normalize_positions(state.position)
+            return self.normalize_positions(np.asarray(state.position, dtype=np.float64))
         if len(state.name) != len(set(state.name)):
             raise ValueError("Joint state contains duplicate coordinate names")
         positions = dict(zip(state.name, state.position, strict=True))

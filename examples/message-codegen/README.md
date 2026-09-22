@@ -705,3 +705,16 @@ then independent loopback Zenoh sessions. It prints planar position `(2, -1)`
 and yaw `pi/2`, sends velocity `(0.5, -0.2, 0.3)` after enabling, then verifies
 a generated zero Twist arrives when disabled. It closes the adapter and all
 transport resources. `test_base_transport.py` runs this exchange automatically.
+
+### Generated joint feedback in manipulation planning
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_planning_joints.py
+```
+
+This decodes a generated coordinator JointState, selects the left-arm joints in
+canonical order, normalizes a differently ordered target, and validates both
+against declared joint limits. It prints selected positions `[-0.2, 0.3]`, target
+`[0.1, 0.5]`, and the preserved source stamp `1700000000123456789`. No robot,
+planning backend, ROS installation, or persistent artifact is required.
