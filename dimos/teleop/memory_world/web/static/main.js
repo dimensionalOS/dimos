@@ -959,6 +959,10 @@ function showChat(open) {
     const room = !document.body.classList.contains('touch');
     document.body.classList.toggle('chat-open', open && room);
     chatWanted = open;
+    // The world is drawn into what the panel leaves, so opening or closing it resizes the
+    // renderer. Without this the strip under the panel is still rendered and everything in
+    // it -- an answer's photographs, most often -- is drawn where nobody can see it.
+    if (scene && scene._resizeDesktopCamera) scene._resizeDesktopCamera();
 }
 
 /** The scene changed a layer itself (a key, the tour): the boxes and the map button follow. */

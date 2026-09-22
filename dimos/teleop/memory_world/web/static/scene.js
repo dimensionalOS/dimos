@@ -423,7 +423,17 @@ export class WorldScene {
     }
 
     _resizeDesktopCamera() {
-        const width = window.innerWidth || 800;
+        // The WINDOW minus whatever is parked beside the world, not the window. The chat
+        // panel is an overlay 300-400 px wide on the right, and while the renderer was
+        // sized to the full window everything drawn into that strip -- including an
+        // answer's evidence photographs -- was rendered underneath it. Measured: of six
+        // photos, the only two on screen sat at x=506 and x=708 in a 756 px window whose
+        // panel started at 454, so both of them were behind it.
+        const aside = document.getElementById('chat');
+        const covered = aside && getComputedStyle(aside).display !== 'none'
+            ? aside.getBoundingClientRect().width
+            : 0;
+        const width = Math.max(1, (window.innerWidth || 800) - covered);
         const height = window.innerHeight || 600;
         this.three.setSize(width, height);
         this.camera.aspect = width / height;
