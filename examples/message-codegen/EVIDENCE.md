@@ -168,3 +168,12 @@ SDK and cockpit runs remained 322 and 154 tests, with both type checks passing.
 Mypy passed on 12 changed runtime/helper/codec modules. The external packaging
 relay and installed typing check also passed after making the bundled generator
 a regular package so an installed DimOS cannot shadow it.
+
+The subsequent relay consumer migration passed the entire `dimos/web` suite
+plus the generated image/grid helper tests: **677 passed in 35.59 s**. This
+includes forkserver blueprint deployment, real relay session/transport tests,
+image and map delivery, cached-map replay after unsubscribing, relay respawn,
+teleoperation stop/watchdog behavior, and lease handover. The watchdog's old
+`Twist.zero()` call was replaced with the generated zero-valued `Twist()`.
+The new array-to-image helper also passed strided input, independent copy,
+explicit encoding, and big-endian depth tests.

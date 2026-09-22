@@ -27,7 +27,7 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry import yaw
-from dimos.msgs.image import image_to_jpeg, image_view
+from dimos.msgs.image import image_from_array, image_to_jpeg, image_view
 from dimos.msgs.occupancy import block_max_reduce, occupancy_view
 from dimos.msgs.time import time_from_nanoseconds
 from dimos.web.relay_bridge.builtin_codecs import decode_point, encode_path, encode_pose
@@ -53,6 +53,24 @@ def test_big_endian_depth_view() -> None:
         width=2, height=1, step=4, encoding="16UC1", is_bigendian=1, data=[0x01, 0x02, 0x03, 0x04]
     )
     np.testing.assert_array_equal(image_view(msg), [[258, 772]])
+
+
+def test_image_array_copy_preserves_endian_and_handles_strides() -> None:
+    pixels = np.arange(24, dtype=">u2").reshape(4, 6)[::2, ::2]
+    msg = image_from_array(pixels, encoding="16UC1")
+    assert (msg.width, msg.height, msg.step, msg.is_bigendian) == (3, 2, 6, 1)
+    expected = pixels.copy()
+    pixels[:] = 0
+    np.testing.assert_array_equal(image_view(msg), expected)
+
+
+@pytest.mark.parametrize(
+    "pixels,encoding",
+    [(np.zeros((2, 2), dtype=np.float32), "mono8"), (np.zeros((2, 2), dtype=np.uint8), "rgb8")],
+)
+def test_image_array_requires_matching_encoding(pixels: np.ndarray, encoding: str) -> None:
+    with pytest.raises(ValueError, match="does not match"):
+        image_from_array(pixels, encoding=encoding)
 
 
 @pytest.mark.parametrize("step,data", [(1, [1]), (2, [1]), (2, [1, 2, 3])])

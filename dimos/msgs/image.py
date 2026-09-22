@@ -18,6 +18,7 @@ from typing import Any
 
 import cv2
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from numpy.typing import NDArray
 
@@ -31,6 +32,30 @@ _FORMATS = {
     "16UC1": ("u2", 1),
     "32FC1": ("f4", 1),
 }
+
+
+def image_from_array(pixels: NDArray[Any], *, encoding: str, header: Header | None = None) -> Image:
+    """Copy an array into a generated image with an explicit pixel encoding."""
+    if encoding not in _FORMATS:
+        raise ValueError(f"unsupported image encoding {encoding!r}")
+    kind, channels = _FORMATS[encoding]
+    expected = np.dtype(kind)
+    if pixels.dtype.kind != expected.kind or pixels.dtype.itemsize != expected.itemsize:
+        raise ValueError(f"array dtype does not match {encoding}")
+    if (channels == 1 and pixels.ndim != 2) or (
+        channels != 1 and (pixels.ndim != 3 or pixels.shape[2] != channels)
+    ):
+        raise ValueError(f"array shape does not match {encoding}")
+    contiguous = np.ascontiguousarray(pixels)
+    return Image(
+        header=header if header is not None else Header(),
+        width=pixels.shape[1],
+        height=pixels.shape[0],
+        encoding=encoding,
+        is_bigendian=int(not pixels.dtype.isnative if np.little_endian else pixels.dtype.isnative),
+        step=pixels.shape[1] * channels * pixels.dtype.itemsize,
+        data=contiguous.view(np.uint8).ravel(),
+    )
 
 
 def image_view(msg: Image) -> NDArray[Any]:

@@ -35,17 +35,17 @@ import time
 from typing import Any
 import zlib
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
+from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
+from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from pydantic import ValidationError
 import pytest
 
 from dimos.core.global_config import global_config
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds
 from dimos.simulation.mujoco.constants import VIDEO_FPS
 from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
 from dimos.web.relay_bridge.e2e_support import stop_module
@@ -201,7 +201,10 @@ def test_encode_paths_and_max_hz_gate(bridge) -> None:
         lambda: image_transport(module).subscribers and odom_transport(module).subscribers
     )
 
-    pose = PoseStamped(ts=42.5, position=[1.5, -2.5, 0.25], orientation=[0.0, 0.0, 0.0, 1.0])
+    pose = PoseStamped(
+        header=Header(stamp=time_from_seconds(42.5)),
+        pose=Pose(position=Point(x=1.5, y=-2.5, z=0.25), orientation=Quaternion(w=1)),
+    )
     odom_transport(module).publish(pose)
     assert module.encoded["odom"] == 1
     assert wait_until(lambda: len(client.frames) == 1)
@@ -210,7 +213,7 @@ def test_encode_paths_and_max_hz_gate(bridge) -> None:
     decoded = json.loads(payload)
     assert decoded == {"x": 1.5, "y": -2.5, "z": 0.25, "yaw": 0.0, "ts": 42.5}
 
-    image = Image.from_numpy(np.zeros((8, 12, 3), dtype=np.uint8))
+    image = image_from_array(np.zeros((8, 12, 3), dtype=np.uint8), encoding="rgb8")
     image_transport(module).publish(image)
     assert module.encoded["color_image"] == 1
     assert wait_until(lambda: client.writers["color_image"].offers)
@@ -256,14 +259,14 @@ def test_no_jpeg_encode_while_unsubscribed(bridge, monkeypatch) -> None:
     # independent of the module.encoded bookkeeping.
     module, clients = bridge
     calls = {"n": 0}
-    real = Image.to_jpeg_bytes
+    real = builtin_codecs.image_to_jpeg
 
     def spy(self: Image, quality: int = 75) -> bytes:
         calls["n"] += 1
         return real(self, quality=quality)
 
-    monkeypatch.setattr(Image, "to_jpeg_bytes", spy)
-    image = Image.from_numpy(np.zeros((8, 12, 3), dtype=np.uint8))
+    monkeypatch.setattr(builtin_codecs, "image_to_jpeg", spy)
+    image = image_from_array(np.zeros((8, 12, 3), dtype=np.uint8), encoding="rgb8")
     image_transport(module).publish(image)
     image_transport(module).publish(image)
     flush_loop(module)
@@ -279,10 +282,11 @@ def test_no_jpeg_encode_while_unsubscribed(bridge, monkeypatch) -> None:
 # Covers every value class of the wire contract: -1 unknown -> 255, 0 free,
 # graded cost, 100 lethal.
 COSTMAP_GRID = OccupancyGrid(
-    grid=np.array([[-1, 0, 50], [100, 0, -1]], dtype=np.int8),
-    resolution=0.05,
-    origin=Pose(-1.25, 2.5, 0.0),
-    ts=42.5,
+    data=[-1, 0, 50, 100, 0, -1],
+    info=MapMetaData(
+        width=3, height=2, resolution=0.05, origin=Pose(position=Point(x=-1.25, y=2.5))
+    ),
+    header=Header(stamp=time_from_seconds(42.5)),
 )
 COSTMAP_CELLS = bytes([255, 0, 50, 100, 0, 255])
 
@@ -309,7 +313,7 @@ def test_costmap_encode_roundtrip_and_meta(costmap_bridge) -> None:
     payload, meta = client.writers["global_costmap"].offers[0]
     assert zlib.decompress(payload) == COSTMAP_CELLS
     assert meta is not None
-    assert (meta["w"], meta["h"], meta["res"]) == (3, 2, 0.05)
+    assert (meta["w"], meta["h"], meta["res"]) == pytest.approx((3, 2, 0.05))
     assert meta["origin"][:2] == [-1.25, 2.5]
     assert meta["origin"][2] == pytest.approx(0.0, abs=1e-12)
 
@@ -424,10 +428,11 @@ def test_costmap_replay_uses_message_published_while_unsubscribed(costmap_bridge
     push(module, client, Subs(chs=[], n=2))
     assert wait_until(lambda: len(costmap_transport(module).subscribers) == 1)
     grid_b = OccupancyGrid(
-        grid=np.array([[100, 100, 100], [0, 0, 0]], dtype=np.int8),
-        resolution=0.05,
-        origin=Pose(-1.25, 2.5, 0.0),
-        ts=43.0,
+        data=[100, 100, 100, 0, 0, 0],
+        info=MapMetaData(
+            width=3, height=2, resolution=0.05, origin=Pose(position=Point(x=-1.25, y=2.5))
+        ),
+        header=Header(stamp=time_from_seconds(43)),
     )
     costmap_transport(module).publish(grid_b)
 
@@ -524,9 +529,8 @@ def test_encode_started_in_old_session_is_not_sent_to_replacement(
         target=odom_transport(module).publish,
         args=(
             PoseStamped(
-                ts=42.5,
-                position=[1.5, -2.5, 0.25],
-                orientation=[0.0, 0.0, 0.0, 1.0],
+                header=Header(stamp=time_from_seconds(42.5)),
+                pose=Pose(position=Point(x=1.5, y=-2.5, z=0.25), orientation=Quaternion(w=1)),
             ),
         ),
     )
@@ -697,7 +701,7 @@ def test_unsubscribe_failure_does_not_skip_other_cleanup_or_leak_into_new_sessio
     assert wait_until(lambda: len(clients) == 2)
     assert old_session.unsubs == {}
 
-    color.publish(Image.from_numpy(np.zeros((8, 12, 3), dtype=np.uint8)))
+    color.publish(image_from_array(np.zeros((8, 12, 3), dtype=np.uint8), encoding="rgb8"))
     flush_loop(module)
 
     assert clients[1].writers["color_image"].offers == []
@@ -764,16 +768,18 @@ def test_start_with_authored_manifest_rates_and_quality(monkeypatch) -> None:
         (image_spec,) = module._channel_specs
         assert image_spec.params["quality"] == 33
         qualities: list[int] = []
-        real = Image.to_jpeg_bytes
+        real = builtin_codecs.image_to_jpeg
 
         def spy(self: Image, quality: int = 75) -> bytes:
             qualities.append(quality)
             return real(self, quality=quality)
 
-        monkeypatch.setattr(Image, "to_jpeg_bytes", spy)
+        monkeypatch.setattr(builtin_codecs, "image_to_jpeg", spy)
         push(module, clients[0], Subs(chs=["color_image"], n=1))
         assert wait_until(lambda: image_transport(module).subscribers)
-        image_transport(module).publish(Image.from_numpy(np.zeros((8, 12, 3), dtype=np.uint8)))
+        image_transport(module).publish(
+            image_from_array(np.zeros((8, 12, 3), dtype=np.uint8), encoding="rgb8")
+        )
         assert wait_until(lambda: qualities == [33])
     finally:
         stop_module(module)
@@ -1331,7 +1337,7 @@ def test_teleop_twist_publishes_geometry_twist(teleop_bridge) -> None:
     module, clients, twists = teleop_bridge
     push(module, clients[0], wire_twist(0.4, 0.2, -0.5, seq=1))
     assert wait_until(lambda: len(twists) == 1)
-    assert twists[0] == Twist(linear=Vector3(0.4, 0.2, 0.0), angular=Vector3(0.0, 0.0, -0.5))
+    assert twists[0] == Twist(linear=Vector3(x=0.4, y=0.2), angular=Vector3(z=-0.5))
 
 
 def test_teleop_clamps_to_boost_bounds(teleop_bridge) -> None:
@@ -1339,7 +1345,7 @@ def test_teleop_clamps_to_boost_bounds(teleop_bridge) -> None:
     push(module, clients[0], wire_twist(100.0, -100.0, -100.0, seq=1))
     assert wait_until(lambda: len(twists) == 1)
     # maxLinear 0.8 * boost 2.0; maxAngular 1.0 * boost 2.0.
-    assert twists[0] == Twist(linear=Vector3(1.6, -1.6, 0.0), angular=Vector3(0.0, 0.0, -2.0))
+    assert twists[0] == Twist(linear=Vector3(x=1.6, y=-1.6), angular=Vector3(z=-2.0))
 
 
 def test_teleop_seq_guard_drops_stale_within_live_stream(teleop_bridge) -> None:
@@ -1362,7 +1368,7 @@ def test_teleop_watchdog_deadline_and_high_water_survives_silence(teleop_bridge)
     # wait_until poll and thread scheduling).
     assert wait_until(lambda: len(twists) == 2)
     elapsed = time.monotonic() - started
-    assert twists[1].is_zero()
+    assert twists[1] == Twist()
     deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + relay_bridge_module._TELEOP_POLL_S + 0.5
     assert elapsed < deadline, f"deadman zero took {elapsed:.3f}s (deadline {deadline:.3f}s)"
     time.sleep(3 * _TELEOP_TEST_WATCHDOG_MS / 1000)
@@ -1392,7 +1398,7 @@ def test_teleop_zero_only_on_release_edge(teleop_bridge) -> None:
     assert wait_until(lambda: len(twists) == 2)
     settle(module)
     assert len(twists) == 2
-    assert twists[1].is_zero()
+    assert twists[1] == Twist()
 
 
 def test_teleop_stop_is_unconditional(teleop_bridge) -> None:
@@ -1402,7 +1408,7 @@ def test_teleop_stop_is_unconditional(teleop_bridge) -> None:
     push(module, clients[0], WireStop(seq=1, ts=time.time(), gen=1))
     push(module, clients[0], WireStop(seq=2, ts=time.time(), gen=1))
     assert wait_until(lambda: len(twists) == 2)
-    assert all(t.is_zero() for t in twists)
+    assert all(t == Twist() for t in twists)
 
 
 def test_teleop_stop_blocks_stale_reordered_twist(teleop_bridge) -> None:
@@ -1424,7 +1430,7 @@ def test_teleop_lease_end_zeroes_once_and_resets_seq(teleop_bridge) -> None:
     assert wait_until(lambda: len(twists) == 1)
     push(module, clients[0], WireTeleopStop(gen=1))
     assert wait_until(lambda: len(twists) == 2)
-    assert twists[1].is_zero()
+    assert twists[1] == Twist()
     push(module, clients[0], WireTeleopStop(gen=1))  # repeat: dead on the gen gate
     settle(module)
     assert len(twists) == 2
@@ -1439,7 +1445,7 @@ def test_teleop_session_drop_zeroes(teleop_bridge) -> None:
     push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=1))
     assert wait_until(lambda: len(twists) == 1)
     kill_session(module, clients[0])
-    assert wait_until(lambda: len(twists) == 2 and twists[1].is_zero())
+    assert wait_until(lambda: len(twists) == 2 and twists[1] == Twist())
     assert wait_until(lambda: len(clients) == 2)  # supervisor reconnected
     settle(module)
     assert len(twists) == 2
@@ -1450,7 +1456,7 @@ def test_teleop_lease_end_blocks_stale_gen_twist_permanently(teleop_bridge) -> N
     push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=50))
     assert wait_until(lambda: len(twists) == 1)
     push(module, clients[0], WireTeleopStop(gen=1))
-    assert wait_until(lambda: len(twists) == 2 and twists[1].is_zero())
+    assert wait_until(lambda: len(twists) == 2 and twists[1] == Twist())
     # Past the watchdog window, delayed twists from the released lease must
     # stay dead regardless of seq: a reordered pre-stop command must never
     # restart the robot after a stop.
@@ -1485,7 +1491,7 @@ def test_teleop_start_adopts_new_gen_and_zeroes_lost_stop(teleop_bridge) -> None
     # The lease changed hands but its teleop_stop datagram was lost: the
     # next grant's announcement stops the robot and voids the old lease.
     push(module, clients[0], WireTeleopStart(gen=2))
-    assert wait_until(lambda: len(twists) == 2 and twists[1].is_zero())
+    assert wait_until(lambda: len(twists) == 2 and twists[1] == Twist())
     push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=51))  # old lease
     settle(module)
     assert len(twists) == 2
@@ -1506,7 +1512,7 @@ def test_teleop_estop_does_not_lower_high_water(teleop_bridge) -> None:
     # A stale reordered e-stop still zeroes (safe direction) but must not
     # lower the high-water and let the superseded twist 11 re-apply.
     push(module, clients[0], WireStop(seq=10, ts=time.time(), gen=1))
-    assert wait_until(lambda: len(twists) == 2 and twists[1].is_zero())
+    assert wait_until(lambda: len(twists) == 2 and twists[1] == Twist())
     push(module, clients[0], wire_twist(0.9, 0.0, 0.0, seq=11))
     settle(module)
     assert len(twists) == 2

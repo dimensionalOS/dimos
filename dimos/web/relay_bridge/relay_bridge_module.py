@@ -1268,7 +1268,7 @@ class RelayBridgeModule(Module):
             return
         self._teleop_driving = False
         logger.warning(f"relay bridge teleop: zero twist ({reason})")
-        self.tele_cmd_vel.publish(Twist.zero())
+        self.tele_cmd_vel.publish(Twist())
 
     def _teleop_reset(self) -> None:
         # Session teardown only: datagrams are QUIC-session-scoped and the

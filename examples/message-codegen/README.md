@@ -295,3 +295,22 @@ cd ../cockpit
 deno task test
 deno task check
 ```
+
+Generated messages keep their ROS fields; conversion operations live in helpers.
+For example, image arrays require an explicit encoding and header:
+
+```python
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.time import header_now
+
+message = image_from_array(pixels, encoding="rgb8", header=header_now("camera"))
+borrowed = image_view(message)  # read-only, retains its owner; honors row padding and byte order
+editable = borrowed.copy()     # an explicit independent mutable copy
+```
+
+`image_from_array` copies the supplied pixels and validates their dtype and shape.
+It accepts non-contiguous inputs. `occupancy_view` provides the corresponding
+read-only grid view using `info.width` and `info.height`. Pose consumers access
+`message.pose.position`; planar heading is `yaw(message.pose.orientation)` from
+`dimos.msgs.geometry`. Creating a zero velocity command is simply generated
+`Twist()`, including in watchdog and stop paths.
