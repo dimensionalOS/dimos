@@ -14,10 +14,11 @@
 
 from threading import RLock
 
+from dimos_generated.nav_msgs.msg import OccupancyGrid
+
 from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.gradient import GradientStrategy
 from dimos.mapping.occupancy.path_map import make_navigation_map
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 
 
 class NavigationMap:

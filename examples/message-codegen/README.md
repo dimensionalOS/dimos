@@ -851,3 +851,25 @@ source headers and obstacle exclusion, and exports `grid-path-python.svg` and
 `grid-path-cpp.svg` under `build/message-codegen/demo/evidence/`. Open the SVGs to
 compare the routes. The native extension is required; the demo fails explicitly
 if it is missing. Remove the two SVGs to clean up the demo output.
+
+### Run the navigation module over both transports
+
+After building generated messages and the native A* extension above:
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_navigation.py
+```
+
+This starts the real `ReplanningAStarPlanner` module and a synthetic drive loop.
+Generated Odometry, OccupancyGrid, and PointStamped inputs travel over LCM and
+then separate loopback Zenoh sessions. The drive loop consumes generated Twist
+commands and sends new odometry until the module publishes a generated arrival
+Bool. It checks the published Path's exact source header and the final stop
+command. The simulation advances 0.1 seconds per control command at an accelerated
+100 Hz wall-clock rate; it needs no robot or ROS installation.
+
+The terminal prints the final position, command count, and source timestamp.
+Open `build/message-codegen/demo/evidence/navigation-lcm.svg` and
+`navigation-zenoh.svg` to inspect the planned route. Module threads, subscriptions,
+and transport sessions stop automatically; remove the two SVGs to clean up output.
+`test_navigation.py` runs this same demo as a bounded subprocess E2E check.

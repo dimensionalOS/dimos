@@ -918,3 +918,32 @@ a numerically duplicated final point rather than reversing the last heading.
 
 Goal validation, higher-level global/local planners, and navigation module
 wiring still require conversion; this evidence does not accept stage 4.
+
+### Generated replanning navigation module (runtime cutover in progress)
+
+Goal validation, global/local replanning, navigation maps, clearance masks,
+position tracking, retry limiting, and the module's stream/spec declarations now
+use generated messages. Odometry and clicked points convert explicitly to nested
+PoseStamped values. Robot-footprint clearing copies and replaces the read-only
+grid buffer. Clearance masks invalidate when map metadata changes.
+
+- `navigation-tests.log`: 67 focused checks passed, including all replanning A*,
+  occupancy, and geometry tests plus the two-transport subprocess navigation E2E.
+- `navigation-mypy.log`: 16 production/demo modules passed.
+- The arrival regression initially failed because an aligned robot at the first
+  path point skipped directly to final rotation. It now checks the last path
+  point, and the regression requires physical displacement before arrival.
+- Cancellation joins the local control thread and sends generated zero Twist;
+  its regression verifies the captured thread is stopped.
+- Goal-validator fixture coordinates changed by one cell at the float32 map
+  resolution. Running the old validator with that resolution reproduced all
+  three new coordinates exactly; obstacle-search behavior is retained.
+- `demo_navigation.py` passed on LCM and independent explicit-loopback Zenoh
+  sessions: each run reached (2.815, 1.000) for a (3, 1) goal within the configured
+  0.2 m tolerance, with 38 commands and 21 published path poses. Source timestamp
+  1700000000123456789 ns survived map processing and path publication.
+  `navigation-lcm.svg` and `navigation-zenoh.svg` are the review artifacts.
+
+This verifies the navigation module with synthetic transport inputs, not a full
+robot blueprint. Other navigation implementations, map producers, and perception
+consumers still need conversion before stage 4 can be accepted.

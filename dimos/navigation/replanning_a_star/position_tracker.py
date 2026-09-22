@@ -16,10 +16,9 @@ from threading import RLock
 import time
 from typing import cast
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 import numpy as np
 from numpy.typing import NDArray
-
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 _max_points_per_second = 1000
 
@@ -51,7 +50,7 @@ class PositionTracker:
     def add_position(self, pose: PoseStamped) -> None:
         with self._lock:
             self._timestamps[self._index] = time.time()
-            self._positions[self._index] = (pose.position.x, pose.position.y)
+            self._positions[self._index] = (pose.pose.position.x, pose.pose.position.y)
             self._index = (self._index + 1) % self._max_points
             self._size = min(self._size + 1, self._max_points)
 

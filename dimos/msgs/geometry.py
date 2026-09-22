@@ -203,3 +203,8 @@ def translate_pose_local(pose: Pose, offset: Vector3) -> Pose:
         ),
         orientation=pose.orientation,
     )
+
+
+def point_distance(first: Point, second: Point) -> float:
+    """Euclidean distance between generated position values."""
+    return math.dist((first.x, first.y, first.z), (second.x, second.y, second.z))
