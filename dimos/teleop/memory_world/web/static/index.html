@@ -15,6 +15,7 @@
             --muted: #5a6478;
             --grid: rgba(122, 240, 168, 0.05);
             --chat-w: min(400px, 40vw);
+            --chat-font: 12px;
         }
         body {
             font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
@@ -239,9 +240,30 @@
         body.desktop-view.chat-open #chat { display: flex; }
         body.desktop-view.chat-open #perf { right: calc(var(--chat-w) + 12px); }
         body.desktop-view.chat-open #log { right: calc(var(--chat-w) + 16px); }
+        #chatResize {
+            position: absolute;
+            left: -3px;
+            top: 0;
+            bottom: 0;
+            width: 7px;
+            cursor: col-resize;
+            z-index: 1;
+        }
+        #chatResize:hover, body.chat-resizing #chatResize { background: var(--accent-soft); }
+        body.chat-resizing { cursor: col-resize; user-select: none; }
+        #chatTools { display: flex; gap: 4px; margin-left: 10px; }
+        #chatTools button {
+            padding: 0 6px;
+            font-size: 11px;
+            line-height: 18px;
+            letter-spacing: 0;
+            text-transform: none;
+            clip-path: none;
+        }
         #chatHeader {
             display: flex;
-            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
             padding: 12px 14px;
             font-size: 12px;
             letter-spacing: 0.16em;
@@ -250,13 +272,13 @@
             border-bottom: 1px solid var(--accent-soft);
         }
         #chatHeader::before { content: '// '; }
-        #chatState { color: var(--muted); letter-spacing: 0.04em; text-transform: none; }
+        #chatState { color: var(--muted); letter-spacing: 0.04em; text-transform: none; margin-left: auto; }
         #chat.thinking #chatState { color: var(--accent); }
         #chatLog {
             flex: 1;
             overflow-y: auto;
             padding: 12px 14px;
-            font-size: 12px;
+            font-size: var(--chat-font);
             line-height: 1.5;
             letter-spacing: 0.02em;
         }
@@ -268,7 +290,7 @@
         .msg .who {
             display: block;
             margin-bottom: 2px;
-            font-size: 10px;
+            font-size: 0.85em;
             letter-spacing: 0.14em;
             text-transform: uppercase;
             color: var(--muted);
@@ -276,31 +298,35 @@
         .msg.human { color: #8fd6ff; }
         .msg.agent { color: var(--text); border-left: 2px solid var(--accent); padding-left: 8px; }
         .msg.system { color: #ffd166; }
-        .msg.tool_call { color: #7fb3ff; font-size: 11px; }
+        .msg.tool_call { color: #7fb3ff; font-size: 0.92em; }
         .msg.tool_call .args { color: var(--muted); }
         .msg.tool_call.expandable { cursor: pointer; }
-        .msg.tool_step { color: var(--muted); font-size: 11px; margin: 4px 0 4px 14px; }
+        .msg.tool_step { color: var(--muted); font-size: 0.92em; margin: 4px 0 4px 14px; }
         .msg.tool_step .head { font-weight: 600; }
         .msg.tool_step.running .head { color: var(--accent); }
         .msg.tool_step.done .head { color: #7fdc9a; }
-        .msg.tool_step pre { margin: 2px 0 0; padding: 4px 6px; white-space: pre-wrap; font-size: 10.5px;
+        .msg.tool_step pre { margin: 2px 0 0; padding: 4px 6px; white-space: pre-wrap; font-size: 0.9em;
             color: #9fb4c8; background: rgba(255,255,255,0.04); border-radius: 4px; max-height: 150px; overflow: auto; }
-        .msg.tool_result { color: #c9b458; font-size: 11px; padding-left: 14px; }
+        .msg.tool_result { color: #c9b458; font-size: 0.92em; padding-left: 14px; }
         .msg.tool_result.failed { color: #ff5f6d; }
-        #chatForm { display: flex; border-top: 1px solid var(--accent-soft); }
+        #chatForm { display: flex; align-items: flex-end; border-top: 1px solid var(--accent-soft); }
         #chatInput {
             flex: 1;
             min-width: 0;
             font: inherit;
-            font-size: 13px;
+            font-size: calc(var(--chat-font) + 1px);
             color: var(--text);
             background: var(--panel);
             border: none;
             padding: 12px 14px;
             outline: none;
+            resize: none;
+            line-height: 1.4;
+            max-height: 40vh;
+            overflow-y: auto;
         }
         #chatInput:focus { box-shadow: inset 0 0 0 1px var(--accent); }
-        #chatForm button { padding: 0 16px; font-size: 12px; letter-spacing: 0.12em; clip-path: none; }
+        #chatForm button { align-self: stretch; padding: 0 16px; font-size: var(--chat-font); letter-spacing: 0.12em; clip-path: none; }
         @media (max-width: 640px) { body.desktop-view.chat-open #chat { display: none; } }
     </style>
 </head>
@@ -343,10 +369,16 @@
         <button id="cameraBtn">Camera</button>
     </div>
     <aside id="chat">
-        <div id="chatHeader">Agent <span id="chatState">not connected</span></div>
+        <div id="chatResize" title="Drag to resize the chat"></div>
+        <div id="chatHeader">Agent <span id="chatState">not connected</span>
+            <span id="chatTools">
+                <button type="button" id="chatFontDown" title="Smaller text">A−</button>
+                <button type="button" id="chatFontUp" title="Larger text">A+</button>
+            </span>
+        </div>
         <div id="chatLog"></div>
         <form id="chatForm" autocomplete="off">
-            <input id="chatInput" type="text" placeholder="Ask about the recording…" aria-label="Ask the agent">
+            <textarea id="chatInput" rows="1" placeholder="Ask about the recording… (Enter sends, Shift+Enter for a new line)" aria-label="Ask the agent"></textarea>
             <button type="submit">Ask</button>
         </form>
     </aside>

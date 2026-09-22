@@ -24,6 +24,9 @@ const logEl = document.getElementById('log');
 const chatEl = document.getElementById('chat');
 const chatLogEl = document.getElementById('chatLog');
 const chatStateEl = document.getElementById('chatState');
+const chatResizeEl = document.getElementById('chatResize');
+const chatFontDownEl = document.getElementById('chatFontDown');
+const chatFontUpEl = document.getElementById('chatFontUp');
 const chatForm = document.getElementById('chatForm');
 const chatInput = document.getElementById('chatInput');
 const backgroundMode = document.body.dataset.backgroundMode || 'black';
@@ -521,10 +524,82 @@ function appendChat(entry) {
     if (follow) chatLogEl.scrollTop = chatLogEl.scrollHeight;
 }
 
+// The chat's width and text size are per-browser conveniences kept in localStorage.
+const CHAT_WIDTH_KEY = 'memoryWorld.chatWidthPx';
+const CHAT_FONT_KEY = 'memoryWorld.chatFontPx';
+const CHAT_WIDTH_MIN = 260;
+const CHAT_FONT_MIN = 9;
+const CHAT_FONT_MAX = 22;
+
+function readPref(key) {
+    try { return Number(localStorage.getItem(key)) || 0; } catch (e) { return 0; }
+}
+
+function savePref(key, value) {
+    try { localStorage.setItem(key, String(value)); } catch (e) { /* private window or blocked storage */ }
+}
+
+function setChatWidth(px) {
+    const width = Math.max(CHAT_WIDTH_MIN, Math.min(Math.round(px), Math.round(window.innerWidth * 0.7)));
+    document.documentElement.style.setProperty('--chat-w', `${width}px`);
+    return width;
+}
+
+function setChatFont(px) {
+    const size = Math.max(CHAT_FONT_MIN, Math.min(Math.round(px), CHAT_FONT_MAX));
+    document.documentElement.style.setProperty('--chat-font', `${size}px`);
+    savePref(CHAT_FONT_KEY, size);
+    return size;
+}
+
+function installChatControls() {
+    const savedWidth = readPref(CHAT_WIDTH_KEY);
+    if (savedWidth) setChatWidth(savedWidth);
+    const savedFont = readPref(CHAT_FONT_KEY);
+    if (savedFont) setChatFont(savedFont);
+
+    let dragging = false;
+    chatResizeEl.addEventListener('mousedown', (event) => {
+        dragging = true;
+        document.body.classList.add('chat-resizing');
+        event.preventDefault();
+    });
+    window.addEventListener('mousemove', (event) => {
+        if (!dragging) return;
+        setChatWidth(window.innerWidth - event.clientX);
+    });
+    window.addEventListener('mouseup', (event) => {
+        if (!dragging) return;
+        dragging = false;
+        document.body.classList.remove('chat-resizing');
+        savePref(CHAT_WIDTH_KEY, setChatWidth(window.innerWidth - event.clientX));
+    });
+
+    const currentFont = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--chat-font')) || 12;
+    chatFontDownEl.addEventListener('click', () => setChatFont(currentFont() - 1));
+    chatFontUpEl.addEventListener('click', () => setChatFont(currentFont() + 1));
+}
+
+installChatControls();
+
 function setAgentIdle(idle) {
     chatEl.classList.toggle('thinking', !idle);
     chatStateEl.textContent = idle ? 'idle' : 'thinking…';
 }
+
+// The box grows with the text, up to its CSS max-height, and shrinks back when cleared.
+function fitChatInput() {
+    chatInput.style.height = 'auto';
+    chatInput.style.height = `${chatInput.scrollHeight}px`;
+}
+
+chatInput.addEventListener('input', fitChatInput);
+chatInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        chatForm.requestSubmit();
+    }
+});
 
 chatForm.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -532,6 +607,7 @@ chatForm.addEventListener('submit', (event) => {
     if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(encodeText('ask', { text }));
     chatInput.value = '';
+    fitChatInput();
     setAgentIdle(false);
 });
 
