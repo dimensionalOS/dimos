@@ -555,5 +555,10 @@ CLIP/PyTorch imports. This leaves an unregistered `self_hosted` marker warning.
 The host filesystem filled during the first workspace/Nix build attempts; those
 attempts failed and are not counted as passing. Removing only this worktree's
 reproducible compiler caches allowed the workspace check and executable build
-to pass. The isolated Nix retry is still pending. Full stage 4/5 acceptance,
-legacy consumers/fixtures, and live viewer demos remain outstanding.
+to pass. The isolated Nix retry then passed, including all 16 Rust tests and
+installation/fixup. An offline Nix build confirmed the completed output. The
+installed Nix executable also passed the external custom-message demo on both
+transports; its transcript is
+`build/message-codegen/demo/evidence/nix-native-recording.txt`, with MCAP/log
+artifacts in the adjacent `nix-native-recording/` directory. Full stage 4/5
+acceptance, legacy consumers/fixtures, and live viewer demos remain outstanding.
