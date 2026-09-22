@@ -545,6 +545,8 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
+# dimos_control_msgs.ControlValues is not in the published PyPI release.
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "f00f05c7d1a3d9039180f0fabdcc481c92a955f4" }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.
 torch = [

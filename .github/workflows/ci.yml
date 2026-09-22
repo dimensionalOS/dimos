@@ -258,11 +258,20 @@ jobs:
           import sys
           import tomllib
 
+          # Temporary exception. dimos_control_msgs.ControlValues exists only on
+          # dimos-lcm main (0.1.4); the newest published release is 0.1.3 and has
+          # no control messages at all, so the control coordinator refactor cannot
+          # start without a git pin. Remove this set, and the [tool.uv.sources]
+          # entry it covers, as soon as dimos-lcm 0.1.4 is released to PyPI.
+          ALLOWED_GIT_SOURCES = {"dimos-lcm"}
+
           with open("pyproject.toml", "rb") as file:
               config = tomllib.load(file)
           sources = config.get("tool", {}).get("uv", {}).get("sources", {})
           rejected = []
           for name, source in sources.items():
+              if name in ALLOWED_GIT_SOURCES:
+                  continue
               entries = source if isinstance(source, list) else [source]
               if any("git" in entry for entry in entries):
                   rejected.append(name)
