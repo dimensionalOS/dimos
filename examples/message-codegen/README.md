@@ -314,3 +314,46 @@ read-only grid view using `info.width` and `info.height`. Pose consumers access
 `message.pose.position`; planar heading is `yaw(message.pose.orientation)` from
 `dimos.msgs.geometry`. Creating a zero velocity command is simply generated
 `Twist()`, including in watchdog and stop paths.
+
+### Native SDK relay during the runtime cutover
+
+With the C++ SDK's LCM, Zenoh C/C++, JSON, and PFR build dependencies installed,
+build the generated package and native relays:
+
+```bash
+bash scripts/setup_message_codegen.sh
+bash scripts/install_native_messages.sh
+cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON \
+  -DCMAKE_PREFIX_PATH="$PWD/build/message-codegen/install"
+cmake --build build/native-cpp -j 2
+ctest --test-dir build/native-cpp --output-on-failure
+cmake -S examples/native-modules/cpp -B build/native-cpp-examples \
+  -DCMAKE_PREFIX_PATH="$PWD/build/message-codegen/install"
+cmake --build build/native-cpp-examples -j 2
+cargo build -p dimos-native-module-examples
+cargo test -p dimos-module --lib
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_native.py
+```
+
+The generated Python extension comes from the initial generation/build demo.
+The `native` job in `.github/workflows/ci.yml` lists the pinned Zenoh archives
+and system dependencies. Add their installation prefix to `CMAKE_PREFIX_PATH`
+and their pkg-config directory to `PKG_CONFIG_PATH` when installed locally.
+
+The demo starts actual SDK subprocesses, supplies their stdin launch configuration,
+and sends a custom `LineSegments3D` and a 640×480 RGB image through
+Python → C++ → Rust → Python, first over LCM and then over loopback Zenoh TCP.
+The segment weight changes from 4 to 5 to 6. The full image and exact source
+nanoseconds must survive both relays. LCM fragments the image along each hop.
+Use `--backend lcm` or `--backend zenoh` for one transport. Temporary topics and
+ports isolate runs; subprocesses and sessions close automatically, including on
+failure. Native logs go to `build/message-codegen/demo/evidence/native-*.log`.
+This exercises the SDK launch protocol; the full coordinator blueprint and live
+Rerun integration are still separate acceptance work.
+
+The in-tree Rust message dependency generates only inside Cargo's `OUT_DIR`.
+Its source package bundles the parser, generator, schemas, and licenses. Cargo
+requires Python 3.10+ during the build (`DIMOS_CODEGEN_PYTHON` can select it);
+the resulting Rust binaries need neither Python nor ROS. Verify the actual source
+archive with `cargo package -p dimos-generated-messages --allow-dirty --offline`.

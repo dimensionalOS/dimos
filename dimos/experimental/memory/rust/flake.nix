@@ -17,7 +17,7 @@
       "aarch64-darwin"
     ] (system: let
       pkgs = nixpkgs.legacyPackages.${system};
-      nativeDeps = [pkgs.cmake pkgs.nasm pkgs.pkg-config];
+      nativeDeps = [pkgs.cmake pkgs.nasm pkgs.pkg-config pkgs.python3];
       systemDeps =
         [pkgs.sqlite pkgs.sqlite.dev]
         ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [pkgs.libiconv];
@@ -29,6 +29,7 @@
           fileset = pkgs.lib.fileset.unions [
             ../../../../Cargo.lock
             ../../../../Cargo.toml
+            ../../../../dimos/message_codegen
             ../../../../dimos/experimental/memory/rust
             ../../../../native/rust/dimos-module
             ../../../../native/rust/dimos-lcm-transport

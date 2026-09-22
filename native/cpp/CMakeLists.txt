@@ -31,6 +31,8 @@ endif()
 # module.hpp runs the dispatch loop and publish workers on std::thread.
 find_package(Threads REQUIRED)
 
+find_package(dimos_generated CONFIG REQUIRED)
+
 # Header-only SDK. Consumers link this INTERFACE target and inherit the include
 # path, the C++ standard, and the SDK's own dependencies. A consumer still sets
 # CMAKE_CXX_STANDARD for the targets it builds that do not link this one.
@@ -41,6 +43,7 @@ target_link_libraries(dimos_native INTERFACE
   pfr
   nlohmann_json::nlohmann_json
   Threads::Threads
+  dimos_generated::messages
 )
 
 # Zenoh transport. zenoh-cpp is header-only over zenoh-c, which is a compiled

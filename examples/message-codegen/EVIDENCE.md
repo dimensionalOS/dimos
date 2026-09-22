@@ -177,3 +177,27 @@ teleoperation stop/watchdog behavior, and lease handover. The watchdog's old
 `Twist.zero()` call was replaced with the generated zero-valued `Twist()`.
 The new array-to-image helper also passed strided input, independent copy,
 explicit encoding, and big-endian depth tests.
+
+### Native SDK CDR relay
+
+The C++ SDK suite passed all **76 tests** using real generated messages in its
+default-codec tests. The Rust SDK passed **143 tests**, including TF, both CDR
+byte orders, malformed input, and propagation of publish encoding errors without
+enqueuing a payload. C++ and Rust ping/pong examples and the custom/image relays
+built successfully. The generated Rust crate also passed Cargo source-package
+verification: a build from the packaged archive, with only Python's standard
+library used for generation and no preexisting generated source.
+
+The native demo used the real SDK processes, generated message packages, stdin
+launch protocol, and Python typed transports:
+
+```text
+lcm: Python weight=4 → C++ weight=5 → Rust weight=6 → Python verified
+lcm: 921,600 image bytes and source nanoseconds=1700000000123456789 match
+zenoh: Python weight=4 → C++ weight=5 → Rust weight=6 → Python verified
+zenoh: 921,600 image bytes and source nanoseconds=1700000000123456789 match
+```
+
+Full output and process logs are under `build/message-codegen/demo/evidence`.
+This does not complete the native consumer, Nix build matrix, coordinator
+blueprint, or live Rerun migration; stage 4 remains open.

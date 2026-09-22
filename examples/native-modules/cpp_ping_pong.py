@@ -26,11 +26,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from dimos_generated.geometry_msgs.msg import Twist
+
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Twist import Twist
 
 _CPP_DIR = Path(__file__).parent / "cpp"
 _BUILD = "nix build .#default"

@@ -17,6 +17,7 @@
 #[cfg(test)]
 extern crate self as dimos_module;
 
+pub mod cdr;
 pub mod host;
 pub mod lcm;
 pub mod log;

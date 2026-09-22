@@ -16,7 +16,7 @@ add_executable(dimos_native_tests
   test_transport_selection.cpp
   test_config.cpp
   test_module.cpp
-  test_lcm_codec.cpp
+  test_cdr_codec.cpp
   test_lcm_transport.cpp
   test_zenoh_transport.cpp
 )

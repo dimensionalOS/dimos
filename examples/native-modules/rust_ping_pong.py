@@ -27,12 +27,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from dimos_generated.geometry_msgs.msg import Twist
+
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.protocol.service.zenohservice import ZenohConfig
 
 _RUST_DIR = Path(__file__).parent / "rust"

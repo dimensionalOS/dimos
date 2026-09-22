@@ -70,25 +70,11 @@ struct MockTransport : Transport {
 Bytes identity_decode(const uint8_t* d, std::size_t n) { return Bytes(d, d + n); }
 Bytes identity_encode(const Bytes& v) { return v; }
 
-// Minimal lcm-gen-shaped message, to exercise the default codecs.
-struct Pod {
-    std::int32_t v = 0;
-    int getEncodedSize() const { return static_cast<int>(sizeof(std::int32_t)); }
-    int encode(void* buf, int offset, int maxlen) const {
-        if (maxlen - offset < static_cast<int>(sizeof(std::int32_t))) return -1;
-        std::memcpy(static_cast<char*>(buf) + offset, &v, sizeof(std::int32_t));
-        return static_cast<int>(sizeof(std::int32_t));
-    }
-    int decode(const void* buf, int offset, int maxlen) {
-        if (maxlen - offset < static_cast<int>(sizeof(std::int32_t))) return -1;
-        std::memcpy(&v, static_cast<const char*>(buf) + offset, sizeof(std::int32_t));
-        return static_cast<int>(sizeof(std::int32_t));
-    }
-};
+using Pod = std_msgs::msg::Int32;
 
 struct Sink {
     std::vector<int> got;
-    void on(const Pod& p) { got.push_back(p.v); }
+    void on(const Pod& p) { got.push_back(p.data); }
 };
 
 template <class F>
@@ -163,7 +149,7 @@ TEST_CASE("member-function handler and default codecs route a message") {
     Builder builder({{"in", "/in"}, {"out", "/out"}}, &notifier);
 
     Sink sink;
-    Output<Pod> out = builder.output<Pod>("out");        // encoder defaults to lcm_encode<Pod>
+    Output<Pod> out = builder.output<Pod>("out");        // encoder defaults to cdr_encode<Pod>
     builder.input<Pod>("in", &Sink::on, &sink);          // member fn + default decoder
 
     for (const auto& route : builder.routes()) {
@@ -172,8 +158,8 @@ TEST_CASE("member-function handler and default codecs route a message") {
     WorkerGuard workers(builder, transport);
 
     Pod m;
-    m.v = 9;
-    transport.deliver("/in", dimos::native::lcm_encode(m));
+    m.data = 9;
+    transport.deliver("/in", dimos::native::cdr_encode(m));
     for (InputPort* port : builder.input_ports()) {
         port->drain_one();
     }

@@ -19,9 +19,13 @@ path = "src/tf_listener.rs"
 name = "tf_broadcaster"
 path = "src/tf_broadcaster.rs"
 
+[[bin]]
+name = "cdr_relay"
+path = "src/cdr_relay.rs"
+
 [dependencies]
 dimos-module = { path = "../../../native/rust/dimos-module" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-generated-messages = { path = "../../../dimos/message_codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"

@@ -262,6 +262,20 @@ name = "bytemuck"
 version = "1.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
+dependencies = [
+ "bytemuck_derive",
+]
+
+[[package]]
+name = "bytemuck_derive"
+version = "1.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a1f896587b6f2c069c73d2f0913e2d590c3990285cd2f0b6aa02b786b4c679c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.4",
+]
 
 [[package]]
 name = "byteorder"
@@ -648,6 +662,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dimos-generated-messages"
+version = "0.1.0"
+dependencies = [
+ "re_cdr",
+ "serde",
+ "serde-big-array",
+]
+
+[[package]]
 name = "dimos-lcm-transport"
 version = "0.1.0"
 dependencies = [
@@ -726,9 +749,9 @@ dependencies = [
 name = "dimos-module"
 version = "0.1.0"
 dependencies = [
+ "dimos-generated-messages",
  "dimos-lcm-transport",
  "dimos-module-macros",
- "lcm-msgs",
  "nalgebra",
  "rayon",
  "serde",
@@ -756,8 +779,8 @@ dependencies = [
 name = "dimos-native-module-examples"
 version = "0.1.0"
 dependencies = [
+ "dimos-generated-messages",
  "dimos-module",
- "lcm-msgs",
  "serde",
  "tokio",
  "tracing",
@@ -2641,6 +2664,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "re_cdr"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bba10c21433b597481f366b978cdf2617e56785b38cb0dcc3833c6b8ad7e061a"
+dependencies = [
+ "bytemuck",
+ "byteorder",
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3041,6 +3076,15 @@ checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde-big-array"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11fc7cc2c76d73e0f27ee52abbd64eec84d46f370c88371120433196934e4b7f"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

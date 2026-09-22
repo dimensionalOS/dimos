@@ -5,13 +5,13 @@
 #include <stdexcept>
 
 #include "dimos/native.hpp"
-#include "geometry_msgs/Twist.hpp"
+#include <dimos_generated/messages.hpp>
 
 using dimos::native::Builder;
 using dimos::native::Config;
 using dimos::native::Module;
 using dimos::native::Output;
-using geometry_msgs::Twist;
+using geometry_msgs::msg::Twist;
 
 constexpr std::int64_t SAMPLE_CONFIG_MIN = 0;
 constexpr std::int64_t SAMPLE_CONFIG_MAX = 1000;

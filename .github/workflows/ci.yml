@@ -390,6 +390,11 @@ jobs:
           sudo unzip -q /tmp/zenoh-c.zip -d /usr/local
           sudo unzip -q /tmp/zenoh-cpp.zip -d /usr/local
           sudo ldconfig
+      - name: Generate native CDR message package
+        run: |
+          bash scripts/setup_message_codegen.sh
+          bash scripts/install_native_messages.sh
+          echo "CMAKE_PREFIX_PATH=$PWD/build/message-codegen/install" >> "$GITHUB_ENV"
       - name: Configure
         run: cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON
       - name: Build

@@ -1,0 +1,12 @@
+[package]
+name = "dimos-generated-messages"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "ROS2-shaped DimOS messages generated at build time without ROS"
+include = ["Cargo.toml", "build.rs", "src/**", "__init__.py", "build_rust.py", "definitions.py", "providers.py", "rust.py", "_vendor/*.py", "schemas/**", "templates/codec.rs"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde-big-array = "=0.5.1"
+re_cdr = "=0.1.0"

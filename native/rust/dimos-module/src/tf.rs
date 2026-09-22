@@ -25,6 +25,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use dimos_generated_messages::codec::Message;
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use tokio::sync::{mpsc, Notify};
 use tracing::warn;
@@ -390,10 +391,13 @@ impl Tf {
                 buffer.receive(&t.parent, &t.child, t.ts, t.iso);
             }
         });
-        let msg = lcm_msgs::tf2_msgs::TFMessage {
+        let msg = dimos_generated_messages::tf2_msgs::msg::TFMessage {
             transforms: transforms.iter().map(to_stamped).collect(),
         };
-        crate::module::publish_encoded(&self.sender, msg.encode()).await
+        let bytes = msg
+            .encode()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        crate::module::publish_encoded(&self.sender, bytes).await
     }
 }
 
@@ -486,7 +490,7 @@ impl Lookup<'_> {
     }
 }
 
-fn to_stamped(t: &Transform) -> lcm_msgs::geometry_msgs::TransformStamped {
+fn to_stamped(t: &Transform) -> dimos_generated_messages::geometry_msgs::msg::TransformStamped {
     let mut sec = t.ts.floor();
     let mut nsec = ((t.ts - sec) * 1e9).round();
     if nsec >= 1e9 {
@@ -495,23 +499,22 @@ fn to_stamped(t: &Transform) -> lcm_msgs::geometry_msgs::TransformStamped {
     }
     let p = t.iso.translation.vector;
     let q = t.iso.rotation;
-    lcm_msgs::geometry_msgs::TransformStamped {
-        header: lcm_msgs::std_msgs::Header {
-            seq: 0,
-            stamp: lcm_msgs::std_msgs::Time {
+    dimos_generated_messages::geometry_msgs::msg::TransformStamped {
+        header: dimos_generated_messages::std_msgs::msg::Header {
+            stamp: dimos_generated_messages::builtin_interfaces::msg::Time {
                 sec: sec as i32,
-                nsec: nsec as i32,
+                nanosec: nsec as u32,
             },
             frame_id: t.parent.clone(),
         },
         child_frame_id: t.child.clone(),
-        transform: lcm_msgs::geometry_msgs::Transform {
-            translation: lcm_msgs::geometry_msgs::Vector3 {
+        transform: dimos_generated_messages::geometry_msgs::msg::Transform {
+            translation: dimos_generated_messages::geometry_msgs::msg::Vector3 {
                 x: p.x,
                 y: p.y,
                 z: p.z,
             },
-            rotation: lcm_msgs::geometry_msgs::Quaternion {
+            rotation: dimos_generated_messages::geometry_msgs::msg::Quaternion {
                 x: q.i,
                 y: q.j,
                 z: q.k,
@@ -530,7 +533,7 @@ struct TfRoute {
 
 impl Route for TfRoute {
     fn try_dispatch(&self, data: &[u8]) {
-        let msg = match lcm_msgs::tf2_msgs::TFMessage::decode(data) {
+        let msg = match dimos_generated_messages::tf2_msgs::msg::TFMessage::decode(data) {
             Ok(msg) => msg,
             Err(e) => {
                 crate::error_throttled!(
@@ -560,7 +563,7 @@ impl Route for TfRoute {
                     continue;
                 };
                 let iso = Isometry3::from_parts(Translation3::new(t.x, t.y, t.z), rotation);
-                let ts = st.header.stamp.sec as f64 + st.header.stamp.nsec as f64 * 1e-9;
+                let ts = st.header.stamp.sec as f64 + st.header.stamp.nanosec as f64 * 1e-9;
                 buffer.receive(&st.header.frame_id, &st.child_frame_id, ts, iso);
             }
         });
@@ -875,18 +878,18 @@ mod tests {
         x: f64,
         quat: (f64, f64, f64, f64),
     ) -> Vec<u8> {
-        use lcm_msgs::geometry_msgs::{
+        use dimos_generated_messages::builtin_interfaces::msg::Time;
+        use dimos_generated_messages::geometry_msgs::msg::{
             Quaternion as LQuat, Transform as LTransform, TransformStamped, Vector3 as LVec3,
         };
-        use lcm_msgs::std_msgs::{Header, Time};
+        use dimos_generated_messages::std_msgs::msg::Header;
         let (x_q, y_q, z_q, w_q) = quat;
-        lcm_msgs::tf2_msgs::TFMessage {
+        dimos_generated_messages::tf2_msgs::msg::TFMessage {
             transforms: vec![TransformStamped {
                 header: Header {
-                    seq: 0,
                     stamp: Time {
                         sec: ts as i32,
-                        nsec: 0,
+                        nanosec: 0,
                     },
                     frame_id: parent.to_string(),
                 },
@@ -903,6 +906,7 @@ mod tests {
             }],
         }
         .encode()
+        .unwrap()
     }
 
     #[test]
@@ -1026,41 +1030,43 @@ mod tests {
 
     #[test]
     fn tf_route_decodes_into_graph() {
-        use lcm_msgs::geometry_msgs::{
+        use dimos_generated_messages::builtin_interfaces::msg::Time;
+        use dimos_generated_messages::geometry_msgs::msg::{
             Quaternion as LQuat, Transform as LTransform, Vector3 as LVec3,
         };
-        use lcm_msgs::std_msgs::{Header, Time};
-        use lcm_msgs::tf2_msgs::TFMessage;
+        use dimos_generated_messages::std_msgs::msg::Header;
+        use dimos_generated_messages::tf2_msgs::msg::TFMessage;
 
         let (tx, _rx) = mpsc::channel(8);
         let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
         let msg = TFMessage {
-            transforms: vec![lcm_msgs::geometry_msgs::TransformStamped {
-                header: Header {
-                    seq: 0,
-                    stamp: Time {
-                        sec: 5,
-                        nsec: 500_000_000,
+            transforms: vec![
+                dimos_generated_messages::geometry_msgs::msg::TransformStamped {
+                    header: Header {
+                        stamp: Time {
+                            sec: 5,
+                            nanosec: 500_000_000,
+                        },
+                        frame_id: "base_link".to_string(),
                     },
-                    frame_id: "base_link".to_string(),
+                    child_frame_id: "mid360_link".to_string(),
+                    transform: LTransform {
+                        translation: LVec3 {
+                            x: 0.1,
+                            y: 0.2,
+                            z: 0.3,
+                        },
+                        rotation: LQuat {
+                            x: 0.0,
+                            y: 0.0,
+                            z: 0.0,
+                            w: 1.0,
+                        },
+                    },
                 },
-                child_frame_id: "mid360_link".to_string(),
-                transform: LTransform {
-                    translation: LVec3 {
-                        x: 0.1,
-                        y: 0.2,
-                        z: 0.3,
-                    },
-                    rotation: LQuat {
-                        x: 0.0,
-                        y: 0.0,
-                        z: 0.0,
-                        w: 1.0,
-                    },
-                },
-            }],
+            ],
         };
-        route.try_dispatch(&msg.encode());
+        route.try_dispatch(&msg.encode().unwrap());
 
         let t = tf.get_latest("base_link", "mid360_link").unwrap();
         assert!((t.translation().x - 0.1).abs() < 1e-9);
@@ -1122,7 +1128,7 @@ mod tests {
             Isometry3::identity(),
         ));
         assert_eq!(st.header.stamp.sec, 2);
-        assert_eq!(st.header.stamp.nsec, 0);
+        assert_eq!(st.header.stamp.nanosec, 0);
     }
 
     #[test]
