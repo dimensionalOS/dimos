@@ -11,6 +11,7 @@ on:
       - scripts/test_message_mcap.sh
       - dimos/protocol/cdr_mcap.py
       - dimos/protocol/test_cdr_mcap.py
+      - dimos/protocol/pubsub/impl/*ros*.py
       - scripts/vendor_message_definitions.py
       - .github/workflows/message-codegen.yml
       - .github/docker/message-codegen-reference.Dockerfile
@@ -61,6 +62,12 @@ jobs:
             build/message-codegen/external-app/evidence/
             build/message-codegen/external-app/dist/
             build/message-codegen/external-app/generated/rust/target/package/*.crate
+      - name: Retain the standalone Python binding for ROS bridge verification
+        uses: actions/upload-artifact@v7
+        with:
+          name: message-codegen-python-binding
+          path: build/message-codegen/demo/cpp/build/dimos_generated*.so
+          if-no-files-found: error
       - name: Retain executable demo evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -78,6 +85,10 @@ jobs:
         with:
           name: message-codegen-evidence
           path: build/message-codegen/demo/evidence/
+      - uses: actions/download-artifact@v8
+        with:
+          name: message-codegen-python-binding
+          path: build/message-codegen/demo/cpp/build/
       - name: Build independent ROS2 reference environment
         run: docker build -f .github/docker/message-codegen-reference.Dockerfile -t dimos-cdr-jazzy-reference .github/docker
       - name: Compare native payloads with independently generated ROS2 types
@@ -95,6 +106,18 @@ jobs:
               source install/setup.bash
               python3 /source/examples/message-codegen/demo_ros_reference.py --build /demo
             ' | tee build/message-codegen/demo/evidence/jazzy-reference.txt
+      - name: Verify generated messages through the optional ROS bridge
+        run: |
+          docker run --rm -v "$PWD:/source:ro" dimos-cdr-jazzy-reference '
+            set -e
+            source /opt/ros/jazzy/setup.bash
+            export PYTHONPATH=/source:/source/build/message-codegen/demo/cpp/build:$PYTHONPATH
+            cd /source
+            python3 -m pytest -o addopts="" --noconftest --import-mode=importlib -p no:cacheprovider \
+              dimos/protocol/pubsub/impl/test_rospubsub_conversion.py \
+              dimos/protocol/pubsub/impl/test_rospubsub.py -q
+            python3 examples/message-codegen/demo_ros_bridge.py
+          ' | tee build/message-codegen/demo/evidence/ros-bridge.txt
       - uses: actions/upload-artifact@v7
         with:
           name: message-codegen-jazzy-reference

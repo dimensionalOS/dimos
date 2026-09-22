@@ -610,3 +610,36 @@ the recorder has no compiled knowledge of their timestamp layout. Recognized
 standard stamped messages use exact source nanoseconds. Delete the four retained
 MCAP/log files when finished reviewing them. These terminal checks complement
 the separate Foxglove and Rerun UI acceptance demos.
+
+### Optional ROS2 bridge (isolated verification)
+
+DimOS generation and runtime remain ROS-free. To check the existing optional
+bridge against ROS2 Jazzy after building the standalone Python binding, use the
+independent reference container:
+
+```bash
+docker build -f .github/docker/message-codegen-reference.Dockerfile \
+  -t dimos-cdr-jazzy-reference .github/docker
+docker run --rm -v "$PWD:/source:ro" dimos-cdr-jazzy-reference '
+  set -e
+  source /opt/ros/jazzy/setup.bash
+  export PYTHONPATH=/source:/source/build/message-codegen/demo/cpp/build:$PYTHONPATH
+  cd /source
+  python3 -m pytest -o addopts="" --noconftest --import-mode=importlib -p no:cacheprovider \
+    dimos/protocol/pubsub/impl/test_rospubsub_conversion.py \
+    dimos/protocol/pubsub/impl/test_rospubsub.py -q
+  python3 examples/message-codegen/demo_ros_bridge.py
+'
+```
+
+The demo prints three poses (`x=0, 1, 2`) and RGB pixels (`[0,128,255]`,
+`[1,128,254]`, `[2,128,253]`) received through real ROS publishers/subscribers.
+Source nanoseconds `123456789` through `123456791` survive unchanged. Nodes,
+timers, subscriptions, and the container are cleaned up on exit. With ROS
+already installed and sourced, run the same Python demo directly.
+
+The bridge uses ROS's serialization/type support and generated DimOS CDR codecs.
+It requires matching ROS message packages only in the bridge environment; it
+does not translate through LCM, rename fields, or load legacy message classes.
+The independent Jazzy CI job runs these checks using the binding produced by
+the preceding ROS-free build.

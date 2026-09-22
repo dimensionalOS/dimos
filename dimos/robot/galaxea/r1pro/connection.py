@@ -37,6 +37,7 @@ from threading import Thread
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -52,13 +53,10 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.pubsub.impl.rospubsub_conversion import ros_to_dimos
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
 
@@ -729,16 +727,7 @@ class R1ProConnection(Module):
                 continue
             last_pub = t0
             try:
-                stamp = msg.header.stamp
-                ts = stamp.sec + stamp.nanosec * 1e-9
-                out.publish(
-                    CompressedImage(
-                        data=bytes(msg.data),
-                        format="jpeg",
-                        frame_id=msg.header.frame_id or stream,
-                        ts=ts if ts > 0 else time.time(),
-                    )
-                )
+                out.publish(ros_to_dimos(msg, CompressedImage))
                 self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=True)
             except Exception:
                 self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=False)
@@ -746,8 +735,6 @@ class R1ProConnection(Module):
 
     def _convert_loop(self, stream: str, q: queue.Queue[Any], dimos_type: type) -> None:
         """ros_to_dimos passthrough worker (depth images, lidar)."""
-        from dimos.protocol.pubsub.impl.rospubsub_conversion import ros_to_dimos
-
         out: Out[Any] = getattr(self, stream)
         while not self._sensor_stop.is_set():
             try:
@@ -766,8 +753,6 @@ class R1ProConnection(Module):
 
     def _imu_loop(self, stream: str, q: queue.Queue[Any]) -> None:
         """Store the latest converted IMU; re-emitted by the publish loop."""
-        from dimos.protocol.pubsub.impl.rospubsub_conversion import ros_to_dimos
-
         target_attr = "_latest_imu_chassis" if stream == "imu_chassis" else "_latest_imu_torso"
         while not self._sensor_stop.is_set():
             try:

@@ -12,237 +12,73 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Generator
+"""Generated CDR streams through the optional ROS2 pub/sub bridge."""
 
-from dimos_lcm.geometry_msgs import PointStamped
-import numpy as np
+from collections.abc import Generator
+import threading
+import uuid
+
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, PointStamped, PoseStamped, Twist, Vector3
+from dimos_generated.sensor_msgs.msg import Image, PointCloud2, PointField
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
+from dimos.protocol.pubsub.impl.rospubsub import ROS_AVAILABLE, DimosROS, ROSTopic
 
-# Add msg_name to LCM PointStamped for testing nested message conversion
-PointStamped.msg_name = "geometry_msgs.PointStamped"
-from dimos.utils.testing.collector import CallbackCollector
-from dimos.utils.testing.replay import TimedSensorReplay
+pytestmark = pytest.mark.skipif(not ROS_AVAILABLE, reason="requires ROS 2")
 
 
-def ros_node():
-    ros = DimosROS()
-    ros.start()
+@pytest.fixture()
+def nodes() -> Generator[tuple[DimosROS, DimosROS], None, None]:
+    publisher, subscriber = DimosROS(), DimosROS()
     try:
-        yield ros
+        publisher.start()
+        subscriber.start()
+        yield publisher, subscriber
     finally:
-        ros.stop()
+        subscriber.stop()
+        publisher.stop()
 
 
-@pytest.fixture()
-def publisher() -> Generator[DimosROS, None, None]:
-    yield from ros_node()
+@pytest.mark.parametrize(
+    "original",
+    [
+        Vector3(x=1.0, y=2.0, z=3.0),
+        Twist(linear=Vector3(x=1.0), angular=Vector3(z=-0.5)),
+        PoseStamped(header=Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="map")),
+        PointStamped(header=Header(stamp=Time(sec=-1, nanosec=999999999)), point=Point(x=1.5)),
+        PointCloud2(),
+        PointCloud2(
+            height=1,
+            width=1,
+            fields=[PointField(name="x", datatype=7, count=1)],
+            point_step=4,
+            row_step=4,
+            data=bytes([0, 0, 128, 63]),
+        ),
+        Image(height=1, width=2, encoding="rgb8", step=6, data=bytes([0, 1, 2, 253, 254, 255])),
+    ],
+    ids=lambda msg: msg.msg_name,
+)
+def test_generated_pubsub(nodes, original):
+    publisher, subscriber = nodes
+    topic = ROSTopic(f"/dimos_cdr_test_{uuid.uuid4().hex}", type(original))
+    received = threading.Event()
+    values = []
 
+    def collect(message, _topic):
+        values.append(message)
+        received.set()
 
-@pytest.fixture()
-def subscriber() -> Generator[DimosROS, None, None]:
-    yield from ros_node()
-
-
-@pytest.mark.skipif_no_ros
-def test_basic_conversion(publisher, subscriber):
-    """Test Vector3 publish/subscribe through ROS.
-
-    Simple flat dimos.msgs type with no nesting (just x/y/z floats).
-    """
-    topic = ROSTopic("/test_ros_topic", Vector3)
-    collector = CallbackCollector(1)
-
-    subscriber.subscribe(topic, collector)
-    publisher.publish(topic, Vector3(1.0, 2.0, 3.0))
-
-    collector.wait()
-    assert len(collector.results) == 1
-    msg = collector.results[0][0]
-    assert msg.x == 1.0
-    assert msg.y == 2.0
-    assert msg.z == 3.0
-
-
-@pytest.mark.skipif_no_ros
-@pytest.mark.self_hosted
-def test_pointcloud2_pubsub(publisher, subscriber):
-    """Test PointCloud2 publish/subscribe through ROS.
-
-    COMPLEX_TYPE - has non-standard attributes (numpy arrays, custom accessors)
-    that can't be treated like a standard message with direct field copy.
-    Uses LCM encode/decode roundtrip to properly convert internal representation.
-    """
-    # Load real lidar data from replay (5 seconds in)
-    replay = TimedSensorReplay("go2_bigoffice/lidar")
-    original = replay.find_closest_seek(5.0)
-
-    assert original is not None, "Failed to load lidar data from replay"
-    assert len(original) > 0, "Loaded empty pointcloud"
-
-    topic = ROSTopic("/test_pointcloud2", PointCloud2)
-    collector = CallbackCollector(1, timeout=5.0)
-
-    subscriber.subscribe(topic, collector)
-    publisher.publish(topic, original)
-
-    collector.wait()
-    assert len(collector.results) == 1
-
-    converted = collector.results[0][0]
-
-    # Verify point cloud data is preserved
-    original_points, _ = original.as_numpy()
-    converted_points, _ = converted.as_numpy()
-
-    assert len(original_points) == len(converted_points), (
-        f"Point count mismatch: {len(original_points)} vs {len(converted_points)}"
-    )
-
-    np.testing.assert_allclose(
-        original_points,
-        converted_points,
-        rtol=1e-5,
-        atol=1e-5,
-        err_msg="Points don't match after ROS pubsub roundtrip",
-    )
-
-    # Verify frame_id is preserved
-    assert converted.frame_id == original.frame_id
-
-    # Verify timestamp is preserved (within 1ms tolerance)
-    assert abs(original.ts - converted.ts) < 0.001
-
-
-@pytest.mark.skipif_no_ros
-def test_pointcloud2_empty_pubsub(publisher, subscriber):
-    """Test empty PointCloud2 publish/subscribe.
-
-    Edge case for COMPLEX_TYPE with zero points.
-    """
-    original = PointCloud2.from_numpy(
-        np.array([]).reshape(0, 3),
-        frame_id="empty_frame",
-        timestamp=1234567890.0,
-    )
-
-    topic = ROSTopic("/test_empty_pointcloud", PointCloud2)
-    collector = CallbackCollector(1)
-
-    subscriber.subscribe(topic, collector)
-    publisher.publish(topic, original)
-
-    collector.wait()
-    assert len(collector.results) == 1
-    assert len(collector.results[0][0]) == 0
-
-
-@pytest.mark.skipif_no_ros
-def test_posestamped_pubsub(publisher, subscriber):
-    """Test PoseStamped publish/subscribe through ROS.
-
-    COMPLEX_TYPE with custom dimos.msgs implementation and nested messages
-    (Header, Pose containing Point and Quaternion). Uses LCM roundtrip.
-    """
-    original = PoseStamped(
-        ts=1234567890.123456,
-        frame_id="base_link",
-        position=[1.0, 2.0, 3.0],
-        orientation=[0.0, 0.0, 0.7071068, 0.7071068],  # 90 degree yaw
-    )
-
-    topic = ROSTopic("/test_posestamped", PoseStamped)
-    collector = CallbackCollector(1)
-
-    subscriber.subscribe(topic, collector)
-    publisher.publish(topic, original)
-
-    collector.wait()
-    assert len(collector.results) == 1
-
-    converted = collector.results[0][0]
-
-    # Verify all fields preserved
-    assert converted.frame_id == original.frame_id
-    assert abs(converted.ts - original.ts) < 0.001  # 1ms tolerance
-    assert converted.x == original.x
-    assert converted.y == original.y
-    assert converted.z == original.z
-    np.testing.assert_allclose(converted.orientation.z, original.orientation.z, rtol=1e-5)
-    np.testing.assert_allclose(converted.orientation.w, original.orientation.w, rtol=1e-5)
-
-
-@pytest.mark.skipif_no_ros
-def test_pointstamped_pubsub(publisher, subscriber):
-    """Test PointStamped publish/subscribe through ROS.
-
-    Raw LCM type with nested messages (Header, Point) but NO custom dimos.msgs
-    implementation. Tests recursive field copy for non-COMPLEX_TYPES.
-    """
-    original = PointStamped()
-    original.header.stamp.sec = 1234567890
-    original.header.stamp.nsec = 123456000
-    original.header.frame_id = "map"
-    original.point.x = 1.5
-    original.point.y = 2.5
-    original.point.z = 3.5
-
-    topic = ROSTopic("/test_pointstamped", PointStamped)
-    collector = CallbackCollector(1)
-
-    subscriber.subscribe(topic, collector)
-    publisher.publish(topic, original)
-
-    collector.wait()
-    assert len(collector.results) == 1
-
-    converted = collector.results[0][0]
-
-    # Verify nested header fields are preserved
-    assert converted.header.frame_id == original.header.frame_id
-    assert converted.header.stamp.sec == original.header.stamp.sec
-    assert converted.header.stamp.nsec == original.header.stamp.nsec
-
-    # Verify point coordinates are preserved
-    assert converted.point.x == original.point.x
-    assert converted.point.y == original.point.y
-    assert converted.point.z == original.point.z
-
-
-@pytest.mark.skipif_no_ros
-def test_twist_pubsub(publisher, subscriber):
-    """Test Twist publish/subscribe through ROS.
-
-    dimos.msgs type with nested Vector3 messages (linear, angular).
-    Tests recursive field copy with custom dimos.msgs nested types.
-    """
-    original = Twist(
-        linear=[1.0, 2.0, 3.0],
-        angular=[0.1, 0.2, 0.3],
-    )
-
-    topic = ROSTopic("/test_twist", Twist)
-    collector = CallbackCollector(1)
-
-    subscriber.subscribe(topic, collector)
-    publisher.publish(topic, original)
-
-    collector.wait()
-    assert len(collector.results) == 1
-
-    converted = collector.results[0][0]
-
-    # Verify linear velocity preserved
-    assert converted.linear.x == original.linear.x
-    assert converted.linear.y == original.linear.y
-    assert converted.linear.z == original.linear.z
-
-    # Verify angular velocity preserved
-    assert converted.angular.x == original.angular.x
-    assert converted.angular.y == original.angular.y
-    assert converted.angular.z == original.angular.z
+    unsubscribe = subscriber.subscribe(topic, collect)
+    node = publisher._raw._node
+    assert node is not None
+    # A live periodic source tolerates asynchronous DDS discovery without a fixed sleep.
+    timer = node.create_timer(0.05, lambda: publisher.publish(topic, original))
+    try:
+        assert received.wait(10), "ROS subscription did not receive the generated message"
+        assert values[0] == original
+    finally:
+        node.destroy_timer(timer)
+        unsubscribe()

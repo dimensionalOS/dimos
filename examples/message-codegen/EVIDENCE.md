@@ -562,3 +562,36 @@ transports; its transcript is
 `build/message-codegen/demo/evidence/nix-native-recording.txt`, with MCAP/log
 artifacts in the adjacent `nix-native-recording/` directory. Full stage 4/5
 acceptance, legacy consumers/fixtures, and live viewer demos remain outstanding.
+
+### Optional ROS bridge uses CDR directly
+
+Removed the LCM intermediate types, recursive field-copy conversion, renamed
+time fields, complex-type allowlist, and old type-import caches. The bridge
+resolves canonical `package/msg/Type` names and uses installed ROS serialization
+with generated DimOS encode/decode. Mismatched message identities are rejected
+even when their wire layouts match. Importing the conversion module remains
+possible without ROS; actually requesting conversion reports the missing
+optional dependency.
+
+**25 checks passed** against the installed Jazzy type support in the isolated
+reference container. Coverage includes seven real pub/sub cases, nested poses,
+empty/nonempty TF arrays, raw/compressed image bytes, padded big-endian point
+cloud data, camera calibration arrays, Unicode frames, exact epoch/zero/negative
+stamps, invalid names, and wrong-type rejection. On the ROS-free host, four
+contract checks pass and 21 ROS-dependent checks skip. The container's minimal
+pytest reports three unknown optional-plugin configuration warnings.
+
+`demo_ros_bridge.py` passed with three changing image/pose pairs on actual ROS
+topics. Transcript: `build/message-codegen/demo/evidence/ros-bridge.txt`. The
+local existing reference image needed `typing_extensions.py` mounted from the
+host virtualenv; the updated reference Dockerfile explicitly installs that
+dependency and pytest. The CI job now downloads the standalone Python binding
+and runs the same bridge checks and demo; this is workflow wiring, not a claim
+that the remote job has passed.
+
+Galaxea depth/lidar/IMU and compressed-image callers now use generated sensor
+types. Compressed images preserve their source format and header rather than
+forcing JPEG and replacing zero timestamps with wall time. Other Galaxea
+geometry/control consumers still need conversion; robot hardware was not used.
+Mypy passes on the converter, Galaxea connection, and demo. The full runtime
+cutover remains incomplete.
