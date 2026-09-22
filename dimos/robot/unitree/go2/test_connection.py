@@ -23,13 +23,14 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos_generated.sensor_msgs.msg import CameraInfo
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.time import to_nanoseconds
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
@@ -62,11 +63,11 @@ def test_connection_config_aes_key_defaults_from_global_config() -> None:
 
 
 def test_odom_to_tf_unprefixed_by_default() -> None:
-    odom = PoseStamped(ts=1.0, frame_id="world")
+    odom = PoseStamped(header=Header(stamp=Time(sec=1, nanosec=123456789), frame_id="world"))
     base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom)
-    assert (base.frame_id, base.child_frame_id) == ("world", "base_link")
-    assert (camera_link.frame_id, camera_link.child_frame_id) == ("base_link", "camera_link")
-    assert (camera_optical.frame_id, camera_optical.child_frame_id) == (
+    assert (base.header.frame_id, base.child_frame_id) == ("world", "base_link")
+    assert (camera_link.header.frame_id, camera_link.child_frame_id) == ("base_link", "camera_link")
+    assert (camera_optical.header.frame_id, camera_optical.child_frame_id) == (
         "camera_link",
         "camera_optical",
     )
@@ -98,14 +99,14 @@ def test_publish_tf_off_keeps_odometry_on_its_port(
 ) -> None:
     """Turning tf off hands the base_link edge to another publisher, not the odom port."""
     conn = connection(publish_tf=False)
-    conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
+    conn._publish_tf(PoseStamped(header=Header(stamp=Time(sec=1), frame_id="ignored")))
     assert conn.tf.publish.call_count == 0
     assert conn.odom.publish.call_count == 1
 
 
 def test_publish_tf_on_by_default(connection: Callable[[bool], GO2Connection]) -> None:
     conn = connection(publish_tf=True)
-    conn._publish_tf(PoseStamped(ts=1.0, frame_id="ignored"))
+    conn._publish_tf(PoseStamped(header=Header(stamp=Time(sec=1), frame_id="ignored")))
     assert conn.tf.publish.call_count == 1
     assert conn.odom.publish.call_count == 1
 
@@ -149,14 +150,32 @@ def test_camera_info_is_restamped_on_each_publish(
 def test_odom_to_tf_prefixed() -> None:
     """.namespace() sets frame_id_prefix: robot-local frames get prefixed, the
     odom parent frame stays global so all robots hang off one tree root."""
-    odom = PoseStamped(ts=1.0, frame_id="world")
+    odom = PoseStamped(header=Header(stamp=Time(sec=1, nanosec=123456789), frame_id="world"))
     base, camera_link, camera_optical = GO2Connection._odom_to_tf(odom, prefix="robot0")
-    assert (base.frame_id, base.child_frame_id) == ("world", "robot0/base_link")
-    assert (camera_link.frame_id, camera_link.child_frame_id) == (
+    assert (base.header.frame_id, base.child_frame_id) == ("world", "robot0/base_link")
+    assert (camera_link.header.frame_id, camera_link.child_frame_id) == (
         "robot0/base_link",
         "robot0/camera_link",
     )
-    assert (camera_optical.frame_id, camera_optical.child_frame_id) == (
+    assert (camera_optical.header.frame_id, camera_optical.child_frame_id) == (
         "robot0/camera_link",
         "robot0/camera_optical",
     )
+
+
+def test_published_tf_copies_source_pose_and_keeps_exact_stamp(connection):
+    conn = connection(publish_tf=True)
+    source = PoseStamped(
+        header=Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="device_odom"),
+        pose=Pose(position=Point(x=1.25, y=-2.5, z=0.3)),
+    )
+    conn._publish_tf(source)
+    message = conn.odom.publish.call_args.args[0]
+    tf = TFMessage.decode(conn.tf.publish.call_args.args[0].encode())
+    assert source.header.frame_id == "device_odom"
+    assert message.header.frame_id == "go2_odom"
+    assert all(edge.header.stamp == source.header.stamp for edge in tf.transforms)
+    assert tf.transforms[0].header.frame_id == "go2_odom"
+    assert tf.transforms[0].transform.translation.x == 1.25
+    message.pose.position.x = 99
+    assert source.pose.position.x == 1.25

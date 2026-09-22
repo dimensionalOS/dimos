@@ -420,3 +420,38 @@ its existing subprocess ResourceWarning; the standalone IPC demo exited cleanly.
 This resolves the Go2 image/cloud interface type mismatches recorded above.
 Go2/WebRTC/MuJoCo pose and TF callers still need their generated-value cutover;
 DimSim's external browser producer and complete live simulation remain unverified.
+
+### Go2 and simulation pose/TF values
+
+WebRTC odometry and TF streams now return generated PoseStamped and
+TransformStamped. The raw converter preserves the device header; the live
+connection explicitly replaces it with a host-arrival header, preserving the
+existing timing policy without a float timestamp round trip. Go2's publication
+copies the received pose before overriding its configured parent frame. Its
+mount chain and TFMessage retain that pose's exact stamp.
+
+MuJoCo's pose boundary maps simulator WXYZ quaternions into generated XYZW fields.
+DimSim's TF builder and G1 simulation ports/mounts also use generated values. G1's
+camera metadata is restamped per publication without mutating the template.
+The Unitree legacy Odometry subclass still serves unconverted recording-fixture
+callers; it has no new fallback role and remains scheduled for deletion.
+
+The focused geometry, device conversion, Go2/WebRTC, MuJoCo lifecycle/pose, and
+simulation TF suites passed **43 tests**. Simulator startup dependencies are
+stubbed in lifecycle/pose tests; shared-memory odometry uses real regions. No
+engine or robot was run. Eight changed production modules passed mypy.
+Logs: `build/message-codegen/unitree-pose-tests.log` and
+`build/message-codegen/unitree-simulation-tf-tests.log`.
+
+The human-facing `demo_robot_tf.py` passed and printed the decoded namespaced
+camera chain with source timestamp `1746565669448350564`. Captured output:
+`build/message-codegen/demo/evidence/robot-tf.txt`.
+
+The broader Go2 blueprint topology test could not collect because PyTorch is
+absent from this environment. Its generated-pose fixture has been updated, but
+that test is not counted as passing. Full blueprint/runtime acceptance remains
+open, as do recorder and legacy-fixture cutovers.
+
+The cumulative Python/Rust coordinator TF demo was rerun on both LCM and Zenoh:
+**2 E2E tests passed** in 8.68 seconds, including changing transform lookups and
+clean worker shutdown. Log: `build/message-codegen/unitree-pose-tf-e2e.log`.

@@ -20,6 +20,8 @@ import math
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     Point,
+    Pose,
+    PoseStamped,
     Quaternion,
     Transform,
     TransformStamped,
@@ -35,6 +37,7 @@ from dimos.msgs.geometry import (
     pose_from_transform,
     quaternion_from_euler,
     transform_from_odometry,
+    transform_from_pose,
     yaw,
 )
 
@@ -142,3 +145,20 @@ def test_pose_conversion_copies_nested_fields_and_preserves_header():
     pose.pose.orientation.w = 0
     assert edge.header.frame_id == "map"
     assert edge.transform.rotation.w == 0.8
+
+
+def test_pose_transform_preserves_header_and_does_not_alias_input():
+    source = PoseStamped(
+        header=Header(frame_id="odom", stamp=Time(sec=-1, nanosec=987654321)),
+        pose=Pose(position=Point(x=1, y=2, z=3), orientation=Quaternion(z=0.6, w=0.8)),
+    )
+    result = transform_from_pose(source, child_frame_id="robot/base")
+    decoded = TransformStamped.decode(result.encode())
+    assert decoded.header == source.header
+    assert decoded.child_frame_id == "robot/base"
+    assert decoded.transform.translation == Vector3(x=1, y=2, z=3)
+    assert decoded.transform.rotation == source.pose.orientation
+    result.header.frame_id = "changed"
+    result.transform.rotation.w = 0
+    assert source.header.frame_id == "odom"
+    assert source.pose.orientation.w == 0.8

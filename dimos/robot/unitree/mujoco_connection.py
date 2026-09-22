@@ -31,6 +31,7 @@ import time
 from typing import Any, TypeVar
 import weakref
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -42,12 +43,8 @@ from reactivex.disposable import Disposable
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.camera_info import camera_info_from_fov
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.image import image_from_array
-from dimos.msgs.time import header_now
-from dimos.robot.unitree.type.odometry import Odometry
+from dimos.msgs.time import header_now, time_from_seconds
 from dimos.simulation.mujoco.constants import (
     LAUNCHER_PATH,
     LIDAR_FPS,
@@ -316,7 +313,7 @@ class MujocoConnection:
 
         return None
 
-    def get_odom_message(self) -> Odometry | None:
+    def get_odom_message(self) -> PoseStamped | None:
         if self.shm_data is None:
             return None
 
@@ -326,13 +323,11 @@ class MujocoConnection:
             pos, quat_wxyz, timestamp = odom_data
 
             # Convert quaternion from (w,x,y,z) to (x,y,z,w) for ROS/Dimos
-            orientation = Quaternion(quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0])
+            orientation = Quaternion(x=quat_wxyz[1], y=quat_wxyz[2], z=quat_wxyz[3], w=quat_wxyz[0])
 
-            return Odometry(
-                position=Vector3(pos[0], pos[1], pos[2]),
-                orientation=orientation,
-                ts=timestamp,
-                frame_id="world",
+            return PoseStamped(
+                header=Header(stamp=time_from_seconds(timestamp), frame_id="world"),
+                pose=Pose(position=Point(x=pos[0], y=pos[1], z=pos[2]), orientation=orientation),
             )
 
         return None
@@ -390,7 +385,7 @@ class MujocoConnection:
         return self._create_stream(self.get_lidar_message, LIDAR_FPS, "Lidar")
 
     @functools.cache
-    def odom_stream(self) -> Observable[Odometry]:
+    def odom_stream(self) -> Observable[PoseStamped]:
         return self._create_stream(self.get_odom_message, ODOM_FREQUENCY, "Odom")
 
     @functools.cache

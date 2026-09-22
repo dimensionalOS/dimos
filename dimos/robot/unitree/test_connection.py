@@ -23,6 +23,7 @@ import threading
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, call
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, TransformStamped, Twist, Vector3
 from dimos_generated.sensor_msgs.msg import Image, PointCloud2
 import numpy as np
 import pytest
@@ -32,12 +33,11 @@ from unitree_webrtc_connect.constants import DATA_CHANNEL_TYPE, RTC_TOPIC, SPORT
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.image import image_view
 from dimos.msgs.pointcloud import pointcloud_xyz
 from dimos.robot.unitree import connection as conn_mod
 from dimos.robot.unitree.connection import SerializableVideoFrame, UnitreeWebRTCConnection
+from dimos.robot.unitree.type.odometry import raw_odometry_msg_sample
 
 
 def _stub_driver(connect_exc: Exception | None = None) -> MagicMock:
@@ -120,8 +120,8 @@ def test_move_api_toggle_sends_selected_wire_command(
     driver = _stub_driver()
     monkeypatch.setattr(conn_mod, "LegionConnection", MagicMock(return_value=driver))
     twist = Twist(
-        linear=Vector3(1.5, -0.4, 0.0),
-        angular=Vector3(0.0, 0.0, 0.8),
+        linear=Vector3(x=1.5, y=-0.4),
+        angular=Vector3(z=0.8),
     )
 
     connection = UnitreeWebRTCConnection(ip="10.0.0.99", **connection_options)
@@ -227,5 +227,47 @@ def test_sensor_streams_emit_generated_cdr_with_exact_arrival_time(
             decoded = Image.decode(message.encode())
             np.testing.assert_array_equal(image_view(decoded), pixels)
             assert decoded.header.frame_id == "camera_optical"
+    finally:
+        subscription.dispose()
+
+
+@pytest.mark.parametrize("as_tf", [False, True])
+def test_odometry_stream_preserves_pose_and_uses_exact_arrival_stamp(
+    built_connection, mocker, sensor_scheduler, as_tf
+):
+    connection, _driver = built_connection
+    mocker.patch.object(conn_mod.time, "time_ns", return_value=1700000000123456789)
+    mocker.patch.object(
+        connection, "raw_odom_stream", return_value=rx.just(raw_odometry_msg_sample)
+    )
+    stream = connection.tf_stream() if as_tf else connection.odom_stream()
+    received = []
+    errors = []
+    ready = threading.Event()
+
+    def receive(message):
+        received.append(message)
+        ready.set()
+
+    def fail(error):
+        errors.append(error)
+        ready.set()
+
+    subscription = stream.subscribe(receive, fail)
+    try:
+        assert ready.wait(5), "Odometry conversion did not publish"
+        assert not errors
+        assert len(received) == 1
+        cls = TransformStamped if as_tf else PoseStamped
+        message = cls.decode(received[0].encode())
+        assert message.header.frame_id == "world"
+        assert (message.header.stamp.sec, message.header.stamp.nanosec) == (1700000000, 123456789)
+        if as_tf:
+            assert message.child_frame_id == "base_link"
+            position, rotation = message.transform.translation, message.transform.rotation
+        else:
+            position, rotation = message.pose.position, message.pose.orientation
+        assert (position.x, position.y, position.z) == (5.961965, -2.916958, 0.319509)
+        assert rotation.w == -0.242112
     finally:
         subscription.dispose()

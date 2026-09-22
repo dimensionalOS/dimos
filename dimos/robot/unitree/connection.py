@@ -14,12 +14,12 @@
 
 import asyncio
 from dataclasses import dataclass
-import functools
 import json
 import threading
 import time
-from typing import Any, TypeAlias, TypeVar
+from typing import Any, TypeAlias
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, TransformStamped, Twist
 from dimos_generated.sensor_msgs.msg import Image, PointCloud2
 import numpy as np
 from numpy.typing import NDArray
@@ -39,9 +39,7 @@ from unitree_webrtc_connect.webrtc_driver import (
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry import transform_from_pose
 from dimos.msgs.image import image_from_array
 from dimos.msgs.time import header_now, time_from_nanoseconds
 from dimos.robot.unitree.type.lidar import (
@@ -49,8 +47,7 @@ from dimos.robot.unitree.type.lidar import (
     pointcloud2_from_webrtc_lidar,
 )
 from dimos.robot.unitree.type.lowstate import LowStateMsg
-from dimos.robot.unitree.type.odometry import Odometry
-from dimos.types.timestamped import Timestamped
+from dimos.robot.unitree.type.odometry import RawOdometryMessage, pose_from_webrtc_odometry
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure, callback_to_observable
@@ -59,14 +56,6 @@ from dimos.utils.sequential_ids import SequentialIds
 VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 
 logger = setup_logger()
-
-
-_T = TypeVar("_T", bound=Timestamped)
-
-
-def time_is_now(x: _T) -> _T:
-    x.ts = time.time()
-    return x
 
 
 @dataclass
@@ -284,7 +273,7 @@ class UnitreeWebRTCConnection(Resource):
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]))
 
     @simple_mcache
-    def raw_odom_stream(self) -> Observable[Pose]:
+    def raw_odom_stream(self) -> Observable[RawOdometryMessage]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]))
 
     @simple_mcache
@@ -295,20 +284,18 @@ class UnitreeWebRTCConnection(Resource):
         return backpressure(self.raw_lidar_stream().pipe(ops.map(convert)))
 
     @simple_mcache
-    def tf_stream(self) -> Observable[Transform]:
-        base_link = functools.partial(Transform.from_pose, "base_link")
-        return backpressure(self.odom_stream().pipe(ops.map(base_link)))
+    def tf_stream(self) -> Observable[TransformStamped]:
+        def convert(pose: PoseStamped) -> TransformStamped:
+            return transform_from_pose(pose, child_frame_id="base_link")
+
+        return backpressure(self.odom_stream().pipe(ops.map(convert)))
 
     @simple_mcache
-    def odom_stream(self) -> Observable[Pose]:
-        return backpressure(
-            self.raw_odom_stream().pipe(
-                ops.map(
-                    Odometry.from_msg,
-                ),
-                ops.map(time_is_now),
-            )
-        )
+    def odom_stream(self) -> Observable[PoseStamped]:
+        def convert(raw: RawOdometryMessage) -> PoseStamped:
+            return pose_from_webrtc_odometry(raw, header=header_now("world"))
+
+        return backpressure(self.raw_odom_stream().pipe(ops.map(convert)))
 
     @simple_mcache
     def video_stream(self) -> Observable[Image]:

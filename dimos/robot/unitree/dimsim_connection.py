@@ -16,20 +16,24 @@ from collections.abc import Callable
 import functools
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import (
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    Vector3,
+)
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 from reactivex import Observable, Subject
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.camera_info import camera_info_from_fov
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry import transform_from_pose
 from dimos.simulation.dimsim.dimsim_process import DimSimProcess
 from dimos.utils.logging_config import setup_logger
 
@@ -117,41 +121,25 @@ class DimSimConnection:
         return {}
 
     def _handle_odom(self, msg: PoseStamped) -> None:
-        self._tf_transport.publish(TFMessage(*_odom_to_tf(msg)))
+        self._tf_transport.publish(TFMessage(transforms=_odom_to_tf(msg)))
 
 
-def _odom_to_tf(odom: PoseStamped) -> list[Transform]:
-    """Build transform chain from odometry pose.
-
-    Transform tree: world -> base_link -> {camera_link -> camera_optical, lidar_link}
-    """
-    camera_link = Transform(
-        translation=Vector3(0.3, 0.0, 0.0),  # camera 30cm forward
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
-        child_frame_id="camera_link",
-        ts=odom.ts,
-    )
-
-    camera_optical = Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-        frame_id="camera_link",
-        child_frame_id="camera_optical",
-        ts=odom.ts,
-    )
-
-    lidar_link = Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
-        child_frame_id="lidar_link",
-        ts=odom.ts,
-    )
-
+def _odom_to_tf(odom: PoseStamped) -> list[TransformStamped]:
+    """Build world → base_link → camera/lidar transforms at the source pose stamp."""
     return [
-        Transform.from_pose("base_link", odom),
-        camera_link,
-        camera_optical,
-        lidar_link,
+        transform_from_pose(odom, child_frame_id="base_link"),
+        TransformStamped(
+            header=Header(stamp=odom.header.stamp, frame_id="base_link"),
+            child_frame_id="camera_link",
+            transform=Transform(translation=Vector3(x=0.3)),
+        ),
+        TransformStamped(
+            header=Header(stamp=odom.header.stamp, frame_id="camera_link"),
+            child_frame_id="camera_optical",
+            transform=Transform(rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)),
+        ),
+        TransformStamped(
+            header=Header(stamp=odom.header.stamp, frame_id="base_link"),
+            child_frame_id="lidar_link",
+        ),
     ]

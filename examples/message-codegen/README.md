@@ -547,3 +547,17 @@ The demo prints decoded XYZ coordinates, frame `world`, and the exact timestamp
 production shared-memory buffer and cleans up its regions on exit. It does not
 launch MuJoCo or require robot hardware. Live simulation and Go2 pose/TF consumers
 remain separate acceptance checks.
+
+### Robot pose and TF conversion (no hardware required)
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_robot_tf.py
+```
+
+This runs the WebRTC device-pose converter and Go2's TF-chain builder on a sample
+packet, round-trips generated TFMessage through CDR, and prints the three edges
+and their composed camera frame. The robot-local frames receive `robot0/`; the
+source parent stays `odom`. Timestamp `1746565669448350564` survives unchanged.
+The live WebRTC connection deliberately supplies a host-arrival header instead,
+matching its previous timing policy with integer-nanosecond precision.

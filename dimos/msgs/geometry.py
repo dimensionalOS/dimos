@@ -124,3 +124,16 @@ def pose_from_transform(message: TransformStamped) -> PoseStamped:
             orientation=message.transform.rotation,
         ),
     )
+
+
+def transform_from_pose(message: PoseStamped, *, child_frame_id: str) -> TransformStamped:
+    """Copy a stamped pose into TF with an explicit child and unchanged source header."""
+    position = message.pose.position
+    return TransformStamped(
+        header=message.header,
+        child_frame_id=child_frame_id,
+        transform=Transform(
+            translation=Vector3(x=position.x, y=position.y, z=position.z),
+            rotation=message.pose.orientation,
+        ),
+    )

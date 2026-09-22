@@ -22,11 +22,12 @@ so the static mount tree owns base_link, and the static tree is rooted at
 mid360_link so it never writes the frame PointLio owns.
 """
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_mid360_record import (
     unitree_go2_mid360_record,
 )
@@ -44,7 +45,7 @@ BLUEPRINTS = [unitree_go2_nav_3d, unitree_go2_mid360_record]
 
 def _tf_children_by_publisher(blueprint: Blueprint) -> dict[str, set[str]]:
     """Child frames each tf publisher the blueprint actually enables will write."""
-    odom = PoseStamped(ts=1.0, frame_id="go2_odom")
+    odom = PoseStamped(header=Header(frame_id="go2_odom"))
     children: dict[str, set[str]] = {}
     for atom in blueprint.blueprints:
         if atom.module is GO2Connection and atom.kwargs.get("publish_tf", True):

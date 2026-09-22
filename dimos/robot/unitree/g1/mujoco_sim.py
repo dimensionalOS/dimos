@@ -12,11 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import threading
 from threading import Thread
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import (
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    Vector3,
+)
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -24,18 +36,10 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry import transform_from_pose
+from dimos.msgs.time import time_from_nanoseconds
 from dimos.robot.unitree.g1.connection import G1ConnectionBase
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
-from dimos.robot.unitree.type.odometry import Odometry as SimOdometry
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -64,14 +68,12 @@ class G1SimConnection(G1ConnectionBase):
     def start(self) -> None:
         super().start()
 
-        from dimos.robot.unitree.mujoco_connection import MujocoConnection
-
         self.connection = MujocoConnection(self.config.g)
         assert self.connection is not None
         self.connection.start()
 
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
-        self.register_disposable(self.connection.odom_stream().subscribe(self._publish_sim_odom))
+        self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
         self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
         self.register_disposable(self.connection.video_stream().subscribe(self.color_image.publish))
 
@@ -92,52 +94,32 @@ class G1SimConnection(G1ConnectionBase):
 
     def _publish_camera_info_loop(self) -> None:
         assert self.connection is not None
-        info = self.connection.camera_info_static
         while not self._stop_event.is_set():
+            info = copy.copy(self.connection.camera_info_static)
+            info.header.stamp = time_from_nanoseconds(time.time_ns())
             self.camera_info.publish(info)
             self._stop_event.wait(1.0)
 
     def _publish_tf(self, msg: PoseStamped) -> None:
         self.odom.publish(msg)
-
-        base_link = Transform.from_pose("base_link", msg)
-
-        # Publish camera_link and camera_optical transforms
-        camera_link = Transform(
-            translation=Vector3(0.05, 0.0, 0.6),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="base_link",
-            child_frame_id="camera_link",
-            ts=time.time(),
-        )
-
-        camera_optical = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id="camera_link",
-            child_frame_id="camera_optical",
-            ts=time.time(),
-        )
-
-        map_to_world = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="map",
-            child_frame_id="world",
-            ts=time.time(),
-        )
-
-        self.tf.publish(TFMessage(base_link, camera_link, camera_optical, map_to_world))
-
-    def _publish_sim_odom(self, msg: SimOdometry) -> None:
-        self._publish_tf(
-            PoseStamped(
-                ts=msg.ts,
-                frame_id=msg.frame_id,
-                position=msg.position,
-                orientation=msg.orientation,
-            )
-        )
+        transforms = [
+            transform_from_pose(msg, child_frame_id="base_link"),
+            TransformStamped(
+                header=Header(stamp=msg.header.stamp, frame_id="base_link"),
+                child_frame_id="camera_link",
+                transform=Transform(translation=Vector3(x=0.05, z=0.6)),
+            ),
+            TransformStamped(
+                header=Header(stamp=msg.header.stamp, frame_id="camera_link"),
+                child_frame_id="camera_optical",
+                transform=Transform(rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)),
+            ),
+            TransformStamped(
+                header=Header(stamp=msg.header.stamp, frame_id="map"),
+                child_frame_id="world",
+            ),
+        ]
+        self.tf.publish(TFMessage(transforms=transforms))
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> None:
