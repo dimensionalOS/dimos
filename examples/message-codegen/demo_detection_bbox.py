@@ -19,11 +19,12 @@ from pathlib import Path
 import cv2
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
-from dimos_generated.vision_msgs.msg import Detection2D
+from dimos_generated.vision_msgs.msg import Detection2DArray
 import numpy as np
 
 from dimos.msgs.image import image_from_array, image_view
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 
 def main() -> None:
@@ -43,15 +44,18 @@ def main() -> None:
         ts=1700000000,
         image=source,
     )
-    wire = Detection2D.decode(detection.to_ros_detection2d().encode())
+    collection = ImageDetections2D(image=source, detections=[detection])
+    array = Detection2DArray.decode(collection.to_ros_detection2d_array().encode())
+    wire = array.detections[0]
+    assert array.header == source.header
     assert wire.header == source.header
-    annotated = detection.annotated_image()
+    annotated = collection.annotated_image()
     output = Path("build/message-codegen/demo/evidence/detection-bbox.png")
     output.parent.mkdir(parents=True, exist_ok=True)
     assert cv2.imwrite(str(output), image_view(annotated))
     print(f"CDR detection: track={wire.id}, class={wire.results[0].hypothesis.class_id}")
     print(f"Image: {output}; source stamp=1700000000123456789 ns")
-    print("PASS: generated image → annotated bbox and CDR Detection2D")
+    print("PASS: generated image → annotated bbox and CDR Detection2DArray")
 
 
 if __name__ == "__main__":

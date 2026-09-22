@@ -36,7 +36,7 @@ import numpy as np
 from rich.console import Console
 from rich.text import Text
 
-from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.image import image_from_array, image_to_bgr, image_view
 from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.utils.decorators.decorators import simple_mcache
@@ -125,13 +125,7 @@ class Detection2DBBox(Detection2D):
 
     def annotated_image(self, scale: float = 1.0) -> Image:
         """Return the full image with this detection's bbox and label drawn on it."""
-        img = image_view(self.image).copy()
-        if self.image.encoding == "rgb8":
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        elif self.image.encoding == "mono8":
-            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-        elif self.image.encoding != "bgr8":
-            raise ValueError(f"Unsupported annotation encoding: {self.image.encoding}")
+        img = image_to_bgr(self.image)
         self.draw_on(img, scale=scale)
         return image_from_array(img, encoding="bgr8", header=self.image.header)
 

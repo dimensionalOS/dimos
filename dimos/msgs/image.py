@@ -120,3 +120,19 @@ def image_sharpness(message: Image) -> float:
             interpolation=cv2.INTER_AREA,
         )
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+
+def image_to_bgr(message: Image) -> NDArray[np.uint8]:
+    """Return an independent BGR8 array for drawing or OpenCV color operations."""
+    pixels = image_view(message)
+    if message.encoding == "bgr8":
+        return pixels.copy()
+    codes = {
+        "rgb8": cv2.COLOR_RGB2BGR,
+        "rgba8": cv2.COLOR_RGBA2BGR,
+        "bgra8": cv2.COLOR_BGRA2BGR,
+        "mono8": cv2.COLOR_GRAY2BGR,
+    }
+    if message.encoding not in codes:
+        raise ValueError(f"Cannot convert {message.encoding!r} to BGR8")
+    return np.asarray(cv2.cvtColor(pixels, codes[message.encoding]), dtype=np.uint8)

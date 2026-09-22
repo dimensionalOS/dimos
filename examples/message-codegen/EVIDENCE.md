@@ -1103,3 +1103,18 @@ identifiers. Mypy passed for bbox/base and the earlier projection demo.
 assertions. The model-backed existing bbox fixture was not run; its generated
 image shape assertion was updated, and model/image fixture conversion remains
 part of the remaining perception work.
+
+### Generated detection collections
+
+ImageDetections and ImageDetections2D use generated images and Detection2DArray;
+array headers preserve the source image stamp and frame. Person/segmentation
+constructors now derive their application-level floating timestamp from generated
+headers. Shared `image_to_bgr` produces an independent drawing array and serves
+both individual and collection annotation. The annotation demo now exercises the
+collection's CDR array and rendered output.
+
+Nine combined generated detection/projection/filter checks passed. Mypy passed
+for the shared image helper, collection base, and bbox. Broader checking remains
+incomplete: Torch typing is unavailable and the person class has pre-existing
+unparameterized NumPy annotations. Model-backed inference and person-follow
+lifecycle acceptance are still outstanding.

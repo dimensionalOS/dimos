@@ -14,11 +14,12 @@
 
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
-from dimos_generated.vision_msgs.msg import Detection2D
+from dimos_generated.vision_msgs.msg import Detection2D, Detection2DArray
 import numpy as np
 
 from dimos.msgs.image import image_from_array, image_view
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 
 def test_generated_bbox_image_and_wire_round_trip():
@@ -52,3 +53,31 @@ def test_generated_bbox_image_and_wire_round_trip():
     assert restored.bbox == det.bbox
     assert restored.track_id == 7
     assert restored.class_id == 2
+
+
+def test_generated_detection_collection_round_trip():
+    pixels = np.zeros((40, 60, 3), dtype=np.uint8)
+    image = image_from_array(
+        pixels, encoding="rgb8", header=Header(frame_id="camera", stamp=Time(nanosec=123))
+    )
+    det = Detection2DBBox(
+        bbox=(10, 10, 30, 30),
+        track_id=7,
+        class_id=2,
+        confidence=0.9,
+        name="target",
+        ts=0,
+        image=image,
+    )
+    collection = ImageDetections2D(image=image, detections=[det])
+    wire = Detection2DArray.decode(collection.to_ros_detection2d_array().encode())
+    assert wire.header == image.header
+    assert len(wire.detections) == 1
+    restored = ImageDetections2D.from_ros_detection2d_array(image, wire)
+    assert len(restored) == 1
+    assert restored[0].bbox == det.bbox
+    annotated = collection.annotated_image()
+    assert annotated.header == image.header
+    assert annotated.encoding == "bgr8"
+    assert np.any(image_view(annotated))
+    assert not np.any(image_view(image))
