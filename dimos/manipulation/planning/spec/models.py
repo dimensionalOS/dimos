@@ -28,6 +28,7 @@ from dimos.manipulation.planning.spec.enums import (
 )
 
 if TYPE_CHECKING:
+    from dimos_generated.geometry_msgs.msg import PoseStamped, TransformStamped
     from dimos_generated.sensor_msgs.msg import JointState
     from dimos_generated.trajectory_msgs.msg import JointTrajectory
     import numpy as np
@@ -35,8 +36,6 @@ if TYPE_CHECKING:
 
     from dimos.manipulation.planning.groups.models import PlanningGroup
     from dimos.manipulation.planning.spec.validation import PreparedRobotModel
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.geometry_msgs.Transform import Transform
 
 
 PlanningGroupID: TypeAlias = str
@@ -49,10 +48,10 @@ JointPath: TypeAlias = "list[JointState]"
 """List of joint states forming a path (each waypoint has names + positions)"""
 
 
-CartesianWaypoint: TypeAlias = "PoseStamped | Transform"
+CartesianWaypoint: TypeAlias = "PoseStamped | TransformStamped"
 """One absolute TCP pose or relative rigid displacement from the planning start."""
 
-CartesianTarget: TypeAlias = "Sequence[PoseStamped] | Sequence[Transform]"
+CartesianTarget: TypeAlias = "Sequence[PoseStamped] | Sequence[TransformStamped]"
 """Ordered homogeneous Cartesian waypoints for one planning group."""
 
 

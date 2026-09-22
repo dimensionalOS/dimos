@@ -21,6 +21,7 @@ import threading
 from typing import TYPE_CHECKING
 
 import attrs
+from dimos_generated.geometry_msgs.msg import PoseStamped
 import numpy as np
 import pinocchio
 
@@ -33,14 +34,15 @@ from dimos.control.tasks.pose_target_ik import (
     PoseTargetIKTaskParams,
     string_tuple_converter,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry import pose_from_matrix, pose_matrix
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix, twist_to_numpy
+from dimos.utils.transform_utils import twist_to_numpy
 
 if TYPE_CHECKING:
+    from dimos_generated.geometry_msgs.msg import TwistStamped
+
     from dimos.control.coordinator import TaskConfig
     from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
-    from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 
 logger = setup_logger()
 
@@ -89,7 +91,7 @@ class EEFTwistTask(PoseTargetIKTask):
         return False
 
     def on_ee_twist_command(self, twist: TwistStamped, t_now: float) -> bool:
-        values = twist_to_numpy(twist)
+        values = twist_to_numpy(twist.twist)
         if values.shape != (6,) or not np.all(np.isfinite(values)):
             logger.warning("EEFTwistTask rejecting invalid twist", task=self._name)
             return False
@@ -193,16 +195,11 @@ def create_task(
 
 
 def _integrate_twist(pose: PoseStamped, twist: TwistStamped, dt: float) -> PoseStamped:
-    matrix = np.asarray(pose_to_matrix(pose), dtype=np.float64)
-    values = twist_to_numpy(twist)
+    matrix = np.asarray(pose_matrix(pose.pose), dtype=np.float64)
+    values = twist_to_numpy(twist.twist)
     matrix[:3, 3] += values[:3] * dt
     angular_step = values[3:] * dt
     if np.linalg.norm(angular_step) > 0.0:
         matrix[:3, :3] = pinocchio.exp3(angular_step) @ matrix[:3, :3]
-    integrated = matrix_to_pose(matrix)
-    return PoseStamped(
-        ts=pose.ts,
-        frame_id=pose.frame_id,
-        position=integrated.position,
-        orientation=integrated.orientation,
-    )
+    integrated = pose_from_matrix(matrix)
+    return PoseStamped(header=pose.header, pose=integrated)

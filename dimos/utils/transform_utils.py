@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+from dimos_generated.geometry_msgs.msg import Twist
 import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R
@@ -20,7 +21,6 @@ from scipy.spatial.transform import Rotation as R
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 

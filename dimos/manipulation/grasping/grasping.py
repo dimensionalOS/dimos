@@ -19,17 +19,19 @@ perception (get pointcloud) to graspgen (generate grasps in Docker) to output gr
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
+
+from dimos_generated.geometry_msgs.msg import PoseArray
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.manipulation.grasping.grasp_gen_spec import LegacyGraspGenSpec
-from dimos.msgs.geometry_msgs.PoseArray import PoseArray
+from dimos.msgs.geometry import quaternion_euler
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import quaternion_to_euler
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -129,9 +131,9 @@ class GraspingModule(Module):
         """Format grasp result for agent/human consumption."""
         best = grasps.poses[0]
         pos = best.position
-        rpy = quaternion_to_euler(best.orientation, degrees=True)
+        rpy = tuple(math.degrees(value) for value in quaternion_euler(best.orientation))
         return (
             f"Generated {len(grasps.poses)}"
             f"Best grasp: pos=({pos.x:.4f}, {pos.y:.4f}, {pos.z:.4f}), "
-            f"rpy=({rpy.x:.1f}, {rpy.y:.1f}, {rpy.z:.1f}) degrees"
+            f"rpy=({rpy[0]:.1f}, {rpy[1]:.1f}, {rpy[2]:.1f}) degrees"
         )

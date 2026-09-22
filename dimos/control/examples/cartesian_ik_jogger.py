@@ -37,7 +37,12 @@ from dataclasses import dataclass
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
+
+from dimos.msgs.geometry import quaternion_from_euler
+from dimos.msgs.time import time_from_seconds
 
 try:
     import pygame
@@ -125,17 +130,16 @@ class JogState:
 
     def to_pose_stamped(self) -> Any:
         """Convert to PoseStamped for LCM publishing."""
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
+        from dimos_generated.geometry_msgs.msg import PoseStamped, Vector3
 
-        position = Vector3(self.x, self.y, self.z)
-        orientation = Quaternion.from_euler(Vector3(self.roll, self.pitch, self.yaw))
+        position = Vector3(x=self.x, y=self.y, z=self.z)
+        orientation = quaternion_from_euler(self.roll, self.pitch, self.yaw)
 
         return PoseStamped(
-            ts=time.time(),
-            position=position,
-            orientation=orientation,
+            header=Header(frame_id="", stamp=time_from_seconds(time.time())),
+            pose=Pose(
+                position=Point(x=position.x, y=position.y, z=position.z), orientation=orientation
+            ),
         )
 
 
@@ -171,8 +175,9 @@ def run_jogger_ui(model_path: str | None = None, ee_joint_id: int = 6) -> None:
                    If None, uses Piper model.
         ee_joint_id: End-effector joint ID in the model
     """
+    from dimos_generated.geometry_msgs.msg import PoseStamped
+
     from dimos.core.transport import LCMTransport
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
     # Use Piper model if not specified
     if model_path is None:

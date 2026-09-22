@@ -16,7 +16,9 @@
 
 from pathlib import Path
 
+from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -32,7 +34,6 @@ from dimos.control.tasks.pose_target_ik import (
 )
 from dimos.manipulation.planning.kinematics.pink_solver import _PinkSolverCore
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.assets.model import RobotModel
 
 
@@ -97,7 +98,9 @@ def _solver(mocker: MockerFixture, positions: list[float] | None = None) -> Pink
     solver.step.return_value = JointState(
         name=["arm/a", "arm/b"], position=positions or [0.01, -0.01]
     )
-    solver.frame_poses.return_value = {"tool": PoseStamped(frame_id="base")}
+    solver.frame_poses.return_value = {
+        "tool": PoseStamped(header=Header(frame_id="base"), pose=Pose())
+    }
     return solver
 
 
@@ -116,7 +119,7 @@ def _snapshot(
     extra_joint_positions: dict[str, float] | None = None,
 ) -> FrameTargetSnapshot:
     return FrameTargetSnapshot(
-        targets=targets or {"tool": PoseStamped(frame_id="world")},
+        targets=targets or {"tool": PoseStamped(header=Header(frame_id="world"), pose=Pose())},
         last_update_time=last_update_time,
         extra_joint_positions=extra_joint_positions or {},
     )
@@ -145,7 +148,7 @@ def test_pose_target_solver_advances_from_last_command_not_delayed_feedback(
         )
 
     step = mocker.patch.object(solver, "_step_frame_targets", side_effect=advance)
-    targets = {"tool": PoseStamped()}
+    targets = {"tool": PoseStamped(header=Header(frame_id=""), pose=Pose())}
 
     assert solver.step(targets, JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]), 0.01)
     assert solver.step(
@@ -180,7 +183,7 @@ def test_pose_target_solver_reset_reseeds_from_feedback(mocker: MockerFixture) -
             ),
         ],
     )
-    targets = {"tool": PoseStamped()}
+    targets = {"tool": PoseStamped(header=Header(frame_id=""), pose=Pose())}
 
     assert solver.step(targets, JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]), 0.01)
     solver.reset()
@@ -209,7 +212,7 @@ def test_pose_target_solver_reset_during_step_discards_command_and_filter_histor
     mocker.patch.object(solver, "_step_frame_targets", side_effect=reset_during_step)
 
     result = solver.step(
-        {"tool": PoseStamped()},
+        {"tool": PoseStamped(header=Header(frame_id=""), pose=Pose())},
         JointState(name=["arm/a", "arm/b"], position=[0.0, 0.0]),
         0.01,
     )
@@ -362,7 +365,7 @@ def test_current_frame_poses_uses_live_coordinator_seed(mocker: MockerFixture) -
 
     poses = task.current_frame_poses(_state(positions={"arm/a": 0.2, "arm/b": 0.3}), ["tool"])
 
-    assert poses == {"tool": PoseStamped(frame_id="base")}
+    assert poses == {"tool": PoseStamped(header=Header(frame_id="base"), pose=Pose())}
     seed = solver.frame_poses.call_args.args[0]
     assert seed.name == ["arm/a", "arm/b"]
     assert seed.position == [0.2, 0.3]

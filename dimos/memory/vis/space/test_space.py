@@ -14,58 +14,70 @@
 
 """Tests for Space builder and element types."""
 
+from dimos_generated.geometry_msgs.msg import (
+    Point as GeoPoint,
+    Pose as GeoPose,
+    PoseStamped,
+    Quaternion,
+    Vector3,
+)
+from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid, Path as Path
+from dimos_generated.vision_msgs.msg import Detection3D
 import numpy as np
 import pytest
 
 from dimos.memory.type.observation import EmbeddedObservation, Observation
+from dimos.memory.vis import color
 from dimos.memory.vis.space.elements import Arrow, Box3D, Camera, Point, Polyline, Pose, Text
 from dimos.memory.vis.space.space import Space
-from dimos.msgs.geometry_msgs.Point import Point as GeoPoint
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path as Path
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
 
 
 class TestElementTypes:
     """Element types wrap msgs with rendering intent + style."""
 
     def test_pose_wraps_posestamped(self):
-        ps = PoseStamped(3.2, 1.5, 0.0)
+        ps = PoseStamped(
+            pose=GeoPose(position=GeoPoint(x=3.2, y=1.5, z=0.0), orientation=Quaternion())
+        )
         p = Pose(ps, color="red", label="fridge")
         assert p.msg is ps
         assert p.color == "red"
         assert p.label == "fridge"
 
     def test_arrow_wraps_posestamped(self):
-        ps = PoseStamped(1, 2, 0, 0, 0, 0.1, 1)
+        ps = PoseStamped(
+            pose=GeoPose(
+                position=GeoPoint(x=1, y=2, z=0), orientation=Quaternion(x=0, y=0, z=0.1, w=1)
+            )
+        )
         a = Arrow(ps, color="orange", length=0.8)
         assert a.msg is ps
         assert a.length == 0.8
 
     def test_point_wraps_geopoint(self):
-        gp = GeoPoint(7.1, 4.3, 0)
+        gp = GeoPoint(x=7.1, y=4.3, z=0)
         p = Point(gp, color="green", label="bottle")
         assert p.msg is gp
         assert p.msg.x == pytest.approx(7.1)
 
     def test_point_wraps_posestamped(self):
-        ps = PoseStamped(3, 1, 0)
+        ps = PoseStamped(pose=GeoPose(position=GeoPoint(x=3, y=1, z=0), orientation=Quaternion()))
         p = Point(ps, radius=0.5)
-        assert p.msg.x == pytest.approx(3.0)
+        assert p.msg.pose.position.x == pytest.approx(3.0)
 
     def test_box3d_from_center_size(self):
-        from dimos.msgs.geometry_msgs.Pose import Pose as GeoPose
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
-        b = Box3D(center=GeoPose(5, 3, 0), size=Vector3(2, 1, 0.5), label="table")
-        assert b.center.x == pytest.approx(5.0)
+        b = Box3D(
+            center=GeoPose(position=GeoPoint(x=5, y=3, z=0), orientation=Quaternion()),
+            size=Vector3(x=2, y=1, z=0.5),
+            label="table",
+        )
+        assert b.center.position.x == pytest.approx(5.0)
         assert b.size.x == pytest.approx(2.0)
         assert b.label == "table"
 
     def test_camera_with_image(self):
-        ps = PoseStamped(1, 2, 0)
+        ps = PoseStamped(pose=GeoPose(position=GeoPoint(x=1, y=2, z=0), orientation=Quaternion()))
         img = Image(np.zeros((480, 640, 3), dtype=np.uint8))
         c = Camera(pose=ps, image=img, color="purple")
         assert c.pose is ps
@@ -83,7 +95,7 @@ class TestSpaceExplicitElements:
 
     def test_add_pose(self):
         s = Space()
-        ps = PoseStamped(3, 1, 0)
+        ps = PoseStamped(pose=GeoPose(position=GeoPoint(x=3, y=1, z=0), orientation=Quaternion()))
         pose = Pose(ps, color="red")
         s.add(pose)
         assert len(s) == 1
@@ -91,15 +103,15 @@ class TestSpaceExplicitElements:
 
     def test_add_multiple_types(self):
         s = Space()
-        ps = PoseStamped(3, 1, 0)
+        ps = PoseStamped(pose=GeoPose(position=GeoPoint(x=3, y=1, z=0), orientation=Quaternion()))
         s.add(Pose(ps, color="red"))
         s.add(Arrow(ps, color="orange"))
-        s.add(Point(GeoPoint(1, 2, 0), label="x"))
+        s.add(Point(GeoPoint(x=1, y=2, z=0), label="x"))
         s.add(Text((0, 0, 0), "hello"))
         assert len(s) == 4
 
     def test_chaining(self):
-        ps = PoseStamped(1, 1, 0)
+        ps = PoseStamped(pose=GeoPose(position=GeoPoint(x=1, y=1, z=0), orientation=Quaternion()))
         s = Space().add(Pose(ps)).add(Arrow(ps)).add(Text((0, 0, 0), "hi"))
         assert len(s) == 3
 
@@ -109,7 +121,9 @@ class TestSpaceAutoWrap:
 
     def test_posestamped_becomes_pose(self):
         s = Space()
-        ps = PoseStamped(3.2, 1.5, 0)
+        ps = PoseStamped(
+            pose=GeoPose(position=GeoPoint(x=3.2, y=1.5, z=0), orientation=Quaternion())
+        )
         s.add(ps, color="blue", label="auto")
         assert len(s) == 1
         el = s.elements[0]
@@ -120,7 +134,7 @@ class TestSpaceAutoWrap:
 
     def test_geopoint_becomes_point(self):
         s = Space()
-        gp = GeoPoint(7, 4, 0)
+        gp = GeoPoint(x=7, y=4, z=0)
         s.add(gp, color="yellow")
         el = s.elements[0]
         assert isinstance(el, Point)
@@ -129,7 +143,14 @@ class TestSpaceAutoWrap:
 
     def test_path_becomes_polyline(self):
         s = Space()
-        p = Path(poses=[PoseStamped(i, 0, 0) for i in range(3)])
+        p = Path(
+            poses=[
+                PoseStamped(
+                    pose=GeoPose(position=GeoPoint(x=i, y=0, z=0), orientation=Quaternion())
+                )
+                for i in range(3)
+            ]
+        )
         s.add(p, color="blue", width=0.1)
         el = s.elements[0]
         assert isinstance(el, Polyline)
@@ -188,15 +209,18 @@ class TestSpaceObservations:
         assert el.data == "some_data"
 
     def test_posestamped_observation_stored_as_observation(self):
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as PS
-
-        obs = Observation(id=3, ts=3.0, pose=(1, 2, 0, 0, 0, 0, 1), _data=PS(5, 2, 0))
+        obs = Observation(
+            id=3,
+            ts=3.0,
+            pose=(1, 2, 0, 0, 0, 0, 1),
+            _data=PoseStamped(pose=GeoPose(position=GeoPoint(x=5, y=2))),
+        )
 
         s = Space()
         s.add(obs)
         el = s.elements[0]
         assert isinstance(el, Observation)
-        assert el.data.x == pytest.approx(5.0)
+        assert el.data.pose.position.x == pytest.approx(5.0)
 
     def test_embedded_observation_stored_as_arrow(self):
         obs = EmbeddedObservation(
@@ -224,7 +248,10 @@ class TestSpaceConvenience:
         assert isinstance(s.elements[0], OccupancyGrid)
 
     def test_add_list_of_msgs(self):
-        poses = [PoseStamped(i, 0, 0) for i in range(3)]
+        poses = [
+            PoseStamped(pose=GeoPose(position=GeoPoint(x=i, y=0, z=0), orientation=Quaternion()))
+            for i in range(3)
+        ]
         s = Space()
         s.add(poses, color="red")
         assert len(s) == 3
@@ -239,7 +266,7 @@ class TestSpaceRepr:
 
     def test_repr_with_elements(self):
         s = Space()
-        ps = PoseStamped(0, 0, 0)
+        ps = PoseStamped(pose=GeoPose(position=GeoPoint(x=0, y=0, z=0), orientation=Quaternion()))
         s.add(Pose(ps))
         s.add(Pose(ps))
         s.add(Arrow(ps))
@@ -255,29 +282,40 @@ class TestSVGRender:
         assert svg.endswith("</svg>")
 
     def test_point_renders_circle(self):
-        from dimos.memory.vis import color
-
         s = Space()
-        s.add(Point(GeoPoint(3, 4, 0), color="red", label="hi"))
+        s.add(Point(GeoPoint(x=3, y=4, z=0), color="red", label="hi"))
         svg = s.to_svg()
         assert "<circle" in svg
         assert color.red.hex() in svg
         assert "hi" in svg
 
     def test_pose_renders_polygon(self):
-        from dimos.memory.vis import color
-
         s = Space()
-        s.add(Pose(PoseStamped(1, 2, 0), color="blue"))
+        s.add(
+            Pose(
+                PoseStamped(
+                    pose=GeoPose(position=GeoPoint(x=1, y=2, z=0), orientation=Quaternion())
+                ),
+                color="blue",
+            )
+        )
         svg = s.to_svg()
         assert "<polygon" in svg
         assert color.blue.hex() in svg
 
     def test_arrow_renders_polygon(self):
-        from dimos.memory.vis import color
-
         s = Space()
-        s.add(Arrow(PoseStamped(0, 0, 0, 0, 0, 0.38, 0.92), color="orange"))
+        s.add(
+            Arrow(
+                PoseStamped(
+                    pose=GeoPose(
+                        position=GeoPoint(x=0, y=0, z=0),
+                        orientation=Quaternion(x=0, y=0, z=0.38, w=0.92),
+                    )
+                ),
+                color="orange",
+            )
+        )
         svg = s.to_svg()
         assert "<polygon" in svg
         assert color.orange.hex() in svg
@@ -286,7 +324,16 @@ class TestSVGRender:
         s = Space()
         s.add(
             Polyline(
-                msg=Path(poses=[PoseStamped(i, i * 0.5, 0) for i in range(5)]),
+                msg=Path(
+                    poses=[
+                        PoseStamped(
+                            pose=GeoPose(
+                                position=GeoPoint(x=i, y=i * 0.5, z=0), orientation=Quaternion()
+                            )
+                        )
+                        for i in range(5)
+                    ]
+                ),
                 color="blue",
             )
         )
@@ -294,11 +341,14 @@ class TestSVGRender:
         assert "<polyline" in svg
 
     def test_box3d_renders_rect(self):
-        from dimos.msgs.geometry_msgs.Pose import Pose as GeoPose
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
         s = Space()
-        s.add(Box3D(center=GeoPose(5, 3, 0), size=Vector3(2, 1, 0), label="table"))
+        s.add(
+            Box3D(
+                center=GeoPose(position=GeoPoint(x=5, y=3, z=0), orientation=Quaternion()),
+                size=Vector3(x=2, y=1, z=0),
+                label="table",
+            )
+        )
         svg = s.to_svg()
         assert "<rect" in svg
         assert "table" in svg
@@ -311,18 +361,23 @@ class TestSVGRender:
         assert "hello &lt;world&gt;" in svg
 
     def test_camera_without_info_renders_dot(self):
-        from dimos.memory.vis import color
-
         s = Space()
-        s.add(Camera(pose=PoseStamped(1, 2, 0), color="purple"))
+        s.add(
+            Camera(
+                pose=PoseStamped(
+                    pose=GeoPose(position=GeoPoint(x=1, y=2, z=0), orientation=Quaternion())
+                ),
+                color="purple",
+            )
+        )
         svg = s.to_svg()
         assert "<circle" in svg
         assert color.purple.hex() in svg
 
     def test_occupancy_grid_renders_image(self):
         grid = OccupancyGrid(
-            grid=np.zeros((10, 10), dtype=np.int8),
-            resolution=0.1,
+            info=MapMetaData(width=10, height=10, resolution=0.1),
+            data=[0] * 100,
         )
         s = Space().base_map(grid)
         svg = s.to_svg()
@@ -331,10 +386,10 @@ class TestSVGRender:
 
     def test_mixed_space(self):
         s = Space()
-        ps = PoseStamped(3, 1, 0)
+        ps = PoseStamped(pose=GeoPose(position=GeoPoint(x=3, y=1, z=0), orientation=Quaternion()))
         s.add(Pose(ps, color="red", label="robot"))
         s.add(Arrow(ps, color="orange"))
-        s.add(Point(GeoPoint(5, 5, 0), color="green", label="goal"))
+        s.add(Point(GeoPoint(x=5, y=5, z=0), color="green", label="goal"))
         s.add(Text((0, 0, 0), "test"))
         svg = s.to_svg()
         assert svg.count("<circle") == 1  # point dot
@@ -343,7 +398,7 @@ class TestSVGRender:
 
     def test_to_svg_writes_file(self, tmp_path):
         s = Space()
-        s.add(Point(GeoPoint(1, 1, 0)))
+        s.add(Point(GeoPoint(x=1, y=1, z=0)))
         out = tmp_path / "test.svg"
         s.to_svg(str(out))
         assert out.exists()

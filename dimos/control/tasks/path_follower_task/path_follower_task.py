@@ -29,6 +29,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Float32, Header
 import numpy as np
 
 from dimos.control.benchmarking.velocity_profile import (
@@ -52,11 +55,8 @@ from dimos.control.tasks.velocity_tracking_pid import (
     VelocityTrackingPID,
 )
 from dimos.core.global_config import global_config as _gc
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.msgs.geometry import quaternion_euler, quaternion_from_euler
+from dimos.msgs.time import time_from_seconds
 from dimos.navigation.replanning_a_star.controllers import PController
 from dimos.navigation.replanning_a_star.path_distancer import PathDistancer
 from dimos.protocol.service.spec import BaseConfig
@@ -228,9 +228,11 @@ class PathFollowerTask(BaseControlTask):
                 self.start_path(
                     path,
                     PoseStamped(
-                        ts=state.t_now,
-                        position=Vector3(float(px), float(py), 0.0),
-                        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, float(pyaw))),
+                        header=Header(frame_id="", stamp=time_from_seconds(state.t_now)),
+                        pose=Pose(
+                            position=Point(x=float(px), y=float(py), z=0.0),
+                            orientation=quaternion_from_euler(0.0, 0.0, float(pyaw)),
+                        ),
                     ),
                 )
         if not self._running():
@@ -246,9 +248,11 @@ class PathFollowerTask(BaseControlTask):
         yaw = pos.get(self._joint_names_list[2])
         if x is not None and y is not None and yaw is not None:
             self._current_odom = PoseStamped(
-                ts=state.t_now,
-                position=Vector3(float(x), float(y), 0.0),
-                orientation=Quaternion.from_euler(Vector3(0.0, 0.0, float(yaw))),
+                header=Header(frame_id="", stamp=time_from_seconds(state.t_now)),
+                pose=Pose(
+                    position=Point(x=float(x), y=float(y), z=0.0),
+                    orientation=quaternion_from_euler(0.0, 0.0, float(yaw)),
+                ),
             )
         if self._current_odom is None:
             return None
@@ -283,8 +287,8 @@ class PathFollowerTask(BaseControlTask):
         # PathSpeedCap.speed_limit_at — min over the next ~8 waypoints so
         # braking starts BEFORE a corner rather than at it.
         if self._velocity_profile is not None and self._velocity_profile_pts is not None:
-            x = self._current_odom.position.x
-            y = self._current_odom.position.y
+            x = self._current_odom.pose.position.x
+            y = self._current_odom.pose.position.y
             i = int(np.argmin(np.sum((self._velocity_profile_pts - np.array([x, y])) ** 2, axis=1)))
             j = min(len(self._velocity_profile), i + 8)
             vlim = float(np.min(self._velocity_profile[i:j]))
@@ -294,7 +298,7 @@ class PathFollowerTask(BaseControlTask):
                 vx, vy, wz = vx * k, vy * k, wz * k
         elif self._profile_cap is not None:
             vx, vy, wz = self._profile_cap.cap(
-                self._current_odom.position.x, self._current_odom.position.y, vx, vy, wz
+                self._current_odom.pose.position.x, self._current_odom.pose.position.y, vx, vy, wz
             )
 
         # Inner-loop gain compensation (mutually exclusive - PI wins if both
@@ -340,8 +344,8 @@ class PathFollowerTask(BaseControlTask):
 
     def _step_initial_rotation(self) -> tuple[float, float, float]:
         assert self._path is not None and self._current_odom is not None
-        first_yaw = self._path.poses[0].orientation.euler[2]
-        robot_yaw = self._current_odom.orientation.euler[2]
+        first_yaw = quaternion_euler(self._path.poses[0].pose.orientation)[2]
+        robot_yaw = quaternion_euler(self._current_odom.pose.orientation)[2]
         yaw_err = angle_diff(first_yaw, robot_yaw)
 
         if abs(yaw_err) < self._config.orientation_tolerance:
@@ -364,7 +368,7 @@ class PathFollowerTask(BaseControlTask):
         best_idx = lo
         best_d_sq = float("inf")
         for i in range(lo, hi):
-            p = self._path.poses[i].position
+            p = self._path.poses[i].pose.position
             d_sq = (p.x - pos[0]) ** 2 + (p.y - pos[1]) ** 2
             if d_sq < best_d_sq:
                 best_d_sq = d_sq
@@ -376,7 +380,7 @@ class PathFollowerTask(BaseControlTask):
         assert self._distancer is not None
         assert self._current_odom is not None
 
-        pos = np.array([self._current_odom.position.x, self._current_odom.position.y])
+        pos = np.array([self._current_odom.pose.position.x, self._current_odom.pose.position.y])
 
         closest = self._windowed_closest(pos)
         if closest > self._max_progress_idx:
@@ -410,8 +414,8 @@ class PathFollowerTask(BaseControlTask):
 
     def _step_final_rotation(self) -> tuple[float, float, float]:
         assert self._path is not None and self._current_odom is not None
-        goal_yaw = self._path.poses[-1].orientation.euler[2]
-        robot_yaw = self._current_odom.orientation.euler[2]
+        goal_yaw = quaternion_euler(self._path.poses[-1].pose.orientation)[2]
+        robot_yaw = quaternion_euler(self._current_odom.pose.orientation)[2]
         yaw_err = angle_diff(goal_yaw, robot_yaw)
 
         if abs(yaw_err) < self._config.orientation_tolerance:
@@ -529,8 +533,8 @@ class PathFollowerTask(BaseControlTask):
         self._velocity_profile = None
         self._velocity_profile_pts = None
 
-        first_yaw = path.poses[0].orientation.euler[2]
-        robot_yaw = current_odom.orientation.euler[2]
+        first_yaw = quaternion_euler(path.poses[0].pose.orientation)[2]
+        robot_yaw = quaternion_euler(current_odom.pose.orientation)[2]
         yaw_err = angle_diff(first_yaw, robot_yaw)
         self._controller.reset_yaw_error(yaw_err)
 

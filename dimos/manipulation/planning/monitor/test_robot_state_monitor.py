@@ -47,9 +47,17 @@ def test_generated_feedback_reorders_joints_and_preserves_source_header(monitor)
     monitor.on_joint_state(JointState.decode(source.encode()))
     assert monitor.get_current_positions().tolist() == [1.0, 2.0]
     assert monitor.get_current_velocities().tolist() == [0.1, 0.2]
-    expected = JointState(header=source.header, name=["arm/a", "arm/b"], position=[1.0, 2.0])
+    expected = JointState(
+        header=source.header, name=["arm/a", "arm/b"], position=[1.0, 2.0], velocity=[0.1, 0.2]
+    )
     world.sync_from_joint_state.assert_called_once_with(expected)
     assert received == [expected]
+    snapshot = monitor.get_current_joint_state()
+    assert snapshot == expected
+    snapshot.header.stamp.nanosec = 0
+    snapshot.position[0] = 99
+    received[0].position[0] = 42
+    assert monitor.get_current_joint_state() == expected
     source.header.stamp.nanosec = 0
     assert received[0].header.stamp.nanosec == 123456789
 

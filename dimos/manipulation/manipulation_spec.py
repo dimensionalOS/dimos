@@ -21,13 +21,12 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Protocol
 
-from dimos_generated.dimos_msgs.msg import TrajectoryStatus
+from dimos_generated.dimos_msgs.msg import GraspCandidateArray, TrajectoryStatus
+from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
 
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionResult
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.trajectory import trajectory_duration
 from dimos.spec.utils import Spec
 

@@ -20,7 +20,17 @@ from contextlib import nullcontext
 import math
 from pathlib import Path
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -41,15 +51,14 @@ from dimos.manipulation.planning.spec.joint_space import (
     JointSpace,
 )
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import LoadedRobotModel, PlanarBaseDefinition, RobotModel
 
 
 def _pose() -> PoseStamped:
-    return PoseStamped(position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0))
+    return PoseStamped(
+        header=Header(frame_id=""),
+        pose=Pose(position=Point(), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)),
+    )
 
 
 def _group(name: str, joints: tuple[str, ...]) -> PlanningGroup:
@@ -304,8 +313,12 @@ def test_plan_cartesian_path_is_explicitly_unsupported() -> None:
         JointState(position=[0.0, 0.0]),
         {
             group.id: (
-                Transform.identity(),
-                Transform(translation=Vector3(0.1, 0.0, 0.0)),
+                TransformStamped(header=Header(frame_id="world"), child_frame_id=""),
+                TransformStamped(
+                    header=Header(frame_id="world"),
+                    transform=Transform(translation=Vector3(x=0.1, y=0.0, z=0.0)),
+                    child_frame_id="",
+                ),
             )
         },
         RoboPlanCartesianPathConfig(),

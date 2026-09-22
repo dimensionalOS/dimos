@@ -16,7 +16,9 @@
 
 from pathlib import Path
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import pytest
 from pytest_mock import MockerFixture
 
@@ -27,8 +29,6 @@ from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import (
 )
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
 
 
@@ -57,7 +57,9 @@ def test_cartesian_leaf_maps_absolute_pose_to_configured_frame(
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
     solver.step.return_value = JointState(name=["arm/joint"], position=[0.01])
     task = CartesianIKTask("cartesian", _config(), solver=solver)
-    target = PoseStamped(position=Vector3(0.4, 0.2, 0.1), frame_id="world")
+    target = PoseStamped(
+        header=Header(frame_id="world"), pose=Pose(position=Point(x=0.4, y=0.2, z=0.1))
+    )
 
     task.on_cartesian_command(target, t_now=2.0)
     output = task.compute(
@@ -75,7 +77,7 @@ def test_cartesian_leaf_maps_absolute_pose_to_configured_frame(
 def test_cartesian_leaf_clears_after_timeout(mocker: MockerFixture) -> None:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
     task = CartesianIKTask("cartesian", _config(), solver=solver)
-    task.on_cartesian_command(PoseStamped(), t_now=1.0)
+    task.on_cartesian_command(PoseStamped(header=Header(frame_id=""), pose=Pose()), t_now=1.0)
 
     output = task.compute(
         CoordinatorState(
@@ -99,11 +101,11 @@ def test_cartesian_clear_reseeds_command_from_feedback(mocker: MockerFixture) ->
         t_now=1.0,
         dt=0.01,
     )
-    task.on_cartesian_command(PoseStamped(), t_now=1.0)
+    task.on_cartesian_command(PoseStamped(header=Header(frame_id=""), pose=Pose()), t_now=1.0)
     assert task.compute(state) is not None
 
     task.clear()
-    task.on_cartesian_command(PoseStamped(), t_now=1.1)
+    task.on_cartesian_command(PoseStamped(header=Header(frame_id=""), pose=Pose()), t_now=1.1)
     solver.step.return_value = JointState(name=["arm/joint"], position=[0.01])
     assert task.compute(state) is not None
 

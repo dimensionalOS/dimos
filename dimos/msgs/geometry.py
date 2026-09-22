@@ -145,3 +145,61 @@ def transform_from_pose(message: PoseStamped, *, child_frame_id: str) -> Transfo
             rotation=message.pose.orientation,
         ),
     )
+
+
+def pose_matrix(pose: Pose) -> NDArray[np.float64]:
+    """Copy a generated pose into a homogeneous matrix, rejecting invalid geometry."""
+    values = np.array([pose.position.x, pose.position.y, pose.position.z], dtype=np.float64)
+    if not np.isfinite(values).all():
+        raise ValueError("Position components must be finite")
+    result = np.eye(4, dtype=np.float64)
+    result[:3, :3] = _rotation(pose.orientation).as_matrix()
+    result[:3, 3] = values
+    return result
+
+
+def quaternion_from_matrix(matrix: NDArray[np.float64]) -> Quaternion:
+    """Convert a finite proper 3-by-3 rotation matrix into a generated quaternion."""
+    values = np.asarray(matrix, dtype=np.float64)
+    if values.shape != (3, 3) or not np.isfinite(values).all():
+        raise ValueError("Rotation matrix must be finite and 3-by-3")
+    if not np.allclose(values.T @ values, np.eye(3), atol=1e-6, rtol=0.0) or not np.isclose(
+        np.linalg.det(values), 1.0, atol=1e-6, rtol=0.0
+    ):
+        raise ValueError("Rotation matrix must be orthonormal with determinant +1")
+    x, y, z, w = Rotation.from_matrix(values).as_quat()
+    return Quaternion(x=x, y=y, z=z, w=w)
+
+
+def pose_from_matrix(matrix: NDArray[np.float64]) -> Pose:
+    """Copy a finite rigid 4-by-4 transform into a generated pose."""
+    values = np.asarray(matrix, dtype=np.float64)
+    if values.shape != (4, 4) or not np.isfinite(values).all():
+        raise ValueError("Pose matrix must be finite and 4-by-4")
+    if not np.allclose(values[3], [0.0, 0.0, 0.0, 1.0], atol=1e-9, rtol=0.0):
+        raise ValueError("Pose matrix must have homogeneous last row [0, 0, 0, 1]")
+    return Pose(
+        position=Point(x=values[0, 3], y=values[1, 3], z=values[2, 3]),
+        orientation=quaternion_from_matrix(values[:3, :3]),
+    )
+
+
+def quaternion_euler(rotation: Quaternion) -> tuple[float, float, float]:
+    """Return fixed-axis XYZ Euler angles in radians for a generated quaternion."""
+    roll, pitch, yaw = _rotation(rotation).as_euler("xyz")
+    return float(roll), float(pitch), float(yaw)
+
+
+def translate_pose_local(pose: Pose, offset: Vector3) -> Pose:
+    """Copy a pose displaced by an offset expressed in its local axes."""
+    matrix = pose_matrix(pose)
+    values = np.array([offset.x, offset.y, offset.z], dtype=np.float64)
+    if not np.isfinite(values).all():
+        raise ValueError("Offset components must be finite")
+    delta = matrix[:3, :3] @ values
+    return Pose(
+        position=Point(
+            x=pose.position.x + delta[0], y=pose.position.y + delta[1], z=pose.position.z + delta[2]
+        ),
+        orientation=pose.orientation,
+    )

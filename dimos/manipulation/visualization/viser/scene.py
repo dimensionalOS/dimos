@@ -25,6 +25,8 @@ import time
 from typing import Any, Protocol, TypeAlias, cast
 import xml.etree.ElementTree as ET
 
+from dimos_generated.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 from numpy.typing import NDArray
@@ -44,10 +46,7 @@ from dimos.manipulation.visualization.viser.runtime import (
     VISER_INSTALL_HINT,
     VISER_URDF_INSTALL_HINT,
 )
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.geometry import pose_matrix
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -330,7 +329,7 @@ class ViserManipulationScene:
             if self._closed:
                 return
             self.clear_grasp_proposals()
-            drawn = list(candidates.candidates[:GRASP_PROPOSAL_DRAW_LIMIT])
+            drawn = list(candidates.candidates)[:GRASP_PROPOSAL_DRAW_LIMIT]
             if not drawn:
                 return
             emphasis = min(GRASP_PROPOSAL_EMPHASIS_COUNT, len(drawn))
@@ -396,7 +395,7 @@ class ViserManipulationScene:
         )
         for rank in range(start, stop):
             pose = candidates[rank].pose
-            rotation = np.asarray(pose.orientation.to_rotation_matrix(), dtype=np.float32)
+            rotation = np.asarray(pose_matrix(pose)[:3, :3], dtype=np.float32)
             origin = np.asarray(
                 [pose.position.x, pose.position.y, pose.position.z], dtype=np.float32
             )
@@ -448,12 +447,12 @@ class ViserManipulationScene:
     ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
         pose = obstacle.pose
         return (
-            (float(pose.position.x), float(pose.position.y), float(pose.position.z)),
+            (float(pose.pose.position.x), float(pose.pose.position.y), float(pose.pose.position.z)),
             (
-                float(pose.orientation.w),
-                float(pose.orientation.x),
-                float(pose.orientation.y),
-                float(pose.orientation.z),
+                float(pose.pose.orientation.w),
+                float(pose.pose.orientation.x),
+                float(pose.pose.orientation.y),
+                float(pose.pose.orientation.z),
             ),
         )
 
@@ -730,20 +729,20 @@ class ViserManipulationScene:
         ghost = self._urdfs.get("preview")
         self.set_urdf_joints(ghost, joint_names, joints)
 
-    def set_target_pose(self, control_id: str, pose: Pose | None) -> None:
+    def set_target_pose(self, control_id: str, pose: PoseStamped | None) -> None:
         handle = self._handles.get(f"{control_id}:ee_control")
         if handle is None or pose is None:
             return
         handle.position = (
-            float(pose.position.x),
-            float(pose.position.y),
-            float(pose.position.z),
+            float(pose.pose.position.x),
+            float(pose.pose.position.y),
+            float(pose.pose.position.z),
         )
         handle.wxyz = (
-            float(pose.orientation.w),
-            float(pose.orientation.x),
-            float(pose.orientation.y),
-            float(pose.orientation.z),
+            float(pose.pose.orientation.w),
+            float(pose.pose.orientation.x),
+            float(pose.pose.orientation.y),
+            float(pose.pose.orientation.z),
         )
 
     def set_target_control_visual_state(self, control_id: str, feasible: bool) -> None:
@@ -990,23 +989,21 @@ class ViserManipulationScene:
             frame_name,
             show_axes=False,
             position=(
-                float(pose.position.x),
-                float(pose.position.y),
-                float(pose.position.z),
+                float(pose.pose.position.x),
+                float(pose.pose.position.y),
+                float(pose.pose.position.z),
             ),
             wxyz=(
-                float(pose.orientation.w),
-                float(pose.orientation.x),
-                float(pose.orientation.y),
-                float(pose.orientation.z),
+                float(pose.pose.orientation.w),
+                float(pose.pose.orientation.x),
+                float(pose.pose.orientation.y),
+                float(pose.pose.orientation.z),
             ),
         )
 
     @staticmethod
     def _has_non_identity_base_pose(config: RobotModelConfig) -> bool:
-        pose = getattr(config, "base_pose", None)
-        if pose is None:
-            return False
+        pose = config.base_pose.pose
         return any(
             abs(value) > 1e-12
             for value in (

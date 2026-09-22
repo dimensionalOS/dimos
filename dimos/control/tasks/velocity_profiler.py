@@ -23,10 +23,9 @@ Computes a speed limit at each waypoint by:
 
 from __future__ import annotations
 
+from dimos_generated.nav_msgs.msg import Path
 import numpy as np
 from numpy.typing import NDArray
-
-from dimos.msgs.nav_msgs.Path import Path
 
 
 class VelocityProfiler:
@@ -60,7 +59,7 @@ class VelocityProfiler:
         if len(path.poses) < 2:
             return np.array([self._min_speed])
 
-        pts = np.array([[p.position.x, p.position.y] for p in path.poses])
+        pts = np.array([[p.pose.position.x, p.pose.position.y] for p in path.poses])
         curvatures = self._compute_curvatures(pts)
         max_speeds = self._curvature_speed_limits(curvatures)
         velocities = self._acceleration_pass(pts, max_speeds, forward=True)

@@ -22,12 +22,12 @@ from dataclasses import dataclass, field
 import math
 from typing import TYPE_CHECKING
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.planners.config import CartesianPathConfig
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 if TYPE_CHECKING:
     from dimos.manipulation.manipulation_module import ManipulationModule
@@ -259,9 +259,9 @@ class ManipulationOperator:
                     group_ids, f"Planning group '{group.id}' has no tip_link"
                 )
         for group_id, pose in request.pose_targets.items():
-            if pose.frame_id != "world":
+            if pose.header.frame_id != "world":
                 return group_ids, self._invalid(
-                    group_ids, f"Unsupported pose frame for '{group_id}': {pose.frame_id}"
+                    group_ids, f"Unsupported pose frame for '{group_id}': {pose.header.frame_id}"
                 )
             if not self._pose_is_finite(pose):
                 return group_ids, self._invalid(
@@ -369,5 +369,6 @@ class ManipulationOperator:
 
     @staticmethod
     def _pose_is_finite(pose: PoseStamped) -> bool:
-        values = [*pose.position, *pose.orientation]
+        point, rotation = pose.pose.position, pose.pose.orientation
+        values = [point.x, point.y, point.z, rotation.x, rotation.y, rotation.z, rotation.w]
         return len(values) == 7 and all(math.isfinite(float(value)) for value in values)

@@ -32,7 +32,7 @@ from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.std_msgs.Float32 import Float32
+    from dimos_generated.std_msgs.msg import Float32
 
 logger = setup_logger()
 

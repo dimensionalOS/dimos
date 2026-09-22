@@ -17,12 +17,15 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+import copy
 from dataclasses import dataclass
 from enum import Enum
 import threading
 from typing import TYPE_CHECKING
 
 import attrs
+from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
+from dimos_generated.std_msgs.msg import Header
 
 from dimos.control.task import CoordinatorState
 from dimos.control.tasks.pose_target_ik import (
@@ -35,8 +38,7 @@ from dimos.control.tasks.pose_target_ik import (
 )
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry import pose_from_matrix, pose_matrix
 from dimos.protocol.service.spec import BaseConfig
 from dimos.teleop.webxr.controller_types import Buttons
 
@@ -173,12 +175,7 @@ class TeleopIKTask(PoseTargetIKTask):
     ) -> bool:
         if hand not in self._bindings:
             return False
-        sample = PoseStamped(
-            ts=pose.ts if isinstance(pose, PoseStamped) else 0.0,
-            frame_id=pose.frame_id if isinstance(pose, PoseStamped) else "",
-            position=pose.position,
-            orientation=pose.orientation,
-        )
+        sample = copy.deepcopy(pose) if isinstance(pose, PoseStamped) else PoseStamped(pose=pose)
         with self._lock:
             if self._session_state is _SessionState.ESTOPPED:
                 return False
@@ -267,11 +264,19 @@ class TeleopIKTask(PoseTargetIKTask):
                 robot_reference = hand_state.robot_reference
                 if current is None or controller_reference is None or robot_reference is None:
                     return None
-                delta = current - controller_reference
+                current_matrix = pose_matrix(current.pose)
+                reference_matrix = pose_matrix(controller_reference.pose)
+                target_matrix = pose_matrix(robot_reference.pose)
+                target_matrix[:3, 3] += current_matrix[:3, 3] - reference_matrix[:3, 3]
+                target_matrix[:3, :3] = (
+                    current_matrix[:3, :3] @ reference_matrix[:3, :3].T @ target_matrix[:3, :3]
+                )
                 targets[binding.target_frame] = PoseStamped(
-                    frame_id=self._teleop_config.robot_model.base_pose.frame_id,
-                    position=robot_reference.position + delta.position,
-                    orientation=delta.orientation * robot_reference.orientation,
+                    header=Header(
+                        frame_id=self._teleop_config.robot_model.base_pose.header.frame_id,
+                        stamp=current.header.stamp,
+                    ),
+                    pose=pose_from_matrix(target_matrix),
                 )
                 update_times.append(hand_state.last_update_time)
             return FrameTargetSnapshot(

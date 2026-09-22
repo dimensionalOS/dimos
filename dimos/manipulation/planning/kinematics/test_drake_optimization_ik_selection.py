@@ -17,7 +17,9 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 
+from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
@@ -32,7 +34,6 @@ from dimos.manipulation.planning.spec.joint_space import (
 )
 from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
@@ -106,7 +107,7 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
 
     result = DrakeOptimizationIK().solve_pose_targets(
         world=world,  # type: ignore[arg-type]
-        pose_targets={group: PoseStamped()},
+        pose_targets={group: PoseStamped(header=Header(frame_id=""), pose=Pose())},
         seed=JointState(name=["arm/shoulder"], position=[22.0]),
         check_collision=False,
         max_attempts=1,

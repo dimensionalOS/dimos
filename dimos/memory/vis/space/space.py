@@ -23,6 +23,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Point as GeoPoint, Pose as GeoPose, PoseStamped
+from dimos_generated.nav_msgs.msg import OccupancyGrid, Path as NavPath
+from dimos_generated.vision_msgs.msg import Detection3D
+
 from dimos.memory.type.observation import EmbeddedObservation, Observation
 from dimos.memory.vis.color import ColorRange, resolve_deferred
 from dimos.memory.vis.space.elements import (
@@ -35,14 +39,8 @@ from dimos.memory.vis.space.elements import (
     SpaceElement,
     Text,
 )
-from dimos.msgs.geometry_msgs.Point import Point as GeoPoint
-from dimos.msgs.geometry_msgs.Pose import Pose as GeoPose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.protocol import DimosMsg
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
 
 
 def _autocolor_value(item: Any) -> float | None:

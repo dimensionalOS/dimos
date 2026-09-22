@@ -21,11 +21,11 @@ import queue
 import threading
 from typing import Literal
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
 
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
 from dimos.manipulation.visualization.operator import TargetEvaluationResult
-from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -108,17 +108,17 @@ class PanelState:
     selected_group_ids: tuple[PlanningGroupID, ...] = ()
     planning_mode: PlanningMode = PlanningMode.JOINT_SPACE
     selection_epoch: int = 0
-    pose_targets: dict[PlanningGroupID, Pose] = field(default_factory=dict)
+    pose_targets: dict[PlanningGroupID, PoseStamped] = field(default_factory=dict)
     group_joint_targets: dict[PlanningGroupID, JointState] = field(default_factory=dict)
     target_joints: JointState | None = None
-    group_poses: dict[PlanningGroupID, Pose] = field(default_factory=dict)
+    group_poses: dict[PlanningGroupID, PoseStamped] = field(default_factory=dict)
     runtime: PanelRuntime = PanelRuntime.STOPPED
     backend_status: BackendConnectionStatus = BackendConnectionStatus.DISCONNECTED
     target_status: TargetStatus = TargetStatus.EMPTY
     action_status: ActionStatus = ActionStatus.IDLE
     manipulation_state: str = "DISCONNECTED"
     current_joints: list[float] | None = None
-    cartesian_target: Pose | None = None
+    cartesian_target: PoseStamped | None = None
     feasibility: FeasibilityState = field(default_factory=FeasibilityState)
     latest_sequence_id: int = 0
     plan_state: PanelPlanState = field(default_factory=PanelPlanState)
@@ -208,10 +208,10 @@ class TargetEvaluationRequest:
     source: PreviewSource
     selection_epoch: int = 0
     group_ids: tuple[PlanningGroupID, ...] = ()
-    pose: Pose | None = None
+    pose: PoseStamped | None = None
     joints: JointState | None = None
     auxiliary_group_ids: tuple[PlanningGroupID, ...] = ()
-    pose_targets: dict[PlanningGroupID, Pose] = field(default_factory=dict)
+    pose_targets: dict[PlanningGroupID, PoseStamped] = field(default_factory=dict)
     joint_targets: dict[PlanningGroupID, JointState] = field(default_factory=dict)
 
 

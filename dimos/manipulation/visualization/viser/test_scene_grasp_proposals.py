@@ -17,22 +17,22 @@
 import inspect
 from unittest.mock import MagicMock
 
+from dimos_generated.geometry_msgs.msg import Point
 import numpy as np
 import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
+
+from dimos_generated.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_generated.geometry_msgs.msg import Pose, Quaternion
+from dimos_generated.std_msgs.msg import Header
 
 from dimos.manipulation.visualization.viser.scene import (
     GRASP_PROPOSAL_DRAW_LIMIT,
     GRASP_PROPOSAL_EMPHASIS_COUNT,
     ViserManipulationScene,
 )
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.time import time_from_seconds
 
 
 def _scene() -> ViserManipulationScene:
@@ -41,11 +41,14 @@ def _scene() -> ViserManipulationScene:
 
 def _proposals(count: int) -> GraspCandidateArray:
     return GraspCandidateArray(
-        Header(1.0, "world"),
-        [
+        header=Header(stamp=time_from_seconds(1.0), frame_id="world"),
+        candidates=[
             GraspCandidate(
-                Pose(Vector3(0.1 * index, 0.0, 0.2), Quaternion(0.0, 0.0, 0.0, 1.0)),
-                1.0 - 0.01 * index,
+                pose=Pose(
+                    position=Point(x=0.1 * index, y=0.0, z=0.2),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                score=1.0 - 0.01 * index,
             )
             for index in range(count)
         ],

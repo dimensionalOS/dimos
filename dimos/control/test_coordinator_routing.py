@@ -28,8 +28,9 @@ from collections.abc import Callable, Iterator
 import threading
 from typing import Any
 
-from dimos_generated.geometry_msgs.msg import Twist, Vector3
+from dimos_generated.geometry_msgs.msg import Pose, PoseStamped, Twist, TwistStamped, Vector3
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
 from dimos.control._control_test_helpers import RecordingTask
@@ -49,8 +50,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.stream import In
 from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.teleop.webxr.controller_types import Buttons
 
 ARM_JOINTS = ["arm/joint1", "arm/joint2"]
@@ -255,14 +254,14 @@ class TestPerInstanceCommandRouting:
         )
         coordinator.start()
 
-        taps["left_cartesian"].emit(PoseStamped())
+        taps["left_cartesian"].emit(PoseStamped(header=Header(frame_id=""), pose=Pose()))
 
         left = coordinator.get_task("cartesian_left")
         right = coordinator.get_task("cartesian_right")
         assert len(left.cartesian_calls) == 1
         assert right.cartesian_calls == []
 
-        taps["right_cartesian"].emit(PoseStamped())
+        taps["right_cartesian"].emit(PoseStamped(header=Header(frame_id=""), pose=Pose()))
 
         assert len(left.cartesian_calls) == 1
         assert len(right.cartesian_calls) == 1
@@ -275,7 +274,7 @@ class TestPerInstanceCommandRouting:
         )
         coordinator.start()
 
-        taps["cartesian_command"].emit(PoseStamped())
+        taps["cartesian_command"].emit(PoseStamped(header=Header(frame_id=""), pose=Pose()))
 
         calls = coordinator.get_task("cart").cartesian_calls
         assert len(calls) == 1
@@ -293,12 +292,14 @@ class TestPerInstanceCommandRouting:
         coordinator.start()
         warn = mocker.patch.object(coord_mod.logger, "warning")
 
-        taps["cartesian_command"].emit(PoseStamped(frame_id="some_other_task"))
-        taps["cartesian_command"].emit(PoseStamped(frame_id=""))
+        taps["cartesian_command"].emit(
+            PoseStamped(header=Header(frame_id="some_other_task"), pose=Pose())
+        )
+        taps["cartesian_command"].emit(PoseStamped(header=Header(frame_id=""), pose=Pose()))
 
         calls = coordinator.get_task("cart").cartesian_calls
         assert len(calls) == 2
-        assert calls[0][0].frame_id == "some_other_task"
+        assert calls[0][0].header.frame_id == "some_other_task"
         assert not warn.called
 
 

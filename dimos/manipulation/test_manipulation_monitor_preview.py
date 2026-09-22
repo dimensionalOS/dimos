@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -34,9 +35,6 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.time import duration_from_seconds, header_now
 from dimos.robot.assets.model import RobotModel
 
@@ -46,7 +44,9 @@ def canonical_model_config() -> RobotModelConfig:
     """Create a model whose joint names match coordinator-facing names."""
     return RobotModelConfig(
         model=RobotModel.from_file(Path("/path/to/robot.urdf")),
-        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        base_pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),
         joint_names=["left/joint1", "left/joint2", "left/joint3"],
         base_link="link_base",
         planning_groups=[
@@ -63,7 +63,9 @@ def canonical_model_config() -> RobotModelConfig:
 def _one_joint_config(name: str = "arm") -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(Path("/path")),
-        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        base_pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),
         joint_names=["j0"],
         base_link="base_link",
         planning_groups=[

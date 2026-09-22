@@ -17,12 +17,15 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from dimos_generated.geometry_msgs.msg import Pose
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
 from dimos.msgs.time import header_now
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.trajectory_msgs.msg import JointTrajectory
 
@@ -43,7 +46,6 @@ from dimos.manipulation.visualization.viser.config import ViserVisualizationConf
 from dimos.manipulation.visualization.viser.runtime import ViserRuntime
 from dimos.manipulation.visualization.viser.scene import RobotDisplayMode, ViserManipulationScene
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
@@ -89,7 +91,7 @@ class FakeRuntimeServer(FakeServer):
 def fake_robot_config(name: str) -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(Path(f"{name}.urdf")),
-        base_pose=PoseStamped(),
+        base_pose=PoseStamped(header=Header(frame_id=""), pose=Pose()),
         joint_names=[],
         planning_groups=[
             PlanningGroupDefinition(
@@ -546,7 +548,7 @@ def test_scene_prepares_urdf_applies_base_pose_and_rejects_wrong_root(
 
     config = fake_robot_config("arm")
     config.model = RobotModel.from_file(fixed_world_root)
-    config.base_pose.position.x = 1.0
+    config.base_pose.pose.position.x = 1.0
 
     def prepare(description: object, **kwargs: object) -> object:
         prepared.append(kwargs)

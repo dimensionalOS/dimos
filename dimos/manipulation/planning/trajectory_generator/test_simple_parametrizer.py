@@ -17,7 +17,9 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import pytest
 from pytest_mock import MockerFixture
 
@@ -44,7 +46,6 @@ from dimos.manipulation.planning.trajectory_generator.parametrizer import (
 from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import (
     SimpleTrapezoidParametrizer,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
@@ -64,7 +65,7 @@ def _selection() -> PlanningGroupSelection:
 def _world(*, velocity: float = 2.0, acceleration: float = 6.0) -> WorldSpec:
     config = RobotModelConfig(
         model=RobotModel.from_file(Path("/robot.urdf")),
-        base_pose=PoseStamped(),
+        base_pose=PoseStamped(header=Header(frame_id=""), pose=Pose()),
         joint_names=["arm/a", "arm/b"],
         base_link="base",
     )

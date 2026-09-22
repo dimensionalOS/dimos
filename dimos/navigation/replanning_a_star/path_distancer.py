@@ -14,10 +14,9 @@
 
 from typing import cast
 
+from dimos_generated.nav_msgs.msg import Path
 import numpy as np
 from numpy.typing import NDArray
-
-from dimos.msgs.nav_msgs.Path import Path
 
 
 class PathDistancer:
@@ -27,7 +26,7 @@ class PathDistancer:
 
     def __init__(self, path: Path, lookahead_dist: float = 0.5) -> None:
         self._lookahead_dist = lookahead_dist
-        self._path = np.array([[p.position.x, p.position.y] for p in path.poses])
+        self._path = np.array([[p.pose.position.x, p.pose.position.y] for p in path.poses])
         self._cumulative_dists = _make_cumulative_distance_array(self._path)
 
     def find_lookahead_point(self, start_idx: int) -> NDArray[np.float64]:

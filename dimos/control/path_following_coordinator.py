@@ -16,10 +16,11 @@
 
 from __future__ import annotations
 
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.std_msgs.msg import Float32
+
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.stream import In
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.std_msgs.Float32 import Float32
 
 
 class PathFollowingCoordinator(ControlCoordinator):

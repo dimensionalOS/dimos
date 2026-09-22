@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.std_msgs.msg import Float32
 import pytest
 from pytest_mock import MockerFixture
 
@@ -26,7 +27,6 @@ from dimos.control.tasks.gripper_task.gripper_task import (
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.spec import JointLimits
-from dimos.msgs.std_msgs.Float32 import Float32
 
 
 def _task() -> GripperControlTask:

@@ -16,6 +16,8 @@
 
 from typing import Any, cast
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -28,7 +30,6 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.openarm.blueprints.basic import openarm_planner_coordinator
@@ -160,8 +161,12 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
         OpenArmPinkPoseTargetSolver,
         "frame_poses",
         return_value={
-            "openarm_left_grasp_frame": PoseStamped(position=[0.5, 0.2, 0.4]),
-            "openarm_right_grasp_frame": PoseStamped(position=[0.5, -0.2, 0.4]),
+            "openarm_left_grasp_frame": PoseStamped(
+                header=Header(frame_id=""), pose=Pose(position=Point(x=0.5, y=0.2, z=0.4))
+            ),
+            "openarm_right_grasp_frame": PoseStamped(
+                header=Header(frame_id=""), pose=Pose(position=Point(x=0.5, y=-0.2, z=0.4))
+            ),
         },
     )
     step = mocker.patch.object(
@@ -199,11 +204,17 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
         coordinator._dispatch("right_gripper_command", Float32(data=0.25))
         coordinator._dispatch(
             "left_cartesian_command",
-            PoseStamped(frame_id=OPENARM_WEBXR_TASK_NAME, position=[1.0, 0.0, 0.0]),
+            PoseStamped(
+                header=Header(frame_id=OPENARM_WEBXR_TASK_NAME),
+                pose=Pose(position=Point(x=1.0, y=0.0, z=0.0)),
+            ),
         )
         coordinator._dispatch(
             "right_cartesian_command",
-            PoseStamped(frame_id=OPENARM_WEBXR_TASK_NAME, position=[-1.0, 0.0, 0.0]),
+            PoseStamped(
+                header=Header(frame_id=OPENARM_WEBXR_TASK_NAME),
+                pose=Pose(position=Point(x=-1.0, y=0.0, z=0.0)),
+            ),
         )
 
         assert coordinator._tick_loop is not None
@@ -291,9 +302,11 @@ def test_openarm_bimanual_pink_steps_from_canonical_zero_with_bounded_updates() 
     initial = ik.frame_poses(seed, frames)
     targets = {
         name: PoseStamped(
-            frame_id=pose.frame_id,
-            position=[pose.position.x, pose.position.y, pose.position.z + 0.01],
-            orientation=pose.orientation,
+            header=Header(frame_id=pose.frame_id),
+            pose=Pose(
+                position=Point(x=pose.position.x, y=pose.position.y, z=pose.position.z + 0.01),
+                orientation=pose.orientation,
+            ),
         )
         for name, pose in initial.items()
     }

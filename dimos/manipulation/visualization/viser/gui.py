@@ -20,7 +20,9 @@ import math
 from threading import RLock
 from typing import Any, TypeAlias, cast
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
@@ -54,8 +56,6 @@ from dimos.manipulation.visualization.viser.state import (
     TargetEvaluationWorker,
     TargetStatus,
 )
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
 
@@ -238,16 +238,11 @@ class ViserPanelGui:
 
     def evaluate_pose_target_set(
         self,
-        pose_targets: Mapping[PlanningGroupID, Pose],
+        pose_targets: Mapping[PlanningGroupID, PoseStamped],
         auxiliary_group_ids: Sequence[PlanningGroupID] = (),
         seed: JointState | None = None,
     ) -> TargetEvaluationResult:
-        stamped = {
-            group_id: PoseStamped(
-                frame_id="world", position=pose.position, orientation=pose.orientation
-            )
-            for group_id, pose in pose_targets.items()
-        }
+        stamped = dict(pose_targets)
         return self.operator.evaluate_pose_target(
             PoseTargetRequest(stamped, tuple(auxiliary_group_ids), _copy_joint_state(seed))
         )
@@ -277,17 +272,10 @@ class ViserPanelGui:
 
     def plan_cartesian(
         self,
-        pose_targets: Mapping[PlanningGroupID, Pose],
+        pose_targets: Mapping[PlanningGroupID, PoseStamped],
         auxiliary_group_ids: Sequence[PlanningGroupID],
     ) -> bool:
-        stamped = {
-            group_id: PoseStamped(
-                frame_id="world",
-                position=pose.position,
-                orientation=pose.orientation,
-            )
-            for group_id, pose in pose_targets.items()
-        }
+        stamped = dict(pose_targets)
         plan = self.operator.plan_cartesian(
             CartesianTargetRequest(
                 stamped,
@@ -734,7 +722,7 @@ class ViserPanelGui:
                 positions.extend(float(value) for value in target.position)
         self.state.target_joints = JointState(name=names, position=positions) if names else None
 
-    def _active_pose_targets(self) -> dict[PlanningGroupID, Pose]:
+    def _active_pose_targets(self) -> dict[PlanningGroupID, PoseStamped]:
         return {
             group_id: self.state.pose_targets[group_id]
             for group_id in self.state.selected_group_ids
@@ -987,7 +975,7 @@ class ViserPanelGui:
         self.state.group_poses = {
             str(group_id): pose
             for group_id, pose in result.group_poses.items()
-            if isinstance(pose, Pose)
+            if isinstance(pose, PoseStamped)
         }
         if request.source == "joints":
             self._sync_pose_targets_from_group_poses()
@@ -1106,7 +1094,7 @@ class ViserPanelGui:
         selection_epoch = self.state.selection_epoch
         target_sequence_id = self.state.latest_sequence_id
         joint_targets: dict[PlanningGroupID, JointState] | None = None
-        pose_targets: dict[PlanningGroupID, Pose] = {}
+        pose_targets: dict[PlanningGroupID, PoseStamped] = {}
         auxiliary_group_ids: tuple[PlanningGroupID, ...] = ()
         if planning_mode == PlanningMode.CARTESIAN_SPACE:
             pose_targets = self._active_pose_targets()
@@ -1401,10 +1389,15 @@ class ViserPanelGui:
     def _set_optional_handle_attr(handle: object, attr: str, value: object) -> None:
         setattr(handle, attr, value)
 
-    def _pose_from_transform_target(self, target: TransformControlsHandle) -> Pose | None:
+    def _pose_from_transform_target(self, target: TransformControlsHandle) -> PoseStamped | None:
         px, py, pz = (float(value) for value in target.position)
         qw, qx, qy, qz = (float(value) for value in target.wxyz)
-        return Pose({"position": [px, py, pz], "orientation": [qx, qy, qz, qw]})
+        return PoseStamped(
+            header=Header(frame_id="world"),
+            pose=Pose(
+                position=Point(x=px, y=py, z=pz), orientation=Quaternion(x=qx, y=qy, z=qz, w=qw)
+            ),
+        )
 
     def _feasibility_status(
         self, result: TargetEvaluationResult, success: bool, collision_free: bool

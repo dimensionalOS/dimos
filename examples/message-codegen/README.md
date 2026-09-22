@@ -771,3 +771,47 @@ The old handwritten JointTrajectory, TrajectoryPoint, and TrajectoryStatus
 classes are removed. Generated sequences return value copies for message
 entries: edit a point and assign it back with `trajectory.points[index] = point`
 when changing a waypoint.
+
+### Generated poses and grasp proposals
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_planning_backends.py
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_grasp_proposals.py
+```
+
+The Drake demo now prints each waypoint's forward-kinematics tool position and
+its CDR TF edge. Derived poses retain the joint sample's exact timestamp; the
+first printed stamp is `1700000000.123456789`. The synthetic URDF is removed
+when the demo exits.
+
+The grasp demo needs neither hardware nor a GPU. Four generated PointCloud2
+points cross a CDR round trip into the heuristic provider. The generated
+`dimos_msgs/msg/GraspCandidateArray` crosses another round trip and prints a
+ranked grasp at `[0.5, 0.0, 0.15]`, a downward approach axis, score `1.0`, and the
+unchanged source timestamp `1700000000123456789` nanoseconds. The provider stops
+on exit.
+
+Use nested ROS fields (`stamped.pose.position`, `stamped.header.stamp`) and the
+functions in `dimos.msgs.geometry` for pose matrices, Euler angles, and local
+translation. A pose-matrix conversion rejects non-finite or non-rigid geometry.
+Generated configuration poses keep a zero timestamp unless a source supplies
+one. Access grasp entries through `.candidates`; the former handwritten pickle
+codecs have been removed. Grasp consumers validate scores and geometry before
+commanding motion.
+
+For base motion, run:
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_path_following.py
+```
+
+This demo decodes a generated 41-waypoint Path, runs the path follower against
+DimOS's base simulator, and round-trips each Twist command through CDR. It prints
+`arrived` and writes `build/message-codegen/demo/evidence/path-following.svg`
+with the reference and executed paths. Remove that generated SVG to clean up.
+Space's SVG and Rerun renderers now read generated poses, points, paths, detection
+boxes, and occupancy grids directly. Both apply the occupancy origin rotation;
+headless tests exercise the actual Rerun SDK as well as SVG output.

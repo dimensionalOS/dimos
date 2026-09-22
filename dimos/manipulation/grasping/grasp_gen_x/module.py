@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, TypeAlias
 
+from dimos_generated.dimos_msgs.msg import GraspCandidateArray
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
 from pydantic import Field, FiniteFloat, field_validator
 
@@ -27,8 +29,6 @@ from dimos.experimental.isolated_python.module import (
     IsolatedPythonModuleConfig,
 )
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.service.spec import BaseConfig
 
 GRASPGENX_MODEL_REPO = "adithyamurali/GraspGenXModel"

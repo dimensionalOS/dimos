@@ -18,6 +18,7 @@ from contextlib import suppress
 import copy
 from typing import TYPE_CHECKING
 
+from dimos_generated.dimos_msgs.msg import GraspCandidateArray
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.trajectory_msgs.msg import JointTrajectory
 
@@ -34,7 +35,6 @@ from dimos.manipulation.visualization.viser.runtime import (
 )
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
 from dimos.manipulation.visualization.viser.theme import apply_dimos_theme
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.time import to_seconds
 from dimos.msgs.trajectory import trajectory_duration
 from dimos.utils.logging_config import setup_logger
@@ -51,6 +51,8 @@ except ImportError as e:
     raise ModuleNotFoundError(VISER_URDF_INSTALL_HINT) from e
 
 if TYPE_CHECKING:
+    from dimos_generated.geometry_msgs.msg import PoseStamped
+
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
         Obstacle,
@@ -58,7 +60,6 @@ if TYPE_CHECKING:
         VisualizationSession,
         VisualizationStateFrame,
     )
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
 

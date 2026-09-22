@@ -28,6 +28,8 @@ from dataclasses import dataclass, field, replace
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 try:
@@ -38,6 +40,7 @@ except ImportError as exc:
         "Install the manipulation extra before selecting the roboplan backend."
     ) from exc
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
@@ -60,9 +63,8 @@ from dimos.manipulation.planning.world.roboplan_model import (
     RoboPlanModel,
     build_roboplan_model,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry import pose_from_matrix, pose_matrix
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -201,7 +203,7 @@ class RoboPlanWorld:
         with self._lock:
             self._require_finalized()
             replacement_pose = deepcopy(pose)
-            matrix = pose_to_matrix(replacement_pose)
+            matrix = pose_matrix(replacement_pose.pose)
             if not np.isfinite(matrix).all():
                 raise ValueError("Obstacle pose must contain only finite values")
             if obstacle_id not in self._obstacles:
@@ -353,16 +355,18 @@ class RoboPlanWorld:
         if group.tip_link is None:
             raise ValueError(f"Planning group '{group_id}' has no tip link")
         mat = self.get_link_pose(ctx, group.tip_link)
-        pose = matrix_to_pose(mat)
+        pose = pose_from_matrix(mat)
         return PoseStamped(
-            frame_id="world",
-            position=[pose.position.x, pose.position.y, pose.position.z],
-            orientation=[
-                pose.orientation.x,
-                pose.orientation.y,
-                pose.orientation.z,
-                pose.orientation.w,
-            ],
+            header=Header(frame_id="world"),
+            pose=Pose(
+                position=Point(x=pose.position.x, y=pose.position.y, z=pose.position.z),
+                orientation=Quaternion(
+                    x=pose.orientation.x,
+                    y=pose.orientation.y,
+                    z=pose.orientation.z,
+                    w=pose.orientation.w,
+                ),
+            ),
         )
 
     def get_link_pose(self, ctx: RoboPlanContext, link_name: str) -> NDArray[np.float64]:
@@ -418,7 +422,7 @@ class RoboPlanWorld:
     def _validate_model_config(self, config: RobotModelConfig) -> None:
         if not config.joint_names:
             raise ValueError("RoboPlanWorld requires explicit joint_names")
-        if config.base_pose.frame_id not in ("", "world"):
+        if config.base_pose.header.frame_id not in ("", "world"):
             raise ValueError("RoboPlanWorld base_pose frame_id must be empty or 'world'")
 
     def _validate_planning_group_config(self, config: RobotModelConfig) -> None:
@@ -541,7 +545,7 @@ class RoboPlanWorld:
 
     def _add_obstacle_to_scene(self, obstacle: Obstacle, obstacle_id: str) -> None:
         scene = self._require_scene()
-        matrix = pose_to_matrix(obstacle.pose)
+        matrix = pose_matrix(obstacle.pose.pose)
         color = np.asarray(obstacle.color, dtype=np.float64)
         if obstacle.obstacle_type == ObstacleType.BOX:
             self._require_dimensions(obstacle, 3)
@@ -596,7 +600,7 @@ class RoboPlanWorld:
 
     def _validate_obstacle(self, obstacle: Obstacle, *, allow_empty_name: bool = False) -> None:
         validate_obstacle(
-            obstacle, pose_to_matrix(obstacle.pose), allow_empty_name=allow_empty_name
+            obstacle, pose_matrix(obstacle.pose.pose), allow_empty_name=allow_empty_name
         )
 
     def _require_dimensions(self, obstacle: Obstacle, n_dims: int) -> None:

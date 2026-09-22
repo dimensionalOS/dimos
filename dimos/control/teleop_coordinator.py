@@ -14,11 +14,11 @@
 
 """Control coordinator carrying spatial poses and keyboard end-effector twists."""
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, TwistStamped
+from dimos_generated.std_msgs.msg import Float32
+
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.stream import In
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.webxr.controller_types import Buttons
 
 

@@ -12,22 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Protocol
+"""Geometry access shared by SVG and Rerun scene renderers."""
 
-from dimos_generated.dimos_msgs.msg import GraspCandidateArray
-from dimos_generated.geometry_msgs.msg import PoseArray
-from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 
-from dimos.spec.utils import Spec
+from dimos.msgs.geometry import yaw
 
 
-class LegacyGraspGenSpec(Spec, Protocol):
-    def generate_grasps(
-        self,
-        pointcloud: PointCloud2,
-        scene_pointcloud: PointCloud2 | None = None,
-    ) -> PoseArray | None: ...
+def message_position(message: Point | Pose | PoseStamped) -> Point:
+    if isinstance(message, PoseStamped):
+        return message.pose.position
+    if isinstance(message, Pose):
+        return message.position
+    return message
 
 
-class GraspGenSpec(Spec, Protocol):
-    def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray: ...
+def message_yaw(message: Pose | PoseStamped) -> float:
+    pose = message.pose if isinstance(message, PoseStamped) else message
+    return yaw(pose.orientation)

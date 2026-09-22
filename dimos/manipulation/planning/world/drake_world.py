@@ -25,6 +25,8 @@ from threading import RLock, current_thread
 from typing import TYPE_CHECKING, Any
 import xml.etree.ElementTree as ET
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
 from dimos.manipulation.planning.groups.identifiers import assert_valid_group_id
@@ -39,6 +41,7 @@ from dimos.manipulation.planning.spec.validation import (
     validate_obstacle,
 )
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
+from dimos.msgs.geometry import pose_matrix
 from dimos.msgs.time import to_seconds
 from dimos.msgs.trajectory import trajectory_duration
 from dimos.robot.assets.model import LoadedRobotModel
@@ -49,12 +52,10 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+from dimos_generated.dimos_msgs.msg import GraspCandidateArray
+from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.trajectory_msgs.msg import JointTrajectory
-
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.models import (
@@ -540,11 +541,8 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     def _pose_to_rigid_transform(self, pose: PoseStamped) -> Any:
         """Convert PoseStamped to Drake RigidTransform."""
-        pose_matrix = Transform(
-            translation=pose.position,
-            rotation=pose.orientation,
-        ).to_matrix()
-        return RigidTransform(pose_matrix)
+        matrix = pose_matrix(pose.pose)
+        return RigidTransform(matrix)
 
     def _create_shape(self, obstacle: Obstacle) -> Any:
         """Create Drake shape from obstacle specification."""
@@ -562,11 +560,8 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
 
     def _validate_obstacle(self, obstacle: Obstacle, *, allow_empty_name: bool = False) -> None:
-        pose_matrix = Transform(
-            translation=obstacle.pose.position,
-            rotation=obstacle.pose.orientation,
-        ).to_matrix()
-        validate_obstacle(obstacle, pose_matrix, allow_empty_name=allow_empty_name)
+        matrix = pose_matrix(obstacle.pose.pose)
+        validate_obstacle(obstacle, matrix, allow_empty_name=allow_empty_name)
 
     def _remove_obstacle_geometry(self, obstacle_data: _ObstacleData) -> None:
         self._scene_graph.RemoveGeometry(
@@ -997,9 +992,13 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         quat = X_WE.rotation().ToQuaternion()  # Drake returns [w, x, y, z]
 
         return PoseStamped(
-            frame_id="world",
-            position=[float(pos[0]), float(pos[1]), float(pos[2])],
-            orientation=[float(quat.x()), float(quat.y()), float(quat.z()), float(quat.w())],
+            header=Header(frame_id="world"),
+            pose=Pose(
+                position=Point(x=float(pos[0]), y=float(pos[1]), z=float(pos[2])),
+                orientation=Quaternion(
+                    x=float(quat.x()), y=float(quat.y()), z=float(quat.z()), w=float(quat.w())
+                ),
+            ),
         )
 
     def get_link_pose(self, ctx: Context, link_name: str) -> NDArray[np.float64]:

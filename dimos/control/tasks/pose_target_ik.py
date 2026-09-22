@@ -27,7 +27,9 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import attrs
+from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pink
 from pydantic import Field
@@ -48,11 +50,10 @@ from dimos.manipulation.planning.kinematics.pink_solver import (
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry import pose_from_matrix, pose_matrix
 from dimos.protocol.service.spec import BaseConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -509,14 +510,13 @@ class PinkPoseTargetSolver(_PinkSolverCore):
         )
         positions = _seed_positions_for_mapping(seed, context.robot.mapping)
         q = self._q_from_dimos_positions(context.robot, positions)
-        base_world = pose_to_matrix(robot_model.base_pose)
+        base_world = pose_matrix(robot_model.base_pose.pose)
         poses: dict[str, PoseStamped] = {}
         for frame_name, frame_context in context.frames.items():
-            pose = matrix_to_pose(base_world @ self._current_frame_matrix(frame_context, q))
+            pose = pose_from_matrix(base_world @ self._current_frame_matrix(frame_context, q))
             poses[frame_name] = PoseStamped(
-                frame_id=robot_model.base_link,
-                position=pose.position,
-                orientation=pose.orientation,
+                header=Header(frame_id=robot_model.base_link),
+                pose=Pose(position=pose.position, orientation=pose.orientation),
             )
         return poses
 

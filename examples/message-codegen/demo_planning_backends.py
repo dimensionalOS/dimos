@@ -17,15 +17,19 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.utils.path_utils import interpolate_path
 from dimos.manipulation.planning.world.drake_world import DrakeWorld
+from dimos.msgs.geometry import pose_matrix, transform_from_pose, transform_matrix
 from dimos.robot.assets.model import RobotModel
 
 _URDF = """<robot name="demo_arm">
@@ -52,7 +56,8 @@ def main() -> None:
             planning_groups=[PlanningGroupDefinition("arm", ("shoulder", "wrist"), "base", "tool")],
         )
         world = DrakeWorld()
-        world.load_model(prepare_robot_model(config))
+        monitor = WorldMonitor(world=world)
+        monitor.load_model(config)
         world.finalize()
         start = JointState.decode(
             JointState(name=config.joint_names, position=[-0.4, 0.3]).encode()
@@ -75,9 +80,28 @@ def main() -> None:
             print(
                 f"  waypoint {index}: {list(decoded.position)}; CDR round-trip and collision check passed"
             )
+            decoded.header = Header(
+                frame_id="encoder", stamp=Time(sec=1700000000, nanosec=123456789 + index)
+            )
+            pose = monitor.get_group_ee_pose("arm", decoded)
+            transform = transform_from_pose(pose, child_frame_id="tool")
+            tf = TFMessage.decode(TFMessage(transforms=[transform]).encode())
+            assert tf.transforms[0].header.stamp == decoded.header.stamp
+            expected = np.array([np.cos(decoded.position[0]), np.sin(decoded.position[0]), 0.0])
+            np.testing.assert_allclose(pose_matrix(pose.pose)[:3, 3], expected, atol=1e-12)
+            np.testing.assert_allclose(
+                transform_matrix(tf.transforms[0].transform), pose_matrix(pose.pose), atol=1e-12
+            )
+            print(
+                f"    tool position={expected.round(6).tolist()}; "
+                f"TF {transform.header.frame_id} -> {transform.child_frame_id}; "
+                f"source stamp={pose.header.stamp.sec}.{pose.header.stamp.nanosec:09d}"
+            )
         np.testing.assert_allclose(list(path_points[0].position), list(start.position))
         np.testing.assert_allclose(list(path_points[-1].position), list(goal.position))
-    print("PASS: generated JointState feeds real Drake and RRT; temporary model removed")
+    print(
+        "PASS: generated JointState feeds real Drake and RRT; FK pose and CDR TF preserve source stamps"
+    )
 
 
 if __name__ == "__main__":

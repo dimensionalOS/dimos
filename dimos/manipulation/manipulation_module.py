@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from collections.abc import Mapping, Sequence
+import copy
 from enum import Enum
 import math
 import threading
@@ -26,7 +27,19 @@ import time
 import traceback
 from typing import Any, Literal, TypeAlias
 
+from dimos_generated.dimos_msgs.msg import GraspCandidateArray
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 from pydantic import Field, model_validator
 
@@ -91,14 +104,9 @@ from dimos.manipulation.visualization.config import (
 )
 from dimos.manipulation.visualization.factory import create_manipulation_visualization
 from dimos.manipulation.visualization.operator import ManipulationOperator
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.geometry import transform_from_pose
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.time import time_from_nanoseconds
 from dimos.perception.experimental.object import Object as DetObject
 from dimos.utils.logging_config import setup_logger
 
@@ -159,7 +167,7 @@ class ManipulationModuleConfig(ModuleConfig):
     # to a link the model already publishes -- an eye-in-hand camera, say. One
     # publisher for the whole chain: a second module publishing the mount at its
     # own rate leaves the two edges of one chain stamped up to a period apart.
-    static_transforms: list[Transform] = Field(default_factory=list)
+    static_transforms: list[TransformStamped] = Field(default_factory=list)
     # Frame the voxel_map port's clouds must already be expressed in.
     world_frame: str = "world"
     # Edge length of a voxel_map cell (meters). Must match the mapper's
@@ -308,12 +316,12 @@ class ManipulationModule(Module):
             fz = self.config.floor_z
             thickness = 0.2
             floor_pose = Pose(
-                Vector3(0.7, 0.0, fz - thickness / 2),
-                Quaternion(0.0, 0.0, 0.0, 1.0),
+                position=Point(x=0.7, y=0.0, z=fz - thickness / 2),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
             )
             floor_obs = Obstacle(
                 name="floor",
-                pose=floor_pose,
+                pose=PoseStamped(header=Header(frame_id="world"), pose=floor_pose),
                 obstacle_type=ObstacleType.BOX,
                 dimensions=(0.6, 1.2, thickness),
             )
@@ -378,30 +386,29 @@ class ManipulationModule(Module):
             try:
                 if self._world_monitor is None:
                     break
-                transforms: list[Transform] = []
+                transforms: list[TransformStamped] = []
                 config = self.config.model
                 for group in self._world_monitor.planning_groups.list():
                     if not group.has_pose_target or group.tip_link is None:
                         continue
                     ee_pose = self._world_monitor.get_group_ee_pose(group.id)
                     if ee_pose is not None and group.tip_link is not None:
-                        ee_tf = Transform.from_pose(group.tip_link, ee_pose)
-                        ee_tf.frame_id = "world"
+                        ee_tf = transform_from_pose(ee_pose, child_frame_id=group.tip_link)
                         transforms.append(ee_tf)
                 for link_name in config.tf_extra_links:
                     link_pose = self._world_monitor.get_link_pose(link_name)
                     if link_pose is not None:
-                        link_tf = Transform.from_pose(link_name, link_pose)
-                        link_tf.frame_id = "world"
+                        link_tf = transform_from_pose(link_pose, child_frame_id=link_name)
                         transforms.append(link_tf)
 
-                now = time.time()
+                now = time.time_ns()
                 for static in self.config.static_transforms:
-                    static.ts = now
+                    static = copy.deepcopy(static)
+                    static.header.stamp = time_from_nanoseconds(now)
                     transforms.append(static)
 
                 if transforms:
-                    self.tf.publish(TFMessage(*transforms))
+                    self.tf.publish(TFMessage(transforms=transforms))
             except Exception as e:
                 logger.warning("TF publish failed", error=str(e))
 
@@ -530,7 +537,7 @@ class ManipulationModule(Module):
                 return list(state.position)
         return None
 
-    def get_ee_pose(self, group_id: PlanningGroupID | None = None) -> Pose | None:
+    def get_ee_pose(self, group_id: PlanningGroupID | None = None) -> PoseStamped | None:
         """Get a planning group's current tip pose."""
         if self._world_monitor:
             try:
@@ -813,7 +820,7 @@ class ManipulationModule(Module):
 
     def generate_plan_to_pose_targets(
         self,
-        pose_targets: Mapping[PlanningGroupID, Pose],
+        pose_targets: Mapping[PlanningGroupID, PoseStamped],
         auxiliary_groups: Sequence[PlanningGroupID] = (),
         speed_scale: float | None = None,
     ) -> GeneratedPlan | None:
@@ -823,14 +830,7 @@ class ManipulationModule(Module):
         if not pose_targets:
             self._fail("At least one pose target is required")
             return None
-        stamped_targets = {
-            group_id: PoseStamped(
-                frame_id="world",
-                position=pose.position,
-                orientation=pose.orientation,
-            )
-            for group_id, pose in pose_targets.items()
-        }
+        stamped_targets = dict(pose_targets)
         auxiliary_ids = tuple(auxiliary_groups)
         group_ids = tuple(dict.fromkeys((*stamped_targets.keys(), *auxiliary_ids)))
         planning = self._begin_group_planning(speed_scale)
@@ -928,12 +928,21 @@ class ManipulationModule(Module):
             plan_result = PlanResult(PlanStatus.AMBIGUOUS_GROUP, group.message)
             return MoveResult(plan_result, None, delta, check_collision)
         resolved_speed = self.config.linear_speed_scale if speed_scale is None else speed_scale
-        relative = Transform(
-            translation=Vector3(*delta),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        relative = TransformStamped(
+            header=Header(frame_id="world"),
+            transform=Transform(
+                translation=Vector3(x=delta[0], y=delta[1], z=delta[2]),
+                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            child_frame_id="",
         )
         plan = self.generate_cartesian_plan(
-            {group.id: (Transform.identity(), relative)},
+            {
+                group.id: (
+                    TransformStamped(header=Header(frame_id="world"), child_frame_id=""),
+                    relative,
+                )
+            },
             CartesianPathConfig(),
             speed_scale=resolved_speed,
             check_collision=check_collision,
@@ -1228,7 +1237,10 @@ class ManipulationModule(Module):
         obstacle = Obstacle(
             name=name,
             obstacle_type=obstacle_type,
-            pose=PoseStamped(position=pose.position, orientation=pose.orientation),
+            pose=PoseStamped(
+                header=Header(frame_id=""),
+                pose=Pose(position=pose.position, orientation=pose.orientation),
+            ),
             dimensions=tuple(dimensions) if dimensions else (),
             mesh_path=mesh_path,
         )
@@ -1263,7 +1275,10 @@ class ManipulationModule(Module):
         obstacle = Obstacle(
             name=name,
             obstacle_type=obstacle_type,
-            pose=PoseStamped(position=pose.position, orientation=pose.orientation),
+            pose=PoseStamped(
+                header=Header(frame_id=""),
+                pose=Pose(position=pose.position, orientation=pose.orientation),
+            ),
             dimensions=tuple(dimensions) if dimensions else (),
             color=rgba,
             mesh_path=mesh_path,
@@ -1306,7 +1321,7 @@ class ManipulationModule(Module):
         obstacle = Obstacle(
             name=VOXEL_MAP_OBSTACLE_ID,
             obstacle_type=ObstacleType.OCTREE,
-            pose=PoseStamped(frame_id=frame),
+            pose=PoseStamped(header=Header(frame_id=frame), pose=Pose()),
             points=tuple(map(tuple, points.tolist())),
             octree_resolution=self.config.voxel_map_resolution,
         )
@@ -1331,7 +1346,10 @@ class ManipulationModule(Module):
             return False
         return self._world_monitor.update_obstacle_pose(
             name,
-            PoseStamped(position=pose.position, orientation=pose.orientation),
+            PoseStamped(
+                header=Header(frame_id=""),
+                pose=Pose(position=pose.position, orientation=pose.orientation),
+            ),
         )
 
     @rpc

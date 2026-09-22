@@ -23,7 +23,7 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
-from dimos_generated.geometry_msgs.msg import Twist, Vector3
+from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import pytest
@@ -66,7 +66,6 @@ from dimos.core.stream import In
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import MotorState, WholeBodyAdapter
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.time import duration_from_seconds, header_now, to_seconds
 from dimos.msgs.trajectory import TrajectoryState
 

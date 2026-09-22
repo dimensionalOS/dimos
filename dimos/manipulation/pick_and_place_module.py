@@ -16,8 +16,12 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 
+from dimos_generated.dimos_msgs.msg import GraspCandidateArray
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
 from pydantic import Field
 
 from dimos.agents.annotation import skill
@@ -36,10 +40,12 @@ from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.manipulation_spec import ManipulationSpec
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.manipulation.skill_errors import ManipulationSkillError
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.geometry import (
+    pose_matrix,
+    quaternion_euler,
+    quaternion_from_euler,
+    translate_pose_local,
+)
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 
 
@@ -129,6 +135,10 @@ class PickAndPlaceModule(Module):
                     "OBJECT_NOT_DETECTED", f"No pointcloud for object_id: {object_id}"
                 )
             candidates = self._grasp_generator.propose_grasps(pointcloud)
+            for candidate in candidates.candidates:
+                if not math.isfinite(candidate.score):
+                    raise ValueError("GraspCandidate.score must be finite")
+                pose_matrix(candidate.pose)
         except (RuntimeError, ValueError) as exc:
             return SkillResult.fail("GRASP_GENERATION_FAILED", str(exc))
         self._grasp_candidates = candidates
@@ -149,13 +159,15 @@ class PickAndPlaceModule(Module):
             return failure
 
         unreachable: SkillResult[ManipulationSkillError] | None = None
-        for rank, candidate in enumerate(candidates.candidates[: self.config.max_grasp_attempts]):
+        for rank, candidate in enumerate(
+            list(candidates.candidates)[: self.config.max_grasp_attempts]
+        ):
             grasp = self._apply_yaw_policy(
                 PoseStamped(
-                    ts=candidates.header.timestamp,
-                    frame_id=candidates.header.frame_id,
-                    position=candidate.pose.position,
-                    orientation=candidate.pose.orientation,
+                    header=candidates.header,
+                    pose=Pose(
+                        position=candidate.pose.position, orientation=candidate.pose.orientation
+                    ),
                 ),
                 group,
             )
@@ -215,9 +227,10 @@ class PickAndPlaceModule(Module):
                 "ROBOT_NOT_FOUND", "Gripper-capable planning group is missing or ambiguous"
             )
         place = PoseStamped(
-            frame_id=self.config.planning_frame,
-            position=Vector3(x, y, z),
-            orientation=self._selected_grasp.orientation,
+            header=Header(frame_id=self.config.planning_frame),
+            pose=Pose(
+                position=Point(x=x, y=y, z=z), orientation=self._selected_grasp.pose.orientation
+            ),
         )
         preplace = self._offset_pose(place, self.config.pregrasp_offset)
         if failure := self._move(preplace, group):
@@ -252,22 +265,21 @@ class PickAndPlaceModule(Module):
         current = self._manipulation.get_state().groups[group].end_effector_pose
         if current is None:
             return pose
-        euler = pose.orientation.to_euler()
-        current_euler = current.orientation.to_euler()
+        euler = quaternion_euler(pose.pose.orientation)
+        current_euler = quaternion_euler(current.pose.orientation)
         return PoseStamped(
-            ts=pose.ts,
-            frame_id=pose.frame_id,
-            position=pose.position,
-            orientation=Quaternion.from_euler(Vector3(euler.x, euler.y, current_euler.z)),
+            header=pose.header,
+            pose=Pose(
+                position=pose.pose.position,
+                orientation=quaternion_from_euler(euler[0], euler[1], current_euler[2]),
+            ),
         )
 
     @staticmethod
     def _offset_pose(pose: PoseStamped, offset: float) -> PoseStamped:
         return PoseStamped(
-            ts=pose.ts,
-            frame_id=pose.frame_id,
-            position=pose.position + pose.orientation.rotate_vector(Vector3(0.0, 0.0, -offset)),
-            orientation=pose.orientation,
+            header=pose.header,
+            pose=translate_pose_local(pose.pose, Vector3(z=-offset)),
         )
 
     def _servo(
@@ -280,9 +292,9 @@ class PickAndPlaceModule(Module):
         rejected. This leg is short, straight, and deliberately ends in contact.
         """
         result = self._manipulation.move_linear(
-            end.position.x - start.position.x,
-            end.position.y - start.position.y,
-            end.position.z - start.position.z,
+            end.pose.position.x - start.pose.position.x,
+            end.pose.position.y - start.pose.position.y,
+            end.pose.position.z - start.pose.position.z,
             planning_group,
             check_collision=False,
         )

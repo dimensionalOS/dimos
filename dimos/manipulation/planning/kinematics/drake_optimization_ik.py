@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, cast
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 
@@ -32,8 +33,7 @@ from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry import pose_matrix
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -98,11 +98,8 @@ class DrakeOptimizationIK:
                 "DrakeOptimizationIK requires exactly one pose-targetable planning group for legacy solve()",
             )
 
-        # Convert PoseStamped to 4x4 matrix via Transform
-        target_matrix = Transform(
-            translation=target_pose.position,
-            rotation=target_pose.orientation,
-        ).to_matrix()
+        # Convert PoseStamped to 4x4 matrix via TransformStamped
+        target_matrix = pose_matrix(target_pose.pose)
 
         # Get joint limits
         lower_limits, upper_limits = world.get_prepared_model().joint_space.position_limits()
@@ -201,10 +198,7 @@ class DrakeOptimizationIK:
             )
 
         lower_limits, upper_limits = world.get_prepared_model().joint_space.position_limits()
-        target_matrix = Transform(
-            translation=request.target_pose.position,
-            rotation=request.target_pose.orientation,
-        ).to_matrix()
+        target_matrix = pose_matrix(request.target_pose.pose)
         target_transform = RigidTransform(target_matrix)
         locked_positions = {
             index: float(request.seed_positions[index])

@@ -18,6 +18,8 @@ import importlib
 from pathlib import Path
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Transform, TransformStamped
+from dimos_generated.std_msgs.msg import Header
 import pytest
 
 pytest.importorskip("roboplan.cartesian_planning")
@@ -26,6 +28,7 @@ roboplan_planner_module = importlib.import_module(
     "dimos.manipulation.planning.planners.roboplan_planner"
 )
 
+from dimos_generated.geometry_msgs.msg import TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import JointState
 
 from dimos.manipulation.planning.planners.roboplan_config import (
@@ -35,13 +38,11 @@ from dimos.manipulation.planning.planners.roboplan_config import (
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.geometry import pose_matrix
 from dimos.robot.manipulators.xarm.config import (
     make_dual_xarm6_model_config,
     make_xarm6_model_config,
 )
-from dimos.utils.transform_utils import pose_to_matrix
 
 pytestmark = pytest.mark.self_hosted
 
@@ -92,8 +93,12 @@ def test_real_roboplan_plans_fixed_orientation_cartesian_path(
         start,
         {
             group_id: (
-                Transform.identity(),
-                Transform(translation=Vector3(0.005, 0.0, 0.0)),
+                TransformStamped(header=Header(frame_id="world"), child_frame_id=""),
+                TransformStamped(
+                    header=Header(frame_id="world"),
+                    transform=Transform(translation=Vector3(x=0.005, y=0.0, z=0.0)),
+                    child_frame_id="",
+                ),
             )
         },
         RoboPlanCartesianPathConfig(
@@ -109,9 +114,9 @@ def test_real_roboplan_plans_fixed_orientation_cartesian_path(
     with world.scratch_context() as ctx:
         planner._apply_selected_state(ctx, result.path[-1])
         final_pose = world.get_group_ee_pose(ctx, group_id)
-    expected = pose_to_matrix(start_pose)
+    expected = pose_matrix(start_pose.pose)
     expected[0, 3] += 0.005
-    position_error, orientation_error = compute_pose_error(pose_to_matrix(final_pose), expected)
+    position_error, orientation_error = compute_pose_error(pose_matrix(final_pose.pose), expected)
     assert position_error <= 0.005
     assert orientation_error <= 0.01
 
@@ -143,13 +148,25 @@ def test_real_roboplan_synchronizes_different_length_dual_arm_targets(
         start,
         {
             left_group_id: (
-                Transform.identity(),
-                Transform(translation=Vector3(0.0015, 0.001, 0.0)),
-                Transform(translation=Vector3(0.003, 0.0, 0.0)),
+                TransformStamped(header=Header(frame_id="world"), child_frame_id=""),
+                TransformStamped(
+                    header=Header(frame_id="world"),
+                    transform=Transform(translation=Vector3(x=0.0015, y=0.001, z=0.0)),
+                    child_frame_id="",
+                ),
+                TransformStamped(
+                    header=Header(frame_id="world"),
+                    transform=Transform(translation=Vector3(x=0.003, y=0.0, z=0.0)),
+                    child_frame_id="",
+                ),
             ),
             right_group_id: (
-                Transform.identity(),
-                Transform(translation=Vector3(0.005, 0.0, 0.0)),
+                TransformStamped(header=Header(frame_id="world"), child_frame_id=""),
+                TransformStamped(
+                    header=Header(frame_id="world"),
+                    transform=Transform(translation=Vector3(x=0.005, y=0.0, z=0.0)),
+                    child_frame_id="",
+                ),
             ),
         },
         RoboPlanCartesianPathConfig(),

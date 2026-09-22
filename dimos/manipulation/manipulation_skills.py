@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
@@ -31,9 +33,7 @@ from dimos.manipulation.manipulation_spec import (
 )
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.manipulation.skill_errors import ManipulationSkillError
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.geometry import quaternion_euler, quaternion_from_euler
 
 
 class ManipulationSkills(Module):
@@ -158,20 +158,17 @@ class ManipulationSkills(Module):
         if current is None:
             return SkillResult.fail("INVALID_STATE", "End-effector pose is unavailable")
         if roll is None and pitch is None and yaw is None:
-            orientation = current.orientation
+            orientation = current.pose.orientation
         else:
-            euler = current.orientation.to_euler()
-            orientation = Quaternion.from_euler(
-                Vector3(
-                    euler.x if roll is None else roll,
-                    euler.y if pitch is None else pitch,
-                    euler.z if yaw is None else yaw,
-                )
+            euler = quaternion_euler(current.pose.orientation)
+            orientation = quaternion_from_euler(
+                euler[0] if roll is None else roll,
+                euler[1] if pitch is None else pitch,
+                euler[2] if yaw is None else yaw,
             )
         target = PoseStamped(
-            frame_id="world",
-            position=Vector3(x, y, z),
-            orientation=orientation,
+            header=Header(frame_id="world"),
+            pose=Pose(position=Point(x=x, y=y, z=z), orientation=orientation),
         )
         plan = self.manipulation.plan_to_poses({group_id: target})
         if failure := self._planning_result(plan):

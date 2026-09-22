@@ -14,6 +14,8 @@
 
 """Array operations on generated occupancy grids."""
 
+import math
+
 from dimos_generated.nav_msgs.msg import OccupancyGrid
 import numpy as np
 from numpy.typing import NDArray
@@ -47,3 +49,11 @@ def block_max_reduce(cells: NDArray[np.int8], factor: int) -> NDArray[np.int8]:
     reduced[reduced == -1000] = -1
     result: NDArray[np.int8] = reduced.astype(np.int8)
     return result
+
+
+def occupancy_extent(message: OccupancyGrid) -> tuple[float, float]:
+    """Return physical width and height, rejecting an invalid grid resolution."""
+    info = message.info
+    if not math.isfinite(info.resolution) or info.resolution <= 0:
+        raise ValueError("OccupancyGrid resolution must be finite and positive")
+    return info.width * info.resolution, info.height * info.resolution

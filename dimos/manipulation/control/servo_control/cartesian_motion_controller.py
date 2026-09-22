@@ -31,20 +31,20 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.manipulation.control.arm_driver_spec import ArmDriverSpec
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
+from dimos.msgs.geometry import pose_matrix, quaternion_euler, quaternion_from_euler
 from dimos.msgs.sensor_msgs.JointCommand import JointCommand
 from dimos.msgs.sensor_msgs.RobotState import RobotState
+from dimos.msgs.time import time_from_seconds
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.simple_controller import PIDController
 
@@ -258,12 +258,18 @@ class CartesianMotionController(Module):
         # Detect if orientation is euler (3 elements) or quaternion (4 elements)
         if len(orientation) == 3:
             # Convert euler to quaternion using Pose's built-in conversion
-            euler_angles = Vector3(orientation[0], orientation[1], orientation[2])
-            quat = Quaternion.from_euler(euler_angles)
+            euler_angles = Vector3(x=orientation[0], y=orientation[1], z=orientation[2])
+            quat = quaternion_from_euler(euler_angles.x, euler_angles.y, euler_angles.z)
             orientation = [quat.x, quat.y, quat.z, quat.w]
 
         target = PoseStamped(
-            ts=time.time(), frame_id=frame_id, position=position, orientation=orientation
+            header=Header(frame_id=frame_id, stamp=time_from_seconds(time.time())),
+            pose=Pose(
+                position=Point(x=position[0], y=position[1], z=position[2]),
+                orientation=Quaternion(
+                    x=orientation[0], y=orientation[1], z=orientation[2], w=orientation[3]
+                ),
+            ),
         )
 
         with self._target_lock:
@@ -310,7 +316,7 @@ class CartesianMotionController(Module):
         if not target_pose or not current_pose:
             return False
 
-        pos_error, ori_error = self._compute_pose_error(current_pose, target_pose)
+        pos_error, ori_error = self._compute_pose_error(current_pose, target_pose.pose)
         return (
             pos_error < self.config.position_tolerance
             and ori_error < self.config.orientation_tolerance
@@ -398,20 +404,21 @@ class CartesianMotionController(Module):
                         current_pose_list[2] / 1000.0,
                     ]
                     euler_angles = Vector3(
-                        current_pose_list[3], current_pose_list[4], current_pose_list[5]
+                        x=current_pose_list[3], y=current_pose_list[4], z=current_pose_list[5]
                     )
-                    quat = Quaternion.from_euler(euler_angles)
+                    quat = quaternion_from_euler(euler_angles.x, euler_angles.y, euler_angles.z)
                     self._current_tcp_pose = Pose(
-                        position=position_m,
-                        orientation=[quat.x, quat.y, quat.z, quat.w],
+                        position=Point(x=position_m[0], y=position_m[1], z=position_m[2]),
+                        orientation=Quaternion(x=quat.x, y=quat.y, z=quat.z, w=quat.w),
                     )
 
                     # Publish current pose for target setters to use
                     current_pose_stamped = PoseStamped(
-                        ts=current_time,
-                        frame_id="world",
-                        position=position_m,
-                        orientation=[quat.x, quat.y, quat.z, quat.w],
+                        header=Header(frame_id="world", stamp=time_from_seconds(current_time)),
+                        pose=Pose(
+                            position=Point(x=position_m[0], y=position_m[1], z=position_m[2]),
+                            orientation=Quaternion(x=quat.x, y=quat.y, z=quat.z, w=quat.w),
+                        ),
                     )
                     self.current_pose.publish(current_pose_stamped)
                 else:
@@ -440,7 +447,7 @@ class CartesianMotionController(Module):
 
                 # Compute Cartesian error
                 pos_error_mag, ori_error_mag = self._compute_pose_error(
-                    self._current_tcp_pose, target_pose
+                    self._current_tcp_pose, target_pose.pose
                 )
 
                 # Log error periodically (every 1 second)
@@ -448,7 +455,7 @@ class CartesianMotionController(Module):
                     self._last_error_log_time = 0.0
                 if current_time - self._last_error_log_time > 1.0:
                     logger.info(
-                        f"Curr=[{self._current_tcp_pose.x:.3f},{self._current_tcp_pose.y:.3f},{self._current_tcp_pose.z:.3f}]m Tgt=[{target_pose.x:.3f},{target_pose.y:.3f},{target_pose.z:.3f}]m Err={pos_error_mag * 1000:.1f}mm"
+                        f"Curr=[{self._current_tcp_pose.position.x:.3f},{self._current_tcp_pose.position.y:.3f},{self._current_tcp_pose.position.z:.3f}]m Tgt=[{target_pose.pose.position.x:.3f},{target_pose.pose.position.y:.3f},{target_pose.pose.position.z:.3f}]m Err={pos_error_mag * 1000:.1f}mm"
                     )
                     self._last_error_log_time = current_time
 
@@ -487,7 +494,7 @@ class CartesianMotionController(Module):
 
                 # Generate Cartesian velocity command
                 cartesian_twist = self._compute_cartesian_velocity(
-                    self._current_tcp_pose, target_pose, dt
+                    self._current_tcp_pose, target_pose.pose, dt
                 )
 
                 # Publish debug twist
@@ -506,12 +513,12 @@ class CartesianMotionController(Module):
                 # Convert Pose to xArm format: [x, y, z, roll, pitch, yaw]
                 # Note: xArm IK expects position in mm, so convert from m to mm
                 next_pose_list = [
-                    next_pose.x * 1000.0,  # m to mm
-                    next_pose.y * 1000.0,  # m to mm
-                    next_pose.z * 1000.0,  # m to mm
-                    next_pose.roll,
-                    next_pose.pitch,
-                    next_pose.yaw,
+                    next_pose.position.x * 1000.0,  # m to mm
+                    next_pose.position.y * 1000.0,  # m to mm
+                    next_pose.position.z * 1000.0,  # m to mm
+                    quaternion_euler(next_pose.orientation)[0],
+                    quaternion_euler(next_pose.orientation)[1],
+                    quaternion_euler(next_pose.orientation)[2],
                 ]
 
                 logger.debug(
@@ -574,24 +581,7 @@ class CartesianMotionController(Module):
         Returns:
             Tuple of (position_error_magnitude, orientation_error_magnitude)
         """
-        # Position error (Euclidean distance)
-        pos_error = Vector3(
-            target_pose.x - current_pose.x,
-            target_pose.y - current_pose.y,
-            target_pose.z - current_pose.z,
-        )
-        pos_error_mag = math.sqrt(pos_error.x**2 + pos_error.y**2 + pos_error.z**2)
-
-        # Orientation error (angle between quaternions)
-        # q_error = q_current^-1 * q_target
-        q_current_inv = current_pose.orientation.conjugate()
-        q_error = q_current_inv * target_pose.orientation
-
-        # Extract angle from axis-angle representation
-        # For quaternion [x, y, z, w], angle = 2 * acos(w)
-        ori_error_mag = 2 * math.acos(min(1.0, abs(q_error.w)))
-
-        return pos_error_mag, ori_error_mag
+        return compute_pose_error(pose_matrix(current_pose), pose_matrix(target_pose))
 
     def _compute_cartesian_velocity(
         self, current_pose: Pose, target_pose: Pose, dt: float
@@ -608,9 +598,9 @@ class CartesianMotionController(Module):
             Twist message with linear and angular velocities
         """
         # Position error
-        error_x = target_pose.x - current_pose.x
-        error_y = target_pose.y - current_pose.y
-        error_z = target_pose.z - current_pose.z
+        error_x = target_pose.position.x - current_pose.position.x
+        error_y = target_pose.position.y - current_pose.position.y
+        error_z = target_pose.position.z - current_pose.position.z
 
         # Compute linear velocities via PID
         vel_x = self._pid_x.update(error_x, dt)  # type: ignore[no-untyped-call]
@@ -619,9 +609,18 @@ class CartesianMotionController(Module):
 
         # Orientation error (convert to euler for simpler PID)
         # This is an approximation; axis-angle would be more accurate
-        error_roll = self._normalize_angle(target_pose.roll - current_pose.roll)
-        error_pitch = self._normalize_angle(target_pose.pitch - current_pose.pitch)
-        error_yaw = self._normalize_angle(target_pose.yaw - current_pose.yaw)
+        error_roll = self._normalize_angle(
+            quaternion_euler(target_pose.orientation)[0]
+            - quaternion_euler(current_pose.orientation)[0]
+        )
+        error_pitch = self._normalize_angle(
+            quaternion_euler(target_pose.orientation)[1]
+            - quaternion_euler(current_pose.orientation)[1]
+        )
+        error_yaw = self._normalize_angle(
+            quaternion_euler(target_pose.orientation)[2]
+            - quaternion_euler(current_pose.orientation)[2]
+        )
 
         # Compute angular velocities via PID
         omega_x = self._pid_roll.update(error_roll, dt)  # type: ignore[no-untyped-call]
@@ -629,7 +628,8 @@ class CartesianMotionController(Module):
         omega_z = self._pid_yaw.update(error_yaw, dt)  # type: ignore[no-untyped-call]
 
         return Twist(
-            linear=Vector3(vel_x, vel_y, vel_z), angular=Vector3(omega_x, omega_y, omega_z)
+            linear=Vector3(x=vel_x, y=vel_y, z=vel_z),
+            angular=Vector3(x=omega_x, y=omega_y, z=omega_z),
         )
 
     def _integrate_velocity(self, current_pose: Pose, velocity: Twist, dt: float) -> Pose:
@@ -646,27 +646,27 @@ class CartesianMotionController(Module):
         """
         # Integrate position (simple Euler integration)
         next_position = Vector3(
-            current_pose.x + velocity.linear.x * dt,
-            current_pose.y + velocity.linear.y * dt,
-            current_pose.z + velocity.linear.z * dt,
+            x=current_pose.position.x + velocity.linear.x * dt,
+            y=current_pose.position.y + velocity.linear.y * dt,
+            z=current_pose.position.z + velocity.linear.z * dt,
         )
 
         # Integrate orientation (simple euler integration - good for small dt)
-        next_roll = current_pose.roll + velocity.angular.x * dt
-        next_pitch = current_pose.pitch + velocity.angular.y * dt
-        next_yaw = current_pose.yaw + velocity.angular.z * dt
+        next_roll = quaternion_euler(current_pose.orientation)[0] + velocity.angular.x * dt
+        next_pitch = quaternion_euler(current_pose.orientation)[1] + velocity.angular.y * dt
+        next_yaw = quaternion_euler(current_pose.orientation)[2] + velocity.angular.z * dt
 
-        euler_angles = Vector3(next_roll, next_pitch, next_yaw)
-        next_orientation = Quaternion.from_euler(euler_angles)
+        euler_angles = Vector3(x=next_roll, y=next_pitch, z=next_yaw)
+        next_orientation = quaternion_from_euler(euler_angles.x, euler_angles.y, euler_angles.z)
 
         return Pose(
-            position=next_position,
-            orientation=[
-                next_orientation.x,
-                next_orientation.y,
-                next_orientation.z,
-                next_orientation.w,
-            ],
+            position=Point(x=next_position.x, y=next_position.y, z=next_position.z),
+            orientation=Quaternion(
+                x=next_orientation.x,
+                y=next_orientation.y,
+                z=next_orientation.z,
+                w=next_orientation.w,
+            ),
         )
 
     @staticmethod

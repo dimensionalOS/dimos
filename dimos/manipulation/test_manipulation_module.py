@@ -25,6 +25,7 @@ import importlib.util
 from unittest.mock import DEFAULT, MagicMock
 
 from dimos_generated.dimos_msgs.msg import TrajectoryStatus
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
 import pytest
 
@@ -42,9 +43,6 @@ from dimos.manipulation.manipulation_module import (
 from dimos.manipulation.manipulation_spec import ExecutionStatus
 from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.time import header_now
 from dimos.msgs.trajectory import TrajectoryState, trajectory_duration
 from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
@@ -181,10 +179,7 @@ class TestManipulationModuleIntegration:
         """Test adding and removing obstacles."""
         module._on_joint_state(joint_state_zeros)
 
-        pose = Pose(
-            position=Vector3(0.5, 0.0, 0.3),
-            orientation=Quaternion(),  # default is identity (w=1)
-        )
+        pose = Pose(position=Point(x=0.5, y=0.0, z=0.3), orientation=Quaternion())
         obstacle_id = module.add_obstacle("test_box", pose, "box", [0.1, 0.1, 0.1])
 
         assert obstacle_id != ""

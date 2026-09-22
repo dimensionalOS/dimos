@@ -17,7 +17,17 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import pytest
 
@@ -40,10 +50,6 @@ from dimos.manipulation.planning.trajectory_generator.config import (
 from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import (
     SimpleTrapezoidParametrizer,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.time import duration_from_seconds, header_now, to_seconds
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
@@ -81,7 +87,9 @@ class RecordingGenerator:
 def _model() -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(Path("/robot.urdf")),
-        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        base_pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),
         joint_names=["left/a", "left/b", "right/c"],
         base_link="base",
         planning_groups=[
@@ -185,8 +193,12 @@ def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch,
     plan = module.generate_cartesian_plan(
         {
             "left_arm": (
-                Transform.identity(),
-                Transform(translation=Vector3(0.01, 0.0, 0.0)),
+                TransformStamped(header=Header(frame_id="world"), child_frame_id=""),
+                TransformStamped(
+                    header=Header(frame_id="world"),
+                    transform=Transform(translation=Vector3(x=0.01, y=0.0, z=0.0)),
+                    child_frame_id="",
+                ),
             )
         },
         RoboPlanCartesianPathConfig(

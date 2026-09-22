@@ -33,6 +33,7 @@ except ImportError as exc:
     )
     raise ImportError(msg) from exc
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
 
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
@@ -40,9 +41,8 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.joint_space import CoordinateTopology, JointSpace
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry import pose_matrix
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import pose_to_matrix
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -315,8 +315,8 @@ class _PinkSolverCore:
     def _target_in_model_frame(
         self, config: RobotModelConfig, target_pose: PoseStamped
     ) -> NDArray[np.float64]:
-        target_world = pose_to_matrix(target_pose)
-        base_world = pose_to_matrix(config.base_pose)
+        target_world = pose_matrix(target_pose.pose)
+        base_world = pose_matrix(config.base_pose.pose)
         target_model: NDArray[np.float64] = np.asarray(
             np.linalg.inv(base_world) @ target_world, dtype=np.float64
         )

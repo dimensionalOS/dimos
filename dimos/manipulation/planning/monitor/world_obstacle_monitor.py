@@ -30,22 +30,22 @@ from dataclasses import replace
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import (
     DEFAULT_OBSTACLE_RGBA,
     CollisionObjectMessage,
     Obstacle,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from dimos_generated.vision_msgs.msg import Detection3D
+
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
-    from dimos.msgs.vision_msgs.Detection3D import Detection3D
     from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
@@ -56,7 +56,7 @@ class WorldObstacleMonitor:
 
     This class handles updates from:
     - Explicit collision objects (CollisionObjectMessage)
-    - Perception detections (Detection3D from dimos.msgs.vision_msgs)
+    - Perception detections (generated Detection3D)
 
     ## Thread Safety
 
@@ -267,7 +267,7 @@ class WorldObstacleMonitor:
         - Removes obstacles for detections that are no longer present
 
         Args:
-            detections: List of Detection3D messages from dimos.msgs.vision_msgs
+            detections: List of generated Detection3D messages
         """
         if not self._running:
             return
@@ -313,11 +313,7 @@ class WorldObstacleMonitor:
 
     def _detection3d_to_pose(self, detection: Detection3D) -> PoseStamped:
         """Convert Detection3D bbox.center to PoseStamped."""
-        center = detection.bbox.center
-        return PoseStamped(
-            position=center.position,
-            orientation=center.orientation,
-        )
+        return PoseStamped(header=detection.header, pose=detection.bbox.center)
 
     def _detection_to_obstacle(self, detection: Detection3D) -> Obstacle:
         """Convert Detection3D to Obstacle."""
@@ -658,10 +654,13 @@ class WorldObstacleMonitor:
                             name=name,
                             obstacle_type=ObstacleType.MESH,
                             pose=PoseStamped(
-                                ts=obj.pose.ts,
-                                frame_id=obj.pose.frame_id,
-                                position=Vector3(hull.centroid),
-                                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                                header=obj.pose.header,
+                                pose=Pose(
+                                    position=Point(
+                                        x=hull.centroid[0], y=hull.centroid[1], z=hull.centroid[2]
+                                    ),
+                                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                                ),
                             ),
                             color=(0.2, 0.8, 0.2, 0.6),
                             mesh_path=hull.path,
@@ -673,7 +672,7 @@ class WorldObstacleMonitor:
         return Obstacle(
             name=name,
             obstacle_type=ObstacleType.BOX,
-            pose=obj.pose or PoseStamped(position=obj.center),
+            pose=obj.pose,
             dimensions=(float(obj.size.x), float(obj.size.y), float(obj.size.z)),
             color=(0.2, 0.8, 0.2, 0.6),
         )

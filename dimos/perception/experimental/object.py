@@ -19,19 +19,22 @@ import time
 from typing import TYPE_CHECKING, Any
 import uuid
 
-from dimos_lcm.geometry_msgs import Pose
-from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import (
+    BoundingBox3D,
+    Detection3D as ROSDetection3D,
+    Detection3DArray,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+)
 import numpy as np
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry import quaternion_from_matrix
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.vision_msgs.Detection3D import Detection3D as ROSDetection3D
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.msgs.time import time_from_seconds
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.detection.type.detection3d.base import Detection3D
 
@@ -68,8 +71,8 @@ class Object(Detection3D):
 
     def set_center(self, center: Vector3) -> None:
         """Update the canonical center and its pose representation together."""
-        self.center = Vector3(center)
-        self.pose.position = self.center
+        self.center = Vector3(x=center.x, y=center.y, z=center.z)
+        self.pose.pose.position = Point(x=center.x, y=center.y, z=center.z)
 
     def update_object(self, other: Object, *, accumulate_pointcloud: bool = True) -> None:
         """Update this object with data from another detection.
@@ -121,14 +124,14 @@ class Object(Detection3D):
         """Return canonical geometry without refitting the point cloud."""
         center = self.center
         size = self.size
-        orientation = self.pose.orientation
+        orientation = self.pose.pose.orientation
         return (
-            Vector3(center.x, center.y, center.z),
-            Quaternion(orientation.x, orientation.y, orientation.z, orientation.w),
+            Vector3(x=center.x, y=center.y, z=center.z),
+            Quaternion(x=orientation.x, y=orientation.y, z=orientation.z, w=orientation.w),
             Vector3(
-                max(float(size.x), 1e-3),
-                max(float(size.y), 1e-3),
-                max(float(size.z), 1e-3),
+                x=max(float(size.x), 1e-3),
+                y=max(float(size.y), 1e-3),
+                z=max(float(size.z), 1e-3),
             ),
         )
 
@@ -143,7 +146,7 @@ class Object(Detection3D):
         center, orientation, size = self._detection3d_bbox_components()
 
         msg = ROSDetection3D()
-        msg.header = Header(self.ts, self.frame_id)
+        msg.header = self.pose.header
         msg.id = self.object_id
         msg.results = [
             ObjectHypothesisWithPose(
@@ -153,10 +156,9 @@ class Object(Detection3D):
                 )
             )
         ]
-        msg.results_length = len(msg.results)
         msg.bbox = BoundingBox3D(
             center=Pose(
-                position=center,
+                position=Point(x=center.x, y=center.y, z=center.z),
                 orientation=orientation,
             ),
             size=size,
@@ -321,24 +323,24 @@ class Object(Detection3D):
                 aabb = pc.pointcloud.get_axis_aligned_bounding_box()
                 aabb_center = (aabb.min_bound + aabb.max_bound) / 2.0
                 aabb_extent = aabb.max_bound - aabb.min_bound
-                center = Vector3(aabb_center[0], aabb_center[1], aabb_center[2])
+                center = Vector3(x=aabb_center[0], y=aabb_center[1], z=aabb_center[2])
                 sx, sy, sz = float(aabb_extent[0]), float(aabb_extent[1]), float(aabb_extent[2])
-                orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
+                orientation = Quaternion(w=1.0)
             else:
                 obb = pc.pointcloud.get_oriented_bounding_box()
-                center = Vector3(obb.center[0], obb.center[1], obb.center[2])
+                center = Vector3(x=obb.center[0], y=obb.center[1], z=obb.center[2])
                 sx, sy, sz = float(obb.extent[0]), float(obb.extent[1]), float(obb.extent[2])
-                orientation = Quaternion.from_rotation_matrix(obb.R)
+                orientation = quaternion_from_matrix(np.asarray(obb.R))
 
             if max_obstacle_width > 0:
                 sx = min(sx, max_obstacle_width)
                 sy = min(sy, max_obstacle_width)
-            size = Vector3(sx, sy, sz)
+            size = Vector3(x=sx, y=sy, z=sz)
             pose = PoseStamped(
-                ts=det.ts,
-                frame_id=frame_id,
-                position=center,
-                orientation=orientation,
+                header=Header(stamp=time_from_seconds(det.ts), frame_id=frame_id),
+                pose=Pose(
+                    position=Point(x=center.x, y=center.y, z=center.z), orientation=orientation
+                ),
             )
 
             # Skip objects too far from origin (background detections)
@@ -452,7 +454,6 @@ def to_detection3d_array(
     if resolved_ts is None:
         resolved_ts = objects[0].ts if objects else 0.0
     return Detection3DArray(
-        detections_length=len(detections),
-        header=Header(resolved_ts, resolved_frame_id),
+        header=Header(stamp=time_from_seconds(resolved_ts), frame_id=resolved_frame_id),
         detections=detections,
     )

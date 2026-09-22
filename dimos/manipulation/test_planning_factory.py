@@ -23,6 +23,8 @@ from types import ModuleType
 from typing import Any
 from unittest.mock import ANY
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.std_msgs.msg import Header
 from pydantic import ValidationError
 import pytest
 from pytest_mock import MockerFixture
@@ -50,9 +52,6 @@ from dimos.manipulation.planning.trajectory_generator.config import (
     SimpleTrapezoidParametrizationConfig,
     TrajectoryParametrizationConfig,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
 
 
@@ -75,7 +74,9 @@ def make_module() -> Generator[Callable[..., ManipulationModule], None, None]:
 def robot_config() -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(Path("/path/to/robot.urdf")),
-        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        base_pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
         planning_groups=[
             PlanningGroupDefinition(

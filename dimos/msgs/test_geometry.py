@@ -35,11 +35,15 @@ import pytest
 from dimos.msgs.geometry import (
     compose_transforms,
     inverse_transform,
+    pose_from_matrix,
     pose_from_transform,
+    pose_matrix,
+    quaternion_euler,
     quaternion_from_euler,
     transform_from_odometry,
     transform_from_pose,
     transform_matrix,
+    translate_pose_local,
     yaw,
 )
 
@@ -175,3 +179,66 @@ def test_transform_matrix_maps_rotation_and_translation_without_aliasing():
     np.testing.assert_allclose(matrix @ [1.0, 0.0, 0.0, 1.0], [2.0, 0.0, 3.0, 1.0], atol=1e-12)
     value.translation.x = 10.0
     assert matrix[0, 3] == 2.0
+
+
+def test_pose_matrix_roundtrip_preserves_rigid_motion_without_aliasing():
+    pose = Pose(
+        position=Point(x=2, y=-1, z=3),
+        orientation=quaternion_from_euler(0, 0, math.pi / 2),
+    )
+    matrix = pose_matrix(pose)
+    np.testing.assert_allclose(matrix @ [1, 0, 0, 1], [2, 0, 3, 1], atol=1e-12)
+    decoded = Pose.decode(pose_from_matrix(matrix).encode())
+    np.testing.assert_allclose(pose_matrix(decoded), matrix, atol=1e-12)
+    matrix[0, 3] = 99
+    decoded.position.y = 42
+    assert pose.position == Point(x=2, y=-1, z=3)
+    assert decoded.position.x == 2
+
+
+@pytest.mark.parametrize(
+    "matrix",
+    [
+        np.eye(3),
+        np.full((4, 4), math.nan),
+        np.diag([1, 1, 1, 2]),
+        np.diag([2, 1, 1, 1]),
+        np.diag([-1, 1, 1, 1]),
+    ],
+)
+def test_pose_from_matrix_rejects_nonrigid_or_invalid_matrices(matrix):
+    with pytest.raises(ValueError):
+        pose_from_matrix(matrix)
+
+
+@pytest.mark.parametrize(
+    "pose",
+    [
+        Pose(position=Point(x=math.inf), orientation=Quaternion(w=1)),
+        Pose(orientation=Quaternion(w=0)),
+        Pose(orientation=Quaternion(w=math.nan)),
+    ],
+)
+def test_pose_matrix_rejects_invalid_geometry(pose):
+    with pytest.raises(ValueError):
+        pose_matrix(pose)
+
+
+def test_local_offset_uses_pose_axes_and_copies_orientation():
+    pose = Pose(
+        position=Point(x=1, y=2, z=3),
+        orientation=quaternion_from_euler(0, 0, math.pi / 2),
+    )
+    translated = translate_pose_local(pose, Vector3(x=2, z=-1))
+    position = translated.position
+    assert (position.x, position.y, position.z) == pytest.approx((1, 4, 2))
+    assert quaternion_euler(translated.orientation) == pytest.approx((0, 0, math.pi / 2))
+    translated.orientation.w = 0
+    assert pose.orientation.w == pytest.approx(math.sqrt(0.5))
+    assert pose.position == Point(x=1, y=2, z=3)
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_local_offset_rejects_nonfinite_displacements(value):
+    with pytest.raises(ValueError, match="Offset components"):
+        translate_pose_local(Pose(orientation=Quaternion(w=1)), Vector3(x=value))

@@ -17,7 +17,9 @@
 from pathlib import Path
 from typing import cast
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import pytest
 from pytest_mock import MockerFixture
 
@@ -32,9 +34,6 @@ from dimos.control.tasks.teleop_ik_task.teleop_ik_task import (
     create_task,
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
 from dimos.teleop.webxr.controller_types import Buttons
 
@@ -69,12 +68,18 @@ def _solver(mocker: MockerFixture) -> PinkPoseTargetSolver:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
     solver.frame_poses.return_value = {
         "left_tool": PoseStamped(
-            position=Vector3(1.0, 0.0, 0.0),
-            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            header=Header(frame_id=""),
+            pose=Pose(
+                position=Point(x=1.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         ),
         "right_tool": PoseStamped(
-            position=Vector3(-1.0, 0.0, 0.0),
-            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            header=Header(frame_id=""),
+            pose=Pose(
+                position=Point(x=-1.0, y=0.0, z=0.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
         ),
     }
     solver.step.return_value = JointState(
@@ -119,8 +124,10 @@ def test_face_buttons_do_not_engage_arm_teleop(mocker: MockerFixture) -> None:
 
 def _pose(x: float) -> PoseStamped:
     return PoseStamped(
-        position=Vector3(x, 0.0, 0.0),
-        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        header=Header(frame_id=""),
+        pose=Pose(
+            position=Point(x=x, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
     )
 
 
@@ -179,7 +186,7 @@ def test_single_binding_tracks_relative_controller_motion(mocker: MockerFixture)
 
     assert output is not None
     target = solver.step.call_args.args[0]["right_tool"]
-    assert target.position.x == pytest.approx(-0.8)
+    assert target.pose.position.x == pytest.approx(-0.8)
 
 
 def test_bimanual_task_requires_both_hands_and_releases_atomically(

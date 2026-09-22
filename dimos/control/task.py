@@ -35,9 +35,8 @@ from dimos.hardware.manipulators.spec import ControlMode as ControlMode
 from dimos.hardware.whole_body.spec import IMUState
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs.Pose import Pose
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+    from dimos_generated.geometry_msgs.msg import Pose, PoseStamped, TwistStamped
+
     from dimos.teleop.webxr.controller_types import Buttons
 
 

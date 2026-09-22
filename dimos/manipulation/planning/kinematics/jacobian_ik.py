@@ -42,18 +42,16 @@ from dimos.manipulation.planning.utils.kinematics_utils import (
     compute_pose_error,
     damped_pseudoinverse,
 )
+from dimos.msgs.geometry import pose_matrix
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import pose_to_matrix
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+from dimos_generated.geometry_msgs.msg import PoseStamped, Vector3
 from dimos_generated.sensor_msgs.msg import JointState
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 logger = setup_logger()
 
@@ -266,10 +264,7 @@ class JacobianIK:
             IKResult with solution or failure status
         """
         # Convert to internal representation
-        target_matrix = Transform(
-            translation=target_pose.position,
-            rotation=target_pose.orientation,
-        ).to_matrix()
+        target_matrix = pose_matrix(target_pose.pose)
         current_joints = np.array(seed.position, dtype=np.float64)
         joint_names = list(seed.name)
         active_joint_indices = active_joint_indices or list(range(len(joint_names)))
@@ -285,9 +280,9 @@ class JacobianIK:
                 world.set_joint_state(ctx, current_state)
 
                 if group is None:
-                    current_pose = pose_to_matrix(world.get_ee_pose(ctx))
+                    current_pose = pose_matrix(world.get_ee_pose(ctx).pose)
                 else:
-                    current_pose = pose_to_matrix(world.get_group_ee_pose(ctx, group.id))
+                    current_pose = pose_matrix(world.get_group_ee_pose(ctx, group.id).pose)
 
                 # Compute error
                 pos_error, ori_error = compute_pose_error(current_pose, target_matrix)
@@ -341,9 +336,9 @@ class JacobianIK:
             final_state = JointState(name=joint_names, position=current_joints.tolist())
             world.set_joint_state(ctx, final_state)
             if group is None:
-                final_pose = pose_to_matrix(world.get_ee_pose(ctx))
+                final_pose = pose_matrix(world.get_ee_pose(ctx).pose)
             else:
-                final_pose = pose_to_matrix(world.get_group_ee_pose(ctx, group.id))
+                final_pose = pose_matrix(world.get_group_ee_pose(ctx, group.id).pose)
             pos_error, ori_error = compute_pose_error(final_pose, target_matrix)
 
         return _create_failure_result(

@@ -817,3 +817,52 @@ Logs: `build/message-codegen/trajectory-cdr-tests.log`,
 Local setup added the pinned optional xacro, Viser, MuJoCo, websocket-client, and
 pytest plugins needed for the existing suites. These results do not establish
 full-repository CI or completion of the remaining pose/image/viewer cutover.
+
+### Generated pose, grasp, and path consumers (runtime cutover in progress)
+
+Manipulation planning, FK/IK, preview, dispatch, the SDK, and Viser now use
+nested generated Pose/PoseStamped values. Matrix/Euler/local-offset operations
+live outside the generated classes. Robot state snapshots retain the source
+Header atomically; FK-derived poses and their TF edges retain exact source
+nanoseconds. Static mount publication copies its configured transform before
+setting the publication time.
+
+GraspCandidate and GraspCandidateArray now come from the generated DimOS schema
+package. The two handwritten pickle codecs are removed. The heuristic and
+isolated GraspGenX adapter accept generated clouds, preserve their source
+headers, and return generated ranked proposals. Pick-and-place validates finite
+scores and valid pose geometry before issuing a gripper or motion command.
+The GraspGenX tests use a mocked inference backend, not a loaded GPU model.
+
+Base path followers, benchmarking, and coordinator scalar/stamped-twist commands
+use generated messages. SVG and Rerun scene rendering reads generated points,
+poses, paths, detection boxes, and occupancy grids. The occupancy origin rotation
+is applied in both renderers. Existing occupancy borrowing and block reduction
+helpers remain in use; renderers validate physical resolution separately.
+
+Human-facing demonstrations:
+
+- `demo_planning_backends.py`: real Drake/RRT, five FK tool poses and CDR TF edges;
+  the first source stamp is `1700000000.123456789`.
+- `demo_grasp_proposals.py`: a four-point CDR cloud becomes a CDR ranked grasp at
+  `[0.5, 0, 0.15]`, with downward approach and unchanged nanoseconds.
+- `demo_path_following.py`: 41 generated path waypoints and CDR Twist commands
+  drive the existing base simulator to `arrived` in 38 ticks. The SVG in
+  `build/message-codegen/demo/evidence/path-following.svg` overlays reference
+  and executed paths.
+
+Validation logs are under `build/message-codegen/`: `pose-combined-tests.log`,
+`pose-space-tests.log`, `pose-combined-mypy.log`, `pose-blueprint-lcm-tests.log`,
+and `pose-blueprint-zenoh-tests.log`. The combined manipulation, control, geometry, grasp, object, and transform suite
+passed 1080 tests. Both coordinator E2E runs passed all five tests. The
+renderer/occupancy/view suite passed 61 tests, including actual
+headless Rerun SDK logging and rotated-grid geometry.
+
+This checkpoint is not an accepted stage-4 completion. The broad type check of
+127 modules still reports four errors at legacy point-cloud boundaries: the
+older grasp provider, the scene-to-pick cloud interface, and cloud-derived
+occupancy rendering. Their producers must be converted; no compatibility reader
+or fallback was added. The temporal object-registration suite also fails
+collection because the optional Hydra/segmentation environment is absent.
+Focused generated-object CDR and spatial-deduplication tests pass. Full viewer UI
+acceptance and the remaining inventory retain their unchecked OpenSpec tasks.

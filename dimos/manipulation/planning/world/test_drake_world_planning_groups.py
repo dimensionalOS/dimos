@@ -17,7 +17,9 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import numpy as np
 import pytest
@@ -28,7 +30,6 @@ from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.world.drake_world import DRAKE_AVAILABLE, DrakeWorld
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.time import duration_from_seconds, header_now
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
@@ -132,7 +133,10 @@ def _config(
 ) -> RobotModelConfig:
     return RobotModelConfig(
         model=RobotModel.from_file(path).with_default_joint_acceleration_limit(2.0),
-        base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
+        base_pose=PoseStamped(
+            header=Header(frame_id=""),
+            pose=Pose(position=Point(x=0, y=0, z=0), orientation=Quaternion(x=0, y=0, z=0, w=1)),
+        ),
         joint_names=joints or ["joint1", "joint2"],
         base_link="base_link",
         planning_groups=groups,
@@ -223,7 +227,10 @@ def test_drake_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=[2, 0, 0], orientation=[0, 0, 0, 1]),
+        pose=PoseStamped(
+            header=Header(frame_id=""),
+            pose=Pose(position=Point(x=2, y=0, z=0), orientation=Quaternion(x=0, y=0, z=0, w=1)),
+        ),
         dimensions=(0.1, 0.1, 0.1),
     )
     unnamed = replace(obstacle, name="")
@@ -249,10 +256,15 @@ def test_drake_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
     assert world.remove_obstacle("missing") is False
     assert world.update_obstacle(replace(obstacle, name="missing")) is False
     assert world.update_obstacle_pose("missing", obstacle.pose) is False
-    moved_pose = PoseStamped(position=[0.0, 0.0, 0.0], orientation=[0.0, 0.0, 0.0, 1.0])
+    moved_pose = PoseStamped(
+        header=Header(frame_id=""),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        ),
+    )
     assert world.update_obstacle_pose("box", moved_pose)
     assert world._obstacles["box"].geometry_id != original_geometry_id
-    assert world.get_obstacles()[0].pose.position.x == pytest.approx(0.0)
+    assert world.get_obstacles()[0].pose.pose.position.x == pytest.approx(0.0)
     assert not world.check_config_collision_free(joint_state)
 
     replacement = replace(
@@ -281,7 +293,10 @@ def test_drake_obstacle_replacement_failure_invalidates_world(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
+        pose=PoseStamped(
+            header=Header(frame_id=""),
+            pose=Pose(position=Point(x=0, y=0, z=0), orientation=Quaternion(x=0, y=0, z=0, w=1)),
+        ),
         dimensions=(0.1, 0.1, 0.1),
     )
     world.add_obstacle(obstacle)
@@ -310,8 +325,8 @@ def test_drake_group_fk_uses_tip_link_and_unique_pose_group(tmp_path: Path) -> N
     group_pose = world.get_group_ee_pose(ctx, "arm")
     default_pose = world.get_ee_pose(ctx)
 
-    assert group_pose.position.x == pytest.approx(2.0)
-    assert default_pose.position.x == pytest.approx(group_pose.position.x)
+    assert group_pose.pose.position.x == pytest.approx(2.0)
+    assert default_pose.pose.position.x == pytest.approx(group_pose.pose.position.x)
     assert world.get_jacobian(ctx).shape == (6, 2)
 
 
@@ -326,7 +341,12 @@ def test_drake_applies_config_base_pose_when_urdf_has_world_base_joint(
         world,
         RobotModelConfig(
             model=RobotModel.from_file(urdf).with_default_joint_acceleration_limit(2.0),
-            base_pose=PoseStamped(position=[0, 0.5, 0], orientation=[0, 0, 0, 1]),
+            base_pose=PoseStamped(
+                header=Header(frame_id=""),
+                pose=Pose(
+                    position=Point(x=0, y=0.5, z=0), orientation=Quaternion(x=0, y=0, z=0, w=1)
+                ),
+            ),
             joint_names=["joint1", "joint2"],
             base_link="base_link",
             planning_groups=[_arm_group("joint1", "joint2")],
@@ -358,7 +378,12 @@ def test_drake_planar_base_coordinates_move_original_robot_root(tmp_path: Path) 
                 .with_default_joint_acceleration_limit(2.0)
                 .with_planar_base(planar_base)
             ),
-            base_pose=PoseStamped(position=[0, 0, 0.5], orientation=[0, 0, 0, 1]),
+            base_pose=PoseStamped(
+                header=Header(frame_id=""),
+                pose=Pose(
+                    position=Point(x=0, y=0, z=0.5), orientation=Quaternion(x=0, y=0, z=0, w=1)
+                ),
+            ),
             joint_names=joint_names,
             base_link=planar_base.root_link,
             planning_groups=[
@@ -382,9 +407,9 @@ def test_drake_planar_base_coordinates_move_original_robot_root(tmp_path: Path) 
     tool_pose = world.get_group_ee_pose(context, "mobile_arm")
 
     np.testing.assert_allclose(original_root_pose[:3, 3], [1.0, 2.0, 0.5], atol=1e-8)
-    assert tool_pose.position.x == pytest.approx(1.0)
-    assert tool_pose.position.y == pytest.approx(4.0)
-    assert tool_pose.position.z == pytest.approx(0.5)
+    assert tool_pose.pose.position.x == pytest.approx(1.0)
+    assert tool_pose.pose.position.y == pytest.approx(4.0)
+    assert tool_pose.pose.position.z == pytest.approx(0.5)
 
 
 @requires_drake

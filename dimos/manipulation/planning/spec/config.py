@@ -18,13 +18,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dimos_generated.geometry_msgs.msg import PoseStamped
 from pydantic import Field
 
 from dimos.core.module import ModuleConfig
 from dimos.manipulation.grasp_verification import GraspVerificationConfig
 from dimos.manipulation.planning.groups.identifiers import assert_valid_joint_names
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.assets.model import RobotModel
 
 

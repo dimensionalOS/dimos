@@ -28,6 +28,7 @@ import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from dimos_generated.nav_msgs.msg import OccupancyGrid
 import numpy as np
 from PIL import Image as PILImage
 
@@ -44,7 +45,9 @@ from dimos.memory.vis.space.elements import (
     SpaceElement,
     Text,
 )
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.memory.vis.space.geometry import message_position, message_yaw
+from dimos.msgs.geometry import pose_matrix
+from dimos.msgs.occupancy import occupancy_extent, occupancy_view
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 if TYPE_CHECKING:
@@ -95,7 +98,8 @@ def _style(el: object) -> tuple[str, float]:
 
 
 def _render_point(el: Point, b: Bounds) -> str:
-    x, y = el.msg.x, _y(el.msg.y)
+    position = message_position(el.msg)
+    x, y = position.x, _y(position.y)
     r = el.radius
     b.include(x - r, y - r)
     b.include(x + r, y + r)
@@ -110,8 +114,9 @@ def _render_point(el: Point, b: Bounds) -> str:
 
 
 def _render_arrow(el: Arrow, b: Bounds) -> str:
-    x, y = el.msg.x, _y(el.msg.y)
-    yaw = el.msg.yaw
+    position = message_position(el.msg)
+    x, y = position.x, _y(position.y)
+    yaw = message_yaw(el.msg)
     length = el.length
     half_base = length * 0.4
 
@@ -139,7 +144,8 @@ def _render_pose(el: Pose, b: Bounds) -> str:
     arrow = Arrow(msg=el.msg, length=el.size, color=el.color, opacity=el.opacity)
     parts = [_render_arrow(arrow, b)]
     if el.label:
-        x, y = el.msg.x, _y(el.msg.y)
+        position = message_position(el.msg)
+        x, y = position.x, _y(position.y)
         fill, alpha = _style(el)
         parts.append(
             f'<text x="{x + el.size * 0.5:.4f}" y="{y:.4f}" '
@@ -151,7 +157,7 @@ def _render_pose(el: Pose, b: Bounds) -> str:
 def _render_polyline(el: Polyline, b: Bounds) -> str:
     pts = []
     for p in el.msg.poses:
-        x, y = p.x, _y(p.y)
+        x, y = p.pose.position.x, _y(p.pose.position.y)
         b.include(x, y)
         pts.append(f"{x:.4f},{y:.4f}")
     stroke, alpha = _style(el)
@@ -163,7 +169,7 @@ def _render_polyline(el: Polyline, b: Bounds) -> str:
 
 
 def _render_box3d(el: Box3D, b: Bounds) -> str:
-    cx, cy = el.center.x, el.center.y
+    cx, cy = el.center.position.x, el.center.position.y
     hw, hh = el.size.x / 2, el.size.y / 2
     # Top-left in world → SVG
     x = cx - hw
@@ -188,8 +194,9 @@ def _render_box3d(el: Box3D, b: Bounds) -> str:
 
 
 def _render_camera(el: Camera, b: Bounds) -> str:
-    x, y = el.pose.x, _y(el.pose.y)
-    yaw = el.pose.yaw
+    position = message_position(el.pose)
+    x, y = position.x, _y(position.y)
+    yaw = message_yaw(el.pose)
     stroke, alpha = _style(el)
 
     if el.camera_info and el.camera_info.K[4] > 0:
@@ -239,33 +246,27 @@ def _render_text(el: Text, b: Bounds) -> str:
 
 
 def _render_occupancy_grid(el: OccupancyGrid, b: Bounds) -> str:
-    if el.grid.size == 0:
+    cells = occupancy_view(el)
+    if cells.size == 0:
         return ""
-
-    rgba = np.flipud(generate_rgba_texture(el))
+    rgba = np.flipud(generate_rgba_texture(cells))
     img = PILImage.fromarray(rgba, "RGBA")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-
-    ox, oy = el.origin.x, el.origin.y
-    world_w = el.width * el.resolution
-    world_h = el.height * el.resolution
-
-    # SVG top-left: world top-left with Y-flip
-    sx = ox
-    sy = _y(oy + world_h)
-
-    b.include(sx, sy)
-    b.include(sx + world_w, sy + world_h)
-
+    matrix = pose_matrix(el.info.origin)
+    width, height = occupancy_extent(el)
+    # Image row zero is the top edge after flipud; project the ROS grid plane into SVG XY.
+    a, c = matrix[0, 0], -matrix[0, 1]
+    d, e = -matrix[1, 0], matrix[1, 1]
+    tx, ty = matrix[0, 3] + matrix[0, 1] * height, -matrix[1, 3] - matrix[1, 1] * height
+    for x, y in ((0, 0), (width, 0), (width, height), (0, height)):
+        b.include(a * x + c * y + tx, d * x + e * y + ty)
     return (
-        f'<image x="{sx:.4f}" y="{sy:.4f}" width="{world_w:.4f}" height="{world_h:.4f}" '
+        f'<image x="0" y="0" width="{width:.4f}" height="{height:.4f}" '
+        f'transform="matrix({a:.9f} {d:.9f} {c:.9f} {e:.9f} {tx:.9f} {ty:.9f})" '
         f'href="data:image/png;base64,{b64}" image-rendering="pixelated"/>'
     )
-
-
-# Dispatch + top-level render
 
 
 def _render_element(el: SpaceElement, b: Bounds) -> str:

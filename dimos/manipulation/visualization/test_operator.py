@@ -18,7 +18,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from dimos_generated.geometry_msgs.msg import Pose, PoseStamped
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from dimos.manipulation.manipulation_spec import (
@@ -40,7 +42,6 @@ from dimos.manipulation.visualization.operator import (
     ManipulationOperator,
     PoseTargetRequest,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.time import duration_from_seconds, header_now
 from dimos.robot.assets.model import RobotModel
 
@@ -100,7 +101,9 @@ def _operator() -> tuple[ManipulationOperator, MagicMock, MagicMock]:
         name=config.joint_names, position=[0.0, 0.0, 0.0]
     )
     monitor.is_state_valid.return_value = True
-    monitor.get_group_ee_pose.return_value = PoseStamped(frame_id="world")
+    monitor.get_group_ee_pose.return_value = PoseStamped(
+        header=Header(frame_id="world"), pose=Pose()
+    )
     return ManipulationOperator(module, monitor), module, monitor
 
 
@@ -142,7 +145,7 @@ def test_joint_evaluation_rejects_noncanonical_unknown_and_overlapping_selection
 
 def test_pose_evaluation_routes_group_id_and_canonical_seed() -> None:
     operator, module, _ = _operator()
-    pose = PoseStamped(frame_id="world")
+    pose = PoseStamped(header=Header(frame_id="world"), pose=Pose())
     seed = JointState(name=["left/j1", "left/j2"], position=[0.0, 0.0])
     result = operator.evaluate_pose_target(PoseTargetRequest({"left_arm": pose}, seed=seed))
     assert result.success
@@ -153,9 +156,11 @@ def test_pose_evaluation_routes_group_id_and_canonical_seed() -> None:
 
 def test_pose_evaluation_rejects_non_world_frame_and_ambiguous_local_seed() -> None:
     operator, _, _ = _operator()
-    bad_frame = PoseTargetRequest({"left_arm": PoseStamped(frame_id="camera")})
+    bad_frame = PoseTargetRequest(
+        {"left_arm": PoseStamped(header=Header(frame_id="camera"), pose=Pose())}
+    )
     bad_seed = PoseTargetRequest(
-        {"left_arm": PoseStamped(frame_id="world")},
+        {"left_arm": PoseStamped(header=Header(frame_id="world"), pose=Pose())},
         seed=JointState(name=["j1", "j2"], position=[0.0, 0.0]),
     )
     assert not operator.evaluate_pose_target(bad_frame).success
@@ -167,7 +172,9 @@ def test_planning_and_actions_return_exact_generated_plan() -> None:
     joint_request = JointTargetRequest(
         ("left_arm",), JointState(name=["left/j1", "left/j2"], position=[0.1, 0.2])
     )
-    pose_request = PoseTargetRequest({"left_arm": PoseStamped(frame_id="world")})
+    pose_request = PoseTargetRequest(
+        {"left_arm": PoseStamped(header=Header(frame_id="world"), pose=Pose())}
+    )
     assert (
         operator.plan_to_joints(joint_request) is module.generate_plan_to_joint_targets.return_value
     )
@@ -180,7 +187,7 @@ def test_planning_and_actions_return_exact_generated_plan() -> None:
 
 def test_cartesian_planning_uses_current_group_pose() -> None:
     operator, module, monitor = _operator()
-    target = PoseStamped(frame_id="world")
+    target = PoseStamped(header=Header(frame_id="world"), pose=Pose())
     config = RoboPlanCartesianPathConfig()
     result = operator.plan_cartesian(CartesianTargetRequest({"left_arm": target}, config))
     assert result is module.generate_cartesian_plan.return_value

@@ -20,6 +20,7 @@ from threading import Event, Thread
 from typing import Any
 from unittest.mock import ANY, MagicMock, call
 
+from dimos_generated.geometry_msgs.msg import Vector3
 import numpy as np
 import pytest
 
@@ -454,10 +455,9 @@ def test_object_db_counts_each_source_frame_once(monkeypatch: Any) -> None:
         last_seen_ts=None,
         detections_count=1,
     )
-    first.center = MagicMock()
+    first.center = Vector3()
     duplicate = MagicMock(object_id="duplicate-id", track_id=-1, ts=4.0)
-    duplicate.center = MagicMock()
-    duplicate.center.distance.return_value = 0.0
+    duplicate.center = Vector3()
 
     observed = object_db.add_objects([first, duplicate])
 
@@ -466,8 +466,7 @@ def test_object_db_counts_each_source_frame_once(monkeypatch: Any) -> None:
     assert first.last_seen_ts == 1000.0
 
     newer = MagicMock(object_id="newer-id", track_id=-1, ts=5.0)
-    newer.center = MagicMock()
-    newer.center.distance.return_value = 0.0
+    newer.center = Vector3()
     first.update_object.side_effect = lambda _: setattr(first, "detections_count", 2)
     now[0] = 1001.0
 

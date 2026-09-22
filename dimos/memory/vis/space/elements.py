@@ -32,13 +32,15 @@ from dimos.memory.vis.color import Color, DeferredColor
 ColorLike = Union[str, Color, DeferredColor]
 
 if TYPE_CHECKING:
+    from dimos_generated.geometry_msgs.msg import (
+        Point as GeoPoint,
+        Pose as GeoPose,
+        PoseStamped,
+        Vector3,
+    )
+    from dimos_generated.nav_msgs.msg import OccupancyGrid, Path
+
     from dimos.memory.type.observation import Observation
-    from dimos.msgs.geometry_msgs.Point import Point as GeoPoint
-    from dimos.msgs.geometry_msgs.Pose import Pose as GeoPose
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
-    from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-    from dimos.msgs.nav_msgs.Path import Path
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -83,7 +85,7 @@ class Point:
     Rerun: rr.Points3D
     """
 
-    msg: GeoPoint | GeoPose
+    msg: GeoPoint | GeoPose | PoseStamped
     color: ColorLike = "#e74c3c"
     radius: float = 0.05
     label: str | None = None
