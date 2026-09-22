@@ -1021,3 +1021,14 @@ writes `build/message-codegen/demo/evidence/aruco-detection.png` with the detect
 bbox and label. Expected world coordinates are x approximately 2 m and z
 approximately 0.402 m. No camera or model weights are needed; delete the PNG to
 clean up.
+
+### Generated bounding-box navigation goal
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_bbox_navigation.py
+```
+
+This terminal demo sends generated calibration and detections over LCM, then
+prints a CDR-decoded goal (2.00, -0.40, -0.40) with the original detection header.
+It retains the module's existing forward/left/up coordinate convention and does
+not perform TF conversion. It needs no robot and writes no files.

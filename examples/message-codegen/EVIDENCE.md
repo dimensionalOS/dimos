@@ -1204,3 +1204,13 @@ LCM codec calls remain in fiducial Python files. The cumulative ArUco demo now
 prints CDR TF edges world → markers → marker_7 and passed. Physical camera
 acquisition and actual robot use were not exercised. ReportLab 4.5.0 was installed
 locally to run the existing generated-board tests.
+
+### Generated bbox navigation
+
+BBoxNavigationModule now consumes generated CameraInfo/Detection2DArray and
+publishes generated PoseStamped with the exact detection header. Its existing
+forward/left/up projection convention is unchanged. One integration test passed
+with real LCM input channels, CDR output decoding, calibration gating, empty
+arrays, and exact timestamps. Mypy passed for the production module.
+`demo_bbox_navigation.py` passed and printed the expected projected goal. This
+is a message/projection check, not physical navigation or TF-frame validation.
