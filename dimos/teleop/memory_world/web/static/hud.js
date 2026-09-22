@@ -13,9 +13,12 @@ const HUD_OFFSET_DOWN = 0.25;
 const HUD_OFFSET_LEFT = 0.32;
 const HUD_FOLLOW_LERP = 0.18;         // damping per frame
 export const ANSWER_PANEL_W = 0.62;          // metres; the canvas behind it is 4:1
-// How close to the edge of the view the panel's centre may be dragged. The panel is
-// wider than it is tall, so this is the half-width that has to stay inside.
-const HUD_EDGE_MARGIN = ANSWER_PANEL_W / 2;
+// What has to stay inside the view when the HUD is dragged: the MAP, the thing the
+// cursor actually picks up. Keeping the answer panel wholly on screen instead cost the
+// horizontal axis a third of its travel, for a panel nobody was holding -- and a window
+// you can drag half off the desk is normal, one that stops short because of something
+// attached to it is not. The map's own half-size, the same rule both axes now use.
+const HUD_EDGE_MARGIN = HUD_PANEL_SIZE / 2;
 
 /** Put the HUD where the head can see it, and move its map marker to the viewer. */
 export function placeHud(scene) {
@@ -122,8 +125,16 @@ export function installHudDrag(scene, dom, signal) {
     const raycaster = new THREE.Raycaster();
     let last = null;
 
-    const panelUnder = (event) => {
-        if (scene.three.xr.isPresenting || !scene._hudGroup.visible) return false;
+    const mapUnder = (event) => {
+        // The MAP alone is the handle, and its OWN visibility is what says so. Raycasting
+        // the whole group instead made most of the screen un-clickable: the answer panel
+        // is 0.62 m wide at 0.55 m from the eye, nearly half the view, and it is hidden
+        // rather than absent when there is no answer -- so the world could not be looked
+        // around at all. The group's flag is not a substitute either: `_setScrub` turns
+        // the group on without the map, which would leave an invisible grab area behind.
+        const map = scene._hudPanel;
+        if (scene.three.xr.isPresenting) return false;
+        if (!map || !map.visible || !scene._hudGroup.visible) return false;
         const box = dom.getBoundingClientRect();
         raycaster.setFromCamera(
             new THREE.Vector2(
@@ -132,9 +143,7 @@ export function installHudDrag(scene, dom, signal) {
             ),
             scene.camera,
         );
-        // The whole group, not just the map: the answer panel and the camera view hang
-        // off the same corner, and picking one up should bring its neighbours.
-        return raycaster.intersectObject(scene._hudGroup, true).length > 0;
+        return raycaster.intersectObject(map, false).length > 0;
     };
 
     const stop = (event) => {
@@ -143,7 +152,7 @@ export function installHudDrag(scene, dom, signal) {
     };
 
     window.addEventListener('mousedown', (event) => {
-        if (event.button !== 0 || !panelUnder(event)) return;
+        if (event.button !== 0 || !mapUnder(event)) return;
         // Start from where it IS, so the first drag does not jump it from the computed
         // corner to whatever the defaults say.
         const local = scene._hudGroup.position.clone().sub(scene.camera.position);
@@ -168,7 +177,7 @@ export function installHudDrag(scene, dom, signal) {
         );
         scene._hudOffset.down = clamp(
             scene._hudOffset.down + (event.clientY - last.y) * metresPerPixel,
-            Math.max(0, halfHeight - HUD_PANEL_SIZE / 2),
+            Math.max(0, halfHeight - HUD_EDGE_MARGIN),
         );
         last = { x: event.clientX, y: event.clientY };
         stop(event);
@@ -185,7 +194,7 @@ export function installHudDrag(scene, dom, signal) {
     // Put it back. A drag has no other undo, and the canvas reads a double-click as
     // "give me pointer lock", which over the panel is never what was meant.
     window.addEventListener('dblclick', (event) => {
-        if (!panelUnder(event)) return;
+        if (!mapUnder(event)) return;
         scene._hudOffset = null;
         stop(event);
     }, { capture: true, signal });
