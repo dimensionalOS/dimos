@@ -208,3 +208,8 @@ def translate_pose_local(pose: Pose, offset: Vector3) -> Pose:
 def point_distance(first: Point, second: Point) -> float:
     """Euclidean distance between generated position values."""
     return math.dist((first.x, first.y, first.z), (second.x, second.y, second.z))
+
+
+def quaternion_angle(first: Quaternion, second: Quaternion) -> float:
+    """Return the shortest angular separation in radians, normalizing inputs."""
+    return float((_rotation(first).inv() * _rotation(second)).magnitude())

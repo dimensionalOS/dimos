@@ -17,35 +17,31 @@
 from __future__ import annotations
 
 import cv2
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds
 
 
 def camera_info(ts: float = 10.0) -> CameraInfo:
-    info = CameraInfo.from_intrinsics(
-        fx=600.0,
-        fy=600.0,
-        cx=320.0,
-        cy=240.0,
+    info = CameraInfo(
         width=640,
         height=480,
-        frame_id="camera_optical",
+        k=[600, 0, 320, 0, 600, 240, 0, 0, 1],
+        header=Header(frame_id="camera_optical"),
     )
-    info.ts = ts
+    info.header.stamp = time_from_seconds(ts)
     return info
 
 
 def blank_image(ts: float = 10.0) -> Image:
-    return Image(
-        data=np.full((480, 640, 3), 255, dtype=np.uint8),
-        format=ImageFormat.BGR,
-        frame_id="camera_optical",
-        ts=ts,
+    return image_from_array(
+        np.full((480, 640, 3), 255, dtype=np.uint8),
+        encoding="bgr8",
+        header=Header(frame_id="camera_optical", stamp=time_from_seconds(ts)),
     )
 
 
@@ -70,19 +66,19 @@ def synthetic_marker_image(marker_id: int = 7, ts: float = 10.0, inverted: bool 
     y0 = (canvas.shape[0] - side_px) // 2
     x0 = (canvas.shape[1] - side_px) // 2
     canvas[y0 : y0 + side_px, x0 : x0 + side_px] = tile
-    return Image(
-        data=cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR),
-        format=ImageFormat.BGR,
-        frame_id="camera_optical",
-        ts=ts,
+    return image_from_array(
+        cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR),
+        encoding="bgr8",
+        header=Header(frame_id="camera_optical", stamp=time_from_seconds(ts)),
     )
 
 
-def world_T_optical(ts: float = 10.0) -> Transform:
-    return Transform(
-        translation=Vector3(1.0, 2.0, 3.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="world",
+def world_T_optical(ts: float = 10.0) -> TransformStamped:
+    return TransformStamped(
+        header=Header(frame_id="world", stamp=time_from_seconds(ts)),
         child_frame_id="camera_optical",
-        ts=ts,
+        transform=Transform(
+            translation=Vector3(x=1.0, y=2.0, z=3.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
     )

@@ -34,15 +34,13 @@ import dataclasses
 import math
 from typing import TYPE_CHECKING, Any, cast
 
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import Detection3DArray
 import numpy as np
 
 from dimos.memory.transform import Transformer
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.imageDetections3D import ImageDetections3D
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_detect import (
@@ -73,25 +71,24 @@ def _camera_info_key(info: CameraInfo) -> tuple[Any, ...]:
         info.width,
         info.height,
         info.distortion_model,
-        tuple(info.K),
-        tuple(info.D),
+        tuple(info.k),
+        tuple(info.d),
     )
 
 
 def _pose_tuple_to_transform(
     pose: tuple[float, float, float, float, float, float, float],
     *,
-    frame_id: str,
+    header: Header,
     child_frame_id: str,
-    ts: float,
-) -> Transform:
+) -> TransformStamped:
     x, y, z, qx, qy, qz, qw = pose
-    return Transform(
-        translation=Vector3(x, y, z),
-        rotation=Quaternion(qx, qy, qz, qw),
-        frame_id=frame_id,
+    return TransformStamped(
+        header=header,
         child_frame_id=child_frame_id,
-        ts=ts,
+        transform=Transform(
+            translation=Vector3(x=x, y=y, z=z), rotation=Quaternion(x=qx, y=qy, z=qz, w=qw)
+        ),
     )
 
 
@@ -124,10 +121,10 @@ def _average_marker_pose(
     norm = math.sqrt(qsx * qsx + qsy * qsy + qsz * qsz + qsw * qsw)
     if norm < 1e-12:
         # Signs cancelled exactly — pathological, fall back to the hemisphere ref.
-        return (Vector3(cx, cy, cz), ref)
+        return (Vector3(x=cx, y=cy, z=cz), ref)
     return (
-        Vector3(cx, cy, cz),
-        Quaternion(qsx / norm, qsy / norm, qsz / norm, qsw / norm),
+        Vector3(x=cx, y=cy, z=cz),
+        Quaternion(x=qsx / norm, y=qsy / norm, z=qsz / norm, w=qsw / norm),
     )
 
 
@@ -158,8 +155,8 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         self._detector = create_aruco_detector(aruco_dictionary, detect_inverted=detect_inverted)
         self._camera_info_key: tuple[Any, ...] | None = None
         self._resolved_camera_info: CameraInfo | None = None
-        self._cam_mtx: np.ndarray | None = None
-        self._dist: np.ndarray | None = None
+        self._cam_mtx: np.ndarray[Any, np.dtype[Any]] | None = None
+        self._dist: np.ndarray[Any, np.dtype[Any]] | None = None
         # Per marker_id sliding-window buffer of raw detections, used to emit
         # smoothed pose updates when ``smoothing_window > 0``.
         self._buffers: dict[int, TimestampedBufferCollection[Detection3DMarker]] = {}
@@ -220,9 +217,8 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
             optical_frame = camera_optical_frame_id(image, info)
             t_world_optical = _pose_tuple_to_transform(
                 pose_tuple,
-                frame_id=self.world_frame,
+                header=Header(stamp=image.header.stamp, frame_id=self.world_frame),
                 child_frame_id=optical_frame,
-                ts=obs.ts,
             )
 
             detections = _detect_markers_in_image(
@@ -264,12 +260,10 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                     track_id = -1
 
                 det = dataclasses.replace(det, track_id=track_id)
-                yielded_pose = Transform(
-                    translation=det.center,
-                    rotation=det.orientation,
-                    frame_id=self.world_frame,
+                yielded_pose = TransformStamped(
+                    header=Header(stamp=image.header.stamp, frame_id=self.world_frame),
                     child_frame_id=f"marker_{mid}",
-                    ts=obs.ts,
+                    transform=Transform(translation=det.center, rotation=det.orientation),
                 )
 
                 yielded_det = det
@@ -289,12 +283,10 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                     yielded_det = dataclasses.replace(
                         det, center=avg_center, orientation=avg_orient, transform=None
                     )
-                    yielded_pose = Transform(
-                        translation=avg_center,
-                        rotation=avg_orient,
-                        frame_id=self.world_frame,
+                    yielded_pose = TransformStamped(
+                        header=Header(stamp=image.header.stamp, frame_id=self.world_frame),
                         child_frame_id=f"marker_{mid}",
-                        ts=obs.ts,
+                        transform=Transform(translation=avg_center, rotation=avg_orient),
                     )
 
                 yield obs.derive(data=yielded_det, pose=yielded_pose).tag(
@@ -401,12 +393,12 @@ class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
         if detections and detections[0].transform is not None:
             transform = detections[0].transform
             return (
-                transform.translation.x,
-                transform.translation.y,
-                transform.translation.z,
-                transform.rotation.x,
-                transform.rotation.y,
-                transform.rotation.z,
-                transform.rotation.w,
+                transform.transform.translation.x,
+                transform.transform.translation.y,
+                transform.transform.translation.z,
+                transform.transform.rotation.x,
+                transform.transform.rotation.y,
+                transform.transform.rotation.z,
+                transform.transform.rotation.w,
             )
         return obs.pose

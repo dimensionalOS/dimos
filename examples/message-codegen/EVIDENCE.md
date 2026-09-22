@@ -1175,3 +1175,17 @@ Mypy passed for both production modules. The ArUco demo detected DICT_4X4_50:7 a
 world x=2.000 m, z=0.402 m, retained the exact image stamp, and wrote an annotated
 PNG; the rendered output was inspected. Fiducial stream modules/transformer and
 hardware-camera integration remain to be converted or verified.
+
+### Generated fiducial observation stream
+
+DetectMarkers, MarkersPerFrame, and MarkerDetectionStreamModule now use generated
+images, camera calibration, transforms, and arrays. The live input path preserves
+zero image stamps instead of replacing them with wall-clock time. Shared SpeedLimit
+now computes distance and angular separation with generated geometry helpers.
+
+Nineteen marker/stream checks passed, including intrinsics refresh during
+smoothing, grouping/empty frames, quality and speed gating, quaternion sign
+invariance, and zero timestamp lookup. Mypy passed for four changed production
+modules. The ArUco demo now also runs image observation → marker observation →
+CDR array and retains the exact image stamp. Shared fiducial test helpers were
+converted; the separate MarkerTfModule tests and producer still need conversion.
