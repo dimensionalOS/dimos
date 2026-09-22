@@ -1312,6 +1312,10 @@ window.app = {
     tourStart: (station = 0) => tour && tour.start(station),
     tourState: () => tour && tour.state(),
     flying: () => !!(flight && flight.flying),
+    // Read-only handle for checking what the world is actually doing. The map button's
+    // label is NOT that: it is initialised to "Show map" and only rewritten when a
+    // toggle runs, so it reads the same whether the map is hidden or simply untouched.
+    scene: () => scene,
     perf: () => (scene ? scene.getPerfStats() : null),
     resetPerf: () => scene && scene.resetPerf(),
     benchmark: (frames) => (scene ? scene.benchmarkRender(frames) : null),
