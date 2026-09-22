@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Annotated, Literal
 
 from PIL import ImageColor
@@ -138,8 +139,9 @@ class MemoryQueryResult(BaseModel):
 
 
 RESULT_SENTINEL = "__DIMOS_MEMORY_RESULT__="
-
-
+STEP_SENTINEL = "__DIMOS_MEMORY_STEP__="
+# Loaded by path in the sandbox: importing the package would pull in the whole module.
+STEPWISE_PATH = Path(__file__).with_name("stepwise.py")
 MEMORY_ANALYSIS_BOOTSTRAP = f"""
 import json
 import math
@@ -177,8 +179,21 @@ namespace = {{
     "objects": objects,
     "sample_pose_path": sample_pose_path,
 }}
+import importlib.util
+
+_spec = importlib.util.spec_from_file_location("stepwise", r"{STEPWISE_PATH}")
+stepwise = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(stepwise)
+run_stepwise = stepwise.run_stepwise
+
+
+def report_step(payload):
+    sys.stderr.write("{STEP_SENTINEL}" + json.dumps(payload) + "\\n")
+    sys.stderr.flush()
+
+
 try:
-    exec(compile(sys.stdin.read(), "<analyze_memory>", "exec"), namespace)
+    run_stepwise(sys.stdin.read(), namespace, report_step)
     result = namespace.get("result")
     if not isinstance(result, dict):
         raise TypeError("analysis must assign a dictionary to `result`")

@@ -28,6 +28,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.teleop.memory_world.module import MemoryWorldModule, _navigation_goal
 from dimos.teleop.memory_world.query import HighlightPath, MemoryQueryResult
+from dimos.teleop.memory_world.stepwise import analysis_steps
 from dimos.teleop.memory_world.visual_search import Place
 
 
@@ -183,8 +184,43 @@ def test_analyze_memory_publishes_and_replaces_result(memory_world: MemoryWorldM
     assert memory_world._active_query_result["answer"] == "Replacement"
     assert memory_world._active_query_result["revision"] == 2
     messages = [json.loads(message) for message in client.messages]
-    assert [message["revision"] for message in messages] == [1, 2]
-    assert messages[0]["query_id"] != messages[1]["query_id"]
+    results = [message for message in messages if message["type"] == "query_result"]
+    assert [message["revision"] for message in results] == [1, 2]
+    assert results[0]["query_id"] != results[1]["query_id"]
+    assert [m["status"] for m in messages if m["type"] == "chat"] == ["start", "done"] * 2
+
+
+def test_analysis_steps_group_short_statements_and_isolate_loops() -> None:
+    source = "import numpy as np\n# the path\na = 1\nb = 2\nfor i in range(3):\n    a += i\nresult = {'answer': str(a)}\n"
+
+    steps = analysis_steps(source)
+
+    assert [text.splitlines()[0] for text, _ in steps] == [
+        "import numpy as np",
+        "for i in range(3):",
+        "result = {'answer': str(a)}",
+    ]
+    assert "# the path" in steps[0][0]
+
+
+def test_analyze_memory_reports_each_step_to_the_viewers(memory_world: MemoryWorldModule) -> None:
+    sent: list[str] = []
+    memory_world._broadcast = sent.append  # type: ignore[method-assign]
+    code = "names = store.list_streams()\nfor _ in range(2):\n    pass\nresult = {'answer': str(len(names))}\n"
+
+    result = memory_world.analyze_memory(code, timeout=60)
+
+    assert result.success
+    steps = [json.loads(raw) for raw in sent if '"tool_step"' in raw]
+    assert [(s["index"], s["status"]) for s in steps] == [
+        (0, "start"),
+        (0, "done"),
+        (1, "start"),
+        (1, "done"),
+        (2, "start"),
+        (2, "done"),
+    ]
+    assert steps[0]["source"].startswith("names = ") and steps[1]["ms"] >= 0
 
 
 def test_analyze_memory_rejects_missing_result(memory_world: MemoryWorldModule) -> None:

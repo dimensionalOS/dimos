@@ -471,9 +471,26 @@ function renderMarkdown(text) {
 }
 
 function appendChat(entry) {
+    if (entry.role === 'tool_step' && entry.status === 'done') {
+        const running = chatLogEl.querySelector(`.msg.tool_step.running[data-step="${entry.index}"]`);
+        if (running) {
+            running.classList.replace('running', 'done');
+            running.querySelector('.head').textContent = `✓ step ${entry.index + 1}/${entry.total} · ${entry.ms} ms`;
+        }
+        return;
+    }
     const row = document.createElement('div');
     row.className = `msg ${entry.role}`;
-    if (entry.role === 'tool_call') {
+    if (entry.role === 'tool_step') {
+        row.classList.add('running');
+        row.dataset.step = String(entry.index);
+        const head = document.createElement('div');
+        head.className = 'head';
+        head.textContent = `▷ step ${entry.index + 1}/${entry.total}`;
+        const pre = document.createElement('pre');
+        pre.textContent = entry.source || '';
+        row.append(head, pre);
+    } else if (entry.role === 'tool_call') {
         const args = entry.args || '';
         const short = args.length > TOOL_ARGS_CHARS ? `${args.slice(0, TOOL_ARGS_CHARS)}…` : args;
         const argsEl = document.createElement('span');

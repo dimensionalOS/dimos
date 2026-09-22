@@ -92,6 +92,7 @@ from dimos.teleop.memory_world.objects import LocateConfig, Look, locate, render
 from dimos.teleop.memory_world.query import (
     MEMORY_ANALYSIS_BOOTSTRAP,
     RESULT_SENTINEL,
+    STEP_SENTINEL,
     HighlightBox,
     HighlightPath,
     HighlightPoint,
@@ -907,34 +908,20 @@ class MemoryWorldModule(Module):
         with self._clients_lock:
             viewer_position = self._viewer_position
             route = [list(p) for p in self._last_route.points] if self._last_route else None
-        try:
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    "-c",
-                    MEMORY_ANALYSIS_BOOTSTRAP,
-                    self.config.store_path,
-                    json.dumps(viewer_position),
-                    json.dumps(route),
-                    json.dumps(self._located_json()),
-                ],
-                input=code,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired:
+        stdout, stderr, timed_out = self._run_analysis(
+            code, timeout, viewer_position=viewer_position, route=route
+        )
+        if timed_out:
             return SkillResult.fail(
                 "EXECUTION_TIMEOUT", f"Memory analysis timed out after {timeout:g} seconds"
             )
 
-        marker = completed.stdout.rfind(RESULT_SENTINEL)
+        marker = stdout.rfind(RESULT_SENTINEL)
         if marker < 0:
-            detail = (completed.stderr or completed.stdout or "analysis returned no result").strip()
+            detail = (stderr or stdout or "analysis returned no result").strip()
             return SkillResult.fail("EXECUTION_FAILED", self._cap_analysis_output(detail))
 
-        encoded = completed.stdout[marker + len(RESULT_SENTINEL) :].splitlines()[0]
+        encoded = stdout[marker + len(RESULT_SENTINEL) :].splitlines()[0]
         if len(encoded) > self.config.memory_analysis_max_output_chars:
             return SkillResult.fail(
                 "RESULT_TOO_LARGE",
@@ -1787,6 +1774,75 @@ class MemoryWorldModule(Module):
         samples = decode_audio(io.BytesIO(audio), sampling_rate=16_000)
         segments, _ = self.whisper.transcribe(samples, language="en")
         return " ".join(segment.text for segment in segments).strip()
+
+    def _run_analysis(
+        self,
+        code: str,
+        timeout: float,
+        *,
+        viewer_position: Any,
+        route: list[list[float]] | None,
+    ) -> tuple[str, str, bool]:
+        """Run an analysis in the sandbox, relaying each step to the viewers as it runs.
+
+        Returns the sandbox's stdout, its stderr minus the step reports, and
+        whether it was killed for running past the timeout.
+        """
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                MEMORY_ANALYSIS_BOOTSTRAP,
+                self.config.store_path,
+                json.dumps(viewer_position),
+                json.dumps(route),
+                json.dumps(self._located_json()),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert process.stdin and process.stdout and process.stderr
+        stderr_lines: list[str] = []
+
+        def relay_steps() -> None:
+            assert process.stderr
+            for line in process.stderr:
+                if line.startswith(STEP_SENTINEL):
+                    try:
+                        self._on_analysis_step(json.loads(line[len(STEP_SENTINEL) :]))
+                        continue
+                    except ValueError:
+                        pass
+                stderr_lines.append(line)
+
+        killed = threading.Event()
+
+        def kill() -> None:
+            killed.set()
+            process.kill()
+
+        reader = threading.Thread(target=relay_steps, daemon=True, name="MemoryAnalysisSteps")
+        reader.start()
+        timer = threading.Timer(timeout, kill)
+        timer.start()
+        try:
+            process.stdin.write(code)
+            process.stdin.close()
+            stdout = process.stdout.read()
+            process.wait()
+        finally:
+            timer.cancel()
+            reader.join(timeout=5)
+        return stdout, "".join(stderr_lines), killed.is_set()
+
+    def _on_analysis_step(self, step: dict[str, Any]) -> None:
+        """Show one step of a running analysis in every viewer's chat."""
+        entry = {"role": "tool_step", **step}
+        with self._clients_lock:
+            self._chat_history.append(entry)  # type: ignore[arg-type]
+        self._broadcast(encode_text("chat", **entry))
 
     def _cap_analysis_output(self, output: str) -> str:
         limit = self.config.memory_analysis_max_output_chars

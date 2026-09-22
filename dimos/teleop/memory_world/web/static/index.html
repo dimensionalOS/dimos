@@ -279,6 +279,12 @@
         .msg.tool_call { color: #7fb3ff; font-size: 11px; }
         .msg.tool_call .args { color: var(--muted); }
         .msg.tool_call.expandable { cursor: pointer; }
+        .msg.tool_step { color: var(--muted); font-size: 11px; margin: 4px 0 4px 14px; }
+        .msg.tool_step .head { font-weight: 600; }
+        .msg.tool_step.running .head { color: var(--accent); }
+        .msg.tool_step.done .head { color: #7fdc9a; }
+        .msg.tool_step pre { margin: 2px 0 0; padding: 4px 6px; white-space: pre-wrap; font-size: 10.5px;
+            color: #9fb4c8; background: rgba(255,255,255,0.04); border-radius: 4px; max-height: 150px; overflow: auto; }
         .msg.tool_result { color: #c9b458; font-size: 11px; padding-left: 14px; }
         .msg.tool_result.failed { color: #ff5f6d; }
         #chatForm { display: flex; border-top: 1px solid var(--accent-soft); }
