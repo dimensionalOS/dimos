@@ -22,6 +22,14 @@ export const viewportHeight = { value: 1 };
 // menu flips it.
 export const voxelStyle = { value: 0 };
 
+// The band of heights the menu's two sliders keep, in the cloud's OWN frame -- the z
+// the server sent, not three's y, because the points hang under `_frameRotate` and the
+// bounds the slider is scaled from came off the same numbers. Shared by every voxel
+// material for the same reason voxelStyle is: the replay draws its own cloud from its
+// own material, and a cut that stopped at the edge of the static map would come back
+// the moment anyone scrubbed.
+export const heightBand = { value: new THREE.Vector2(-1e9, 1e9) };
+
 // View-space light, the same one the cube map used.
 const LIGHT_DIR = new THREE.Vector3(2, 4, 3).normalize();
 
@@ -38,6 +46,8 @@ export const SPRITE_VERTEX_GLSL = `
     uniform float voxelSize;
     uniform float viewportHeight;
     uniform float voxelStyle;
+    uniform vec2 heightBand;
+    bool outsideHeightBand(vec3 p) { return p.z < heightBand.x || p.z > heightBand.y; }
     varying vec3 vVoxelView;     // the voxel centre, in view space
     varying float vSpriteRadius; // half the sprite's view-space extent at that depth
     varying mat3 vCubeAxes;      // the voxel's world axes, expressed in view space
@@ -113,6 +123,7 @@ export function spriteUniforms(voxelSize) {
         voxelSize: { value: voxelSize },
         viewportHeight,
         voxelStyle,
+        heightBand,
         lightDir: { value: LIGHT_DIR },
     };
 }

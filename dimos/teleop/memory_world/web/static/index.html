@@ -356,6 +356,9 @@
             padding: 6px;
             width: 100%;
         }
+        #menu label.slider { display: grid; grid-template-columns: 30px 1fr 52px; align-items: center; gap: 8px; cursor: default; }
+        #menu label.slider input { width: 100%; }
+        #menu label.slider span { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
         #menu .row { display: flex; gap: 6px; }
         #menu .row button { flex: 1; text-align: center; }
         #menu .note { color: var(--muted); font-size: 11px; line-height: 1.5; }
@@ -373,7 +376,11 @@
             border: 1px solid var(--accent-soft);
             border-left: 3px solid #ff5c3a;
             z-index: 125;
-            max-width: min(900px, calc(100% - 24px));
+            /* A FIXED width, not a max: the bar is centred by translateX(-50%), so a
+               label that grows pushed the whole thing outward and every button with it --
+               Next walked away under the cursor between one answer and the next. The
+               label takes up the slack instead and ellipses when it runs out. */
+            width: min(900px, calc(100% - 24px));
         }
         /* The answer, as real text. It used to be drawn into a canvas and hung in the
            scene as a head-locked quad: unselectable, unscalable, blurry at an angle, and
@@ -428,7 +435,7 @@
         body:not(.desktop-view) #results { display: none; }
         body.desktop-view.touch #results { bottom: 308px; }    /* and clear of the timeline */
         #resultsCounter { font-size: 14px; font-weight: 700; color: #ff9a6a; white-space: nowrap; }
-        #resultsLabel { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        #resultsLabel { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         #results button { padding: 8px 12px; }
         /* Tour: a museum card in the corner while the camera flies between stations. */
         #tour {
@@ -590,6 +597,10 @@
         <label><input type="checkbox" id="layerCubes"> Draw voxels as cubes (not spheres)</label>
         <label><input type="checkbox" id="layerPhotos" checked> Photos</label>
         <label><input type="checkbox" id="layerHud" checked> Minimap + answer panel</label>
+        <h2>Lidar height</h2>
+        <label class="slider">Min <input type="range" id="heightMin"><span id="heightMinVal">—</span></label>
+        <label class="slider">Max <input type="range" id="heightMax"><span id="heightMaxVal">—</span></label>
+        <button id="heightResetBtn">Show every height</button>
         <h2>Advanced</h2>
         <button id="menuDisconnectBtn">Disconnect</button>
         <button id="embedBtn" class="hidden">Add SigLIP embeddings (siglipify)</button>

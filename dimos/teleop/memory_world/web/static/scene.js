@@ -914,7 +914,9 @@ export class WorldScene {
                     vColor = color;
                     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
                     // Above the roof cut (robot z) the voxel vanishes: the tour looks in from above.
-                    bool gone = position.z > roofCut || inSightLine(position);
+                    bool gone = position.z > roofCut
+                        || outsideHeightBand(position)
+                        || inSightLine(position);
                     gl_PointSize = gone ? 0.0 : spritePointSize(mvPosition);
                     gl_Position = gone ? vec4(2.0, 2.0, 2.0, 1.0) : projectionMatrix * mvPosition;
                 }`,

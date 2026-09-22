@@ -95,6 +95,7 @@ let flight = null;
 let results = null;
 let tour = null;
 let voxelStyle = null;
+let heightBand = null;
 // Per-frame work hung off the scene's tick: flights, replay, the tour.
 let tickers = [];
 
@@ -105,7 +106,9 @@ try {
     Flight = (await import(`/static_mw/flight.js${assetVersion}`)).Flight;
     ResultsNav = (await import(`/static_mw/results.js${assetVersion}`)).ResultsNav;
     Tour = (await import(`/static_mw/tour.js${assetVersion}`)).Tour;
-    voxelStyle = (await import('/static_mw/voxel_sprites.js')).voxelStyle;  // same instance as scene.js
+    const sprites = await import('/static_mw/voxel_sprites.js');  // same instances as scene.js
+    voxelStyle = sprites.voxelStyle;
+    heightBand = sprites.heightBand;
     diag('scene_module_loaded');
 } catch (err) {
     diag('scene_module_failed', { error: String(err && err.message || err) });
@@ -221,6 +224,7 @@ function handleControl(msg) {
             break;
         case 'ready':
             syncLayerBoxes();  // the cloud, photos and minimap exist now
+            syncHeightRange();  // and the cloud's own z range is known
             setStatus('World loaded — left stick walks, pinch both hands to scale');
             diag('server_ready');
             break;
@@ -746,6 +750,69 @@ function applyAskAvailability() {
     micBtn.classList.toggle('hidden', !connected || !canAsk);
 }
 
+// ---- the lidar height band ----------------------------------------------------
+// Two sliders over the cloud's OWN z range, so "all the way up" means the top of this
+// recording rather than some number chosen for a different building. They are indices
+// into that range, not metres: a range input's step is fixed at authoring time and the
+// range is not known until the world arrives.
+const HEIGHT_STEPS = 400;
+const heightMinEl = document.getElementById('heightMin');
+const heightMaxEl = document.getElementById('heightMax');
+const heightMinVal = document.getElementById('heightMinVal');
+const heightMaxVal = document.getElementById('heightMaxVal');
+let heightRange = null;   // {low, high} metres, from the cloud header
+
+for (const el of [heightMinEl, heightMaxEl]) {
+    el.min = 0; el.max = HEIGHT_STEPS; el.step = 1;
+    el.disabled = true;
+    el.addEventListener('input', applyHeightBand);
+}
+document.getElementById('heightResetBtn').addEventListener('click', () => {
+    heightMinEl.value = 0;
+    heightMaxEl.value = HEIGHT_STEPS;
+    applyHeightBand();
+});
+
+const heightAt = (slider) => {
+    if (!heightRange) return null;
+    const t = Number(slider.value) / HEIGHT_STEPS;
+    return heightRange.low + t * (heightRange.high - heightRange.low);
+};
+
+function applyHeightBand() {
+    if (!heightRange || !heightBand) return;
+    // Either slider may be dragged past the other; the band is what lies BETWEEN them,
+    // so read them as a pair rather than trusting which is which. Letting min exceed max
+    // would empty the world with no way back but the reset button.
+    const a = heightAt(heightMinEl);
+    const b = heightAt(heightMaxEl);
+    const low = Math.min(a, b);
+    const high = Math.max(a, b);
+    // Slack only where a slider is at its stop, so the labels stay true everywhere else.
+    // The bounds came from the extreme voxels themselves, and an exact cut at a bound is
+    // a float comparison against the very points that set it -- "all the way down" has to
+    // mean all of them, not all but the lowest.
+    const slack = (heightRange.high - heightRange.low) / HEIGHT_STEPS;
+    const ends = [Number(heightMinEl.value), Number(heightMaxEl.value)];
+    heightBand.value.set(
+        Math.min(...ends) <= 0 ? low - slack : low,
+        Math.max(...ends) >= HEIGHT_STEPS ? high + slack : high,
+    );
+    heightMinVal.textContent = `${low.toFixed(2)}m`;
+    heightMaxVal.textContent = `${high.toFixed(2)}m`;
+}
+
+/** Scale the sliders to the cloud that just arrived, keeping them wide open. */
+function syncHeightRange() {
+    const bounds = scene && scene._cloudBounds;
+    if (!bounds || !Number.isFinite(bounds.z_min) || !Number.isFinite(bounds.z_max)) return;
+    heightRange = { low: bounds.z_min, high: bounds.z_max };
+    heightMinEl.value = 0;
+    heightMaxEl.value = HEIGHT_STEPS;
+    heightMinEl.disabled = heightMaxEl.disabled = false;
+    applyHeightBand();
+}
+
 // ---- menu --------------------------------------------------------------------
 
 const menuEl = document.getElementById('menu');
@@ -1003,6 +1070,13 @@ async function connect() {
         // unanswered prompt would otherwise leave the canvas black forever.
         void acquireMic();
         await startViewer();
+        // A fresh connection is a fresh session: nothing on screen was asked for by the
+        // person who just arrived. The server stopped replaying the last visitor's answer
+        // over the wire, but the PAGE keeps its own copy -- the typed question, the
+        // places, the route and the evidence photos all survive a disconnect, so a
+        // reconnect used to come back to someone else's answer with no query behind it.
+        askInput.value = '';
+        if (results) results.clear();
         connectBtn.classList.add('hidden');
         disconnectBtn.classList.remove('hidden');
         applyIndexStatus(indexStatus);
@@ -1096,6 +1170,16 @@ window.app = {
     navigate: () => results && results.navigate(),
     // Draw voxels as cubes (true) or spheres (false); also in the menu, remembered per browser.
     cubes: (on = null) => { if (on !== null) setVoxelStyle(on); return !!(voxelStyle && voxelStyle.value); },
+    // The lidar height band: the slider range the world came with, and what is kept.
+    heightBand: () => (heightBand ? { low: heightBand.value.x, high: heightBand.value.y, range: heightRange } : null),
+    setHeightBand: (low, high) => {
+        if (!heightRange) return null;
+        const at = (m) => Math.round(((m - heightRange.low) / (heightRange.high - heightRange.low)) * HEIGHT_STEPS);
+        heightMinEl.value = Math.max(0, Math.min(HEIGHT_STEPS, at(low)));
+        heightMaxEl.value = Math.max(0, Math.min(HEIGHT_STEPS, at(high)));
+        applyHeightBand();
+        return { low: heightBand.value.x, high: heightBand.value.y };
+    },
     orbitFrame: (frame) => setOrbitFrame(frame),
     searchStatus: () => indexStatus,
     // The museum tour: start, step, exit; state for automated checks.
