@@ -1438,6 +1438,81 @@
       "error": "invalid_video_panel"
     },
     {
+      "name": "video_panel_webrtc",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "encoding": "video.webrtc.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "camera",
+            "kind": "video",
+            "channels": [
+              "color_image"
+            ]
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "dir": "rx",
+            "encoding": "video.webrtc.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
+          }
+        ],
+        "panels": [
+          {
+            "id": "camera",
+            "kind": "video",
+            "title": "",
+            "channels": [
+              "color_image"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "video_panel_webrtc_wrong_delivery",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "color_image",
+            "encoding": "video.webrtc.v1",
+            "delivery": "reliable",
+            "maxHz": 15.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "camera",
+            "kind": "video",
+            "channels": [
+              "color_image"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_video_panel"
+    },
+    {
       "name": "map2d_panel_full",
       "data": {
         "version": 1,
