@@ -65,41 +65,57 @@ class WorldCache:
         configured = self.config.global_map_stream_name
         if not configured:
             return None
-        store = self._ensure_store()
-        available = store.list_streams()
         for name in (configured, _sibling_map_stream(configured)):
-            if name not in available:
-                continue
-            try:
-                latest = store.streams[name].last()
-            except LookupError:  # declared but empty
-                continue
-            xyz = latest.data.points_f32()
-            if xyz is None or len(xyz) == 0:
-                continue
-            xyz = np.asarray(xyz, dtype=np.float32)
-            # The cloud says which frame it is in and it is NOT safe to assume that is
-            # ours. Everything else in the world -- the capture poses, the trajectory,
-            # the planner's map -- is in `world_frame`, so a map written in any other
-            # frame has to be moved into it or it sits somewhere else entirely while
-            # looking perfectly reasonable.
-            frame = str(getattr(latest.data, "frame_id", "") or "").lstrip("/")
-            if frame and frame != self.config.world_frame:
-                matrix = self._frame_pose_at(frame, float(latest.ts))
-                if matrix is None:
-                    # Refuse rather than place it wrongly: the next candidate, and then
-                    # the caller, fall back to a source whose frame is known.
-                    logger.warning(
-                        "%s is in %r and tf cannot place that in %r; ignoring it",
-                        name,
-                        frame,
-                        self.config.world_frame,
-                    )
-                    continue
-                logger.info("%s is in %r; moving it into %r", name, frame, self.config.world_frame)
-                xyz = (np.asarray(matrix) @ np.c_[xyz, np.ones(len(xyz))].T).T[:, :3]
-            return name, np.ascontiguousarray(xyz, dtype=np.float32)
+            xyz = self._named_map_cloud(name)
+            if xyz is not None:
+                return name, xyz
         return None
+
+    def _named_map_cloud(self, name: str) -> np.ndarray | None:
+        """One map stream read and placed in `world_frame`, or None if it cannot be.
+
+        None rather than a raise on every way of being unusable -- absent, declared but
+        empty, or in a frame tf cannot place -- because both callers have somewhere else
+        to go, and the point of returning None is that they get there.
+        """
+        store = self._ensure_store()
+        if name not in store.list_streams():
+            return None
+        try:
+            latest = store.streams[name].last()
+        except LookupError:  # declared but empty
+            return None
+        xyz = latest.data.points_f32()
+        if xyz is None or len(xyz) == 0:
+            return None
+        xyz = np.asarray(xyz, dtype=np.float32)
+        # The cloud says which frame it is in and it is NOT safe to assume that is ours.
+        # Everything else in the world -- the capture poses, the trajectory, the planner's
+        # map -- is in `world_frame`, so a map written in any other frame has to be moved
+        # into it or it sits somewhere else entirely while looking perfectly reasonable.
+        frame = str(getattr(latest.data, "frame_id", "") or "").lstrip("/")
+        if frame and frame != self.config.world_frame:
+            matrix = self._frame_pose_at(frame, float(latest.ts))
+            if matrix is None:
+                # Refuse rather than place it wrongly: the caller falls back to a source
+                # whose frame is known.
+                logger.warning(
+                    "%s is in %r and tf cannot place that in %r; ignoring it",
+                    name,
+                    frame,
+                    self.config.world_frame,
+                )
+                return None
+            logger.info("%s is in %r; moving it into %r", name, frame, self.config.world_frame)
+            xyz = (np.asarray(matrix) @ np.c_[xyz, np.ones(len(xyz))].T).T[:, :3]
+        return np.ascontiguousarray(xyz, dtype=np.float32)
+
+    def _map_height_mask(self, found: np.ndarray) -> np.ndarray:
+        """Points that are finite on EVERY axis and inside the configured height band."""
+        z = found[:, 2]
+        low = self.config.map_z_min if self.config.map_z_min is not None else -np.inf
+        high = self.config.map_z_max if self.config.map_z_max is not None else np.inf
+        return np.isfinite(found).all(axis=1) & (z >= low) & (z <= high)
 
     def _build_voxel_cloud_from_lidar(self) -> tuple[dict[str, Any], bytes] | None:
         """The voxel map, packed for the wire.
@@ -128,6 +144,8 @@ class WorldCache:
                 # No seekable replay (a failed build, too few scans): the map still shows.
                 logger.exception("no replay for the cloud; accumulating the scans instead")
                 return None
+
+        drawn_from: list[str] = []  # the stream the drawn cloud came from, if it was one
 
         def from_global_map() -> np.ndarray | None:
             # Contained like `from_replay`, and for the same reason. This source is
@@ -161,6 +179,7 @@ class WorldCache:
                 return None
             name, xyz = found
             logger.info("voxel cloud from the %s stream: %d voxels", name, len(xyz))
+            drawn_from.append(name)
             return xyz
 
         try:
@@ -179,8 +198,6 @@ class WorldCache:
                 if found is None or found.size == 0:
                     continue
                 z = found[:, 2]
-                low = self.config.map_z_min if self.config.map_z_min is not None else -np.inf
-                high = self.config.map_z_max if self.config.map_z_max is not None else np.inf
                 # Finite on EVERY axis, not just inside the height band on z. The height
                 # test alone let a NaN or an infinity through in x or y -- and the
                 # `global_map` source is a raw PointCloud2 written by somebody else's
@@ -191,7 +208,7 @@ class WorldCache:
                 # had already been assigned, so every later build failed identically and
                 # the recording was permanently unviewable. The cloud itself was fine.
                 finite = np.isfinite(found).all(axis=1)
-                keep = finite & (z >= low) & (z <= high)
+                keep = self._map_height_mask(found)
                 if not finite.all():
                     logger.warning(
                         "dropped %d point(s) with a non-finite coordinate", int((~finite).sum())
@@ -212,9 +229,8 @@ class WorldCache:
                 break
             if xyz is None or xyz.size == 0:
                 return None
-            self._map_xyz = np.ascontiguousarray(
-                xyz.astype(np.float32)
-            )  # the whole map, for planning
+            # The whole map, unstrided, for planning -- and NOT always the one on screen.
+            self._map_xyz = self._planning_map(xyz, drawn_from[0] if drawn_from else None)
             if xyz.shape[0] > self.config.max_points:
                 stride = xyz.shape[0] // self.config.max_points + 1
                 xyz = xyz[::stride]
@@ -229,6 +245,35 @@ class WorldCache:
         except Exception:
             logger.exception("voxel-from-lidar build failed")
             return None
+
+    def _planning_map(self, drawn: np.ndarray, source: str | None) -> np.ndarray:
+        """The map the route planner walks over, which is not always the one on screen.
+
+        A morphological closing is the right thing to LOOK at and the wrong thing to plan
+        over. Filling a gap narrower than the structuring element seals the space between
+        a floor and the shelf above it, and standable surface is exactly what the MLS
+        planner reads out of that space -- so the map that looks more solid offers fewer
+        places to stand. Measured on grocery.db, same planner and same 25 early poses:
+        `global_map` 308,080 surface cells and a 42.93 m route to a basket from the 8th,
+        `global_map_smoothed` 271,037 cells and NO route from any of them.
+
+        So a smoothed stream is drawn and its raw sibling is planned over. With no raw
+        sibling to read the drawn cloud is still the best map there is, and a closed map
+        plans worse than an open one but far better than none.
+        """
+        if source and source.endswith(SMOOTHED_SUFFIX):
+            raw = self._named_map_cloud(_sibling_map_stream(source))
+            if raw is not None:
+                kept = raw[self._map_height_mask(raw)]
+                if kept.size:
+                    logger.info(
+                        "planning over the %s stream instead: %d voxels",
+                        _sibling_map_stream(source),
+                        len(kept),
+                    )
+                    return np.ascontiguousarray(kept.astype(np.float32))
+                logger.warning("the raw map is empty after filtering; planning over the drawn one")
+        return np.ascontiguousarray(drawn.astype(np.float32))
 
     def _build_image_poses(self) -> tuple[tuple[dict[str, Any], bytes], list[bytes]]:
         """Sample N capture poses and JPEG thumbnails from the color_image stream.
