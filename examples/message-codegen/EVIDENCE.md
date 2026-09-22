@@ -1073,3 +1073,20 @@ selected records carrying custom point IDs. Mypy passed for filters and demo.
 `demo_cloud_filters.py` passed both visible 101-to-100-point scenarios.
 Detection3DPC and its higher-level consumers still require conversion; these
 results establish filter behavior, not acceptance of the person-follow pipeline.
+
+### Generated 3D detection projection and target calculation
+
+Detection3DPC and its batch projection wrapper now accept generated depth,
+clouds, camera calibration, and stamped transforms. Depth projection preserves
+the depth stamp and target frame; cloud projection selects original records.
+Centroid poses use the cloud header. Open3D bounding calculations are explicit.
+DetectionNavigation now consumes these generated values and produces generated
+Twist commands using the shared quaternion helper.
+
+Seven projection/filter checks passed, covering translated depth unprojection,
+image/behind-camera rejection, bounding extents, robust target selection, CDR
+velocity output, and field-preserving filters. Mypy passed for four production
+modules. `demo_detection_projection.py` passed and printed the expected world
+centroid (11.5, 1.5, 2.0) with stamp 1700000000123456789 ns. The 2D detection image
+API and person-follow/security callers remain unfinished; no full pipeline or
+model-inference acceptance is claimed.

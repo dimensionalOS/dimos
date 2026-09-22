@@ -952,3 +952,15 @@ This terminal demo filters a synthetic cloud containing a dense object and one
 isolated low point. Height and radius filters each retain 100 of 101 points;
 results cross CDR boundaries and preserve the source header. It requires Open3D
 from the development environment, no sensor or ROS, and writes no files.
+
+### Generated depth-to-detection projection
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_detection_projection.py
+```
+
+The terminal demo projects sixteen depth pixels into a translated world frame,
+then prints the generated CDR centroid and exact source timestamp. It uses
+synthetic depth and needs no sensor, robot, or ROS installation. No files are
+written. This exercises projection, not model inference or the person-follow
+module lifecycle.
