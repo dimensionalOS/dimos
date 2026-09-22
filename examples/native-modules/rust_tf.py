@@ -28,6 +28,10 @@ import math
 from pathlib import Path
 import time
 
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -35,9 +39,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.time import time_from_nanoseconds
 
 _RUST_DIR = Path(__file__).parent / "rust"
 # The crate is a workspace member, so cargo builds into the repo-root target dir.
@@ -62,20 +64,25 @@ class TfProducer(Module):
         start = time.time()
         while self._running:
             t = time.time() - start
-            now = time.time()
-            self.tfbuffer.publish(
-                Transform(
-                    translation=Vector3(0.0, math.cos(t), math.sin(t)),
-                    frame_id="a",
-                    child_frame_id="b",
-                    ts=now,
-                ),
-                Transform(
-                    translation=Vector3(1.0, 0.0, 0.0),
-                    frame_id="b",
-                    child_frame_id="c",
-                    ts=now,
-                ),
+            stamp = time_from_nanoseconds(time.time_ns())
+            self.tf.publish(
+                TFMessage(
+                    transforms=[
+                        TransformStamped(
+                            header=Header(frame_id="a", stamp=stamp),
+                            child_frame_id="b",
+                            transform=Transform(
+                                translation=Vector3(y=math.cos(t), z=math.sin(t)),
+                                rotation=Quaternion(w=1),
+                            ),
+                        ),
+                        TransformStamped(
+                            header=Header(frame_id="b", stamp=stamp),
+                            child_frame_id="c",
+                            transform=Transform(translation=Vector3(x=1), rotation=Quaternion(w=1)),
+                        ),
+                    ]
+                )
             )
             await asyncio.sleep(0.1)
 

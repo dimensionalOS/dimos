@@ -278,3 +278,16 @@ The external Rust consumer test also verified SDK-compatible function signatures
 CDR. The built-in custom-message/image SDK relay still passed on both transports,
 and the Rust SDK suite still passed all 146 tests. Mypy passed for both runtime
 demo entry points using their separately generated type stubs.
+
+### TF through the real module coordinator
+
+The generated-message Python/Rust TF example now runs through
+`ModuleCoordinator.build`, Python worker deployment, native process startup,
+and typed stream wiring. Both LCM and Zenoh checks passed, each collecting four
+composed `a → d` transforms with `x=1.5`, `y² + z²=1`, and changing positions.
+Both runs returned normally after interruption and stopped their native workers.
+The test logs are captured in pytest's temporary directory; the test summary is
+`build/message-codegen/rust-tf-blueprint-tests.log`.
+
+This verifies coordinator wiring beyond the direct native SDK relay. It does not
+complete the three-language blueprint with live viewers required by task 4.10.

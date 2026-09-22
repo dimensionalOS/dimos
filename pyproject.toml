@@ -719,6 +719,7 @@ follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
+markers = ["native_e2e: native module end-to-end checks requiring built executables"]
 env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",

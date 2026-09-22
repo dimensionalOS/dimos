@@ -408,3 +408,31 @@ encode time report `InvalidInput`, while malformed CDR reports `InvalidData`.
 The external consumer test checks both errors against the SDK's function types.
 Subprocesses and sessions close on exit. Logs and visible results are under
 `build/message-codegen/external-native/evidence`.
+
+### Python/Rust TF through the module coordinator
+
+Build the Rust examples, then run the TF blueprint using either backend:
+
+```bash
+cargo build --release -p dimos-native-module-examples
+DIMOS_TRANSPORT=zenoh PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/native-modules/rust_tf.py
+# Repeat with DIMOS_TRANSPORT=lcm on a host configured for multicast.
+```
+
+The Python worker publishes `a → b → c` using generated `TransformStamped`
+messages, and the Rust broadcaster publishes `c → d`. The Rust listener prints
+`x=1.5` and changing `y=cos(t), z=sin(t)` for the composed `a → d` transform.
+Generated quaternions follow ROS message defaults (all zeros); this example
+explicitly sets `w=1` for identity rotations. Stop with Ctrl-C; the coordinator
+stops both native processes and its Python workers.
+
+The automated check runs the same blueprint, verifies four changing composed
+transforms per backend, and checks clean shutdown. It requires the normal DimOS
+runtime dependencies (including Open3D). Pytest disables interactive host system
+configuration, and the LCM run reserves a temporary local UDP port:
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/pytest \
+  examples/native-modules/test_rust_tf.py -m native_e2e -o addopts='' -v
+```
