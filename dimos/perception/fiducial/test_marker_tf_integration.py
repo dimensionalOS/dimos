@@ -19,25 +19,28 @@ from __future__ import annotations
 import time
 import uuid
 
-from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_generated.vision_msgs.msg import (
+    BoundingBox3D,
+    Detection3D,
+    Detection3DArray,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+)
 import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.msgs.time import time_from_seconds
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.protocol.tf.tf import TF
 
 
 def _marker_detection_array(ts: float) -> Detection3DArray:
     det = Detection3D()
-    det.header = Header(ts, "world")
+    det.header = Header(stamp=time_from_seconds(ts), frame_id="world")
     det.id = "11"
     det.results = [
         ObjectHypothesisWithPose(
@@ -47,18 +50,16 @@ def _marker_detection_array(ts: float) -> Detection3DArray:
             )
         )
     ]
-    det.results_length = len(det.results)
     det.bbox = BoundingBox3D(
         center=Pose(
-            position=Vector3(0.5, -0.2, 1.25),
-            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            position=Point(x=0.5, y=-0.2, z=1.25),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
         ),
-        size=Vector3(0.18, 0.18, 0.0),
+        size=Vector3(x=0.18, y=0.18, z=0.0),
     )
     return Detection3DArray(
-        header=Header(ts, "world"),
+        header=Header(stamp=time_from_seconds(ts), frame_id="world"),
         detections=[det],
-        detections_length=1,
     )
 
 
@@ -89,13 +90,13 @@ def test_marker_tf_consumes_detection_array_over_lcm() -> None:
 
         assert w_markers is not None, "Timed out waiting for world -> marker_tf/markers"
         assert w_marker is not None, "Timed out waiting for world -> marker_tf/marker_11"
-        assert w_markers.frame_id == "world"
+        assert w_markers.header.frame_id == "world"
         assert w_markers.child_frame_id == "marker_tf/markers"
-        assert w_marker.frame_id == "world"
+        assert w_marker.header.frame_id == "world"
         assert w_marker.child_frame_id == "marker_tf/marker_11"
-        assert w_marker.translation.x == pytest.approx(0.5)
-        assert w_marker.translation.y == pytest.approx(-0.2)
-        assert w_marker.translation.z == pytest.approx(1.25)
+        assert w_marker.transform.translation.x == pytest.approx(0.5)
+        assert w_marker.transform.translation.y == pytest.approx(-0.2)
+        assert w_marker.transform.translation.z == pytest.approx(1.25)
     finally:
         host_tf.dispose()
         host_transport.stop()

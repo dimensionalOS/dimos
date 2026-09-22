@@ -1189,3 +1189,18 @@ invariance, and zero timestamp lookup. Mypy passed for four changed production
 modules. The ArUco demo now also runs image observation → marker observation →
 CDR array and retains the exact image stamp. Shared fiducial test helpers were
 converted; the separate MarkerTfModule tests and producer still need conversion.
+
+### Generated marker TF publication and desk blueprint
+
+MarkerTfModule publishes generated TFMessage/TransformStamped values directly
+from generated detections, retaining exact array timestamps. The desk blueprint
+uses standalone calibration loading and generated static transforms. Converted
+fixture verification renders a twelve-marker board and checks its published TF
+chain. All **38 fiducial tests passed**, including the existing LCM input
+integration, namespace/identity cases, empty arrays, static TF thread, calibration
+loading, and generated stream checks (`build/message-codegen/fiducial-tests.log`).
+Mypy passed for the TF publisher and desk blueprint. No legacy message imports or
+LCM codec calls remain in fiducial Python files. The cumulative ArUco demo now
+prints CDR TF edges world → markers → marker_7 and passed. Physical camera
+acquisition and actual robot use were not exercised. ReportLab 4.5.0 was installed
+locally to run the existing generated-board tests.

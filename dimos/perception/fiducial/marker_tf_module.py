@@ -40,17 +40,15 @@ Compose with a marker detector via matching ``detections`` streams::
 
 from __future__ import annotations
 
+from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_generated.vision_msgs.msg import Detection3D, Detection3DArray
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -83,22 +81,16 @@ class MarkerTfModule(Module):
         return f"{p}/{name}" if p else name
 
     def _process_detections(self, detections: Detection3DArray) -> None:
-        if detections.detections_length == 0:
+        if not detections.detections:
             return
-
-        marker_detections = detections.detections[: detections.detections_length]
-        if not marker_detections:
-            return
-
+        marker_detections = detections.detections
         markers_parent = self._markers_parent_frame()
-        ts = detections.ts
-        out: list[Transform] = [
-            Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id=self.config.world_frame,
+        stamp = detections.header.stamp
+        out = [
+            TransformStamped(
+                header=Header(stamp=stamp, frame_id=self.config.world_frame),
                 child_frame_id=markers_parent,
-                ts=ts,
+                transform=Transform(rotation=Quaternion(w=1)),
             )
         ]
 
@@ -110,12 +102,15 @@ class MarkerTfModule(Module):
 
             pose = detection.bbox.center
             out.append(
-                Transform(
-                    translation=pose.position,
-                    rotation=pose.orientation,
-                    frame_id=markers_parent,
+                TransformStamped(
+                    header=Header(stamp=stamp, frame_id=markers_parent),
                     child_frame_id=self._marker_child_frame(marker_id),
-                    ts=ts,
+                    transform=Transform(
+                        translation=Vector3(
+                            x=pose.position.x, y=pose.position.y, z=pose.position.z
+                        ),
+                        rotation=pose.orientation,
+                    ),
                 )
             )
 
@@ -123,7 +118,7 @@ class MarkerTfModule(Module):
         # In that case, skip TF entirely rather than publishing only the
         # namespace anchor without any marker child frames.
         if len(out) > 1:
-            self.tf.publish(TFMessage(*out))
+            self.tf.publish(TFMessage(transforms=out))
 
     @staticmethod
     def _marker_id_from_detection(detection: Detection3D) -> str | None:
@@ -131,7 +126,7 @@ class MarkerTfModule(Module):
         if marker_id:
             return marker_id
 
-        for result in detection.results[: detection.results_length]:
+        for result in detection.results:
             class_id = str(result.hypothesis.class_id).strip()
             if ":" not in class_id:
                 continue

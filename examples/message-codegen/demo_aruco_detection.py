@@ -19,12 +19,14 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_generated.vision_msgs.msg import Detection3D, Detection3DArray
 import numpy as np
 
 from dimos.memory.type.observation import Observation
 from dimos.msgs.image import image_from_array, image_view
 from dimos.perception.fiducial.marker_detect import detect_markers_in_image
+from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.perception.fiducial.marker_transformer import DetectMarkers, MarkersPerFrame
 
 
@@ -70,6 +72,20 @@ def main() -> None:
     assert len(decoded_array.detections) == 1
     assert decoded_array.header.stamp == image.header.stamp
     print("Memory stream: image → marker observation → generated CDR array")
+    publisher = MarkerTfModule()
+    transforms: list[TFMessage] = []
+    unsubscribe = publisher.tf.subscribe(
+        lambda msg: transforms.append(TFMessage.decode(msg.encode()))
+    )
+    try:
+        publisher._process_detections(decoded_array)
+        assert len(transforms) == 1
+        for transform in transforms[0].transforms:
+            assert transform.header.stamp == image.header.stamp
+            print(f"CDR TF: {transform.header.frame_id} → {transform.child_frame_id}")
+    finally:
+        unsubscribe()
+        publisher.stop()
     output = Path("build/message-codegen/demo/evidence/aruco-detection.png")
     output.parent.mkdir(parents=True, exist_ok=True)
     assert cv2.imwrite(str(output), image_view(found[0].annotated_image()))
