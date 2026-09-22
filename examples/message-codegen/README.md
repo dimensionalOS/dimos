@@ -573,4 +573,40 @@ The demo records custom weighted segments to SQLite and a ROS2-profile MCAP,
 reopens both by their stored type/schema, and replays SQLite through a real
 module's `Out` port. It prints weights `4, 5, 6` and consecutive source nanoseconds
 starting at `1700000000123456789`. Temporary recordings are removed automatically.
-This checks Python storage and replay; the Rust recorder cutover is still pending.
+This checks Python storage and replay.
+
+### Record an external custom message with the Rust recorder
+
+First complete the external-package demo above, including its locally added
+`application_note` field. Build the recorder once, then record that external type
+over both transports using the same executable:
+
+```bash
+cargo build -p dimos-memory-recorder --locked
+PYTHONPATH=.:build/message-codegen/demo/cpp/build:build/message-codegen/external-app/venv/lib/python3.12/site-packages \
+  .venv/bin/python examples/message-codegen/demo_native_recording.py
+```
+
+Adjust the external virtualenv's Python version in the path when necessary.
+The demo prints `locally-added-field-0` through `locally-added-field-2` and exact
+payload stamps on LCM and Zenoh. It stops each recorder and closes its transport
+resources, retaining `external-native-recording-{lcm,zenoh}.mcap` and `.log` files
+under `build/message-codegen/demo/evidence/` for inspection. Use `--output` to
+choose another artifact directory and `--executable` for a packaged recorder.
+
+With the viewer-checker dependencies installed as described above, independently
+decode both recordings from their embedded schemas:
+
+```bash
+node examples/message-codegen/viewer-checker/check-native-recording.mjs \
+  build/message-codegen/demo/evidence/external-native-recording-lcm.mcap
+node examples/message-codegen/viewer-checker/check-native-recording.mjs \
+  build/message-codegen/demo/evidence/external-native-recording-zenoh.mcap
+```
+
+The Foxglove decoder requires no custom message package. Arbitrary custom payloads
+are preserved byte-for-byte; their MCAP publish time uses reception time because
+the recorder has no compiled knowledge of their timestamp layout. Recognized
+standard stamped messages use exact source nanoseconds. Delete the four retained
+MCAP/log files when finished reviewing them. These terminal checks complement
+the separate Foxglove and Rerun UI acceptance demos.

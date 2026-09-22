@@ -25,6 +25,12 @@ import time
 from typing import cast
 import uuid
 
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import Image, Imu
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+from mcap.reader import make_reader
 import numpy as np
 import pytest
 
@@ -43,18 +49,20 @@ from dimos.experimental.memory.rust_recorder import (
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.time import time_from_seconds
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 
 pytestmark = pytest.mark.self_hosted
 
 _RUST_PACKAGE = DIMOS_PROJECT_ROOT / "dimos" / "experimental" / "memory" / "rust"
-_EXECUTABLE = _RUST_PACKAGE / "result" / "bin" / "dimos-memory-recorder"
+_EXECUTABLE = Path(
+    os.environ.get(
+        "DIMOS_RECORDER_TEST_EXECUTABLE",
+        str(_RUST_PACKAGE / "result" / "bin" / "dimos-memory-recorder"),
+    )
+)
 _MCAP_AVAILABLE = importlib.util.find_spec("mcap") is not None
 
 
@@ -153,7 +161,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
         store=store,
         record_tf=False,
         encoding_threads=2,
-        stream_codecs={"imu": "lz4+lcm"},
+        stream_codecs={"imu": "lz4+cdr" if store_kind == "sqlite" else "cdr"},
         session=ZenohConfig(
             mode="peer",
             connect=[],
@@ -212,15 +220,13 @@ def test_rust_artifact_is_readable_by_python_memory2(
         _wait_for_log(process, "memory recorder ready")
 
         expected = Imu(
-            ts=12.5,
-            frame_id="imu_link",
-            angular_velocity=Vector3(1.0, 2.0, 3.0),
+            header=Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="imu_link"),
+            angular_velocity=Vector3(x=1.0, y=2.0, z=3.0),
         )
-        expected_image = Image(
-            data=np.full((16, 16, 3), [20, 80, 140], dtype=np.uint8),
-            format=ImageFormat.RGB,
-            frame_id="camera",
-            ts=12.75,
+        expected_image = image_from_array(
+            np.full((16, 16, 3), [20, 80, 140], dtype=np.uint8),
+            encoding="rgb8",
+            header=Header(frame_id="camera", stamp=time_from_seconds(12.75)),
         )
         publisher.broadcast(None, expected)
         image_publisher.broadcast(None, expected_image)
@@ -240,21 +246,25 @@ def test_rust_artifact_is_readable_by_python_memory2(
     if store_kind == "sqlite":
         memory = SqliteStore(path=str(artifact))
     else:
+        with artifact.open("rb") as file:
+            recorded_imu = [
+                row
+                for _schema, channel, row in make_reader(file).iter_messages()
+                if channel.topic == "imu"
+            ]
+        assert len(recorded_imu) == 1
+        assert recorded_imu[0].publish_time == 1700000000123456789
         memory = McapStore(path=str(artifact))
     with memory:
         observation = cast("Observation[Imu]", memory.stream("imu").first())
-        assert observation.ts == 12.5
-        assert observation.data.lcm_encode() == expected.lcm_encode()
+        assert observation.ts == 1700000000.123456789
+        assert observation.data.encode() == expected.encode()
         image_observation = cast("Observation[Image]", memory.stream("color_image").first())
         decoded_image = image_observation.data
         assert image_observation.ts == 12.75
-        assert decoded_image.frame_id == "camera"
-        assert decoded_image.format is ImageFormat.RGB
-        assert decoded_image.data.shape == expected_image.data.shape
-        assert (
-            np.mean(np.abs(decoded_image.data.astype(float) - expected_image.data.astype(float)))
-            < 5
-        )
+        assert decoded_image.header == expected_image.header
+        assert decoded_image.encoding == "rgb8"
+        np.testing.assert_array_equal(image_view(decoded_image), image_view(expected_image))
 
 
 @pytest.mark.parametrize(
@@ -283,7 +293,10 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     channel = f"/rust-recorder-{uuid.uuid4().hex[:8]}"
     publisher: LCMTransport[Imu] = LCMTransport(channel, Imu, url=lcm_url)
     session = RustRecordingSession(rust_cli_recorder.make_plan({("imu", Imu): publisher}))
-    expected = Imu(ts=22.5, frame_id="imu_link", angular_velocity=Vector3(1.0, 2.0, 3.0))
+    expected = Imu(
+        header=Header(stamp=time_from_seconds(22.5), frame_id="imu_link"),
+        angular_velocity=Vector3(x=1, y=2, z=3),
+    )
     try:
         publisher.start()
         session.start()
@@ -307,7 +320,7 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     with memory:
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 22.5
-        assert observation.data.lcm_encode() == expected.lcm_encode()
+        assert observation.data.encode() == expected.encode()
 
 
 def test_tf_records_over_zenoh_and_replays_through_python(
@@ -363,18 +376,18 @@ def test_tf_records_over_zenoh_and_replays_through_python(
         stderr=subprocess.PIPE,
     )
     expected = TFMessage(
-        Transform(
-            translation=Vector3(1.0, 2.0, 3.0),
-            frame_id="world",
-            child_frame_id="base_link",
-            ts=10.25,
-        ),
-        Transform(
-            translation=Vector3(4.0, 5.0, 6.0),
-            frame_id="base_link",
-            child_frame_id="camera",
-            ts=11.5,
-        ),
+        transforms=[
+            TransformStamped(
+                header=Header(frame_id="world", stamp=time_from_seconds(10.25)),
+                child_frame_id="base_link",
+                transform=Transform(translation=Vector3(x=1, y=2, z=3)),
+            ),
+            TransformStamped(
+                header=Header(frame_id="base_link", stamp=time_from_seconds(11.5)),
+                child_frame_id="camera",
+                transform=Transform(translation=Vector3(x=4, y=5, z=6)),
+            ),
+        ]
     )
     try:
         assert process.stdin is not None

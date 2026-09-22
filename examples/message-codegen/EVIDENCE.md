@@ -509,3 +509,51 @@ storage behavior: **23 passed, 9 failed**. Every failure requests the obsolete
 `lcm` storage codec. This is an outstanding coordinated Python/Rust recorder
 cutover, not an accepted regression result. Log:
 `build/message-codegen/rust-recorder-config-audit.log`.
+
+### Native recorder CDR and external schemas
+
+The coordinated native recorder cutover resolves the nine obsolete-codec failures
+above: **32 Python configuration checks, 16 Rust unit tests, five native process
+E2E tests, and one external-package recording E2E test passed**. Production Python
+configuration modules pass mypy; the Rust recorder passes Clippy with warnings
+denied. Root workspace `cargo check --workspace --locked --offline` passes.
+
+The recorder now receives complete generated schemas, writes ROS2-profile MCAP
+with `cdr` channels and embedded `ros2msg` definitions, and uses chunk compression.
+SQLite accepts `cdr` and `lz4+cdr`; obsolete LCM/JPEG wrappers are removed. Raw
+image pixels remain exact. The root Cargo lockfile no longer depends on the
+external `dimos-lcm` message repository; the in-tree raw LCM transport remains.
+
+Recognized stamped messages retain integer source nanoseconds, including the E2E
+MCAP value `1700000000123456789`. Zero stamps remain zero; invalid nanosecond
+fields are rejected. MCAP rejects negative timestamps instead of silently
+clamping them. SQLite converts timestamps to seconds only at its existing query
+API boundary. Known ordinary message payloads preserve their original CDR bytes,
+including byte order; TF arrays split into generated single-transform TFMessages.
+
+`demo_native_recording.py` records three changing external Telemetry messages on
+each transport with the same Rust binary. The locally added `application_note`
+field survives along with every payload timestamp. The unknown custom timestamp
+layout uses reception time for MCAP indexing. Foxglove's independent decoder
+reads all six samples from embedded schemas without the custom package installed
+in its environment. This is decoder evidence, not Foxglove/Rerun UI acceptance.
+
+Review artifacts and transcripts:
+
+- `build/message-codegen/demo/evidence/external-native-recording-{lcm,zenoh}.mcap`
+  and matching `.log` files.
+- `build/message-codegen/demo/evidence/native-recording.txt` and
+  `native-recording-foxglove.txt`.
+- `build/message-codegen/rust-recorder-cdr-tests.log`,
+  `rust-recorder-config-cdr-tests.log`, `rust-recorder-cdr-e2e.log`, and
+  `external-native-recording-e2e.log`.
+- `build/message-codegen/rust-recorder-cdr-clippy.log` and
+  `recorder-workspace-check.log`.
+
+The Python recorder checks use `--noconftest` to avoid unrelated optional
+CLIP/PyTorch imports. This leaves an unregistered `self_hosted` marker warning.
+The host filesystem filled during the first workspace/Nix build attempts; those
+attempts failed and are not counted as passing. Removing only this worktree's
+reproducible compiler caches allowed the workspace check and executable build
+to pass. The isolated Nix retry is still pending. Full stage 4/5 acceptance,
+legacy consumers/fixtures, and live viewer demos remain outstanding.

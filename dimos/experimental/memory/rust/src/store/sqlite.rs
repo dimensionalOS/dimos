@@ -90,13 +90,15 @@ fn insert_observation(connection: &Connection, observation: &Observation) -> Res
     if observation.stream.is_tf() {
         connection.execute(
             &format!(r#"INSERT INTO "{name}" (ts) VALUES (?1)"#),
-            params![observation.source_ts],
+            params![observation.source_ts as f64 / 1_000_000_000.0],
         )?;
     } else {
-        let tags = serde_json::json!({"reception_ts": observation.reception_ts}).to_string();
+        let tags =
+            serde_json::json!({"reception_ts": observation.reception_ts as f64 / 1_000_000_000.0})
+                .to_string();
         connection.execute(
             &format!(r#"INSERT INTO "{name}" (ts, tags) VALUES (?1, jsonb(?2))"#),
-            params![observation.source_ts, tags],
+            params![observation.source_ts as f64 / 1_000_000_000.0, tags],
         )?;
     }
     let id = connection.last_insert_rowid();

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Experimental native recorder for high-throughput LCM-backed memory streams."""
+"""Experimental native recorder for high-throughput CDR memory streams."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
 
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -29,14 +30,12 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In
 from dimos.memory.recording_policy import OnExisting
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-_SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm"}
+_SUPPORTED_NATIVE_CODECS = {"cdr", "lz4+cdr"}
 
 
 class RustStreamSpec(BaseModel):
@@ -46,6 +45,21 @@ class RustStreamSpec(BaseModel):
     name: str
     payload_type: str
     codec: str
+    schema_name: str = Field(min_length=1)
+    schema_definition: str = Field(min_length=1)
+
+    @classmethod
+    def from_type(
+        cls, *, port: str, name: str, payload_type: type[Any], codec: str
+    ) -> RustStreamSpec:
+        return cls(
+            port=port,
+            name=name,
+            codec=codec,
+            payload_type=f"{payload_type.__module__}.{payload_type.__qualname__}",
+            schema_name=payload_type.msg_name,
+            schema_definition=payload_type.schema,
+        )
 
 
 class RustStoreConfig(BaseModel):
@@ -86,7 +100,7 @@ RustRecordingStoreConfig: TypeAlias = Annotated[
 
 
 class RustRecorderConfig(NativeModuleConfig):
-    """Compatibility-first configuration for :class:`RustRecorder`.
+    """Configuration for :class:`RustRecorder`.
 
     Python owns artifact lifecycle and stream registration. The native process
     receives only ``store``, ``encoding_threads``, and the internally resolved
@@ -158,11 +172,11 @@ class RustRecorder(NativeModule):
         class CameraRecorder(RustRecorder):
             color_image: In[Image]
 
-    Both stores use the Python Mem2 codec configuration: images default to
-    JPEG, and ``stream_codecs`` may select ``lcm`` or ``lz4+lcm``. MCAP uses
-    indexed Zstd chunks around those storage-encoded observations. The native
+    Both stores accept generated CDR messages with complete schema metadata.
+    SQLite additionally accepts ``lz4+cdr`` blob compression. MCAP uses
+    indexed Zstd chunks around unwrapped CDR observations. The native
     path preserves source timestamps for common stamped message types. Other
-    LCM messages use their reception timestamp. Spatial pose attachment is not
+    timestamp layouts use their reception timestamp. Spatial pose attachment is not
     supported yet.
     """
 
@@ -196,11 +210,11 @@ class RustRecorder(NativeModule):
             if port is self.tf:
                 if self.config.record_tf:
                     specs.append(
-                        RustStreamSpec(
+                        RustStreamSpec.from_type(
                             port=port_name,
                             name="tf",
-                            payload_type=f"{TFMessage.__module__}.{TFMessage.__qualname__}",
-                            codec="lcm",
+                            payload_type=TFMessage,
+                            codec="cdr",
                         )
                     )
                 continue
@@ -209,10 +223,10 @@ class RustRecorder(NativeModule):
             codec = self.config.stream_codecs.get(stream_name, self._default_codec(port.type))
             self._validate_codec(stream_name, port.type, codec)
             specs.append(
-                RustStreamSpec(
+                RustStreamSpec.from_type(
                     port=port_name,
                     name=stream_name,
-                    payload_type=f"{port.type.__module__}.{port.type.__qualname__}",
+                    payload_type=port.type,
                     codec=codec,
                 )
             )
@@ -227,30 +241,27 @@ class RustRecorder(NativeModule):
 
     @staticmethod
     def _default_codec(payload_type: type[Any]) -> str:
-        if issubclass(payload_type, Image):
-            return "jpeg"
-        if hasattr(payload_type, "lcm_encode") and hasattr(payload_type, "lcm_decode"):
-            return "lcm"
+        if all(
+            hasattr(payload_type, member) for member in ("encode", "decode", "msg_name", "schema")
+        ):
+            return "cdr"
         raise TypeError(
-            f"RustRecorder only supports LCM-backed messages, got {payload_type.__qualname__}"
+            f"RustRecorder requires a generated CDR message, got {payload_type.__qualname__}"
         )
 
     @staticmethod
     def _validate_codec(stream_name: str, payload_type: type[Any], codec: str) -> None:
         if codec not in _SUPPORTED_NATIVE_CODECS:
             raise ValueError(
-                f"Unsupported native codec {codec!r} for stream {stream_name!r}; "
-                f"choose one of {sorted(_SUPPORTED_NATIVE_CODECS)}"
+                f"Unsupported native codec {codec!r} for stream {stream_name!r}; choose one of {sorted(_SUPPORTED_NATIVE_CODECS)}"
             )
-        if codec == "jpeg" and not issubclass(payload_type, Image):
-            raise TypeError(f"JPEG codec requires Image, got {payload_type.__qualname__}")
-        if not hasattr(payload_type, "lcm_encode") or not hasattr(payload_type, "lcm_decode"):
-            raise TypeError(
-                f"Native codec {codec!r} requires an LCM-backed type, "
-                f"got {payload_type.__qualname__}"
-            )
+        RustRecorder._default_codec(payload_type)
 
     def _prepare_store(self, specs: list[RustStreamSpec]) -> None:
+        if self.config.store.kind == "mcap" and any(spec.codec != "cdr" for spec in specs):
+            raise ValueError(
+                "MCAP requires cdr channels; use chunk compression instead of payload wrappers"
+            )
         path = Path(self.config.store.path)
         if self.config.store.kind == "mcap" and self.config.on_existing is OnExisting.APPEND:
             raise ValueError("MCAP append is unsupported; choose overwrite, backup, or error")
