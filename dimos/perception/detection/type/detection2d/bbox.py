@@ -19,12 +19,12 @@ import hashlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from dimos_generated.sensor_msgs.msg import Image
     from typing_extensions import Self
     from ultralytics.engine.results import Results
 
-    from dimos.msgs.sensor_msgs.Image import Image
-
-from dimos_lcm.vision_msgs import (
+import cv2
+from dimos_generated.vision_msgs.msg import (
     BoundingBox2D,
     Detection2D as ROSDetection2D,
     ObjectHypothesis,
@@ -32,12 +32,13 @@ from dimos_lcm.vision_msgs import (
     Point2D,
     Pose2D,
 )
+import numpy as np
 from rich.console import Console
 from rich.text import Text
 
-from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection2d.base import Detection2D
-from dimos.types.timestamped import to_timestamp
 from dimos.utils.decorators.decorators import simple_mcache
 
 Bbox = tuple[float, float, float, float]
@@ -93,9 +94,6 @@ class Detection2DBBox(Detection2D):
 
     def draw_on(self, img: Any, scale: float = 1.0) -> None:
         """Draw this detection's bbox and label onto a BGR numpy array (in-place)."""
-        import cv2
-        import numpy as np
-
         x1, y1, x2, y2 = map(int, self.bbox)
 
         h = hashlib.md5(self.name.encode()).digest()[0]
@@ -127,11 +125,15 @@ class Detection2DBBox(Detection2D):
 
     def annotated_image(self, scale: float = 1.0) -> Image:
         """Return the full image with this detection's bbox and label drawn on it."""
-        img = self.image.to_opencv().copy()
+        img = image_view(self.image).copy()
+        if self.image.encoding == "rgb8":
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        elif self.image.encoding == "mono8":
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        elif self.image.encoding != "bgr8":
+            raise ValueError(f"Unsupported annotation encoding: {self.image.encoding}")
         self.draw_on(img, scale=scale)
-        from dimos.msgs.sensor_msgs.Image import Image
-
-        return Image.from_opencv(img, ts=self.ts)
+        return image_from_array(img, encoding="bgr8", header=self.image.header)
 
     # return focused image, only on the bbox
     def cropped_image(self, padding: int = 20) -> Image:
@@ -144,9 +146,12 @@ class Detection2DBBox(Detection2D):
             Cropped Image containing only the detection area plus padding
         """
         x1, y1, x2, y2 = map(int, self.bbox)
-        return self.image.crop(
-            x1 - padding, y1 - padding, x2 - x1 + 2 * padding, y2 - y1 + 2 * padding
-        )
+        pixels = image_view(self.image)
+        cropped = pixels[
+            max(0, y1 - padding) : min(self.image.height, y2 + padding),
+            max(0, x1 - padding) : min(self.image.width, x2 + padding),
+        ]
+        return image_from_array(cropped, encoding=self.image.encoding, header=self.image.header)
 
     def __str__(self) -> str:
         console = Console(force_terminal=True, legacy_windows=False)
@@ -202,8 +207,8 @@ class Detection2DBBox(Detection2D):
             return False
 
         # Check if within image bounds (if image has shape)
-        if self.image.shape:
-            h, w = self.image.shape[:2]
+        if self.image.height and self.image.width:
+            h, w = self.image.height, self.image.width
             if not (0 <= x1 <= w and 0 <= y1 <= h and 0 <= x2 <= w and 0 <= y2 <= h):
                 return False
 
@@ -255,7 +260,7 @@ class Detection2DBBox(Detection2D):
             class_id=class_id,
             confidence=confidence,
             name=name,
-            ts=image.ts,
+            ts=to_seconds(image.header.stamp),
             image=image,
         )
 
@@ -299,14 +304,14 @@ class Detection2DBBox(Detection2D):
         confidence = 0.0
         if ros_det.results:
             hypothesis = ros_det.results[0].hypothesis
-            class_id = hypothesis.class_id
+            class_id = int(hypothesis.class_id)
             confidence = hypothesis.score
 
         # Extract track_id
         track_id = int(ros_det.id) if ros_det.id.isdigit() else 0
 
         # Extract timestamp
-        ts = to_timestamp(ros_det.header.stamp)
+        ts = to_seconds(ros_det.header.stamp)
 
         name = kwargs.pop("name", f"class_{class_id}")
 
@@ -322,12 +327,12 @@ class Detection2DBBox(Detection2D):
 
     def to_ros_detection2d(self) -> ROSDetection2D:
         return ROSDetection2D(
-            header=Header(self.ts, "camera_link"),
+            header=self.image.header,
             bbox=self.to_ros_bbox(),
             results=[
                 ObjectHypothesisWithPose(
-                    ObjectHypothesis(
-                        class_id=self.class_id,
+                    hypothesis=ObjectHypothesis(
+                        class_id=str(self.class_id),
                         score=self.confidence,
                     )
                 )

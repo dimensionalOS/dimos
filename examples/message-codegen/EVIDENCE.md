@@ -1090,3 +1090,16 @@ modules. `demo_detection_projection.py` passed and printed the expected world
 centroid (11.5, 1.5, 2.0) with stamp 1700000000123456789 ns. The 2D detection image
 API and person-follow/security callers remain unfinished; no full pipeline or
 model-inference acceptance is claimed.
+
+### Generated 2D bounding-box image and wire boundary
+
+Detection2DBBox now crops generated image views, annotates an independent BGR
+copy, and emits generated vision_msgs/Detection2D with the original image header.
+Class identifiers use the ROS string field on the wire. Eight combined generated
+bbox/projection/filter checks passed. The bbox case checks crop pixels, RGB/BGR
+conversion, source immutability, integer timestamp preservation, and decoded
+identifiers. Mypy passed for bbox/base and the earlier projection demo.
+`demo_detection_bbox.py` generated the annotated review PNG and passed its CDR
+assertions. The model-backed existing bbox fixture was not run; its generated
+image shape assertion was updated, and model/image fixture conversion remains
+part of the remaining perception work.
