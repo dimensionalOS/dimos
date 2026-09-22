@@ -29,11 +29,14 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+# What `global_map_smooth` names its output: `<in>_smoothed`.
+SMOOTHED_SUFFIX = "_smoothed"
+
 
 class WorldCache:
     """The three builders behind the payloads every viewer gets on connect."""
 
-    def _global_map_cloud(self) -> np.ndarray | None:
+    def _global_map_cloud(self) -> tuple[str, np.ndarray] | None:
         """The ray-traced global map stored in the recording, when it has one.
 
         One PointCloud2 holding the finished voxel set. Built ahead of time from a
@@ -41,41 +44,52 @@ class WorldCache:
         rays already applied -- strictly better than the replay's final keyframe (which
         is the same idea but only as far as the replay got) and far better than a plain
         accumulation, which keeps every reflection and every person who walked past.
+
+        The smoothed companion wins where it exists: a morphological closing fills the
+        doorway-sized holes and the speckle between two sweeps, and it is the same map
+        at the same stamp in the same frame. Every candidate is tried THROUGH the reads
+        below rather than only for its name, so a smoothed stream that is declared but
+        empty, unreadable or unplaceable falls through to the raw one instead of losing
+        the map. Returns the name it read beside the cloud, so the log says which it is.
         """
-        name = self.config.global_map_stream_name
-        if not name:
+        configured = self.config.global_map_stream_name
+        if not configured:
             return None
         store = self._ensure_store()
-        if name not in store.list_streams():
-            return None
-        try:
-            latest = store.streams[name].last()
-        except LookupError:  # declared but empty
-            return None
-        xyz = latest.data.points_f32()
-        if xyz is None or len(xyz) == 0:
-            return None
-        xyz = np.asarray(xyz, dtype=np.float32)
-        # The cloud says which frame it is in and it is NOT safe to assume that is ours.
-        # Everything else in the world -- the capture poses, the trajectory, the planner's
-        # map -- is in `world_frame`, so a map written in any other frame has to be moved
-        # into it or it sits somewhere else entirely while looking perfectly reasonable.
-        frame = str(getattr(latest.data, "frame_id", "") or "").lstrip("/")
-        if frame and frame != self.config.world_frame:
-            matrix = self._frame_pose_at(frame, float(latest.ts))
-            if matrix is None:
-                # Refuse rather than place it wrongly: the caller falls back to a source
-                # whose frame is known.
-                logger.warning(
-                    "%s is in %r and tf cannot place that in %r; ignoring it",
-                    name,
-                    frame,
-                    self.config.world_frame,
-                )
-                return None
-            logger.info("%s is in %r; moving it into %r", name, frame, self.config.world_frame)
-            xyz = (np.asarray(matrix) @ np.c_[xyz, np.ones(len(xyz))].T).T[:, :3]
-        return np.ascontiguousarray(xyz, dtype=np.float32)
+        available = store.list_streams()
+        for name in (f"{configured}{SMOOTHED_SUFFIX}", configured):
+            if name not in available:
+                continue
+            try:
+                latest = store.streams[name].last()
+            except LookupError:  # declared but empty
+                continue
+            xyz = latest.data.points_f32()
+            if xyz is None or len(xyz) == 0:
+                continue
+            xyz = np.asarray(xyz, dtype=np.float32)
+            # The cloud says which frame it is in and it is NOT safe to assume that is
+            # ours. Everything else in the world -- the capture poses, the trajectory,
+            # the planner's map -- is in `world_frame`, so a map written in any other
+            # frame has to be moved into it or it sits somewhere else entirely while
+            # looking perfectly reasonable.
+            frame = str(getattr(latest.data, "frame_id", "") or "").lstrip("/")
+            if frame and frame != self.config.world_frame:
+                matrix = self._frame_pose_at(frame, float(latest.ts))
+                if matrix is None:
+                    # Refuse rather than place it wrongly: the next candidate, and then
+                    # the caller, fall back to a source whose frame is known.
+                    logger.warning(
+                        "%s is in %r and tf cannot place that in %r; ignoring it",
+                        name,
+                        frame,
+                        self.config.world_frame,
+                    )
+                    continue
+                logger.info("%s is in %r; moving it into %r", name, frame, self.config.world_frame)
+                xyz = (np.asarray(matrix) @ np.c_[xyz, np.ones(len(xyz))].T).T[:, :3]
+            return name, np.ascontiguousarray(xyz, dtype=np.float32)
+        return None
 
     def _build_voxel_cloud_from_lidar(self) -> tuple[dict[str, Any], bytes] | None:
         """The voxel map, packed for the wire.
@@ -133,13 +147,11 @@ class WorldCache:
                     self.config.global_map_stream_name,
                 )
                 return None
-            if found is not None:
-                logger.info(
-                    "voxel cloud from the %s stream: %d voxels",
-                    self.config.global_map_stream_name,
-                    len(found),
-                )
-            return found
+            if found is None:
+                return None
+            name, xyz = found
+            logger.info("voxel cloud from the %s stream: %d voxels", name, len(xyz))
+            return xyz
 
         try:
             # Best first, and each source is tried THROUGH the height filter before the
