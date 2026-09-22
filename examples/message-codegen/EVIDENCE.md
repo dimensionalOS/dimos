@@ -1022,3 +1022,19 @@ empty frontier groups.
 
 Patrol and other remaining consumers still need conversion. This checkpoint
 does not complete the full exploration-to-robot blueprint or stage 4 acceptance.
+
+### Generated patrol routing
+
+The patrol module and all three routers now consume generated occupancy maps and
+nested poses. Coordinate conversion uses the shared map-origin helpers, and
+selected goals retain the map frame and integer timestamp. The existing office
+coverage fixture now constructs generated clouds and maps directly.
+
+- `build/message-codegen/patrol-tests.log`: **9 passed**, including six generated
+  CDR cases covering all routers with ordinary and rotated/translated maps, plus
+  all three existing office-map coverage tests.
+- Mypy passed for 11 checked source files (patrol production code and demo).
+- `build/message-codegen/patrol-demo.log`: all routers produced five CDR goals;
+  three reviewable SVGs were written under `demo/evidence/patrol-*.svg`.
+- This verifies goal selection and coverage calculations. It does not claim
+  patrol lifecycle or hardware motion acceptance, or completion of stage 4.

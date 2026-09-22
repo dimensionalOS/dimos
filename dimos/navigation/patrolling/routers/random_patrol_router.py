@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.geometry_msgs.msg import Point, PoseStamped
+from dimos_generated.nav_msgs.msg import OccupancyGrid
 import numpy as np
 from numpy.typing import NDArray
 from scipy.ndimage import binary_erosion
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.occupancy import grid_to_world, occupancy_view
 from dimos.navigation.patrolling.routers.base_patrol_router import BasePatrolRouter
 from dimos.navigation.patrolling.utilities import point_to_pose_stamped
 
@@ -34,17 +35,17 @@ class RandomPatrolRouter(BasePatrolRouter):
         )
         if point is None:
             return None
-        return point_to_pose_stamped(point)
+        return point_to_pose_stamped(point, occupancy_grid.header)
 
 
 def _random_empty_spot(
     occupancy_grid: OccupancyGrid,
     clearance_m: float,
     visited: NDArray[np.bool_] | None = None,
-) -> tuple[float, float] | None:
-    clearance_cells = int(np.ceil(clearance_m / occupancy_grid.resolution))
+) -> Point | None:
+    clearance_cells = int(np.ceil(clearance_m / occupancy_grid.info.resolution))
 
-    free_mask = occupancy_grid.grid == 0
+    free_mask = occupancy_view(occupancy_grid) == 0
     if not np.any(free_mask):
         return None
 
@@ -64,5 +65,5 @@ def _random_empty_spot(
 
     idx = safe_indices[np.random.randint(len(safe_indices))]
     row, col = idx
-    world = occupancy_grid.grid_to_world((col, row, 0))
-    return (world.x, world.y)
+    world = grid_to_world(occupancy_grid, (col, row))
+    return world

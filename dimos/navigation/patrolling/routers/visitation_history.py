@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_generated.geometry_msgs.msg import Point
+from dimos_generated.nav_msgs.msg import OccupancyGrid
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.occupancy import occupancy_view, world_to_grid
 
 
 def _circular_disk(radius_cells: int) -> NDArray[np.bool_]:
@@ -57,7 +59,7 @@ class VisitationHistory:
 
     def update_grid(self, grid: OccupancyGrid) -> None:
         self._grid = grid
-        self._clearance_radius_cells = int(np.ceil(self._clearance_radius_m / grid.resolution))
+        self._clearance_radius_cells = int(np.ceil(self._clearance_radius_m / grid.info.resolution))
         self._clearance_disk = _circular_disk(self._clearance_radius_cells)
         self._rebuild()
 
@@ -80,7 +82,7 @@ class VisitationHistory:
         visited = self._visited
         if grid is None or visited is None:
             return 0.0
-        free_mask = grid.grid == 0
+        free_mask = occupancy_view(grid) == 0
         total = int(np.count_nonzero(free_mask))
         if total == 0:
             return 0.0
@@ -96,7 +98,7 @@ class VisitationHistory:
         grid = self._grid
         if grid is None:
             return
-        self._visited = np.zeros((grid.height, grid.width), dtype=bool)
+        self._visited = np.zeros((grid.info.height, grid.info.width), dtype=bool)
         for x, y in self._points:
             self._stamp(x, y)
 
@@ -106,14 +108,14 @@ class VisitationHistory:
         if grid is None or visited is None:
             return
         r = self._clearance_radius_cells
-        grid_pos = grid.world_to_grid((x, y))
-        col, row = int(grid_pos.x), int(grid_pos.y)
-        if row + r < 0 or row - r >= grid.height or col + r < 0 or col - r >= grid.width:
+        grid_pos = world_to_grid(grid, Point(x=x, y=y))
+        col, row = int(np.floor(round(grid_pos[0], 9))), int(np.floor(round(grid_pos[1], 9)))
+        if row + r < 0 or row - r >= grid.info.height or col + r < 0 or col - r >= grid.info.width:
             return
         r_min = max(0, row - r)
-        r_max = min(grid.height, row + r + 1)
+        r_max = min(grid.info.height, row + r + 1)
         c_min = max(0, col - r)
-        c_max = min(grid.width, col + r + 1)
+        c_max = min(grid.info.width, col + r + 1)
         d_r_min = r_min - (row - r)
         d_r_max = d_r_min + (r_max - r_min)
         d_c_min = c_min - (col - r)

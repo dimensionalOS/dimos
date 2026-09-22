@@ -904,3 +904,18 @@ checking the exact source header. It prints the selected coordinates and writes
 `build/message-codegen/demo/evidence/frontiers.svg`. Open that SVG to inspect
 the selected goal; remove it to clean up. No robot, ROS installation, or viewer
 login is required.
+
+### Generated patrol goals
+
+After the generation/build setup above, run:
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_patrol.py
+```
+
+The demo prints five goals each for random, coverage, and frontier patrol, and
+writes `build/message-codegen/demo/evidence/patrol-{random,coverage,frontier}.svg`.
+Each goal crosses a CDR encode/decode boundary and retains the map's exact header.
+The red markers show selected goals; this demo does not simulate travel between
+them. No robot or ROS installation is required. Remove those three SVG files to
+clean up the demo outputs.
