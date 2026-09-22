@@ -35,6 +35,7 @@ failure can be bisected by dropping down a level:
   zenoh router the viewer dials.
 """
 
+from functools import partial
 import os
 from typing import Any
 
@@ -85,29 +86,30 @@ def _static_robot_body(rr: Any) -> list[Any]:
     ]
 
 
-def _camera_info_to_pinhole(camera_info: Any) -> Any:
-    """Log the pinhole onto the video's entity instead of camera_info's own.
+def _camera_info_to_pinhole(camera_info: Any, camera: str = "world/video") -> Any:
+    """Log the pinhole onto the camera image's entity instead of camera_info's own.
 
     Entities are named after topics, so the two land on sibling paths, and a Pinhole only
     projects its own entity and its children, hence a frustum that draws but stays empty.
     No ``optical_frame``: the video's frame_id already anchors it, a second parent is
     rejected.
     """
-    return camera_info.to_rerun(image_topic="world/video")
+    return camera_info.to_rerun(image_topic=camera)
 
 
-def _rerun_blueprint() -> Any:
+def _rerun_blueprint(camera: str = "world/video") -> Any:
     """Split layout: camera feed + 3D world, as the WebRTC go2 blueprint has.
 
-    The 2D view sits on ``world/video``, not ``world/color_image``: over zenoh the camera
-    arrives as H.264 on the ``video`` port, which is also where the pinhole is logged.
+    The 2D view sits on the camera's own entity, not ``world/color_image``: over zenoh the
+    camera arrives as H.264 on the ``video`` port, and off GO2DDS in jpeg mode as
+    ``CompressedImage`` on ``image``. Either way that entity is where the pinhole is logged.
     """
     import rerun as rr
     import rerun.blueprint as rrb
 
     return rrb.Blueprint(
         rrb.Horizontal(
-            rrb.Spatial2DView(origin="world/video", name="Camera"),
+            rrb.Spatial2DView(origin=camera, name="Camera"),
             rrb.Spatial3DView(
                 origin="world",
                 name="3D",
@@ -132,10 +134,12 @@ def _render_map(msg: Any) -> Any:
     return msg.to_rerun(voxel_size=0.01)
 
 
-def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, Any]:
+def _rerun_config(
+    visual_override: dict[str, Any] | None = None, camera: str = "world/video"
+) -> dict[str, Any]:
     """The bridge's own view, plus whatever the layer above it adds."""
     return {
-        "blueprint": _rerun_blueprint,
+        "blueprint": partial(_rerun_blueprint, camera),
         "tf_axes": 0.5,
         # The robot box hangs off base_link on its own entity: a static transform
         # under world/tf would override the live one.
@@ -143,7 +147,7 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
             "world/robot_body": _static_robot_body,
         },
         "visual_override": {
-            "world/camera_info": _camera_info_to_pinhole,
+            "world/camera_info": partial(_camera_info_to_pinhole, camera=camera),
             "world/pointlio_map": _render_map,
             "world/lidar": _render_map,
             "world/local_map": _render_map,
@@ -318,6 +322,10 @@ _go2_dds_pointlio = GO2DDS.blueprint(
     iface="enP8p1s0",
     lidar_on=False,
     tf_root="mid360_link",
+    # jpeg polled off the videohub instead of the h264 multicast: one frame a second is
+    # all the wifi link (and a human watching) needs, and it lands on `image`, not `video`.
+    video_encoding="jpeg",
+    video_fps=1.0,
     session=ZenohConfig(mode="router", listen=["tcp/0.0.0.0:7447"], connect=[]),
 ).remappings(
     [
@@ -336,7 +344,8 @@ go2_dds_motion_pointlio = autoconnect(
                 "world/lidar": None,
                 "world/lidar_raw": None,
                 "world/region_bounds": None,
-            }
+            },
+            camera="world/image",
         ),
     ),
     _go2_dds_pointlio,
@@ -368,7 +377,9 @@ go2_viewer = autoconnect(
     vis_module(
         viewer_backend=global_config.viewer,
         rerun_config={
-            **_rerun_config(),
+            # the camera pane follows the dds stack it dials by default; pass
+            # camera="world/video" to watch an h264 (go2web bridge) stack instead
+            **_rerun_config(camera="world/image"),
             "topics": [
                 "tf",
                 "odometry",
@@ -381,7 +392,9 @@ go2_viewer = autoconnect(
                 "goal",
                 "way_point",
                 "goal_reached",
+                # h264 off the zenoh stacks, jpeg off GO2DDS: one of the two arrives
                 "video",
+                "image",
                 "camera_info",
             ],
             # the map's own rate is the lidar's, more than a screen or a bad link needs
