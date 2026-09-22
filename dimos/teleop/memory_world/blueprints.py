@@ -182,12 +182,19 @@ memory_world_hyperspace = (
             # when it was a whole light leaving and a different duplicate arriving. 0 is the
             # whole index, and this demo is about what it can find, not how fast.
             rank_frames=0,
-            # OWLv2 ran on CPU on Apple silicon by construction until 2026-09-22
-            # (`allow_mps=False`, because MPS died there without a traceback). It is a
-            # config field now, defaulting to Metal: the old ban was half a rule, and what
-            # actually kills a worker is the PARENT having compiled a Metal kernel before
-            # forking, which a `dimos run` parent does not do. Hyperspace measured OWLv2 on
-            # MPS in a real worker at 10.7 s against ~140 s on cpu, same place.
+            # METAL IS OFF FOR THIS BLUEPRINT, MEASURED 2026-09-22. `allow_mps` became a
+            # config field defaulting to Metal, on the strength of OWLv2 answering in a real
+            # worker at 10.7 s against ~140 s on cpu. IT DOES NOT SURVIVE HERE: with the
+            # default, `Hyperspace/start` dies in worker 1 with "Failed to create metal
+            # library ... Unable to reach MTLCompilerService", and the demo never comes up.
+            # Reproduced identically under `dtk run` and plain `dimos run`, so the supervisor
+            # is not the cause -- this blueprint runs four workers and one of the others
+            # reaches Metal before Hyperspace's does. The 10.7 s measurement was taken on a
+            # smaller stack; it is not wrong, it just does not transfer to this one.
+            #
+            # So the field stays default-on for stacks where it works, and this demo opts
+            # out. Turning it back on here means reproducing the failure above first.
+            allow_mps=False,
             #
             # The numbers below are all CPU numbers and the cut below is argued from a CPU
             # tail. On Metal that arithmetic changes and 12 x 3 may be affordable again --
