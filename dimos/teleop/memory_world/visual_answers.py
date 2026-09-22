@@ -123,10 +123,22 @@ class VisualAnswers:
                 self._index_progress = stale or "no embeddings; add them from the viewer"
                 logger.info("visual index: %s", self._index_progress)
                 return
-            self._index_progress = f"building (had {existing} frames)"
+            wanted = self.config.build_image_index_on_start
+            if wanted:
+                self._index_progress = f"building (had {existing} frames)"
             try:
-                added = index.build(stride=self.config.image_index_stride)
-                logger.info("visual index built: %d frames (+%d new)", index.count(), added)
+                # An index the recording already holds is USED, not topped up, unless a
+                # build was actually asked for. Topping up on every start is minutes to
+                # hours of embedding on cpu under a store lock, for frames nobody is
+                # waiting on -- and the viewer spends all of it saying "Search not ready"
+                # over an index that could already have answered. `stale` is handled
+                # above, so what is skipped here is only ever a usable index.
+                added = 0
+                if wanted:
+                    added = index.build(stride=self.config.image_index_stride)
+                    logger.info("visual index built: %d frames (+%d new)", index.count(), added)
+                else:
+                    logger.info("visual index: using the %d frames already indexed", existing)
                 # Warm the model loads and the index here, off the request path: cold
                 # they add ~18s (and, for precomputed vectors, the pooling-head pass)
                 # to whichever query comes first, which is the one being demoed. Still
