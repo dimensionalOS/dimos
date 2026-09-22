@@ -815,3 +815,19 @@ with the reference and executed paths. Remove that generated SVG to clean up.
 Space's SVG and Rerun renderers now read generated poses, points, paths, detection
 boxes, and occupancy grids directly. Both apply the occupancy origin rotation;
 headless tests exercise the actual Rerun SDK as well as SVG output.
+
+### Generated cloud-to-map and inflation demo
+
+Run after building the generated Python messages above (the normal mapping environment
+also requires NumPy, SciPy, Numba, and the visualization dependencies):
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_occupancy.py
+```
+
+The demo sends 1,200 synthetic points through CDR, projects them into an occupancy
+map, inflates the obstacle by 0.2 m, and round-trips the generated grid through CDR.
+It prints the occupied-cell counts and checks the exact source header. Open
+`build/message-codegen/demo/evidence/occupancy.svg` to inspect the resulting map.
+The demo needs no robot, ROS installation, viewer login, or running transport.
+Remove that SVG to clean up its output.

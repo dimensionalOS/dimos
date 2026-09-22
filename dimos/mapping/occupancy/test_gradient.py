@@ -12,18 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import cv2
 import numpy as np
 import pytest
 
 from dimos.mapping.occupancy.gradient import gradient, voronoi_gradient
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_view
 from dimos.utils.data import get_data
 
 
 @pytest.mark.parametrize("method", ["simple", "voronoi"])
 def test_gradient(occupancy, method) -> None:
-    expected = Image.from_file(get_data(f"gradient_{method}.png"))
+    expected = cv2.imread(str(get_data(f"gradient_{method}.png")), cv2.IMREAD_COLOR)
 
     match method:
         case "simple":
@@ -34,4 +35,4 @@ def test_gradient(occupancy, method) -> None:
             raise ValueError(f"Unknown resampling method: {method}")
 
     actual = visualize_occupancy_grid(og, "rainbow")
-    np.testing.assert_array_equal(actual.data, expected.data)
+    np.testing.assert_array_equal(image_view(actual), expected)

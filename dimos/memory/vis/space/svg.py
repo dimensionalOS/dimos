@@ -29,10 +29,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dimos_generated.nav_msgs.msg import OccupancyGrid
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
 from PIL import Image as PILImage
 
+from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.occupancy.visualizations import generate_rgba_texture
+from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
 from dimos.memory.type.observation import Observation
 from dimos.memory.vis.color import Color
 from dimos.memory.vis.space.elements import (
@@ -48,7 +51,6 @@ from dimos.memory.vis.space.elements import (
 from dimos.memory.vis.space.geometry import message_position, message_yaw
 from dimos.msgs.geometry import pose_matrix
 from dimos.msgs.occupancy import occupancy_extent, occupancy_view
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 if TYPE_CHECKING:
     from dimos.memory.vis.space.space import Space
@@ -287,9 +289,6 @@ def _render_element(el: SpaceElement, b: Bounds) -> str:
     elif isinstance(el, OccupancyGrid):
         return _render_occupancy_grid(el, b)
     elif isinstance(el, PointCloud2):
-        from dimos.mapping.occupancy.inflation import simple_inflate
-        from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
-
         return _render_occupancy_grid(simple_inflate(height_cost_occupancy(el), 0.05), b)
     elif isinstance(el, Observation):
         ps = el.pose_stamped

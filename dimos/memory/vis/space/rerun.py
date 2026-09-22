@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.nav_msgs.msg import OccupancyGrid
+from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
@@ -36,7 +37,7 @@ from dimos.msgs.geometry import (
     transform_matrix,
 )
 from dimos.msgs.occupancy import occupancy_extent, occupancy_view
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_rgb, pointcloud_xyz
 
 if TYPE_CHECKING:
     from dimos.memory.vis.space.space import Space
@@ -154,7 +155,11 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
 
     if pointclouds:
         for i, el in enumerate(pointclouds):
-            rr.log(f"scene/pointcloud/{i}", el.to_rerun(), static=True)
+            rr.log(
+                f"scene/pointcloud/{i}",
+                rr.Points3D(pointcloud_xyz(el), colors=pointcloud_rgb(el)),
+                static=True,
+            )
 
     if points:
         rr.log(
@@ -311,7 +316,11 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
             rr.log(
                 path, rr.Transform3D(translation=matrix[:3, 3], mat3x3=matrix[:3, :3]), static=True
             )
-            rr.log(f"{path}/pointcloud", data.to_rerun(), static=True)
+            rr.log(
+                f"{path}/pointcloud",
+                rr.Points3D(pointcloud_xyz(data), colors=pointcloud_rgb(data)),
+                static=True,
+            )
         elif isinstance(data, (int, float)):
             rr.log(
                 path,

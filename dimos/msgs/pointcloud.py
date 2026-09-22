@@ -114,7 +114,7 @@ def select_points(message: PointCloud2, keep: NDArray[np.bool_]) -> PointCloud2:
     pointcloud_view(message)  # Validate the full declared layout before selecting bytes.
     if keep.dtype != np.bool_ or keep.shape != (message.height * message.width,):
         raise ValueError("point selection must be a flat boolean mask matching the point count")
-    records = np.ndarray(
+    records: NDArray[np.uint8] = np.ndarray(
         (message.height, message.width, message.point_step),
         dtype=np.uint8,
         buffer=message.data.view(),
@@ -133,3 +133,21 @@ def select_points(message: PointCloud2, keep: NDArray[np.bool_]) -> PointCloud2:
         data=selected.tobytes(),
         is_dense=message.is_dense,
     )
+
+
+def pointcloud_rgb(message: PointCloud2) -> NDArray[np.uint8] | None:
+    """Copy RGB bytes from the standard packed rgb/rgba field, if present.
+
+    FLOAT32 fields carry color bits, not numeric floating-point color values.
+    Both representations preserve the declared byte order and row padding.
+    """
+    points = pointcloud_view(message)
+    names = points.dtype.names or ()
+    name = next((name for name in ("rgb", "rgba") if name in names), None)
+    if name is None:
+        return None
+    field = points[name]
+    if field.ndim != 2 or field.dtype.kind not in "fu" or field.dtype.itemsize != 4:
+        raise ValueError("packed point cloud color must be a scalar FLOAT32 or UINT32 field")
+    packed = field.view(np.dtype(">u4" if message.is_bigendian else "<u4")).ravel()
+    return np.stack([(packed >> shift) & 255 for shift in (16, 8, 0)], axis=-1).astype(np.uint8)

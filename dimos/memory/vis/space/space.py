@@ -25,6 +25,7 @@ from typing import Any
 
 from dimos_generated.geometry_msgs.msg import Point as GeoPoint, Pose as GeoPose, PoseStamped
 from dimos_generated.nav_msgs.msg import OccupancyGrid, Path as NavPath
+from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.vision_msgs.msg import Detection3D
 
 from dimos.memory.type.observation import EmbeddedObservation, Observation
@@ -40,7 +41,6 @@ from dimos.memory.vis.space.elements import (
     Text,
 )
 from dimos.msgs.protocol import DimosMsg
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 def _autocolor_value(item: Any) -> float | None:

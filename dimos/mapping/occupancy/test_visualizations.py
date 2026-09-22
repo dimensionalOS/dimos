@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
+from dimos.msgs.image import image_view
 from dimos.utils.data import get_data
 
 
@@ -28,4 +29,4 @@ def test_visualize_occupancy_grid(occupancy_gradient, palette) -> None:
 
     result = visualize_occupancy_grid(occupancy_gradient, palette)
 
-    np.testing.assert_array_equal(result.data, expected)
+    np.testing.assert_array_equal(image_view(result), expected)

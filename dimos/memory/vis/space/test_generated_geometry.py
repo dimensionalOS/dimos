@@ -19,6 +19,8 @@ import xml.etree.ElementTree as ET
 
 from dimos_generated.geometry_msgs.msg import Point as GeoPoint, Pose as GeoPose, PoseStamped
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid, Path
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 import rerun as rr
@@ -27,6 +29,7 @@ from dimos.memory.vis.space.elements import Arrow, Camera, Point, Polyline, Pose
 from dimos.memory.vis.space.rerun import render
 from dimos.memory.vis.space.space import Space
 from dimos.msgs.geometry import quaternion_from_euler
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 
 
 def test_rerun_logs_generated_pose_point_and_path(mocker):
@@ -94,4 +97,28 @@ def test_both_renderers_apply_rotated_occupancy_origin(mocker):
         meshes[0].vertex_positions.as_arrow_array().to_pylist(),
         [[2, 3, 0], [2, 5, 0], [1, 5, 0], [1, 3, 0]],
         atol=1e-7,
+    )
+
+
+def test_generated_cloud_renders_in_svg_and_rerun(mocker):
+    cloud = pointcloud_from_xyz(
+        np.array([[0.0, 0.0, 0.0], [0.2, 0.3, 1.0], [1.0, 1.0, 0.0]]),
+        header=Header(frame_id="map"),
+    )
+    space = Space().add(PointCloud2.decode(cloud.encode()))
+    svg = ET.fromstring(space.to_svg())
+    assert svg.find(".//{http://www.w3.org/2000/svg}image") is not None
+    mocker.patch("dimos.visualization.rerun.init.rerun_init")
+    log = mocker.spy(rr, "log")
+    with rr.RecordingStream("generated-cloud-test") as recording:
+        memory = recording.memory_recording()
+        try:
+            render(space, spawn=False)
+            assert memory.num_msgs() > 0
+        finally:
+            recording.disconnect()
+    logged = {call.args[0]: call.args[1] for call in log.call_args_list}
+    np.testing.assert_allclose(
+        logged["scene/pointcloud/0"].positions.as_arrow_array().to_pylist(),
+        [[0, 0, 0], [0.2, 0.3, 1], [1, 1, 0]],
     )

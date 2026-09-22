@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import cv2
+from dimos_generated.nav_msgs.msg import OccupancyGrid, Path
+from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.geometry import pose_matrix
+from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.occupancy import occupancy_extent
 
 
 def visualize_path(
@@ -28,10 +31,8 @@ def visualize_path(
     thickness: int = 1,
     scale: int = 8,
 ) -> Image:
-    import cv2
-
     image = visualize_occupancy_grid(occupancy_grid, "rainbow")
-    bgr = image.data
+    bgr = image_view(image)
 
     bgr = cv2.resize(
         bgr,
@@ -40,19 +41,21 @@ def visualize_path(
     )
 
     # Convert robot dimensions from meters to grid cells, then to scaled pixels
-    resolution = occupancy_grid.resolution
+    occupancy_extent(occupancy_grid)
+    resolution = occupancy_grid.info.resolution
+    world_to_grid = np.linalg.inv(pose_matrix(occupancy_grid.info.origin))
     robot_width_px = int((robot_width / resolution) * scale)
     robot_length_px = int((robot_length / resolution) * scale)
 
     # Draw robot rectangle at each path point
     for pose in path.poses:
         # Convert world coordinates to grid coordinates
-        grid_coord = occupancy_grid.world_to_grid([pose.x, pose.y, pose.z])
-        cx = int(grid_coord.x * scale)
-        cy = int(grid_coord.y * scale)
+        local = world_to_grid @ pose_matrix(pose.pose)
+        cx = int(local[0, 3] / resolution * scale)
+        cy = int(local[1, 3] / resolution * scale)
 
-        # Get yaw angle from pose orientation
-        yaw = pose.yaw
+        # Get heading relative to the grid's origin orientation.
+        yaw = np.arctan2(local[1, 0], local[0, 0])
 
         # Define rectangle corners centered at origin (length along x, width along y)
         half_length = robot_length_px / 2
@@ -81,9 +84,4 @@ def visualize_path(
         pts = rotated_corners.astype(np.int32).reshape((-1, 1, 2))
         cv2.polylines(bgr, [pts], isClosed=True, color=(0, 0, 0), thickness=thickness)
 
-    return Image(
-        data=bgr,
-        format=ImageFormat.BGR,
-        frame_id=occupancy_grid.frame_id,
-        ts=occupancy_grid.ts,
-    )
+    return image_from_array(bgr, encoding="bgr8", header=occupancy_grid.header)

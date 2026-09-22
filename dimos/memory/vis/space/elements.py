@@ -39,11 +39,11 @@ if TYPE_CHECKING:
         Vector3,
     )
     from dimos_generated.nav_msgs.msg import OccupancyGrid, Path
+    from dimos_generated.sensor_msgs.msg import PointCloud2
 
     from dimos.memory.type.observation import Observation
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 @dataclass

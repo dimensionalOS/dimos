@@ -866,3 +866,28 @@ or fallback was added. The temporal object-registration suite also fails
 collection because the optional Hydra/segmentation environment is absent.
 Focused generated-object CDR and spatial-deduplication tests pass. Full viewer UI
 acceptance and the remaining inventory retain their unchecked OpenSpec tasks.
+
+### Generated cloud and occupancy renderers (runtime cutover in progress)
+
+Cloud-to-map algorithms, inflation, gradient/Voronoi maps, obstacle operations,
+and navigation-map composition now use generated PointCloud2/OccupancyGrid values.
+Map images and path footprints use generated Image/Path values. Space accepts
+CDR point clouds directly in both SVG and Rerun. Packed rgb/rgba conversion handles
+FLOAT32 color bits, UINT32, both byte orders, and padded rows.
+
+- `occupancy-renderer-tests.log`: 92 generated mapping, color, view, and renderer
+  checks passed, including real headless Rerun SDK output and rotated-grid paths.
+- `occupancy-fixtures-tests.log`: 10 existing image/XML fixture checks passed.
+  Three gradient image fixtures were regenerated for the ROS float32 resolution:
+  0.05 is stored as 0.05000000074505806. A direct comparison reproduced the old
+  fixture exactly with float64 0.05 and identified 718 changed pixels with the
+  declared float32 value. Seven other fixture comparisons passed unchanged.
+- `occupancy-cutover-mypy.log`: all 15 checked production/demo modules passed.
+- `demo_occupancy.py`: 1,200 CDR points, 44 occupied cells before inflation and
+  208 afterward; exact source timestamp 1700000000123456789 ns retained. SVG
+  output is `build/message-codegen/demo/evidence/occupancy.svg`.
+
+These checks do not complete the broader navigation cutover. A* and path
+resampling/masking callers and their fixtures still require conversion, as do
+remaining perception cloud/image producers. The demo SVG was generated and
+validated programmatically; human visual review is deferred.

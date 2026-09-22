@@ -15,13 +15,16 @@
 from functools import lru_cache
 from typing import Literal, TypeAlias
 
+import cv2
+from dimos_generated.nav_msgs.msg import OccupancyGrid, Path
+from dimos_generated.sensor_msgs.msg import Image
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.geometry import pose_matrix
+from dimos.msgs.image import image_from_array
+from dimos.msgs.occupancy import occupancy_extent, occupancy_view
 
 Palette: TypeAlias = Literal["rainbow", "turbo"]
 
@@ -31,33 +34,27 @@ def visualize_occupancy_grid(
 ) -> Image:
     match palette:
         case "rainbow":
-            bgr_image = rainbow_image(occupancy_grid.grid)
+            bgr_image = rainbow_image(occupancy_view(occupancy_grid))
         case "turbo":
-            bgr_image = turbo_image(occupancy_grid.grid)
+            bgr_image = turbo_image(occupancy_view(occupancy_grid))
         case _:
             raise NotImplementedError()
 
     if path is not None and len(path.poses) > 0:
         _draw_path(occupancy_grid, bgr_image, path)
 
-    return Image(
-        data=bgr_image,
-        format=ImageFormat.BGR,
-        frame_id=occupancy_grid.frame_id,
-        ts=occupancy_grid.ts,
-    )
+    return image_from_array(bgr_image, encoding="bgr8", header=occupancy_grid.header)
 
 
 def _draw_path(occupancy_grid: OccupancyGrid, bgr_image: NDArray[np.uint8], path: Path) -> None:
-    import cv2
-
+    occupancy_extent(occupancy_grid)
+    world_to_grid = np.linalg.inv(pose_matrix(occupancy_grid.info.origin))
     points = []
     for pose in path.poses:
-        grid_coord = occupancy_grid.world_to_grid([pose.x, pose.y, pose.z])
-        pixel_x = int(grid_coord.x)
-        pixel_y = int(grid_coord.y)
-
-        if 0 <= pixel_x < occupancy_grid.width and 0 <= pixel_y < occupancy_grid.height:
+        position = pose.pose.position
+        local = world_to_grid @ np.array([position.x, position.y, position.z, 1.0])
+        pixel_x, pixel_y = np.floor(local[:2] / occupancy_grid.info.resolution).astype(int)
+        if 0 <= pixel_x < occupancy_grid.info.width and 0 <= pixel_y < occupancy_grid.info.height:
             points.append((pixel_x, pixel_y))
 
     if len(points) > 1:
@@ -76,8 +73,6 @@ def rainbow_image(grid: NDArray[np.int8]) -> NDArray[np.uint8]:
     Returns:
         Image with rainbow visualization of the occupancy grid
     """
-    import cv2
-
     # Create a copy of the grid for visualization
     # Map values to 0-255 range for colormap
     height, width = grid.shape

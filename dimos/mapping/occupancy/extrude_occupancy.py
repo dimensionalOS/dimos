@@ -13,10 +13,11 @@
 # limitations under the License.
 
 
+from dimos_generated.nav_msgs.msg import OccupancyGrid
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.msgs.occupancy import occupancy_view
 
 # Rectangle type: (x, y, width, height)
 Rect = tuple[int, int, int, int]
@@ -36,12 +37,10 @@ def identify_convex_shapes(occupancy_grid: OccupancyGrid) -> list[Rect]:
     Returns:
         List of rectangles as (x, y, width, height) tuples in grid coords.
     """
-    grid = occupancy_grid.grid
+    grid = occupancy_view(occupancy_grid)
 
     # Create binary mask of occupied cells (treat UNKNOWN as OCCUPIED)
-    occupied_mask = ((grid == CostValues.OCCUPIED) | (grid == CostValues.UNKNOWN)).astype(
-        np.uint8
-    ) * 255
+    occupied_mask = ((grid == 100) | (grid == -1)).astype(np.uint8) * 255
 
     return _decompose_to_rectangles(occupied_mask)
 
@@ -184,9 +183,9 @@ def generate_mujoco_scene(
     # Get rectangles from the occupancy grid
     rectangles = identify_convex_shapes(occupancy_grid)
 
-    resolution = occupancy_grid.resolution
-    origin_x = occupancy_grid.origin.position.x
-    origin_y = occupancy_grid.origin.position.y
+    resolution = occupancy_grid.info.resolution
+    origin_x = occupancy_grid.info.origin.position.x
+    origin_y = occupancy_grid.info.origin.position.y
 
     # Build XML
     xml_lines = [
@@ -208,7 +207,7 @@ def generate_mujoco_scene(
     # Add each rectangle as a box geom
     for i, (gx, gy, gw, gh) in enumerate(rectangles):
         # Convert grid coordinates to world coordinates
-        # Grid origin is top-left, world origin is at occupancy_grid.origin
+        # Grid origin is top-left, world origin is at occupancy_grid.info.origin
         # gx, gy are in grid cells, need to convert to meters
         world_x = origin_x + (gx + gw / 2) * resolution
         world_y = origin_y + (gy + gh / 2) * resolution
