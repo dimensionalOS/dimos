@@ -35,7 +35,13 @@ from dimos.teleop.memory_world.answers import WorldAnswers
 from dimos.teleop.memory_world.query import ClusterSummary, MemoryQueryResult
 from dimos.teleop.memory_world.route import LETHAL, RoutePlanner
 from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix, quaternion_from_matrix
-from dimos.teleop.memory_world.visual_search import Place, cluster_places, search_phrase
+from dimos.teleop.memory_world.visual_answers import VisualAnswers
+from dimos.teleop.memory_world.visual_search import (
+    Place,
+    VisualMemoryIndex,
+    cluster_places,
+    search_phrase,
+)
 from dimos.teleop.memory_world.world_cache import WorldCache
 
 VOXEL = 0.1
@@ -441,6 +447,89 @@ def test_a_viewer_opening_an_empty_world_is_not_shown_the_last_visitor_s_answer(
     assert world._active_query_result is live
     assert world._last_answer == ("places", "xyz")
     assert len(world._world_clients) == 2
+
+
+def test_an_index_the_recording_already_holds_is_used_not_rebuilt() -> None:
+    """`build_image_index_on_start` off with vectors present means USE them.
+
+    Topping up on every start is minutes to hours of cpu embedding under the store lock,
+    and the viewer says "Search not ready" for all of it over an index that could already
+    have answered. An EMPTY index still refuses, because there is nothing to answer with.
+    """
+    built = []
+
+    class Index:
+        precomputed_stream_name = None
+        model = SimpleNamespace(embed_text=lambda _text: None)
+
+        def __init__(self, rows: int) -> None:
+            self.rows = rows
+
+        def count(self) -> int:
+            return self.rows
+
+        def build(self, stride: int = 1) -> int:
+            built.append(stride)
+            return 0
+
+        def load(self) -> None:
+            pass
+
+    def run(rows: int, on_start: bool) -> str:
+        host = SimpleNamespace(
+            config=SimpleNamespace(
+                image_stream_name="color_image",
+                build_image_index_on_start=on_start,
+                image_index_stride=3,
+            ),
+            _store_lock=threading.RLock(),
+            _index_lock=threading.RLock(),
+            _index_progress="not started",
+            _ensure_store=lambda: SimpleNamespace(list_streams=lambda: ["color_image"]),
+            _ensure_visual_index=lambda: Index(rows),
+            whisper=None,
+        )
+        VisualAnswers._build_visual_index(host)
+        return host._index_progress
+
+    assert run(4826, on_start=False) == "ready (4826 frames)"
+    assert built == [], "an index that is already there was rebuilt"
+
+    assert run(4826, on_start=True) == "ready (4826 frames)"
+    assert built == [3], "an explicit build did not run"
+
+    assert "no embeddings" in run(0, on_start=False)
+
+
+def test_which_frames_are_indexed_does_not_move_when_tf_places_fewer_of_them() -> None:
+    """The stride counts frames of the image stream, never of the posed survivors.
+
+    Striding the survivors makes every pick a function of how many frames tf happened to
+    place, so a run that places one fewer re-phases all the rest and the index already in
+    the recording matches almost nothing the next build wants -- which is ~2/3 of the
+    recording re-embedded on cpu, holding the store lock, under a viewer that says only
+    "Search not ready". Measured on grocery.db: 4,826 rows stored and 6,431 wanted by the
+    very next build of the same file.
+    """
+    frames = [SimpleNamespace(id=i, ts=float(i)) for i in range(30)]
+    index = VisualMemoryIndex.__new__(VisualMemoryIndex)
+    index.image_stream_name = "color_image"
+    index.store = SimpleNamespace(
+        streams={"color_image": SimpleNamespace(order_by=lambda _field: iter(frames))}
+    )
+
+    def posed_ids(unplaceable: set[int]) -> list[int]:
+        index.pose_of = lambda obs: None if obs.id in unplaceable else np.eye(4)
+        return [obs.id for obs, _ in index._posed_frames(stride=3)]
+
+    everything = posed_ids(set())
+    assert everything == list(range(0, 30, 3))
+
+    # tf loses three of them. The rest must keep the numbers they already had -- the
+    # failure this guards is not "fewer frames" but "different frames".
+    fewer = posed_ids({0, 9, 21})
+    assert fewer == [3, 6, 12, 15, 18, 24, 27]
+    assert set(fewer) < set(everything)
 
 
 def test_the_smoothed_global_map_wins_but_an_empty_one_falls_back_to_the_raw() -> None:

@@ -19,14 +19,16 @@ import {
 
 const statusEl = document.getElementById('status');
 const connectBtn = document.getElementById('connectBtn');
-const disconnectBtn = document.getElementById('disconnectBtn');
-const micBtn = document.getElementById('micBtn');
 const orbitBtn = document.getElementById('orbitBtn');
 const embedBtn = document.getElementById('embedBtn');
 const searchNote = document.getElementById('searchNote');
-const askForm = document.getElementById('askBar');
-const askInput = document.getElementById('askInput');
-const askBtn = document.getElementById('askBtn');
+const chatEl = document.getElementById('chat');
+const chatLogEl = document.getElementById('chatLog');
+const chatStateEl = document.getElementById('chatState');
+const chatForm = document.getElementById('chatForm');
+const chatInput = document.getElementById('chatInput');
+const chatBtn = document.getElementById('chatBtn');
+const chatMic = document.getElementById('chatMic');
 const logEl = document.getElementById('log');
 const backgroundMode = document.body.dataset.backgroundMode || 'black';
 
@@ -95,6 +97,7 @@ let flight = null;
 let results = null;
 let tour = null;
 let voxelStyle = null;
+let heightBand = null;
 // Per-frame work hung off the scene's tick: flights, replay, the tour.
 let tickers = [];
 
@@ -105,7 +108,9 @@ try {
     Flight = (await import(`/static_mw/flight.js${assetVersion}`)).Flight;
     ResultsNav = (await import(`/static_mw/results.js${assetVersion}`)).ResultsNav;
     Tour = (await import(`/static_mw/tour.js${assetVersion}`)).Tour;
-    voxelStyle = (await import('/static_mw/voxel_sprites.js')).voxelStyle;  // same instance as scene.js
+    const sprites = await import('/static_mw/voxel_sprites.js');  // same instances as scene.js
+    voxelStyle = sprites.voxelStyle;
+    heightBand = sprites.heightBand;
     diag('scene_module_loaded');
 } catch (err) {
     diag('scene_module_failed', { error: String(err && err.message || err) });
@@ -221,6 +226,7 @@ function handleControl(msg) {
             break;
         case 'ready':
             syncLayerBoxes();  // the cloud, photos and minimap exist now
+            syncHeightRange();  // and the cloud's own z range is known
             setStatus('World loaded — left stick walks, pinch both hands to scale');
             diag('server_ready');
             break;
@@ -232,7 +238,6 @@ function handleControl(msg) {
             // which persists; the status line is transient and gets overwritten by the next
             // thing that happens. Printing the answer in both showed it twice on screen.
             setStatus('Answer ready — places highlighted');
-            askBtn.disabled = false;
             break;
         case 'route':
             if (results) results.setRoute(msg);
@@ -240,6 +245,16 @@ function handleControl(msg) {
         case 'voice_transcript':
             setStatus(`Heard: “${msg.text}” — searching…`);
             if (scene) scene.setHeardText(msg.text);
+            break;
+        case 'chat':
+            appendChat(msg);
+            break;
+        case 'chat_history':
+            chatLogEl.textContent = '';
+            for (const entry of msg.entries || []) appendChat(entry);
+            break;
+        case 'agent_idle':
+            setAgentIdle(Boolean(msg.idle));
             break;
         case 'index_status':
             applyIndexStatus(msg);
@@ -484,6 +499,9 @@ async function startViewer() {
     // `connected` gates the phone's chrome: the status line is worth reading while the
     // world is still coming up and noise once it is there.
     document.body.classList.add('connected');
+    // With a keyboard the conversation gets its own panel; a phone has no room for it,
+    // and the menu's box is what says whether it is wanted at all.
+    showChat(chatWanted);
     scene.startDesktop(sendViewerPose);
     setStatus('Desktop view — click to look, WASD to walk');
 }
@@ -583,14 +601,14 @@ async function startRecording() {
         sendRecording(new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' }));
     };
     mine.start();
-    micBtn.classList.add('recording');
+    chatMic.classList.add('recording');
     setStatus('Listening…');
     diag('voice_recording_started');
 }
 
 function stopRecording() {
     micPress += 1;  // no start still waiting on a prompt belongs to a held button now
-    micBtn.classList.remove('recording');
+    chatMic.classList.remove('recording');
     // Let go of it HERE, not when `onstop` eventually arrives. `stop()` only queues that
     // event, so a press arriving in between found `recorder` still set and turned itself
     // away -- and the stale `onstop` then cleared the reference without starting anything.
@@ -666,12 +684,8 @@ stickEl.addEventListener('touchmove', moveStick, { passive: false });
 stickEl.addEventListener('touchend', releaseStick);
 stickEl.addEventListener('touchcancel', releaseStick);
 
-const hudBtn = document.getElementById('hudBtn');
-hudBtn.addEventListener('click', () => {
-    if (scene) hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
-});
+
 // The minimap starts hidden, so the button starts as the way to get it back.
-hudBtn.textContent = 'Show map';
 // Take me to the answer: the best photo of the place BEING BROWSED, else that place's
 // marker, else the focus point. The J key and this button both used to ask for index 0 of
 // the UNFILTERED photo list and fall back to _lastResultPoints[0], so after stepping to
@@ -697,7 +711,6 @@ async function ask(text, span) {
     if (!text) return null;
     const session = ws;  // the answer belongs to this connection only, and there must be one
     if (!session) return null;
-    askBtn.disabled = true;
     // The previous answer stops being the answer the moment another question is asked --
     // not when a new result arrives, because a question that FAILS never brings one and
     // its predecessor stayed on screen. Through the nav, which owns the pictures and the
@@ -724,26 +737,187 @@ async function ask(text, span) {
     } catch (e) {
         if (ws === session) setStatus(`Question failed: ${e.message || e}`);
         return null;
-    } finally {
-        if (ws === session) askBtn.disabled = false;
     }
 }
 
-askForm.addEventListener('submit', (event) => {
+// ---- the agent's conversation -------------------------------------------------
+//
+// From andrew/feat/vr_demo. The server forwards the rows the human CLI prints: what was
+// asked, each tool call and its result, and the reply. Typing here does NOT go through
+// `ask()` above -- that one blocks on an HTTP round trip and returns only the
+// conclusion, which is what the old one-line ask bar could show. This publishes the
+// question to the agent and lets every step come back on its own.
+
+const TOOL_ARGS_CHARS = 160;
+
+function escapeHtml(text) {
+    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function inlineMarkdown(text) {
+    return escapeHtml(text)
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/(^|[^*\w])\*(?!\*)([^*]+?)\*(?![*\w])/g, '$1<em>$2</em>');
+}
+
+// The markdown a model writes, as HTML: bold, italics, code, and lists. Escaped first,
+// so a recording that contains a `<script>` in a label cannot become one here.
+function renderMarkdown(text) {
+    const html = [];
+    let list = null;
+    for (const raw of String(text).split('\n')) {
+        const line = raw.trimEnd();
+        const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+        const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+        const item = bullet || numbered;
+        const kind = bullet ? 'ul' : 'ol';
+        if (item && list !== kind) {
+            if (list) html.push(`</${list}>`);
+            html.push(`<${kind}>`);
+            list = kind;
+        } else if (!item && list) {
+            html.push(`</${list}>`);
+            list = null;
+        }
+        if (item) html.push(`<li>${inlineMarkdown(item[1])}</li>`);
+        else if (line) html.push(`<div>${inlineMarkdown(line)}</div>`);
+        else html.push('<div class="gap"></div>');
+    }
+    if (list) html.push(`</${list}>`);
+    return html.join('');
+}
+
+function appendChat(entry) {
+    const row = document.createElement('div');
+    row.className = `msg ${entry.role}`;
+    if (entry.role === 'tool_call') {
+        const args = entry.args || '';
+        const short = args.length > TOOL_ARGS_CHARS ? `${args.slice(0, TOOL_ARGS_CHARS)}…` : args;
+        const argsEl = document.createElement('span');
+        argsEl.className = 'args';
+        argsEl.textContent = short;
+        row.append(`▶ ${entry.name}(`, argsEl, ')');
+        if (short !== args) {
+            row.classList.add('expandable');
+            row.title = 'Click to expand';
+            row.addEventListener('click', () => {
+                const open = row.classList.toggle('open');
+                argsEl.textContent = open ? args : short;
+            });
+        }
+    } else if (entry.role === 'tool_result') {
+        row.textContent = `↳ ${entry.text}`;
+        if (entry.ok === false) row.classList.add('failed');
+    } else {
+        const who = document.createElement('span');
+        who.className = 'who';
+        who.textContent = entry.role;
+        const body = document.createElement('div');
+        body.innerHTML = renderMarkdown(entry.text || '');
+        row.append(who, body);
+    }
+    // Only follow the tail if the reader is already at it: scrolling back to read a tool
+    // result must not be yanked away by the next row.
+    const follow = chatLogEl.scrollTop + chatLogEl.clientHeight >= chatLogEl.scrollHeight - 24;
+    chatLogEl.appendChild(row);
+    if (follow) chatLogEl.scrollTop = chatLogEl.scrollHeight;
+}
+
+function setAgentIdle(idle) {
+    chatEl.classList.toggle('thinking', !idle);
+    chatStateEl.textContent = idle ? 'idle' : 'thinking…';
+}
+
+chatForm.addEventListener('submit', (event) => {
     event.preventDefault();
-    void ask(askInput.value);
-    askInput.blur();
+    const text = chatInput.value.trim();
+    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+    // The places and pictures on screen belong to the previous question.
+    if (results) results.clear();
+    ws.send(encodeText('ask', { text }));
+    chatInput.value = '';
+    setAgentIdle(false);
+    diag('ask', { text });
 });
 
-/** Whether you can ask at all: the server says so (`ask`), older servers only said `present`. */
+/** Whether you can ask at all: the server says so (`ask`), older servers only said
+ *  `present`. HYPE-ONLY and it must survive every merge from vr_demo2: this build answers
+ *  from hyperspace, not a SigLIP frame index, so `present` is FALSE here and gating on it
+ *  alone parks the ask box on "Search not ready" while curl'd questions are answered and
+ *  drawn in the world. `present` remains the fallback for a server too old to send `ask`. */
 function applyAskAvailability() {
     const connected = !!ws;
     const canAsk = !!(indexStatus.ask ?? indexStatus.present);
-    askInput.disabled = !connected || !canAsk;
-    askInput.placeholder = canAsk
+    chatInput.disabled = !connected || !canAsk;
+    chatBtn.disabled = !connected || !canAsk;
+    chatInput.placeholder = canAsk
         ? 'Ask the recording, e.g. where did I see a chair'
         : 'Search not ready — see the menu';
-    micBtn.classList.toggle('hidden', !connected || !canAsk);
+    chatMic.classList.toggle('hidden', !connected || !canAsk);
+}
+
+// ---- the lidar height band ----------------------------------------------------
+// Two sliders over the cloud's OWN z range, so "all the way up" means the top of this
+// recording rather than some number chosen for a different building. They are indices
+// into that range, not metres: a range input's step is fixed at authoring time and the
+// range is not known until the world arrives.
+const HEIGHT_STEPS = 400;
+const heightMinEl = document.getElementById('heightMin');
+const heightMaxEl = document.getElementById('heightMax');
+const heightMinVal = document.getElementById('heightMinVal');
+const heightMaxVal = document.getElementById('heightMaxVal');
+let heightRange = null;   // {low, high} metres, from the cloud header
+
+for (const el of [heightMinEl, heightMaxEl]) {
+    el.min = 0; el.max = HEIGHT_STEPS; el.step = 1;
+    el.disabled = true;
+    el.addEventListener('input', applyHeightBand);
+}
+document.getElementById('heightResetBtn').addEventListener('click', () => {
+    heightMinEl.value = 0;
+    heightMaxEl.value = HEIGHT_STEPS;
+    applyHeightBand();
+});
+
+const heightAt = (slider) => {
+    if (!heightRange) return null;
+    const t = Number(slider.value) / HEIGHT_STEPS;
+    return heightRange.low + t * (heightRange.high - heightRange.low);
+};
+
+function applyHeightBand() {
+    if (!heightRange || !heightBand) return;
+    // Either slider may be dragged past the other; the band is what lies BETWEEN them,
+    // so read them as a pair rather than trusting which is which. Letting min exceed max
+    // would empty the world with no way back but the reset button.
+    const a = heightAt(heightMinEl);
+    const b = heightAt(heightMaxEl);
+    const low = Math.min(a, b);
+    const high = Math.max(a, b);
+    // Slack only where a slider is at its stop, so the labels stay true everywhere else.
+    // The bounds came from the extreme voxels themselves, and an exact cut at a bound is
+    // a float comparison against the very points that set it -- "all the way down" has to
+    // mean all of them, not all but the lowest.
+    const slack = (heightRange.high - heightRange.low) / HEIGHT_STEPS;
+    const ends = [Number(heightMinEl.value), Number(heightMaxEl.value)];
+    heightBand.value.set(
+        Math.min(...ends) <= 0 ? low - slack : low,
+        Math.max(...ends) >= HEIGHT_STEPS ? high + slack : high,
+    );
+    heightMinVal.textContent = `${low.toFixed(2)}m`;
+    heightMaxVal.textContent = `${high.toFixed(2)}m`;
+}
+
+/** Scale the sliders to the cloud that just arrived, keeping them wide open. */
+function syncHeightRange() {
+    const bounds = scene && scene._cloudBounds;
+    if (!bounds || !Number.isFinite(bounds.z_min) || !Number.isFinite(bounds.z_max)) return;
+    heightRange = { low: bounds.z_min, high: bounds.z_max };
+    heightMinEl.value = 0;
+    heightMaxEl.value = HEIGHT_STEPS;
+    heightMinEl.disabled = heightMaxEl.disabled = false;
+    applyHeightBand();
 }
 
 // ---- menu --------------------------------------------------------------------
@@ -766,28 +940,40 @@ document.getElementById('menuDisconnectBtn').addEventListener('click', () => {
 const layerBoxes = {
     voxels: document.getElementById('layerVoxels'),
     photos: document.getElementById('layerPhotos'),
-    hud: document.getElementById('layerHud'),
 };
 layerBoxes.voxels.addEventListener('change', () => scene && scene._cloudWanted !== layerBoxes.voxels.checked && scene.toggleCloud());
 layerBoxes.photos.addEventListener('change', () => scene && scene._imageQuadGroup.visible !== layerBoxes.photos.checked && scene.toggleImages());
-layerBoxes.hud.addEventListener('change', () => {
-    if (scene && scene._hudPanel.visible !== layerBoxes.hud.checked) hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
-});
+// Whether the conversation is wanted. Survives a reconnect, which the scene and the
+// panel's contents do not. Declared before `showChat` reads it: a `let` after its first
+// use is only safe by accident of call order.
+let chatWanted = true;
+const chatToggle = document.getElementById('chatToggle');
+chatToggle.addEventListener('click', () => showChat(!document.body.classList.contains('chat-open')));
+
+/** Show or hide the conversation. A phone never gets it, however it is asked for. */
+function showChat(open) {
+    const room = !document.body.classList.contains('touch');
+    document.body.classList.toggle('chat-open', open && room);
+    chatWanted = open;
+    // The world is drawn into what the panel leaves, so opening or closing it resizes the
+    // renderer. Without this the strip under the panel is still rendered and everything in
+    // it -- an answer's photographs, most often -- is drawn where nobody can see it.
+    if (scene && scene._resizeDesktopCamera) scene._resizeDesktopCamera();
+}
 
 /** The scene changed a layer itself (a key, the tour): the boxes and the map button follow. */
 function syncBoxesFromScene() {
     if (!scene) return;
     layerBoxes.voxels.checked = scene._cloudWanted;
     layerBoxes.photos.checked = scene._imageQuadGroup.visible;
-    layerBoxes.hud.checked = scene._hudPanel.visible;
-    hudBtn.textContent = scene._hudPanel.visible ? 'Hide map' : 'Show map';
 }
 
 /** Apply the boxes to the current scene: they keep their state across a reconnect, the scene does not. */
 function syncLayerBoxes() {
     const wanted = { voxels: layerBoxes.voxels.checked, photos: layerBoxes.photos.checked,
-        hud: layerBoxes.hud.checked };
+    };
     if (!scene) return;
+    showChat(chatWanted);
     // Each toggle writes the boxes back; the snapshot keeps the later ones honest.
     if (scene._cloudWanted !== wanted.voxels) scene.toggleCloud();
     if (scene._imageQuadGroup && scene._imageQuadGroup.visible !== wanted.photos) scene.toggleImages();
@@ -796,10 +982,6 @@ function syncLayerBoxes() {
     // matches a fresh scene's default, which is exactly the "Photos off" case, and an
     // answer would then have switched them back on again after every reconnect.
     scene._photosPinnedOff = !wanted.photos;
-    scene._hudOff = !wanted.hud;  // same reason: the toggle below does not always run
-    if (scene._hudPanel && scene._hudPanel.visible !== wanted.hud) {
-        hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
-    }
 }
 const cubesBox = document.getElementById('layerCubes');
 function setVoxelStyle(cubes) {
@@ -869,7 +1051,13 @@ window.addEventListener('keydown', (event) => {
         return;
     }
     if (typing) return;
-    if (event.code === 'Slash') { event.preventDefault(); askInput.focus(); return; }
+    if (event.code === 'Slash') { event.preventDefault(); chatInput.focus(); return; }
+    // C, beside the other layer keys. Here and not in `scene.js` with M/I/V because
+    // the panel is DOM the scene knows nothing about.
+    if (event.code === 'KeyC' && document.body.classList.contains('desktop-view')) {
+        showChat(!document.body.classList.contains('chat-open'));
+        return;
+    }
     if (tour && tour.active) {
         // Space always advances the tour. The arrows do too -- EXCEPT on a hands-on
         // station, whose whole text is "the controls are back": it prints
@@ -987,9 +1175,9 @@ document.getElementById('cameraBtn').addEventListener('click', () => {
     if (scene) scene.stepQueryImage();  // the same filtered step the P key takes
 });
 
-micBtn.addEventListener('pointerdown', startRecording);
-micBtn.addEventListener('pointerup', stopRecording);
-micBtn.addEventListener('pointerleave', stopRecording);
+chatMic.addEventListener('pointerdown', startRecording);
+chatMic.addEventListener('pointerup', stopRecording);
+chatMic.addEventListener('pointerleave', stopRecording);
 
 // ---- UI handlers -----------------------------------------------------------
 
@@ -1003,8 +1191,15 @@ async function connect() {
         // unanswered prompt would otherwise leave the canvas black forever.
         void acquireMic();
         await startViewer();
+        // A fresh connection is a fresh session: nothing on screen was asked for by the
+        // person who just arrived. The server stopped replaying the last visitor's answer
+        // over the wire, but the PAGE keeps its own copy -- the typed question, the
+        // places, the route and the evidence photos all survive a disconnect, so a
+        // reconnect used to come back to someone else's answer with no query behind it.
+        chatInput.value = '';
+        chatLogEl.textContent = '';
+        if (results) results.clear();
         connectBtn.classList.add('hidden');
-        disconnectBtn.classList.remove('hidden');
         applyIndexStatus(indexStatus);
         void loadFrames();
         if (document.body.classList.contains('desktop-view')) orbitBtn.classList.remove('hidden');
@@ -1061,14 +1256,14 @@ async function disconnect() {
     timeline.hidden = true;
     timeline.classList.remove('loading', 'replaying');
     orbitBtn.textContent = 'Orbit frame';  // the next world names its frame again
-    hudBtn.textContent = 'Show map';       // a fresh scene starts with the minimap hidden
-    askBtn.disabled = false;               // a question in flight stops owning it
     if (replay) replay.dispose();
     replay = null;
-    document.body.classList.remove('desktop-view');
+    document.body.classList.remove('desktop-view', 'chat-open');
+    chatLogEl.textContent = '';
+    setAgentIdle(true);
+    chatStateEl.textContent = 'not connected';
     connectBtn.classList.remove('hidden');
     connectBtn.disabled = false;
-    disconnectBtn.classList.add('hidden');
     applyAskAvailability();  // ws is null by now: the ask box goes dead with the mic
     embedBtn.classList.add('hidden');
     orbitBtn.classList.add('hidden');
@@ -1096,6 +1291,16 @@ window.app = {
     navigate: () => results && results.navigate(),
     // Draw voxels as cubes (true) or spheres (false); also in the menu, remembered per browser.
     cubes: (on = null) => { if (on !== null) setVoxelStyle(on); return !!(voxelStyle && voxelStyle.value); },
+    // The lidar height band: the slider range the world came with, and what is kept.
+    heightBand: () => (heightBand ? { low: heightBand.value.x, high: heightBand.value.y, range: heightRange } : null),
+    setHeightBand: (low, high) => {
+        if (!heightRange) return null;
+        const at = (m) => Math.round(((m - heightRange.low) / (heightRange.high - heightRange.low)) * HEIGHT_STEPS);
+        heightMinEl.value = Math.max(0, Math.min(HEIGHT_STEPS, at(low)));
+        heightMaxEl.value = Math.max(0, Math.min(HEIGHT_STEPS, at(high)));
+        applyHeightBand();
+        return { low: heightBand.value.x, high: heightBand.value.y };
+    },
     orbitFrame: (frame) => setOrbitFrame(frame),
     searchStatus: () => indexStatus,
     // The museum tour: start, step, exit; state for automated checks.
@@ -1103,6 +1308,10 @@ window.app = {
     tourStart: (station = 0) => tour && tour.start(station),
     tourState: () => tour && tour.state(),
     flying: () => !!(flight && flight.flying),
+    // Read-only handle for checking what the world is actually doing. The map button's
+    // label is NOT that: it is initialised to "Show map" and only rewritten when a
+    // toggle runs, so it reads the same whether the map is hidden or simply untouched.
+    scene: () => scene,
     perf: () => (scene ? scene.getPerfStats() : null),
     resetPerf: () => scene && scene.resetPerf(),
     benchmark: (frames) => (scene ? scene.benchmarkRender(frames) : null),
@@ -1128,7 +1337,6 @@ window.app = {
         scene.focusOn(points[index].position);
         return true;
     },
-    hud: () => scene && scene.toggleHud(),
     // Search readiness as the server last reported it, and the embed job's state.
     indexStatus: () => indexStatus,
     // Orbit the robot's frame (also key O / the Orbit button); null toggles.

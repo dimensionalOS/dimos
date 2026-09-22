@@ -109,8 +109,9 @@ export class ReplayLayer extends THREE.Points {
                     vec3 ramp = t < 1.0 ? mix(color0, color1, t) : t < 2.0 ? mix(color1, color2, t - 1.0) : mix(color2, color3, t - 2.0);
                     vColor = mix(ramp, freshColor, fresh);
                     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-                    gl_PointSize = spritePointSize(mvPosition);
-                    gl_Position = projectionMatrix * mvPosition;
+                    bool gone = outsideHeightBand(position);
+                    gl_PointSize = gone ? 0.0 : spritePointSize(mvPosition);
+                    gl_Position = gone ? vec4(2.0, 2.0, 2.0, 1.0) : projectionMatrix * mvPosition;
                 }`,
             fragmentShader: SPRITE_FRAGMENT_SHADER,
         });

@@ -303,7 +303,13 @@ class VisualMemoryIndex:
                 settings["device"] = self._device
             self._model = SigLIPModel(**settings)
             self._model.start()
-            logger.info("loaded %s for visual memory search", self.model_name)
+            # The DEVICE, not just the model. Without it there is no way to tell from a log
+            # whether a run that asked for Metal got it: a config field that silently does
+            # not take, or a `default_torch_device()` that fell back, both look like a
+            # normal load. `model.device` is what the model resolved, not what was asked.
+            logger.info(
+                "loaded %s on %s for visual memory search", self.model_name, self._model.device
+            )
         return self._model
 
     @property
@@ -469,15 +475,29 @@ class VisualMemoryIndex:
             "index_kind": INDEX_KIND_TAG,
         }
 
-    def _posed_frames(self) -> Iterator[tuple[Any, np.ndarray]]:
-        """(image observation, world_T_optical) in time order, skipping frames tf cannot place."""
-        for obs in self.store.streams[self.image_stream_name].order_by("ts"):
+    def _posed_frames(self, stride: int = 1) -> Iterator[tuple[Any, np.ndarray]]:
+        """(image observation, world_T_optical) in time order, skipping frames tf cannot place.
+
+        The stride counts frames of the IMAGE STREAM, not of the posed ones that survive
+        the skip, and that distinction is the whole point. Striding the survivors makes
+        the sample set a function of how many frames tf happened to place, so a run that
+        places a few more or fewer re-phases every later pick: the index already in the
+        recording then matches almost nothing the next build wants, and it re-embeds most
+        of the recording -- on cpu, holding the store lock, while the viewer says only
+        "Search not ready". Measured on grocery.db: 24,110 frames, 14,478 posed, stride 3
+        over the survivors is the 4,826 rows stored, and a fresh build of the same file
+        wanted 6,431 it did not have. Counting raw frames makes the set depend on the
+        recording alone, so a second build asks for exactly what the first one wrote.
+        """
+        for index, obs in enumerate(self.store.streams[self.image_stream_name].order_by("ts")):
+            if index % stride:
+                continue
             matrix = self.pose_of(obs)
             if matrix is not None:
                 yield obs, matrix
 
     def build(self, stride: int = 1, batch_size: int = 8) -> int:
-        """Embed every *stride*-th posed frame of the image stream into the index.
+        """Embed every *stride*-th frame of the image stream that tf can place.
 
         Returns the number of frames added. Existing index rows are kept, so a
         rebuild after adding frames only costs the new ones.
@@ -503,10 +523,13 @@ class VisualMemoryIndex:
         except ValueError as mismatch:  # another model, camera or pose convention
             target, stale = None, str(mismatch)  # dropped below, once vectors replace it
         already_indexed = set() if target is None else {obs.data.source_id for obs in target}
+        # A frame tf cannot place is skipped, not consumed: it stays wanted, and a later
+        # build over a repaired tf picks it up. That retry costs a pose lookup, never an
+        # embedding, because the skip happens before the model is asked for anything.
         wanted = (
             (obs, pose)
-            for index, (obs, pose) in enumerate(self._posed_frames())
-            if index % stride == 0 and int(obs.id) not in already_indexed
+            for obs, pose in self._posed_frames(stride=stride)
+            if int(obs.id) not in already_indexed
         )
 
         added = 0

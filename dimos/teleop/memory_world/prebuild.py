@@ -32,6 +32,7 @@ import argparse
 import sys
 import time
 
+from dimos.models.base import default_torch_device
 from dimos.teleop.memory_world.module import MemoryWorldModule
 from dimos.utils.logging_config import setup_logger
 
@@ -66,11 +67,23 @@ def main(argv: list[str] | None = None) -> None:
         default=5,
         help="index every Nth frame; 5 is what ~/Commands/memworld serves with",
     )
+    # The module defaults SigLIP to cpu because MPS dies inside a dimos worker (see
+    # `siglip_device` there). This is a plain process, where MPS is fine -- measured
+    # 15 fps against 0.06 fps on cpu for the giant checkpoint -- so the best device
+    # is the default here.
+    parser.add_argument(
+        "--siglip-device",
+        default=default_torch_device(),
+        help="torch device for the frame embeddings; default: the best available",
+    )
     parser.add_argument("--image-stream", default=None, help="default: the module's guess")
     parser.add_argument("--lidar-stream", default=None)
     parser.add_argument("--world-frame", default=None)
     args = parser.parse_args(argv)
-    config: dict[str, object] = {"image_index_stride": args.image_index_stride}
+    config: dict[str, object] = {
+        "image_index_stride": args.image_index_stride,
+        "siglip_device": args.siglip_device,
+    }
     for key, value in (
         ("image_stream_name", args.image_stream),
         ("lidar_stream_name", args.lidar_stream),

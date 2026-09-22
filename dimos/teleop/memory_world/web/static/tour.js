@@ -596,7 +596,7 @@ export class Tour {
             if (this.scene._cloudWanted !== this._saved.voxels) this.scene.toggleCloud();
             this.scene.setQuality(this._saved.quality ?? null);
             // The box is the truth: it can be unchecked through the menu mid-tour.
-            this.scene._hudGroup.visible = this.scene._hudPanel.visible;
+            this.scene._hudGroup.visible = true;   // the answer panel lives here
         }
         this.diag('tour_exit');
     }

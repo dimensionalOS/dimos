@@ -9,7 +9,7 @@ import { desktopLookAngles, robotToWorldOffset, worldPosToRobotXY } from '/stati
 import { drawAnswer } from '/static_mw/answer_panel.js';
 import { DESKTOP_PITCH_LIMIT, installTouch } from './touch.js';
 import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms, viewportHeight, viewportHeightPx } from '/static_mw/voxel_sprites.js';
-import { ANSWER_PANEL_W, HUD_PANEL_SIZE, placeHud } from '/static_mw/hud.js';
+import { ANSWER_PANEL_W, placeHud } from '/static_mw/hud.js';
 import { addQueryImage, sightLineFor } from '/static_mw/evidence.js';
 import { OrbitControl } from '/static_mw/orbit.js';
 import { IMAGE_LOD_INTERVAL_S, photoMarkerMethods } from './photo_markers.js';
@@ -25,7 +25,6 @@ const EYE_HEIGHT_M = 1.6;
 const DESKTOP_LOOK_SENSITIVITY = 0.0022;      // radians per pixel of mouse travel
 const DESKTOP_SPRINT_MULTIPLIER = 3.0;
 const DESKTOP_MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE']);
-const HUD_MARKER_RADIUS = 0.008;
 const ANSWER_PANEL_H = 0.155;
 const CAMERA_PANEL_W = 0.40;          // replay camera frame, 16:9, above the answer
 const CAMERA_FRUSTUM_M = 0.5;         // how far the drawn frustum reaches from the camera
@@ -34,6 +33,14 @@ const IMAGE_QUAD_H = 0.34;            // 16:9-ish
 // Photo markers hang at the height the camera actually was; a recording whose odom
 // starts metres off the floor would otherwise float them all in the air.
 const PERF_WINDOW = 240;
+// The longest gap between rAF callbacks that can still be a RENDERED frame. Anything
+// above this is the browser having paused the loop -- a hidden tab, an occluded window, a
+// sleeping machine -- and `timeMs - _lastTickMs` then measures the pause, not the work.
+// Seen live: `median_ms` bit-identical at 8.34000015258789 across six reports 20 s apart
+// while `p95_ms` climbed 4003 -> 4071 -> 8002, which is a ring holding one real burst and
+// a handful of wake-ups. Cosmetic in the readout and NOT cosmetic in the governor, which
+// medians the last 90 samples and would step quality down to the floor on them.
+const MAX_RENDERED_FRAME_MS = 1000;
 // Quality steps down when the median frame is slow, back up after a settled spell.
 const QUALITY_LEVELS = [
     { voxel_fraction: 1.0, voxel_range_m: Infinity, quad_budget: 24, foveation: 0.0, resolution: 1.0 },
@@ -149,48 +156,15 @@ export class WorldScene {
         this._queryImages = [];                       // headers of the frames behind the last answer
         this._queryImageMeshes = [];                  // their quads, so one can be shown alone
         this._photosPinnedOff = false;                // set when the user turns Photos off
-        this._hudOff = false;                         // likewise for the minimap and answer panel
         this._queryImageCursor = -1;
         this.onOrbitChange = null;   // set by main.js; see setOrbit
 
-        // Top-down map: shared texture, used twice (ground projection + HUD).
-        this._topDownBounds = null;
 
-        // HUD minimap — head-locked panel attached to scene root (not world).
+        // Head-locked carrier for the VR answer panel and the replay camera frame. It
+        // used to hold a minimap too; that was removed 2026-09-22 because it rendered
+        // over the world and was not wanted back.
         this._hudGroup = new THREE.Group();
         this.scene.add(this._hudGroup);
-        this._hudPanelMat = new THREE.MeshBasicMaterial({
-            color: 0x182a40,
-            transparent: true,
-            opacity: 0.85,
-            side: THREE.DoubleSide,
-        });
-        this._hudPanel = new THREE.Mesh(
-            new THREE.PlaneGeometry(HUD_PANEL_SIZE, HUD_PANEL_SIZE),
-            this._hudPanelMat,
-        );
-        // Off by default: it covers the view and most of the time you want the
-        // world, not a map of it. M or the button brings it back.
-        this._hudPanel.visible = false;
-        this._hudGroup.add(this._hudPanel);
-        this._hudMarker = new THREE.Mesh(
-            new THREE.CircleGeometry(HUD_MARKER_RADIUS, 16),
-            new THREE.MeshBasicMaterial({ color: 0xff3344 }),
-        );
-        // Marker is child of the panel — its local XY is mm in panel space.
-        this._hudPanel.add(this._hudMarker);
-        this._hudMarker.position.z = 0.001;           // avoid z-fight
-        // Heading needle (small line in front of marker showing camera forward).
-        this._hudHeading = new THREE.Line(
-            new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(0, 0, 0),
-                new THREE.Vector3(0, 0.04, 0),
-            ]),
-            new THREE.LineBasicMaterial({ color: 0xff3344 }),
-        );
-        this._hudPanel.add(this._hudHeading);
-        this._hudHeading.position.z = 0.001;
-
         const answerCanvas = document.createElement('canvas');
         answerCanvas.width = 1024;
         answerCanvas.height = 256;
@@ -417,7 +391,17 @@ export class WorldScene {
     }
 
     _resizeDesktopCamera() {
-        const width = window.innerWidth || 800;
+        // The WINDOW minus whatever is parked beside the world, not the window. The chat
+        // panel is an overlay 300-400 px wide on the right, and while the renderer was
+        // sized to the full window everything drawn into that strip -- including an
+        // answer's evidence photographs -- was rendered underneath it. Measured: of six
+        // photos, the only two on screen sat at x=506 and x=708 in a 756 px window whose
+        // panel started at 454, so both of them were behind it.
+        const aside = document.getElementById('chat');
+        const covered = aside && getComputedStyle(aside).display !== 'none'
+            ? aside.getBoundingClientRect().width
+            : 0;
+        const width = Math.max(1, (window.innerWidth || 800) - covered);
         const height = window.innerHeight || 600;
         this.three.setSize(width, height);
         this.camera.aspect = width / height;
@@ -442,7 +426,6 @@ export class WorldScene {
         // J: stand where the best answer's camera stood (a known clear spot),
         // or, without a frame, bring the answer point in front of the viewer.
         if (event.code === 'KeyJ' && this.onJump) this.onJump();
-        if (event.code === 'KeyM') this.toggleHud();
         if (event.code === 'KeyO') this.setOrbit(!this._orbit.active);
         if (event.code === 'KeyP') this.stepQueryImage(event.shiftKey ? -1 : 1);
         else if (event.code === 'KeyI') this.toggleImages();
@@ -499,25 +482,15 @@ export class WorldScene {
         return this._orbit.active;
     }
 
-    toggleHud() {
-        this._hudPanel.visible = !this._hudPanel.visible;
-        this._hudOff = !this._hudPanel.visible;  // the user's own choice; an answer respects it
-        // The head-locked group carries the answer panel, and the tour pins it off so an
-        // answer cannot reappear beside an unrelated station. M toggles the user's panel,
-        // but it does not get to undo that pin -- `_setAnswer` already honours it, and
-        // this was the one way back in: two presses during a tour put a stale answer on
-        // screen next to a card describing something else.
-        this._hudGroup.visible = this._hudPanel.visible && !this._hudGroupPinnedOff;
-        this.diag('hud_toggle', { visible: this._hudPanel.visible });
-        if (this.onLayerChange) this.onLayerChange();
-        return this._hudPanel.visible;
-    }
 
     /** Phone controls: one finger looks, two fingers walk (drag) and scale (pinch). */
     _tick(timeMs) {
         viewportHeight.value = viewportHeightPx(this.three);
         const frameMs = this._lastTickMs ? timeMs - this._lastTickMs : 0;
-        if (frameMs > 0) {
+        // A pause is not a slow frame. `_lastTickMs` still advances below, so the next
+        // real frame is measured from now rather than from before the pause.
+        const hidden = typeof document !== 'undefined' && document.hidden;
+        if (frameMs > 0 && frameMs <= MAX_RENDERED_FRAME_MS && !hidden) {
             this._frameSamples[this._frameSampleCursor] = frameMs;
             this._frameSampleCursor = (this._frameSampleCursor + 1) % PERF_WINDOW;
             this._frameSampleCount = Math.min(this._frameSampleCount + 1, PERF_WINDOW);
@@ -631,13 +604,6 @@ export class WorldScene {
         this._cameraFrustum.userData.posed = false;
     }
 
-    _robotXYToHudUV(rx, ry) {
-        // u = (rx - x_min) / (x_max - x_min); v same for ry but flipped.
-        const b = this._topDownBounds;
-        const u = (rx - b.x_min) / Math.max(b.x_max - b.x_min, 1e-6);
-        const v = 1.0 - (ry - b.y_min) / Math.max(b.y_max - b.y_min, 1e-6);
-        return [Math.max(0, Math.min(1, u)), Math.max(0, Math.min(1, v))];
-    }
 
     _walk(stickX, stickY, up, dt) {
         // Quest left stick: forward push = stickY < 0, right push = stickX > 0.
@@ -908,7 +874,9 @@ export class WorldScene {
                     vColor = color;
                     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
                     // Above the roof cut (robot z) the voxel vanishes: the tour looks in from above.
-                    bool gone = position.z > roofCut || inSightLine(position);
+                    bool gone = position.z > roofCut
+                        || outsideHeightBand(position)
+                        || inSightLine(position);
                     gl_PointSize = gone ? 0.0 : spritePointSize(mvPosition);
                     gl_Position = gone ? vec4(2.0, 2.0, 2.0, 1.0) : projectionMatrix * mvPosition;
                 }`,
@@ -1383,30 +1351,13 @@ export class WorldScene {
         const inXr = this.three.xr.isPresenting;
         this._answerPanel.visible = inXr;
         if (this.onAnswerText) this.onAnswerText(inXr ? null : String(answer));
-        if (!this._hudGroupPinnedOff && !this._hudOff) this._hudGroup.visible = true;  // it lives here
+        if (!this._hudGroupPinnedOff) this._hudGroup.visible = true;  // it lives here
     }
 
-    setTopDownMap(header, jpegArrayBuffer) {
-        const blob = new Blob([jpegArrayBuffer], { type: 'image/jpeg' });
-        createImageBitmap(blob).then((bitmap) => {
-            this._topDownBounds = header;
-            // Only the minimap shows it (pasted on the floor it hid the voxels you stood
-            // among); V flipped: the histogram's row 0 is at y_max.
-            const hudTex = new THREE.Texture(bitmap);
-            hudTex.needsUpdate = true;
-            hudTex.colorSpace = THREE.SRGBColorSpace;
-            hudTex.repeat.y = -1;
-            hudTex.offset.y = 1;
-            if (this._hudPanelMat.map) { this._hudPanelMat.map.image?.close?.(); this._hudPanelMat.map.dispose(); }
-            this._hudPanelMat.color.set(0xffffff);
-            this._hudPanelMat.map = hudTex;
-            this._hudPanelMat.opacity = 0.95;
-            this._hudPanelMat.needsUpdate = true;
-
-            this.diag('top_down_map_loaded', { w: bitmap.width, h: bitmap.height });
-        }).catch((e) => {
-            this.diag('top_down_decode_failed', { error: String(e.message || e) });
-        });
+    setTopDownMap() {
+        // The top-down map was the minimap's texture and nothing else drew it, so this
+        // accepts the frame the server still sends and does nothing with it. Kept as a
+        // method because the message router calls it by name.
     }
 
     setOdomTrail(header, payloadArrayBuffer) {

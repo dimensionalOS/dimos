@@ -1,13 +1,16 @@
-// The head-up panel: where it hangs relative to the head, and the little map on it.
+// The head-up panel: where it hangs relative to the head.
+//
+// The MINIMAP that used to live on it was removed 2026-09-22 at Jeff's request -- it kept
+// rendering over the world and he did not want it back. What is left is the carrier for
+// the things that still have to hang in front of the head: the VR answer panel, and the
+// replay camera frame. Those manage their own visibility; this only places the group.
 //
 // Lifted out of scene.js when that file hit the repo's 75 KB file limit. It is the
 // largest piece of it that only reads the scene rather than being read by it, so it is
 // the one that moves without dragging anything behind it. Same shape as evidence.js:
 // a function over the scene, not a class.
 import * as THREE from 'https://esm.sh/three@0.160.0';
-import { worldDirToRobotXY, worldPosToRobotXY } from '/static_mw/world_frame.js';
 
-export const HUD_PANEL_SIZE = 0.22;          // metres (square)
 const HUD_DISTANCE = 0.55;            // metres in front of head
 const HUD_OFFSET_DOWN = 0.25;
 const HUD_OFFSET_LEFT = 0.32;
@@ -60,32 +63,7 @@ export function placeHud(scene) {
         .addScaledVector(fwd, HUD_DISTANCE)
         .addScaledVector(right, -offsetLeft);
     target.y -= HUD_OFFSET_DOWN;
-    // Tilt the panel slightly toward the user (downward tilt around X).
     scene._hudGroup.position.lerp(target, HUD_FOLLOW_LERP);
     // Face the user — look at head from panel position, then tilt up a bit.
     scene._hudGroup.lookAt(headPos);
-
-    // Update marker dot position to where the camera is *in world*.
-    // We need the camera's robot-frame XY. Camera is at headPos in three-world;
-    // un-apply worldGroup transform + frameRotate to get robot frame.
-    if (scene._topDownBounds) {
-        const robotXY = worldPosToRobotXY(scene._worldGroup, headPos);
-        if (robotXY) {
-            const uv = scene._robotXYToHudUV(robotXY[0], robotXY[1]);
-            // Panel is HUD_PANEL_SIZE wide centred at (0,0). Map u,v in [0,1]
-            // to [-S/2, S/2].
-            const s = HUD_PANEL_SIZE;
-            scene._hudMarker.position.x = (uv[0] - 0.5) * s;
-            scene._hudMarker.position.y = (0.5 - uv[1]) * s;
-            scene._hudHeading.position.copy(scene._hudMarker.position);
-            // The needle wants yaw in the MAP's frame, not three's, and the two differ
-            // by the world spin -- which is why this used to read `atan2(fwd.x, -fwd.z)`
-            // straight off the world forward and point somewhere else than the dot it
-            // sits on the moment anyone turned. That expression is what this returns at
-            // rotation.y === 0.
-            const [fwdRx, fwdRy] = worldDirToRobotXY(scene._worldGroup, fwd);
-            const robotYaw = Math.atan2(fwdRx, fwdRy);
-            scene._hudHeading.rotation.z = -robotYaw;
-        }
-    }
 }
