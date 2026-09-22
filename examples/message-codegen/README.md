@@ -891,3 +891,16 @@ and true-height Rerun geometry, then exports the reference and traveled paths to
 `build/message-codegen/demo/evidence/odometry-history.svg`. Open that file for
 visual review; remove it to clean up the demo output. This exercises control
 steps directly; it does not start a robot or the follower's timed control thread.
+
+### Generated frontier goals
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_frontiers.py
+```
+
+The demo decodes an occupancy map from CDR, detects the frontier between its
+known and unknown halves, and round-trips the selected pose through CDR while
+checking the exact source header. It prints the selected coordinates and writes
+`build/message-codegen/demo/evidence/frontiers.svg`. Open that SVG to inspect
+the selected goal; remove it to clean up. No robot, ROS installation, or viewer
+login is required.

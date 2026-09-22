@@ -1000,3 +1000,25 @@ archetype directly, retaining the actual Z coordinate.
 
 Exploration and patrol consumers still require generated-message conversion.
 This checkpoint does not complete the runtime or viewer acceptance gates.
+
+### Generated frontier exploration (runtime cutover in progress)
+
+Wavefront exploration now consumes generated OccupancyGrid/PoseStamped/Bool and
+publishes generated goals. Coordinate conversion uses the full map origin;
+frontier centroids retain the map plane's height. Stop goals preserve the
+current odometry header. Perimeters smaller than one cell no longer admit
+empty frontier groups.
+
+- `frontier-combined-tests.log`: 101 checks passed across frontier exploration,
+  follower/history, map producers, navigation, occupancy, geometry, and the
+  cumulative two-transport navigation E2E.
+- `frontier-mypy.log`: the explorer and demo pass mypy.
+- Four frontier regressions verify translated/rotated map centroids, original
+  pose headers on stop, copy isolation, and an actual exploration-loop goal
+  decoded from generated CDR with the map's exact frame and nanoseconds.
+- `demo_frontiers.py`: selected (5.00, 4.75) m at the known/unknown boundary;
+  stamp 1700000000123456789 ns retained. The review artifact is
+  `build/message-codegen/demo/evidence/frontiers.svg`.
+
+Patrol and other remaining consumers still need conversion. This checkpoint
+does not complete the full exploration-to-robot blueprint or stage 4 acceptance.
