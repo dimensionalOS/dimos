@@ -14,9 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import functools
-from pathlib import Path
 import struct
 from typing import TYPE_CHECKING, Any
 
@@ -37,8 +35,6 @@ if TYPE_CHECKING:
     from pydantic import JsonValue
     from rerun._baseclasses import Archetype
 
-    from dimos.experimental.agent_encode.pointcloud.runtime.context import Request, Result
-    from dimos.experimental.agent_encode.pointcloud.runtime.dispatch import EncodeBudget
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
 
@@ -346,34 +342,21 @@ class PointCloud2(Timestamped):
 
     @staticmethod
     def agent_encode_legend() -> str:
-        """Field reference for agent_encode(); delivered once per stream by consumers."""
-        from dimos.experimental.agent_encode.pointcloud.runtime import dispatch
+        """How an agent script measures a cloud with the point-cloud API; delivered once
+        per stream by consumers."""
+        # the encoder pulls in scipy and PIL, which message classes do not load
+        from dimos.experimental.agent_encode.pointcloud import legend
 
-        return dispatch.legend()
+        return legend.legend()
 
-    def agent_encode(
-        self,
-        requests: Mapping[str, Request[Result]] | None = None,
-        out_dir: str | Path | None = None,
-        budget: EncodeBudget | None = None,
-    ) -> dict[str, JsonValue]:
-        """Describe this cloud for an agent: run each named request in
-        ``requests`` and return its result under that name; requests share lazy
-        fields. ``budget`` bounds the JSON response without changing measurement
-        resolution. With no requests, return a compact ``Overview`` of coverage,
-        height-band regions and lower-surface relief; ``agent_encode({})`` returns
-        metadata only. Requests are renders (``DepthView``, ``OccupancyMap``) or
-        geometric queries (``Overlap``, ``Sweep``, ``Closest``) over shapes
-        (``Box``, ``Cylinder``, ``Sphere``) from
-        ``dimos.experimental.agent_encode.pointcloud.api``;
-        explicit requests choose their poses, sizes and bands.
-        ``agent_encode_legend()`` documents each and shows an example call. Images go
-        under ``out_dir`` (default ``$AGENT_ENCODE_DIR``, the current run directory,
-        or the DimOS state directory).
-        """
-        from dimos.experimental.agent_encode.pointcloud.runtime import dispatch
+    def agent_encode(self) -> dict[str, JsonValue]:
+        """A compact first look at this cloud for an agent: frame, timestamp, size, bounds
+        and centroid, and an ``Overview`` of coverage, height-band structure and
+        lower-surface relief. ``agent_encode_legend()`` explains how to measure more."""
+        # the encoder pulls in scipy and PIL, which message classes do not load
+        from dimos.experimental.agent_encode.pointcloud import overview
 
-        return dispatch.encode(self, requests, out_dir=out_dir, budget=budget)
+        return overview.encode(self)
 
     @functools.cached_property
     def center(self) -> Vector3:

@@ -18,13 +18,14 @@ from dataclasses import dataclass
 import math
 
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.experimental.agent_encode.pointcloud.shapes.base import Shape
 
 
 @dataclass(frozen=True)
 class Box(Shape):
-    """An axis-aligned-in-z box."""
+    """A box turned about z by ``yaw_deg``."""
 
     center: tuple[float, float, float]
     """x, y, z in the cloud's frame."""
@@ -33,41 +34,43 @@ class Box(Shape):
     yaw_deg: float = 0.0
     """Rotation about z."""
 
-    def _local(self, points: np.ndarray) -> np.ndarray:
+    def _local(
+        self, points: NDArray[np.float32] | NDArray[np.float64]
+    ) -> NDArray[np.float32] | NDArray[np.float64]:
         """Points in the box frame: origin at the centre, x along the yaw."""
         rel = points - np.asarray(self.center, dtype=points.dtype)
         c, s = math.cos(math.radians(self.yaw_deg)), math.sin(math.radians(self.yaw_deg))
-        local: np.ndarray = np.empty_like(rel)
+        local: NDArray[np.float32] | NDArray[np.float64] = np.empty_like(rel)
         local[:, 0] = rel[:, 0] * c + rel[:, 1] * s
         local[:, 1] = -rel[:, 0] * s + rel[:, 1] * c
         local[:, 2] = rel[:, 2]
         return local
 
-    def contains(self, points: np.ndarray) -> np.ndarray:
-        half = np.asarray(self.size, dtype=points.dtype) / 2.0
-        inside: np.ndarray = (np.abs(self._local(points)) <= half).all(axis=1)
-        return inside
+    def contains(self, points: NDArray[np.float32] | NDArray[np.float64]) -> NDArray[np.bool_]:
+        half = (np.asarray(self.size, dtype=np.float64) / 2.0).astype(points.dtype)
+        return np.asarray(np.all(np.abs(self._local(points)) <= half, axis=1), dtype=np.bool_)
 
-    def distance(self, points: np.ndarray) -> np.ndarray:
-        """Distance from the box surface to each point; 0 inside."""
-        half = np.asarray(self.size, dtype=points.dtype) / 2.0
-        outside = np.maximum(np.abs(self._local(points)) - half, 0.0)
-        d: np.ndarray = np.linalg.norm(outside, axis=1)
+    def distance(self, points: NDArray[np.float32] | NDArray[np.float64]) -> NDArray[np.float64]:
+        half = np.asarray(self.size, dtype=np.float64) / 2.0
+        local = self._local(points.astype(np.float64))
+        outside = np.maximum(np.abs(local) - half, 0.0)
+        d: NDArray[np.float64] = np.linalg.norm(outside, axis=1)
         return d
 
-    def chord(self, direction: np.ndarray) -> float:
-        """Length of the longest segment along the unit ``direction`` inside the box."""
+    def chord(self, direction: NDArray[np.float64]) -> float:
         c, s = math.cos(math.radians(self.yaw_deg)), math.sin(math.radians(self.yaw_deg))
         along = np.abs(np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]]) @ direction)
         lengths = np.divide(self.size, along, out=np.full(3, np.inf), where=along > 0)
         return float(lengths.min())
 
-    def anchor(self, z_extent: tuple[float, float]) -> np.ndarray:
-        return np.asarray(self.center, dtype=float)
+    def anchor(self, z_extent: tuple[float, float]) -> NDArray[np.float64]:
+        return np.asarray(self.center, dtype=np.float64)
 
-    def wireframe(self, z_extent: tuple[float, float]) -> list[np.ndarray]:
+    def wireframe(self, z_extent: tuple[float, float]) -> list[NDArray[np.float64]]:
         signs = np.array([[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)])
         c, s = math.cos(math.radians(self.yaw_deg)), math.sin(math.radians(self.yaw_deg))
-        rotation = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-        corners = (signs * np.asarray(self.size) / 2) @ rotation.T + self.anchor(z_extent)
+        rotation = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+        corners = (signs * np.asarray(self.size, dtype=np.float64) / 2) @ rotation.T + self.anchor(
+            z_extent
+        )
         return [corners[[i, i ^ bit]] for i in range(8) for bit in (1, 2, 4) if i < i ^ bit]

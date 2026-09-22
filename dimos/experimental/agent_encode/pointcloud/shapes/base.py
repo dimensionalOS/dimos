@@ -14,37 +14,37 @@
 
 from __future__ import annotations
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 
 import numpy as np
+from numpy.typing import NDArray
 
-from dimos.experimental.agent_encode.pointcloud.render.overlays import Canvas, Overlay
+from dimos.experimental.agent_encode.pointcloud.image.lib.canvas import Canvas, Drawable
 
 
-class Shape(Overlay):
-    """A solid that queries test returns against."""
-
-    @abstractmethod
-    def contains(self, points: np.ndarray) -> np.ndarray:
-        """Whether each point lies inside."""
+class Shape(Drawable, ABC):
+    """A solid that returns are tested against; drawn as its wireframe."""
 
     @abstractmethod
-    def distance(self, points: np.ndarray) -> np.ndarray:
-        """Distance from the surface to each point; 0 inside."""
+    def contains(self, points: NDArray[np.float32] | NDArray[np.float64]) -> NDArray[np.bool_]:
+        """Whether each (N, 3) point lies inside."""
 
     @abstractmethod
-    def chord(self, direction: np.ndarray) -> float:
+    def distance(self, points: NDArray[np.float32] | NDArray[np.float64]) -> NDArray[np.float64]:
+        """Distance from the surface to each (N, 3) point; 0 inside."""
+
+    @abstractmethod
+    def chord(self, direction: NDArray[np.float64]) -> float:
         """Length of the longest segment along the unit ``direction`` inside the shape."""
 
     @abstractmethod
-    def anchor(self, z_extent: tuple[float, float]) -> np.ndarray:
+    def anchor(self, z_extent: tuple[float, float]) -> NDArray[np.float64]:
         """The shape's centre; ``z_extent`` closes unbounded ends."""
 
     @abstractmethod
-    def wireframe(self, z_extent: tuple[float, float]) -> list[np.ndarray]:
+    def wireframe(self, z_extent: tuple[float, float]) -> list[NDArray[np.float64]]:
         """World-coordinate outline paths; ``z_extent`` closes unbounded ends."""
 
-    def draw(self, canvas: Canvas) -> list[str]:
+    def draw(self, canvas: Canvas) -> None:
         for path in self.wireframe(canvas.z_extent):
             canvas.path(path)
-        return ["shape"]
