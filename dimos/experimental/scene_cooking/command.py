@@ -171,12 +171,10 @@ def blender_output_line_is_interesting(line: str) -> bool:
     """Return true for Blender output worth streaming during normal cooks."""
 
     return (
-        line.startswith("DIMOS_")
+        line.startswith(("DIMOS_", "Blender ", "Error:"))
         or "Read blend:" in line
         or "Finished glTF" in line
-        or line.startswith("Blender ")
         or line == "Blender quit"
         or "Traceback" in line
         or "ERROR" in line
-        or line.startswith("Error:")
     )

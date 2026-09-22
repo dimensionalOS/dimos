@@ -42,6 +42,7 @@ The **Backend** is the glue — on `append()` it encodes the payload, inserts me
 ```python
 from dimos.memory.observationstore.base import ObservationStore
 
+
 class MyObservationStore(ObservationStore[T]):
     def __init__(self, name: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -87,6 +88,7 @@ from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for
 from dimos.memory.store.base import Store
 
+
 class MyStore(Store):
     def _create_backend(
         self, name: str, payload_type: type | None = None, **config: Any
@@ -122,6 +124,7 @@ def my_store() -> Iterator[MyStore]:
     with MyStore() as store:
         yield store
 
+
 @pytest.fixture(params=["memory_store", "sqlite_store", "my_store"])
 def session(request):
     return request.getfixturevalue(request.param)
@@ -149,7 +152,8 @@ def query(self, q: StreamQuery) -> Iterator[Observation[T]]:
     # Delegate remaining operations to Python
     remaining = StreamQuery(
         search_text=q.search_text,
-        offset_val=q.offset_val, limit_val=q.limit_val,
+        offset_val=q.offset_val,
+        limit_val=q.limit_val,
     )
     return remaining.apply(iter(rows))
 ```

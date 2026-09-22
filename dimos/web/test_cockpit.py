@@ -848,8 +848,10 @@ def test_lcm_schema_joins_user_params_in_the_request_only() -> None:
     [
         (
             Channel("pose", PoseStamped, encoding="nav_msgs.Odometry.lcm.v1"),
-            r"'pose': encoding 'nav_msgs\.Odometry\.lcm\.v1' encodes nav_msgs\.Odometry, "
-            r"not PoseStamped",
+            (
+                r"'pose': encoding 'nav_msgs\.Odometry\.lcm\.v1' encodes nav_msgs\.Odometry, "
+                r"not PoseStamped"
+            ),
         ),
         (
             Channel("note", dict, encoding="geometry_msgs.PoseStamped.lcm.v1"),

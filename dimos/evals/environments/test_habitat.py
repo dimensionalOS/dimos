@@ -167,16 +167,16 @@ def test_explicit_spawn_uses_real_constructor(mocker, navigable):
     mocker.patch.dict("sys.modules", {"habitat_sim": hs})
     sim = hs.Simulator.return_value
     sim.pathfinder.is_navigable.return_value = navigable
-    config = dict(
-        scene_id="example",
-        scene_dataset_config="default",
-        seed=4,
-        start_position_ros=(1, 2, 3),
-        width=640,
-        height=360,
-        hfov_deg=90,
-        camera_height_m=0.45,
-    )
+    config = {
+        "scene_id": "example",
+        "scene_dataset_config": "default",
+        "seed": 4,
+        "start_position_ros": (1, 2, 3),
+        "width": 640,
+        "height": 360,
+        "hfov_deg": 90,
+        "camera_height_m": 0.45,
+    }
     if not navigable:
         with pytest.raises(ValueError, match="not navigable"):
             HabitatHost(config)

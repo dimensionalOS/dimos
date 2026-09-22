@@ -50,9 +50,9 @@ from dimos.utils.decorators.decorators import cached_property, simple_mcache
 from dimos.utils.logging_config import setup_logger
 
 if sys.version_info < (3, 13):
-    from typing_extensions import TypeVar
+    pass
 else:
-    from typing import TypeVar
+    pass
 
 logger = setup_logger()
 
@@ -261,9 +261,6 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
     def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
         """Fake publish request for testing."""
         return {"status": "ok", "message": "Fake publish"}
-
-
-_Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
 
 
 class GO2Connection(Module, Camera, Pointcloud):

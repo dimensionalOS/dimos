@@ -174,9 +174,7 @@ def _proposal_passes_2d(det: Detection2DSeg, image_area: float, policy: Inventor
     area = float((det.mask > 0).sum())
     if area < policy.min_mask_area_px:
         return False
-    if area > policy.max_mask_area_fraction * image_area:
-        return False
-    return True
+    return not area > policy.max_mask_area_fraction * image_area
 
 
 # A lifted cloud plainly spanning more than one object: wider than any single

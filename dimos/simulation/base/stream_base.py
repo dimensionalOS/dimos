@@ -63,12 +63,10 @@ class StreamBase(ABC):
     @abstractmethod
     def _load_stage(self, usd_path: str | Path):  # type: ignore[no-untyped-def]
         """Load stage from file."""
-        pass
 
     @abstractmethod
     def _setup_camera(self):  # type: ignore[no-untyped-def]
         """Setup and validate camera."""
-        pass
 
     def _setup_ffmpeg(self) -> None:
         """Setup FFmpeg process for streaming."""
@@ -103,14 +101,11 @@ class StreamBase(ABC):
     @abstractmethod
     def _setup_annotator(self):  # type: ignore[no-untyped-def]
         """Setup annotator."""
-        pass
 
     @abstractmethod
     def stream(self):  # type: ignore[no-untyped-def]
         """Start streaming."""
-        pass
 
     @abstractmethod
     def cleanup(self):  # type: ignore[no-untyped-def]
         """Cleanup resources."""
-        pass

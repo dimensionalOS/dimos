@@ -336,10 +336,9 @@ def test_websocket_dispatches_binary_and_text_messages(
     dispatch_binary = mocker.patch.object(module, "_dispatch_binary_message")
     dispatch_text = mocker.patch.object(module, "_dispatch_text_message")
 
-    with TestClient(app) as client:
-        with client.websocket_connect("/ws") as websocket:
-            websocket.send_bytes(b"controller")
-            websocket.send_text('{"type":"body_tracking_snapshot"}')
+    with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        websocket.send_bytes(b"controller")
+        websocket.send_text('{"type":"body_tracking_snapshot"}')
 
     dispatch_binary.assert_called_once_with(b"controller")
     dispatch_text.assert_called_once_with('{"type":"body_tracking_snapshot"}')

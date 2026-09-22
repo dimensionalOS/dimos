@@ -268,9 +268,11 @@ def test_recordings_discovery(
     monkeypatch.setattr(
         Path,
         "stat",
-        lambda self, *a, **k: (_ for _ in ()).throw(FileNotFoundError(self))
-        if self.name == "ghost.db"
-        else real(self, *a, **k),
+        lambda self, *a, **k: (
+            (_ for _ in ()).throw(FileNotFoundError(self))
+            if self.name == "ghost.db"
+            else real(self, *a, **k)
+        ),
     )
     assert cd.recordings() == [db] and cd.recordings(10**9) == [db] and cd.recordings(1) == []
 

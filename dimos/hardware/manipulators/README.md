@@ -93,6 +93,7 @@ class MyArmAdapter:  # No inheritance needed - just match the Protocol
     def disconnect(self) -> None: ...
     def read_joint_positions(self) -> list[float]: ...
     def write_joint_positions(self, positions: list[float], velocity: float = 1.0) -> bool: ...
+
     # ... implement other Protocol methods
 ```
 
@@ -111,6 +112,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from .adapter import MyArmAdapter
+
 
 class MyArm(Module[MyArmConfig]):
     joint_state: Out[JointState]

@@ -121,31 +121,33 @@ def _read_sse_notifications(
     deadline = time.monotonic() + timeout
     # A scalar timeout is requests' read timeout: the SSE stream stays open
     # across the whole request, an idle read (no bytes for `timeout`s) trips it.
-    with requests.Session() as session:
-        with session.get(
+    with (
+        requests.Session() as session,
+        session.get(
             url,
             headers={"Accept": "text/event-stream"},
             stream=True,
             timeout=timeout,
-        ) as response:
-            assert response.headers["content-type"].startswith("text/event-stream")
-            for raw in response.iter_lines():
-                if time.monotonic() > deadline:
-                    break
-                line = raw.decode("utf-8", "replace")
-                if not line or not line.startswith("data: "):
-                    continue
-                try:
-                    data = json.loads(line[6:])
-                except json.JSONDecodeError:
-                    continue
-                if data.get("method") not in _NOTIFICATION_METHODS:
-                    continue
-                if tool_name is not None and _frame_tool_name(data) != tool_name:
-                    continue
-                collected.append(data)
-                if len(collected) >= expected:
-                    return collected
+        ) as response,
+    ):
+        assert response.headers["content-type"].startswith("text/event-stream")
+        for raw in response.iter_lines():
+            if time.monotonic() > deadline:
+                break
+            line = raw.decode("utf-8", "replace")
+            if not line or not line.startswith("data: "):
+                continue
+            try:
+                data = json.loads(line[6:])
+            except json.JSONDecodeError:
+                continue
+            if data.get("method") not in _NOTIFICATION_METHODS:
+                continue
+            if tool_name is not None and _frame_tool_name(data) != tool_name:
+                continue
+            collected.append(data)
+            if len(collected) >= expected:
+                return collected
     return collected
 
 
