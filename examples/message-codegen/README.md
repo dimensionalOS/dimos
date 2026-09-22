@@ -532,3 +532,18 @@ The webcam path emits generated RGB images; stereo slicing happens on pixels
 before message construction. Camera metadata and both TF edges share one exact
 stamp without mutating the configured calibration or mount. Hardware-free tests
 feed known BGR pixels into the capture boundary and verify the decoded RGB crops.
+
+### Simulation lidar shared memory (no engine required)
+
+Run the actual simulation lidar producer and consumer in separate processes:
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_mujoco_lidar_shm.py
+```
+
+The demo prints decoded XYZ coordinates, frame `world`, and the exact timestamp
+`1700000000123456789`. It writes generated PointCloud2 CDR bytes through the
+production shared-memory buffer and cleans up its regions on exit. It does not
+launch MuJoCo or require robot hardware. Live simulation and Go2 pose/TF consumers
+remain separate acceptance checks.

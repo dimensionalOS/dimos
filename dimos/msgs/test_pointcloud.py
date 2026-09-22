@@ -18,11 +18,13 @@
 import gc
 import struct
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import PointCloud2, PointField
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
-from dimos.msgs.pointcloud import pointcloud_view, pointcloud_xyz
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_view, pointcloud_xyz
 
 
 @pytest.fixture(params=[False, True], ids=["little-endian", "big-endian"])
@@ -116,3 +118,39 @@ def test_missing_scalar_coordinate_rejected(padded_cloud):
     padded_cloud.fields = [field for field in padded_cloud.fields if field.name != "y"]
     with pytest.raises(ValueError, match="scalar 'y'"):
         pointcloud_xyz(padded_cloud)
+
+
+@pytest.mark.parametrize("organized", [False, True])
+def test_xyz_factory_copies_noncontiguous_coordinates_and_preserves_header(organized):
+    values = np.arange(36, dtype=">f8").reshape(2, 6, 3)[:, ::2]
+    points = values if organized else values.reshape(-1, 3)
+    header = Header(frame_id="lidar", stamp=Time(sec=1700000000, nanosec=123456789))
+    cloud = pointcloud_from_xyz(points, header=header)
+    decoded = PointCloud2.decode(cloud.encode())
+    np.testing.assert_array_equal(pointcloud_xyz(decoded), points.reshape(-1, 3))
+    assert decoded.header == header
+    assert decoded.is_dense and not decoded.is_bigendian
+    assert (decoded.height, decoded.width) == ((2, 3) if organized else (1, 6))
+    assert decoded.point_step == 12
+    assert decoded.row_step == decoded.width * 12
+    points[...] = -1
+    assert pointcloud_xyz(cloud)[0, 0] == 0
+    header.frame_id = "changed"
+    assert cloud.header.frame_id == "lidar"
+
+
+def test_xyz_factory_marks_missing_coordinates_and_supports_empty_cloud():
+    values = np.array([[1, np.nan, 3], [np.inf, 2, 3]], dtype=np.float32)
+    cloud = pointcloud_from_xyz(values, header=Header())
+    assert not cloud.is_dense
+    np.testing.assert_array_equal(pointcloud_xyz(cloud), values)
+    empty = pointcloud_from_xyz(np.empty((0, 3)), header=Header())
+    assert (empty.height, empty.width, len(empty.data)) == (1, 0, 0)
+
+
+@pytest.mark.parametrize(
+    "points", [np.zeros(3), np.zeros((2, 4)), np.array([["a", "b", "c"]]), np.full((1, 3), 1e100)]
+)
+def test_xyz_factory_rejects_invalid_shape_type_or_range(points):
+    with pytest.raises(ValueError):
+        pointcloud_from_xyz(points, header=Header())

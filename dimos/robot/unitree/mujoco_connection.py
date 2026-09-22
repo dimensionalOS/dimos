@@ -31,6 +31,8 @@ import time
 from typing import Any, TypeVar
 import weakref
 
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from numpy.typing import NDArray
 from reactivex import Observable, empty
@@ -39,12 +41,12 @@ from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
+from dimos.msgs.camera_info import camera_info_from_fov
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import header_now
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.simulation.mujoco.constants import (
     LAUNCHER_PATH,
@@ -98,12 +100,12 @@ class MujocoConnection:
         self._stop_events: list[threading.Event] = []
         self._is_cleaned_up = False
 
-    camera_info_static: CameraInfo = CameraInfo.from_fov(
-        fov_deg=VIDEO_CAMERA_FOV,
+    camera_info_static: CameraInfo = camera_info_from_fov(
+        fov_degrees=VIDEO_CAMERA_FOV,
         width=VIDEO_WIDTH,
         height=VIDEO_HEIGHT,
         axis="vertical",
-        frame_id="camera_optical",
+        header=Header(frame_id="camera_optical"),
     )
 
     def start(self) -> None:
@@ -395,8 +397,12 @@ class MujocoConnection:
     def video_stream(self) -> Observable[Image]:
         def get_video_as_image() -> Image | None:
             frame = self.get_video_frame()
-            # MuJoCo renderer returns RGB uint8 frames; Image.from_numpy defaults to BGR.
-            return Image.from_numpy(frame, format=ImageFormat.RGB) if frame is not None else None
+            # MuJoCo renderer returns RGB uint8 pixels.
+            return (
+                image_from_array(frame, encoding="rgb8", header=header_now("camera_optical"))
+                if frame is not None
+                else None
+            )
 
         return self._create_stream(get_video_as_image, VIDEO_FPS, "Video")
 

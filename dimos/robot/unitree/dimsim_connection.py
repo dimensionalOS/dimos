@@ -16,19 +16,19 @@ from collections.abc import Callable
 import functools
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_generated.std_msgs.msg import Header
 from reactivex import Observable, Subject
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
+from dimos.msgs.camera_info import camera_info_from_fov
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.dimsim.dimsim_process import DimSimProcess
 from dimos.utils.logging_config import setup_logger
@@ -41,12 +41,12 @@ _FOV_DEG = 46
 
 
 class DimSimConnection:
-    camera_info_static: CameraInfo = CameraInfo.from_fov(
-        fov_deg=_FOV_DEG,
+    camera_info_static: CameraInfo = camera_info_from_fov(
+        fov_degrees=_FOV_DEG,
         width=_WIDTH,
         height=_HEIGHT,
         axis="horizontal",
-        frame_id="camera_optical",
+        header=Header(frame_id="camera_optical"),
     )
 
     def __init__(self, global_config: GlobalConfig) -> None:

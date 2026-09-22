@@ -20,6 +20,7 @@ import threading
 import time
 from typing import Any, TypeAlias, TypeVar
 
+from dimos_generated.sensor_msgs.msg import Image, PointCloud2
 import numpy as np
 from numpy.typing import NDArray
 from reactivex import operators as ops
@@ -41,8 +42,8 @@ from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import header_now, time_from_nanoseconds
 from dimos.robot.unitree.type.lidar import (
     RawLidarMsg,
     pointcloud2_from_webrtc_lidar,
@@ -288,13 +289,10 @@ class UnitreeWebRTCConnection(Resource):
 
     @simple_mcache
     def lidar_stream(self) -> Observable[PointCloud2]:
-        return backpressure(
-            self.raw_lidar_stream().pipe(
-                ops.map(pointcloud2_from_webrtc_lidar),
-                ops.map(time_is_now),
-                # repair_stale_ts(),
-            )
-        )
+        def convert(raw: RawLidarMsg) -> PointCloud2:
+            return pointcloud2_from_webrtc_lidar(raw, stamp=time_from_nanoseconds(time.time_ns()))
+
+        return backpressure(self.raw_lidar_stream().pipe(ops.map(convert)))
 
     @simple_mcache
     def tf_stream(self) -> Observable[Transform]:
@@ -318,14 +316,13 @@ class UnitreeWebRTCConnection(Resource):
             self.raw_video_stream().pipe(
                 ops.filter(lambda frame: frame is not None),
                 ops.map(
-                    lambda frame: Image.from_numpy(
+                    lambda frame: image_from_array(
                         # np.ascontiguousarray(frame.to_ndarray("rgb24")),
                         frame.to_ndarray(format="rgb24"),  # type: ignore[attr-defined]
-                        format=ImageFormat.RGB,  # Frame is RGB24, not BGR
-                        frame_id="camera_optical",
+                        encoding="rgb8",
+                        header=header_now("camera_optical"),
                     ),
                 ),
-                ops.map(time_is_now),
             )
         )
 

@@ -393,3 +393,30 @@ and the complete Go2 stack were not run.
 `demo_message_helpers.py` visibly prints the decoded calibration matrix and four
 distortion coefficients with source timestamp `1700000000123456789`; output is
 `build/message-codegen/demo/evidence/message-helpers.txt`.
+
+### Go2 sensor values and simulation lidar IPC
+
+The WebRTC video/lidar conversion now constructs generated Image/PointCloud2
+values directly. Hardware-free tests exercise the actual reactive conversion
+using synthetic driver events, checking RGB pixels, XYZ coordinates, declared
+frames, exact host-arrival stamps, and CDR round trips. The new XYZ factory
+preserves organized shape, copies source storage, and rejects finite coordinates
+that cannot fit float32. Missing points remain NaN/infinity with `is_dense=False`.
+
+MuJoCo video/calibration construction and its lidar shared-memory boundary use
+generated messages. Lidar IPC now carries CDR instead of pickle. Odd/even sequence
+checks discard an observed in-progress or changed write before decoding. The
+standalone `demo_mujoco_lidar_shm.py` passed with separate producer/consumer
+processes and printed two expected XYZ points and timestamp
+`1700000000123456789`. No engine or robot was launched.
+
+The focused cloud, WebRTC conversion, connection lifecycle, and shared-memory
+suite passed **51 tests**, with one hardware-recording test deselected. Log:
+`build/message-codegen/go2-sensor-cutover-tests.log`. Mypy passed on eight changed
+production modules. Pytest ran with `-o addopts=''` because this local environment
+lacks the configured xdist/timeout/coverage plugins. Repository conftest emitted
+its existing subprocess ResourceWarning; the standalone IPC demo exited cleanly.
+
+This resolves the Go2 image/cloud interface type mismatches recorded above.
+Go2/WebRTC/MuJoCo pose and TF callers still need their generated-value cutover;
+DimSim's external browser producer and complete live simulation remain unverified.

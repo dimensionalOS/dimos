@@ -19,18 +19,25 @@ aes_128_key forwarding, and the UNITREE_AES_128_KEY env var via GlobalConfig.
 """
 
 import json
+import threading
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, call
 
+from dimos_generated.sensor_msgs.msg import Image, PointCloud2
+import numpy as np
 import pytest
+import reactivex as rx
+from reactivex.scheduler import ThreadPoolScheduler
 from unitree_webrtc_connect.constants import DATA_CHANNEL_TYPE, RTC_TOPIC, SPORT_CMD
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.image import image_view
+from dimos.msgs.pointcloud import pointcloud_xyz
 from dimos.robot.unitree import connection as conn_mod
-from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.connection import SerializableVideoFrame, UnitreeWebRTCConnection
 
 
 def _stub_driver(connect_exc: Exception | None = None) -> MagicMock:
@@ -165,3 +172,60 @@ def test_global_config_reads_unitree_aes_128_key_env(monkeypatch: pytest.MonkeyP
     """The key enters via GlobalConfig, read from the UNITREE_AES_128_KEY env var."""
     monkeypatch.setenv("UNITREE_AES_128_KEY", "ee" * 16)
     assert GlobalConfig().unitree_aes_128_key == "ee" * 16
+
+
+@pytest.fixture
+def sensor_scheduler(mocker):
+    scheduler = ThreadPoolScheduler(max_workers=2)
+    mocker.patch("dimos.utils.reactive.get_scheduler", return_value=scheduler)
+    try:
+        yield scheduler
+    finally:
+        scheduler.executor.shutdown(wait=True)
+
+
+@pytest.mark.parametrize("kind", ["lidar", "video"])
+def test_sensor_streams_emit_generated_cdr_with_exact_arrival_time(
+    built_connection, mocker, sensor_scheduler, kind
+):
+    connection, _driver = built_connection
+    mocker.patch.object(conn_mod.time, "time_ns", return_value=1700000000123456789)
+    values = np.array([[1.25, 2.5, 3.75]], dtype=np.float32)
+    pixels = np.arange(18, dtype=np.uint8).reshape(2, 3, 3)
+    if kind == "lidar":
+        raw = {"data": {"stamp": 1.0, "data": {"points": values}}}
+        mocker.patch.object(connection, "raw_lidar_stream", return_value=rx.just(raw))
+        stream = connection.lidar_stream()
+    else:
+        frame = SerializableVideoFrame(data=pixels)
+        mocker.patch.object(connection, "raw_video_stream", return_value=rx.just(frame))
+        stream = connection.video_stream()
+    received = []
+    errors = []
+    ready = threading.Event()
+
+    def receive(message):
+        received.append(message)
+        ready.set()
+
+    def fail(error):
+        errors.append(error)
+        ready.set()
+
+    subscription = stream.subscribe(receive, fail)
+    try:
+        assert ready.wait(5), "Sensor conversion did not publish"
+        assert not errors
+        assert len(received) == 1
+        message = received[0]
+        assert (message.header.stamp.sec, message.header.stamp.nanosec) == (1700000000, 123456789)
+        if kind == "lidar":
+            decoded = PointCloud2.decode(message.encode())
+            np.testing.assert_array_equal(pointcloud_xyz(decoded), values)
+            assert decoded.header.frame_id == "world"
+        else:
+            decoded = Image.decode(message.encode())
+            np.testing.assert_array_equal(image_view(decoded), pixels)
+            assert decoded.header.frame_id == "camera_optical"
+    finally:
+        subscription.dispose()

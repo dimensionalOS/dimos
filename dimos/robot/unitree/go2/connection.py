@@ -19,7 +19,7 @@ from threading import Thread
 import time
 from typing import Any, Protocol
 
-from dimos_generated.sensor_msgs.msg import CameraInfo
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from pydantic import Field
 from reactivex import empty
 from reactivex.disposable import Disposable
@@ -39,8 +39,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.time import time_from_nanoseconds
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
@@ -313,7 +311,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.connection.start()
 
         def onimage(image: Image) -> None:
-            image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
+            image.header.frame_id = _prefixed(self.config.frame_id_prefix, image.header.frame_id)
             self.color_image.publish(image)
 
         if self.config.lidar:

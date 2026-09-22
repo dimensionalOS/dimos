@@ -19,7 +19,8 @@
 
 from typing import Any
 
-from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.sensor_msgs.msg import PointCloud2, PointField
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 from numpy.typing import NDArray
 
@@ -70,3 +71,35 @@ def pointcloud_xyz(message: PointCloud2) -> NDArray[np.float64]:
         if name not in (points.dtype.names or ()) or points[name].ndim != 2:
             raise ValueError(f"point cloud requires a scalar {name!r} field")
     return np.stack([points[name].ravel() for name in ("x", "y", "z")], axis=-1).astype(np.float64)
+
+
+def pointcloud_from_xyz(points: NDArray[Any], *, header: Header) -> PointCloud2:
+    """Copy Nx3 or HxWx3 coordinates into a tightly packed little-endian XYZ cloud.
+
+    XYZ fields are float32. NaNs/infinities remain missing-point markers and set
+    is_dense=False; finite coordinates outside float32 range are rejected.
+    """
+    values = np.asarray(points)
+    if values.ndim not in (2, 3) or values.shape[-1] != 3:
+        raise ValueError("XYZ coordinates must have shape (N, 3) or (H, W, 3)")
+    if values.dtype.kind not in "fiu":
+        raise ValueError("XYZ coordinates must be numeric")
+    finite = np.isfinite(values)
+    if np.any(np.abs(values[finite].astype(np.float64)) > np.finfo(np.float32).max):
+        raise ValueError("XYZ coordinates exceed float32 range")
+    packed = np.ascontiguousarray(values, dtype="<f4")
+    height, width = (1, packed.shape[0]) if packed.ndim == 2 else packed.shape[:2]
+    return PointCloud2(
+        header=header,
+        height=height,
+        width=width,
+        fields=[
+            PointField(name=name, offset=index * 4, datatype=PointField.FLOAT32, count=1)
+            for index, name in enumerate(("x", "y", "z"))
+        ],
+        is_bigendian=False,
+        point_step=12,
+        row_step=width * 12,
+        data=packed.view(np.uint8).reshape(-1),
+        is_dense=bool(finite.all()),
+    )
