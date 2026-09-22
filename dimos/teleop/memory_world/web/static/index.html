@@ -98,11 +98,6 @@
             margin-top: 14px;
         }
         button.secondary:hover { background: var(--panel); border-color: var(--accent); }
-        #micBtn.recording {
-            background: #ff5f6d;
-            border-color: #ff5f6d;
-            color: var(--bg);
-        }
         .hidden { display: none !important; }
         #perf {
             position: absolute;
@@ -472,7 +467,6 @@
            Camera keep their buttons: nothing in the menu does what they do, and a phone
            has no keyboard to press J or P with. */
         body.touch.connected #status,
-        body.touch #disconnectBtn,
         body.touch #orbitBtn,
         body.touch #hudBtn,
         body.touch #orbitTouchBtn { display: none; }
@@ -602,8 +596,6 @@
         </h1>
         <div id="status">[ READY TO CONNECT ]</div>
         <button id="connectBtn" onclick="window.app.connect()">Connect</button>
-        <button id="disconnectBtn" class="secondary hidden" onclick="window.app.disconnect()">Disconnect</button>
-        <button id="micBtn" class="secondary hidden">Hold to ask</button>
         <button id="orbitBtn" class="secondary hidden">Orbit frame</button>
         <div id="hints">
             <b>LEFT STICK</b>  walk / strafe<br>
@@ -625,7 +617,7 @@
             <b>M</b>  show / hide the minimap &nbsp; <b>H</b>  keep this menu<br>
             <b>O</b>  orbit the robot (drag circles it, wheel moves in and out; follows the timeline)<br>
             <b>TIMELINE</b>  drag to scrub the recording, ▶ plays it back, ✕ returns to the full map<br>
-            <b>HOLD MIC</b>  speak a question, or type one in the chat panel<br>
+            <b>HOLD MIC</b>  in the chat panel, speak a question instead of typing it<br>
             <b>← →</b>  step through the answer's places &nbsp; <b>N</b>  route to it &nbsp; <b>T</b>  the tour
         </div>
     </div>
@@ -659,7 +651,8 @@
         <label><input type="checkbox" id="layerVoxels" checked> Voxel map</label>
         <label><input type="checkbox" id="layerCubes"> Draw voxels as cubes (not spheres)</label>
         <label><input type="checkbox" id="layerPhotos" checked> Photos</label>
-        <label><input type="checkbox" id="layerHud" checked> Minimap + answer panel</label>
+        <label><input type="checkbox" id="layerHud"> Minimap + answer panel</label>
+        <label><input type="checkbox" id="layerChat" checked> Agent chat</label>
         <h2>Lidar height</h2>
         <label class="slider">Min <input type="range" id="heightMin"><span id="heightMinVal">—</span></label>
         <label class="slider">Max <input type="range" id="heightMax"><span id="heightMaxVal">—</span></label>
@@ -667,7 +660,7 @@
         <h2>Advanced</h2>
         <button id="menuDisconnectBtn">Disconnect</button>
         <button id="embedBtn" class="hidden">Add SigLIP embeddings (siglipify)</button>
-        <div class="note">Keys: ← → places · N navigate · O orbit · T tour · H menu · I photos · V voxels · M minimap</div>
+        <div class="note">Keys: ← → places · N navigate · O orbit · T tour · H menu · I photos · V voxels · M minimap · C chat</div>
     </div>
     <div id="answerText" hidden></div>
     <div id="results" hidden>

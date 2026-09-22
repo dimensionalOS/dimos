@@ -19,8 +19,6 @@ import {
 
 const statusEl = document.getElementById('status');
 const connectBtn = document.getElementById('connectBtn');
-const disconnectBtn = document.getElementById('disconnectBtn');
-const micBtn = document.getElementById('micBtn');
 const orbitBtn = document.getElementById('orbitBtn');
 const embedBtn = document.getElementById('embedBtn');
 const searchNote = document.getElementById('searchNote');
@@ -501,8 +499,9 @@ async function startViewer() {
     // `connected` gates the phone's chrome: the status line is worth reading while the
     // world is still coming up and noise once it is there.
     document.body.classList.add('connected');
-    // With a keyboard the conversation gets its own panel; a phone has no room for it.
-    document.body.classList.toggle('chat-open', !document.body.classList.contains('touch'));
+    // With a keyboard the conversation gets its own panel; a phone has no room for it,
+    // and the menu's box is what says whether it is wanted at all.
+    showChat(layerBoxes.chat.checked);
     scene.startDesktop(sendViewerPose);
     setStatus('Desktop view — click to look, WASD to walk');
 }
@@ -602,14 +601,14 @@ async function startRecording() {
         sendRecording(new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' }));
     };
     mine.start();
-    for (const button of [micBtn, chatMic]) button.classList.add('recording');
+    chatMic.classList.add('recording');
     setStatus('Listening…');
     diag('voice_recording_started');
 }
 
 function stopRecording() {
     micPress += 1;  // no start still waiting on a prompt belongs to a held button now
-    for (const button of [micBtn, chatMic]) button.classList.remove('recording');
+    chatMic.classList.remove('recording');
     // Let go of it HERE, not when `onstop` eventually arrives. `stop()` only queues that
     // event, so a press arriving in between found `recorder` still set and turned itself
     // away -- and the stale `onstop` then cleared the reference without starting anything.
@@ -855,10 +854,7 @@ function applyAskAvailability() {
     chatInput.placeholder = canAsk
         ? 'Ask the recording, e.g. where did I see a chair'
         : 'Search not ready — see the menu';
-    // Both mics, one implementation: the panel's and the chat form's.
-    for (const button of [micBtn, chatMic]) {
-        button.classList.toggle('hidden', !connected || !canAsk);
-    }
+    chatMic.classList.toggle('hidden', !connected || !canAsk);
 }
 
 // ---- the lidar height band ----------------------------------------------------
@@ -945,12 +941,21 @@ const layerBoxes = {
     voxels: document.getElementById('layerVoxels'),
     photos: document.getElementById('layerPhotos'),
     hud: document.getElementById('layerHud'),
+    chat: document.getElementById('layerChat'),
 };
 layerBoxes.voxels.addEventListener('change', () => scene && scene._cloudWanted !== layerBoxes.voxels.checked && scene.toggleCloud());
 layerBoxes.photos.addEventListener('change', () => scene && scene._imageQuadGroup.visible !== layerBoxes.photos.checked && scene.toggleImages());
 layerBoxes.hud.addEventListener('change', () => {
     if (scene && scene._hudPanel.visible !== layerBoxes.hud.checked) hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
 });
+layerBoxes.chat.addEventListener('change', () => showChat(layerBoxes.chat.checked));
+
+/** Show or hide the conversation. A phone has no room for it whatever the box says. */
+function showChat(open) {
+    const room = !document.body.classList.contains('touch');
+    document.body.classList.toggle('chat-open', open && room);
+    layerBoxes.chat.checked = open;
+}
 
 /** The scene changed a layer itself (a key, the tour): the boxes and the map button follow. */
 function syncBoxesFromScene() {
@@ -958,14 +963,16 @@ function syncBoxesFromScene() {
     layerBoxes.voxels.checked = scene._cloudWanted;
     layerBoxes.photos.checked = scene._imageQuadGroup.visible;
     layerBoxes.hud.checked = scene._hudPanel.visible;
+    layerBoxes.chat.checked = document.body.classList.contains('chat-open');
     hudBtn.textContent = scene._hudPanel.visible ? 'Hide map' : 'Show map';
 }
 
 /** Apply the boxes to the current scene: they keep their state across a reconnect, the scene does not. */
 function syncLayerBoxes() {
     const wanted = { voxels: layerBoxes.voxels.checked, photos: layerBoxes.photos.checked,
-        hud: layerBoxes.hud.checked };
+        hud: layerBoxes.hud.checked, chat: layerBoxes.chat.checked };
     if (!scene) return;
+    showChat(wanted.chat);
     // Each toggle writes the boxes back; the snapshot keeps the later ones honest.
     if (scene._cloudWanted !== wanted.voxels) scene.toggleCloud();
     if (scene._imageQuadGroup && scene._imageQuadGroup.visible !== wanted.photos) scene.toggleImages();
@@ -1048,6 +1055,12 @@ window.addEventListener('keydown', (event) => {
     }
     if (typing) return;
     if (event.code === 'Slash') { event.preventDefault(); chatInput.focus(); return; }
+    // C, beside the other layer keys. Here and not in `scene.js` with M/I/V because
+    // the panel is DOM the scene knows nothing about.
+    if (event.code === 'KeyC' && document.body.classList.contains('desktop-view')) {
+        showChat(!document.body.classList.contains('chat-open'));
+        return;
+    }
     if (tour && tour.active) {
         // Space always advances the tour. The arrows do too -- EXCEPT on a hands-on
         // station, whose whole text is "the controls are back": it prints
@@ -1165,11 +1178,9 @@ document.getElementById('cameraBtn').addEventListener('click', () => {
     if (scene) scene.stepQueryImage();  // the same filtered step the P key takes
 });
 
-for (const button of [micBtn, chatMic]) {
-    button.addEventListener('pointerdown', startRecording);
-    button.addEventListener('pointerup', stopRecording);
-    button.addEventListener('pointerleave', stopRecording);
-}
+chatMic.addEventListener('pointerdown', startRecording);
+chatMic.addEventListener('pointerup', stopRecording);
+chatMic.addEventListener('pointerleave', stopRecording);
 
 // ---- UI handlers -----------------------------------------------------------
 
@@ -1192,7 +1203,6 @@ async function connect() {
         chatLogEl.textContent = '';
         if (results) results.clear();
         connectBtn.classList.add('hidden');
-        disconnectBtn.classList.remove('hidden');
         applyIndexStatus(indexStatus);
         void loadFrames();
         if (document.body.classList.contains('desktop-view')) orbitBtn.classList.remove('hidden');
@@ -1258,7 +1268,6 @@ async function disconnect() {
     chatStateEl.textContent = 'not connected';
     connectBtn.classList.remove('hidden');
     connectBtn.disabled = false;
-    disconnectBtn.classList.add('hidden');
     applyAskAvailability();  // ws is null by now: the ask box goes dead with the mic
     embedBtn.classList.add('hidden');
     orbitBtn.classList.add('hidden');
