@@ -14,12 +14,15 @@
 
 from __future__ import annotations
 
-import time
+from copy import deepcopy
 from typing import TYPE_CHECKING
+
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
 
 from dimos.mapping.voxels.impl.o3d import O3dVoxels
 from dimos.mapping.voxels.impl.packed import PackedVoxels
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 
@@ -65,7 +68,7 @@ class VoxelGrid:
         if show_startup_log:
             logger.info(f"VoxelGrid using device: {device if use_cuda else 'CPU:0 (packed-numpy)'}")
 
-        self._latest_frame_ts: float = 0.0
+        self._latest_header = Header(frame_id=frame_id)
         self._disposed = False
 
     def _check_disposed(self) -> None:
@@ -74,21 +77,16 @@ class VoxelGrid:
 
     def add_frame(self, frame: PointCloud2) -> None:
         self._check_disposed()
-        if frame.ts is not None:
-            self._latest_frame_ts = frame.ts
-
         self._impl.add_frame(frame)
+        self._latest_header = deepcopy(frame.header)
+        self._latest_header.frame_id = self._frame_id
         self.get_global_pointcloud.invalidate_cache(self)
         self.get_global_pointcloud2.invalidate_cache(self)
 
     @simple_mcache
     def get_global_pointcloud2(self) -> PointCloud2:
         self._check_disposed()
-        return PointCloud2(
-            ensure_legacy_pcd(self.get_global_pointcloud()),
-            frame_id=self._frame_id,
-            ts=self._latest_frame_ts if self._latest_frame_ts else time.time(),
-        )
+        return pointcloud_from_xyz(self._impl.points(), header=self._latest_header)
 
     @simple_mcache
     def get_global_pointcloud(self) -> o3d.t.geometry.PointCloud:
@@ -116,18 +114,3 @@ class VoxelGrid:
         self.get_global_pointcloud.invalidate_cache(self)  # type: ignore[attr-defined]
         self.get_global_pointcloud2.invalidate_cache(self)  # type: ignore[attr-defined]
         self._impl.dispose()
-
-
-def ensure_legacy_pcd(
-    pcd_any: o3d.t.geometry.PointCloud | o3d.geometry.PointCloud,
-) -> o3d.geometry.PointCloud:
-    import open3d as o3d  # type: ignore[import-untyped]
-
-    if isinstance(pcd_any, o3d.geometry.PointCloud):
-        return pcd_any
-
-    assert isinstance(pcd_any, o3d.t.geometry.PointCloud), (
-        "Input must be a legacy PointCloud or a tensor PointCloud"
-    )
-
-    return pcd_any.to_legacy()

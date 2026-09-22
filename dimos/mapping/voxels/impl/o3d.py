@@ -16,31 +16,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
+from numpy.typing import NDArray
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_xyz
 
 if TYPE_CHECKING:
     import open3d as o3d  # type: ignore[import-untyped]
     import open3d.core as o3c  # type: ignore[import-untyped]
-
-
-def ensure_tensor_pcd(
-    pcd_any: o3d.t.geometry.PointCloud | o3d.geometry.PointCloud,
-    device: o3c.Device,
-) -> o3d.t.geometry.PointCloud:
-    """Convert legacy / cuda.pybind point clouds into o3d.t.geometry.PointCloud on `device`."""
-    import open3d as o3d  # type: ignore[import-untyped]
-    import open3d.core as o3c  # type: ignore[import-untyped]
-
-    if isinstance(pcd_any, o3d.t.geometry.PointCloud):
-        return pcd_any.to(device)
-
-    assert isinstance(pcd_any, o3d.geometry.PointCloud), (
-        "Input must be a legacy PointCloud or a tensor PointCloud"
-    )
-
-    return o3d.t.geometry.PointCloud.from_legacy(pcd_any, o3c.float32, device)
 
 
 class O3dVoxels:
@@ -70,11 +54,12 @@ class O3dVoxels:
     def add_frame(self, frame: PointCloud2) -> None:
         import open3d.core as o3c  # type: ignore[import-untyped]
 
-        pcd = ensure_tensor_pcd(frame.pointcloud, self._dev)
-        if pcd.is_empty():
+        values = pointcloud_xyz(frame).astype(np.float32)
+        values = values[np.isfinite(values).all(axis=1)]
+        if not len(values):
             return
 
-        pts = pcd.point["positions"].to(self._dev, o3c.float32)
+        pts = o3c.Tensor(values, device=self._dev, dtype=o3c.float32)
         vox = (pts / self._voxel_size).floor().to(self._key_dtype)
         keys_Nx3 = vox.contiguous()
 
@@ -127,7 +112,7 @@ class O3dVoxels:
 
         self._hashmap.activate(new_keys)
 
-    def points(self) -> np.ndarray:
+    def points(self) -> NDArray[np.float32]:
         """Voxel centers, (N, 3) float32."""
         import open3d.core as o3c  # type: ignore[import-untyped]
 

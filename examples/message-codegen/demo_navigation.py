@@ -25,13 +25,18 @@ import uuid
 from demo_pubsub import free_port
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, PointStamped, Pose, Quaternion, Twist
-from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid, Odometry, Path
+from dimos_generated.nav_msgs.msg import OccupancyGrid, Odometry, Path
+from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Bool, Header
 import numpy as np
 
 from dimos.core.transport import LCMTransport, ZenohTransport
+from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.pointclouds.occupancy import GeneralOccupancyConfig
+from dimos.mapping.voxels.grid import VoxelGrid
 from dimos.memory.vis.space.elements import Polyline
 from dimos.memory.vis.space.space import Space
+from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 from dimos.utils.testing.waiting import wait_until
@@ -84,19 +89,28 @@ def demonstrate(backend: str) -> None:
             port = getattr(module, name)
             port.transport = transport(name, port.type, 0)
         odometry = transport("odometry", Odometry, 1)
-        maps = transport("global_costmap", OccupancyGrid, 1)
+        clouds = transport("global_map", PointCloud2, 1)
         goals = transport("clicked_point", PointStamped, 1)
         velocities = transport("nav_cmd_vel", Twist, 1)
         arrivals = transport("goal_reached", Bool, 1)
         paths = transport("path", Path, 1)
         header = Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="map")
-        grid = OccupancyGrid(
-            header=header,
-            info=MapMetaData(
-                width=24, height=24, resolution=0.25, origin=Pose(orientation=Quaternion(w=1))
-            ),
-            data=np.zeros(24 * 24, dtype=np.int8),
+        mapper = CostMapper(
+            algo="general", config=GeneralOccupancyConfig(resolution=0.125, min_height=0.5)
         )
+        mapper.global_map.transport = transport("global_map", PointCloud2, 0)
+        mapper.merged_map.transport = transport("merged_map", PointCloud2, 0)
+        mapper.global_costmap.transport = transport("global_costmap", OccupancyGrid, 0)
+        mapper.start()
+        stack.callback(mapper.stop)
+        voxels = VoxelGrid(voxel_size=0.25, device="CPU:0", frame_id="map", show_startup_log=False)
+        stack.callback(voxels.dispose)
+        x, y = np.meshgrid(np.arange(0, 6, 0.25), np.arange(0, 6, 0.25))
+        points = np.column_stack((x.ravel(), y.ravel(), np.zeros(x.size)))
+        source = pointcloud_from_xyz(points, header=header)
+        voxels.add_frame(PointCloud2.decode(source.encode()))
+        accumulated = voxels.get_global_pointcloud2()
+        assert accumulated.header == header
         position = [1.0, 1.0, 0.0]
         lock = Lock()
         arrived = Event()
@@ -126,7 +140,7 @@ def demonstrate(backend: str) -> None:
         stack.callback(module.stop)
 
         def initialized() -> bool:
-            maps.publish(grid)
+            clouds.publish(accumulated)
             with lock:
                 feedback()
             return (
@@ -144,6 +158,11 @@ def demonstrate(backend: str) -> None:
         path = next(path for path in received_paths if len(path.poses))
         assert path.header == header and all(pose.header == header for pose in path.poses)
         wait_until(lambda: bool(commands) and commands[-1] == Twist(), timeout=5)
+        grid = module._planner._navigation_map.binary_costmap
+        assert grid.header == header
+        print(
+            f"{backend}: {len(points)} source points → {accumulated.width} voxels → {grid.info.width}x{grid.info.height} costmap"
+        )
         output = FilePath(f"build/message-codegen/demo/evidence/navigation-{backend}.svg")
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(Space().base_map(grid).add(Polyline(path)).to_svg())

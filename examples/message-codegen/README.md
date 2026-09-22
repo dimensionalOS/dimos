@@ -860,15 +860,18 @@ After building generated messages and the native A* extension above:
 PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_navigation.py
 ```
 
-This starts the real `ReplanningAStarPlanner` module and a synthetic drive loop.
-Generated Odometry, OccupancyGrid, and PointStamped inputs travel over LCM and
-then separate loopback Zenoh sessions. The drive loop consumes generated Twist
+This starts the real `CostMapper` and `ReplanningAStarPlanner` modules and a
+synthetic drive loop. A generated CDR cloud is accumulated by the CPU voxel
+mapper, then sent to CostMapper over LCM and separate loopback Zenoh sessions.
+The resulting generated OccupancyGrid feeds navigation alongside generated
+Odometry and PointStamped inputs. The drive loop consumes generated Twist
 commands and sends new odometry until the module publishes a generated arrival
 Bool. It checks the published Path's exact source header and the final stop
 command. The simulation advances 0.1 seconds per control command at an accelerated
 100 Hz wall-clock rate; it needs no robot or ROS installation.
 
-The terminal prints the final position, command count, and source timestamp.
+The terminal prints source/voxel counts, costmap dimensions, final position,
+command count, and source timestamp.
 Open `build/message-codegen/demo/evidence/navigation-lcm.svg` and
 `navigation-zenoh.svg` to inspect the planned route. Module threads, subscriptions,
 and transport sessions stop automatically; remove the two SVGs to clean up output.
