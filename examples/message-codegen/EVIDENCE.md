@@ -304,3 +304,23 @@ The Python ↔ Rust raw transport demo still exchanged 128, 65,536, and 1,048,57
 bytes exactly. After rebuilding the Rust native examples, the three-language SDK
 relay passed on LCM and Zenoh again, preserving 921,600 image bytes and timestamp
 `1700000000123456789`. Transport limits are documented in the raw crate README.
+
+### Three-language coordinator blueprint
+
+`demo_blueprint.py` now deploys the Python producer/verifier and C++/Rust relays
+through the actual module coordinator. Its parametrized E2E test passed on both
+LCM and Zenoh, checking three distinct samples each. Two additional standalone
+Zenoh launches each verified five samples. Every sample changes its custom
+segment fields, 921,600 RGB image bytes, and exact source nanoseconds; Python
+compares the complete returned messages against the expected native edits.
+Mypy and Ruff passed for the demo.
+
+The Zenoh demo uses a temporary loopback router and explicit client endpoints.
+Initial runs using default multicast peer discovery intermittently returned
+neither stream despite successful native startup. Explicit routing passed the
+repeated launches, but this does not establish the cause or fix default peer
+discovery. Keep that finding open for the final runtime checks. Logs are
+`build/message-codegen/three-language-blueprint-{tests,zenoh,zenoh-repeat}.log`.
+
+This completes the three-language coordinator portion of the human demo;
+live Rerun/browser image and pose integration is still required for task 4.10.

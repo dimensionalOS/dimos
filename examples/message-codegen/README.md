@@ -436,3 +436,41 @@ configuration, and the LCM run reserves a temporary local UDP port:
 PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/pytest \
   examples/native-modules/test_rust_tf.py -m native_e2e -o addopts='' -v
 ```
+
+### Three-language module coordinator blueprint
+
+After building the native relays above, run the complete worker-based graph:
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_blueprint.py --transport zenoh
+# On a multicast-configured host:
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_blueprint.py --transport lcm
+```
+
+```text
+Python worker → C++ native worker → Rust native worker → Python worker
+   weight n          n + 1               n + 2          validate fields
+   RGB image  ──────────────────────────────────────── validate all pixels
+```
+
+Each of five samples changes the custom weight, endpoint, image pixels, and exact
+source timestamp. The final Python worker validates the full encoded messages;
+the terminal reports each result. `--samples N` changes the sample count. Native
+processes and workers stop automatically after the finite run, including failures.
+
+The Zenoh demo starts a temporary loopback router and connects every worker to
+its explicit endpoint, with multicast discovery disabled. The topics and module
+names have a unique namespace. The LCM run uses `LCM_DEFAULT_URL`, so set it to an
+isolated multicast port when other local blueprints are running. As with the TF
+demo, normal DimOS runtime dependencies are required. Automated checks choose a
+temporary LCM port and run the same command on each transport:
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/pytest \
+  examples/message-codegen/test_blueprint.py -m native_e2e -o addopts='' -v
+```
+
+This finite demo exercises coordinator deployment, remapping, native startup,
+and generated streams. Live Rerun/browser integration remains a later addition.
