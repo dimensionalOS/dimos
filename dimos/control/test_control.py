@@ -23,6 +23,7 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
 from dimos_generated.sensor_msgs.msg import JointState
 import pytest
 
@@ -64,7 +65,6 @@ from dimos.core.stream import In
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import MotorState, WholeBodyAdapter
-from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
@@ -384,7 +384,7 @@ class TestControlCoordinatorLifecycle:
         dispatch = mocker.patch.object(coordinator, "_dispatch")
 
         coordinator._map_twist_to_base_joints(
-            Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0])
+            Twist(linear=Vector3(x=1.0, y=2.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=3.0))
         )
 
         stream, joint_state = dispatch.call_args.args

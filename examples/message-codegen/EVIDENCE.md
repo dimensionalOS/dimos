@@ -679,3 +679,23 @@ four-joint state with matching tick stamps. Transcripts:
 
 These checks exercise synthetic hardware boundaries and real coordinator ticks;
 no physical G1 control or complete robot blueprint acceptance is claimed.
+
+### Generated base-motion adapter and coordinator commands
+
+TransportTwistAdapter now uses generated Twist/PoseStamped and reads nested
+position/quaternion fields through the geometry yaw helper. The coordinator and
+GROOT command contract, plus Go2/GROOT transport maps, use generated Twist.
+Existing enable, stop, one/two/three-axis mapping, and odometry copy-isolation
+behavior remain covered.
+
+**373 checks passed** (four base-adapter cases and all 369 control tests), plus
+one subprocess E2E that runs the base demo on both LCM and independent Zenoh
+sessions. Mypy passes on six changed production/blueprint/demo modules.
+The demo received odometry `[2.0, -1.0, pi/2]`, observed the generated velocity
+command `(0.5, -0.2, 0.3)`, and observed a zero Twist after disable.
+
+Logs: `build/message-codegen/base-control-cdr-tests.log`,
+`base-transport-cdr-e2e.log`, and
+`build/message-codegen/demo/evidence/base-transport.txt`. No hardware motion was
+performed. Legacy benchmark/trajectory/pose consumers outside this adapter path
+remain pending in the broader runtime cutover.

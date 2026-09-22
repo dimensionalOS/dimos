@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from dimos_generated.dimos_msgs.msg import MotorCommandArray
+from dimos_generated.geometry_msgs.msg import Twist
 from dimos_generated.sensor_msgs.msg import Imu, JointState
 
 from dimos.control.components import HardwareComponent, HardwareType
@@ -72,7 +73,6 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
-from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner

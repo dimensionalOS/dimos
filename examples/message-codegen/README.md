@@ -692,3 +692,16 @@ streams, verifying names, positions, ROS header frames, CDR round trips, and one
 shared tick stamp. Its existing internal snapshot clock remains in floating
 seconds and is explicitly converted at the message boundary. Both demos close
 subscriptions and stop their modules on exit.
+
+### Base-motion transport commands, odometry, and stop
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_base_transport.py
+```
+
+The actual base adapter receives generated PoseStamped odometry over LCM and
+then independent loopback Zenoh sessions. It prints planar position `(2, -1)`
+and yaw `pi/2`, sends velocity `(0.5, -0.2, 0.3)` after enabling, then verifies
+a generated zero Twist arrives when disabled. It closes the adapter and all
+transport resources. `test_base_transport.py` runs this exchange automatically.
