@@ -86,6 +86,12 @@ impl SessionSettings {
             ("scouting/multicast/enabled", json_text(&self.multicast)),
             ("scouting/multicast/interface", json_text(&self.interface)),
             ("scouting/gossip/enabled", json_text(&self.gossip)),
+            // Match Python: preserve stream SHM, but keep RPC payloads off the
+            // arena-mapping path that drops replies when RLIMIT_MEMLOCK is hit.
+            (
+                "transport/shared_memory/transport_optimization/messages",
+                json_text(&["put"]),
+            ),
         ];
         // Empty means the stock multicast group. A moved group is a private
         // discovery bus, which is how parallel sessions on one host stay apart.
@@ -430,6 +436,27 @@ mod tests {
             r#""wlan0""#
         );
         assert_eq!(config.get_json("connect/timeout_ms").unwrap(), "1000");
+    }
+
+    #[test]
+    fn shared_memory_optimizes_streams_but_not_rpc_payloads() {
+        let config = settings(serde_json::json!({})).zenoh_config().unwrap();
+        assert_eq!(
+            config.get_json("transport/shared_memory/enabled").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            config
+                .get_json("transport/shared_memory/transport_optimization/enabled")
+                .unwrap(),
+            "true"
+        );
+        assert_eq!(
+            config
+                .get_json("transport/shared_memory/transport_optimization/messages")
+                .unwrap(),
+            r#"["put"]"#
+        );
     }
 
     #[test]

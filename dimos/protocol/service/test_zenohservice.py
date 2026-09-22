@@ -115,14 +115,14 @@ def test_close_all_empties_the_pool_even_when_a_session_will_not_close(
     assert len(opens) == 2
 
 
-def test_shared_memory_stays_on() -> None:
-    """Local peers get zenoh's shared-memory path, which nothing here turns off.
-
-    Zenoh enables it by default; a wheel built without the feature drops the key.
-    """
+def test_shared_memory_optimizes_streams_but_not_rpc_payloads() -> None:
+    """RPC delivery must not depend on the receiver's locked-memory allowance."""
 
     config = json.loads(str(zenohservice._zenoh_config(ZenohConfig())))
-    assert config["transport"]["shared_memory"]["enabled"] is True
+    shared_memory = config["transport"]["shared_memory"]
+    assert shared_memory["enabled"] is True
+    assert shared_memory["transport_optimization"]["enabled"] is True
+    assert shared_memory["transport_optimization"]["messages"] == ["put"]
 
 
 def test_different_modes_produce_different_keys() -> None:

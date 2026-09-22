@@ -234,6 +234,10 @@ _ZENOH_DEFAULTED_WHEN_EMPTY = ("connect", "listen", "scout_addr", "connect_timeo
 def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
     """The zenoh session config these settings open."""
     zconfig = zenoh.Config()
+    # Keep streams on SHM, but send RPC payloads over the network. Zenoh locks
+    # each mapped SHM arena; exceeding RLIMIT_MEMLOCK drops replies even though
+    # query finalization still arrives. Match the native SessionSettings policy.
+    zconfig.insert_json5("transport/shared_memory/transport_optimization/messages", '["put"]')
     for name, value in config.to_wire().items():
         if not value and name in _ZENOH_DEFAULTED_WHEN_EMPTY:
             continue
