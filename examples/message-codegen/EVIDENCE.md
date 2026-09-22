@@ -1136,3 +1136,20 @@ is substituted, so no weights or inference are exercised. The offline
 Local verification installed OpenAI 2.21.0, Hydra 1.3.2, and CPU Torch 2.7.1.
 Person-follow imports successfully. Actual tracking inference, simulation camera
 producers, and the full person-follow lifecycle remain unverified and unfinished.
+
+### Generated person-follow thread lifecycle
+
+Two standalone tests pass for the real control thread with deterministic tracker
+output: successful detection produces motion then a final zero command, and
+immediate tracking loss produces only zero commands. Both join the thread within
+two seconds and clean up the module. Commands are decoded from CDR before
+assertion. `demo_person_follow.py` passed the visible motion/stop scenario.
+
+The tests use `--noconftest` because the unrelated agent conftest requires missing
+LangGraph. Model creation and tracker inference are substituted; neither actual
+weights nor robot actuation are verified. Inspection confirms MuJoCo and DimSim
+camera producers already use generated CameraInfo and Image; no producer change
+was needed for this increment. Simulation execution remains a separate gate.
+The standalone control-thread demo does not enter an MCP skill-call context;
+its final tool-progress update logs an unknown-tool warning. MCP tool-stream
+lifecycle is not part of this check.

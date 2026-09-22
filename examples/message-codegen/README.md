@@ -985,3 +985,15 @@ PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/mess
 This offline terminal demo resizes a generated image and converts a fixed model
 response into a CDR detection array. It prints the dimensions and verifies the
 source header. It does not call an API or run model inference, and writes no files.
+
+### Person-follow control thread with generated messages
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_person_follow.py
+```
+
+This hardware-free demo starts the actual person-follow control thread with
+fixed tracker output. It prints a CDR-decoded forward command, requests stopping,
+checks the final zero command, and joins the thread. Model creation and tracker
+inference are substituted; this is not a model-accuracy or robot demo. It needs
+the optional Torch/Hydra imports but downloads no weights and writes no files.
