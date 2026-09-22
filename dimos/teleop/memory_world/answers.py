@@ -164,6 +164,38 @@ class WorldAnswers:
         n = int(header.get("n", 0))
         return np.frombuffer(payload, dtype=np.float32, count=n * 3).reshape(n, 3)
 
+    def _join_world_clients(self, conn: Any) -> None:
+        """Register a viewer, and start it on a clean world if the last session ended.
+
+        `_active_query_result` and its evidence photos are replayed to every websocket
+        that connects, which is what lets a second viewer -- a headset picked up beside
+        a laptop -- join a demo already in progress. Nothing ever cleared them, so they
+        were not session state at all: they lived as long as the process, and the next
+        person to open the page was greeted by markers and photographs answering a
+        question they never asked. Every path that answers wrote them -- a curl, an
+        agent turn, another tab, the tour, and on the hyperspace build any answer
+        published by anybody -- so this had many ways to happen and no way not to.
+
+        An answer belongs to the viewing session that asked for it. A viewer arriving
+        to an EMPTY set is the start of a new session and gets a clean world; one
+        arriving while others are watching is joining theirs and still inherits it.
+        Caller holds `_clients_lock`.
+        """
+        if not self._world_clients:
+            self._forget_the_answer()
+        self._world_clients.add(conn)
+
+    def _forget_the_answer(self) -> None:
+        """Drop the answer on screen and its evidence. Caller holds `_clients_lock`.
+
+        All three together: the result the wire replays, the photographs behind it, and
+        the places `/navigate` plans from. Leaving any one behind leaves the viewer able
+        to route to a marker it is no longer showing.
+        """
+        self._active_query_result = None
+        self._active_query_images = []
+        self._last_answer = (None, None)
+
     def _query_is_current(self, query_id: str) -> bool:
         current = getattr(self, "_active_query_result", None)
         return isinstance(current, dict) and current.get("query_id") == query_id

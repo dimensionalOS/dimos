@@ -31,6 +31,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from dimos.teleop.memory_world.answers import WorldAnswers
 from dimos.teleop.memory_world.query import ClusterSummary, MemoryQueryResult
 from dimos.teleop.memory_world.route import LETHAL, RoutePlanner
 from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix, quaternion_from_matrix
@@ -385,6 +386,36 @@ def test_an_mcap_goes_to_the_indexer_that_can_read_it(recorded, expect_siglipify
     assert went_to_siglipify is expect_siglipify, (
         f"payload {recorded!r} went to {'siglipify' if went_to_siglipify else 'our indexer'}"
     )
+
+
+def test_a_viewer_opening_an_empty_world_is_not_shown_the_last_visitor_s_answer() -> None:
+    """The answer on screen is replayed to every new websocket and was never cleared.
+
+    So it outlived its viewers: a curl, an agent turn or a closed tab left markers and
+    evidence photographs on the next person's opening screen, answering a question they
+    had not asked. The join is what has to distinguish the two cases, because a headset
+    picked up beside a laptop is a second viewer of a LIVE answer and must still get it.
+    """
+    world = WorldAnswers()
+    world._world_clients = set()
+    world._active_query_result = {"query_id": "abc"}
+    world._active_query_images = [({"index": 0}, b"jpeg")]
+    world._last_answer = ("places", "abc")
+
+    world._join_world_clients("the first viewer")
+    assert world._active_query_result is None
+    assert world._active_query_images == []
+    assert world._last_answer == (None, None)
+    assert world._world_clients == {"the first viewer"}
+
+    # ...and the live case the clearing must not break.
+    live = {"query_id": "xyz"}
+    world._active_query_result = live
+    world._last_answer = ("places", "xyz")
+    world._join_world_clients("a headset joining the same demo")
+    assert world._active_query_result is live
+    assert world._last_answer == ("places", "xyz")
+    assert len(world._world_clients) == 2
 
 
 def test_the_smoothed_global_map_wins_but_an_empty_one_falls_back_to_the_raw() -> None:

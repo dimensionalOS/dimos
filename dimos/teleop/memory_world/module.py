@@ -545,7 +545,7 @@ class MemoryWorldModule(
         loop = asyncio.get_running_loop()
         conn = ClientConn(ws=ws, loop=loop)
         with self._clients_lock:
-            self._world_clients.add(conn)
+            self._join_world_clients(conn)
         logger.info("memory-world client connected (now %d)", len(self._world_clients))
 
         sender = asyncio.create_task(self._sender_loop(conn))
