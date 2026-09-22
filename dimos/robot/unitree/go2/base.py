@@ -105,6 +105,7 @@ class Go2Base(StaticTfPublisher):
         self.register_disposable(Disposable(timer.cancel))
 
     def _startup_pose(self) -> None:
+        self.set_lidar(False)
         self.standup()
 
     @rpc
