@@ -303,7 +303,13 @@ class VisualMemoryIndex:
                 settings["device"] = self._device
             self._model = SigLIPModel(**settings)
             self._model.start()
-            logger.info("loaded %s for visual memory search", self.model_name)
+            # The DEVICE, not just the model. Without it there is no way to tell from a log
+            # whether a run that asked for Metal got it: a config field that silently does
+            # not take, or a `default_torch_device()` that fell back, both look like a
+            # normal load. `model.device` is what the model resolved, not what was asked.
+            logger.info(
+                "loaded %s on %s for visual memory search", self.model_name, self._model.device
+            )
         return self._model
 
     @property
