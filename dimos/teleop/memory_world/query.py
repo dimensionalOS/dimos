@@ -20,7 +20,7 @@ from collections.abc import Sequence
 from typing import Annotated, Literal
 
 from PIL import ImageColor
-from pydantic import BaseModel, BeforeValidator, Field, ValidationError
+from pydantic import BaseModel, BeforeValidator, Field, ValidationError, field_validator
 
 FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
 Point3 = tuple[FiniteFloat, FiniteFloat, FiniteFloat]
@@ -76,6 +76,24 @@ class HighlightRegion(BaseModel):
     opacity: float = Field(default=0.35, ge=0.0, le=1.0)
 
 
+class HighlightBox(BaseModel):
+    """An axis-aligned world-frame box rendered as a wireframe with a faint fill."""
+
+    center: Point3
+    # Full x, y, z size in metres.
+    extent: Point3
+    label: str = Field(default="", max_length=120)
+    color: Color = "#22dd88"
+    opacity: float = Field(default=0.12, ge=0.0, le=1.0)
+
+    @field_validator("extent")
+    @classmethod
+    def _positive(cls, extent: Point3) -> Point3:
+        if min(extent) <= 0.0:
+            raise ValueError("extent must be positive on every axis")
+        return extent
+
+
 class HighlightPoint(BaseModel):
     """A world-frame point of interest."""
 
@@ -85,6 +103,9 @@ class HighlightPoint(BaseModel):
     # Metres around the point whose voxels the viewer repaints. Only set when
     # the point is an object, not a capture pose.
     radius: float | None = Field(default=None, gt=0.0, le=5.0)
+    # Full x, y, z size in metres of the object's box around the point; the viewer
+    # repaints the voxels inside it instead of the ball.
+    extent: Point3 | None = None
 
 
 class MemoryQueryResult(BaseModel):
@@ -92,7 +113,8 @@ class MemoryQueryResult(BaseModel):
 
     answer: str = Field(min_length=1, max_length=2_000)
     focus_point: Point3 | None = None
-    regions: list[HighlightRegion] = Field(default_factory=list, max_length=32)
+    regions: list[HighlightRegion] = Field(default_factory=list, max_length=128)
+    boxes: list[HighlightBox] = Field(default_factory=list, max_length=64)
     evidence_paths: list[HighlightPath] = Field(default_factory=list, max_length=32)
     points: list[HighlightPoint] = Field(default_factory=list, max_length=128)
     observation_ids: list[int] = Field(default_factory=list, max_length=200)
@@ -116,6 +138,7 @@ store = SqliteStore(path=sys.argv[1], must_exist=True)
 store.start()
 viewer_position = json.loads(sys.argv[2])
 route = json.loads(sys.argv[3])
+objects = json.loads(sys.argv[4])
 
 def sample_pose_path(stream_name="pointlio_lidar", max_points=200):
     # Return a bounded world-frame xyz path from a pose-bearing stream.
@@ -136,6 +159,7 @@ namespace = {{
     "store": store,
     "viewer_position": viewer_position,
     "route": route,
+    "objects": objects,
     "sample_pose_path": sample_pose_path,
 }}
 try:

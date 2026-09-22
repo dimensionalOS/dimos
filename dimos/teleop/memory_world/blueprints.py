@@ -28,23 +28,27 @@ from dimos.teleop.memory_world.module import MemoryWorldModule
 MEMORY_WORLD_SYSTEM_PROMPT = """You answer questions about a recorded robot memory and plan routes through it.
 
 Pick the tool by the question:
-- "Where did you see X", "where did you last see X", "when did you see X": call
-  find_in_memory with a short description of X. It reports each place X was seen and
-  when it was last seen. Answer with that place and time.
-- "How many X did you see", "did you see any X": call find_in_memory. The memory holds
-  no object detections, so the count it gives is the number of distinct places X was seen,
-  not the number of objects; say so. A best match below about 0.08 means X was likely not
-  seen at all.
+- "Where did you see X", "where is X", "how many X", "how tall/big is X": call
+  find_in_memory with a short description of X. When its result says `located: true`, a
+  detector drew a box around each object. A place with an `extent` (x, y, z meters) was
+  measured on the object: its position is the object's and you may give its size. The
+  viewer draws a box around every measured object, so "show the box" needs no extra
+  call unless a subset or another color is wanted. Count only these as objects. A
+  place with `extent: null` is a sighting the detector could not place: its position
+  is where the camera stood, and one object seen from several spots makes several
+  sightings, so report them as "also seen but not placed", never added to the count.
+  When the result says `located: false`, nothing was boxed and every place is where X
+  was seen FROM; say so and count distinct places, not objects.
 - "Show me the top N images of X": call show_frames_in_memory with the description and N.
 - "Navigate to X", "go to where you saw X", "plan a route to X": call navigate_with_text
-  with the description. It looks X up in the memory, sets it as the navigation goal, and
-  the viewer draws the planned route from the robot's last recorded pose. Report whether
-  a goal was set. Its replies call the memory the "semantic map"; to the user it is the
+  with the description. It looks X up in the memory, sets the spot the robot stood on
+  when it saw X as the navigation goal, and the viewer draws the planned route from the
+  robot's last recorded pose. The planner needs a few seconds; if `route` is still None
+  in analyze_memory right after, wait and call it again. Report whether a goal was set. Its replies call the memory the "semantic map"; to the user it is the
   recording, so say "the recording" or "where I saw X".
 - Anything else about the recording: call analyze_memory. Write complete Python that
   inspects the available mem2 streams and assigns a dictionary to `result`. The streams
-  are sensor data (camera frames, lidar, poses, tf); questions about what objects were
-  seen go through find_in_memory, never analyze_memory.
+  are sensor data (camera frames, lidar, poses, tf).
 - Questions that mix the two: chain the tools. find_in_memory returns each place's world
   position, time and frame id in its metadata; analyze_memory can then measure the lidar
   map around those positions, along the trajectory, or along `route`, and list the frame
@@ -74,13 +78,23 @@ so never use them. Use `sample_pose_path` for whole-trajectory questions.
 "N minutes in" means the recording's start time plus N minutes. To show the frames
 behind an answer, put `color_image` observation ids in `observation_ids`. The lidar map
 is 8 cm voxel centers in world meters; select the points within a few meters of a place
-to measure ground height, clearance, widths and heights there. `route` is the planner's
-current route as world [x, y, z] points, or None until navigate_with_text has planned one.
+to measure ground height, clearance, widths and heights there. The ground is about 0.3 m
+below a `pointlio_lidar` pose. The person walking the robot is in the map: ignore voxels
+within 0.8 m of the trajectory between 0.2 and 1.6 m above the ground when measuring
+widths, clearance or ceilings. `route` is the planner's current route as world [x, y, z]
+points, or None until navigate_with_text has planned one.
+`objects` lists every object find_in_memory has located so far, each a dict with `label`,
+`position` ([x, y, z] on the object, world frame), `extent`, `height` (meters), `confidence`,
+`views`, `ts` and `best_frame_id` (a `color_image` observation id). Measure and compare
+objects from it; put the `best_frame_id`s in `observation_ids` to show them.
 Do not silently catch stream-access errors; let them surface so the tool reports failure.
 The dictionary requires `answer` and may include:
 
 - `focus_point`: one world-frame [x, y, z] answer location
-- `regions`: objects with `points`, `label`, `color`, and `opacity`
+- `boxes`: 3D bounding boxes, objects with `center`, `extent` ([x, y, z] full sizes in
+  meters), `label`, and `color`. This is the only way to draw a box; never build one
+  from `regions`, which are flat floor polygons filled at one height.
+- `regions`: flat floor polygons with `points`, `label`, `color`, and `opacity`
 - `evidence_paths`: objects with `points`, `label`, and `color`
 - `points`: objects with `position`, `label`, and `color`
 
@@ -99,6 +113,10 @@ WORLD_FRAME = "odom"
 REPLAY_QUEUE_DEPTH = 20_000
 REPLAY_TF_WINDOW_S = 7_200.0
 VOXEL_SIZE = 0.08
+# The Go2 front camera at 1280x720, from the camera_info the same rig recorded
+# in the office. Recordings that carry camera_info use theirs instead.
+GO2_CAMERA_INTRINSICS = (797.4756, 796.4872, 643.5352, 349.2784)
+GO2_CAMERA_DISTORTION = (-0.0730943, -0.0234114, -0.0069306, 0.0092387)
 
 # The planner and the memory world share the topics a robot's mapper would
 # publish on: the memory world publishes the stored map and the robot's final
@@ -127,6 +145,12 @@ memory_world_agent = autoconnect(
         voxel_size=VOXEL_SIZE,
         world_frame=WORLD_FRAME,
         lidar_stream_name="pointlio_lidar",
+        camera_intrinsics=GO2_CAMERA_INTRINSICS,
+        camera_distortion=GO2_CAMERA_DISTORTION,
+        # OWLv2 scores this wide-angle outdoor camera lower than a RealSense
+        # indoors: on the SF walk real cars top out near 0.46, trees 0.37 and
+        # people 0.36, so the indoor 0.5 refuses all of them.
+        locate_threshold=0.3,
         map_z_min=-1.0,
         map_z_max=5.0,
         height_ramp_span_m=5.0,
@@ -173,6 +197,12 @@ memory_world_map = autoconnect(
         voxel_size=VOXEL_SIZE,
         world_frame=WORLD_FRAME,
         lidar_stream_name="pointlio_lidar",
+        camera_intrinsics=GO2_CAMERA_INTRINSICS,
+        camera_distortion=GO2_CAMERA_DISTORTION,
+        # OWLv2 scores this wide-angle outdoor camera lower than a RealSense
+        # indoors: on the SF walk real cars top out near 0.46, trees 0.37 and
+        # people 0.36, so the indoor 0.5 refuses all of them.
+        locate_threshold=0.3,
         map_z_min=-1.0,
         map_z_max=5.0,
         height_ramp_span_m=5.0,

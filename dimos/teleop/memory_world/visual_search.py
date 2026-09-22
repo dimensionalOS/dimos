@@ -134,6 +134,8 @@ class Place:
     camera_position: tuple[float, float, float] | None = None
     # Distinct viewing directions that saw this place (1 for a single frame).
     views: int = 1
+    # The object's box size in meters, when a detector measured it.
+    extent: tuple[float, float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -480,9 +482,11 @@ class VisualMemoryIndex:
         )
 
         added = 0
-        vision_config = self.model._model.config.vision_config
-        grid_side = vision_config.image_size // vision_config.patch_size
+        grid_side = 0
         for batch in _batched(wanted, batch_size):
+            if grid_side == 0:
+                vision_config = self.model._model.config.vision_config
+                grid_side = vision_config.image_size // vision_config.patch_size
             pil_images = [PILImage.fromarray(obs.data.to_rgb().data) for obs, _ in batch]
             with torch.inference_mode():
                 inputs = self.model._move_inputs_to_device(
@@ -506,7 +510,8 @@ class VisualMemoryIndex:
                 )
                 added += 1
             logger.info("indexed %d frames of %s", added, self.image_stream_name)
-        self._loaded = None
+        if added:
+            self._loaded = None
         return added
 
     def warm(self) -> None:

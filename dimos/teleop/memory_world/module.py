@@ -72,8 +72,12 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path as NavPath
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.teleop.memory_world.camera import CameraModel, Rectifier
 from dimos.teleop.memory_world.messages import (
     MSG_IMAGE_POSES,
     MSG_IMAGE_THUMBNAIL,
@@ -84,9 +88,11 @@ from dimos.teleop.memory_world.messages import (
     encode_binary,
     encode_text,
 )
+from dimos.teleop.memory_world.objects import LocateConfig, Look, locate, render_depth
 from dimos.teleop.memory_world.query import (
     MEMORY_ANALYSIS_BOOTSTRAP,
     RESULT_SENTINEL,
+    HighlightBox,
     HighlightPath,
     HighlightPoint,
     MemoryQueryResult,
@@ -102,14 +108,10 @@ from dimos.teleop.memory_world.replay import (
 from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix, quaternion_from_matrix
 from dimos.teleop.memory_world.visual_search import (
     SIGLIP2_MODEL_NAME,
-    PatchHit,
     Place,
     VisualMemoryIndex,
     body_style_quaternion,
-    cluster_hits,
     cluster_places,
-    hot_patches,
-    patch_world_position,
     search_phrase,
 )
 from dimos.types.robot_location import RobotLocation
@@ -136,6 +138,42 @@ def _heading(
     """Yaw of an optical camera pose's forward axis, in world radians."""
     forward = pose_matrix(position, orientation)[:3, 2]
     return float(np.arctan2(forward[1], forward[0]))
+
+
+def _merge_results(active: dict[str, Any], fresh: dict[str, Any]) -> dict[str, Any]:
+    """The fresh result on top of the canvas so far, each list capped at its schema limit."""
+    merged = dict(active)
+    for key in ("regions", "boxes", "evidence_paths", "points", "observation_ids"):
+        combined = list(active.get(key) or []) + list(fresh.get(key) or [])
+        if key == "observation_ids":
+            combined = list(dict.fromkeys(combined))
+        merged[key] = combined[-_list_cap(key) :]
+    merged["answer"] = fresh["answer"]
+    merged["focus_point"] = fresh.get("focus_point") or active.get("focus_point")
+    merged["route"] = fresh.get("route")
+    return merged
+
+
+def _list_cap(key: str) -> int:
+    return max(
+        getattr(meta, "max_length", 0) or 0 for meta in MemoryQueryResult.model_fields[key].metadata
+    )
+
+
+def _navigation_goal(place: Place) -> dict[str, float]:
+    """Where to stand for a place, facing it.
+
+    A measured object's position is on the object, inside the map's voxels, so the
+    goal is where the camera stood when it saw it, which the robot has already
+    walked. An unmeasured place is that spot already.
+    """
+    if place.extent is not None and place.camera_position is not None:
+        stand = place.camera_position
+        yaw = float(np.arctan2(place.position[1] - stand[1], place.position[0] - stand[0]))
+    else:
+        stand = place.position
+        yaw = _heading(place.position, place.orientation)
+    return {"pos_x": stand[0], "pos_y": stand[1], "pos_z": stand[2], "rot_z": yaw}
 
 
 class _RevalidatedStaticFiles(StaticFiles):
@@ -294,6 +332,18 @@ class MemoryWorldConfig(ModuleConfig):
     # hits must land to be the same object.
     locate_frames: int = PydanticField(default=12, ge=1)
     object_radius_m: float = PydanticField(default=0.75, gt=0.0)
+    # The detector path: OWLv2 on the best frame of each place, its box placed
+    # off the depth stream or, without one, off depth rendered from the lidar map.
+    locate_threshold: float = PydanticField(default=0.5, gt=0.0, lt=1.0)
+    # Narrow each detector box to an EdgeTAM mask before measuring the map under it.
+    segment_boxes: bool = True
+    locate_attempts: int = PydanticField(default=2, ge=1)
+    locate_max_depth_m: float = PydanticField(default=20.0, gt=0.0)
+    # Intrinsics for a recording without a camera_info stream: fx, fy, cx, cy
+    # at the recorded resolution, and the distortion of the named model.
+    camera_intrinsics: tuple[float, float, float, float] | None = None
+    camera_distortion: tuple[float, ...] = ()
+    camera_distortion_model: Literal["equidistant", "plumb_bob"] = "equidistant"
     # ---- the stored map -------------------------------------------------------
     # The mapper's snapshots are written into the recording once as keyframe
     # and diff streams (see replay.py). A later run loads the map they end on.
@@ -355,9 +405,19 @@ class MemoryWorldModule(Module):
         self._store_read_lock = threading.Lock()
         self._map_progress = "not started"
         self._map_publisher: threading.Thread | None = None
+        self._located: dict[str, list[Place]] = {}
+        self._owlv2: Any = None
+        self._edge_tam: Any = None
+        self._edge_tam_unavailable = False
+        self._models_lock = threading.Lock()
+        self._map_centers: np.ndarray | None = None
         self._camera_hfov_deg: float | None = None
         self._active_query_result: dict[str, Any] | None = None
         self._active_query_images: list[tuple[dict[str, Any], bytes]] = []
+        # An agent turn keeps every result it publishes on one canvas until the
+        # agent goes idle. Outside a turn each result replaces the last.
+        self._turn_open = False
+        self._turn_query_id: str | None = None
         self._query_revision = 0
         self._last_route: HighlightPath | None = None
         self._map_push_lock = threading.Lock()
@@ -805,8 +865,9 @@ class MemoryWorldModule(Module):
         """Analyze the recorded memory and display validated spatial results in VR.
 
         Run complete Python code in a fresh process with ``store`` (the mem2
-        SqliteStore), ``np`` (NumPy), ``viewer_position`` and ``route`` (the
-        planner's current route as world xyz points, or None) available. Inspect
+        SqliteStore), ``np`` (NumPy), ``viewer_position``, ``route`` (the
+        planner's current route as world xyz points, or None) and ``objects``
+        (every object the detector has located so far, with position and size) available. Inspect
         streams with ``store.list_streams()``, ``store.summary()``, and
         ``store.streams[name]``. Observations expose ``pose_tuple``, ``data``,
         and ``id``. ``store.read_stream`` does not exist. For a bounded xyz
@@ -834,6 +895,7 @@ class MemoryWorldModule(Module):
                     self.config.store_path,
                     json.dumps(viewer_position),
                     json.dumps(route),
+                    json.dumps(self._located_json()),
                 ],
                 input=code,
                 capture_output=True,
@@ -876,6 +938,7 @@ class MemoryWorldModule(Module):
             metadata={
                 "query_id": query_id,
                 "regions": len(result.regions),
+                "boxes": len(result.boxes),
                 "evidence_paths": len(result.evidence_paths),
                 "observation_ids": len(result.observation_ids),
                 "route": result.route is not None,
@@ -889,15 +952,32 @@ class MemoryWorldModule(Module):
             client.send_threadsafe(message)
 
     def _publish_query_result(self, result: MemoryQueryResult) -> str:
-        """Send a result to every connected viewer and remember it for reconnects."""
+        """Send a result to every connected viewer and remember it for reconnects.
+
+        Inside an agent turn the result joins the turn's canvas, so the route, the
+        boxes and the frames of successive tool calls all stay up together.
+        """
         with self._clients_lock:
-            query_id = uuid.uuid4().hex
-            self._query_revision += 1
             result.route = self._last_route
-            payload = result.model_dump(mode="json")
+            fresh = result.model_dump(mode="json")
+            active = self._active_query_result
+            if (
+                self._turn_open
+                and active is not None
+                and self._turn_query_id is not None
+                and active.get("query_id") == self._turn_query_id
+            ):
+                query_id = self._turn_query_id
+                payload = _merge_results(active, fresh)
+            else:
+                query_id = uuid.uuid4().hex
+                payload = fresh
+                self._active_query_images = []
+                if self._turn_open:
+                    self._turn_query_id = query_id
+            self._query_revision += 1
             payload.update(query_id=query_id, revision=self._query_revision)
             self._active_query_result = payload
-            self._active_query_images = []
         self._broadcast(encode_text("query_result", **payload))
         return query_id
 
@@ -933,13 +1013,38 @@ class MemoryWorldModule(Module):
                 return
             self._index_progress = f"ready ({index.count()} frames)"
             logger.info("visual index ready: %d frames (+%d new)", index.count(), added)
-        # Warm the index and both model loads here, off the request path: cold
-        # they add half a minute to whichever query comes first, the demoed one.
+        # Warm the index and the text model here, off the request path: cold they
+        # add half a minute to whichever query comes first, the demoed one.
         with self._search_lock:
             index.warm()
         index.model.embed_text("warmup")
-        _ = self.whisper
-        logger.info("voice query path warm")
+        logger.info("search path warm")
+
+    def _warm_detectors(self) -> None:
+        """Load the detector, the segmenter and Whisper and run each once, off the request path."""
+        try:
+            if self._camera_model() is not None:
+                frame = Image.from_opencv(np.zeros((64, 64, 3), np.uint8), ts=0.0)
+                self._owlv2_detector().query_detections(frame, ["a thing"], 0.5)
+                segmenter = self._segmenter()
+                if segmenter is not None:
+                    box = Detection2DBBox(
+                        bbox=(8.0, 8.0, 56.0, 56.0),
+                        track_id=-1,
+                        class_id=0,
+                        confidence=1.0,
+                        name="a thing",
+                        ts=0.0,
+                        image=frame,
+                    )
+                    segmenter.segment(ImageDetections2D(image=frame, detections=[box]))
+                logger.info("detector path warm")
+        except Exception:
+            logger.exception("detector warm-up failed")
+        try:
+            _ = self.whisper
+        except ImportError as error:
+            logger.warning("voice queries unavailable: %s", error)
 
     @skill
     @_serialized
@@ -966,10 +1071,19 @@ class MemoryWorldModule(Module):
             return SkillResult.fail("NOT_FOUND", f"Nothing in the recording matches {phrase!r}")
 
         latest = max(places, key=lambda place: place.ts)
-        answer = (
-            f"Found {phrase} in {len(places)} place(s), best match {places[0].similarity:+.3f}. "
-            f"Last seen {self._describe_time(latest.ts)} at {_xyz_text(latest.position)}."
-        )
+        if located:
+            measured = sum(1 for place in places if place.extent is not None)
+            answer = (
+                f"The detector measured {measured} {phrase} object(s) on the map, plus "
+                f"{len(places) - measured} sighting(s) it could not place, which may repeat "
+                f"those or each other. Best confidence {places[0].similarity:.2f}. Last seen "
+                f"{self._describe_time(latest.ts)} at {_xyz_text(latest.position)}."
+            )
+        else:
+            answer = (
+                f"Found {phrase} in {len(places)} place(s), best match {places[0].similarity:+.3f}. "
+                f"Last seen {self._describe_time(latest.ts)} at {_xyz_text(latest.position)}."
+            )
         query_id = self._show_places(phrase, places, located, answer)
 
         return SkillResult(
@@ -987,6 +1101,7 @@ class MemoryWorldModule(Module):
                         "ts": place.ts,
                         "offset_s": self._offset_s(place.ts),
                         "frame_id": place.source_id,
+                        "extent": place.extent,
                     }
                     for place in places
                 ],
@@ -1095,10 +1210,7 @@ class MemoryWorldModule(Module):
                 "distance": 1.0 - place.similarity,
                 "metadata": [
                     {
-                        "pos_x": place.position[0],
-                        "pos_y": place.position[1],
-                        "pos_z": place.position[2],
-                        "rot_z": _heading(place.position, place.orientation),
+                        **_navigation_goal(place),
                         "ts": place.ts,
                         "frame_id": place.source_id,
                     }
@@ -1163,10 +1275,18 @@ class MemoryWorldModule(Module):
                 HighlightPoint(
                     position=place.position,
                     label=f"{phrase} ({place.similarity:+.3f}, {place.views} view"
-                    f"{'s' if place.views != 1 else ''})",
-                    radius=self.config.object_radius_m if located else None,
+                    f"{'s' if place.views != 1 else ''}"
+                    + (f", {place.extent[2]:.1f} m tall" if place.extent else "")
+                    + ")",
+                    radius=self.config.object_radius_m if place.extent is not None else None,
+                    extent=place.extent,
                 )
                 for place in places
+            ],
+            boxes=[
+                HighlightBox(center=place.position, extent=place.extent, label=phrase)
+                for place in places
+                if place.extent is not None
             ],
             observation_ids=self._markers_near([place.position for place in places]),
         )
@@ -1221,7 +1341,10 @@ class MemoryWorldModule(Module):
             }
             sent.append((header, jpeg))
         with self._clients_lock:
-            self._active_query_images = sent
+            offset = len(self._active_query_images)
+            for header, _ in sent:
+                header["index"] += offset
+            self._active_query_images.extend(sent)
         for header, jpeg in sent:
             self._broadcast(encode_binary(MSG_QUERY_IMAGE, header, jpeg))
 
@@ -1261,6 +1384,30 @@ class MemoryWorldModule(Module):
                 )
         return self._camera_hfov_deg
 
+    # ---- objects ------------------------------------------------------------------
+
+    def _camera_model(self) -> CameraModel | None:
+        """The image stream's intrinsics, from camera_info or the configured values."""
+        store = self._ensure_store()
+        if self.config.camera_info_stream_name in store.list_streams():
+            return CameraModel.from_camera_info(
+                store.streams[self.config.camera_info_stream_name].first().data
+            )
+        if self.config.camera_intrinsics is None:
+            return None
+        fx, fy, cx, cy = self.config.camera_intrinsics
+        first = store.streams[self.config.image_stream_name].first().data
+        return CameraModel(
+            width=int(first.width),
+            height=int(first.height),
+            fx=fx,
+            fy=fy,
+            cx=cx,
+            cy=cy,
+            distortion=tuple(self.config.camera_distortion),
+            model=self.config.camera_distortion_model,
+        )
+
     # ---- the stored map --------------------------------------------------------
 
     def _open_map(self) -> None:
@@ -1283,6 +1430,7 @@ class MemoryWorldModule(Module):
                 centers, _ = final_map(store, self.config.voxel_size)
             self._map_complete = True
             self._map_progress = "ready"
+            self._map_centers = centers
         logger.info("map from an earlier run covers the recording: %d voxels", len(centers))
         with self._map_push_lock:
             self._latest_map = centers
@@ -1398,42 +1546,157 @@ class MemoryWorldModule(Module):
         return np.asarray(body @ OPTICAL_FROM_BODY)
 
     def _locate_objects(self, phrase: str) -> list[Place]:
-        """Raycast the hot patches of the best frames through depth and group the hits.
+        """Show the detector the best frame of each place and measure what it boxes.
 
-        Empty when the recording has no depth stream or intrinsics, or when
-        no hot patch lands on valid depth.
+        Empty when the recording has no intrinsics, when nothing can place a
+        box (no depth stream and no complete lidar map), or when the detector
+        refuses every frame.
         """
-        if self.config.depth_stream_name is None or self.config.camera_info_stream_name is None:
+        cached = self._located.get(phrase)
+        if cached is not None:
+            return cached
+        camera = self._camera_model()
+        if camera is None:
             return []
-        store = self._ensure_store()
-        depth_stream = store.streams[self.config.depth_stream_name]
-        k = store.streams[self.config.camera_info_stream_name].first().data.K
-        intrinsics = (float(k[0]), float(k[4]), float(k[2]), float(k[5]))
-
-        hits: list[PatchHit] = []
-        for frame in self._ensure_visual_index().frame_patches(phrase, k=self.config.locate_frames):
-            try:
-                depth = depth_stream.at(frame.ts, tolerance=self.config.depth_tolerance_s).first()
-            except LookupError:
-                continue
-            depth_mm = np.asarray(depth.data.data)
-            camera_to_world = pose_matrix(frame.position, frame.orientation)
-            for image_uv, score in hot_patches(frame.similarity, frame.rows, frame.cols):
-                position = patch_world_position(image_uv, depth_mm, intrinsics, camera_to_world)
-                if position is not None:
-                    hits.append(
-                        PatchHit(
-                            position=position,
-                            similarity=score,
-                            source_id=frame.source_id,
-                            ts=frame.ts,
-                            camera_position=frame.position,
-                            camera_orientation=frame.orientation,
-                        )
-                    )
-        return cluster_hits(
-            hits, radius=self.config.object_radius_m, max_places=self.config.max_places
+        if self.config.depth_stream_name is None and self._map_centers is None:
+            return []
+        ranked = self._ensure_visual_index().search(phrase, k=self.config.search_top_k)
+        rectify = Rectifier(camera)
+        images = self._ensure_store().streams[self.config.image_stream_name]
+        places_looks: list[list[Look]] = []
+        for group in self._frames_by_place(ranked):
+            looks = [self._look_at(candidate, images, rectify, camera) for candidate in group]
+            if any(look is not None for look in looks):
+                places_looks.append([look for look in looks if look is not None])
+        config = LocateConfig(
+            threshold=self.config.locate_threshold,
+            attempts=self.config.locate_attempts,
+            max_depth_m=self.config.locate_max_depth_m,
+            merge_m=self.config.object_radius_m,
         )
+        found = locate(
+            phrase,
+            places_looks,
+            self._owlv2_detector(),
+            camera,
+            segmenter=self._segmenter(),
+            config=config,
+        )
+        places = [
+            Place(
+                position=item.centre,
+                similarity=item.confidence,
+                source_id=item.frame_id,
+                ts=item.ts,
+                orientation=quaternion_from_matrix(item.world_t_camera[:3, :3]),
+                camera_position=tuple(float(v) for v in item.world_t_camera[:3, 3]),  # type: ignore[arg-type]
+                views=item.views,
+                extent=item.extent,
+            )
+            for item in found
+        ]
+        self._located[phrase] = places
+        logger.info(
+            "located %d %r object(s) from %d place(s) shown to the detector",
+            len(places),
+            phrase,
+            len(places_looks),
+        )
+        return places
+
+    def _frames_by_place(self, ranked: list[Place]) -> list[list[Place]]:
+        """Ranked frames grouped by where they were taken, best first, a few per place."""
+        groups: list[list[Place]] = []
+        for candidate in ranked:
+            here = np.asarray(candidate.position)
+            for group in groups:
+                if (
+                    np.linalg.norm(here - np.asarray(group[0].position))
+                    < self.config.place_radius_m
+                ):
+                    if len(group) < self.config.locate_attempts:
+                        group.append(candidate)
+                    break
+            else:
+                if len(groups) < self.config.locate_frames:
+                    groups.append([candidate])
+        return groups
+
+    def _look_at(
+        self, candidate: Place, images: Any, rectify: Rectifier, camera: CameraModel
+    ) -> Look | None:
+        try:
+            obs = images.at(candidate.ts, tolerance=0.005).first()
+        except LookupError:
+            return None
+        pose = self._camera_pose_of(obs)
+        if pose is None:
+            return None
+        image = Image.from_opencv(rectify(obs.data.to_opencv()), ts=float(obs.ts))
+        return Look(int(obs.id), float(obs.ts), image, pose, self._depth_for(obs.ts, pose, camera))
+
+    def _depth_for(self, ts: float, pose: np.ndarray, camera: CameraModel) -> np.ndarray | None:
+        """Meters on the camera's grid: the recorded depth, else the lidar map through the camera."""
+        if self.config.depth_stream_name is not None:
+            depth_stream = self._ensure_store().streams[self.config.depth_stream_name]
+            try:
+                depth = depth_stream.at(ts, tolerance=self.config.depth_tolerance_s).first()
+            except LookupError:
+                return None
+            return np.asarray(depth.data.data, dtype=np.float32) * 0.001
+        if self._map_centers is None:
+            return None
+        return render_depth(
+            self._map_centers,
+            pose,
+            camera,
+            max_depth_m=self.config.locate_max_depth_m,
+            voxel_m=self.config.voxel_size,
+        )
+
+    def _owlv2_detector(self) -> Any:
+        with self._models_lock:
+            if self._owlv2 is None:
+                from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
+
+                self._owlv2 = Owlv2Detector()
+                logger.info("loaded OWLv2 for object localization")
+            return self._owlv2
+
+    def _segmenter(self) -> Any:
+        """EdgeTAM masks for the detector's boxes, or None where it cannot run."""
+        if not self.config.segment_boxes:
+            return None
+        with self._models_lock:
+            if self._edge_tam_unavailable:
+                return None
+            if self._edge_tam is None:
+                from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
+
+                try:
+                    self._edge_tam = EdgeTAMImageSegmenter()
+                except (RuntimeError, ImportError, OSError) as error:
+                    self._edge_tam_unavailable = True
+                    logger.warning("objects are measured under boxes, not masks: %s", error)
+                    return None
+                logger.info("loaded EdgeTAM for object masks")
+            return self._edge_tam
+
+    def _located_json(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "label": phrase,
+                "position": list(place.position),
+                "extent": list(place.extent) if place.extent else None,
+                "height": place.extent[2] if place.extent else None,
+                "confidence": place.similarity,
+                "views": place.views,
+                "ts": place.ts,
+                "best_frame_id": place.source_id,
+            }
+            for phrase, places in self._located.items()
+            for place in places
+        ]
 
     def _markers_near(self, positions: list[tuple[float, float, float]]) -> list[int]:
         """Ids of the capture-pose markers closest to each place.
@@ -1574,18 +1837,28 @@ class MemoryWorldModule(Module):
             return
         with self._clients_lock:
             self._agent_is_idle = False
+            self._begin_turn()
         self.human_input.publish(text)
+
+    def _begin_turn(self) -> None:
+        """Start a fresh canvas for the answer to a new question. Callers hold the lock."""
+        self._turn_open = True
+        self._turn_query_id = None
 
     def _on_agent_message(self, msg: BaseMessage) -> None:
         entries = chat_entries(msg)
         with self._clients_lock:
             self._chat_history.extend(entries)
+            if any(entry.get("role") == "human" for entry in entries):
+                self._begin_turn()
         for entry in entries:
             self._broadcast(encode_text("chat", **entry))
 
     def _on_agent_idle(self, idle: bool) -> None:
         with self._clients_lock:
             self._agent_is_idle = bool(idle)
+            if idle:
+                self._turn_open = False
         self._broadcast(encode_text("agent_idle", idle=bool(idle)))
 
     # ---- lifecycle ---------------------------------------------------------
@@ -1633,8 +1906,13 @@ class MemoryWorldModule(Module):
         Each step is a pass over the recording; run together they starve each
         other (on an mcap every pass decompresses the image chunks), so the
         stored map goes first, the world cache second and the slow SigLIP index
-        last. A client that connects mid-way waits on the world cache lock.
+        last. A client that connects mid-way waits on the world cache lock. The
+        detector and segmenter load on their own thread meanwhile, since they
+        never touch the recording.
         """
+        threading.Thread(
+            target=self._warm_detectors, daemon=True, name="MemoryWorldWarmDetectors"
+        ).start()
         try:
             self._open_map()
         except Exception:

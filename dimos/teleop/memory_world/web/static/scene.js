@@ -98,6 +98,7 @@ const VOXEL_CULL_MOVE_M = 1.0;
 // itself stays inside a navy-to-cyan band, so warm colours read as "answer".
 const VOXEL_HIGHLIGHT_COLOR = 0xffb347;
 const VOXEL_HIGHLIGHT_FOCUS_COLOR = 0xff5c3a;
+const VOXEL_HIGHLIGHT_MARGIN_M = 0.1;                // box growth so edge voxels get painted
 // How far in front of the viewer a focused answer is brought.
 const FOCUS_DISTANCE_M = 4.0;
 
@@ -172,6 +173,8 @@ export class WorldScene {
         // replaced atomically when a new answer arrives.
         this._highlightGroup = new THREE.Group();
         this._frameRotate.add(this._highlightGroup);
+        this._queryImageGroup = new THREE.Group();     // frames hung for the active query
+        this._frameRotate.add(this._queryImageGroup);
         this._highlightedVoxels = [];                 // instance indices repainted by the last result
         this._lastResultPoints = [];                  // so a rebuilt cloud gets repainted too
         this._activeQueryId = null;                   // query images for any other id are stale
@@ -926,7 +929,7 @@ export class WorldScene {
         this.diag('quality', { level, median_ms: Number((medianMs || 0).toFixed(1)), auto: this._qualityAuto });
     }
 
-    /** Repaint the voxels around each point that carries a radius; the first
+    /** Repaint the voxels inside each point's extent box, or within its radius; the first
      *  point is the answer and gets the hotter colour. Points without a radius
      *  are capture poses, and painting the floor under the robot would mislead. */
     _highlightVoxels(points) {
@@ -937,15 +940,19 @@ export class WorldScene {
         }
         this._highlightedVoxels = [];
         points.forEach((point, order) => {
-            if (!(point.radius > 0)) return;
+            if (!(point.radius > 0) && !point.extent) return;
             const [px, py, pz] = point.position;
             const r2 = point.radius * point.radius;
+            const half = point.extent ? point.extent.map((e) => e / 2 + VOXEL_HIGHLIGHT_MARGIN_M) : null;
             const paint = new THREE.Color(order === 0 ? VOXEL_HIGHLIGHT_FOCUS_COLOR : VOXEL_HIGHLIGHT_COLOR);
             for (let i = 0; i < d.n; i++) {
                 const dx = d.positions[i * 3] - px;
                 const dy = d.positions[i * 3 + 1] - py;
                 const dz = d.positions[i * 3 + 2] - pz;
-                if (dx * dx + dy * dy + dz * dz <= r2) {
+                const inside = half
+                    ? Math.abs(dx) <= half[0] && Math.abs(dy) <= half[1] && Math.abs(dz) <= half[2]
+                    : dx * dx + dy * dy + dz * dz <= r2;
+                if (inside) {
                     d.paint[i * 3] = paint.r; d.paint[i * 3 + 1] = paint.g; d.paint[i * 3 + 2] = paint.b;
                     this._highlightedVoxels.push(i);
                 }
@@ -1118,6 +1125,8 @@ export class WorldScene {
 
     setQueryResult(result) {
         this._clearHighlightGroup();
+        const sameQuery = Boolean(result.query_id) && result.query_id === this._activeQueryId;
+        if (!sameQuery) this._clearGroup(this._queryImageGroup);
 
         for (const region of result.regions || []) {
             const points = region.points || [];
@@ -1144,6 +1153,23 @@ export class WorldScene {
                 new THREE.BufferGeometry().setFromPoints(boundaryPoints),
                 new THREE.LineBasicMaterial({ color: region.color || '#f9e547' }),
             ));
+        }
+
+        for (const box of result.boxes || []) {
+            const [w, d, h] = box.extent;
+            const geometry = new THREE.BoxGeometry(w, d, h);
+            const color = box.color || '#22dd88';
+            const fill = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+                color, transparent: true, opacity: box.opacity ?? 0.12, depthWrite: false, side: THREE.DoubleSide,
+            }));
+            fill.position.set(...box.center);
+            this._highlightGroup.add(fill);
+            const edges = new THREE.LineSegments(
+                new THREE.EdgesGeometry(geometry),
+                new THREE.LineBasicMaterial({ color }),
+            );
+            edges.position.set(...box.center);
+            this._highlightGroup.add(edges);
         }
 
         for (const path of result.evidence_paths || []) {
@@ -1178,14 +1204,17 @@ export class WorldScene {
         this._imageLodAccumS = IMAGE_LOD_INTERVAL_S;
 
         this._activeQueryId = result.query_id || null;
-        this._queryImages = [];
-        this._queryImageMeshes = [];
-        this._queryImageCursor = -1;
+        if (!sameQuery) {
+            this._queryImages = [];
+            this._queryImageMeshes = [];
+            this._queryImageCursor = -1;
+        }
         this._setAnswer(result.answer || 'Memory result');
         this.diag('query_result_loaded', {
             query_id: result.query_id,
             revision: result.revision,
             regions: (result.regions || []).length,
+            boxes: (result.boxes || []).length,
             evidence_paths: (result.evidence_paths || []).length,
             route: Boolean(result.route),
         });
@@ -1221,7 +1250,7 @@ export class WorldScene {
             // lookAt works in world space; the group is a child of the frame rotation.
             this._frameRotate.updateWorldMatrix(true, false);
             quad.up.copy(up).transformDirection(this._frameRotate.matrixWorld);
-            this._highlightGroup.add(quad);
+            this._queryImageGroup.add(quad);
             // lookAt aims the plane's front (+z, where the texture reads
             // correctly) at the eye. Turning it away showed the back face,
             // which is the picture mirrored.
@@ -1234,7 +1263,7 @@ export class WorldScene {
             const segments = [];
             for (const corner of corners) segments.push(eye.clone(), corner);
             for (let i = 0; i < 4; i++) segments.push(corners[i], corners[(i + 1) % 4]);
-            this._highlightGroup.add(new THREE.LineSegments(
+            this._queryImageGroup.add(new THREE.LineSegments(
                 new THREE.BufferGeometry().setFromPoints(segments),
                 new THREE.LineBasicMaterial({ color: header.index === 0 ? 0xff5c3a : 0xffb347 }),
             ));
@@ -1282,8 +1311,12 @@ export class WorldScene {
     }
 
     _clearHighlightGroup() {
-        while (this._highlightGroup.children.length) {
-            const child = this._highlightGroup.children.pop();
+        this._clearGroup(this._highlightGroup);
+    }
+
+    _clearGroup(group) {
+        while (group.children.length) {
+            const child = group.children.pop();
             child.traverse((obj) => {
                 if (obj.geometry) obj.geometry.dispose();
                 if (obj.material) obj.material.dispose();

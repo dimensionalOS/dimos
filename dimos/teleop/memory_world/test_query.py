@@ -16,6 +16,7 @@ from collections.abc import Iterator
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
 import numpy as np
@@ -25,8 +26,9 @@ import pytest_mock
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.teleop.memory_world.module import MemoryWorldModule
+from dimos.teleop.memory_world.module import MemoryWorldModule, _navigation_goal
 from dimos.teleop.memory_world.query import HighlightPath, MemoryQueryResult
+from dimos.teleop.memory_world.visual_search import Place
 
 
 def _empty_store(path: Path) -> None:
@@ -76,6 +78,17 @@ def test_memory_query_result_validates_spatial_geometry() -> None:
     assert result.focus_point == (1.0, 2.0, 0.0)
     assert result.regions[0].opacity == 0.35
     assert result.evidence_paths[0].color == "#ffd166"
+
+
+def test_memory_query_result_draws_boxes() -> None:
+    result = MemoryQueryResult(
+        answer="Boxed",
+        boxes=[{"center": [1.0, 2.0, 3.0], "extent": [2.0, 4.5, 1.5], "label": "car"}],
+    )
+
+    assert result.boxes[0].color == "#22dd88"
+    with pytest.raises(ValidationError):
+        MemoryQueryResult(answer="Flat", boxes=[{"center": [0, 0, 0], "extent": [1.0, 0.0, 1.0]}])
 
 
 @pytest.mark.parametrize(
@@ -240,6 +253,92 @@ def test_viewer_pose_accepts_only_finite_xyz(memory_world: MemoryWorldModule) ->
     assert memory_world._viewer_position == (1.0, 2.5, 3.0)
 
 
+def test_detected_objects_are_visible_to_analysis(tmp_path: Path) -> None:
+    db_path = tmp_path / "recording.db"
+    _empty_store(db_path)
+    module = MemoryWorldModule(store_path=str(db_path))
+    module._located = {
+        "tree": [Place((1.0, 2.0, 3.0), 0.6, 77, 10.0, views=4, extent=(2.0, 2.0, 6.5))],
+        "car": [Place((5.0, 2.0, 0.5), 0.8, 91, 20.0, views=9, extent=(4.0, 1.8, 1.4))],
+    }
+    try:
+        outcome = module.analyze_memory(
+            "trees = [o for o in objects if o['label'] == 'tree']\n"
+            "result = {'answer': f'{len(trees)} tree {trees[0][\"height\"]:.1f} m', "
+            "'observation_ids': [o['best_frame_id'] for o in objects]}\n",
+            timeout=10,
+        )
+        assert outcome.success, outcome.message
+        assert outcome.message == "1 tree 6.5 m"
+        assert module._active_query_result["observation_ids"] == [77, 91]  # type: ignore[index]
+    finally:
+        module.stop()
+
+
+def test_locate_objects_boxes_the_frame_and_measures_the_map(tmp_path: Path) -> None:
+    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+    from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+
+    db_path = tmp_path / "recording.db"
+    store = SqliteStore(path=str(db_path))
+    store.start()
+    frames = store.stream("color_image", Image)
+    for ts in (100.0, 101.0):
+        frames.append(Image.from_opencv(np.zeros((480, 640, 3), np.uint8), ts=ts), ts=ts)
+    store.stop()
+
+    class _Detector:
+        def query_detections(self, image: Image, queries: list[str], threshold: float) -> Any:
+            box = Detection2DBBox(
+                bbox=(40.0, 100.0, 300.0, 380.0),
+                track_id=-1,
+                class_id=0,
+                confidence=0.7,
+                name=queries[0],
+                ts=image.ts,
+                image=image,
+            )
+            return ImageDetections2D(image=image, detections=[box])
+
+    world_t_camera = np.eye(4)
+    world_t_camera[:3, :3] = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]], dtype=float)
+    wall = np.array(
+        [[x, 6.0, z] for x in np.arange(-3.0, -0.5, 0.08) for z in np.arange(0.0, 1.0, 0.08)],
+        dtype=np.float32,
+    )
+    module = MemoryWorldModule(
+        store_path=str(db_path),
+        camera_intrinsics=(400.0, 400.0, 320.0, 240.0),
+        camera_distortion=(0.0, 0.0, 0.0, 0.0),
+    )
+    module._map_centers = wall
+    module._owlv2 = _Detector()
+    module.config.segment_boxes = False
+    module._camera_pose_of = lambda obs: world_t_camera  # type: ignore[method-assign]
+    module._ensure_visual_index = lambda: SimpleNamespace(  # type: ignore[method-assign]
+        search=lambda text, k: [
+            Place((0.0, 0.0, 0.0), 0.3, 1, 100.0),
+            Place((10.0, 0.0, 0.0), 0.2, 2, 101.0),
+        ]
+    )
+    try:
+        places, located = module._search_places("wall")
+
+        assert located and len(places) == 1
+        wall_place = places[0]
+        assert wall_place.views == 2 and wall_place.similarity == 0.7
+        assert wall_place.position[0] < -0.5 and abs(wall_place.position[1] - 6.0) < 0.15
+        assert wall_place.extent is not None and wall_place.extent[2] < 1.2
+        assert wall_place.camera_position == (0.0, 0.0, 0.0)
+        assert module._located_json()[0]["label"] == "wall"
+        goal = _navigation_goal(wall_place)
+        assert (goal["pos_x"], goal["pos_y"], goal["pos_z"]) == (0.0, 0.0, 0.0)
+        assert abs(goal["rot_z"] - np.arctan2(6.0, wall_place.position[0])) < 0.05
+    finally:
+        module.stop()
+
+
 def test_agent_messages_reach_every_viewer_and_the_history(
     memory_world: MemoryWorldModule,
 ) -> None:
@@ -306,6 +405,31 @@ def test_planner_path_becomes_the_route_of_the_active_answer(
 
     assert memory_world._active_query_result["route"] is None
     assert len(sent) == 3
+
+
+def test_results_within_one_agent_turn_share_a_canvas(memory_world: MemoryWorldModule) -> None:
+    memory_world._broadcast = lambda message: None  # type: ignore[method-assign]
+    memory_world._on_agent_message(HumanMessage(content="Where is the tree? Box it and go there."))
+    first = memory_world._publish_query_result(
+        MemoryQueryResult(answer="Found", points=[{"position": [1.0, 2.0, 0.0], "label": "tree"}])
+    )
+    second = memory_world._publish_query_result(
+        MemoryQueryResult(
+            answer="Boxed",
+            regions=[{"points": [[0, 0, 0], [1, 0, 0], [1, 1, 0]], "label": "box"}],
+        )
+    )
+    canvas = memory_world._active_query_result
+
+    assert first == second and canvas is not None
+    assert canvas["answer"] == "Boxed"
+    assert len(canvas["points"]) == 1 and len(canvas["regions"]) == 1
+
+    memory_world._on_agent_idle(True)
+    third = memory_world._publish_query_result(MemoryQueryResult(answer="Voice query"))
+
+    assert third != first
+    assert memory_world._active_query_result["points"] == []
 
 
 def test_later_answers_keep_the_planner_route(memory_world: MemoryWorldModule) -> None:
