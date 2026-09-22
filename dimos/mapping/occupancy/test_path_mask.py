@@ -13,15 +13,15 @@
 # limitations under the License.
 
 
+import cv2
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 import numpy as np
 import pytest
 
 from dimos.mapping.occupancy.path_mask import make_path_mask
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_view
 from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.utils.data import get_data
 
@@ -34,15 +34,16 @@ from dimos.utils.data import get_data
     ],
 )
 def test_make_path_mask(occupancy_gradient, pose_index, max_length, expected_image) -> None:
-    start = Vector3(4.0, 2.0, 0)
-    goal_pose = Pose(6.15, 10.0, 0, 0, 0, 0, 1)
-    expected = Image.from_file(get_data(expected_image))
+    start = Point(x=4, y=2)
+    goal_pose = Pose(position=Point(x=6.15, y=10), orientation=Quaternion(w=1))
+    expected = cv2.imread(str(get_data(expected_image)), cv2.IMREAD_COLOR)
     path = min_cost_astar(occupancy_gradient, goal_pose.position, start, use_cpp=False)
     path = smooth_resample_path(path, goal_pose, 0.1)
     robot_width = 0.4
     path_mask = make_path_mask(occupancy_gradient, path, robot_width, pose_index, max_length)
     actual = visualize_occupancy_grid(occupancy_gradient, "rainbow")
 
-    actual.data[path_mask] = [0, 100, 0]
+    pixels = image_view(actual).copy()
+    pixels[path_mask] = [0, 100, 0]
 
-    np.testing.assert_array_equal(actual.data, expected.data)
+    np.testing.assert_array_equal(pixels, expected)

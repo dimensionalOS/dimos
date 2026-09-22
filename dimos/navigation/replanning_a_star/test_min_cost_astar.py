@@ -14,49 +14,62 @@
 
 import time
 
+import cv2
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 import numpy as np
-from open3d.geometry import PointCloud
 import pytest
 
 from dimos.mapping.occupancy.gradient import gradient, voronoi_gradient
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_view
+from dimos.msgs.occupancy import grid_to_world, world_to_grid
 from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.utils.data import get_data
 
 
-@pytest.fixture
-def costmap() -> PointCloud:
-    return gradient(OccupancyGrid(np.load(get_data("occupancy_simple.npy"))), max_distance=1.5)
+def _grid(cells, resolution=0.05):
+    return OccupancyGrid(
+        info=MapMetaData(
+            width=cells.shape[1],
+            height=cells.shape[0],
+            resolution=resolution,
+            origin=Pose(orientation=Quaternion(w=1)),
+        ),
+        data=cells.astype(np.int8).ravel(),
+    )
 
 
 @pytest.fixture
-def costmap_three_paths() -> PointCloud:
-    return voronoi_gradient(OccupancyGrid(np.load(get_data("three_paths.npy"))), max_distance=1.5)
+def costmap() -> OccupancyGrid:
+    return gradient(_grid(np.load(get_data("occupancy_simple.npy"))), max_distance=1.5)
+
+
+@pytest.fixture
+def costmap_three_paths() -> OccupancyGrid:
+    return voronoi_gradient(_grid(np.load(get_data("three_paths.npy"))), max_distance=1.5)
 
 
 def test_astar(costmap) -> None:
-    start = Vector3(4.0, 2.0)
-    goal = Vector3(6.15, 10.0)
-    expected = Image.from_file(get_data("astar_min_cost.png"))
+    start = Point(x=4, y=2)
+    goal = Point(x=6.15, y=10)
+    expected = cv2.imread(str(get_data("astar_min_cost.png")), cv2.IMREAD_COLOR)
 
     path = min_cost_astar(costmap, goal, start, use_cpp=False)
     actual = visualize_occupancy_grid(costmap, "rainbow", path)
 
-    np.testing.assert_array_equal(actual.data, expected.data)
+    np.testing.assert_array_equal(image_view(actual), expected)
 
 
 def test_astar_corner(costmap_three_paths) -> None:
-    start = Vector3(2.8, 3.35)
-    goal = Vector3(6.35, 4.25)
-    expected = Image.from_file(get_data("astar_corner_min_cost.png"))
+    start = Point(x=2.8, y=3.35)
+    goal = Point(x=6.35, y=4.25)
+    expected = cv2.imread(str(get_data("astar_corner_min_cost.png")), cv2.IMREAD_COLOR)
 
     path = min_cost_astar(costmap_three_paths, goal, start, use_cpp=False)
     actual = visualize_occupancy_grid(costmap_three_paths, "rainbow", path)
 
-    np.testing.assert_array_equal(actual.data, expected.data)
+    np.testing.assert_array_equal(image_view(actual), expected)
 
 
 def test_astar_unknown_penalty_blocks_unknown_cells(costmap) -> None:
@@ -69,10 +82,10 @@ def test_astar_unknown_penalty_blocks_unknown_cells(costmap) -> None:
     grid[10:90, 10] = 0  # left column
     grid[89, 10:90] = 0  # bottom row
     grid[10:90, 89] = 0  # right column
-    og = OccupancyGrid(grid, resolution=0.1)
+    og = _grid(grid, resolution=0.1)
 
-    start = og.grid_to_world((10, 10))
-    goal = og.grid_to_world((89, 10))
+    start = grid_to_world(og, (10, 10))
+    goal = grid_to_world(og, (89, 10))
 
     for use_cpp in [False, True]:
         path = min_cost_astar(og, goal, start, unknown_penalty=1.0, use_cpp=use_cpp)
@@ -81,8 +94,8 @@ def test_astar_unknown_penalty_blocks_unknown_cells(costmap) -> None:
             continue
         # Verify no path cell lands on an unknown cell
         for pose in path.poses:
-            gp = og.world_to_grid((pose.position.x, pose.position.y))
-            gx, gy = round(gp.x), round(gp.y)
+            gp = world_to_grid(og, pose.pose.position)
+            gx, gy = round(gp[0]), round(gp[1])
             if 0 <= gx < 100 and 0 <= gy < 100:
                 assert grid[gy, gx] != -1, (
                     f"Path traverses unknown cell at grid ({gx}, {gy}), use_cpp={use_cpp}"
@@ -94,10 +107,10 @@ def test_astar_unknown_penalty_allows_with_low_penalty(costmap) -> None:
     grid = np.full((50, 50), -1, dtype=np.int8)  # All unknown
     grid[5, 5] = 0  # start cell free
     grid[45, 45] = 0  # goal cell free
-    og = OccupancyGrid(grid, resolution=0.1)
+    og = _grid(grid, resolution=0.1)
 
-    start = og.grid_to_world((5, 5))
-    goal = og.grid_to_world((45, 45))
+    start = grid_to_world(og, (5, 5))
+    goal = grid_to_world(og, (45, 45))
 
     for use_cpp in [False, True]:
         path = min_cost_astar(og, goal, start, unknown_penalty=0.5, use_cpp=use_cpp)
@@ -108,8 +121,8 @@ def test_astar_unknown_penalty_allows_with_low_penalty(costmap) -> None:
 
 
 def test_astar_python_and_cpp(costmap) -> None:
-    start = Vector3(4.0, 2.0, 0)
-    goal = Vector3(6.15, 10.0)
+    start = Point(x=4, y=2)
+    goal = Point(x=6.15, y=10)
 
     start_time = time.perf_counter()
     path_python = min_cost_astar(costmap, goal, start, use_cpp=False)
@@ -130,7 +143,7 @@ def test_astar_python_and_cpp(costmap) -> None:
 
     # Assert that both implementations return almost identical points.
     np.testing.assert_allclose(
-        [(p.position.x, p.position.y) for p in path_python.poses],
-        [(p.position.x, p.position.y) for p in path_cpp.poses],
+        [(p.pose.position.x, p.pose.position.y) for p in path_python.poses],
+        [(p.pose.position.x, p.pose.position.y) for p in path_cpp.poses],
         atol=0.05001,
     )

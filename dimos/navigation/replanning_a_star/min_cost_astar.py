@@ -13,12 +13,12 @@
 # limitations under the License.
 
 import heapq
+import math
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import VectorLike
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.nav_msgs.msg import OccupancyGrid, Path
+
+from dimos.msgs.occupancy import grid_to_world, occupancy_view, world_to_grid
 from dimos.utils.logging_config import setup_logger
 
 # Try to import C++ extension for faster pathfinding
@@ -65,88 +65,55 @@ def _reconstruct_path(
     parents: dict[tuple[int, int], tuple[int, int]],
     current: tuple[int, int],
     costmap: OccupancyGrid,
-    start_tuple: tuple[int, int],
-    goal_tuple: tuple[int, int],
 ) -> Path:
-    frame_id = costmap.frame_id
-    waypoints: list[PoseStamped] = []
+    coordinates = [current]
     while current in parents:
-        world_point = costmap.grid_to_world(current)
-        pose = PoseStamped(
-            frame_id=frame_id,
-            position=[world_point.x, world_point.y, 0.0],
-            orientation=Quaternion(0, 0, 0, 1),  # Identity quaternion
-        )
-        waypoints.append(pose)
         current = parents[current]
-
-    start_world_point = costmap.grid_to_world(start_tuple)
-    start_pose = PoseStamped(
-        frame_id=frame_id,
-        position=[start_world_point.x, start_world_point.y, 0.0],
-        orientation=Quaternion(0, 0, 0, 1),
-    )
-    waypoints.append(start_pose)
-
-    waypoints.reverse()
-
-    # Add the goal position if it's not already included
-    goal_point = costmap.grid_to_world(goal_tuple)
-
-    if (
-        not waypoints
-        or (waypoints[-1].x - goal_point.x) ** 2 + (waypoints[-1].y - goal_point.y) ** 2 > 1e-10
-    ):
-        goal_pose = PoseStamped(
-            frame_id=frame_id,
-            position=[goal_point.x, goal_point.y, 0.0],
-            orientation=Quaternion(0, 0, 0, 1),
-        )
-        waypoints.append(goal_pose)
-
-    return Path(frame_id=frame_id, poses=waypoints)
+        coordinates.append(current)
+    coordinates.reverse()
+    return _reconstruct_path_from_coords(coordinates, costmap)
 
 
 def _reconstruct_path_from_coords(
     path_coords: list[tuple[int, int]],
     costmap: OccupancyGrid,
 ) -> Path:
-    frame_id = costmap.frame_id
-    waypoints: list[PoseStamped] = []
-
-    for gx, gy in path_coords:
-        world_point = costmap.grid_to_world((gx, gy))
-        pose = PoseStamped(
-            frame_id=frame_id,
-            position=[world_point.x, world_point.y, 0.0],
-            orientation=Quaternion(0, 0, 0, 1),
-        )
-        waypoints.append(pose)
-
-    return Path(frame_id=frame_id, poses=waypoints)
+    return Path(
+        header=costmap.header,
+        poses=[
+            PoseStamped(
+                header=costmap.header,
+                pose=Pose(position=grid_to_world(costmap, coordinate), orientation=Quaternion(w=1)),
+            )
+            for coordinate in path_coords
+        ],
+    )
 
 
 def min_cost_astar(
     costmap: OccupancyGrid,
-    goal: VectorLike,
-    start: VectorLike = (0.0, 0.0),
+    goal: Point,
+    start: Point | None = None,
     cost_threshold: int = 100,
     unknown_penalty: float = 0.8,
     use_cpp: bool = True,
 ) -> Path | None:
-    start_vector = costmap.world_to_grid(start)
-    goal_vector = costmap.world_to_grid(goal)
+    cells = occupancy_view(costmap)
+    start_vector = world_to_grid(costmap, start if start is not None else Point())
+    goal_vector = world_to_grid(costmap, goal)
+    # Ignore sub-nanocell rotation roundoff before assigning a point to its cell.
+    start_tuple = (math.floor(round(start_vector[0], 9)), math.floor(round(start_vector[1], 9)))
+    goal_tuple = (math.floor(round(goal_vector[0], 9)), math.floor(round(goal_vector[1], 9)))
 
-    start_tuple = (int(start_vector.x), int(start_vector.y))
-    goal_tuple = (int(goal_vector.x), int(goal_vector.y))
-
-    if not (0 <= goal_tuple[0] < costmap.width and 0 <= goal_tuple[1] < costmap.height):
+    if not (0 <= goal_tuple[0] < costmap.info.width and 0 <= goal_tuple[1] < costmap.info.height):
+        return None
+    if not (0 <= start_tuple[0] < costmap.info.width and 0 <= start_tuple[1] < costmap.info.height):
         return None
 
     if use_cpp:
         if _USE_CPP:
             path_coords = _astar_cpp(
-                costmap.grid,
+                cells,
                 start_tuple[0],
                 start_tuple[1],
                 goal_tuple[0],
@@ -185,7 +152,7 @@ def min_cost_astar(
             continue
 
         if current == goal_tuple:
-            return _reconstruct_path(parents, current, costmap, start_tuple, goal_tuple)
+            return _reconstruct_path(parents, current, costmap)
 
         closed_set.add(current)
 
@@ -193,22 +160,22 @@ def min_cost_astar(
             neighbor_x, neighbor_y = current_x + dx, current_y + dy
             neighbor = (neighbor_x, neighbor_y)
 
-            if not (0 <= neighbor_x < costmap.width and 0 <= neighbor_y < costmap.height):
+            if not (0 <= neighbor_x < costmap.info.width and 0 <= neighbor_y < costmap.info.height):
                 continue
 
             if neighbor in closed_set:
                 continue
 
-            neighbor_val = costmap.grid[neighbor_y, neighbor_x]
+            neighbor_val = cells[neighbor_y, neighbor_x]
 
             if neighbor_val >= cost_threshold:
                 continue
 
-            if neighbor_val == CostValues.UNKNOWN:
+            if neighbor_val == -1:
                 cell_cost = cost_threshold * unknown_penalty
                 if cell_cost >= cost_threshold:
                     continue
-            elif neighbor_val == CostValues.FREE:
+            elif neighbor_val == 0:
                 cell_cost = 0.0
             else:
                 cell_cost = neighbor_val

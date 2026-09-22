@@ -891,3 +891,30 @@ These checks do not complete the broader navigation cutover. A* and path
 resampling/masking callers and their fixtures still require conversion, as do
 remaining perception cloud/image producers. The demo SVG was generated and
 validated programmatically; human visual review is deferred.
+
+### Generated A* and path processing (runtime cutover in progress)
+
+A* consumes generated occupancy buffers in both Python and the compiled C++
+extension and returns generated Path/PoseStamped values with the source header.
+Resampling and path masks use nested ROS fields. Coordinate helpers apply the
+full grid-origin transform. Sub-nanocell rotation roundoff no longer assigns an
+exact cell corner to the preceding cell, and negative out-of-map positions are
+rejected. Resampling writes pose edits back into generated sequences and merges
+a numerically duplicated final point rather than reversing the last heading.
+
+- `path-all-tests.log`: 38 checks passed, covering the complete occupancy test
+  directory, recorded-map A*, native/Python parity, generated CDR paths, rotated
+  grids, mask exclusion, source-header retention, and input isolation.
+- Mypy passed on the four changed production modules and the demo.
+- The native A* extension was compiled locally; generated-pipeline tests assert
+  its availability before exercising the native branch.
+- Six path-image fixtures were regenerated. On both recorded input maps, all
+  161/107 generated A* waypoints exactly matched the old implementation when
+  both were given the declared float32 resolution. Image expectations now also
+  reflect generated path coordinates and the corrected final-point handling.
+- `demo_grid_path.py`: both planners produced 41 waypoints, resampled to 122
+  CDR-decoded poses, with exact source headers and no occupied mask cells.
+  `grid-path-python.svg` and `grid-path-cpp.svg` are the human review artifacts.
+
+Goal validation, higher-level global/local planners, and navigation module
+wiring still require conversion; this evidence does not accept stage 4.

@@ -831,3 +831,23 @@ It prints the occupied-cell counts and checks the exact source header. Open
 `build/message-codegen/demo/evidence/occupancy.svg` to inspect the resulting map.
 The demo needs no robot, ROS installation, viewer login, or running transport.
 Remove that SVG to clean up its output.
+
+### Generated map → native/Python planner → path demo
+
+The normal native extension build provides A*. To build just that extension for
+this demo, with the compiler and pybind11 already installed:
+
+```bash
+c++ -O3 -shared -std=c++17 -fPIC \
+  $(.venv/bin/python -m pybind11 --includes) \
+  dimos/navigation/replanning_a_star/min_cost_astar_cpp.cpp \
+  -o dimos/navigation/replanning_a_star/min_cost_astar_ext$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_grid_path.py
+```
+
+Both planners route around the same synthetic wall using a CDR-decoded grid.
+The demo resamples each result, sends it through generated Path CDR, checks exact
+source headers and obstacle exclusion, and exports `grid-path-python.svg` and
+`grid-path-cpp.svg` under `build/message-codegen/demo/evidence/`. Open the SVGs to
+compare the routes. The native extension is required; the demo fails explicitly
+if it is missing. Remove the two SVGs to clean up the demo output.

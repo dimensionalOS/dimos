@@ -16,9 +16,12 @@
 
 import math
 
+from dimos_generated.geometry_msgs.msg import Point
 from dimos_generated.nav_msgs.msg import OccupancyGrid
 import numpy as np
 from numpy.typing import NDArray
+
+from dimos.msgs.geometry import pose_matrix
 
 
 def occupancy_view(msg: OccupancyGrid) -> NDArray[np.int8]:
@@ -57,3 +60,25 @@ def occupancy_extent(message: OccupancyGrid) -> tuple[float, float]:
     if not math.isfinite(info.resolution) or info.resolution <= 0:
         raise ValueError("OccupancyGrid resolution must be finite and positive")
     return info.width * info.resolution, info.height * info.resolution
+
+
+def world_to_grid(message: OccupancyGrid, point: Point) -> tuple[float, float]:
+    """Convert a world point to continuous grid coordinates, including origin rotation."""
+    occupancy_extent(message)
+    matrix = pose_matrix(message.info.origin)
+    local = matrix[:3, :3].T @ (np.array([point.x, point.y, point.z]) - matrix[:3, 3])
+    if not np.isfinite(local).all():
+        raise ValueError("grid coordinates must be finite")
+    return float(local[0] / message.info.resolution), float(local[1] / message.info.resolution)
+
+
+def grid_to_world(message: OccupancyGrid, coordinates: tuple[float, float]) -> Point:
+    """Convert continuous grid coordinates to the grid plane in world coordinates."""
+    occupancy_extent(message)
+    x, y = coordinates
+    if not math.isfinite(x) or not math.isfinite(y):
+        raise ValueError("grid coordinates must be finite")
+    result = pose_matrix(message.info.origin) @ np.array(
+        [x * message.info.resolution, y * message.info.resolution, 0.0, 1.0]
+    )
+    return Point(x=float(result[0]), y=float(result[1]), z=float(result[2]))
