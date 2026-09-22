@@ -26,6 +26,8 @@ roboplan_planner_module = importlib.import_module(
     "dimos.manipulation.planning.planners.roboplan_planner"
 )
 
+from dimos_generated.sensor_msgs.msg import JointState
+
 from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanCartesianPathConfig,
     RoboPlanPlannerConfig,
@@ -35,7 +37,6 @@ from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.xarm.config import (
     make_dual_xarm6_model_config,
     make_xarm6_model_config,

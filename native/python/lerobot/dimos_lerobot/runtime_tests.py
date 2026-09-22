@@ -19,6 +19,8 @@ from threading import Event, Thread
 import time
 from typing import Any, Protocol
 
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 from dimos_lerobot import runtime as policy_runtime
 from dimos_lerobot.runtime import LeRobotPolicyRuntime
 from lerobot.configs.policies import PreTrainedConfig
@@ -36,7 +38,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.testing.waiting import wait_until
@@ -230,7 +232,9 @@ def _provide_observation(
     values = positions or [float(i) / 10 for i in range(len(JOINTS))]
     timestamp = time.time() if ts is None else ts
     module._on_color_image(Image(data=rgb, format=ImageFormat.RGB, ts=timestamp))
-    module._on_joint_state(JointState(ts=timestamp, name=JOINTS, position=values))
+    module._on_joint_state(
+        JointState(header=Header(stamp=time_from_seconds(timestamp)), name=JOINTS, position=values)
+    )
     return rgb, values, timestamp
 
 
@@ -256,7 +260,7 @@ def test_policy_predicts_and_executes_one_native_joint_chunk(make_runtime: Runti
     trajectory = call.args[0]
     assert call.kwargs == {}
     assert trajectory.joint_names == JOINTS
-    assert [point.time_from_start for point in trajectory.points] == [0.0, 0.02, 0.04]
+    assert [to_seconds(point.time_from_start) for point in trajectory.points] == [0.0, 0.02, 0.04]
     np.testing.assert_allclose(trajectory.points[0].positions, positions)
     np.testing.assert_allclose(trajectory.points[1].positions, actions[0])
     np.testing.assert_allclose(trajectory.points[2].positions, actions[1])
@@ -584,7 +588,11 @@ def test_preflight_rejects_invalid_live_joints(
     module._on_color_image(
         Image(data=np.zeros((4, 5, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=timestamp)
     )
-    module._on_joint_state(JointState(ts=timestamp, name=names, position=positions))
+    module._on_joint_state(
+        JointState(
+            header=Header(stamp=time_from_seconds(timestamp)), name=names, position=positions
+        )
+    )
 
     status = module.preflight_rollout()
 
@@ -609,7 +617,13 @@ def test_preflight_requires_exact_live_rgb_contract(
     module, control = make_runtime(policy)
     timestamp = time.time()
     module._on_color_image(Image(data=image, format=image_format, ts=timestamp))
-    module._on_joint_state(JointState(ts=timestamp, name=JOINTS, position=[0.0] * len(JOINTS)))
+    module._on_joint_state(
+        JointState(
+            header=Header(stamp=time_from_seconds(timestamp)),
+            name=JOINTS,
+            position=[0.0] * len(JOINTS),
+        )
+    )
 
     status = module.preflight_rollout()
 

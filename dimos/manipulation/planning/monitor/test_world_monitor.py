@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -43,7 +44,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.time import header_now
 from dimos.perception.experimental.object import Object
 from dimos.robot.assets.model import RobotModel
 
@@ -292,7 +293,7 @@ def test_world_monitor_syncs_planning_scene_to_visualization() -> None:
 def test_world_monitor_forwards_raw_trajectory_preview_protocol() -> None:
     fake_viz = FakeViz()
     monitor = world_monitor_module.WorldMonitor(world=FakeWorld(), visualization=fake_viz)  # type: ignore[arg-type]
-    trajectory = JointTrajectory(joint_names=["j1"], points=[])
+    trajectory = JointTrajectory(header=header_now(), joint_names=["j1"], points=[])
 
     assert isinstance(fake_viz, VisualizationSpec)
     monitor.cancel_preview_animation()

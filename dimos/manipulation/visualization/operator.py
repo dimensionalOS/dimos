@@ -17,15 +17,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import copy
 from dataclasses import dataclass, field
 import math
 from typing import TYPE_CHECKING
+
+from dimos_generated.sensor_msgs.msg import JointState
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.planners.config import CartesianPathConfig
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 if TYPE_CHECKING:
     from dimos.manipulation.manipulation_module import ManipulationModule
@@ -111,7 +113,7 @@ class ManipulationOperator:
     def get_init_joints(self) -> JointState | None:
         """Return the operator-authoritative initialization state."""
         init = self._module.get_init_joints()
-        return None if init is None else JointState(init)
+        return None if init is None else copy.deepcopy(init)
 
     def evaluate_joint_target(self, request: JointTargetRequest) -> TargetEvaluationResult:
         """Validate and evaluate a canonical joint target."""
@@ -122,7 +124,7 @@ class ManipulationOperator:
         complete = self._complete_states(groups, request.target)
         if complete is None:
             return self._invalid(request.group_ids, "Incomplete model target state")
-        return self._evaluate_complete_target(groups, JointState(request.target), complete)
+        return self._evaluate_complete_target(groups, copy.deepcopy(request.target), complete)
 
     def evaluate_pose_target(self, request: PoseTargetRequest) -> TargetEvaluationResult:
         """Validate and evaluate explicit world-frame pose targets."""
@@ -132,7 +134,7 @@ class ManipulationOperator:
         ik = self._module.inverse_kinematics(
             pose_targets=dict(request.pose_targets),
             auxiliary_group_ids=request.auxiliary_group_ids,
-            seed=JointState(request.seed) if request.seed is not None else None,
+            seed=copy.deepcopy(request.seed) if request.seed is not None else None,
             check_collision=True,
         )
         if not ik.is_success() or ik.joint_state is None:
@@ -155,12 +157,9 @@ class ManipulationOperator:
         assert groups is not None
         targets = {
             group.id: JointState(
-                {
-                    "name": list(group.joint_names),
-                    "position": list(
-                        request.target.position[offset : offset + len(group.joint_names)]
-                    ),
-                }
+                name=list(group.joint_names),
+                header=request.target.header,
+                position=list(request.target.position)[offset : offset + len(group.joint_names)],
             )
             for group, offset in self._group_offsets(groups)
         }
@@ -315,7 +314,7 @@ class ManipulationOperator:
             if value is None:
                 return None
             positions.append(value)
-        return JointState({"name": list(config.joint_names), "position": positions})
+        return JointState(name=list(config.joint_names), position=positions)
 
     def _evaluate_complete_target(
         self,
@@ -350,7 +349,7 @@ class ManipulationOperator:
             message="Target is collision-free" if valid else "Target is infeasible",
             collision_free=valid,
             group_ids=tuple(group.id for group in groups),
-            target_joints=JointState(target),
+            target_joints=copy.deepcopy(target),
             group_diagnostics=diagnostics,
             group_poses=poses,
         )

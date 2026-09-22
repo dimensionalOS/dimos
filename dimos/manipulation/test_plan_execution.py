@@ -16,6 +16,9 @@
 
 from unittest.mock import DEFAULT, MagicMock
 
+from dimos_generated.dimos_msgs.msg import TrajectoryStatus
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
@@ -30,27 +33,26 @@ from dimos.manipulation.manipulation_spec import ExecutionStatus
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.visualization.operator import ManipulationOperator
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.msgs.time import duration_from_seconds, header_now
+from dimos.msgs.trajectory import TrajectoryState
 from dimos.robot.assets.model import PlanarBaseDefinition
 
 
 def _plan(final_position: float = 1.0, joint_name: str = "arm/j0") -> GeneratedPlan:
     names = [joint_name]
     trajectory = JointTrajectory(
+        header=header_now(),
         joint_names=names,
         points=[
-            TrajectoryPoint(
+            JointTrajectoryPoint(
                 positions=[0.0],
                 velocities=[0.0],
-                time_from_start=0.0,
+                time_from_start=duration_from_seconds(0.0),
             ),
-            TrajectoryPoint(
+            JointTrajectoryPoint(
                 positions=[final_position],
                 velocities=[0.0],
-                time_from_start=1.0,
+                time_from_start=duration_from_seconds(1.0),
             ),
         ],
     )
@@ -149,7 +151,7 @@ def test_execute_sends_planar_base_columns_to_the_base_task(module_factory) -> N
     coordinator.task_invoke.side_effect = lambda task, method, args: (
         TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
         if method == "execute"
-        else TrajectoryStatus(state=state)
+        else TrajectoryStatus(header=header_now(), state=state)
     )
     module = _module_with_coordinator(coordinator, module_factory)
     planar_base = PlanarBaseDefinition(
@@ -165,12 +167,12 @@ def test_execute_sends_planar_base_columns_to_the_base_task(module_factory) -> N
     module._initialize_execution()
     names = ["arm/j0", *planar_base.joint_names]
     points = [
-        TrajectoryPoint(positions=[0.0] * 4, time_from_start=0.0),
-        TrajectoryPoint(positions=[1.0] * 4, time_from_start=1.0),
+        JointTrajectoryPoint(positions=[0.0] * 4, time_from_start=duration_from_seconds(0.0)),
+        JointTrajectoryPoint(positions=[1.0] * 4, time_from_start=duration_from_seconds(1.0)),
     ]
     module._last_plan = GeneratedPlan(
         group_ids=("manipulator",),
-        trajectory=JointTrajectory(joint_names=names, points=points),
+        trajectory=JointTrajectory(header=header_now(), joint_names=names, points=points),
         path=[JointState(name=names, position=point.positions) for point in points],
         status=PlanningStatus.SUCCESS,
     )
@@ -249,10 +251,12 @@ def test_status_refresh_observes_nonblocking_execution(module_factory, reader, t
         return module.get_state().operation_status.name
 
     assert operator.execute(_plan()) is True
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.EXECUTING)
+    coordinator.task_invoke.return_value = TrajectoryStatus(
+        header=header_now(), state=TrajectoryState.EXECUTING
+    )
     assert read_status() == "EXECUTING"
 
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=terminal)
+    coordinator.task_invoke.return_value = TrajectoryStatus(header=header_now(), state=terminal)
     assert read_status() == operation
     assert module.get_state().execution_status.name == terminal.name
     coordinator.task_invoke.reset_mock()

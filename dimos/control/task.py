@@ -187,6 +187,7 @@ class ControlTask(Protocol):
     Use state.t_now passed to compute() for all timing.
 
     Example:
+        >>> from dimos.msgs.trajectory import sample_trajectory
         >>> class MyTask:
         ...     @property
         ...     def name(self) -> str:
@@ -204,7 +205,7 @@ class ControlTask(Protocol):
         ...     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         ...         # Use state.t_now, NOT time.time()!
         ...         t_elapsed = state.t_now - self._start_time
-        ...         positions = self._trajectory.sample(t_elapsed)
+        ...         positions, _ = sample_trajectory(self._trajectory, t_elapsed)
         ...         return JointCommandOutput(
         ...             joint_names=["left/joint1", "left/joint2"],
         ...             positions=positions,

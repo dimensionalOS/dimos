@@ -39,6 +39,8 @@ from dimos.manipulation.planning.spec.validation import (
     validate_obstacle,
 )
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
+from dimos.msgs.time import to_seconds
+from dimos.msgs.trajectory import trajectory_duration
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -48,11 +50,11 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.models import (
@@ -1180,9 +1182,9 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         trajectory_indices = self._trajectory_indices(trajectory)
         playback_scale = 1.0
         if duration is not None:
-            if duration <= 0.0 or trajectory.duration <= 0.0:
+            if duration <= 0.0 or trajectory_duration(trajectory) <= 0.0:
                 raise ValueError("preview duration must be positive")
-            playback_scale = duration / trajectory.duration
+            playback_scale = duration / trajectory_duration(trajectory)
         with self._lock:
             assert self._plant_context is not None
             assert self._live_context is not None
@@ -1200,7 +1202,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             )
 
         try:
-            previous_time = trajectory.points[0].time_from_start
+            previous_time = to_seconds(trajectory.points[0].time_from_start)
             for frame_index, point in enumerate(trajectory.points):
                 with self._lock:
                     if self._preview_animation_generation != generation:
@@ -1214,7 +1216,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                     self._set_preview_positions(self._plant_context, positions)
                     self._publish_visualization()
                 if frame_index < len(trajectory.points) - 1:
-                    next_time = trajectory.points[frame_index + 1].time_from_start
+                    next_time = to_seconds(trajectory.points[frame_index + 1].time_from_start)
                     time.sleep((next_time - previous_time) * playback_scale)
                     previous_time = next_time
         finally:

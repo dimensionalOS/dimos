@@ -741,3 +741,33 @@ and 2, showing that the cube's return disappears while a distant point remains.
 Both the retained cloud and the world-frame clear mask round-trip through CDR
 with their original integer nanosecond timestamps. The demos remove temporary
 models and dispose module resources on exit; neither needs robot hardware or ROS.
+
+
+### Generated trajectories and execution status
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_trajectory.py
+```
+
+The trapezoid generator produces 51 ROS2 JointTrajectoryPoint values for two
+joints. The demo sends the generated JointTrajectory over LCM and then over
+independent loopback Zenoh sessions, preserving source nanoseconds
+`1700000000123456789`. A real JointTrajectoryTask executes it against synthetic
+feedback; printed commands progress from `[0, 0]` to `[0.3, -0.2]`. Generated
+`dimos_msgs/msg/TrajectoryStatus` crosses the return channel and reports
+`COMPLETED`, progress 1, and zero remaining duration. Each transport and session
+closes on exit. `test_trajectory.py` runs the exchange as a subprocess test.
+
+Import trajectories from `dimos_generated.trajectory_msgs.msg`; waypoint times
+use `builtin_interfaces/Duration`. Use `duration_from_seconds` and `to_seconds`
+from `dimos.msgs.time` at floating-time boundaries. `sample_trajectory` and
+`trajectory_duration` in `dimos.msgs.trajectory` provide interpolation and total
+time outside the generated message classes. Absent velocities mean zero
+feed-forward for joint-position execution. Generated status state fields are
+integers with constants on TrajectoryStatus; compare them with `==`.
+
+The old handwritten JointTrajectory, TrajectoryPoint, and TrajectoryStatus
+classes are removed. Generated sequences return value copies for message
+entries: edit a point and assign it back with `trajectory.points[index] = point`
+when changing a waypoint.

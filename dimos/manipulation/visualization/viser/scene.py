@@ -25,6 +25,7 @@ import time
 from typing import Any, Protocol, TypeAlias, cast
 import xml.etree.ElementTree as ET
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 from numpy.typing import NDArray
 import trimesh
@@ -47,7 +48,6 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -661,14 +661,14 @@ class ViserManipulationScene:
                 return
             self._ensure_robot_urdfs(config)
             current = self._urdfs.get("current")
-            self.set_urdf_joints(current, config.joint_names, joint_state.position)
+            self.set_urdf_joints(current, config.joint_names, list(joint_state.position))
             if self._target_tracks_current:
-                self._set_target_joints(config.joint_names, joint_state.position)
+                self._set_target_joints(config.joint_names, list(joint_state.position))
                 self._set_target_visibility(self._target_active)
         self.set_urdf_joints(
             self._collision_fallback_urdf,
             config.joint_names,
-            joint_state.position,
+            list(joint_state.position),
         )
 
     def cancel_preview_animation(self) -> None:

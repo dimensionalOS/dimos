@@ -168,7 +168,7 @@ class LcmSpy:
         event = threading.Event()
 
         def listener(msg: bytes) -> None:
-            data = type.lcm_decode(msg)
+            data = type.decode(msg)
             if predicate(data):
                 event.set()
 

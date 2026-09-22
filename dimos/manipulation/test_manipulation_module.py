@@ -24,6 +24,8 @@ from __future__ import annotations
 import importlib.util
 from unittest.mock import DEFAULT, MagicMock
 
+from dimos_generated.dimos_msgs.msg import TrajectoryStatus
+from dimos_generated.sensor_msgs.msg import JointState
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
@@ -43,8 +45,8 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.msgs.time import header_now
+from dimos.msgs.trajectory import TrajectoryState, trajectory_duration
 from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
 
 pytestmark = pytest.mark.self_hosted
@@ -96,7 +98,9 @@ def module(xarm7_config):
             return TrajectoryCancellationResult(TrajectoryCancellationStatus.ALREADY_STOPPED)
         return DEFAULT
 
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    coordinator.task_invoke.return_value = TrajectoryStatus(
+        header=header_now(), state=TrajectoryState.COMPLETED
+    )
     coordinator.task_invoke.side_effect = invoke
     mod = ManipulationModule(
         model=xarm7_config,
@@ -157,7 +161,7 @@ class TestManipulationModuleIntegration:
 
         assert module._last_plan is not None
         assert len(module._last_plan.trajectory.points) > 1
-        assert module._last_plan.trajectory.duration > 0
+        assert trajectory_duration(module._last_plan.trajectory) > 0
         assert module._last_plan.group_ids == ("manipulator",)
 
     def test_plan_to_explicit_joint_target(self, module, joint_state_zeros):

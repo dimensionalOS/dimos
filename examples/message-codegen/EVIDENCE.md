@@ -759,3 +759,61 @@ per capture, and the original nanosecond stamp on both outputs. Logs:
 
 These local results do not claim that manipulation entry points, legacy poses
 and trajectories, interactive visualizers, or the full repository are converted.
+
+
+### Generated trajectories from planning through execution
+
+Trajectory generators, parametrizers, previews, execution splitting, joint and
+planar-base tasks, coordinator RPC contracts, and the legacy threaded controller
+now use generated ROS2 JointTrajectory and JointTrajectoryPoint values. Waypoint
+times are Duration fields; validation compares normalized integer nanoseconds,
+including adjacent nanoseconds beyond floating-point resolution. Interpolation
+and duration calculation live in `dimos.msgs.trajectory`. Position-only joint
+commands are accepted with zero velocity feed-forward. Joint/base splitting
+preserves all optional point fields and the original Header. Anchoring a running
+trajectory also preserves its metadata and optional fields.
+
+Execution feedback now uses generated `dimos_msgs/msg/TrajectoryStatus` with
+Duration elapsed/remaining fields and a wall-clock Header. The internal enum
+references generated wire constants, and wire state comparisons use equality.
+The three handwritten trajectory codecs were deleted, with no legacy imports
+remaining in Python source. The typed test spy uses the generated decode API and
+coordinator tests use canonical schema names.
+
+The remaining manipulation JointState consumers (module, SDK, operator, Viser,
+and controllers) now use generated values, explicit copies, and list conversion
+at sequence API boundaries. Model-state reordering preserves the incoming Header.
+Snapshot reprs still expose joint values for interactive inspection.
+
+Validation:
+
+- **968 tests passed** across all manipulation and control tests, trajectory
+  helper tests, the transport demo subprocess test, and LeRobot's host module
+  contract tests. No skips. This includes real Drake/RoboPlan and Viser tests.
+- **Three Galaxea planar-preview tests passed**, including moving its mock base
+  through generated trajectory execution.
+- **Five process-level coordinator E2E tests passed on Zenoh and the same five on
+  LCM**: RPC startup, execution, published feedback, cancellation, and dual-arm
+  execution. No coordinator or pytest processes remained afterward.
+- **26 focused checks passed** after the final header-preservation and demo edits.
+- **28 production/demo/test-support modules passed mypy.**
+- The isolated LeRobot runtime's joint/trajectory inputs and corresponding tests
+  were updated and syntax-checked. Its full runtime suite is still pending; the
+  separate torch/lerobot environment is not installed here. Its legacy image API
+  also remains part of the broader image-consumer cutover.
+
+`demo_trajectory.py` passed on LCM and independent loopback Zenoh sessions. It
+transmitted 51 generated points, preserved source stamp
+`1700000000123456789`, printed changing commands from `[0, 0]` to `[0.3, -0.2]`,
+and received generated COMPLETED status with zero remaining duration. The demo's
+synthetic clock exercises the actual task without moving hardware.
+
+Logs: `build/message-codegen/trajectory-cdr-tests.log`,
+`trajectory-cdr-mypy.log`, `trajectory-planar-preview-tests.log`,
+`trajectory-blueprint-tests.log` (Zenoh), `trajectory-blueprint-lcm-tests.log`,
+`trajectory-final-focused-tests.log`, and
+`build/message-codegen/demo/evidence/trajectory.txt`.
+
+Local setup added the pinned optional xacro, Viser, MuJoCo, websocket-client, and
+pytest plugins needed for the existing suites. These results do not establish
+full-repository CI or completion of the remaining pose/image/viewer cutover.

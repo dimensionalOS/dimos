@@ -21,12 +21,14 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Protocol
 
+from dimos_generated.dimos_msgs.msg import TrajectoryStatus
+from dimos_generated.sensor_msgs.msg import JointState
+
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionResult
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryStatus
+from dimos.msgs.trajectory import trajectory_duration
 from dimos.spec.utils import Spec
 
 
@@ -108,11 +110,20 @@ class PlanningGroupState:
     joint_presets: Mapping[str, JointState] = field(default_factory=dict)
 
     def __repr__(self) -> str:
+        joints = (
+            None
+            if self.joints is None
+            else dict(zip(self.joints.name, self.joints.position, strict=True))
+        )
+        presets = {
+            name: dict(zip(state.name, state.position, strict=True))
+            for name, state in self.joint_presets.items()
+        }
         return (
-            f"PlanningGroupState(joints={self.joints!r}, "
+            f"PlanningGroupState(joints={joints!r}, "
             f"end_effector_pose={self.end_effector_pose!r}, "
             f"gripper_position={self.gripper_position!r}, "
-            f"joint_presets={dict(self.joint_presets)!r})"
+            f"joint_presets={presets!r})"
         )
 
 
@@ -153,7 +164,7 @@ class PlanResult:
             return f"PlanResult({self.status.name}, message={self.message!r})"
         return (
             f"PlanResult({self.status.name}, groups={self.plan.group_ids!r}, "
-            f"waypoints={len(self.plan.path)}, duration={self.plan.trajectory.duration:.3g}s, "
+            f"waypoints={len(self.plan.path)}, duration={trajectory_duration(self.plan.trajectory):.3g}s, "
             f"path_length={self.plan.path_length:.3g}, planning_time={self.plan.planning_time:.3g}s, "
             f"iterations={self.plan.iterations}, message={self.message!r})"
         )

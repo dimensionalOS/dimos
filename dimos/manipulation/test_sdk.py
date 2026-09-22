@@ -15,6 +15,8 @@
 import atexit
 from dataclasses import replace
 
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory
 from IPython.core.completer import provisionalcompleter
 from IPython.core.interactiveshell import InteractiveShell
 import numpy as np
@@ -39,8 +41,7 @@ from dimos.manipulation.manipulation_spec import (
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.sdk import Arm, MotionError
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.time import header_now
 from dimos.porcelain.dimos import Dimos
 
 
@@ -71,10 +72,22 @@ def rpc(mocker):
         },
     )
     proxy.plan_to_joints.return_value = PlanResult(
-        PlanStatus.SUCCEEDED, plan=GeneratedPlan(("arm",), JointTrajectory())
+        PlanStatus.SUCCEEDED,
+        plan=GeneratedPlan(
+            ("arm",),
+            JointTrajectory(
+                header=header_now(),
+            ),
+        ),
     )
     proxy.plan_to_poses.return_value = PlanResult(
-        PlanStatus.SUCCEEDED, plan=GeneratedPlan(("arm",), JointTrajectory())
+        PlanStatus.SUCCEEDED,
+        plan=GeneratedPlan(
+            ("arm",),
+            JointTrajectory(
+                header=header_now(),
+            ),
+        ),
     )
     proxy.execute.return_value = ExecutionResult(ExecutionStatus.COMPLETED)
     proxy.move_linear.return_value = MoveResult(
@@ -173,7 +186,7 @@ def test_explicit_group_and_module_selection(app, rpc):
 
 def test_joints_are_fresh_arrays_in_declared_order(arm, rpc):
     state = rpc.get_state.return_value.groups["arm"]
-    state.joints.name[:] = ["j1", "j0"]
+    state.joints.name = ["j1", "j0"]
 
     positions = arm.joints()
     np.testing.assert_array_equal(positions, [0.2, 0.1])

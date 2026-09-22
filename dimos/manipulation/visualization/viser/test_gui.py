@@ -23,7 +23,13 @@ import time
 
 import pytest
 
+from dimos.msgs.time import duration_from_seconds, header_now
+
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
+
+from dimos_generated.dimos_msgs.msg import TrajectoryStatus
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
@@ -61,10 +67,7 @@ from dimos.manipulation.visualization.viser.state import (
     TargetEvaluationWorker,
     TargetStatus,
 )
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.msgs.trajectory import TrajectoryState
 from dimos.robot.assets.model import LoadedRobotModel, PlanarBaseDefinition, RobotModel
 
 
@@ -264,10 +267,15 @@ def executable_gui(monkeypatch, mocker):
         plan=GeneratedPlan(
             group_ids=gui.state.selected_group_ids,
             trajectory=JointTrajectory(
+                header=header_now(),
                 joint_names=["arm/j0"],
                 points=[
-                    TrajectoryPoint(positions=[0.0], time_from_start=0.0),
-                    TrajectoryPoint(positions=[1.0], time_from_start=1.0),
+                    JointTrajectoryPoint(
+                        positions=[0.0], time_from_start=duration_from_seconds(0.0)
+                    ),
+                    JointTrajectoryPoint(
+                        positions=[1.0], time_from_start=duration_from_seconds(1.0)
+                    ),
                 ],
             ),
             path=[JointState(name=["arm/j0"], position=[value]) for value in (0.0, 1.0)],
@@ -353,7 +361,7 @@ def test_gui_completion_enables_next_plan_without_cancel(executable_gui, module_
     def invoke(task, method, args=None):
         if method == "execute":
             return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
-        return TrajectoryStatus(state=reported["state"])
+        return TrajectoryStatus(header=header_now(), state=reported["state"])
 
     mocker.patch.object(module._control_coordinator, "task_invoke", side_effect=invoke)
     cancel = mocker.spy(module, "cancel")
@@ -606,8 +614,10 @@ def test_gui_preview_enters_previewing_before_worker_runs(
     gui.state.plan_state.target_sequence_id = gui.state.latest_sequence_id
     gui.state.plan_state.plan = GeneratedPlan(
         group_ids=gui.state.selected_group_ids,
-        trajectory=JointTrajectory(),
-        path=[JointState({"name": [], "position": []})],
+        trajectory=JointTrajectory(
+            header=header_now(),
+        ),
+        path=[JointState(name=[], position=[])],
     )
 
     assert gui.state.can_execute() is True
@@ -643,8 +653,10 @@ def test_gui_selection_change_clears_invalidated_preview(
     gui.state.plan_state.target_sequence_id = gui.state.latest_sequence_id
     gui.state.plan_state.plan = GeneratedPlan(
         group_ids=gui.state.selected_group_ids,
-        trajectory=JointTrajectory(),
-        path=[JointState({"name": [], "position": []})],
+        trajectory=JointTrajectory(
+            header=header_now(),
+        ),
+        path=[JointState(name=[], position=[])],
     )
 
     gui._submit_preview()
@@ -679,8 +691,10 @@ def test_gui_selection_change_ignores_invalidated_preview_error(
     gui.state.plan_state.target_sequence_id = gui.state.latest_sequence_id
     gui.state.plan_state.plan = GeneratedPlan(
         group_ids=gui.state.selected_group_ids,
-        trajectory=JointTrajectory(),
-        path=[JointState({"name": [], "position": []})],
+        trajectory=JointTrajectory(
+            header=header_now(),
+        ),
+        path=[JointState(name=[], position=[])],
     )
 
     gui._submit_preview()

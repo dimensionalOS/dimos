@@ -26,6 +26,7 @@ import time
 import traceback
 from typing import Any, Literal, TypeAlias
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 from pydantic import Field, model_validator
 
@@ -96,7 +97,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.perception.experimental.object import Object as DetObject
@@ -356,6 +356,7 @@ class ManipulationModule(Module):
                 return
             indices = [name_to_idx[name] for name in names]
             state = JointState(
+                header=msg.header,
                 name=list(names),
                 position=[msg.position[index] for index in indices],
                 velocity=[msg.velocity[index] for index in indices]

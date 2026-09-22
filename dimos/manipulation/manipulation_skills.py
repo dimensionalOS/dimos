@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from dimos_generated.sensor_msgs.msg import JointState
+
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.skill_result import SkillResult
@@ -32,7 +34,6 @@ from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 class ManipulationSkills(Module):

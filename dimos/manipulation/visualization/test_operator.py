@@ -18,6 +18,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
     CommandStatus,
@@ -38,9 +41,7 @@ from dimos.manipulation.visualization.operator import (
     PoseTargetRequest,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.time import duration_from_seconds, header_now
 from dimos.robot.assets.model import RobotModel
 
 
@@ -58,8 +59,11 @@ def _config() -> RobotModelConfig:
 
 def _plan() -> GeneratedPlan:
     trajectory = JointTrajectory(
+        header=header_now(),
         joint_names=["left/j1", "left/j2"],
-        points=[TrajectoryPoint(positions=[0.4, 0.5], time_from_start=1.0)],
+        points=[
+            JointTrajectoryPoint(positions=[0.4, 0.5], time_from_start=duration_from_seconds(1.0))
+        ],
     )
     return GeneratedPlan(
         group_ids=("left_arm",),

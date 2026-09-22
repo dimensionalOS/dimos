@@ -20,6 +20,9 @@ import pickle
 from types import UnionType
 from typing import get_args, get_origin, get_type_hints
 
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
 from dimos.manipulation.manipulation_module import ManipulationModule
 import dimos.manipulation.manipulation_spec as manipulation_spec
 from dimos.manipulation.manipulation_spec import (
@@ -37,9 +40,7 @@ from dimos.manipulation.manipulation_spec import (
 )
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.time import duration_from_seconds, header_now
 from dimos.spec.utils import spec_annotation_compliance
 
 
@@ -124,10 +125,17 @@ def test_plan_result_repr_summarizes_trajectory_without_dumping_points() -> None
     plan = GeneratedPlan(
         group_ids=("arm/manipulator",),
         trajectory=JointTrajectory(
+            header=header_now(),
             joint_names=["arm/j0"],
             points=[
-                TrajectoryPoint(positions=[0.0], velocities=[0.0], time_from_start=0.0),
-                TrajectoryPoint(positions=[123.456], velocities=[0.0], time_from_start=1.0),
+                JointTrajectoryPoint(
+                    positions=[0.0], velocities=[0.0], time_from_start=duration_from_seconds(0.0)
+                ),
+                JointTrajectoryPoint(
+                    positions=[123.456],
+                    velocities=[0.0],
+                    time_from_start=duration_from_seconds(1.0),
+                ),
             ],
         ),
         path=[
@@ -145,7 +153,7 @@ def test_plan_result_repr_summarizes_trajectory_without_dumping_points() -> None
     assert "waypoints=2" in text
     assert "path_length=123" in text
     assert "iterations=7" in text
-    assert "TrajectoryPoint" not in text
+    assert "JointTrajectoryPoint" not in text
     assert "positions" not in text
 
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
@@ -36,7 +37,6 @@ from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_posi
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 if TYPE_CHECKING:
     from dimos.porcelain.dimos import Dimos

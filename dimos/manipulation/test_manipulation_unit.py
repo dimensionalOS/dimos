@@ -21,6 +21,9 @@ import pickle
 import time
 from unittest.mock import ANY, DEFAULT, MagicMock, call
 
+from dimos_generated.dimos_msgs.msg import TrajectoryStatus
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -72,11 +75,9 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.msgs.time import duration_from_seconds, header_now
+from dimos.msgs.trajectory import TrajectoryState
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
@@ -96,7 +97,9 @@ def _control_coordinator(
         return DEFAULT
 
     coordinator.task_invoke.side_effect = invoke
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
+    coordinator.task_invoke.return_value = TrajectoryStatus(
+        header=header_now(), state=TrajectoryState.IDLE
+    )
     return coordinator
 
 
@@ -162,10 +165,11 @@ def _install_generated_plan(
     )
     module._last_plan = GeneratedPlan(
         trajectory=JointTrajectory(
+            header=header_now(),
             joint_names=config.joint_names,
             points=[
-                TrajectoryPoint(
-                    time_from_start=float(index),
+                JointTrajectoryPoint(
+                    time_from_start=duration_from_seconds(float(index)),
                     positions=list(point),
                     velocities=[0.0 for _ in config.joint_names],
                 )
@@ -187,10 +191,11 @@ def _install_generated_plan(
 
 def _generated_plan_trajectory(joint_names: list[str], *points: list[float]) -> JointTrajectory:
     return JointTrajectory(
+        header=header_now(),
         joint_names=joint_names,
         points=[
-            TrajectoryPoint(
-                time_from_start=float(index),
+            JointTrajectoryPoint(
+                time_from_start=duration_from_seconds(float(index)),
                 positions=list(point),
                 velocities=[0.0 for _ in joint_names],
             )
@@ -202,9 +207,12 @@ def _generated_plan_trajectory(joint_names: list[str], *points: list[float]) -> 
 def _make_trajectory(*points: tuple[float, list[float]]) -> JointTrajectory:
     joint_names = [f"j{i}" for i in range(len(points[0][1]))] if points else []
     return JointTrajectory(
+        header=header_now(),
         joint_names=joint_names,
         points=[
-            TrajectoryPoint(time_from_start=time_from_start, positions=positions)
+            JointTrajectoryPoint(
+                time_from_start=duration_from_seconds(time_from_start), positions=positions
+            )
             for time_from_start, positions in points
         ],
     )
@@ -441,7 +449,11 @@ class TestStateMachine:
         module = module_factory()
         module._state = ManipulationState.EXECUTING
         module._last_plan = GeneratedPlan(
-            trajectory=JointTrajectory(), group_ids=("manipulator",), path=[]
+            trajectory=JointTrajectory(
+                header=header_now(),
+            ),
+            group_ids=("manipulator",),
+            path=[],
         )
         module._world_monitor = MagicMock()
 
@@ -454,7 +466,9 @@ class TestStateMachine:
         config = _one_joint_config()
         _install_generated_plan(module, config, [0.0], [0.1])
         coordinator = _control_coordinator(cancel_status=TrajectoryCancellationStatus.CANCELLED)
-        coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.ABORTED)
+        coordinator.task_invoke.return_value = TrajectoryStatus(
+            header=header_now(), state=TrajectoryState.ABORTED
+        )
         module._control_coordinator = coordinator
         module._initialize_execution()
 
@@ -515,7 +529,7 @@ class TestStateMachine:
             cancel_status=TrajectoryCancellationStatus.CANCELLED
         )
         module._control_coordinator.task_invoke.return_value = TrajectoryStatus(
-            state=TrajectoryState.ABORTED
+            header=header_now(), state=TrajectoryState.ABORTED
         )
         module._initialize_execution()
         module.execute(blocking=False)
@@ -750,7 +764,7 @@ class TestPlanningInitialization:
         explicit_seed = JointState(name=robot_config.joint_names, position=[0.2, 0.1, 0.0])
         pending_plan = GeneratedPlan(
             group_ids=("manipulator",),
-            trajectory=JointTrajectory(joint_names=robot_config.joint_names),
+            trajectory=JointTrajectory(header=header_now(), joint_names=robot_config.joint_names),
             path=[explicit_seed],
             status=PlanningStatus.SUCCESS,
         )

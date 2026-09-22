@@ -26,6 +26,7 @@ from types import ModuleType
 from typing import Any, ClassVar
 import xml.etree.ElementTree as ET
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -49,7 +50,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.transform_utils import pose_to_matrix
 
@@ -1273,7 +1273,7 @@ def test_group_fk_and_jacobian_use_group_tip_and_local_joint_order(
     ctx = world.get_live_context()
     world.set_joint_state(
         ctx,
-        JointState({"name": ["joint1", "joint2", "joint3"], "position": [1.0, 2.0, 3.0]}),
+        JointState(name=["joint1", "joint2", "joint3"], position=[1.0, 2.0, 3.0]),
     )
 
     pose = world.get_group_ee_pose(ctx, "wrist")
@@ -1692,8 +1692,8 @@ def test_native_selected_planner_uses_explicit_start_after_live_state_advances(
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert result.path[0].position == pytest.approx(start.position)
-    assert observed_scene_start[:2] == pytest.approx(start.position)
+    assert list(result.path[0].position) == pytest.approx(list(start.position))
+    assert observed_scene_start[:2] == pytest.approx(list(start.position))
 
 
 def test_native_selected_planner_supports_non_overlapping_multi_group_selection(
@@ -1719,7 +1719,7 @@ def test_native_selected_planner_supports_non_overlapping_multi_group_selection(
 
     assert result.status == PlanningStatus.SUCCESS
     assert result.path[-1].name == ["joint1", "joint2"]
-    assert result.path[-1].position == pytest.approx([0.1, 0.1])
+    assert list(result.path[-1].position) == pytest.approx([0.1, 0.1])
 
 
 def test_cartesian_planner_returns_timed_canonical_joint_states_and_options(
@@ -1768,8 +1768,8 @@ def test_cartesian_planner_returns_timed_canonical_joint_states_and_options(
     assert result.status == PlanningStatus.SUCCESS
     assert result.timestamps == [0.0, 0.02, 0.04]
     assert [state.name for state in result.path] == [list(selection.joint_names)] * 3
-    assert result.path[-1].position == pytest.approx([0.1, 0.1])
-    assert result.path[1].velocity == pytest.approx([0.5, 0.5])
+    assert list(result.path[-1].position) == pytest.approx([0.1, 0.1])
+    assert list(result.path[1].velocity) == pytest.approx([0.5, 0.5])
     planner = FakeCartesianPathPlanner.instances[-1]
     assert planner.options.speed_mode == FakeCartesianSpeedMode.TimeOptimal
     for field_name, expected in option_overrides.items():
@@ -1835,7 +1835,7 @@ def test_cartesian_uses_explicit_start_after_live_state_advances(
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert result.path[0].position == pytest.approx(start.position)
+    assert list(result.path[0].position) == pytest.approx(list(start.position))
     start_pose = FakeCartesianPathPlanner.instances[-1].paths[0].tforms[0][0]
     assert start_pose[0, 3] == pytest.approx(sum(start.position))
 

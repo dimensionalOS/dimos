@@ -18,6 +18,8 @@ from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import ValidationError
@@ -45,8 +47,7 @@ from dimos.manipulation.visualization.factory import create_manipulation_visuali
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.time import header_now
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
@@ -160,7 +161,7 @@ class FakeWorld:
         return None
 
     def get_joint_state(self, ctx: object) -> JointState:
-        return JointState({})
+        return JointState()
 
     def is_collision_free(self, ctx: object) -> bool:
         return True
@@ -323,7 +324,7 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
         PlanningSceneInfo(model=fake_world.get_prepared_model()), operator=object()
     )
     frame = VisualizationStateFrame(joint_state=None)
-    trajectory = JointTrajectory(joint_names=["arm/j1"], points=[])
+    trajectory = JointTrajectory(header=header_now(), joint_names=["arm/j1"], points=[])
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,

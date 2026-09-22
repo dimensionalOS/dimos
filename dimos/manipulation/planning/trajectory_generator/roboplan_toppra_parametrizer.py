@@ -20,6 +20,7 @@ import sys
 from typing import Any
 
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import numpy as np
 import roboplan.core as roboplan_core
 import roboplan.toppra as roboplan_toppra
@@ -36,8 +37,7 @@ from dimos.manipulation.planning.trajectory_generator.parametrizer import (
 )
 from dimos.manipulation.planning.world.roboplan_model import RoboPlanGroup, RoboPlanModel
 from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.time import duration_from_seconds, header_now
 
 
 @dataclass(frozen=True)
@@ -231,8 +231,8 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
             [joint_space.normalize_positions(position) for position in canonical_positions]
         )
         points = [
-            TrajectoryPoint(
-                time_from_start=time,
+            JointTrajectoryPoint(
+                time_from_start=duration_from_seconds(time),
                 positions=list(position),
                 velocities=[float(velocity[index]) for index in output_indices],
             )
@@ -244,6 +244,7 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
             )
         ]
         return JointTrajectory(
+            header=header_now(),
             joint_names=list(selection.joint_names),
             points=points,
         )

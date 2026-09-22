@@ -21,10 +21,11 @@ import queue
 import threading
 from typing import Literal
 
+from dimos_generated.sensor_msgs.msg import JointState
+
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
 from dimos.manipulation.visualization.operator import TargetEvaluationResult
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

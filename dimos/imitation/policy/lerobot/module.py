@@ -19,6 +19,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol, TypedDict
 
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory
 from pydantic import Field, field_validator
 
 from dimos.control.tasks.trajectory_task.trajectory_task import (
@@ -32,8 +34,6 @@ from dimos.experimental.isolated_python.module import (
     IsolatedPythonModuleConfig,
 )
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.spec.utils import Spec
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 

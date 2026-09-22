@@ -18,6 +18,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 import numpy as np
 import pytest
 
@@ -28,8 +29,7 @@ from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.world.drake_world import DRAKE_AVAILABLE, DrakeWorld
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.time import duration_from_seconds, header_now
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 requires_drake = pytest.mark.skipif(
@@ -40,10 +40,19 @@ requires_drake = pytest.mark.skipif(
 
 def _trajectory(names: list[str], first: list[float], second: list[float]) -> JointTrajectory:
     return JointTrajectory(
+        header=header_now(),
         joint_names=names,
         points=[
-            TrajectoryPoint(time_from_start=0.0, positions=first, velocities=[0.0] * len(names)),
-            TrajectoryPoint(time_from_start=2.0, positions=second, velocities=[0.0] * len(names)),
+            JointTrajectoryPoint(
+                time_from_start=duration_from_seconds(0.0),
+                positions=first,
+                velocities=[0.0] * len(names),
+            ),
+            JointTrajectoryPoint(
+                time_from_start=duration_from_seconds(2.0),
+                positions=second,
+                velocities=[0.0] * len(names),
+            ),
         ],
     )
 

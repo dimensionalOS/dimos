@@ -320,7 +320,7 @@ def test_roboplan_toppra_parametrizes_unbounded_planar_base(tmp_path: Path) -> N
         world, selection, result
     )
 
-    positions = [point.positions for point in plan.trajectory.points]
+    positions = [list(point.positions) for point in plan.trajectory.points]
     assert positions[0] == pytest.approx(start)
     assert positions[-1] == pytest.approx(goal)
     assert max(abs(current[2] - previous[2]) for previous, current in pairwise(positions)) < math.pi

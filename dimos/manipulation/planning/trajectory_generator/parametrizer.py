@@ -20,12 +20,12 @@ import copy
 import math
 
 from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.time import duration_from_seconds, header_now, to_nanoseconds
 
 _TRAJECTORY_POSITION_TOLERANCE = 1e-6
 
@@ -129,7 +129,7 @@ class BaseTrajectoryParametrizer(ABC):
     ) -> JointTrajectory:
         if len(timestamps) != len(path):
             raise TrajectoryParametrizationError("Planner must return one timestamp per waypoint")
-        points: list[TrajectoryPoint] = []
+        points: list[JointTrajectoryPoint] = []
         for waypoint_index, (state, timestamp) in enumerate(zip(path, timestamps, strict=True)):
             velocities = list(state.velocity)
             if len(velocities) != len(selection.joint_names):
@@ -137,13 +137,14 @@ class BaseTrajectoryParametrizer(ABC):
                     f"Waypoint {waypoint_index} velocity dimension mismatch"
                 )
             points.append(
-                TrajectoryPoint(
-                    time_from_start=float(timestamp),
+                JointTrajectoryPoint(
+                    time_from_start=duration_from_seconds(float(timestamp)),
                     positions=list(state.position),
                     velocities=velocities,
                 )
             )
         return JointTrajectory(
+            header=header_now(),
             joint_names=list(selection.joint_names),
             points=points,
         )
@@ -164,36 +165,38 @@ class BaseTrajectoryParametrizer(ABC):
             )
         if not trajectory.points:
             raise TrajectoryParametrizationError("Generated trajectory has no points")
-        previous_time: float | None = None
+        previous_time: int | None = None
         for point_index, point in enumerate(trajectory.points):
             if len(point.positions) != len(expected) or len(point.velocities) != len(expected):
                 raise TrajectoryParametrizationError(
                     f"Generated point {point_index} dimension mismatch"
                 )
             cls._assert_finite_sequence(
-                point.positions,
+                list(point.positions),
                 f"Generated point {point_index} positions",
             )
             cls._assert_finite_sequence(
-                point.velocities,
+                list(point.velocities),
                 f"Generated point {point_index} velocities",
             )
-            if not math.isfinite(point.time_from_start):
+            try:
+                point_time = to_nanoseconds(point.time_from_start)
+            except ValueError as exc:
                 raise TrajectoryParametrizationError(
-                    f"Generated point {point_index} time is non-finite"
-                )
-            if point_index == 0 and point.time_from_start != 0.0:
+                    f"Generated point {point_index} duration is invalid"
+                ) from exc
+            if point_index == 0 and point_time != 0.0:
                 raise TrajectoryParametrizationError("Generated trajectory must start at time 0")
-            if previous_time is not None and point.time_from_start <= previous_time:
+            if previous_time is not None and point_time <= previous_time:
                 raise TrajectoryParametrizationError(
                     "Generated trajectory times must be strictly increasing"
                 )
-            previous_time = point.time_from_start
-        if not cls._positions_close(trajectory.points[0].positions, expected_start):
+            previous_time = point_time
+        if not cls._positions_close(list(trajectory.points[0].positions), expected_start):
             raise TrajectoryParametrizationError(
                 "Generated trajectory does not preserve the path start"
             )
-        if not cls._positions_close(trajectory.points[-1].positions, expected_goal):
+        if not cls._positions_close(list(trajectory.points[-1].positions), expected_goal):
             raise TrajectoryParametrizationError(
                 "Generated trajectory does not preserve the path goal"
             )
