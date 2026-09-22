@@ -643,3 +643,39 @@ subprocess E2E check exercises the same assertions and cleanup. The initial demo
 Zenoh factory incorrectly passed a leading slash to the raw transport; it now
 uses the same `dimos/` topic mapping as the production transport factory.
 No production topic compatibility path was added.
+
+### G1 and shared coordinator joint-state cutover
+
+G1WholeBodyConnection now uses generated MotorCommandArray, JointState, and Imu
+messages. It constructs one explicit integer-nanosecond arrival header for each
+feedback sample, shared by the joint and IMU messages. Unitree WXYZ is explicitly
+copied to ROS XYZW. Every command array must contain all 29 joints before any
+DDS command is written. Existing damping-first soft start, mode-machine, and
+CRC behavior remain covered by the command tests.
+
+The shared coordinator, tick-loop outputs, velocity/trajectory consumers, and
+IK task joint states now use generated JointState. IK command snapshots use
+explicit deep copies; generated sequence names are compared as lists. Internal
+coordinator snapshot timestamps remain floating seconds, converted explicitly
+to Header.stamp at publication. G1/GROOT and Galaxea coordinator transport maps
+and declared joint ports now reference the same generated types. Other legacy
+pose/trajectory consumers remain outstanding.
+
+**12 G1 tests and all 369 tests in `dimos/control` passed.** The narrower 138-test
+routing/joint-state suite and 60-test IK suite passed before broadening to the
+full directory. Pinocchio 4.1.0, pin-pink 4.3.0, and QP dependencies were installed
+from the local cache; ONNX Runtime 1.24.1 was installed to collect the GROOT task
+tests. Mypy passes on 12 changed production/blueprint/demo modules.
+
+Both human demos passed: G1 printed 29-joint samples with q0 `0.0`, `0.1`, `0.2`
+and exact stamps `1700000000123456789` through `1700000000123456791`; the running
+mock coordinator printed left `[0.1, 0.2]`, right `[0.3, 0.4]`, and the merged
+four-joint state with matching tick stamps. Transcripts:
+
+- `build/message-codegen/demo/evidence/g1-messages.txt`
+- `build/message-codegen/demo/evidence/coordinator-joints.txt`
+- `build/message-codegen/g1-wholebody-cdr-tests.log`
+- `build/message-codegen/control-all-cdr-tests.log`
+
+These checks exercise synthetic hardware boundaries and real coordinator ticks;
+no physical G1 control or complete robot blueprint acceptance is claimed.

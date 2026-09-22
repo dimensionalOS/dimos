@@ -672,3 +672,23 @@ Zenoh sessions. It prints feedback positions `[0.25, -0.5]`, commanded positions
 `[0.75, -0.25]`, and the hardware-facing WXYZ quaternion. The demo checks command
 gains/torques and generated headers, then closes transports, subscriptions, and
 sessions. `test_whole_body_transport.py` runs the same exchange automatically.
+
+### G1 whole-body feedback and coordinator joint streams
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_g1_messages.py
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_coordinator_joints.py
+```
+
+The G1 demo feeds three synthetic 29-motor snapshots through the actual output
+ports. It prints changing joint positions, the converted ROS XYZW orientation,
+and consecutive exact source nanoseconds shared by joint and IMU messages. It
+does not initialize the Unitree SDK or connect to a robot.
+
+The coordinator demo runs two mock arms and prints aggregate and per-arm joint
+streams, verifying names, positions, ROS header frames, CDR round trips, and one
+shared tick stamp. Its existing internal snapshot clock remains in floating
+seconds and is explicitly converted at the message boundary. Both demos close
+subscriptions and stop their modules on exit.

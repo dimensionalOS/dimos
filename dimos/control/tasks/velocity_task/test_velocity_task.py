@@ -16,12 +16,13 @@
 
 from __future__ import annotations
 
+from dimos_generated.sensor_msgs.msg import JointState
+
 from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.velocity_task.velocity_task import (
     JointVelocityTask,
     JointVelocityTaskConfig,
 )
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 def _task() -> JointVelocityTask:

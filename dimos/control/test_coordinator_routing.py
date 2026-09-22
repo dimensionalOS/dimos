@@ -28,6 +28,7 @@ from collections.abc import Callable, Iterator
 import threading
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import JointState
 import pytest
 
 from dimos.control._control_test_helpers import RecordingTask
@@ -50,7 +51,6 @@ from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.webxr.controller_types import Buttons
 
 ARM_JOINTS = ["arm/joint1", "arm/joint2"]

@@ -16,6 +16,7 @@
 
 from pathlib import Path
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -32,7 +33,6 @@ from dimos.control.tasks.pose_target_ik import (
 from dimos.manipulation.planning.kinematics.pink_solver import _PinkSolverCore
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
 
 

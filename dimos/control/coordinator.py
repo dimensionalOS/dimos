@@ -32,6 +32,8 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.sensor_msgs.msg import JointState
+
 from dimos.control.components import (
     TWIST_SUFFIX_MAP,
     HardwareComponent,
@@ -65,7 +67,6 @@ from dimos.hardware.drive_trains.spec import (
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
