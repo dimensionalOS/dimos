@@ -20,11 +20,11 @@ import math
 from pathlib import Path
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.geometry import compose_transforms, quaternion_from_euler
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.assets.model import JointDescription, RobotModel
@@ -77,18 +77,22 @@ def decode_image(response: Any, frame_id: str, time_converter: Any) -> Image | N
     return Image.from_numpy(array, format=image_format, frame_id=frame_id, ts=ts)
 
 
-def joint_to_transform(joint: JointDescription) -> Transform:
-    return Transform(
-        translation=Vector3(*joint.origin_xyz),
-        rotation=Quaternion.from_euler(Vector3(*joint.origin_rpy)),
-        frame_id=joint.parent_link,
+def joint_to_transform(joint: JointDescription) -> TransformStamped:
+    return TransformStamped(
+        header=Header(frame_id=joint.parent_link),
         child_frame_id=joint.child_link,
+        transform=Transform(
+            translation=Vector3(
+                x=joint.origin_xyz[0], y=joint.origin_xyz[1], z=joint.origin_xyz[2]
+            ),
+            rotation=quaternion_from_euler(*joint.origin_rpy),
+        ),
     )
 
 
 def camera_mount_transforms(
     urdf_path: str | Path, base_frame_id: str, optical_frames: list[str]
-) -> list[Transform]:
+) -> list[TransformStamped]:
     """Compose each base_frame_id -> optical_frame extrinsic from the URDF's fixed joints.
 
     Walks the fixed-joint chain (base_link -> body -> {pos}_camera -> optical) up
@@ -98,7 +102,7 @@ def camera_mount_transforms(
     model = RobotModel.from_file(urdf_path).load()
     urdf_root = model.root_link
     joint_by_child = {joint.child_link: joint for joint in model.joints}
-    transforms: list[Transform] = []
+    transforms: list[TransformStamped] = []
     for optical_frame in optical_frames:
         chain: list[JointDescription] = []
         current = optical_frame
@@ -112,13 +116,13 @@ def camera_mount_transforms(
         edges = [joint_to_transform(joint) for joint in reversed(chain)]
         composed = edges[0]
         for edge in edges[1:]:
-            composed = composed + edge
-        composed.frame_id = base_frame_id
+            composed = compose_transforms(composed, edge)
+        composed.header.frame_id = base_frame_id
         transforms.append(composed)
     return transforms
 
 
-def roll_optical_frame(transform: Transform, quarter_turns: int) -> Transform:
+def roll_optical_frame(transform: TransformStamped, quarter_turns: int) -> TransformStamped:
     """Roll a camera's optical frame `quarter_turns` * 90° about its viewing (z) axis.
 
     Pairs with `rotate_image_quarter_turns`: rotating the image alone leaves the 3D
@@ -127,14 +131,12 @@ def roll_optical_frame(transform: Transform, quarter_turns: int) -> Transform:
     """
     if not quarter_turns:
         return transform
-    roll = Quaternion.from_euler(Vector3(0.0, 0.0, quarter_turns * math.pi / 2))
-    return Transform(
-        translation=transform.translation,
-        rotation=transform.rotation * roll,
-        frame_id=transform.frame_id,
+    roll = TransformStamped(
+        header=Header(frame_id=transform.child_frame_id),
         child_frame_id=transform.child_frame_id,
-        ts=transform.ts,
+        transform=Transform(rotation=quaternion_from_euler(0, 0, quarter_turns * math.pi / 2)),
     )
+    return compose_transforms(transform, roll)
 
 
 def rotate_image_quarter_turns(image: Image, quarter_turns: int) -> Image:

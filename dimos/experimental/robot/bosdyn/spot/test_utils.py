@@ -12,9 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from pathlib import Path
 
-from dimos.experimental.robot.bosdyn.spot.utils import camera_mount_transforms
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
+import pytest
+
+from dimos.experimental.robot.bosdyn.spot.utils import camera_mount_transforms, roll_optical_frame
+from dimos.msgs.geometry import yaw
 
 
 def test_camera_mount_transforms_uses_loaded_robot_topology(tmp_path: Path) -> None:
@@ -42,6 +49,22 @@ def test_camera_mount_transforms_uses_loaded_robot_topology(tmp_path: Path) -> N
     transforms = camera_mount_transforms(urdf, "body", ["camera_optical"])
 
     assert len(transforms) == 1
-    assert transforms[0].frame_id == "body"
+    assert transforms[0].header.frame_id == "body"
     assert transforms[0].child_frame_id == "camera_optical"
-    assert transforms[0].translation.to_list() == [1.0, 2.0, 0.0]
+    translation = transforms[0].transform.translation
+    assert (translation.x, translation.y, translation.z) == (1.0, 2.0, 0.0)
+
+
+@pytest.mark.parametrize("turns", [-1, 0, 1])
+def test_optical_roll_preserves_mount_and_exact_stamp(turns):
+    edge = TransformStamped(
+        header=Header(frame_id="body", stamp=Time(sec=1700000000, nanosec=123456789)),
+        child_frame_id="optical",
+        transform=Transform(translation=Vector3(x=1, y=2, z=3)),
+    )
+    rolled = roll_optical_frame(edge, turns)
+    assert rolled.header == edge.header
+    assert rolled.child_frame_id == edge.child_frame_id
+    assert rolled.transform.translation == edge.transform.translation
+    assert yaw(rolled.transform.rotation) == pytest.approx(turns * math.pi / 2)
+    assert edge.transform.rotation.w == 1

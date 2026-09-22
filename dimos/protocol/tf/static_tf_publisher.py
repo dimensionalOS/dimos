@@ -27,15 +27,16 @@ from __future__ import annotations
 import asyncio
 import time
 
+from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry import quaternion_from_euler
+from dimos.msgs.time import time_from_nanoseconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -44,23 +45,25 @@ logger = setup_logger()
 FrameSpec = tuple[str, str | None, tuple[float, float, float], tuple[float, float, float]]
 
 
-def frames_to_edge_transforms(frames: list[FrameSpec]) -> list[Transform]:
-    """Build a ``parent -> child`` Transform for each non-root edge of a frame tree.
+def frames_to_edge_transforms(frames: list[FrameSpec]) -> list[TransformStamped]:
+    """Build a ``parent -> child`` TransformStamped for each non-root edge of a frame tree.
 
     This is the static mount tree (the rigid sensor offsets); a tf buffer composes
     these edges to answer any ``world <- frame`` query once odometry supplies the
     moving ``world <- root`` edge.
     """
-    transforms: list[Transform] = []
+    transforms: list[TransformStamped] = []
     for name, parent, translation, rpy in frames:
         if parent is None:
             continue
         transforms.append(
-            Transform(
-                translation=Vector3(*translation),
-                rotation=Quaternion.from_euler(Vector3(*rpy)),
-                frame_id=parent,
+            TransformStamped(
+                header=Header(frame_id=parent),
                 child_frame_id=name,
+                transform=Transform(
+                    translation=Vector3(x=translation[0], y=translation[1], z=translation[2]),
+                    rotation=quaternion_from_euler(*rpy),
+                ),
             )
         )
     return transforms
@@ -77,9 +80,9 @@ class StaticTfPublisher(Module):
     tf: Out[TFMessage]
 
     _running: bool = False
-    _transforms: list[Transform] = []
+    _transforms: list[TransformStamped] = []
 
-    def transforms(self) -> list[Transform]:
+    def transforms(self) -> list[TransformStamped]:
         """The static transforms to publish. Override in a rig-specific subclass."""
         raise NotImplementedError(
             f"{type(self).__name__} must override transforms() with its mount frames"
@@ -104,10 +107,10 @@ class StaticTfPublisher(Module):
     async def _publish_loop(self) -> None:
         period = 1.0 / self.config.publish_hz
         while self._running:
-            now = time.time()
+            now = time_from_nanoseconds(time.time_ns())
             for transform in self._transforms:
-                transform.ts = now
-            self.tf.publish(TFMessage(*self._transforms))
+                transform.header.stamp = now
+            self.tf.publish(TFMessage(transforms=self._transforms))
             await asyncio.sleep(period)
 
     @rpc

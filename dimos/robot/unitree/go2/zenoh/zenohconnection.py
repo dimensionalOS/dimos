@@ -31,22 +31,25 @@ import threading
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field, field_validator
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry import inverse_transform, transform_from_odometry
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
+from dimos.protocol.tf.static_tf_publisher import (
+    StaticTfPublisher,
+    StaticTfPublisherConfig,
+    frames_to_edge_transforms,
+)
 from dimos.robot.unitree.go2.connection import _camera_info_static
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     CAMERA_XYZ,
@@ -159,36 +162,30 @@ class GO2Zenoh(StaticTfPublisher):
     def set_lidar(self, enabled: bool) -> None:
         self.send_command("lidar on" if enabled else "lidar off")
 
-    def transforms(self) -> list[Transform]:
+    def transforms(self) -> list[TransformStamped]:
         """The mount tree, rooted at mid360_link because Point-LIO owns that frame.
 
         Measured outward from the body, but odom -> mid360_link is the only live edge, so
         the two edges above the lidar are inverted — otherwise mid360_link has two parents
         and the body snaps between them at 35 Hz.
         """
-        base_to_camera = Transform(
-            translation=Vector3(*CAMERA_XYZ),
-            frame_id="base_link",
-            child_frame_id="front_camera",
+        roll, pitch, yaw = (math.radians(float(d)) for d in self.config.mid360_mount)
+        base_to_camera, camera_to_mid360, camera_to_optical = frames_to_edge_transforms(
+            [
+                ("front_camera", "base_link", CAMERA_XYZ, (0.0, 0.0, 0.0)),
+                ("mid360_link", "front_camera", MID360_XYZ, (roll, pitch, yaw)),
+                ("camera_optical", "front_camera", (0.0, 0.0, 0.0), OPTICAL_RPY),
+            ]
         )
-        camera_to_mid360 = Transform(
-            translation=Vector3(*MID360_XYZ),
-            rotation=Quaternion.from_euler(
-                Vector3(*(math.radians(float(d)) for d in self.config.mid360_mount))
-            ),
-            frame_id="front_camera",
-            child_frame_id="mid360_link",
-        )
-        camera_to_optical = Transform(
-            rotation=Quaternion.from_euler(Vector3(*OPTICAL_RPY)),
-            frame_id="front_camera",
-            child_frame_id="camera_optical",
-        )
-        return [-camera_to_mid360, -base_to_camera, camera_to_optical]
+        return [
+            inverse_transform(camera_to_mid360),
+            inverse_transform(base_to_camera),
+            camera_to_optical,
+        ]
 
     def _publish_tf(self, odom: Odometry) -> None:
         """The one moving edge, odom -> mid360_link; the bridge publishes no tf."""
-        self.tf.publish(TFMessage(Transform.from_pose(odom.child_frame_id, odom.to_pose_stamped())))
+        self.tf.publish(TFMessage(transforms=[transform_from_odometry(odom)]))
 
     async def _publish_camera_info(self) -> None:
         period = 1.0 / self.config.camera_info_hz

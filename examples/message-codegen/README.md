@@ -501,3 +501,11 @@ The Python/Rust TF demo above now logs the composed transform from both Python
 and Rust. Its automated check verifies both results. Robot-specific publishers
 and downstream consumers are being converted to these fields as part of the
 remaining runtime cutover.
+
+The TF demo's fixed `b → c` edge is published by the production
+`StaticTfPublisher` in its own worker. This exercises periodic generated
+`TFMessage` publication alongside the dynamic Python and Rust edges. Static mount
+implementations return `list[TransformStamped]`; `frames_to_edge_transforms`
+constructs them from `(child, parent, xyz, fixed-axis-rpy)` entries. A `None` parent
+marks the root and produces no edge. The publisher supplies current integer
+nanosecond stamps on every cycle.

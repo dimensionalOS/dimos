@@ -25,12 +25,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.std_msgs.msg import Header
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
 from dimos.visualization.vis_module import vis_module
@@ -46,15 +46,8 @@ class RealSenseMountTf(StaticTfPublisher):
     path from world to it and draws nothing.
     """
 
-    def transforms(self) -> list[Transform]:
-        return [
-            Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="world",
-                child_frame_id="camera_link",
-            )
-        ]
+    def transforms(self) -> list[TransformStamped]:
+        return [TransformStamped(header=Header(frame_id="world"), child_frame_id="camera_link")]
 
 
 def _rerun_blueprint() -> Any:

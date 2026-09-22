@@ -46,6 +46,8 @@ from __future__ import annotations
 
 import math
 
+from dimos_generated.geometry_msgs.msg import TransformStamped
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import In
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
@@ -53,7 +55,6 @@ from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -92,7 +93,7 @@ FRAMES: list[FrameSpec] = [
 class Mid360RealsenseStaticTf(StaticTfPublisher):
     """Publishes the RealSense/Mid-360 mount tree onto tf on a fixed interval."""
 
-    def transforms(self) -> list[Transform]:
+    def transforms(self) -> list[TransformStamped]:
         return frames_to_edge_transforms(FRAMES)
 
 

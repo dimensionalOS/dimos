@@ -27,8 +27,11 @@ which accumulates it and is equally happy on a live robot.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-import math
 from pathlib import Path
+
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.tf2_msgs.msg import TFMessage
 
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.module import Module, ModuleConfig
@@ -37,15 +40,11 @@ from dimos.experimental.robot.bosdyn.spot.config import (
     CAMERA_STREAM_SUFFIXES,
     FRONT_CAMERA_ROTATE_UPRIGHT,
 )
+from dimos.experimental.robot.bosdyn.spot.utils import roll_optical_frame
 from dimos.memory.replay import resolve_db_path
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -122,23 +121,18 @@ class SpotReplay(Module):
 
     def _republish_tf(self, message: TFMessage) -> None:
         self.tf.publish(
-            TFMessage(*(self._roll_optical_frame(transform) for transform in message.transforms))
+            TFMessage(
+                transforms=[self._roll_optical_frame(transform) for transform in message.transforms]
+            )
         )
 
-    def _roll_optical_frame(self, transform: Transform) -> Transform:
+    def _roll_optical_frame(self, transform: TransformStamped) -> TransformStamped:
         if not self.config.roll_front_frames:
             return transform
         turns = _OPTICAL_FRAME_ROLL_TURNS.get(transform.child_frame_id)
         if not turns:
             return transform
-        roll = Quaternion.from_euler(Vector3(0.0, 0.0, turns * math.pi / 2))
-        return Transform(
-            translation=transform.translation,
-            rotation=transform.rotation * roll,
-            frame_id=transform.frame_id,
-            child_frame_id=transform.child_frame_id,
-            ts=transform.ts,
-        )
+        return roll_optical_frame(transform, turns)
 
     async def main(self) -> AsyncIterator[None]:
         db_path = self._resolve_db_path()

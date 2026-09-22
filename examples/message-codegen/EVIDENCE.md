@@ -347,3 +347,23 @@ identity rotation. A zero quaternion must be constructed explicitly to test
 rejection. The initial missing TF replies were not evidence of a zero default.
 Robot-specific publishers and other legacy convenience-class consumers remain
 to be updated; this is not completion of task 4.2 or 4.6.
+
+### Static publishers and robot mount callers
+
+`StaticTfPublisher` and its frame-tree helper now use generated stamped transforms
+and exact `time.time_ns()` stamps. The Go2/Mid-360, Alfred URDF, RealSense, and
+Mid-360/RealSense mount declarations use those values. Go2's Zenoh mount tree and
+odometry-to-TF callback were converted as well; its camera/video consumers still
+need their separate runtime migration.
+
+Spot's URDF mount composition and optical-frame rotation now use the geometry
+helpers. Its SDK odometry boundary publishes generated Odometry and a matching
+TFMessage, and replay's TF/odometry declarations use the generated types. A
+synthetic SDK-value test checks negative source time, pose, velocity, frame names,
+and CDR round trips without importing or connecting to the robot SDK.
+
+Eleven mount/helper/Spot boundary checks passed. The cumulative TF demo now
+includes the production periodic `StaticTfPublisher` for `b → c`; Python publishes
+`a → b`, Rust publishes `c → d`, and both language buffers compose `a → d`.
+Both LCM and Zenoh E2E checks passed, including shutdown. This is hardware-free
+message/geometry verification, not physical robot or camera acceptance.

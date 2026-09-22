@@ -40,6 +40,7 @@ from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO
 from dimos.msgs.time import time_from_nanoseconds
+from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, frames_to_edge_transforms
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -51,7 +52,7 @@ _BUILD = "cargo build --release"
 
 
 class TfProducer(Module):
-    """Publishes a time-varying a -> b -> c transform chain onto /tf."""
+    """Publishes the time-varying a -> b edge onto /tf."""
 
     tf: IO[TFMessage]
 
@@ -79,11 +80,6 @@ class TfProducer(Module):
                                 rotation=Quaternion(w=1),
                             ),
                         ),
-                        TransformStamped(
-                            header=Header(frame_id="b", stamp=stamp),
-                            child_frame_id="c",
-                            transform=Transform(translation=Vector3(x=1), rotation=Quaternion(w=1)),
-                        ),
                     ]
                 )
             )
@@ -102,6 +98,13 @@ class TfProducer(Module):
     def stop(self) -> None:
         self._running = False
         super().stop()
+
+
+class StaticMount(StaticTfPublisher):
+    """Exercise the production periodic publisher for the fixed b -> c mount."""
+
+    def transforms(self) -> list[TransformStamped]:
+        return frames_to_edge_transforms([("c", "b", (1.0, 0.0, 0.0), (0.0, 0.0, 0.0))])
 
 
 class TfListenerConfig(NativeModuleConfig):
@@ -137,6 +140,9 @@ class TfBroadcasterModule(NativeModule):
 
 if __name__ == "__main__":
     bp = autoconnect(
-        TfProducer.blueprint(), TfBroadcasterModule.blueprint(), TfListenerModule.blueprint()
+        TfProducer.blueprint(),
+        StaticMount.blueprint(),
+        TfBroadcasterModule.blueprint(),
+        TfListenerModule.blueprint(),
     ).global_config(viewer="none")
     ModuleCoordinator.build(bp).loop()

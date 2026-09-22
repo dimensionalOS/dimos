@@ -43,6 +43,20 @@ from dataclasses import field
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseWithCovariance,
+    Quaternion,
+    TransformStamped,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
+
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
@@ -71,15 +85,10 @@ from dimos.experimental.robot.bosdyn.spot.utils import (
     rotate_camera_info_quarter_turns,
     rotate_image_quarter_turns,
 )
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.geometry import transform_from_odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.time import time_from_seconds
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -168,7 +177,7 @@ class SpotHighLevel(StaticTfPublisher):
         # never reaches a half-initialised SDK.
         self._ready = asyncio.Event()
 
-    def transforms(self) -> list[Transform]:
+    def transforms(self) -> list[TransformStamped]:
         """Static base_link -> camera-optical extrinsics parsed from the URDF.
 
         `StaticTfPublisher` republishes these on a fixed interval; the moving
@@ -466,44 +475,26 @@ class SpotHighLevel(StaticTfPublisher):
 
     def _publish_odom(self, vision_tform_body: Any, velocity: Any, ts: float) -> None:
         pose = Pose(
-            position=[vision_tform_body.x, vision_tform_body.y, vision_tform_body.z],
-            orientation=[
-                vision_tform_body.rot.x,
-                vision_tform_body.rot.y,
-                vision_tform_body.rot.z,
-                vision_tform_body.rot.w,
-            ],
+            position=Point(x=vision_tform_body.x, y=vision_tform_body.y, z=vision_tform_body.z),
+            orientation=Quaternion(
+                x=vision_tform_body.rot.x,
+                y=vision_tform_body.rot.y,
+                z=vision_tform_body.rot.z,
+                w=vision_tform_body.rot.w,
+            ),
         )
         twist = Twist(
-            linear=[velocity.linear.x, velocity.linear.y, velocity.linear.z],
-            angular=[velocity.angular.x, velocity.angular.y, velocity.angular.z],
+            linear=Vector3(x=velocity.linear.x, y=velocity.linear.y, z=velocity.linear.z),
+            angular=Vector3(x=velocity.angular.x, y=velocity.angular.y, z=velocity.angular.z),
         )
         odometry = Odometry(
-            ts=ts,
-            frame_id=self.config.odom_frame_id,
+            header=Header(stamp=time_from_seconds(ts), frame_id=self.config.odom_frame_id),
             child_frame_id=self.config.base_frame_id,
-            pose=pose,
-            twist=twist,
+            pose=PoseWithCovariance(pose=pose),
+            twist=TwistWithCovariance(twist=twist),
         )
         self.odometry.publish(odometry)
-        self.tf.publish(
-            TFMessage(
-                Transform(
-                    translation=Vector3(
-                        vision_tform_body.x, vision_tform_body.y, vision_tform_body.z
-                    ),
-                    rotation=Quaternion(
-                        vision_tform_body.rot.x,
-                        vision_tform_body.rot.y,
-                        vision_tform_body.rot.z,
-                        vision_tform_body.rot.w,
-                    ),
-                    frame_id=self.config.odom_frame_id,
-                    child_frame_id=self.config.base_frame_id,
-                    ts=ts,
-                )
-            )
-        )
+        self.tf.publish(TFMessage(transforms=[transform_from_odometry(odometry)]))
 
     @rpc
     async def move(self, twist: Twist, duration: float = 0.0) -> bool:
@@ -569,7 +560,7 @@ class SpotHighLevel(StaticTfPublisher):
             yaw: Rotational velocity (rad/s).
             duration: Seconds to move. 0 uses one `cmd_vel_timeout` window.
         """
-        twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
+        twist = Twist(linear=Vector3(x=x, y=y), angular=Vector3(z=yaw))
         if await self.move(twist, duration=duration):
             return f"Moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
         return f"Failed to move with velocity=({x}, {y}, {yaw})"
