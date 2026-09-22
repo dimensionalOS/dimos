@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from pydantic import JsonValue
     from rerun._baseclasses import Archetype
 
-    from dimos.experimental.agent_encode.pointcloud.runtime.context import Node
+    from dimos.experimental.agent_encode.pointcloud.runtime.context import Request, Result
     from dimos.experimental.agent_encode.pointcloud.runtime.dispatch import EncodeBudget
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
@@ -353,7 +353,7 @@ class PointCloud2(Timestamped):
 
     def agent_encode(
         self,
-        requests: Mapping[str, Node[object]] | None = None,
+        requests: Mapping[str, Request[Result]] | None = None,
         out_dir: str | Path | None = None,
         budget: EncodeBudget | None = None,
     ) -> dict[str, JsonValue]:

@@ -26,7 +26,7 @@ from dimos.experimental.agent_encode.pointcloud.handlers.occupancy_map import Oc
 from dimos.experimental.agent_encode.pointcloud.handlers.overlap import Overlap
 from dimos.experimental.agent_encode.pointcloud.handlers.sweep import Sweep
 from dimos.experimental.agent_encode.pointcloud.render import raster as render
-from dimos.experimental.agent_encode.pointcloud.runtime.context import Node
+from dimos.experimental.agent_encode.pointcloud.runtime.context import Request, Result
 from dimos.experimental.agent_encode.pointcloud.runtime.dispatch import encode, legend
 from dimos.experimental.agent_encode.pointcloud.shapes.box import Box
 from dimos.experimental.agent_encode.pointcloud.shapes.cylinder import Cylinder
@@ -68,7 +68,9 @@ def test_shapes_contain_and_measure() -> None:
     assert sph.distance(pts)[2] == pytest.approx(4.0)
 
 
-def run(cloud: PointCloud2, request: Node[object], out_dir: Path | None = None) -> dict[str, Any]:
+def run(
+    cloud: PointCloud2, request: Request[Result], out_dir: Path | None = None
+) -> dict[str, Any]:
     result: dict[str, Any] = encode(cloud, {"r": request}, out_dir=out_dir)["results"]["r"]
     return result
 

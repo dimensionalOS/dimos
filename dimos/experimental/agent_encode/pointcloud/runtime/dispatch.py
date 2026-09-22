@@ -19,20 +19,23 @@ every handler and shape."""
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, fields, is_dataclass, replace
+from dataclasses import dataclass, fields, replace
 import hashlib
 import json
-import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 from pydantic import JsonValue
+from pydantic_core import to_jsonable_python
 
-from dimos.experimental.agent_encode.pointcloud.fields import FieldData
 from dimos.experimental.agent_encode.pointcloud.handlers.overview import Overview
 from dimos.experimental.agent_encode.pointcloud.render import raster as render
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext, Node
+from dimos.experimental.agent_encode.pointcloud.runtime.context import (
+    EncodeContext,
+    Request,
+    Result,
+)
 from dimos.experimental.agent_encode.pointcloud.runtime.recipe import canonical, describe
 
 if TYPE_CHECKING:
@@ -61,27 +64,12 @@ def _contains_invalid_number(value: JsonValue) -> bool:
     return False
 
 
-def _json_safe(value: object) -> JsonValue:
-    """A result as strict JSON: dataclasses become objects of their fields."""
-    if is_dataclass(value) and not isinstance(value, type):
-        return {f.name: _json_safe(getattr(value, f.name)) for f in fields(value)}
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, Mapping):
-        if any(not isinstance(key, str) for key in value):
-            raise TypeError("JSON result keys must be strings")
-        return {key: _json_safe(item) for key, item in value.items()}
-    if isinstance(value, np.ndarray):
-        return _json_safe(value.tolist())
-    if isinstance(value, np.generic):
-        return _json_safe(value.item())
-    if isinstance(value, (tuple, list)):
-        return [_json_safe(item) for item in value]
-    if isinstance(value, float) and not math.isfinite(value):
-        raise ValueError("result contains a non-finite number")
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    raise TypeError(f"result contains non-JSON value {type(value).__name__}")
+def _json(value: object) -> JsonValue:
+    """``value`` as strict JSON: dataclasses become objects of their fields, and a
+    non-finite number is a ValueError."""
+    converted: JsonValue = to_jsonable_python(value, fallback=lambda array: array.tolist())
+    json.dumps(converted, allow_nan=False)
+    return converted
 
 
 def _size(value: JsonValue) -> int:
@@ -147,13 +135,13 @@ def _terminal_too_large(
 
 
 def _named(
-    ctx: EncodeContext, requests: Mapping[str, Node[object]], budget: EncodeBudget
+    ctx: EncodeContext, requests: Mapping[str, Request[Result]], budget: EncodeBudget
 ) -> dict[str, JsonValue]:
     if any(not isinstance(name, str) or not name for name in requests):
         raise ValueError("output names must be nonempty strings")
     metadata_errors: dict[str, JsonValue] = {}
     try:
-        timestamp = _json_safe(ctx.cloud.ts)
+        timestamp = _json(ctx.cloud.ts)
     except (ValueError, TypeError) as exc:
         timestamp = None
         metadata_errors["ts"] = str(exc)
@@ -173,12 +161,13 @@ def _named(
         try:
             if _contains_invalid_number(request):
                 raise ValueError("request contains a non-finite number")
-            result = ctx.evaluate(node)
-            if isinstance(result, FieldData):
-                result = result.summary()
-            measured = _json_safe(result)
-            if not is_dataclass(result) or not isinstance(measured, dict):
-                raise TypeError("named outputs must be measurements or renders, not selections")
+            if not isinstance(node, Request):
+                raise TypeError(
+                    f"{type(node).__name__} is not a request; selections, shapes and grids "
+                    "go inside one, as in Overlap(Box(...))"
+                )
+            result = ctx.evaluate(node).summary()
+            measured = {f.name: _json(getattr(result, f.name)) for f in fields(result)}
             results[name] = {"status": "ok", **measured, "request": request}
         except (ValueError, TypeError, OverflowError, OSError, RuntimeError) as exc:
             results[name] = {
@@ -308,7 +297,7 @@ for name, r in out["results"].items():
 
 def encode(
     cloud: PointCloud2,
-    requests: Mapping[str, Node[object]] | None = None,
+    requests: Mapping[str, Request[Result]] | None = None,
     out_dir: str | Path | None = None,
     budget: EncodeBudget | None = None,
 ) -> dict[str, JsonValue]:

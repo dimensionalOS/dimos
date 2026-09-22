@@ -21,12 +21,17 @@ import math
 import numpy as np
 
 from dimos.experimental.agent_encode.pointcloud.render.overlays import Canvas, Overlay
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext, Node
+from dimos.experimental.agent_encode.pointcloud.runtime.context import (
+    EncodeContext,
+    Request,
+    Result,
+    Selection,
+)
 from dimos.experimental.agent_encode.pointcloud.shapes.base import Shape
 
 
 @dataclass(frozen=True)
-class SweepResult:
+class SweepResult(Result):
     hit: bool
     distance_m: float | None
     """How far the shape travelled before first touching a return; None when it reached
@@ -42,7 +47,7 @@ class SweepResult:
 
 
 @dataclass(frozen=True)
-class Sweep(Overlay):
+class Sweep(Request[SweepResult], Overlay):
     """Sample a shape's motion along a heading or a 3D direction, every ``step_m`` from
     the start to the endpoint; contacts between samples can be missed."""
 
@@ -51,7 +56,7 @@ class Sweep(Overlay):
     """Horizontal heading, degrees from +x toward +y."""
     max_distance: float = 1.0
     step_m: float = 0.05
-    source: Node[np.ndarray] | None = None
+    source: Selection | None = None
     direction: tuple[float, float, float] | None = None
     """A 3D heading (dx, dy, dz) in place of ``direction_deg``; it is normalized."""
 

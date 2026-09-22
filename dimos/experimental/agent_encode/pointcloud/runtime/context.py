@@ -17,6 +17,7 @@ where image files go."""
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
@@ -25,7 +26,7 @@ from itertools import count
 import os
 from pathlib import Path
 import tempfile
-from typing import TYPE_CHECKING, Protocol, TypeVar, cast, runtime_checkable
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast, runtime_checkable
 
 import numpy as np
 
@@ -86,10 +87,14 @@ class EncodeContext:
         finally:
             staging.unlink(missing_ok=True)
 
-    def select(self, source: Node[np.ndarray] | None) -> EncodeContext:
+    def select(self, source: Selection | None) -> EncodeContext:
         """Use a field's points, preserving coordinates and the shared evaluation cache."""
         if source is None:
             return self
+        if not isinstance(source, Selection):
+            raise TypeError(
+                f"source must be a selection such as Select(...), not {type(source).__name__}"
+            )
         cloud, points = self.evaluate(_Selected(source))
         return replace(self, cloud=cloud, points=points, parent=self.root)
 
@@ -109,20 +114,44 @@ class EncodeContext:
 
 @runtime_checkable
 class Node(Protocol[T_co]):
-    """A lazy request: a selection, a field, a measurement or a render, fully
-    parameterised by the caller."""
+    """Anything ``EncodeContext.evaluate`` computes once per call."""
 
     def run(self, ctx: EncodeContext) -> T_co: ...
 
 
 @dataclass(frozen=True)
+class Result:
+    """What a request measured, as the agent reads it."""
+
+    def summary(self) -> Result:
+        """The part a named output reports; results holding raw arrays override it."""
+        return self
+
+
+R_co = TypeVar("R_co", bound=Result, covariant=True)
+
+
+class Request(ABC, Generic[R_co]):
+    """What an agent can name in ``agent_encode()``: a query, a render, an output or a field."""
+
+    @abstractmethod
+    def run(self, ctx: EncodeContext) -> R_co: ...
+
+
+class Selection(ABC):
+    """A lazy set of returns, passed as another node's ``source``."""
+
+    @abstractmethod
+    def run(self, ctx: EncodeContext) -> np.ndarray:
+        """The selected (N, 3) returns."""
+
+
+@dataclass(frozen=True)
 class _Selected:
-    source: Node[np.ndarray]
+    source: Selection
 
     def run(self, ctx: EncodeContext) -> tuple[PointCloud2, np.ndarray]:
         points = ctx.evaluate(self.source)
-        if not isinstance(points, np.ndarray) or points.ndim != 2 or points.shape[1] != 3:
-            raise TypeError("source must evaluate to an (N, 3) point array")
         cloud = type(ctx.cloud).from_numpy(
             points, frame_id=ctx.cloud.frame_id, timestamp=ctx.cloud.ts
         )

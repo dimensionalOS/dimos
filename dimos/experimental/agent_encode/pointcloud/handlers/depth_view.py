@@ -36,7 +36,12 @@ from dimos.experimental.agent_encode.pointcloud.render.overlays import (
     Overlay,
     draw_overlays,
 )
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext, Node
+from dimos.experimental.agent_encode.pointcloud.runtime.context import (
+    EncodeContext,
+    Request,
+    Result,
+    Selection,
+)
 
 
 @dataclass(frozen=True)
@@ -147,7 +152,7 @@ class DepthSurface(PickSurface):
 
 
 @dataclass(frozen=True)
-class DepthViewResult:
+class DepthViewResult(Result):
     image: Path
     view_ref: dict[str, JsonValue]
     covered_pixels: int
@@ -160,7 +165,7 @@ class DepthViewResult:
 
 
 @dataclass(frozen=True)
-class DepthView(Pickable):
+class DepthView(Request[DepthViewResult], Pickable):
     """A perspective depth render of the cloud as an image."""
 
     view: tuple[float, float, float, float, float]
@@ -173,7 +178,7 @@ class DepthView(Pickable):
     point_size_m: float | None = None
     """One width for every return. None draws each as wide as the gap to its nearest
     neighbour, so surfaces close at the cloud's own resolution."""
-    source: Node[np.ndarray] | None = None
+    source: Selection | None = None
     overlays: tuple[Overlay, ...] = ()
 
     def raster(self, ctx: EncodeContext) -> tuple[render.DepthRaster, EncodeContext]:

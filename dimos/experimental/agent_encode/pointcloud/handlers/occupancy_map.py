@@ -36,13 +36,18 @@ from dimos.experimental.agent_encode.pointcloud.render.overlays import (
     draw_overlays,
     grid_pixel,
 )
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext, Node
+from dimos.experimental.agent_encode.pointcloud.runtime.context import (
+    EncodeContext,
+    Request,
+    Result,
+    Selection,
+)
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 
 
 @dataclass(frozen=True)
-class OccupancyMapResult:
+class OccupancyMapResult(Result):
     image: Path
     view_ref: dict[str, JsonValue]
     spacing_m: float
@@ -63,7 +68,7 @@ class OccupancyMapResult:
 
 
 @dataclass(frozen=True)
-class OccupancyMap(Pickable):
+class OccupancyMap(Request[OccupancyMapResult], Pickable):
     """The top-down occupancy map of the cloud as an image."""
 
     z_range: tuple[float, float]
@@ -82,7 +87,7 @@ class OccupancyMap(Pickable):
     colour: Literal["flat", "height"] = "flat"
     """Occupied cells are black, or with "height" coloured by their highest return over
     ``z_range``, which adds height_scale to read it back."""
-    source: Node[np.ndarray] | None = None
+    source: Selection | None = None
     overlays: tuple[Overlay, ...] = ()
     grid: Grid | None = None
     """An explicit XY grid fixes the origin, resolution, and extent; it cannot be

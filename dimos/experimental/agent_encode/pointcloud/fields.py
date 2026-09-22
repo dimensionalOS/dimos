@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from typing import Protocol
 
@@ -28,7 +27,12 @@ from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
 from dimos.experimental.agent_encode.pointcloud import constants
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext, Node
+from dimos.experimental.agent_encode.pointcloud.runtime.context import (
+    EncodeContext,
+    Request,
+    Result,
+    Selection,
+)
 
 
 class Region3D(Protocol):
@@ -95,14 +99,14 @@ class Grid:
 
 
 @dataclass(frozen=True)
-class Select:
+class Select(Selection):
     """A lazy selection of returns: the include shapes, less the exclude shapes."""
 
     include: Region3D | tuple[Region3D, ...] = ()
     """Shapes or bands to intersect; none means all returns."""
     exclude: Region3D | tuple[Region3D, ...] = ()
     """Shapes or bands whose returns are then removed."""
-    source: Node[np.ndarray] | None = None
+    source: Selection | None = None
 
     def run(self, ctx: EncodeContext) -> np.ndarray:
         ctx = ctx.select(self.source)
@@ -144,7 +148,7 @@ class Band:
 
 
 @dataclass(frozen=True)
-class FieldSummary:
+class FieldSummary(Result):
     """A computed field as a named output reports it; the cells stay internal."""
 
     grid: Grid
@@ -152,7 +156,7 @@ class FieldSummary:
 
 
 @dataclass(frozen=True)
-class FieldData:
+class FieldData(Result):
     """Internal computed fields."""
 
     grid: Grid
@@ -237,11 +241,9 @@ class Distances(FieldData):
         return DistancesSummary(self.grid, list(self.values), self.target_count)
 
 
-class FieldNode(ABC):
-    """A lazy field supporting arithmetic and three-state mask composition."""
-
-    @abstractmethod
-    def run(self, ctx: EncodeContext) -> FieldData: ...
+class FieldNode(Request[FieldData]):
+    """A lazy field supporting arithmetic and three-state mask composition. Named
+    directly, it reports its grid and channels; ``Components`` adds its region table."""
 
     def __sub__(self, other: FieldNode | float) -> Difference:
         return Difference(self, other)
@@ -265,7 +267,7 @@ class HeightField(FieldNode):
     """
 
     grid: Grid
-    source: Node[np.ndarray] | None = None
+    source: Selection | None = None
 
     @property
     def min(self) -> Channel:
@@ -374,7 +376,7 @@ class DistanceField(FieldNode):
     """
 
     grid: Grid
-    source: FieldNode | Node[np.ndarray] | None = None
+    source: FieldNode | Selection | None = None
     """The targets. Those outside the grid still participate when this is a selection."""
 
     def run(self, ctx: EncodeContext) -> Distances:

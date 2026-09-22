@@ -48,7 +48,11 @@ from dimos.experimental.agent_encode.pointcloud.render.overlays import (
     draw_overlays,
     grid_pixel,
 )
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
+from dimos.experimental.agent_encode.pointcloud.runtime.context import (
+    EncodeContext,
+    Request,
+    Result,
+)
 
 
 def numbers(values: np.ndarray | float, decimals: int | None = None) -> JsonValue:
@@ -126,14 +130,14 @@ class DiscSample:
 
 
 @dataclass(frozen=True)
-class SampleResult:
+class SampleResult(Result):
     grid: Grid
     decimals: int
     samples: list[PointSample] | list[DiscSample]
 
 
 @dataclass(frozen=True)
-class Sample:
+class Sample(Request[SampleResult]):
     """Sample containing cells without interpolation."""
 
     source: FieldNode
@@ -209,7 +213,7 @@ class Sample:
 
 
 @dataclass(frozen=True)
-class WindowResult:
+class WindowResult(Result):
     grid: Grid
     decimals: int
     values: dict[str, JsonValue]
@@ -217,7 +221,7 @@ class WindowResult:
 
 
 @dataclass(frozen=True)
-class Window:
+class Window(Request[WindowResult]):
     """Exact cell slice, preserving the parent grid."""
 
     source: FieldNode
@@ -250,7 +254,7 @@ class Window:
 
 
 @dataclass(frozen=True)
-class MapResult:
+class MapResult(Result):
     grid: Grid
     value_range: tuple[float, float]
     colour: render.ColourScale
@@ -262,7 +266,7 @@ class MapResult:
 
 
 @dataclass(frozen=True)
-class Map(Pickable):
+class Map(Request[MapResult], Pickable):
     """Render a scalar field, mask, or labels without modifying the field grid.
 
     Pixel origin is top-left; increasing the grid's second axis goes up.

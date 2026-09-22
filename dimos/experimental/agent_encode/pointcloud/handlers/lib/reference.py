@@ -21,13 +21,14 @@ import hashlib
 
 from pydantic import JsonValue
 
-from dimos.experimental.agent_encode.pointcloud import fields as field_nodes
-from dimos.experimental.agent_encode.pointcloud.render import raster as render
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
+from dimos.experimental.agent_encode.pointcloud.fields import Band, Grid
+from dimos.experimental.agent_encode.pointcloud.runtime.context import (
+    EncodeContext,
+    Request,
+    Selection,
+)
 from dimos.experimental.agent_encode.pointcloud.runtime.recipe import canonical, describe
-from dimos.experimental.agent_encode.pointcloud.shapes.box import Box
-from dimos.experimental.agent_encode.pointcloud.shapes.cylinder import Cylinder
-from dimos.experimental.agent_encode.pointcloud.shapes.sphere import Sphere
+from dimos.experimental.agent_encode.pointcloud.shapes.base import Shape
 
 
 def _small(ref: dict[str, JsonValue]) -> None:
@@ -52,58 +53,28 @@ def _bounded(value: object, depth: int = 0, count: list[int] | None = None) -> N
         raise ValueError("reference must contain only JSON values")
 
 
-def _restore(spec: JsonValue) -> object:
-    # These imports resolve the handlers -> reference -> handlers dependency. The registry is closed.
-    from dimos.experimental.agent_encode.pointcloud.handlers.depth_view import DepthView
-    from dimos.experimental.agent_encode.pointcloud.handlers.field_outputs import Map
-    from dimos.experimental.agent_encode.pointcloud.handlers.occupancy_map import OccupancyMap
-    from dimos.experimental.agent_encode.pointcloud.handlers.pick import (
-        Pick,
-        PickSelection,
-        SelectionRef,
-    )
+def _classes(base: type) -> dict[str, Callable[..., object]]:
+    """``base`` and every subclass defined so far, by name."""
+    found: dict[str, Callable[..., object]] = {base.__name__: base}
+    for sub in base.__subclasses__():
+        found |= _classes(sub)
+    return found
 
-    classes = (
-        DepthView,
-        OccupancyMap,
-        Map,
-        Box,
-        Cylinder,
-        Sphere,
-        Pick,
-        PickSelection,
-        SelectionRef,
-        render.View,
-        field_nodes.Grid,
-        field_nodes.Select,
-        field_nodes.Band,
-        field_nodes.HeightField,
-        field_nodes.Percentile,
-        field_nodes.Channel,
-        field_nodes.DistanceField,
-        field_nodes.Difference,
-        field_nodes.And,
-        field_nodes.Or,
-        field_nodes.Not,
-        field_nodes.Resample,
-        field_nodes.Threshold,
-        field_nodes.Components,
-    )
-    registry: dict[str, Callable[..., object]] = {cls.__name__: cls for cls in classes}
+
+def _restore(spec: JsonValue, classes: dict[str, Callable[..., object]]) -> object:
+    """Rebuild the recipe objects ``describe`` wrote; nested references stay JSON until
+    their own ``resolve``."""
     if isinstance(spec, list):
-        return tuple(_restore(v) for v in spec)
-    if not isinstance(spec, dict):
+        return tuple(_restore(v, classes) for v in spec)
+    if not isinstance(spec, dict) or "schema" in spec:
         return spec
-    if "schema" in spec:
-        # Nested references are opaque JSON; their recipes are restored only by resolve().
-        return spec
-    if "type" in spec:
-        name = spec["type"]
-        if not isinstance(name, str) or name not in registry:
-            raise ValueError("unknown portable recipe node")
-        args = {k: _restore(v) for k, v in spec.items() if k != "type"}
-        return registry[name](**args)
-    return {k: _restore(v) for k, v in spec.items()}
+    restored = {k: _restore(v, classes) for k, v in spec.items() if k != "type"}
+    name = spec.get("type")
+    if name is None:
+        return restored
+    if not isinstance(name, str) or name not in classes:
+        raise ValueError("unknown portable recipe node")
+    return classes[name](**restored)
 
 
 def reference(node: object, ctx: EncodeContext, kind: str = "view") -> dict[str, JsonValue]:
@@ -131,4 +102,5 @@ def resolve(ref: object, ctx: EncodeContext, kind: str = "view") -> object:
         raise ValueError("reference schema or digest mismatch")
     if ref["cloud"] != ctx.fingerprint:
         raise ValueError("stale reference: finite cloud, frame, or timestamp differs")
-    return _restore(ref["recipe"])
+    classes = {**_classes(Request), **_classes(Selection), **_classes(Shape)}
+    return _restore(ref["recipe"], {**classes, "Grid": Grid, "Band": Band})

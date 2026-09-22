@@ -27,7 +27,11 @@ from dimos.experimental.agent_encode.pointcloud.handlers.lib.reference import (
 )
 from dimos.experimental.agent_encode.pointcloud.handlers.lib.surface import Pickable, PickResult
 from dimos.experimental.agent_encode.pointcloud.render.overlays import Canvas, Overlay
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
+from dimos.experimental.agent_encode.pointcloud.runtime.context import (
+    EncodeContext,
+    Request,
+    Selection,
+)
 
 
 def _pixels(pick: Pick, width: int, height: int) -> tuple[np.ndarray, bool]:
@@ -86,7 +90,7 @@ def _pixels(pick: Pick, width: int, height: int) -> tuple[np.ndarray, bool]:
 
 
 @dataclass(frozen=True)
-class Pick(Overlay):
+class Pick(Request[PickResult], Overlay):
     """Lazy exact visual measurement of one region of a render, at most 65536 pixels.
 
     The reusable selection includes all selected returns.
@@ -155,7 +159,7 @@ class Pick(Overlay):
 
 
 @dataclass(frozen=True)
-class PickSelection:
+class PickSelection(Selection):
     pick: Pick
 
     def run(self, ctx: EncodeContext) -> np.ndarray:
@@ -163,7 +167,7 @@ class PickSelection:
 
 
 @dataclass(frozen=True)
-class SelectionRef:
+class SelectionRef(Selection):
     """Reopen a Pick result's JSON selection_ref against the exact original cloud."""
 
     selection_ref: dict[str, JsonValue]

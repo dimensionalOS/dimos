@@ -21,12 +21,17 @@ import numpy as np
 
 from dimos.experimental.agent_encode.pointcloud.fields import Select
 from dimos.experimental.agent_encode.pointcloud.render.overlays import Canvas, Overlay
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext, Node
+from dimos.experimental.agent_encode.pointcloud.runtime.context import (
+    EncodeContext,
+    Request,
+    Result,
+    Selection,
+)
 from dimos.experimental.agent_encode.pointcloud.shapes.base import Shape
 
 
 @dataclass(frozen=True)
-class OverlapResult:
+class OverlapResult(Result):
     count: int
     """Returns inside. 0 says nothing was returned from inside the shape; it does not
     prove the volume is empty."""
@@ -35,11 +40,11 @@ class OverlapResult:
 
 
 @dataclass(frozen=True)
-class Overlap(Overlay):
+class Overlap(Request[OverlapResult], Overlay):
     """Are there returns inside a shape, and where do they lie."""
 
     shape: Shape
-    source: Node[np.ndarray] | None = None
+    source: Selection | None = None
 
     @cached_property
     def selection(self) -> Select:

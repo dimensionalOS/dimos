@@ -26,11 +26,11 @@ from pydantic import JsonValue
 
 from dimos.experimental.agent_encode.pointcloud.fields import Grid
 from dimos.experimental.agent_encode.pointcloud.render.overlays import Canvas
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
+from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext, Result
 
 
 @dataclass(frozen=True)
-class PickResult:
+class PickResult(Result):
     outcome: Literal["hit", "ambiguous", "no_return", "outside_image", "field_value"]
     """``field_value`` when the render shows a derived field no single returns make up."""
     image_size: tuple[int, int]

@@ -19,12 +19,17 @@ from dataclasses import dataclass
 import numpy as np
 
 from dimos.experimental.agent_encode.pointcloud.render.overlays import Canvas, Overlay
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext, Node
+from dimos.experimental.agent_encode.pointcloud.runtime.context import (
+    EncodeContext,
+    Request,
+    Result,
+    Selection,
+)
 from dimos.experimental.agent_encode.pointcloud.shapes.base import Shape
 
 
 @dataclass(frozen=True)
-class ClosestResult:
+class ClosestResult(Result):
     """Both None when no return qualifies."""
 
     distance_m: float | None
@@ -33,12 +38,12 @@ class ClosestResult:
 
 
 @dataclass(frozen=True)
-class Closest(Overlay):
+class Closest(Request[ClosestResult], Overlay):
     """The return nearest to a shape's surface, and how far away it is."""
 
     shape: Shape
     """A Cylinder only considers returns inside its z_range and measures horizontally."""
-    source: Node[np.ndarray] | None = None
+    source: Selection | None = None
 
     def draw(self, canvas: Canvas) -> list[str]:
         geometry = self.shape.draw(canvas)

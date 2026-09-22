@@ -31,7 +31,11 @@ from dimos.experimental.agent_encode.pointcloud.fields import (
     Select,
     Threshold,
 )
-from dimos.experimental.agent_encode.pointcloud.runtime.context import EncodeContext
+from dimos.experimental.agent_encode.pointcloud.runtime.context import (
+    EncodeContext,
+    Request,
+    Result,
+)
 
 
 def cover(points: np.ndarray, cell: float) -> tuple[Grid, bool]:
@@ -126,7 +130,7 @@ class Relief:
 
 
 @dataclass(frozen=True)
-class OverviewResult:
+class OverviewResult(Result):
     """Everything is None for a cloud with no returns; structure and relief are None
     without a measured lower surface."""
 
@@ -148,7 +152,7 @@ def _quantiles(values: tuple[float | None, float | None, float | None]) -> Quant
 
 
 @dataclass(frozen=True)
-class Overview:
+class Overview(Request[OverviewResult]):
     """Summarize observed geometry without emitting grids or inferred objects.
 
     XY/Z are cloud axes, and cells are multiples of the cloud's own return spacing.
