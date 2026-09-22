@@ -595,3 +595,35 @@ forcing JPEG and replacing zero timestamps with wall time. Other Galaxea
 geometry/control consumers still need conversion; robot hardware was not used.
 Mypy passes on the converter, Galaxea connection, and demo. The full runtime
 cutover remains incomplete.
+
+### Galaxea generated control and feedback messages
+
+The R1Pro connection now uses generated MotorCommandArray, JointState, Twist,
+PoseStamped, Odometry, and TFMessage alongside the previously converted sensor
+streams. No legacy message imports remain in this connection module. Commands
+use generated arrays directly and require 18 entries in every declared array
+before publishing. ROS command conversion uses the CDR bridge; unsupported
+base axes remain zero.
+
+Wheel integration computes delta time from integer source nanoseconds and
+publishes nested ROS2 pose/twist fields. Pose, odometry, and both TF edges retain
+the same exact stamp. Joint-state aggregation retains the oldest segment stamp,
+including zero, without converting through floating-point seconds or replacing
+it with wall time. The publisher's interval wait now responds to its stop event.
+
+**13 focused checks passed**, covering integration and clock jumps, exact
+zero/epoch joint stamps, all 18 joint values, three command segments, tracking
+velocity sentinels, and rejection of each malformed command array. Tests use
+real generated messages and mock only the ROS/output boundaries. Mypy passes on
+the connection and demo. Log: `build/message-codegen/galaxea-cdr-tests.log`.
+The test launcher emitted a subprocess ResourceWarning; the reported process
+was no longer live when checked after the run.
+
+`demo_galaxea_messages.py` passed using the actual module output subscriptions.
+It printed base x coordinates `0.100000`, `0.199980`, and `0.299900`, the complete
+lidar TF chain, and exact stamps `1700000000223456789` through
+`1700000000423456789`. Transcript:
+`build/message-codegen/demo/evidence/galaxea-messages.txt`. No robot hardware or
+ROS was required. This validates the connection's generated-message boundary;
+remaining downstream whole-body/navigation consumers and hardware acceptance
+are not claimed complete.

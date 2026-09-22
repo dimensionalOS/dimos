@@ -643,3 +643,18 @@ It requires matching ROS message packages only in the bridge environment; it
 does not translate through LCM, rename fields, or load legacy message classes.
 The independent Jazzy CI job runs these checks using the binding produced by
 the preceding ROS-free build.
+
+### Galaxea feedback without hardware or ROS
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_galaxea_messages.py
+```
+
+This feeds synthetic chassis-speed samples into the actual Galaxea connection
+callback and subscribes to its generated pose, odometry, and TF output streams.
+It prints three changing positions and the `odom -> base_link -> lidar_chassis_left_link`
+chain, with exact source nanoseconds on every edge. It requires neither ROS nor
+a robot; it cleans up subscriptions and the module on exit. The neighboring
+`test_connection_messages.py` also checks joint-state aggregation, command array
+splitting, tracking-speed sentinels, and malformed-command rejection.

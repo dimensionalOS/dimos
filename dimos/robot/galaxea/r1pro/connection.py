@@ -37,7 +37,24 @@ from threading import Thread
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos_generated.sensor_msgs.msg import CompressedImage, Image, Imu, PointCloud2
+from dimos_generated.dimos_msgs.msg import MotorCommandArray
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    PoseWithCovariance,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    TwistStamped,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos_generated.nav_msgs.msg import Odometry
+from dimos_generated.sensor_msgs.msg import CompressedImage, Image, Imu, JointState, PointCloud2
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -49,14 +66,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import VEL_STOP
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.pubsub.impl.rospubsub_conversion import ros_to_dimos
+from dimos.msgs.geometry import transform_from_pose
+from dimos.msgs.time import header_now, time_from_nanoseconds
+from dimos.protocol.pubsub.impl.rospubsub_conversion import dimos_to_ros, ros_to_dimos
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
 
@@ -116,18 +128,9 @@ def _make_qos() -> Any:
     )
 
 
-def _stamp_secs(msg: Any) -> float:
-    """Header stamp in seconds, falling back to wall clock if the driver left it 0."""
-    ts = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-    return ts if ts > 0 else time.time()
-
-
-def _ros_stamp_now() -> Any:
-    from builtin_interfaces.msg import Time as RosTime
-
-    t = time.time()
-    sec = int(t)
-    return RosTime(sec=sec, nanosec=int((t - sec) * 1e9))
+def _stamp_nanoseconds(msg: Any) -> int:
+    """Preserve the driver's source stamp, including zero, as integer nanoseconds."""
+    return int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
 
 
 class R1ProConnectionConfig(ModuleConfig):
@@ -204,9 +207,9 @@ class R1ProConnection(Module):
         self._latest_right_dq: list[float] = [0.0] * 7
         self._latest_right_eff: list[float] = [0.0] * 7
         self._torso_seen = False
-        self._ts_torso = 0.0
-        self._ts_left = 0.0
-        self._ts_right = 0.0
+        self._ts_torso = 0
+        self._ts_left = 0
+        self._ts_right = 0
         self._left_seen = False
         self._right_seen = False
         self._latest_imu_chassis: Imu | None = None
@@ -216,7 +219,7 @@ class R1ProConnection(Module):
         self._odom_x = 0.0
         self._odom_y = 0.0
         self._odom_yaw = 0.0
-        self._odom_last_ts: float | None = None
+        self._odom_last_ns: int | None = None
 
         # Sensor decode pipeline.
         self._sensor_stop = threading.Event()
@@ -508,16 +511,14 @@ class R1ProConnection(Module):
     # Control input handlers
 
     def _on_motor_command(self, msg: MotorCommandArray) -> None:
-        if msg.num_joints != _NUM_MOTORS:
-            logger.warning(f"Expected {_NUM_MOTORS} motor commands, got {msg.num_joints}; ignoring")
+        if any(len(values) != _NUM_MOTORS for values in (msg.q, msg.dq, msg.kp, msg.kd, msg.tau)):
+            logger.warning(f"Expected {_NUM_MOTORS} values in each motor-command array; ignoring")
             return
-
-        from sensor_msgs.msg import JointState as RosJointState
 
         ros = self._ros
         if ros is None:
             return  # pre-start / post-stop
-        stamp = _ros_stamp_now()
+        header = header_now()
 
         for topic, sl in (
             (self._cmd_torso_topic, _TORSO_SLICE),
@@ -526,13 +527,14 @@ class R1ProConnection(Module):
         ):
             if topic is None:
                 continue
-            cmd = RosJointState()
-            cmd.header.stamp = stamp
-            cmd.name = [""]
-            cmd.position = list(msg.q[sl])
-            cmd.velocity = self._tracking_velocities(msg.dq[sl])
-            cmd.effort = [0.0]
-            ros.publish(topic, cmd)
+            cmd = JointState(
+                header=header,
+                name=[""],
+                position=list(msg.q)[sl],
+                velocity=self._tracking_velocities(list(msg.dq)[sl]),
+                effort=[0.0],
+            )
+            ros.publish(topic, dimos_to_ros(cmd, topic.ros_type))
 
     def _tracking_velocities(self, dqs: list[float]) -> list[float]:
         """Map MotorCommand.dq to ROS tracking velocity (0/sentinel → configured)."""
@@ -540,18 +542,16 @@ class R1ProConnection(Module):
         return [speed if (v == 0.0 or v == VEL_STOP) else float(v) for v in dqs]
 
     def _on_cmd_vel(self, msg: Twist) -> None:
-        from geometry_msgs.msg import TwistStamped
-
         ros = self._ros
         if ros is None or self._speed_topic is None:
             return
-
-        cmd = TwistStamped()
-        cmd.header.stamp = _ros_stamp_now()
-        cmd.twist.linear.x = msg.linear.x
-        cmd.twist.linear.y = msg.linear.y
-        cmd.twist.angular.z = msg.angular.z
-        ros.publish(self._speed_topic, cmd)
+        cmd = TwistStamped(
+            header=header_now(),
+            twist=Twist(
+                linear=Vector3(x=msg.linear.x, y=msg.linear.y), angular=Vector3(z=msg.angular.z)
+            ),
+        )
+        ros.publish(self._speed_topic, dimos_to_ros(cmd, self._speed_topic.ros_type))
 
     # Control feedback callbacks (3 segments)
 
@@ -560,7 +560,7 @@ class R1ProConnection(Module):
             self._copy_segment(
                 msg, self._latest_torso_q, self._latest_torso_dq, self._latest_torso_eff
             )
-            self._ts_torso = _stamp_secs(msg)
+            self._ts_torso = _stamp_nanoseconds(msg)
             self._torso_seen = True
 
     def _on_feedback_left(self, msg: Any, _topic: Any) -> None:
@@ -568,7 +568,7 @@ class R1ProConnection(Module):
             self._copy_segment(
                 msg, self._latest_left_q, self._latest_left_dq, self._latest_left_eff
             )
-            self._ts_left = _stamp_secs(msg)
+            self._ts_left = _stamp_nanoseconds(msg)
             self._left_seen = True
 
     def _on_feedback_right(self, msg: Any, _topic: Any) -> None:
@@ -576,7 +576,7 @@ class R1ProConnection(Module):
             self._copy_segment(
                 msg, self._latest_right_q, self._latest_right_dq, self._latest_right_eff
             )
-            self._ts_right = _stamp_secs(msg)
+            self._ts_right = _stamp_nanoseconds(msg)
             self._right_seen = True
 
     @staticmethod
@@ -584,23 +584,23 @@ class R1ProConnection(Module):
         msg: Any, q_dst: list[float], dq_dst: list[float], eff_dst: list[float]
     ) -> None:
         n = min(len(msg.position), len(q_dst))
-        q_dst[:n] = msg.position[:n]
+        q_dst[:n] = list(msg.position)[:n]
         if msg.velocity:
             nv = min(len(msg.velocity), len(dq_dst))
-            dq_dst[:nv] = msg.velocity[:nv]
+            dq_dst[:nv] = list(msg.velocity)[:nv]
         if msg.effort:
             ne = min(len(msg.effort), len(eff_dst))
-            eff_dst[:ne] = msg.effort[:ne]
+            eff_dst[:ne] = list(msg.effort)[:ne]
 
     # Wheel odometry (integrated from executed chassis speed)
 
     def _on_chassis_speed(self, msg: Any, _topic: Any) -> None:
-        now = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        if self._odom_last_ts is None:
-            self._odom_last_ts = now
+        now = _stamp_nanoseconds(msg)
+        if self._odom_last_ns is None:
+            self._odom_last_ns = now
             return
-        dt = now - self._odom_last_ts
-        self._odom_last_ts = now
+        dt = (now - self._odom_last_ns) / 1_000_000_000
+        self._odom_last_ns = now
         if dt <= 0.0 or dt > 1.0:
             # Clock jump or first-tick anomaly — keep position, refresh ts.
             return
@@ -612,37 +612,42 @@ class R1ProConnection(Module):
         self._odom_y += (sy * vx + cy * vy) * dt
         self._odom_yaw += wz * dt
 
-        from dimos.msgs.geometry_msgs.Pose import Pose
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
         half = self._odom_yaw * 0.5
-        position = Vector3(self._odom_x, self._odom_y, 0.0)
-        orientation = Quaternion(0.0, 0.0, math.sin(half), math.cos(half))
-        frame_id = self.config.odom_frame_id
+        header = Header(stamp=time_from_nanoseconds(now), frame_id=self.config.odom_frame_id)
         base = self.config.frame_id
-        pose = PoseStamped(ts=now, frame_id=frame_id, position=position, orientation=orientation)
+        pose = PoseStamped(
+            header=header,
+            pose=Pose(
+                position=Point(x=self._odom_x, y=self._odom_y),
+                orientation=Quaternion(z=math.sin(half), w=math.cos(half)),
+            ),
+        )
         self.odom.publish(pose)
         self.odometry.publish(
             Odometry(
-                ts=now,
-                frame_id=frame_id,
+                header=header,
                 child_frame_id=base,
-                pose=Pose(position, orientation),
-                twist=Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz)),
+                pose=PoseWithCovariance(pose=pose.pose),
+                twist=TwistWithCovariance(
+                    twist=Twist(linear=Vector3(x=vx, y=vy), angular=Vector3(z=wz))
+                ),
             )
         )
-        # Both edges at the odom stamp: the voxel map matches each against the
-        # cloud stamp independently
+        # Both edges share the source stamp so clouds can resolve their full chain.
         self.tf.publish(
             TFMessage(
-                Transform.from_pose(base, pose),
-                Transform(
-                    translation=Vector3(*_LIDAR_MOUNT_XYZ),
-                    frame_id=base,
-                    child_frame_id=self.config.lidar_frame_id,
-                    ts=now,
-                ),
+                transforms=[
+                    transform_from_pose(pose, child_frame_id=base),
+                    TransformStamped(
+                        header=Header(stamp=header.stamp, frame_id=base),
+                        child_frame_id=self.config.lidar_frame_id,
+                        transform=Transform(
+                            translation=Vector3(
+                                x=_LIDAR_MOUNT_XYZ[0], y=_LIDAR_MOUNT_XYZ[1], z=_LIDAR_MOUNT_XYZ[2]
+                            )
+                        ),
+                    ),
+                ]
             )
         )
 
@@ -688,8 +693,7 @@ class R1ProConnection(Module):
             if bootstrapped:
                 self.motor_states.publish(
                     JointState(
-                        ts=ts,
-                        frame_id=frame_id,
+                        header=Header(stamp=time_from_nanoseconds(ts), frame_id=frame_id),
                         name=R1PRO_UPPER_BODY_JOINTS,
                         position=positions,  # type: ignore[arg-type]
                         velocity=velocities,
@@ -704,7 +708,7 @@ class R1ProConnection(Module):
             next_tick += period
             sleep_for = next_tick - time.perf_counter()
             if sleep_for > 0:
-                time.sleep(sleep_for)
+                self._stop_event.wait(sleep_for)
             else:
                 next_tick = time.perf_counter()
 
