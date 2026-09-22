@@ -300,6 +300,7 @@ class RelayProcess:
         cert: Path | None = None,
         key: Path | None = None,
         auth_file: Path | None = None,
+        rtc_file: Path | None = None,
         timeout: float = 20.0,
     ) -> None:
         self._port = port
@@ -311,6 +312,7 @@ class RelayProcess:
         self._cert = cert
         self._key = key
         self._auth_file = auth_file
+        self._rtc_file = rtc_file
         self._timeout = timeout
         self._process: subprocess.Popen[str] | None = None
         self._threads: list[threading.Thread] = []
@@ -339,6 +341,7 @@ class RelayProcess:
             cert=self._cert,
             key=self._key,
             auth_file=self._auth_file,
+            rtc_file=self._rtc_file,
         )
         logger.info(f"starting relay: {' '.join(cmd)}")
         env = os.environ | {"NO_COLOR": "1"}
