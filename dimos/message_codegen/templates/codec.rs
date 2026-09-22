@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::io;
+
 use re_cdr::{BigEndian, LittleEndian};
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -21,36 +23,36 @@ pub trait Message: Serialize + DeserializeOwned {
 
     fn validate(&self) -> Result<(), String>;
 
-    fn encode(&self) -> Result<Vec<u8>, String> {
+    fn encode(&self) -> io::Result<Vec<u8>> {
         self.encode_endian(true)
     }
 
-    fn encode_endian(&self, little_endian: bool) -> Result<Vec<u8>, String> {
-        self.validate()?;
+    fn encode_endian(&self, little_endian: bool) -> io::Result<Vec<u8>> {
+        self.validate().map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         let body = if little_endian {
             re_cdr::to_vec::<_, LittleEndian>(self)
         } else {
             re_cdr::to_vec::<_, BigEndian>(self)
-        }.map_err(|error| error.to_string())?;
+        }.map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
         let mut bytes = Vec::with_capacity(4 + body.len());
         bytes.extend_from_slice(&[0, u8::from(little_endian), 0, 0]);
         bytes.extend(body);
         Ok(bytes)
     }
 
-    fn decode(bytes: &[u8]) -> Result<Self, String> {
+    fn decode(bytes: &[u8]) -> io::Result<Self> {
         if bytes.len() < 4 || bytes[0] != 0 || bytes[1] > 1 || bytes[2] != 0 || bytes[3] != 0 {
-            return Err("Expected plain CDR/XCDR1 encapsulation".into());
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Expected plain CDR/XCDR1 encapsulation"));
         }
         let (value, consumed): (Self, usize) = if bytes[1] == 1 {
             re_cdr::from_bytes::<Self, LittleEndian>(&bytes[4..])
         } else {
             re_cdr::from_bytes::<Self, BigEndian>(&bytes[4..])
-        }.map_err(|error| error.to_string())?;
+        }.map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
         if consumed != bytes.len() - 4 {
-            return Err("Trailing bytes after CDR message".into());
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Trailing bytes after CDR message"));
         }
-        value.validate()?;
+        value.validate().map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         Ok(value)
     }
 }

@@ -56,32 +56,22 @@ def stop_process(process: subprocess.Popen[bytes]) -> None:
             process.wait(timeout=5)
 
 
-def demonstrate(backend: str, cpp: Path, rust: Path, evidence: Path) -> None:
+def exchange_native(
+    backend: str, cpp: Path, rust: Path, evidence: Path, messages: dict[str, Any]
+) -> dict[str, Any]:
+    """Launch two native SDK relays, exchange named ports, and close all resources."""
     base = f"demo/{uuid.uuid4().hex[:8]}"
     endpoint = f"tcp/127.0.0.1:{free_port(socket.SOCK_STREAM)}"
     group = urlsplit(LCMConfig().url).hostname
     lcm_url = f"udpm://{group}:{free_port(socket.SOCK_DGRAM)}?ttl=0&recv_buf_size=4194304"
-    stamp = 1_700_000_000_123_456_789
-    lines = LineSegments3D(segments=[LineSegment3D(start=Point(x=1), end=Point(y=2), weight=4)])
-    lines.header.frame_id = "map"
-    lines.header.stamp = time_from_nanoseconds(stamp)
-    image = Image(
-        width=640,
-        height=480,
-        encoding="rgb8",
-        step=1920,
-        data=np.arange(640 * 480 * 3, dtype=np.uint8),
-    )
-    image.header.frame_id = "camera"
-    image.header.stamp = time_from_nanoseconds(stamp)
     with ExitStack() as stack:
         pool = ZenohSessionPool()
         stack.callback(pool.close_all)
         channels: dict[str, list[PubSubTransport[Any]]] = {}
-        for name, message in (("lines", lines), ("image", image)):
+        for channel_index, (name, message) in enumerate(messages.items()):
             channels[name] = []
             for index in range(3):
-                topic = f"{base}/{name[0]}{index}"
+                topic = f"{base}/{channel_index}{index}"
                 peer: PubSubTransport[Any]
                 if backend == "lcm":
                     peer = LCMTransport(topic, type(message), url=lcm_url)
@@ -99,7 +89,7 @@ def demonstrate(backend: str, cpp: Path, rust: Path, evidence: Path) -> None:
                 stack.callback(peer.stop)
                 peer.start()
                 channels[name].append(peer)
-        received: dict[str, list[Any]] = {"lines": [], "image": []}
+        received: dict[str, list[Any]] = {name: [] for name in messages}
         ready = {name: threading.Event() for name in received}
         for name, peers in channels.items():
 
@@ -147,7 +137,7 @@ def demonstrate(backend: str, cpp: Path, rust: Path, evidence: Path) -> None:
             assert process.stdin is not None
             process.stdin.write(json.dumps(launch).encode() + b"\n")
             process.stdin.close()
-        for name, message in (("lines", lines), ("image", image)):
+        for name, message in messages.items():
             for _ in range(60):
                 assert all(p.poll() is None for p in processes), (
                     f"Native process exited; see {evidence}"
@@ -156,15 +146,33 @@ def demonstrate(backend: str, cpp: Path, rust: Path, evidence: Path) -> None:
                 if ready[name].wait(0.25):
                     break
             assert received[name], f"No {backend} {name} reply; see {evidence}"
-        decoded_lines = received["lines"][0]
-        assert decoded_lines.segments[0].weight == 6
-        assert to_nanoseconds(decoded_lines.header.stamp) == stamp
-        assert decoded_lines.header.frame_id == "map"
-        assert decoded_lines.segments[0].start.x == 1
-        assert decoded_lines.segments[0].end.y == 2
-        assert received["image"][0].encode() == image.encode()
-        print(f"{backend}: Python weight=4 → C++ weight=5 → Rust weight=6 → Python verified")
-        print(f"{backend}: {len(image.data):,} image bytes and source nanoseconds={stamp} match")
+        return {name: values[0] for name, values in received.items()}
+
+
+def demonstrate(backend: str, cpp: Path, rust: Path, evidence: Path) -> None:
+    stamp = 1_700_000_000_123_456_789
+    lines = LineSegments3D(segments=[LineSegment3D(start=Point(x=1), end=Point(y=2), weight=4)])
+    lines.header.frame_id = "map"
+    lines.header.stamp = time_from_nanoseconds(stamp)
+    image = Image(
+        width=640,
+        height=480,
+        encoding="rgb8",
+        step=1920,
+        data=np.arange(640 * 480 * 3, dtype=np.uint8),
+    )
+    image.header.frame_id = "camera"
+    image.header.stamp = time_from_nanoseconds(stamp)
+    received = exchange_native(backend, cpp, rust, evidence, {"lines": lines, "image": image})
+    decoded_lines = received["lines"]
+    assert decoded_lines.segments[0].weight == 6
+    assert to_nanoseconds(decoded_lines.header.stamp) == stamp
+    assert decoded_lines.header.frame_id == "map"
+    assert decoded_lines.segments[0].start.x == 1
+    assert decoded_lines.segments[0].end.y == 2
+    assert received["image"].encode() == image.encode()
+    print(f"{backend}: Python weight=4 → C++ weight=5 → Rust weight=6 → Python verified")
+    print(f"{backend}: {len(image.data):,} image bytes and source nanoseconds={stamp} match")
 
 
 def main() -> None:

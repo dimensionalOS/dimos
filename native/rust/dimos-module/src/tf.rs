@@ -394,9 +394,7 @@ impl Tf {
         let msg = dimos_generated_messages::tf2_msgs::msg::TFMessage {
             transforms: transforms.iter().map(to_stamped).collect(),
         };
-        let bytes = msg
-            .encode()
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        let bytes = msg.encode()?;
         crate::module::publish_encoded(&self.sender, bytes).await
     }
 }

@@ -384,3 +384,27 @@ build/native-cpp/tests/dimos_lidar_cdr_demo
 It prints the decoded XYZI point count, frame, timestamp, and intensity for both
 CDR byte orders. It also verifies negative timestamp normalization and rejects
 invalid timestamps and negative cloud sizes. The executable exits on its own.
+
+### External messages through native SDK ports
+
+After the external packaging demo and the native SDK dependency setup above:
+
+```bash
+bash scripts/test_message_packages.sh
+bash scripts/test_external_native_messages.sh
+```
+
+The first command adds `application_note` to a local copy of `Telemetry.msg` and
+builds separate Python/CMake/Cargo packages. The second builds C++ and Rust SDK
+modules against those packages and exchanges the extended message through
+Python → C++ → Rust → Python over LCM and Zenoh. The displayed note becomes
+`added-locally/cpp-native/rust-native`; every other field and the source timestamp
+must remain unchanged. It uses the generated Rust `Telemetry::encode` and
+`Telemetry::decode` directly in port declarations. No SDK-specific codec adapter
+or change to the built-in definition registry is needed.
+
+Generated Rust codec entry points return `std::io::Result`: invalid values at
+encode time report `InvalidInput`, while malformed CDR reports `InvalidData`.
+The external consumer test checks both errors against the SDK's function types.
+Subprocesses and sessions close on exit. Logs and visible results are under
+`build/message-codegen/external-native/evidence`.

@@ -258,3 +258,23 @@ Clippy passed with warnings denied for the SDK and migrated root-workspace
 modules, and independently for RealSense and dimSLAM. Generated explicit Default
 implementations retain a targeted lint annotation: the same emitter supports
 nonzero `.msg` defaults and fixed arrays longer than 32 elements.
+
+### Independently generated messages in the native SDKs
+
+The external package relay was rebuilt after aligning generated Rust codec errors
+with SDK port signatures. Both the installed file relay and the actual native
+SDK relay passed. The external application changed only its local `.msg` copy;
+its Rust ports used the external type's generated methods directly:
+
+```text
+lcm: external Python → native C++ → native Rust → Python: added-locally/cpp-native/rust-native
+zenoh: external Python → native C++ → native Rust → Python: added-locally/cpp-native/rust-native
+SDK codecs accepted the external generated type directly; no handwritten codec or upstream schema PR.
+```
+
+All other fields and the exact timestamp matched after both native processes.
+The external Rust consumer test also verified SDK-compatible function signatures,
+`InvalidInput` on bounded-field encode failure, and `InvalidData` on truncated
+CDR. The built-in custom-message/image SDK relay still passed on both transports,
+and the Rust SDK suite still passed all 146 tests. Mypy passed for both runtime
+demo entry points using their separately generated type stubs.

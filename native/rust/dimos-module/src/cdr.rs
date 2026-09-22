@@ -20,13 +20,11 @@ use dimos_generated_messages::codec::Message;
 use std::io;
 
 pub fn encode<T: Message>(message: &T) -> io::Result<Vec<u8>> {
-    message
-        .encode()
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
+    message.encode()
 }
 
 pub fn decode<T: Message>(bytes: &[u8]) -> io::Result<T> {
-    T::decode(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    T::decode(bytes)
 }
 
 #[cfg(test)]
