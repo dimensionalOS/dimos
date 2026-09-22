@@ -334,6 +334,31 @@ def test_an_mcap_goes_to_the_indexer_that_can_read_it(recorded, expect_siglipify
     )
 
 
+def test_the_planner_walks_the_raw_map_even_when_the_smoothed_one_is_on_screen() -> None:
+    """A closing is the right thing to look at and the wrong thing to plan over.
+
+    Filling a gap narrower than the structuring element seals the space between a floor
+    and the shelf above it, and standable surface is what the MLS planner reads out of
+    that space -- so the map that looks more solid offers FEWER places to stand. Measured
+    on grocery.db over the same 25 early poses: the raw map has 308,080 surface cells and
+    routes to a basket in 42.93 m, the closed one has 271,037 and routes nowhere.
+    """
+    drawn = np.ones((4, 3), dtype=np.float32)
+    raw = np.zeros((9, 3), dtype=np.float32)
+    world = WorldCache()
+    world.config = SimpleNamespace(map_z_min=None, map_z_max=None)
+    world._named_map_cloud = lambda name: raw if name == "global_map" else None
+
+    assert len(world._planning_map(drawn, "global_map_smoothed")) == 9
+
+    # A raw source is already the map to plan over, and nothing else is fetched.
+    assert len(world._planning_map(drawn, "global_map")) == 4
+    # So is the drawn cloud when the raw sibling is not in the recording at all.
+    assert len(world._planning_map(drawn, "voxel_keyframe_smoothed")) == 4
+    # And when the cloud came from the replay or an accumulation, not a stream.
+    assert len(world._planning_map(drawn, None)) == 4
+
+
 def test_a_viewer_opening_an_empty_world_is_not_shown_the_last_visitor_s_answer() -> None:
     """The answer on screen is replayed to every new websocket and was never cleared.
 
