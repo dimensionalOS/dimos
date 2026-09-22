@@ -18,12 +18,15 @@ from __future__ import annotations
 
 from typing import Any
 
+import cv2
+from dimos_generated.geometry_msgs.msg import TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.geometry import compose_transforms
+from dimos.msgs.image import image_to_bgr
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import (
     camera_info_to_cv_matrices,
@@ -40,14 +43,14 @@ def detect_markers_in_image(
     image: Image,
     *,
     camera_info: CameraInfo,
-    world_T_optical: Transform,
+    world_T_optical: TransformStamped,
     marker_length_m: float,
     aruco_dictionary: str,
     world_frame: str = "world",
     detect_inverted: bool = False,
     detector: Any | None = None,
-    camera_matrix: np.ndarray | None = None,
-    dist_coeffs: np.ndarray | None = None,
+    camera_matrix: np.ndarray[Any, np.dtype[Any]] | None = None,
+    dist_coeffs: np.ndarray[Any, np.dtype[Any]] | None = None,
 ) -> list[Detection3DMarker]:
     """Detect markers in one image and return rich world-frame 3D detections."""
     if marker_length_m <= 0:
@@ -66,20 +69,18 @@ def detect_markers_in_image(
     if camera_matrix is None or dist_coeffs is None:
         camera_matrix, dist_coeffs = camera_info_to_cv_matrices(camera_info)
 
-    gray = image.to_grayscale().as_numpy()
+    gray = cv2.cvtColor(image_to_bgr(image), cv2.COLOR_BGR2GRAY)
     corners, ids, _ = detector.detectMarkers(gray)
     if ids is None or len(ids) == 0:
         return []
 
     optical_frame = camera_optical_frame_id(image, camera_info)
-    t_world_optical = Transform(
-        translation=world_T_optical.translation,
-        rotation=world_T_optical.rotation,
-        frame_id=world_frame,
+    t_world_optical = TransformStamped(
+        header=Header(stamp=image.header.stamp, frame_id=world_frame),
         child_frame_id=optical_frame,
-        ts=image.ts,
+        transform=world_T_optical.transform,
     )
-    marker_size = Vector3(marker_length_m, marker_length_m, 0.0)
+    marker_size = Vector3(x=marker_length_m, y=marker_length_m)
     detections: list[Detection3DMarker] = []
 
     for corner_set, mid_arr in zip(corners, ids, strict=True):
@@ -98,11 +99,10 @@ def detect_markers_in_image(
         t_optical_marker = rvec_tvec_to_transform(
             rvec,
             tvec,
-            frame_id=optical_frame,
+            header=Header(stamp=image.header.stamp, frame_id=optical_frame),
             child_frame_id=f"marker_{mid}",
-            ts=image.ts,
         )
-        t_world_marker = t_world_optical + t_optical_marker
+        t_world_marker = compose_transforms(t_world_optical, t_optical_marker)
 
         corners_2d = corner_set.reshape(4, 2).astype(np.float32)
         bbox = marker_corners_to_bbox(corners_2d)
@@ -123,13 +123,13 @@ def detect_markers_in_image(
                 class_id=mid,
                 confidence=1.0,
                 name="",
-                ts=image.ts,
+                ts=to_seconds(image.header.stamp),
                 image=image,
-                center=t_world_marker.translation,
+                center=t_world_marker.transform.translation,
                 size=marker_size,
                 transform=t_world_optical,
                 frame_id=world_frame,
-                orientation=t_world_marker.rotation,
+                orientation=t_world_marker.transform.rotation,
                 marker_id=mid,
                 corners_px=corners_2d,
                 dictionary=aruco_dictionary,

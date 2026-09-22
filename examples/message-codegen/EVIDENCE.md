@@ -1164,3 +1164,14 @@ identity after CDR, array behavior, annotation, exact stamps, and copy isolation
 Mypy passed for three production modules. `demo_marker_messages.py` passed its
 visible two-marker CDR check. Upstream fiducial producers still need conversion;
 these checks do not establish the full marker detection pipeline.
+
+### Generated fiducial frame detection
+
+Marker calibration, image conversion, Rodrigues pose conversion, and world-pose
+composition now use generated messages and shared helpers. The stamped transform
+constructor accepts a Header directly, retaining integer timestamps. Ten combined
+marker geometry, actual rendered-marker detection, and wire/array checks passed.
+Mypy passed for both production modules. The ArUco demo detected DICT_4X4_50:7 at
+world x=2.000 m, z=0.402 m, retained the exact image stamp, and wrote an annotated
+PNG; the rendered output was inspected. Fiducial stream modules/transformer and
+hardware-camera integration remain to be converted or verified.

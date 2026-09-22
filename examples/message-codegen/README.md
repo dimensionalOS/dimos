@@ -1008,3 +1008,16 @@ This terminal demo serializes two synthetic marker detections and prints their
 CDR-decoded dictionary-qualified identities and world positions. It verifies the
 exact source timestamp. It performs no marker inference or camera acquisition
 and writes no files.
+
+### Detect an ArUco marker from a generated image
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_aruco_detection.py
+```
+
+This demo renders marker 7, runs OpenCV ArUco detection and pose estimation,
+composes a translated world pose, and decodes the generated CDR detection. It
+writes `build/message-codegen/demo/evidence/aruco-detection.png` with the detected
+bbox and label. Expected world coordinates are x approximately 2 m and z
+approximately 0.402 m. No camera or model weights are needed; delete the PNG to
+clean up.

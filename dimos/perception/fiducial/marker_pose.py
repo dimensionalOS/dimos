@@ -16,15 +16,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.geometry import quaternion_from_matrix
 
 if TYPE_CHECKING:
     import cv2
@@ -38,26 +37,28 @@ def is_fisheye_model(distortion_model: str | None) -> bool:
     return (distortion_model or "").strip().lower() in _FISHEYE_MODELS
 
 
-def camera_info_to_cv_matrices(camera_info: CameraInfo) -> tuple[np.ndarray, np.ndarray]:
+def camera_info_to_cv_matrices(
+    camera_info: CameraInfo,
+) -> tuple[np.ndarray[Any, np.dtype[Any]], np.ndarray[Any, np.dtype[Any]]]:
     """Build OpenCV ``cameraMatrix`` and ``distCoeffs`` from ``CameraInfo``."""
-    k = np.array(camera_info.K, dtype=np.float64).reshape(3, 3)
-    d = np.array(camera_info.D if camera_info.D else [], dtype=np.float64).reshape(-1, 1)
+    k = np.array(camera_info.k, dtype=np.float64).reshape(3, 3)
+    d = np.array(camera_info.d if camera_info.d else [], dtype=np.float64).reshape(-1, 1)
     return k, d
 
 
 def camera_optical_frame_id(image: Image, camera_info: CameraInfo) -> str:
     """Frame in which image pixels and intrinsics apply (optical convention in ROS).
 
-    Prefer ``Image.frame_id`` so TF lookups match the stream that produced the
-    pixels. Fall back to ``CameraInfo.frame_id``, then a conventional default.
+    Prefer ``Image.header.frame_id`` so TF lookups match the stream that produced the
+    pixels. Fall back to ``CameraInfo.header.frame_id``, then a conventional default.
     """
-    for fid in (image.frame_id, camera_info.frame_id):
+    for fid in (image.header.frame_id, camera_info.header.frame_id):
         if fid and fid.strip():
             return fid.strip()
     return "camera_optical"
 
 
-def _aruco_marker_object_points(marker_length_m: float) -> np.ndarray:
+def _aruco_marker_object_points(marker_length_m: float) -> np.ndarray[Any, np.dtype[Any]]:
     """Corner order matches OpenCV ArUco / solvePnP convention (planar square, Z=0)."""
     h = marker_length_m / 2.0
     return np.array(
@@ -72,13 +73,13 @@ def _aruco_marker_object_points(marker_length_m: float) -> np.ndarray:
 
 
 def estimate_marker_pose(
-    corners_px: np.ndarray,
+    corners_px: np.ndarray[Any, np.dtype[Any]],
     marker_length_m: float,
-    camera_matrix: np.ndarray,
-    dist_coeffs: np.ndarray,
+    camera_matrix: np.ndarray[Any, np.dtype[Any]],
+    dist_coeffs: np.ndarray[Any, np.dtype[Any]],
     *,
     distortion_model: str | None = None,
-) -> tuple[np.ndarray, np.ndarray] | None:
+) -> tuple[np.ndarray[Any, np.dtype[Any]], np.ndarray[Any, np.dtype[Any]]] | None:
     """Return ``(rvec, tvec)`` for camera optical <- marker from undistorted solvePnP.
 
     For fisheye/equidistant intrinsics, corners are first undistorted into the
@@ -88,17 +89,17 @@ def estimate_marker_pose(
     import cv2
 
     obj = _aruco_marker_object_points(marker_length_m)
-    img: np.ndarray = corners_px.reshape(4, 1, 2).astype(np.float32)
+    img: np.ndarray[Any, np.dtype[Any]] = corners_px.reshape(4, 1, 2).astype(np.float32)
     if is_fisheye_model(distortion_model):
         d_flat = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)
         if d_flat.size < 4:
             raise ValueError(
                 f"Fisheye/equidistant distortion model requires at least 4 coefficients; "
-                f"got {d_flat.size}. Check CameraInfo.D."
+                f"got {d_flat.size}. Check CameraInfo.d."
             )
         d_fisheye = d_flat[:4].reshape(4, 1)
         img = cv2.fisheye.undistortPoints(img, camera_matrix, d_fisheye, P=camera_matrix)
-        solve_dist: np.ndarray = np.zeros((0, 1), dtype=np.float64)
+        solve_dist: np.ndarray[Any, np.dtype[Any]] = np.zeros((0, 1), dtype=np.float64)
     else:
         solve_dist = dist_coeffs
     ok, rvec, tvec = cv2.solvePnP(
@@ -114,25 +115,24 @@ def estimate_marker_pose(
 
 
 def rvec_tvec_to_transform(
-    rvec: np.ndarray,
-    tvec: np.ndarray,
+    rvec: np.ndarray[Any, np.dtype[Any]],
+    tvec: np.ndarray[Any, np.dtype[Any]],
     *,
-    frame_id: str,
+    header: Header,
     child_frame_id: str,
-    ts: float,
-) -> Transform:
+) -> TransformStamped:
     """Build ``Transform`` for ``frame_id`` <- ``child_frame_id`` (camera <- marker)."""
     import cv2
 
     rot_mat, _ = cv2.Rodrigues(rvec)
-    quat = Quaternion.from_rotation_matrix(rot_mat)
+    quat = quaternion_from_matrix(np.asarray(rot_mat, dtype=np.float64))
     tx, ty, tz = tvec.reshape(3)
-    return Transform(
-        translation=Vector3(float(tx), float(ty), float(tz)),
-        rotation=quat,
-        frame_id=frame_id,
+    return TransformStamped(
+        header=header,
         child_frame_id=child_frame_id,
-        ts=ts,
+        transform=Transform(
+            translation=Vector3(x=float(tx), y=float(ty), z=float(tz)), rotation=quat
+        ),
     )
 
 
@@ -150,7 +150,9 @@ def create_aruco_detector(
     return cv2.aruco.ArucoDetector(dictionary, parameters)
 
 
-def marker_corners_to_bbox(corners_px: np.ndarray) -> tuple[float, float, float, float]:
+def marker_corners_to_bbox(
+    corners_px: np.ndarray[Any, np.dtype[Any]],
+) -> tuple[float, float, float, float]:
     """Return the axis-aligned image bbox around a marker's four pixel corners."""
     corners_2d = np.asarray(corners_px, dtype=np.float32).reshape(4, 2)
     xy_min = corners_2d.min(axis=0)
@@ -159,12 +161,12 @@ def marker_corners_to_bbox(corners_px: np.ndarray) -> tuple[float, float, float,
 
 
 def marker_reprojection_error(
-    corners_px: np.ndarray,
+    corners_px: np.ndarray[Any, np.dtype[Any]],
     marker_length_m: float,
-    camera_matrix: np.ndarray,
-    dist_coeffs: np.ndarray,
-    rvec: np.ndarray,
-    tvec: np.ndarray,
+    camera_matrix: np.ndarray[Any, np.dtype[Any]],
+    dist_coeffs: np.ndarray[Any, np.dtype[Any]],
+    rvec: np.ndarray[Any, np.dtype[Any]],
+    tvec: np.ndarray[Any, np.dtype[Any]],
     *,
     distortion_model: str | None = None,
 ) -> float:
@@ -175,7 +177,9 @@ def marker_reprojection_error(
     """
     import cv2
 
-    observed: np.ndarray = np.asarray(corners_px, dtype=np.float32).reshape(4, 1, 2)
+    observed: np.ndarray[Any, np.dtype[Any]] = np.asarray(corners_px, dtype=np.float32).reshape(
+        4, 1, 2
+    )
     project_dist = dist_coeffs
 
     if is_fisheye_model(distortion_model):
@@ -183,7 +187,7 @@ def marker_reprojection_error(
         if d_flat.size < 4:
             raise ValueError(
                 f"Fisheye/equidistant distortion model requires at least 4 coefficients; "
-                f"got {d_flat.size}. Check CameraInfo.D."
+                f"got {d_flat.size}. Check CameraInfo.d."
             )
         d_fisheye = d_flat[:4].reshape(4, 1)
         observed = cv2.fisheye.undistortPoints(
