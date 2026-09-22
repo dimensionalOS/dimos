@@ -30,8 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_generated.geometry_msgs.msg import Twist, Vector3
 
 
 @dataclass(frozen=True)
@@ -105,13 +104,13 @@ def clamp_holonomic_cmd_vel(
 
     return Twist(
         linear=Vector3(
-            s_x,
-            s_y,
-            float(raw_cmd.linear.z),
+            x=s_x,
+            y=s_y,
+            z=float(raw_cmd.linear.z),
         ),
         angular=Vector3(
-            float(raw_cmd.angular.x),
-            float(raw_cmd.angular.y),
-            wz,
+            x=float(raw_cmd.angular.x),
+            y=float(raw_cmd.angular.y),
+            z=wz,
         ),
     )

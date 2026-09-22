@@ -1214,3 +1214,17 @@ with real LCM input channels, CDR output decoding, calibration gating, empty
 arrays, and exact timestamps. Mypy passed for the production module.
 `demo_bbox_navigation.py` passed and printed the expected projected goal. This
 is a message/projection check, not physical navigation or TF-frame validation.
+
+### Generated holonomic tracking and command limits
+
+Converted the holonomic tracking law, command limiter, and trajectory samples
+to generated Pose/Twist/Vector3. Quaternion yaw uses the shared geometry helper;
+samples retain independent copies of caller-owned values.
+
+Verification: five focused tests passed (frame rotation, feedforward, position
+and yaw correction, one-sided damping, speed/acceleration bounds, copy isolation,
+and CDR round-trip output). Mypy passed for all three production modules.
+`demo_holonomic_tracking.py` ran 200 synthetic ticks and reached `(2, 1)` with
+`0.00000002m` position error, printing intermediate decoded velocity commands.
+This verifies the tracking core only; path-controller and live module conversion
+remain part of the ongoing coordinated runtime cutover.

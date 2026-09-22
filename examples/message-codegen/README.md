@@ -1032,3 +1032,17 @@ This terminal demo sends generated calibration and detections over LCM, then
 prints a CDR-decoded goal (2.00, -0.40, -0.40) with the original detection header.
 It retains the module's existing forward/left/up coordinate convention and does
 not perform TF conversion. It needs no robot and writes no files.
+
+### Holonomic tracking through CDR
+
+After building the generated demo bindings, run:
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_holonomic_tracking.py
+```
+
+The terminal shows a synthetic robot accelerating toward `(2, 1)` and settling
+at the target. Reference poses, measured poses, and limited velocity commands
+round-trip through generated CDR codecs each tick. This exercises the tracking
+law and limiter, without a transport, path planner, hardware, or ROS install.
+No processes or output files require cleanup.

@@ -34,10 +34,10 @@ caller-owned messages.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos_generated.geometry_msgs.msg import Pose, Twist
 
 
 @dataclass(frozen=True)
@@ -49,8 +49,8 @@ class TrajectorySample:
     twist_body: Twist
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "pose_plan", Pose(self.pose_plan))
-        object.__setattr__(self, "twist_body", Twist(self.twist_body))
+        object.__setattr__(self, "pose_plan", deepcopy(self.pose_plan))
+        object.__setattr__(self, "twist_body", deepcopy(self.twist_body))
 
 
 @dataclass(frozen=True)
