@@ -48,6 +48,9 @@ def write_distribution(
         dirs_exist_ok=True,
         ignore=shutil.ignore_patterns("__pycache__", "test_*.py"),
     )
+    # A namespace directory loses to an installed regular `dimos` package,
+    # even with _codegen first on sys.path. Build with the bundled generator.
+    (toolkit.parent / "__init__.py").write_text("")
     (project / "pyproject.toml").write_text(
         '[build-system]\nrequires = ["setuptools>=70", "wheel", "pybind11==3.0.1"]\n'
         'build-backend = "setuptools.build_meta"\n'

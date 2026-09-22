@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import subprocess
+import sys
 from types import ModuleType
 
 import pytest
@@ -60,6 +62,29 @@ def test_distribution_carries_source_closure_and_pinned_generator(tmp_path):
     assert (project / "_codegen/dimos/message_codegen/_vendor/rosidl_parser.py").is_file()
     assert "dimos.messages" in (project / "setup.py").read_text()
     assert "pybind11==3.0.1" in (project / "pyproject.toml").read_text()
+
+
+def test_bundled_generator_wins_over_installed_dimos(tmp_path):
+    names = generate([], tmp_path / "messages", ["geometry_msgs/msg/Point"])
+    write_distribution(tmp_path / "messages", "example_messages", names)
+    installed = tmp_path / "installed" / "dimos"
+    installed.mkdir(parents=True)
+    (installed / "__init__.py").write_text("raise RuntimeError('wrong installed generator')\n")
+    bundled = tmp_path / "messages/python/_codegen"
+    subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import sys; from pathlib import Path; sys.path[:0] = sys.argv[1:]; "
+            "from dimos.message_codegen import native_build; "
+            "assert Path(native_build.__file__).is_relative_to(sys.argv[1])",
+            str(bundled),
+            str(installed.parent),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
 
 
 def test_installed_schema_discovery_does_not_import_native_types(tmp_path, monkeypatch):
