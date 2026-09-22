@@ -16,10 +16,10 @@ from __future__ import annotations
 
 from typing import Generic
 
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import Detection3DArray
 from typing_extensions import TypeVar
 
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.bbox import Detection3DBBox
 from dimos.perception.detection.type.imageDetections import ImageDetections
 
@@ -36,7 +36,6 @@ class ImageDetections3D(ImageDetections[T3D], Generic[T3D]):
 
         detections = [det.to_detection3d_msg() for det in self.detections]
         return Detection3DArray(
-            detections_length=len(detections),
-            header=Header(self.image.ts, resolved_frame_id),
+            header=Header(stamp=self.image.header.stamp, frame_id=resolved_frame_id),
             detections=detections,
         )

@@ -1153,3 +1153,14 @@ was needed for this increment. Simulation execution remains a separate gate.
 The standalone control-thread demo does not enter an MCP skill-call context;
 its final tool-progress update logs an unknown-tool warning. MCP tool-stream
 lifecycle is not part of this check.
+
+### Generated 3D bbox and marker messages
+
+3D bbox, marker, and array conversions now emit generated vision messages and
+poses. Image headers supply exact timestamps. Marker hypotheses are assigned back
+to the generated result sequence after editing, preserving dictionary-qualified
+identity. Six converted existing/extended tests passed for bbox geometry, marker
+identity after CDR, array behavior, annotation, exact stamps, and copy isolation.
+Mypy passed for three production modules. `demo_marker_messages.py` passed its
+visible two-marker CDR check. Upstream fiducial producers still need conversion;
+these checks do not establish the full marker detection pipeline.

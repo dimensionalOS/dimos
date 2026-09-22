@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import cv2
+from dimos_generated.geometry_msgs.msg import Quaternion, Vector3
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import Detection3D
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
+from dimos.msgs.image import image_from_array
+from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import marker_reprojection_error
 
@@ -41,9 +42,9 @@ def _project_synthetic_marker_corners(
 
 
 def test_marker_detection3d_msg_preserves_marker_identity_on_wire() -> None:
-    center = Vector3(1.0, 2.0, 3.0)
-    orientation = Quaternion(0.1, 0.2, 0.3, 0.9)
-    size = Vector3(0.16, 0.16, 0.0)
+    center = Vector3(x=1.0, y=2.0, z=3.0)
+    orientation = Quaternion(x=0.1, y=0.2, z=0.3, w=0.9)
+    size = Vector3(x=0.16, y=0.16, z=0.0)
     marker_length_m = 0.16
     camera_matrix = np.array(
         [[420.0, 0.0, 60.0], [0.0, 420.0, 50.0], [0.0, 0.0, 1.0]],
@@ -68,10 +69,10 @@ def test_marker_detection3d_msg_preserves_marker_identity_on_wire() -> None:
         rvec,
         tvec,
     )
-    image = Image(
-        data=np.zeros((100, 120, 3), dtype=np.uint8),
-        frame_id="camera_optical",
-        ts=123.456,
+    image = image_from_array(
+        np.zeros((100, 120, 3), dtype=np.uint8),
+        encoding="bgr8",
+        header=Header(frame_id="camera_optical", stamp=time_from_seconds(123.456)),
     )
 
     det = Detection3DMarker(
@@ -80,7 +81,7 @@ def test_marker_detection3d_msg_preserves_marker_identity_on_wire() -> None:
         class_id=999,
         confidence=1.0,
         name="marker_42",
-        ts=image.ts,
+        ts=to_seconds(image.header.stamp),
         image=image,
         center=center,
         size=size,
@@ -99,7 +100,7 @@ def test_marker_detection3d_msg_preserves_marker_identity_on_wire() -> None:
 
     assert msg.header.frame_id == "world"
     assert msg.id == "42"
-    assert msg.results_length == 1
+    assert len(msg.results) == 1
     assert msg.results[0].hypothesis.class_id == "DICT_APRILTAG_36h11:42"
     assert msg.results[0].hypothesis.score == pytest.approx(1.0)
     assert msg.bbox.center.position.x == pytest.approx(center.x)
@@ -113,7 +114,7 @@ def test_marker_detection3d_msg_preserves_marker_identity_on_wire() -> None:
     assert msg.bbox.size.y == pytest.approx(size.y)
     assert msg.bbox.size.z == pytest.approx(size.z)
 
-    decoded = Detection3D.lcm_decode(msg.lcm_encode())
+    decoded = Detection3D.decode(msg.encode())
     assert decoded.id == "42"
-    assert decoded.results_length == 1
+    assert len(decoded.results) == 1
     assert decoded.results[0].hypothesis.class_id == "DICT_APRILTAG_36h11:42"

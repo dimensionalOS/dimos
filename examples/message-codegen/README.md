@@ -997,3 +997,14 @@ fixed tracker output. It prints a CDR-decoded forward command, requests stopping
 checks the final zero command, and joins the thread. Model creation and tracker
 inference are substituted; this is not a model-accuracy or robot demo. It needs
 the optional Torch/Hydra imports but downloads no weights and writes no files.
+
+### Generated 3D marker messages
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_marker_messages.py
+```
+
+This terminal demo serializes two synthetic marker detections and prints their
+CDR-decoded dictionary-qualified identities and world positions. It verifies the
+exact source timestamp. It performs no marker inference or camera acquisition
+and writes no files.
