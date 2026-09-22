@@ -1038,3 +1038,16 @@ coverage fixture now constructs generated clouds and maps directly.
   three reviewable SVGs were written under `demo/evidence/patrol-*.svg`.
 - This verifies goal selection and coverage calculations. It does not claim
   patrol lifecycle or hardware motion acceptance, or completion of stage 4.
+
+### Generated movement manager
+
+The click-to-goal relay and teleop/navigation velocity arbiter use generated
+PointStamped, Twist, and Bool. Clicks retain their source header; cancellation
+headers use integer wall-clock nanoseconds. Component scaling uses explicit
+keyword fields. Existing cancellation behavior is unchanged.
+
+- `build/message-codegen/movement-patrol-tests.log`: **14 passed**, comprising
+  five movement tests with CDR-decoded outputs and nine patrol checks.
+- Mypy passed for the movement module and its demo.
+- `demo_movement.py` printed the preserved click timestamp, teleop suppression,
+  and navigation resumption and completed its assertions.

@@ -19,12 +19,11 @@ from dataclasses import dataclass, field
 import math
 import time
 
+from dimos_generated.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
 import pytest
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.time import header_now
 from dimos.navigation.movement_manager.movement_manager import (
     MovementManager,
 )
@@ -44,10 +43,16 @@ def _attach(module):
     """Subscribe to every Out port; return (captured, unsubscribers)."""
     captured = Captured()
     unsubs = [
-        module.cmd_vel.subscribe(captured.cmd_vel.append),
-        module.stop_movement.subscribe(captured.stop_movement.append),
-        module.goal.subscribe(captured.goal.append),
-        module.way_point.subscribe(captured.way_point.append),
+        module.cmd_vel.subscribe(
+            lambda msg: captured.cmd_vel.append(type(msg).decode(msg.encode()))
+        ),
+        module.stop_movement.subscribe(
+            lambda msg: captured.stop_movement.append(type(msg).decode(msg.encode()))
+        ),
+        module.goal.subscribe(lambda msg: captured.goal.append(type(msg).decode(msg.encode()))),
+        module.way_point.subscribe(
+            lambda msg: captured.way_point.append(type(msg).decode(msg.encode()))
+        ),
     ]
     return captured, unsubs
 
@@ -65,11 +70,11 @@ def manager_and_captured() -> Generator[tuple[MovementManager, Captured], None, 
 
 
 def _twist(lx=0.0):
-    return Twist(linear=Vector3(lx, 0, 0), angular=Vector3(0, 0, 0))
+    return Twist(linear=Vector3(x=lx, y=0, z=0), angular=Vector3(x=0, y=0, z=0))
 
 
 def _click(x=1.0, y=2.0, z=0.0):
-    return PointStamped(ts=time.time(), frame_id="map", x=x, y=y, z=z)
+    return PointStamped(header=header_now("map"), point=Point(x=x, y=y, z=z))
 
 
 def test_teleop_suppresses_nav_and_cancels_goal(manager_and_captured):
@@ -88,7 +93,7 @@ def test_teleop_suppresses_nav_and_cancels_goal(manager_and_captured):
 
     # Goal cancelled with NaN
     assert len(captured.goal) == 1
-    assert math.isnan(captured.goal[0].x)
+    assert math.isnan(captured.goal[0].point.x)
 
 
 def test_nav_resumes_after_cooldown(manager_and_captured):
@@ -127,11 +132,11 @@ def test_invalid_clicks_rejected(manager_and_captured):
 def test_tele_cmd_vel_scaling(manager_and_captured):
     """tele_cmd_vel_scaling multiplies each teleop twist component independently."""
     manager, captured = manager_and_captured
-    scaling = Twist(Vector3(0.5, 2.0, 0.0), Vector3(1.0, 1.0, 0.25))
+    scaling = Twist(linear=Vector3(x=0.5, y=2.0, z=0.0), angular=Vector3(x=1.0, y=1.0, z=0.25))
     manager.config.tele_cmd_vel_scaling = scaling
     manager.config.tele_cooldown_sec = 10.0
 
-    manager._on_teleop(Twist(Vector3(1, 1, 1), Vector3(1, 1, 1)))
+    manager._on_teleop(Twist(linear=Vector3(x=1, y=1, z=1), angular=Vector3(x=1, y=1, z=1)))
 
     assert len(captured.cmd_vel) == 1
     published = captured.cmd_vel[0]

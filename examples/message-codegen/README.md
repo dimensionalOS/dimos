@@ -919,3 +919,14 @@ Each goal crosses a CDR encode/decode boundary and retains the map's exact heade
 The red markers show selected goals; this demo does not simulate travel between
 them. No robot or ROS installation is required. Remove those three SVG files to
 clean up the demo outputs.
+
+### Generated movement arbitration
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_movement.py
+```
+
+This terminal demo forwards a stamped click through CDR, shows teleop overriding
+navigation, then shows navigation resuming after cooldown. It uses in-process
+module callbacks and CDR output round trips; it does not actuate a robot or
+exercise network discovery. No output files require cleanup.
