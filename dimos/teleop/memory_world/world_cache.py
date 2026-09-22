@@ -353,8 +353,12 @@ class WorldCache:
     ) -> tuple[dict[str, Any], bytes] | None:
         """Render a top-down density map from the same point cloud shown in VR.
 
-        Used for two things on the client: a GTA-style HUD minimap and a
-        ground-pasted texture (so the user sees walls "drawn" on the floor).
+        NOTHING DRAWS THIS ANY MORE. It fed the HUD minimap, deleted 2026-09-22, and
+        before that a ground-pasted texture that hid the voxels you stood among. The
+        server still computes it and still sends MSG_TOP_DOWN_MAP, and `setTopDownMap`
+        on the client is a no-op that accepts it. Left in place deliberately rather than
+        ripped out at the same time as the panel: it is cheap, and a top-down view is the
+        obvious thing to want back. Delete both ends together if it is still unused.
         """
         cloud_header, cloud_payload = cloud
         n = int(cloud_header.get("n", 0))
