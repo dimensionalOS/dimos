@@ -25,3 +25,13 @@ cargo build -p dimos-lcm-transport --example interop
 The demo chooses a local UDP port, starts the native receiver, waits for its ready
 signal, and exchanges both short and fragmented binary payloads with Python's LCM
 binding. It terminates and reaps the native process even on failure.
+
+The receiver rejects malformed offsets, lengths, fragment numbers, conflicting
+headers, overlaps, holes, and invalid channel UTF-8. Repeated fragments do not
+advance completion; out-of-order fragments remain supported. Limits are 64 MiB
+per message, 128 MiB of incomplete payload storage, and 64 incomplete messages
+per transport instance. Fragment bookkeeping is also bounded by these limits and
+the protocol's 16-bit fragment count. Incomplete messages expire after five
+seconds and are purged when another fragment arrives. Publishing above 64 MiB
+returns `InvalidInput` before any datagrams are sent. These are raw transport
+limits and do not depend on the payload's encoding.

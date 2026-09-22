@@ -291,3 +291,16 @@ The test logs are captured in pytest's temporary directory; the test summary is
 
 This verifies coordinator wiring beyond the direct native SDK relay. It does not
 complete the three-language blueprint with live viewers required by task 4.10.
+
+### Raw LCM fragment validation
+
+The retained Rust raw transport passed 18 unit tests and its compile doctest after
+adding bounded reassembly. Checks cover reordered/duplicate fragments, conflicting
+metadata, invalid offsets/counts, overlapping or missing bytes, invalid channels,
+expiry, aggregate payload limits, and continuing reception after malformed UDP
+packets. Clippy passed with warnings denied.
+
+The Python ↔ Rust raw transport demo still exchanged 128, 65,536, and 1,048,576
+bytes exactly. After rebuilding the Rust native examples, the three-language SDK
+relay passed on LCM and Zenoh again, preserving 921,600 image bytes and timestamp
+`1700000000123456789`. Transport limits are documented in the raw crate README.

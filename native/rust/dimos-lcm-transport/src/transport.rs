@@ -19,6 +19,7 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 
 const MAGIC_SHORT: u32 = 0x4c433032; // "LC02"
@@ -26,6 +27,11 @@ const MAGIC_LONG: u32 = 0x4c433033; // "LC03"
 const SHORT_HEADER_SIZE: usize = 8;
 const FRAGMENT_HEADER_SIZE: usize = 20;
 const MAX_DATAGRAM_SIZE: usize = 65507;
+// Bound incomplete UDP messages independently of sender-supplied lengths.
+const MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
+const MAX_REASSEMBLY_BYTES: usize = 128 * 1024 * 1024;
+const MAX_INCOMPLETE_MESSAGES: usize = 64;
+const REASSEMBLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Default LCM multicast group address.
 pub const DEFAULT_MULTICAST_GROUP: Ipv4Addr = Ipv4Addr::new(239, 255, 76, 67);
@@ -35,9 +41,11 @@ pub const DEFAULT_PORT: u16 = 7667;
 static SEQ: AtomicU32 = AtomicU32::new(0);
 
 struct FragmentBuffer {
-    channel: String,
-    num_fragments: u16,
-    received: u16,
+    channel: Option<String>,
+    fragments: Vec<Option<(usize, usize)>>,
+    received: usize,
+    received_bytes: usize,
+    created: Instant,
     data: Vec<u8>,
 }
 
@@ -135,6 +143,12 @@ impl Lcm {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "LCM channel must fit in 63 bytes and contain no NUL",
+            ));
+        }
+        if data.len() > MAX_MESSAGE_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "LCM message exceeds the 64 MiB transport limit",
             ));
         }
         let total = SHORT_HEADER_SIZE + channel_bytes.len() + 1 + data.len();
@@ -258,48 +272,111 @@ impl Lcm {
 
         let mut offset = FRAGMENT_HEADER_SIZE;
 
-        // First fragment carries the channel name
+        if total_size == 0
+            || total_size > MAX_MESSAGE_SIZE
+            || num_fragments == 0
+            || fragment_no >= num_fragments
+            || usize::from(num_fragments) > total_size
+            || (fragment_no == 0 && fragment_offset != 0)
+        {
+            return Ok(None);
+        }
+
+        // Only fragment zero carries the channel. Reject invalid UTF-8 rather
+        // than routing a replacement-character channel to the wrong subscriber.
         let channel = if fragment_no == 0 {
-            let channel_end = match buf[offset..].iter().position(|&b| b == 0) {
-                Some(pos) => offset + pos,
-                None => return Ok(None),
+            let Some(pos) = buf[offset..].iter().position(|&b| b == 0) else {
+                return Ok(None);
             };
-            let ch = String::from_utf8_lossy(&buf[offset..channel_end]).into_owned();
-            offset = channel_end + 1;
-            Some(ch)
+            if pos > 63 {
+                return Ok(None);
+            }
+            let Ok(ch) = std::str::from_utf8(&buf[offset..offset + pos]) else {
+                return Ok(None);
+            };
+            offset += pos + 1;
+            Some(ch.to_owned())
         } else {
             None
         };
-
         let payload = &buf[offset..];
+        let Some(end) = fragment_offset.checked_add(payload.len()) else {
+            return Ok(None);
+        };
+        if payload.is_empty() || end > total_size {
+            return Ok(None);
+        }
 
         let key = (sender, seqno);
-
+        let now = Instant::now();
         let mut reassembly = self.reassembly.lock().unwrap();
+        reassembly.retain(|_, entry| now.duration_since(entry.created) < REASSEMBLY_TIMEOUT);
+        if !reassembly.contains_key(&key) {
+            let used: usize = reassembly.values().map(|entry| entry.data.len()).sum();
+            if reassembly.len() >= MAX_INCOMPLETE_MESSAGES
+                || total_size > MAX_REASSEMBLY_BYTES - used
+            {
+                return Ok(None);
+            }
+        }
         let entry = reassembly.entry(key).or_insert_with(|| FragmentBuffer {
-            channel: channel.clone().unwrap_or_default(),
-            num_fragments,
+            channel: None,
+            fragments: vec![None; usize::from(num_fragments)],
             received: 0,
+            received_bytes: 0,
+            created: now,
             data: vec![0u8; total_size],
         });
-
-        // First fragment also sets the channel name on an existing entry
-        if let Some(ch) = channel {
-            entry.channel = ch;
+        if entry.data.len() != total_size || entry.fragments.len() != usize::from(num_fragments) {
+            reassembly.remove(&key);
+            return Ok(None);
         }
-
-        let end = (fragment_offset + payload.len()).min(total_size);
-        entry.data[fragment_offset..end].copy_from_slice(&payload[..end - fragment_offset]);
+        if let Some(range) = entry.fragments[usize::from(fragment_no)] {
+            // Repeated datagrams do not advance completion. Conflicting repeats
+            // invalidate this message instead of silently replacing its bytes.
+            if range != (fragment_offset, end)
+                || entry.data[fragment_offset..end] != *payload
+                || (fragment_no == 0 && entry.channel != channel)
+            {
+                reassembly.remove(&key);
+            }
+            return Ok(None);
+        }
+        if entry.received_bytes + payload.len() > total_size {
+            reassembly.remove(&key);
+            return Ok(None);
+        }
+        if channel.is_some() {
+            entry.channel = channel;
+        }
+        entry.data[fragment_offset..end].copy_from_slice(payload);
+        entry.fragments[usize::from(fragment_no)] = Some((fragment_offset, end));
         entry.received += 1;
+        entry.received_bytes += payload.len();
 
-        if entry.received == entry.num_fragments {
+        if entry.received == entry.fragments.len() {
             let complete = reassembly.remove(&key).unwrap();
-            return Ok(Some(ReceivedMessage {
-                channel: complete.channel,
-                data: complete.data,
-            }));
+            if complete.received_bytes != total_size {
+                return Ok(None);
+            }
+            let mut ranges: Vec<_> = complete.fragments.into_iter().flatten().collect();
+            ranges.sort_unstable();
+            let mut expected = 0;
+            for (start, end) in ranges {
+                if start != expected {
+                    return Ok(None); // overlap or hole
+                }
+                expected = end;
+            }
+            if expected == total_size {
+                if let Some(channel) = complete.channel {
+                    return Ok(Some(ReceivedMessage {
+                        channel,
+                        data: complete.data,
+                    }));
+                }
+            }
         }
-
         Ok(None)
     }
 
@@ -312,7 +389,13 @@ impl Lcm {
             Some(pos) => channel_start + pos,
             None => return Ok(None),
         };
-        let channel = String::from_utf8_lossy(&buf[channel_start..channel_end]).into_owned();
+        if channel_end - channel_start > 63 {
+            return Ok(None);
+        }
+        let Ok(channel) = std::str::from_utf8(&buf[channel_start..channel_end]) else {
+            return Ok(None);
+        };
+        let channel = channel.to_owned();
         let data = buf[channel_end + 1..].to_vec();
         Ok(Some(ReceivedMessage { channel, data }))
     }
@@ -333,6 +416,169 @@ mod tests {
         for channel in ["x".repeat(64), "é".repeat(32), "invalid\0channel".into()] {
             let error = lcm.publish(&channel, b"payload").await.unwrap_err();
             assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        }
+    }
+
+    async fn receiver() -> Lcm {
+        Lcm::with_options(LcmOptions {
+            port: 0,
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+    }
+
+    fn fragment(seq: u32, size: u32, offset: u32, index: u16, count: u16, data: &[u8]) -> Vec<u8> {
+        let mut packet = vec![0; FRAGMENT_HEADER_SIZE];
+        BigEndian::write_u32(&mut packet[0..4], MAGIC_LONG);
+        BigEndian::write_u32(&mut packet[4..8], seq);
+        BigEndian::write_u32(&mut packet[8..12], size);
+        BigEndian::write_u32(&mut packet[12..16], offset);
+        BigEndian::write_u16(&mut packet[16..18], index);
+        BigEndian::write_u16(&mut packet[18..20], count);
+        if index == 0 {
+            packet.extend_from_slice(b"CHAN\0");
+        }
+        packet.extend_from_slice(data);
+        packet
+    }
+
+    fn accept(lcm: &Lcm, packet: &[u8]) -> Option<ReceivedMessage> {
+        lcm.process_fragment("127.0.0.1:1234".parse().unwrap(), packet)
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn reordered_and_repeated_fragments_complete_once_with_exact_bytes() {
+        let lcm = receiver().await;
+        let last = fragment(1, 6, 4, 2, 3, b"ef");
+        assert!(accept(&lcm, &last).is_none());
+        assert!(accept(&lcm, &last).is_none());
+        assert!(accept(&lcm, &fragment(1, 6, 0, 0, 3, b"ab")).is_none());
+        let message = accept(&lcm, &fragment(1, 6, 2, 1, 3, b"cd")).unwrap();
+        assert_eq!(message.channel, "CHAN");
+        assert_eq!(message.data, b"abcdef");
+        assert!(lcm.reassembly.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn invalid_headers_and_ranges_do_not_allocate_reassembly() {
+        let lcm = receiver().await;
+        for packet in [
+            fragment(1, u32::MAX, 0, 0, 2, b"ab"),
+            fragment(1, 4, u32::MAX, 1, 2, b"cd"),
+            fragment(1, 4, 3, 1, 2, b"cd"),
+            fragment(1, 4, 0, 0, 0, b"ab"),
+            fragment(1, 4, 0, 2, 2, b"ab"),
+            fragment(1, 1, 0, 0, 2, b"a"),
+            fragment(1, 4, 1, 0, 2, b"ab"),
+            fragment(1, 4, 0, 0, 2, b""),
+        ] {
+            assert!(accept(&lcm, &packet).is_none());
+            assert!(lcm.reassembly.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn conflicting_metadata_and_repeated_payloads_invalidate_message() {
+        for conflicting in [
+            fragment(1, 5, 2, 1, 2, b"cd"),
+            fragment(1, 4, 2, 1, 3, b"cd"),
+            fragment(1, 4, 0, 0, 2, b"zz"),
+        ] {
+            let lcm = receiver().await;
+            assert!(accept(&lcm, &fragment(1, 4, 0, 0, 2, b"ab")).is_none());
+            assert!(accept(&lcm, &conflicting).is_none());
+            assert!(lcm.reassembly.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn overlaps_and_holes_never_produce_a_message() {
+        for second in [
+            fragment(1, 4, 1, 1, 2, b"cd"),  // overlap plus a hole
+            fragment(1, 4, 3, 1, 2, b"d"),   // uncovered byte
+            fragment(1, 4, 1, 1, 2, b"cde"), // too many bytes
+        ] {
+            let lcm = receiver().await;
+            assert!(accept(&lcm, &fragment(1, 4, 0, 0, 2, b"ab")).is_none());
+            assert!(accept(&lcm, &second).is_none());
+            assert!(lcm.reassembly.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn incomplete_messages_are_bounded_and_expired_slots_are_reused() {
+        let lcm = receiver().await;
+        for seq in 0..MAX_INCOMPLETE_MESSAGES as u32 {
+            assert!(accept(&lcm, &fragment(seq, 4, 0, 0, 2, b"ab")).is_none());
+        }
+        assert!(accept(&lcm, &fragment(100, 4, 0, 0, 2, b"ab")).is_none());
+        assert_eq!(
+            lcm.reassembly.lock().unwrap().len(),
+            MAX_INCOMPLETE_MESSAGES
+        );
+        {
+            let mut buffers = lcm.reassembly.lock().unwrap();
+            for buffer in buffers.values_mut() {
+                buffer.created = Instant::now() - REASSEMBLY_TIMEOUT;
+            }
+        }
+        assert!(accept(&lcm, &fragment(100, 4, 0, 0, 2, b"ab")).is_none());
+        assert_eq!(lcm.reassembly.lock().unwrap().len(), 1);
+        assert_eq!(
+            accept(&lcm, &fragment(100, 4, 2, 1, 2, b"cd"))
+                .unwrap()
+                .data,
+            b"abcd"
+        );
+    }
+
+    #[tokio::test]
+    async fn incomplete_payload_storage_is_bounded_across_senders() {
+        let lcm = receiver().await;
+        for seq in 0..2 {
+            assert!(accept(&lcm, &fragment(seq, MAX_MESSAGE_SIZE as u32, 0, 0, 2, b"a")).is_none());
+        }
+        assert!(accept(&lcm, &fragment(3, 4, 0, 0, 2, b"ab")).is_none());
+        let buffers = lcm.reassembly.lock().unwrap();
+        assert_eq!(buffers.len(), 2);
+        assert_eq!(
+            buffers
+                .values()
+                .map(|entry| entry.data.len())
+                .sum::<usize>(),
+            MAX_REASSEMBLY_BYTES
+        );
+    }
+
+    #[tokio::test]
+    async fn recv_continues_after_malformed_datagrams() {
+        let lcm = receiver().await;
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let destination =
+            SocketAddrV4::new(Ipv4Addr::LOCALHOST, lcm.socket.local_addr().unwrap().port());
+        for packet in [
+            fragment(1, 4, u32::MAX, 1, 2, b"cd"),
+            make_small_packet(&[0xff], b"invalid channel"),
+            make_small_packet(b"GOOD", b"intact"),
+        ] {
+            sender.send_to(&packet, destination).await.unwrap();
+        }
+        let message = tokio::time::timeout(Duration::from_secs(2), lcm.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(message.channel, "GOOD");
+        assert_eq!(message.data, b"intact");
+    }
+
+    #[test]
+    fn invalid_short_channels_are_dropped() {
+        for channel in [vec![b'x'; 64], vec![0xff]] {
+            assert!(Lcm::decode_small(&make_small_packet(&channel, b"data"))
+                .unwrap()
+                .is_none());
         }
     }
 
