@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 from functools import cached_property
 import os
 from typing import Any
 
-import numpy as np
+from dimos_generated.sensor_msgs.msg import Image
 from openai import OpenAI
 
 from dimos.models.vl.base import VlModel, VlModelConfig
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.image import image_to_jpeg
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -46,26 +47,15 @@ class OpenAIVlModel(VlModel):
 
     def query(
         self,
-        image: Image | np.ndarray,
+        image: Image,
         query: str,
         response_format: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> str:
-        if isinstance(image, np.ndarray):
-            import warnings
-
-            warnings.warn(
-                "OpenAIVlModel.query should receive standard dimos Image type, not a numpy array",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-            image = Image.from_numpy(image)
-
         # Apply auto_resize if configured
         image, _ = self._prepare_image(image)
 
-        img_base64 = image.to_base64()
+        img_base64 = base64.b64encode(image_to_jpeg(image)).decode("ascii")
 
         api_kwargs: dict[str, Any] = {
             "model": self.config.model_name,
@@ -105,7 +95,7 @@ class OpenAIVlModel(VlModel):
             {
                 "type": "image_url",
                 "image_url": {
-                    "url": f"data:image/jpeg;base64,{self._prepare_image(img)[0].to_base64()}"
+                    "url": f"data:image/jpeg;base64,{base64.b64encode(image_to_jpeg(self._prepare_image(img)[0])).decode('ascii')}"
                 },
             }
             for img in images

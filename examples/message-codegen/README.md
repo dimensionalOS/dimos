@@ -975,3 +975,13 @@ Open `build/message-codegen/demo/evidence/detection-bbox.png` to inspect the
 synthetic target's bounding box and label. The terminal prints CDR-decoded track
 and class identifiers and checks the exact image header. Remove the PNG to clean
 up. This uses synthetic pixels, with no model download or sensor required.
+
+### Generated vision-model image boundary
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_vl_images.py
+```
+
+This offline terminal demo resizes a generated image and converts a fixed model
+response into a CDR detection array. It prints the dimensions and verifies the
+source header. It does not call an API or run model inference, and writes no files.

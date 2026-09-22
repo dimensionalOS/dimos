@@ -17,6 +17,9 @@ from threading import Event, RLock, Thread
 import time
 from typing import Any
 
+from dimos_generated.geometry_msgs.msg import Twist
+from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 from reactivex.disposable import Disposable
 
@@ -30,11 +33,7 @@ from dimos.models.qwen.bbox import BBox
 from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
 from dimos.models.vl.base import VlModel
 from dimos.models.vl.create import create
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.image import image_from_array
 from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.navigation.visual_servoing.detection_navigation import DetectionNavigation
 from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
@@ -204,7 +203,7 @@ class PersonFollowSkillContainer(Module):
         """
         self._stop_following()
 
-        self.cmd_vel.publish(Twist.zero())
+        self.cmd_vel.publish(Twist())
 
         if self._thread is not None:
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
@@ -247,7 +246,7 @@ class PersonFollowSkillContainer(Module):
         )
 
         if len(initial_detections) == 0:
-            self.cmd_vel.publish(Twist.zero())
+            self.cmd_vel.publish(Twist())
             return f"EdgeTAM failed to segment '{query}'."
 
         logger.info(f"EdgeTAM initialized with {len(initial_detections)} detections")
@@ -279,7 +278,7 @@ class PersonFollowSkillContainer(Module):
             detections = tracker.process_image(latest_image)
 
             if len(detections) == 0:
-                self.cmd_vel.publish(Twist.zero())
+                self.cmd_vel.publish(Twist())
 
                 lost_count += 1
                 if lost_count > self._max_lost_frames:
@@ -321,7 +320,7 @@ class PersonFollowSkillContainer(Module):
         self._should_stop.set()
 
     def _send_stop_reason(self, query: str, reason: str) -> None:
-        self.cmd_vel.publish(Twist.zero())
+        self.cmd_vel.publish(Twist())
         self.tool_update(
             "follow_person",
             f"Person follow stopped for '{query}'. Reason: {reason}.",
@@ -332,4 +331,4 @@ class PersonFollowSkillContainer(Module):
 
 def _decode_base64_image(b64: str) -> Image:
     bgr_array = get_turbojpeg().decode(base64.b64decode(b64))
-    return Image(data=bgr_array, format=ImageFormat.BGR)
+    return image_from_array(bgr_array, encoding="bgr8")

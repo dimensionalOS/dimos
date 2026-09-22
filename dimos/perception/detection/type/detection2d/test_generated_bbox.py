@@ -20,6 +20,7 @@ import numpy as np
 from dimos.msgs.image import image_from_array, image_view
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 
 
 def test_generated_bbox_image_and_wire_round_trip():
@@ -81,3 +82,20 @@ def test_generated_detection_collection_round_trip():
     assert annotated.encoding == "bgr8"
     assert np.any(image_view(annotated))
     assert not np.any(image_view(image))
+
+
+def test_generated_point_detection_crop_and_cdr():
+    pixels = np.arange(100, dtype=np.uint8).reshape(10, 10)
+    image = image_from_array(
+        pixels, encoding="mono8", header=Header(frame_id="camera", stamp=Time(nanosec=789))
+    )
+    point = Detection2DPoint(x=1, y=1, name="point", ts=0, image=image)
+    assert point.is_valid()
+    crop = point.cropped_image(padding=2)
+    np.testing.assert_array_equal(image_view(crop), pixels[:3, :3])
+    assert crop.header == image.header
+    wire = Detection2D.decode(point.to_ros_detection2d().encode())
+    assert wire.header == image.header
+    assert wire.bbox.center.position.x == wire.bbox.center.position.y == 1
+    assert wire.bbox.size_x == wire.bbox.size_y == 0
+    assert wire.results[0].hypothesis.class_id == "-1"

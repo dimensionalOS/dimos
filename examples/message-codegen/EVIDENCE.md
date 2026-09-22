@@ -1118,3 +1118,21 @@ for the shared image helper, collection base, and bbox. Broader checking remains
 incomplete: Torch typing is unavailable and the person class has pre-existing
 unparameterized NumPy annotations. Model-backed inference and person-follow
 lifecycle acceptance are still outstanding.
+
+### Generated vision-provider and tracker image boundaries
+
+Person-follow streams, EdgeTAM preprocessing, visual queries, and Qwen/OpenAI
+providers now use generated messages. Provider images use explicit JPEG encoding;
+legacy ndarray query compatibility was removed. VLM resize and warmup paths use
+explicit array helpers. Point detections preserve generated image headers.
+
+Sixteen combined generated vision/detection/projection/filter tests passed.
+Provider tests intercept API calls and decode their JPEGs to verify dimensions,
+colors, MIME type, and single/batch request structure. CPU tracker tests verify
+normalization, temporary image cleanup, and mask conversion; model construction
+is substituted, so no weights or inference are exercised. The offline
+`demo_vl_images.py` passed. Mypy passed for person-follow and the three VLM modules.
+
+Local verification installed OpenAI 2.21.0, Hydra 1.3.2, and CPU Torch 2.7.1.
+Person-follow imports successfully. Actual tracking inference, simulation camera
+producers, and the full person-follow lifecycle remain unverified and unfinished.

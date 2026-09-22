@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from dimos_lcm.vision_msgs import (
+from dimos_generated.vision_msgs.msg import (
     BoundingBox2D,
     Detection2D as ROSDetection2D,
     ObjectHypothesis,
@@ -26,11 +26,11 @@ from dimos_lcm.vision_msgs import (
     Pose2D,
 )
 
-from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.image import image_from_array, image_view
 from dimos.perception.detection.type.detection2d.base import Detection2D
 
 if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos_generated.sensor_msgs.msg import Image
 
 
 @dataclass
@@ -65,17 +65,17 @@ class Detection2DPoint(Detection2D):
             Cropped Image containing the area around the point
         """
         x, y = int(self.x), int(self.y)
-        return self.image.crop(
-            x - padding,
-            y - padding,
-            2 * padding,
-            2 * padding,
-        )
+        pixels = image_view(self.image)
+        cropped = pixels[
+            max(0, y - padding) : min(self.image.height, y + padding),
+            max(0, x - padding) : min(self.image.width, x + padding),
+        ]
+        return image_from_array(cropped, encoding=self.image.encoding, header=self.image.header)
 
     def to_ros_detection2d(self) -> ROSDetection2D:
         """Convert point to ROS Detection2D message (as zero-size bbox at point)."""
         return ROSDetection2D(
-            header=Header(self.ts, "camera_link"),
+            header=self.image.header,
             bbox=BoundingBox2D(
                 center=Pose2D(
                     position=Point2D(x=self.x, y=self.y),
@@ -86,8 +86,8 @@ class Detection2DPoint(Detection2D):
             ),
             results=[
                 ObjectHypothesisWithPose(
-                    ObjectHypothesis(
-                        class_id=self.class_id,
+                    hypothesis=ObjectHypothesis(
+                        class_id=str(self.class_id),
                         score=self.confidence,
                     )
                 )
@@ -97,7 +97,7 @@ class Detection2DPoint(Detection2D):
 
     def is_valid(self) -> bool:
         """Check if the point is within image bounds."""
-        if self.image.shape:
-            h, w = self.image.shape[:2]
+        if self.image.height and self.image.width:
+            h, w = self.image.height, self.image.width
             return bool(0 <= self.x <= w and 0 <= self.y <= h)
         return True
