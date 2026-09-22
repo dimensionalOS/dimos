@@ -47,10 +47,11 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+from dimos_generated.sensor_msgs.msg import JointState
+
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 if TYPE_CHECKING:

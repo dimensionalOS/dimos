@@ -16,12 +16,14 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+import copy
 import math
+
+from dimos_generated.sensor_msgs.msg import JointState
 
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
@@ -49,7 +51,7 @@ class BaseTrajectoryParametrizer(ABC):
                 f"Cannot materialize unsuccessful planning result: {result.status.name}"
             )
 
-        path = [JointState(state) for state in result.path]
+        path = [copy.deepcopy(state) for state in result.path]
         self._validate_selected_path(path, selection.joint_names)
         if result.timestamps is None:
             trajectory = self._parametrize_path(world, selection, tuple(path), speed_scale)
@@ -58,8 +60,8 @@ class BaseTrajectoryParametrizer(ABC):
         self._validate_trajectory(
             trajectory,
             selection.joint_names,
-            expected_start=path[0].position,
-            expected_goal=path[-1].position,
+            expected_start=list(path[0].position),
+            expected_goal=list(path[-1].position),
         )
 
         return GeneratedPlan(

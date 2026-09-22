@@ -17,6 +17,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from dimos_generated.sensor_msgs.msg import JointState
 import pytest
 from pytest_mock import MockerFixture
 
@@ -44,7 +45,6 @@ from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import
     SimpleTrapezoidParametrizer,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 

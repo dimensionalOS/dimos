@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, cast
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
@@ -33,7 +34,6 @@ from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -113,7 +113,7 @@ class DrakeOptimizationIK:
                 seed = world.get_joint_state(ctx)
 
         # Extract joint names and seed positions
-        joint_names = seed.name
+        joint_names = list(seed.name)
         seed_positions = np.array(seed.position, dtype=np.float64)
 
         # Target transform
@@ -328,7 +328,7 @@ class DrakeOptimizationIK:
         joint_solution = np.clip(joint_solution, lower_limits, upper_limits)
 
         # Compute actual error using FK
-        solution_state = JointState({"name": joint_names, "position": joint_solution.tolist()})
+        solution_state = JointState(name=joint_names, position=joint_solution.tolist())
         with world.scratch_context() as ctx:
             world.set_joint_state(ctx, solution_state)
             actual_matrix = world.get_link_pose(ctx, target_frame_name)
@@ -356,7 +356,7 @@ def _create_success_result(
 ) -> IKResult:
     return IKResult(
         status=IKStatus.SUCCESS,
-        joint_state=JointState({"name": joint_names, "position": joint_positions.tolist()}),
+        joint_state=JointState(name=joint_names, position=joint_positions.tolist()),
         position_error=position_error,
         orientation_error=orientation_error,
         iterations=iterations,

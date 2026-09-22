@@ -19,6 +19,7 @@ import math
 import sys
 from typing import Any
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 import roboplan.core as roboplan_core
 import roboplan.toppra as roboplan_toppra
@@ -35,7 +36,6 @@ from dimos.manipulation.planning.trajectory_generator.parametrizer import (
 )
 from dimos.manipulation.planning.world.roboplan_model import RoboPlanGroup, RoboPlanModel
 from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 

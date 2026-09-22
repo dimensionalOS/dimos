@@ -38,6 +38,8 @@ except ImportError as exc:
         "Install the manipulation extra before selecting the roboplan backend."
     ) from exc
 
+from dimos_generated.sensor_msgs.msg import JointState
+
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
@@ -59,7 +61,6 @@ from dimos.manipulation.planning.world.roboplan_model import (
     build_roboplan_model,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
 

@@ -16,6 +16,8 @@
 
 import math
 
+from dimos_generated.sensor_msgs.msg import JointState
+
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.trajectory_generator.config import (
@@ -28,7 +30,6 @@ from dimos.manipulation.planning.trajectory_generator.parametrizer import (
     BaseTrajectoryParametrizer,
     TrajectoryParametrizationError,
 )
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 

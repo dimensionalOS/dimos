@@ -24,7 +24,12 @@ from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
-from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_view, pointcloud_xyz
+from dimos.msgs.pointcloud import (
+    pointcloud_from_xyz,
+    pointcloud_view,
+    pointcloud_xyz,
+    select_points,
+)
 
 
 @pytest.fixture(params=[False, True], ids=["little-endian", "big-endian"])
@@ -154,3 +159,38 @@ def test_xyz_factory_marks_missing_coordinates_and_supports_empty_cloud():
 def test_xyz_factory_rejects_invalid_shape_type_or_range(points):
     with pytest.raises(ValueError):
         pointcloud_from_xyz(points, header=Header())
+
+
+def test_selection_preserves_custom_fields_padding_and_header(padded_cloud):
+    padded_cloud.header = Header(frame_id="camera", stamp=Time(sec=1700000000, nanosec=123456789))
+    # Nonzero point padding must survive too; row padding is discarded.
+    raw = bytearray(padded_cloud.data)
+    raw[20:24] = b"abcd"
+    raw[108:112] = b"wxyz"
+    padded_cloud.data = bytes(raw)
+    result = PointCloud2.decode(
+        select_points(padded_cloud, np.array([True, False, False, True])).encode()
+    )
+    assert bytes(result.data) == raw[:24] + raw[88:112]
+    assert result.header == padded_cloud.header
+    assert result.fields == padded_cloud.fields
+    assert result.is_bigendian == padded_cloud.is_bigendian
+    assert result.is_dense == padded_cloud.is_dense
+    assert (result.height, result.width, result.row_step) == (1, 2, 48)
+    np.testing.assert_array_equal(pointcloud_view(result)["tags"], [[[1, 11], [4, 14]]])
+    padded_cloud.data = bytes(len(raw))
+    assert bytes(result.data)[20:24] == b"abcd"
+
+
+@pytest.mark.parametrize(
+    "mask", [np.array([True]), np.ones((2, 2), dtype=bool), np.ones(4, dtype=int)]
+)
+def test_selection_rejects_mismatched_mask(padded_cloud, mask):
+    with pytest.raises(ValueError, match="flat boolean mask"):
+        select_points(padded_cloud, mask)
+
+
+def test_selection_supports_no_retained_points(padded_cloud):
+    result = select_points(padded_cloud, np.zeros(4, dtype=bool))
+    assert (result.height, result.width, result.row_step, len(result.data)) == (1, 0, 0, 0)
+    assert result.fields == padded_cloud.fields

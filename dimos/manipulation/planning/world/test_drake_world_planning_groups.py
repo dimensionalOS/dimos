@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 import pytest
 
@@ -27,7 +28,6 @@ from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.world.drake_world import DRAKE_AVAILABLE, DrakeWorld
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
@@ -296,7 +296,7 @@ def test_drake_group_fk_uses_tip_link_and_unique_pose_group(tmp_path: Path) -> N
     _load(world, _config(urdf, [_arm_group("joint1", "joint2")]))
     world.finalize()
     ctx = world.get_live_context()
-    world.set_joint_state(ctx, JointState({"name": ["joint1", "joint2"], "position": [0.0, 0.0]}))
+    world.set_joint_state(ctx, JointState(name=["joint1", "joint2"], position=[0.0, 0.0]))
 
     group_pose = world.get_group_ee_pose(ctx, "arm")
     default_pose = world.get_ee_pose(ctx)
@@ -395,7 +395,7 @@ def test_drake_group_jacobian_shape_and_group_local_order(tmp_path: Path) -> Non
     )
     world.finalize()
     ctx = world.get_live_context()
-    world.set_joint_state(ctx, JointState({"name": ["joint1", "joint2"], "position": [0.0, 0.0]}))
+    world.set_joint_state(ctx, JointState(name=["joint1", "joint2"], position=[0.0, 0.0]))
 
     forward_jacobian = world.get_group_jacobian(ctx, "wrist_forward")
     reverse_jacobian = world.get_group_jacobian(ctx, "wrist_reverse")

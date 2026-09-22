@@ -103,3 +103,33 @@ def pointcloud_from_xyz(points: NDArray[Any], *, header: Header) -> PointCloud2:
         data=packed.view(np.uint8).reshape(-1),
         is_dense=bool(finite.all()),
     )
+
+
+def select_points(message: PointCloud2, keep: NDArray[np.bool_]) -> PointCloud2:
+    """Copy selected point records in row order, retaining every field and point byte.
+
+    The result is unorganized with no row padding. Point padding, endianness,
+    field metadata, source header, and the conservative density flag survive.
+    """
+    pointcloud_view(message)  # Validate the full declared layout before selecting bytes.
+    if keep.dtype != np.bool_ or keep.shape != (message.height * message.width,):
+        raise ValueError("point selection must be a flat boolean mask matching the point count")
+    records = np.ndarray(
+        (message.height, message.width, message.point_step),
+        dtype=np.uint8,
+        buffer=message.data.view(),
+        strides=(message.row_step, message.point_step, 1),
+    )
+    selected = records.reshape(message.height * message.width, message.point_step)[keep]
+    width = len(selected)
+    return PointCloud2(
+        header=message.header,
+        height=1,
+        width=width,
+        fields=message.fields,
+        is_bigendian=message.is_bigendian,
+        point_step=message.point_step,
+        row_step=width * message.point_step,
+        data=selected.tobytes(),
+        is_dense=message.is_dense,
+    )

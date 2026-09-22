@@ -718,3 +718,26 @@ canonical order, normalizes a differently ordered target, and validates both
 against declared joint limits. It prints selected positions `[-0.2, 0.3]`, target
 `[0.1, 0.5]`, and the preserved source stamp `1700000000123456789`. No robot,
 planning backend, ROS installation, or persistent artifact is required.
+
+
+### Planner backends and robot self exclusion
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_planning_backends.py
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_self_filter.py
+```
+
+The backend demo requires the manipulation dependencies (including Drake). It
+creates a temporary two-joint URDF, plans between generated JointState values,
+interpolates five waypoints, and checks every CDR-decoded waypoint against the
+real Drake world. The printed shoulder positions run from -0.4 through 0 to 0.4.
+This is an unobstructed joint-path demo; it does not exercise obstacle avoidance
+or the still-pending generated trajectory/pose cutover.
+
+The self-filter demo requires yourdfpy. It moves a modeled cube through x=0, 1,
+and 2, showing that the cube's return disappears while a distant point remains.
+Both the retained cloud and the world-frame clear mask round-trip through CDR
+with their original integer nanosecond timestamps. The demos remove temporary
+models and dispose module resources on exit; neither needs robot hardware or ROS.

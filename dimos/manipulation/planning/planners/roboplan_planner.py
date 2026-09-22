@@ -33,6 +33,8 @@ except ImportError as exc:
         "Install the manipulation extra before selecting the roboplan backend."
     ) from exc
 
+from dimos_generated.sensor_msgs.msg import JointState
+
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanCartesianPathConfig,
@@ -57,7 +59,6 @@ from dimos.manipulation.planning.world.roboplan_world import (
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import pose_to_matrix
 
@@ -695,15 +696,15 @@ class RoboPlanPlanner:
         if not shortened_path:
             raise ValueError("RoboPlan path shortcutter returned an empty path")
         if not np.allclose(
-            shortened_path[0].position,
-            original_path[0].position,
+            np.asarray(shortened_path[0].position, dtype=np.float64),
+            np.asarray(original_path[0].position, dtype=np.float64),
             atol=1e-9,
             rtol=0.0,
         ):
             raise ValueError("RoboPlan path shortcutter changed the start configuration")
         if not np.allclose(
-            shortened_path[-1].position,
-            original_path[-1].position,
+            np.asarray(shortened_path[-1].position, dtype=np.float64),
+            np.asarray(original_path[-1].position, dtype=np.float64),
             atol=1e-9,
             rtol=0.0,
         ):

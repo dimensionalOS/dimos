@@ -27,6 +27,8 @@ from pytest_mock import MockerFixture
 
 pytest.importorskip("roboplan.toppra")
 
+from dimos_generated.sensor_msgs.msg import JointState
+
 from dimos.manipulation.planning.groups.models import (
     PlanningGroup,
     PlanningGroupDefinition,
@@ -53,7 +55,6 @@ from dimos.manipulation.planning.trajectory_generator.roboplan_toppra_parametriz
 )
 from dimos.manipulation.planning.world.roboplan_model import RoboPlanGroup, RoboPlanModel
 from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 pytestmark = pytest.mark.self_hosted

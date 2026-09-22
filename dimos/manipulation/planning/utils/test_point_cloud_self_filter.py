@@ -29,10 +29,13 @@ if sys.platform == "linux" and platform.machine() == "aarch64":
         "yourdfpy", reason="yourdfpy is unavailable in the Linux ARM test environment"
     )
 
+from dimos_generated.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
+
 from dimos.manipulation.planning.utils.point_cloud_self_filter import PointCloudSelfFilter
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.msgs.time import time_from_seconds
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.assets.model import RobotModel
 
@@ -81,25 +84,23 @@ def _place_arm(module: PointCloudSelfFilter, at: tuple[float, float, float], ts:
     """Put the arm at `at` in both the camera and world frames."""
     for parent in ("camera", "world"):
         module.tfbuffer.receive_transform(
-            Transform(
-                translation=Vector3(*at),
-                frame_id=parent,
+            TransformStamped(
+                transform=Transform(translation=Vector3(x=at[0], y=at[1], z=at[2])),
+                header=Header(frame_id=parent, stamp=time_from_seconds(ts)),
                 child_frame_id="arm",
-                ts=ts,
             )
         )
 
 
 def _cloud(points: list[list[float]], ts: float = 1.0) -> PointCloud2:
-    return PointCloud2.from_numpy(
+    return pointcloud_from_xyz(
         np.asarray(points, dtype=np.float32).reshape((-1, 3)),
-        frame_id="camera",
-        timestamp=ts,
+        header=Header(frame_id="camera", stamp=time_from_seconds(ts)),
     )
 
 
 def _keys(cloud: PointCloud2, voxel_size: float) -> set[tuple[int, int, int]]:
-    points = cloud.points_f32()
+    points = pointcloud_xyz(cloud)
     if not len(points):
         return set()
     return {tuple(k) for k in np.floor(points / voxel_size).astype(int).tolist()}
@@ -115,7 +116,7 @@ def test_points_on_the_robot_are_dropped_and_the_rest_survive(
 
     assert result is not None
     filtered, _ = result
-    np.testing.assert_allclose(filtered.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
+    np.testing.assert_allclose(pointcloud_xyz(filtered), [[2.0, 0.0, 0.0]], atol=1e-6)
 
 
 def test_the_mask_also_covers_where_the_robot_just_was(
@@ -155,7 +156,7 @@ def test_the_mask_quantizes_the_way_the_mapper_does(
     result = module.filter_cloud(_cloud([]))
 
     assert result is not None
-    points = result[1].points_f32()
+    points = pointcloud_xyz(result[1])
     offsets = points / 0.05 - np.floor(points / 0.05)
     np.testing.assert_allclose(offsets, 0.5, atol=1e-5)
 

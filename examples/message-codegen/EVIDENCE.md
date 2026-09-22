@@ -725,3 +725,37 @@ and retained source nanoseconds `1700000000123456789`. Logs:
 Planner backend implementations, manipulation module entry points, and the
 interactive manipulation visualizer still have legacy message consumers. These
 checks do not claim the full manipulation stack is converted.
+
+
+### Planner backend JointState and PointCloud2 self-filter cutover
+
+All planning backend JointState imports now use generated values, including
+Drake/Jacobian/Pink IK, RRT and RoboPlan, world synchronization, path utilities,
+and trajectory parametrizer inputs. Dictionary constructors became explicit
+keyword construction; the parametrizer copies generated inputs with deepcopy.
+Array/list conversions are explicit at numerical and sequence API boundaries.
+Pose and trajectory message types remain part of the pending cutover.
+
+The robot self-filter now consumes generated PointCloud2 and TransformStamped.
+A separate selection helper retains complete point records, including arbitrary
+fields, field counts, point padding, and byte order. It removes row padding when
+forming an unorganized result and preserves the source Header. Clear masks copy
+the source stamp into a world-frame header. Transform matrices come from an
+explicit geometry helper.
+
+**253 tests passed with no skips** across the complete planning subtree and the
+geometry/point-cloud helper suites. Installed pinned RoboPlan 0.6.0 and Drake
+1.49.0 allowed actual backend tests to run. Added selection tests cover both byte
+orders, custom array fields, point padding, header preservation, copy isolation,
+empty output, and invalid masks. Nineteen production/demo modules pass mypy.
+
+Both human-facing terminal demos passed: `demo_planning_backends.py` printed five
+CDR-decoded, collision-checked joint waypoints in a real Drake world;
+`demo_self_filter.py` printed three changing arm positions, one retained point
+per capture, and the original nanosecond stamp on both outputs. Logs:
+`build/message-codegen/planner-backends-cdr-tests.log`,
+`planner-backends-mypy.log`, and
+`build/message-codegen/demo/evidence/{planning-backends,self-filter}.txt`.
+
+These local results do not claim that manipulation entry points, legacy poses
+and trajectories, interactive visualizers, or the full repository are converted.

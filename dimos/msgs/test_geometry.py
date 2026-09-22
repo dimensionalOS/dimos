@@ -29,6 +29,7 @@ from dimos_generated.geometry_msgs.msg import (
 )
 from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.std_msgs.msg import Header
+import numpy as np
 import pytest
 
 from dimos.msgs.geometry import (
@@ -38,6 +39,7 @@ from dimos.msgs.geometry import (
     quaternion_from_euler,
     transform_from_odometry,
     transform_from_pose,
+    transform_matrix,
     yaw,
 )
 
@@ -162,3 +164,14 @@ def test_pose_transform_preserves_header_and_does_not_alias_input():
     result.transform.rotation.w = 0
     assert source.header.frame_id == "odom"
     assert source.pose.orientation.w == 0.8
+
+
+def test_transform_matrix_maps_rotation_and_translation_without_aliasing():
+    value = Transform(
+        translation=Vector3(x=2.0, y=-1.0, z=3.0),
+        rotation=quaternion_from_euler(0.0, 0.0, math.pi / 2),
+    )
+    matrix = transform_matrix(value)
+    np.testing.assert_allclose(matrix @ [1.0, 0.0, 0.0, 1.0], [2.0, 0.0, 3.0, 1.0], atol=1e-12)
+    value.translation.x = 10.0
+    assert matrix[0, 3] == 2.0

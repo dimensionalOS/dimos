@@ -85,6 +85,14 @@ def _transform(translation: NDArray[np.float64], rotation: Rotation) -> Transfor
     )
 
 
+def transform_matrix(transform: Transform) -> NDArray[np.float64]:
+    """Copy a generated transform into a homogeneous 4-by-4 matrix."""
+    matrix = np.eye(4, dtype=np.float64)
+    matrix[:3, :3] = _rotation(transform.rotation).as_matrix()
+    matrix[:3, 3] = _translation(transform)
+    return matrix
+
+
 def compose_transforms(first: TransformStamped, second: TransformStamped) -> TransformStamped:
     """Compose A←B and B←C, preserving A's exact source stamp in the A←C result.
 

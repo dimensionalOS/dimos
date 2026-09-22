@@ -24,6 +24,7 @@ from pathlib import Path
 from types import MappingProxyType, ModuleType, SimpleNamespace
 from typing import Any, cast
 
+from dimos_generated.sensor_msgs.msg import JointState
 import numpy as np
 from pink.exceptions import NoSolutionFound
 import pytest
@@ -67,7 +68,6 @@ from dimos.manipulation.planning.spec.validation import PreparedRobotModel, prep
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import LoadedRobotModel, PlanarBaseDefinition, RobotModel
 from dimos.utils.transform_utils import matrix_to_pose
 
@@ -548,7 +548,7 @@ class _FakeWorld:
 
     def get_joint_state(self, ctx: object) -> JointState:
         self.joint_state_calls += 1
-        return JointState({"name": ["joint_b", "joint_c", "joint_a"], "position": [0.0, 0.0, 0.0]})
+        return JointState(name=["joint_b", "joint_c", "joint_a"], position=[0.0, 0.0, 0.0])
 
     def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
         return np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
@@ -875,8 +875,8 @@ def test_step_frame_targets_rechecks_tracking_envelope_after_history_filter(
         joint_command_filter_cutoff_hz=5.0,
     )
 
-    assert first.position == pytest.approx([0.2])
-    assert second.position == pytest.approx([0.05])
+    assert list(first.position) == pytest.approx([0.2])
+    assert list(second.position) == pytest.approx([0.05])
 
 
 def test_step_frame_targets_preserves_controlled_joint_order(
@@ -905,7 +905,7 @@ def test_step_frame_targets_preserves_controlled_joint_order(
     )
 
     assert result.name == ["joint_c", "joint_a"]
-    assert result.position == pytest.approx([0.1, 0.08])
+    assert list(result.position) == pytest.approx([0.1, 0.08])
 
 
 def test_step_frame_targets_builds_both_frame_tasks_with_tuning(
@@ -1149,7 +1149,7 @@ def test_step_frame_targets_normalizes_feedback_and_saturates_commands(
         max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
     )
 
-    assert result.position == pytest.approx([-0.9999, 0.1, _TRACKING_ERROR_RAD])
+    assert list(result.position) == pytest.approx([-0.9999, 0.1, _TRACKING_ERROR_RAD])
 
 
 def test_step_frame_targets_rejects_feedback_beyond_tolerance(
@@ -1201,7 +1201,7 @@ def test_step_frame_targets_velocity_limits_unbounded_position_joint(
         max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
     )
 
-    assert result.position == pytest.approx([5.1])
+    assert list(result.position) == pytest.approx([5.1])
 
 
 def test_validate_frame_targets_rejects_margin_wider_than_joint_range(
@@ -1274,7 +1274,7 @@ def test_solve_targets_returns_successful_ik_result(mocker: MockerFixture) -> No
     assert result.status == IKStatus.SUCCESS
     assert result.joint_state is not None
     assert result.joint_state.name == ["joint_a", "joint_b", "joint_c"]
-    assert result.joint_state.position == pytest.approx([0.2, 0.1, 0.3])
+    assert list(result.joint_state.position) == pytest.approx([0.2, 0.1, 0.3])
 
 
 def test_planning_uses_named_stack_and_task_lifecycle_hooks(
@@ -1520,7 +1520,7 @@ def test_solve_pose_targets_uses_group_tip_and_filters_group_joints(
         return_value=IKResult(
             status=IKStatus.SUCCESS,
             joint_state=JointState(
-                {"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]}
+                name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3]
             ),
         ),
     )
@@ -1533,7 +1533,7 @@ def test_solve_pose_targets_uses_group_tip_and_filters_group_joints(
                 position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
             )
         },
-        seed=JointState({"name": ["joint_a", "joint_b", "joint_c"], "position": [0.0, 0.0, 0.0]}),
+        seed=JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
         max_attempts=1,
     )
 
@@ -1571,7 +1571,7 @@ def test_solve_pose_targets_partial_seed_reads_world_state(mocker: MockerFixture
         return_value=IKResult(
             status=IKStatus.SUCCESS,
             joint_state=JointState(
-                {"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]}
+                name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3]
             ),
         ),
     )
@@ -1584,7 +1584,7 @@ def test_solve_pose_targets_partial_seed_reads_world_state(mocker: MockerFixture
                 position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
             )
         },
-        seed=JointState({"name": ["joint_a"], "position": [0.0]}),
+        seed=JointState(name=["joint_a"], position=[0.0]),
         max_attempts=1,
     )
 
@@ -1602,7 +1602,7 @@ def test_solve_pose_targets_multi_target_uses_multi_frame_solve(mocker: MockerFi
         return_value=IKResult(
             status=IKStatus.SUCCESS,
             joint_state=JointState(
-                {"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]}
+                name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3]
             ),
             position_error=0.0,
             orientation_error=0.0,
@@ -1619,7 +1619,7 @@ def test_solve_pose_targets_multi_target_uses_multi_frame_solve(mocker: MockerFi
                 position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
             ),
         },
-        seed=JointState({"name": ["joint_a", "joint_b", "joint_c"], "position": [0.0, 0.0, 0.0]}),
+        seed=JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
         max_attempts=1,
     )
 
@@ -1642,7 +1642,7 @@ def test_solve_pose_targets_checks_multi_group_solution_together(
         return_value=IKResult(
             status=IKStatus.SUCCESS,
             joint_state=JointState(
-                {"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]}
+                name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3]
             ),
         ),
     )
@@ -1657,12 +1657,7 @@ def test_solve_pose_targets_checks_multi_group_solution_together(
                 position=Vector3(), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
             ),
         },
-        seed=JointState(
-            {
-                "name": ["joint_a", "joint_b", "joint_c"],
-                "position": [0.0, 0.0, 0.0],
-            }
-        ),
+        seed=JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
         max_attempts=1,
     )
 
@@ -1681,7 +1676,7 @@ def test_solve_pose_targets_auxiliary_only_retains_seed_selection_order(
         world=cast("Any", world),
         pose_targets={},
         auxiliary_groups=[world.groups["no_tip"], world.groups["manipulator"]],
-        seed=JointState({"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]}),
+        seed=JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3]),
     )
 
     assert result.status == IKStatus.SUCCESS
@@ -1691,7 +1686,7 @@ def test_solve_pose_targets_auxiliary_only_retains_seed_selection_order(
 
 
 def _solved_joint_state() -> JointState:
-    return JointState({"name": ["joint_a", "joint_b", "joint_c"], "position": [0.1, 0.2, 0.3]})
+    return JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3])
 
 
 def _qp_infeasible() -> NoSolutionFound:
@@ -1809,7 +1804,7 @@ def test_solve_mapping_value_error_fails_without_retrying(mocker: MockerFixture)
 
 
 def _pose_targets_seed() -> JointState:
-    return JointState({"name": ["joint_a", "joint_b", "joint_c"], "position": [0.0, 0.0, 0.0]})
+    return JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0])
 
 
 def test_solve_pose_targets_retries_after_no_solution_found(mocker: MockerFixture) -> None:

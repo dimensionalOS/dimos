@@ -20,6 +20,8 @@ from contextlib import contextmanager
 import threading
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.sensor_msgs.msg import JointState
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.manipulation.planning.groups.identifiers import assert_valid_group_id
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
@@ -36,7 +38,6 @@ from dimos.manipulation.planning.spec.validation import PreparedRobotModel, prep
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
