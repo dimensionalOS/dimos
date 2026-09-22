@@ -35,10 +35,12 @@ failure can be bisected by dropping down a level:
   zenoh router the viewer dials.
 """
 
+from collections.abc import Mapping
 from functools import partial
 import os
 from typing import Any
 
+from dimos.core.coordination.blueprint_config.sources import configuration_environment
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
@@ -132,6 +134,17 @@ def _rerun_blueprint(camera: str = "world/video") -> Any:
 
 def _render_map(msg: Any) -> Any:
     return msg.to_rerun(voxel_size=0.01)
+
+
+def _dds_camera(environ: Mapping[str, str] | None = None) -> str:
+    """The entity GO2DDS puts the camera on, off the same knob GO2DDS reads.
+
+    h264 off the RTP multicast lands on `video`, jpeg polled off the videohub on `image`,
+    so one `.env` line (``GO2DDS__VIDEO_ENCODING=jpeg``, plus ``GO2DDS__VIDEO_FPS``) moves
+    the robot's encoder and the pane watching it together.
+    """
+    env = {key.lower(): value for key, value in configuration_environment(environ).items()}
+    return "world/image" if env.get("go2dds__video_encoding") == "jpeg" else "world/video"
 
 
 def _rerun_config(
@@ -322,10 +335,6 @@ _go2_dds_pointlio = GO2DDS.blueprint(
     iface="enP8p1s0",
     lidar_on=False,
     tf_root="mid360_link",
-    # jpeg polled off the videohub instead of the h264 multicast: one frame a second is
-    # all the wifi link (and a human watching) needs, and it lands on `image`, not `video`.
-    video_encoding="jpeg",
-    video_fps=1.0,
     session=ZenohConfig(mode="router", listen=["tcp/0.0.0.0:7447"], connect=[]),
 ).remappings(
     [
@@ -345,7 +354,7 @@ go2_dds_motion_pointlio = autoconnect(
                 "world/lidar_raw": None,
                 "world/region_bounds": None,
             },
-            camera="world/image",
+            camera=_dds_camera(),
         ),
     ),
     _go2_dds_pointlio,
@@ -377,9 +386,9 @@ go2_viewer = autoconnect(
     vis_module(
         viewer_backend=global_config.viewer,
         rerun_config={
-            # the camera pane follows the dds stack it dials by default; pass
-            # camera="world/video" to watch an h264 (go2web bridge) stack instead
-            **_rerun_config(camera="world/image"),
+            # the camera pane follows the encoder of the stack it dials: set
+            # GO2DDS__VIDEO_ENCODING here too when the robot is serving jpeg
+            **_rerun_config(camera=_dds_camera()),
             "topics": [
                 "tf",
                 "odometry",

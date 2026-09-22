@@ -17,6 +17,7 @@
 from typing import Any
 
 from dimos.robot.unitree.go2.zenoh.blueprints import (
+    _dds_camera,
     go2_dds_motion_pointlio,
     go2_viewer,
     go2_zenoh_basic,
@@ -36,15 +37,22 @@ def _camera_entity(blueprint: Any) -> str:
     return str(pane)
 
 
-def test_dds_pointlio_streams_1hz_jpeg() -> None:
-    (dds,) = (a for a in go2_dds_motion_pointlio.active_blueprints if "video_fps" in a.kwargs)
-    assert dds.kwargs["video_encoding"] == "jpeg"
-    assert dds.kwargs["video_fps"] == 1.0
-    assert _camera_entity(go2_dds_motion_pointlio) == "world/image"
+def test_camera_entity_follows_the_encoder() -> None:
+    assert _dds_camera({"GO2DDS__VIDEO_ENCODING": "jpeg"}) == "world/image"
+    assert _dds_camera({"go2dds__video_encoding": "jpeg"}) == "world/image"
+    assert _dds_camera({}) == "world/video"
+
+
+def test_dds_pointlio_pins_no_encoding() -> None:
+    # h264 is the default; the robot's .env is what flips it to jpeg
+    for atom in go2_dds_motion_pointlio.active_blueprints:
+        assert "video_encoding" not in atom.kwargs
+        assert "video_fps" not in atom.kwargs
+    assert _camera_entity(go2_dds_motion_pointlio) == _dds_camera()
 
 
 def test_viewer_subscribes_both_encodings() -> None:
-    assert _camera_entity(go2_viewer) == "world/image"
+    assert _camera_entity(go2_viewer) == _dds_camera()
     topics = _rerun_kwargs(go2_viewer)["topics"]
     assert {"video", "image", "camera_info"} <= set(topics)
 
