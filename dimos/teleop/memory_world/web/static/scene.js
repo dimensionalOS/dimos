@@ -456,7 +456,6 @@ export class WorldScene {
         };
     }
 
-    /** Hide or show the head-locked HUD: minimap and answer text together. */
     // ---- orbit: circle a frame of the robot instead of walking (orbit.js) ------
 
     /** Where the orbited frame is now, robot coords; the eye follows it while orbiting. */

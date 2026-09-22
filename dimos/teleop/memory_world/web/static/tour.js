@@ -564,7 +564,7 @@ export class Tour {
             // A presentation shows the whole map from above: pin full quality (the
             // governor's lower levels cull far voxels) and restore automatic on exit.
             this._saved.quality = this.scene._qualityAuto ? null : this.scene._quality;
-            this.scene._hudGroup.visible = false;   // minimap + answer panel: the card carries the words
+            this.scene._hudGroup.visible = false;   // the answer panel: the card carries the words
             this.scene._hudGroupPinnedOff = true;   // an answer must not bring it back mid-tour
             this.scene.setQuality(0);
             this._buildPlacards();

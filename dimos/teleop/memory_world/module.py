@@ -173,8 +173,8 @@ class MemoryWorldConfig(ModuleConfig):
     # The frame the viewer's orbit mode circles, sent per replay scan. Falls
     # back to the camera frame when tf does not know it.
     orbit_frame: str = "base_link"
-    # Top-down density map (GTA-style minimap + ground projection). Computed
-    # from the same point cloud — Z-slab histogram into a square image.
+    # Top-down density map, a Z-slab histogram of the same point cloud into a square
+    # image. Still computed and sent; nothing has drawn it since the minimap went.
     map_image_size: int = 512
     # The top-down map is a footprint, so it takes the middle of whatever
     # height range the cloud spans — percentiles, not metres, so it works on
@@ -641,8 +641,8 @@ class MemoryWorldModule(
             conn.send_threadsafe(encode_text("world_summary", **cloud_header))
             conn.send_threadsafe(encode_binary(MSG_POINT_CLOUD, cloud_header, cloud_payload))
 
-            # Send top-down map next — both the ground plane and the HUD
-            # minimap need it, so render asap on the client.
+            # Send the top-down map next. Nothing draws it since the minimap was
+            # removed; the client's `setTopDownMap` takes it and does nothing.
             if top_down is not None:
                 map_header, map_payload = top_down
                 conn.send_threadsafe(encode_binary(MSG_TOP_DOWN_MAP, map_header, map_payload))

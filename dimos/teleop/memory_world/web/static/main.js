@@ -225,7 +225,7 @@ function handleControl(msg) {
             log(`world n=${msg.n}${msg.has_colors ? ' rgb' : ''}`);
             break;
         case 'ready':
-            syncLayerBoxes();  // the cloud, photos and minimap exist now
+            syncLayerBoxes();  // the cloud and photos exist now
             syncHeightRange();  // and the cloud's own z range is known
             setStatus('World loaded — left stick walks, pinch both hands to scale');
             diag('server_ready');
@@ -685,7 +685,6 @@ stickEl.addEventListener('touchend', releaseStick);
 stickEl.addEventListener('touchcancel', releaseStick);
 
 
-// The minimap starts hidden, so the button starts as the way to get it back.
 // Take me to the answer: the best photo of the place BEING BROWSED, else that place's
 // marker, else the focus point. The J key and this button both used to ask for index 0 of
 // the UNFILTERED photo list and fall back to _lastResultPoints[0], so after stepping to
