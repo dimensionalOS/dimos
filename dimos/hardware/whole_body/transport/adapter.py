@@ -24,12 +24,13 @@ from collections.abc import Callable
 import threading
 from typing import Any
 
+from dimos_generated.dimos_msgs.msg import MotorCommandArray
+from dimos_generated.sensor_msgs.msg import Imu, JointState
+
 from dimos.core.transport_factory import make_transport
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.msgs.time import header_now
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -135,6 +136,7 @@ class TransportWholeBodyAdapter:
             return False
 
         msg = MotorCommandArray(
+            header=header_now(),
             q=[c.q for c in commands],
             dq=[c.dq for c in commands],
             kp=[c.kp for c in commands],

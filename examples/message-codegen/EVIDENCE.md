@@ -627,3 +627,19 @@ lidar TF chain, and exact stamps `1700000000223456789` through
 ROS was required. This validates the connection's generated-message boundary;
 remaining downstream whole-body/navigation consumers and hardware acceptance
 are not claimed complete.
+
+### Whole-body adapter generated streams
+
+TransportWholeBodyAdapter now declares generated JointState, Imu, and
+MotorCommandArray types. Commands receive an explicit wall-clock header. Five
+focused tests pass for disconnected behavior, preservation of complete feedback
+when a short frame arrives, and XYZW-to-WXYZ IMU conversion. The adapter and demo
+pass mypy.
+
+The hardware-free demo passed on LCM and independent loopback Zenoh sessions,
+exchanging two-joint feedback, IMU, and full hybrid motor commands. Transcript:
+`build/message-codegen/demo/evidence/whole-body-transport.txt`. The automatic
+subprocess E2E check exercises the same assertions and cleanup. The initial demo
+Zenoh factory incorrectly passed a leading slash to the raw transport; it now
+uses the same `dimos/` topic mapping as the production transport factory.
+No production topic compatibility path was added.

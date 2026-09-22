@@ -658,3 +658,17 @@ chain, with exact source nanoseconds on every edge. It requires neither ROS nor
 a robot; it cleans up subscriptions and the module on exit. The neighboring
 `test_connection_messages.py` also checks joint-state aggregation, command array
 splitting, tracking-speed sentinels, and malformed-command rejection.
+
+### Whole-body transport feedback and commands
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build \
+  .venv/bin/python examples/message-codegen/demo_whole_body_transport.py
+```
+
+This connects the actual whole-body adapter to synthetic robot-side publishers
+and a command subscriber, first over LCM and then through two explicit loopback
+Zenoh sessions. It prints feedback positions `[0.25, -0.5]`, commanded positions
+`[0.75, -0.25]`, and the hardware-facing WXYZ quaternion. The demo checks command
+gains/torques and generated headers, then closes transports, subscriptions, and
+sessions. `test_whole_body_transport.py` runs the same exchange automatically.
