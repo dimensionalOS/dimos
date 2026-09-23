@@ -205,12 +205,18 @@ def sample_pose_path(max_points=200):
     # It is passed in already built rather than read here: on this build the poses come
     # from the tf tree, not from a pose stamped on an observation, and tf is the module's
     # to read. A recording whose tf could not place the camera gives an empty path.
+    # An (N, 3) ARRAY, not a list of lists. Everything else the sandbox hands out is a
+    # numpy array -- `points_f32()` above all -- so a model writes `path.shape` and
+    # `path[:, 2]` on its first attempt and got `AttributeError: 'list' object has no
+    # attribute 'shape'`, burning a whole tool call on the shape of the thing rather
+    # than on the question. Indexing, len() and iteration all still work.
     if not isinstance(max_points, int) or not 2 <= max_points <= 2000:
         raise ValueError("max_points must be an integer from 2 through 2000")
     if len(trail) <= max_points:
-        return [list(point) for point in trail]
+        return np.asarray(trail, dtype=float).reshape(-1, 3)
     stride = (len(trail) - 1) / (max_points - 1)
-    return [list(trail[min(int(index * stride), len(trail) - 1)]) for index in range(max_points)]
+    picked = [trail[min(int(index * stride), len(trail) - 1)] for index in range(max_points)]
+    return np.asarray(picked, dtype=float).reshape(-1, 3)
 
 namespace = {{
     "__name__": "__main__",

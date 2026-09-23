@@ -177,7 +177,7 @@ stream = store.streams["global_map"]   # a stream reads as a sequence of observa
 observation = stream.last()            # also .first(); iterate for all of them
 ts, ident, payload = observation.ts, observation.id, observation.data
 cloud = store.streams["global_map"].last().data.points_f32()   # the lidar map, (N, 3)
-path = sample_pose_path(max_points=200)  # the robot's trajectory, world xyz, already built
+path = sample_pose_path(max_points=200)  # the robot's trajectory: an (N, 3) numpy array
 places                                   # what the LAST search found, centre and radius each
 viewer_position                          # where the person is standing, or None
 world_frame                              # the frame every number below is in

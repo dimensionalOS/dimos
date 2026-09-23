@@ -1136,3 +1136,22 @@ def test_the_planner_walks_the_path_and_the_viewer_orbits_the_steps() -> None:
     # one step per lidar scan -- and the orbit is then exactly what the planner wanted.
     host.index.pop("path")
     assert host._robot_path_for("base_link") == steps
+
+
+def test_the_trajectory_reaches_a_program_as_an_array_not_a_list(memory_world) -> None:
+    """`path.shape` is the first thing a model writes, and it used to throw.
+
+    Everything else the sandbox hands out is a numpy array -- `points_f32()` above all --
+    so a list of lists here cost a whole tool call to `AttributeError: 'list' object has
+    no attribute 'shape'` before the model could get to the question. Jeff saw it on
+    "whats the height of the ceiling?". A real subprocess, because the shape of this
+    thing only exists inside the bootstrap.
+    """
+    outcome = memory_world.analyze_memory(
+        "path = sample_pose_path(max_points=8)\n"
+        "result = {'answer': f'{type(path).__name__} {path.ndim}d {path.shape[1]} wide'}\n",
+        timeout=60,
+    )
+
+    assert outcome.success, outcome.message
+    assert outcome.message == "ndarray 2d 3 wide"
