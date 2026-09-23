@@ -246,8 +246,12 @@ function handleControl(msg) {
         case 'chat':
             appendChat(msg);
             break;
+        case 'chat_summary':
+            applyChatSummary(msg.call_id, msg.summary);
+            break;
         case 'chat_history':
             chatLogEl.textContent = '';
+            chatRows.clear();
             for (const entry of msg.entries || []) appendChat(entry);
             break;
         case 'agent_idle':
@@ -775,24 +779,77 @@ function renderMarkdown(text) {
     return html.join('');
 }
 
+// Rows by tool-call id, so a summary that arrives after the row can find it. Cleared with
+// the log, because a summary for a row nobody can see has nothing to write on.
+const chatRows = new Map();
+
+/** The argument worth showing beside the tool's name: the value, not the JSON. */
+function toolArgSummary(args) {
+    let parsed = null;
+    try {
+        parsed = JSON.parse(args || '{}');
+    } catch (_) {
+        return args || '';
+    }
+    if (!parsed || typeof parsed !== 'object') return args || '';
+    const shown = Object.entries(parsed)
+        // A whole program is never the one-line summary; `python` rows say it in words.
+        .filter(([, v]) => v !== null && v !== '' && String(v).length < 120)
+        .map(([k, v]) => (typeof v === 'string' ? v : `${k}=${JSON.stringify(v)}`));
+    return shown.join(', ');
+}
+
 function appendChat(entry) {
     const row = document.createElement('div');
     row.className = `msg ${entry.role}`;
     if (entry.role === 'tool_call') {
-        const args = entry.args || '';
-        const short = args.length > TOOL_ARGS_CHARS ? `${args.slice(0, TOOL_ARGS_CHARS)}…` : args;
-        const argsEl = document.createElement('span');
-        argsEl.className = 'args';
-        argsEl.textContent = short;
-        row.append(`▶ ${entry.name}(`, argsEl, ')');
-        if (short !== args) {
-            row.classList.add('expandable');
-            row.title = 'Click to expand';
-            row.addEventListener('click', () => {
-                const open = row.classList.toggle('open');
-                argsEl.textContent = open ? args : short;
-            });
+        const name = document.createElement('span');
+        name.className = 'tool';
+        name.textContent = entry.name;
+        row.append(name);
+        if (entry.python) {
+            // A program: the summary is the row and the source folds out of it. Written
+            // this way round because the source is what the panel used to show and what
+            // nobody could read -- see chat.py for who names the calls.
+            const said = document.createElement('span');
+            said.className = 'said';
+            const summary = entry.summary || '';
+            said.textContent = summary || 'reading the program…';
+            if (!summary) said.classList.add('waiting');
+            const more = document.createElement('span');
+            more.className = 'more';
+            more.textContent = 'code';
+            const code = document.createElement('pre');
+            code.className = 'code';
+            let program = '';
+            try {
+                program = String(JSON.parse(entry.args || '{}')[entry.python] || '');
+            } catch (_) {
+                program = entry.args || '';
+            }
+            code.textContent = program;
+            more.addEventListener('click', () => row.classList.toggle('open'));
+            row.append(said, more, code);
+        } else {
+            const args = toolArgSummary(entry.args);
+            const full = entry.args || '';
+            const short = args.length > TOOL_ARGS_CHARS ? `${args.slice(0, TOOL_ARGS_CHARS)}…` : args;
+            const argsEl = document.createElement('span');
+            argsEl.className = 'args';
+            argsEl.textContent = short;
+            row.append(argsEl);
+            // The full JSON is still reachable: a summary that drops an argument must not
+            // be the only thing anyone can see.
+            const more = document.createElement('span');
+            more.className = 'more';
+            more.textContent = 'args';
+            const code = document.createElement('pre');
+            code.className = 'code';
+            code.textContent = full;
+            more.addEventListener('click', () => row.classList.toggle('open'));
+            row.append(more, code);
         }
+        if (entry.call_id) chatRows.set(entry.call_id, row);
     } else if (entry.role === 'tool_result') {
         row.textContent = `↳ ${entry.text}`;
         if (entry.ok === false) row.classList.add('failed');
@@ -809,6 +866,16 @@ function appendChat(entry) {
     const follow = chatLogEl.scrollTop + chatLogEl.clientHeight >= chatLogEl.scrollHeight - 24;
     chatLogEl.appendChild(row);
     if (follow) chatLogEl.scrollTop = chatLogEl.scrollHeight;
+}
+
+/** A summary that arrived after its row: write it where the placeholder was. */
+function applyChatSummary(callId, summary) {
+    const row = chatRows.get(callId);
+    if (!row || !summary) return;
+    const said = row.querySelector('.said');
+    if (!said) return;
+    said.textContent = summary;
+    said.classList.remove('waiting');
 }
 
 function setAgentIdle(idle) {
@@ -1181,6 +1248,7 @@ async function connect() {
         // reconnect used to come back to someone else's answer with no query behind it.
         chatInput.value = '';
         chatLogEl.textContent = '';
+        chatRows.clear();
         if (results) results.clear();
         connectBtn.classList.add('hidden');
         applyIndexStatus(indexStatus);
@@ -1243,6 +1311,7 @@ async function disconnect() {
     replay = null;
     document.body.classList.remove('desktop-view', 'chat-open');
     chatLogEl.textContent = '';
+    chatRows.clear();
     setAgentIdle(true);
     chatStateEl.textContent = 'not connected';
     connectBtn.classList.remove('hidden');

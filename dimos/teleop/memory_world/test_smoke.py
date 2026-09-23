@@ -24,6 +24,7 @@ together; it does not mean the demo looks right.
 from __future__ import annotations
 
 import itertools
+import json
 import math
 import threading
 from types import SimpleNamespace
@@ -727,3 +728,40 @@ def test_prebuild_refuses_a_recording_it_cannot_build_instead_of_leaving_half_of
         prebuild.main([memory_world.config.store_path])
     assert "prebuild failed" in str(refused.value)
     assert "visual index" in str(refused.value)
+
+
+# ---- the chat panel ---------------------------------------------------------------
+
+
+def test_a_question_is_not_mistaken_for_a_program_and_a_program_is_found() -> None:
+    """Which tool calls get summarised rather than dumped.
+
+    The failure that matters is the false positive: `{"query": "a fire extinguisher"}` read
+    as code would replace the one readable row in the transcript with a model's guess about
+    a phrase. So a python token alone is not enough and a field NAME alone is not either.
+    """
+    from dimos.teleop.memory_world.chat import python_in_args
+
+    assert python_in_args('{"query":"a fire extinguisher"}') is None
+    assert python_in_args('{"text":"where is the entrance, and how tall is it"}') is None
+    assert python_in_args("not json at all") is None
+    assert python_in_args('{"n":3}') is None
+
+    program = "import numpy as np\nxyz = np.asarray(cloud)\nreturn xyz.mean(axis=0)"
+    found = python_in_args(json.dumps({"code": program}))
+    assert found == ("code", program)
+    # ...and under a name nobody would guess, because it is multi-line python.
+    found = python_in_args(json.dumps({"payload": program}))
+    assert found == ("payload", program)
+
+
+def test_a_summary_that_cannot_be_had_leaves_the_program_showing() -> None:
+    """The summariser is a nicety over a subprocess, and must never break a transcript."""
+    from dimos.teleop.memory_world import chat
+
+    was = chat.SUMMARY_COMMAND
+    try:
+        chat.SUMMARY_COMMAND = ("definitely-not-a-command-on-this-machine",)
+        assert chat.summarise_python("import numpy as np\nprint(np.pi)") is None
+    finally:
+        chat.SUMMARY_COMMAND = was

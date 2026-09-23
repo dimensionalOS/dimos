@@ -35,7 +35,10 @@ typing into the panel gets, and it shows the work rather than only the conclusio
 
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict, deque
+import json
+import subprocess
+import threading
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages.base import BaseMessage
@@ -51,6 +54,83 @@ logger = setup_logger()
 # Rows kept for a viewer that connects mid-conversation. A transcript is text; the cost
 # of holding several hundred rows is nothing beside one thumbnail.
 CHAT_HISTORY = 400
+
+# ---- python tool calls, said in words ----------------------------------------------
+# A tool whose argument is a program puts a screenful of source in the transcript, and the
+# one thing a reader wants from it -- what it actually DID -- is the hardest thing to see
+# in it. So a fast model names the calls it makes and the panel shows that, with the source
+# behind a disclosure for anyone who wants it.
+SUMMARY_MODEL = "claude-haiku-4-5-20251001"
+# Shelled out to the `claude` CLI rather than the API: there is no ANTHROPIC_API_KEY on
+# this machine, and Jeff's call (2026-09-23) was that shelling out is fine here.
+SUMMARY_COMMAND = ("claude", "-p")
+SUMMARY_TIMEOUT_S = 30.0
+SUMMARY_CHARS = 240
+SUMMARY_CACHE = 128
+# Argument names that mean "this value is a program", and the tokens that say a value is
+# python whatever it is called. Both, because a tool is free to call the field anything and
+# a field called `code` is free to hold a shell one-liner.
+PYTHON_ARG_KEYS = ("code", "python", "script", "source", "program", "snippet", "expression")
+PYTHON_TOKENS = ("import ", "def ", "print(", "return ", "lambda ", "for ", "await ", "= ")
+SUMMARY_PROMPT = """Below is the body of one tool call made by an agent. List the main
+python functions, methods and libraries it calls, most important first, as a bare
+comma-separated list of names -- no prose, no explanation, no code fences, one line, at
+most eight names. If it calls nothing recognisable, answer with what it does in at most
+eight words.
+
+"""
+
+
+def python_in_args(args: str) -> tuple[str, str] | None:
+    """``(argument name, source)`` of the first argument that is a python program, else None.
+
+    Multi-line and token-bearing, or named like a program and token-bearing. A one-line
+    `"a fire extinguisher"` must never read as code, which is why a token alone is not
+    enough and a NAME alone is not either.
+    """
+    try:
+        parsed = json.loads(args or "{}")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    for key, value in parsed.items():
+        if not isinstance(value, str) or len(value) < 24:
+            continue
+        tokens = sum(token in value for token in PYTHON_TOKENS)
+        if not tokens:
+            continue
+        if str(key).lower() in PYTHON_ARG_KEYS or ("\n" in value and tokens >= 2):
+            return str(key), value
+    return None
+
+
+def summarise_python(code: str) -> str | None:
+    """The calls *code* makes, named by a fast model. None when it cannot be had.
+
+    Never raises: a missing CLI, a timeout or a non-zero exit all mean the panel shows the
+    source as it always did. The summary is a nicety and must not be able to break a chat.
+    """
+    try:
+        done = subprocess.run(
+            [*SUMMARY_COMMAND, SUMMARY_PROMPT + code, "--model", SUMMARY_MODEL],
+            capture_output=True,
+            text=True,
+            timeout=SUMMARY_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        logger.info("no python summary (%s): the source will be shown instead", error)
+        return None
+    if done.returncode != 0:
+        logger.info("no python summary (exit %d): %s", done.returncode, done.stderr[-200:])
+        return None
+    # First non-empty line only: the model is asked for one line and a preamble is the
+    # commonest way that goes wrong.
+    for line in done.stdout.splitlines():
+        said = line.strip().strip("`").strip()
+        if said:
+            return said[:SUMMARY_CHARS]
+    return None
 
 
 class WorldChat:
@@ -75,6 +155,9 @@ class WorldChat:
 
     def _init_chat(self) -> None:
         self._chat_history = deque(maxlen=CHAT_HISTORY)
+        # One summary per distinct program, and a bound on the memory: an agent in a loop
+        # runs the same code again and again, and paying a model for each is silly.
+        self._summaries: OrderedDict[str, str] = OrderedDict()
         # Idle until told otherwise: the panel's "thinking…" must not be the first thing
         # a viewer sees on a server whose agent has never been asked anything.
         self._agent_is_idle = True
@@ -118,7 +201,52 @@ class WorldChat:
         with self._clients_lock:
             self._chat_history.extend(entries)
         for entry in entries:
+            found = (
+                python_in_args(str(entry.get("args") or ""))
+                if entry.get("role") == "tool_call"
+                else None
+            )
+            if found is not None:
+                # The row goes out NOW and the summary follows it. Waiting for the model
+                # would hold the whole transcript behind a nicety -- and the row is the
+                # proof the agent is working, which is exactly what a person watching a
+                # slow query is looking for.
+                entry["python"] = found[0]  # type: ignore[typeddict-unknown-key]
+                self._broadcast(encode_text("chat", **entry))
+                self._summarise_in_the_background(entry, found[1])
+                continue
             self._broadcast(encode_text("chat", **entry))
+
+    def _summarise_in_the_background(self, entry: ChatEntry, code: str) -> None:
+        """Name the calls *code* makes, then tell every viewer, including later ones."""
+        call_id = entry.get("call_id")
+        cached = self._summaries.get(code)
+        if cached is not None:
+            self._publish_summary(entry, call_id, cached)
+            return
+
+        def work() -> None:
+            said = summarise_python(code)
+            if not said:
+                return
+            with self._clients_lock:
+                self._summaries[code] = said
+                while len(self._summaries) > SUMMARY_CACHE:
+                    self._summaries.popitem(last=False)
+            self._publish_summary(entry, call_id, said)
+
+        threading.Thread(target=work, daemon=True, name="MemoryWorldChatSummary").start()
+
+    def _publish_summary(self, entry: ChatEntry, call_id: Any, said: str) -> None:
+        """Attach a summary to the row a viewer already has, and to the stored one.
+
+        The stored entry is mutated so a viewer connecting AFTERWARDS gets the summary
+        with the transcript rather than the raw program -- the row and the history are the
+        same dict, so this is one write.
+        """
+        with self._clients_lock:
+            entry["summary"] = said  # type: ignore[typeddict-unknown-key]
+        self._broadcast(encode_text("chat_summary", call_id=call_id, summary=said))
 
     def _on_agent_idle(self, idle: bool) -> None:
         with self._clients_lock:
