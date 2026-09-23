@@ -238,3 +238,21 @@ and verification of each transport's separate RRD output.
 Scouting/gossip are disabled in the explicit Zenoh fixture. This is not evidence
 that the previously observed default discovery issue is fixed, nor is it
 interactive viewer acceptance.
+
+### Viewer control WebSocket
+
+The viewer's click, velocity, and stop handlers now emit generated `PointStamped`
+and `Twist`. Click timestamps convert integer milliseconds directly to ROS time;
+nullable 2D click coordinates remain zero. No legacy message imports remain in
+`dimos/visualization` Python sources.
+
+```sh
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_viewer_controls.py
+```
+
+Observed: a real loopback WebSocket delivered a map click at `(1.5, 2.5, 0)` with
+stamp `1700000000.123000000`, forward/yaw velocity `(0.5, 0.8)`, and a stop with all
+six velocity components zero. All received values were encoded and decoded as
+CDR. This exercises the control protocol without requiring a graphical viewer.
+The six server tests passed; production-file mypy passed. The invalid-JSON test
+now proves that a subsequent stop is delivered instead of relying on sleeps.

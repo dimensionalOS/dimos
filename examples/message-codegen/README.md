@@ -1161,3 +1161,12 @@ The Zenoh variant writes `live-bridge-zenoh.rrd`. It uses separate publisher and
 subscriber sessions connected explicitly over loopback TCP with scouting and
 gossip disabled. This verifies the transport-to-bridge route without claiming
 default peer-discovery reliability. Both variants have bounded subprocess tests.
+
+Run the viewer control protocol without a GUI:
+
+```sh
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_viewer_controls.py
+```
+
+This opens a local WebSocket, sends a click, velocity, and stop, and prints the
+verified generated CDR values. It requires no robot or ROS installation.

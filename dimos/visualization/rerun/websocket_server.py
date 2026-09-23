@@ -22,15 +22,15 @@ import threading
 import time
 from typing import Any, Literal, TypedDict, Union
 
+from dimos_generated.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
+from dimos_generated.std_msgs.msg import Header
 import websockets
 import websockets.asyncio.server as ws_server
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.time import time_from_nanoseconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -199,11 +199,15 @@ class RerunWebSocketServer(Module):
         if msg_type == "click":
             self.clicked_point.publish(
                 PointStamped(
-                    x=_num(msg.get("x")),
-                    y=_num(msg.get("y")),
-                    z=_num(msg.get("z")),
-                    ts=_num(msg.get("timestamp_ms")) / 1000.0,
-                    frame_id=str(msg.get("entity_path", "")),
+                    header=Header(
+                        stamp=time_from_nanoseconds(int(msg.get("timestamp_ms") or 0) * 1_000_000),
+                        frame_id=str(msg.get("entity_path", "")),
+                    ),
+                    point=Point(
+                        x=_num(msg.get("x")),
+                        y=_num(msg.get("y")),
+                        z=_num(msg.get("z")),
+                    ),
                 )
             )
 
@@ -211,17 +215,17 @@ class RerunWebSocketServer(Module):
             self.tele_cmd_vel.publish(
                 Twist(
                     linear=Vector3(
-                        _num(msg.get("linear_x")),
-                        _num(msg.get("linear_y")),
-                        _num(msg.get("linear_z")),
+                        x=_num(msg.get("linear_x")),
+                        y=_num(msg.get("linear_y")),
+                        z=_num(msg.get("linear_z")),
                     ),
                     angular=Vector3(
-                        _num(msg.get("angular_x")),
-                        _num(msg.get("angular_y")),
-                        _num(msg.get("angular_z")),
+                        x=_num(msg.get("angular_x")),
+                        y=_num(msg.get("angular_y")),
+                        z=_num(msg.get("angular_z")),
                     ),
                 )
             )
 
         elif msg_type == "stop":
-            self.tele_cmd_vel.publish(Twist.zero())
+            self.tele_cmd_vel.publish(Twist())
