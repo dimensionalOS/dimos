@@ -12,30 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copyreg
 
-import numpy as np
-
-
-def reduce_external(obj):  # type: ignore[no-untyped-def]
-    # Convert Vector3dVector to numpy array for pickling
-    points_array = np.asarray(obj.points)
-    return (reconstruct_pointcloud, (points_array,))
-
-
+# Recorded lidar pickles under data/ reference this function by module path
+# (they were written through a copyreg reducer for open3d point clouds), so it
+# has to stay importable from here.
 def reconstruct_pointcloud(points_array):  # type: ignore[no-untyped-def]
-    # Create new PointCloud and assign the points
     import open3d as o3d  # type: ignore[import-untyped]
 
     pc = o3d.geometry.PointCloud()
     pc.points = o3d.utility.Vector3dVector(points_array)
     return pc
-
-
-def register_picklers() -> None:
-    # Register for the actual PointCloud class that gets instantiated
-    # We need to create a dummy PointCloud to get its actual class
-    import open3d as o3d  # type: ignore[import-untyped]
-
-    _dummy_pc = o3d.geometry.PointCloud()
-    copyreg.pickle(_dummy_pc.__class__, reduce_external)
