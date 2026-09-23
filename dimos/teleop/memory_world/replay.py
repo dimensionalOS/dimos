@@ -12,49 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Voxel replay: keyframes plus per-scan add/remove diffs, stored in the recording.
+"""Voxel replay: reading the keyframe-and-diff streams an older recording carries.
 
-Scrubbing a timeline needs the voxel map *as it was* at any moment. Rebuilding
-it from raw scans is far too slow for that, so two streams are written into the
-recording once:
+``voxel_keyframe`` holds the whole voxel set every few seconds and ``voxel_diff`` holds
+what each lidar scan added or removed, so any moment is the nearest earlier keyframe plus
+the diffs up to it -- and a viewer already showing one moment reaches its neighbour by
+applying, or un-applying, a few of them. :class:`VoxelReplay` serves that to a browser as
+segments and its final keyframe doubles as the static map.
 
-``voxel_keyframe``
-    The whole voxel set, one PointCloud2 every ``keyframe_interval_s`` and one
-    at the last scan, so the final keyframe is the finished map.
-``voxel_diff``
-    One PointCloud2 per lidar scan holding only the voxels that scan added
-    (tag ``TAG_ADDED``) or removed (tag ``TAG_REMOVED``).
-
-Any moment is then the nearest earlier keyframe plus the diffs up to it, and a
-viewer that already shows some moment reaches a neighbouring one by applying
-(or un-applying, since a diff is its own inverse with the tags swapped) a few
-diffs. The map is the ray-traced one (:class:`RayTracedGrid`, over dimos's
-``VoxelRayMapper``): every scan casts rays from the sensor, so a voxel a later
-scan sees through is cleared, and people and doors that moved disappear from
-the map instead of leaving a shell. The final keyframe doubles as the static
-map the viewer shows outside the timeline.
-
-Run ``python -m dimos.teleop.memory_world.replay <recording.db>`` to build the
-streams ahead of time; the module builds them on first use otherwise.
+**NOTHING WRITES THESE STREAMS ANY MORE.** They were ray-traced from the raw scans on
+first use, which cost half an hour on a large recording and was deleted on 2026-09-22:
+a recording whose mapper published ``global_map`` as it grew already holds the map at
+every moment of it, and the timeline is read off those messages instead (see
+``world_cache._map_timeline``). This file is kept for the recordings made before that,
+which carry the streams already; a recording without them has no voxel timeline and is
+scrubbed through its map stream or not at all.
 """
 
 from __future__ import annotations
 
-import argparse
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 import gzip
-import itertools
 import json
 import struct
-import time
 from typing import Any
 
 import numpy as np
 
-from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
-from dimos.mapping.voxels.keys import FIELD_BITS, FIELD_MASK, KEY_OFFSET
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
 
@@ -64,272 +50,7 @@ DIFF_STREAM = "voxel_diff"
 KEYFRAME_STREAM = "voxel_keyframe"
 TAG_ADDED = 1
 TAG_REMOVED = 2
-# 2: the build reads the lidar stream in TIME order. Version 1 read it in the order the
-# scans were WRITTEN, so on a recording whose scans are not in time order its frame n is a
-# different scan from frame n of a version-2 build -- and everything that indexes by frame
-# (the orbit positions, the timeline, `_robot_end_pose`) reads time order now. A version-1
-# cache is not wrong in itself, it is simply not the thing the servers read any more:
-# measured, an existing cache paired frames [1, 2, 0.5, 3, 2.5] with orbit positions
-# [0.5, 1, 2, 2.5, 3], and `available()` said it was fine. Bumping this rebuilds it.
-FORMAT_VERSION = 2
-# Streams built another way (column carving, before ray tracing) are rebuilt.
-BUILDER = "raytrace"
 WIRE_CACHE_BYTES = 256_000_000  # gzipped segments kept for the next viewer
-
-
-@dataclass(frozen=True)
-class SensorScan:
-    """One lidar scan in its sensor frame, and where that sensor was."""
-
-    points: np.ndarray  # (N, 3) float32, sensor frame
-    position: tuple[float, float, float]
-    orientation: tuple[float, float, float, float]  # (x, y, z, w)
-
-
-def sensor_scan(points: np.ndarray, world_from_sensor: np.ndarray, in_world: bool) -> SensorScan:
-    """A scan as :class:`SensorScan`, given the sensor's pose as a 4x4 matrix.
-
-    A scan stored already in the world frame (``in_world``) is moved back into
-    the sensor frame first: the rays have to start at the sensor.
-    """
-    from dimos.teleop.memory_world.tf_tree import quaternion_from_matrix
-
-    points = np.ascontiguousarray(points, dtype=np.float32)
-    if in_world and len(points):
-        sensor_from_world = np.linalg.inv(world_from_sensor)
-        points = np.ascontiguousarray(
-            (points @ sensor_from_world[:3, :3].T + sensor_from_world[:3, 3]).astype(np.float32)
-        )
-    return SensorScan(
-        points=points,
-        position=tuple(float(v) for v in world_from_sensor[:3, 3]),  # type: ignore[arg-type]
-        orientation=quaternion_from_matrix(world_from_sensor[:3, :3]),
-    )
-
-
-def pack_keys(points: np.ndarray, voxel_size: float) -> np.ndarray:
-    """Sorted, unique packed voxel keys of world points (the PackedVoxels layout)."""
-    if not len(points):
-        return np.empty(0, dtype=np.int64)
-    vox = np.floor(points / np.float32(voxel_size)).astype(np.int64)
-    if np.abs(vox).max(initial=0) >= KEY_OFFSET:
-        raise ValueError(f"point outside +-{KEY_OFFSET * voxel_size:.0f} m packed range")
-    vox += KEY_OFFSET
-    return np.unique((vox[:, 0] << (2 * FIELD_BITS)) | (vox[:, 1] << FIELD_BITS) | vox[:, 2])
-
-
-def unpack_centres(keys: np.ndarray, voxel_size: float) -> np.ndarray:
-    """Voxel centres, (N, 3) float32, of packed keys."""
-    vox = np.empty((len(keys), 3), dtype=np.float32)
-    vox[:, 0] = (keys >> (2 * FIELD_BITS)) - KEY_OFFSET
-    vox[:, 1] = ((keys >> FIELD_BITS) & FIELD_MASK) - KEY_OFFSET
-    vox[:, 2] = (keys & FIELD_MASK) - KEY_OFFSET
-    return (vox + np.float32(0.5)) * np.float32(voxel_size)
-
-
-class RayTracedGrid:
-    """The voxel set of a ray-traced map as packed keys, with a diff per scan.
-
-    Each scan goes into a :class:`VoxelRayMapper`, which casts a ray from the
-    sensor to every return and lowers the health of the voxels it passes
-    through, so a wall that was really a person walking past is cleared by the
-    scans that later see the space empty. A scan can only change voxels within
-    ``max_range`` of the sensor, so the diff is taken by comparing the mapper's
-    voxels inside that cylinder with the ones held for it before the scan.
-
-    The mapper's other settings are its defaults, which are the ray-tracing
-    module's: in particular ``support_min`` (a voxel needs that many healthy
-    neighbours to be shown) stays on, because at 8 cm it is what separates
-    walls and floors from the fuzz around them. At 5 cm the same gate hides
-    two thirds of a building, so the voxel size is not free to shrink.
-    """
-
-    def __init__(self, voxel_size: float, max_range: float, **mapper_kwargs: Any) -> None:
-        self.voxel_size = voxel_size
-        self.max_range = max_range
-        self.mapper = VoxelRayMapper(voxel_size=voxel_size, max_range=max_range, **mapper_kwargs)
-        self.keys = np.empty(0, dtype=np.int64)
-        # Centres of `keys`, kept in step, so the cylinder test is a lookup.
-        self._centres = np.empty((0, 3), dtype=np.float32)
-
-    def _near(self, position: tuple[float, float, float]) -> np.ndarray:
-        """Mask of the held keys inside the cylinder a scan from *position* can touch."""
-        dx = self._centres[:, 0] - position[0]
-        dy = self._centres[:, 1] - position[1]
-        near_xy = dx * dx + dy * dy <= self.max_range**2
-        near_z = np.abs(self._centres[:, 2] - position[2]) <= self.max_range
-        return np.asarray(near_xy & near_z, dtype=bool)
-
-    def add_scan(self, scan: SensorScan) -> tuple[np.ndarray, np.ndarray]:
-        """Fold one scan into the map; returns the (added, removed) sorted keys."""
-        self.mapper.add_frame(scan.points, scan.position, scan.orientation)
-        z = scan.position[2]
-        now = pack_keys(
-            self.mapper.local_map(
-                scan.position, self.max_range, z - self.max_range, z + self.max_range
-            ),
-            self.voxel_size,
-        )
-        near = self._near(scan.position)
-        before = self.keys[near]
-        added = np.setdiff1d(now, before, assume_unique=True)
-        removed = np.setdiff1d(before, now, assume_unique=True)
-        if len(removed):
-            # `keys` is sorted and `removed` is a subset of it: a merge, not a scan.
-            keep = np.ones(len(self.keys), dtype=bool)
-            keep[np.searchsorted(self.keys, removed)] = False
-            self.keys = self.keys[keep]
-            self._centres = self._centres[keep]
-        if len(added):
-            # `near` is a float32 cylinder test over this class's own centres while `now`
-            # comes from the mapper's test over its own, so a voxel on the boundary can be
-            # in `now` and absent from `before` while already being held. Inserting it
-            # twice breaks the uniqueness `removed` relies on, and the duplicate then
-            # survives every later clear: a ghost voxel in the map and in the VR scene.
-            at = np.searchsorted(self.keys, added)
-            held = at < len(self.keys)
-            if held.any():
-                fresh = np.ones(len(added), dtype=bool)
-                fresh[held] = self.keys[at[held]] != added[held]
-                added, at = added[fresh], at[fresh]
-            self.keys = np.insert(self.keys, at, added)
-            self._centres = np.insert(
-                self._centres, at, unpack_centres(added, self.voxel_size), axis=0
-            )
-        return added, removed
-
-    def centres(self, keys: np.ndarray | None = None) -> np.ndarray:
-        """Voxel centres, (N, 3) float32, of *keys* (default: the whole set)."""
-        return self._centres if keys is None else unpack_centres(keys, self.voxel_size)
-
-
-@dataclass
-class ReplayStats:
-    scans: int = 0
-    keyframes: int = 0
-    added: int = 0
-    removed: int = 0
-    final_voxels: int = 0
-    seconds: float = 0.0
-
-
-def build_replay_streams(
-    store: Any,
-    *,
-    lidar_stream_name: str,
-    to_scan: Callable[[Any], SensorScan | None],
-    voxel_size: float,
-    max_range: float = 30.0,
-    keyframe_interval_s: float = 5.0,
-    diff_stream_name: str = DIFF_STREAM,
-    keyframe_stream_name: str = KEYFRAME_STREAM,
-    dry_run: bool = False,
-    cancelled: Callable[[], bool] | None = None,
-    world_frame: str | None = None,
-) -> ReplayStats:
-    """Write the keyframe and diff streams for every scan of the lidar stream.
-
-    ``to_scan`` turns a lidar observation into a :class:`SensorScan` (or None
-    to skip it). Existing streams of the same names are replaced. ``dry_run``
-    only gathers the statistics. A build that ``cancelled`` cuts short lacks
-    the keyframe tagged ``last`` and is rebuilt next time. ``world_frame`` is
-    recorded in the tags so a later build in another frame replaces it.
-    """
-    started = time.monotonic()
-    stream_tags = {
-        "voxel_size": float(voxel_size),
-        "max_range": float(max_range),
-        "lidar_stream": lidar_stream_name,
-        "keyframe_interval_s": float(keyframe_interval_s),
-        "builder": BUILDER,
-        "format": FORMAT_VERSION,
-        "world_frame": world_frame,  # a different frame later means a rebuild
-    }
-    diffs = keyframes = None
-    if not dry_run:
-        for name in (diff_stream_name, keyframe_stream_name):
-            if name in store.list_streams():
-                store.delete_stream(name)
-        diffs = store.stream(diff_stream_name, PointCloud2)
-        keyframes = store.stream(keyframe_stream_name, PointCloud2)
-
-    grid = RayTracedGrid(voxel_size, max_range)
-    stats = ReplayStats()
-    last_keyframe_ts: float | None = None
-    low = np.full(3, np.inf)  # of every voxel ever added: the int16 grid's span
-    high = np.full(3, -np.inf)
-    # One scan of lookahead says which is the last: on an mcap, count() and what the
-    # iterator yields differ (8697 vs 8015 on one recording), so no counting.
-    # IN TIME ORDER. A stream iterates in the order it was WRITTEN, and everything
-    # downstream of this loop is causal or binary-searched: the ray-traced grid applies
-    # each scan to the last, the diffs are replayed in the order they were appended, and
-    # `ReplayIndex.scan_at` bisects the stamps. Measured on scans written 1, 2, 0.5, 3,
-    # 2.5: seeking to 2 landed on the scan at 0.5, in Python and in replay.js alike, and
-    # the reconstruction had been built by adding an earlier scan on top of a later one.
-    scans = iter(scans_in_build_order(store, lidar_stream_name))
-    obs = next(scans, None)
-    while obs is not None:
-        if cancelled is not None and cancelled():
-            break
-        following = next(scans, None)
-        is_last = following is None
-        scan = to_scan(obs)
-        if scan is not None:
-            added, removed = grid.add_scan(scan)
-        else:
-            added = removed = np.empty(0, dtype=np.int64)
-        stats.added += len(added)
-        stats.removed += len(removed)
-        added_centres = grid.centres(added)
-        if len(added_centres):
-            low = np.minimum(low, added_centres.min(axis=0))
-            high = np.maximum(high, added_centres.max(axis=0))
-        ts = float(obs.ts)
-        # The last scan is always a keyframe: that is the finished map.
-        take_keyframe = (
-            last_keyframe_ts is None or ts - last_keyframe_ts >= keyframe_interval_s or is_last
-        )
-        if take_keyframe:
-            last_keyframe_ts = ts
-            stats.keyframes += 1
-        if diffs is not None and keyframes is not None:
-            centres = np.concatenate([added_centres, grid.centres(removed)])
-            tags = np.concatenate(
-                [
-                    np.full(len(added), TAG_ADDED, np.uint8),
-                    np.full(len(removed), TAG_REMOVED, np.uint8),
-                ]
-            )
-            diffs.append(
-                PointCloud2.from_numpy(centres, frame_id="world", timestamp=ts, tags=tags),
-                ts=ts,
-                tags={**stream_tags, "scan_index": stats.scans},
-            )
-            if take_keyframe:
-                keyframes.append(
-                    PointCloud2.from_numpy(grid.centres(), frame_id="world", timestamp=ts),
-                    ts=ts,
-                    tags={
-                        **stream_tags,
-                        "scan_index": stats.scans,
-                        "last": is_last,  # a build that died early has none
-                        "low": np.where(np.isfinite(low), low, 0.0).tolist(),
-                        "high": np.where(np.isfinite(high), high, 0.0).tolist(),
-                    },
-                )
-        stats.scans += 1
-        obs = following
-        if stats.scans % 200 == 0:
-            logger.info(
-                "replay build: %d scans, %d voxels, +%d/-%d so far",
-                stats.scans,
-                len(grid.keys),
-                stats.added,
-                stats.removed,
-            )
-    stats.final_voxels = len(grid.keys)
-    stats.seconds = time.monotonic() - started
-    return stats
 
 
 def accumulate_scans(
@@ -338,8 +59,8 @@ def accumulate_scans(
     """*n_scans* scans spread over *stream* voxelised into one (N, 3) cloud, no clearing.
 
     ``to_world`` maps a lidar observation to one in the world frame (None to
-    skip it). ``n_scans <= 0`` uses every scan. This is the plain accumulation
-    used when no ray-traced replay is built.
+    skip it). ``n_scans <= 0`` uses every scan. This is the plain accumulation used when
+    a recording carries neither a global map nor ray-traced replay streams.
     """
     from dimos.mapping.voxels.module import VoxelMapTransformer
     from dimos.memory.transform import FnTransformer, throttle
@@ -468,39 +189,6 @@ class ReplayIndex:
         }
 
 
-def scans_in_build_order(store: Any, lidar_stream_name: str) -> Any:
-    """The lidar scans in the order a build reads them, which is TIME order.
-
-    Its own function because FORMAT_VERSION 1 read row order and the difference between
-    the two is what `_reads_the_same_as_this_build` decides: a test that has to produce a
-    version-1 build for real replaces this, rather than imitating the old bytes by hand.
-    """
-    return store.streams[lidar_stream_name].order_by("ts")
-
-
-def _reads_the_same_as_this_build(store: Any, tags: dict[str, Any]) -> bool:
-    """Whether a build from before FORMAT_VERSION 2 comes out the same as one made now.
-
-    Version 1 read the lidar stream in the order the scans were WRITTEN and version 2
-    reads it in TIME order, so the two differ only on a recording whose scans were not
-    written in time order. Which it was is written in the build's OWN output: the diffs
-    came out in the order it read them, so ascending diff stamps mean the two orders
-    were the same order and the streams on disk are what this build would produce.
-
-    Without this every recording already indexed would rebuild -- half an hour on a small
-    one, longer on the 23 GB one this is demonstrated against -- to arrive at the same
-    bytes. Stamps only; the clouds stay on disk, and `_load_index` reads the same ones.
-
-    Only `available()` asks, and only after refusing a build with no diffs at all: a
-    guard for that here as well was unreachable, which a mutation of it surviving is how
-    it was noticed.
-    """
-    if tags.get("format") != 1 or DIFF_STREAM not in store.list_streams():
-        return False
-    stamps = [float(obs.ts) for obs in store.streams[DIFF_STREAM]]
-    return all(before <= after for before, after in itertools.pairwise(stamps))
-
-
 def _final(keyframes: Any) -> Any:
     """The keyframe with the highest scan index (two scans can share a stamp, so
     not ``last()``); tags only, the clouds stay on disk until ``.data``."""
@@ -539,17 +227,15 @@ class VoxelReplay:
         self._wire_bytes = 0
 
     @staticmethod
-    def available(
-        store: Any,
-        *,
-        voxel_size: float,
-        lidar_stream_name: str,
-        max_range: float | None = None,
-        world_frame: str | None = None,
-        keyframe_interval_s: float | None = None,
-    ) -> bool:
-        """True when both streams exist, were built for this grid, range, lidar and
-        keyframe spacing, and the build reached the last scan."""
+    def available(store: Any) -> bool:
+        """True when this recording carries a finished, seekable pair of replay streams.
+
+        The tag checks this used to make -- voxel size, ray range, lidar stream, keyframe
+        spacing, format version -- all existed to decide whether to REBUILD, and nothing
+        rebuilds any more. What is on disk is either readable or the recording has no
+        voxel timeline; the index takes its voxel size from the streams' own tags, so
+        serving them is self-consistent whatever built them.
+        """
         names = store.list_streams()
         if DIFF_STREAM not in names or KEYFRAME_STREAM not in names:
             return False
@@ -557,38 +243,19 @@ class VoxelReplay:
         if keyframes.count() == 0:  # a build that died before its first keyframe
             return False
         # ...and one that has no DIFFS is not a replay either, whatever its keyframes say.
-        # Measured at both format versions: the streams were accepted, `/replay/index`
-        # served `scans: []`, and the viewer sat on "replay index still building
-        # (0 scans)" for ever because nothing scheduled the rebuild that would fill it.
-        # `next(iter(...))` rather than `count()`: on an mcap the two disagree.
+        # The streams were accepted, `/replay/index` served `scans: []`, and the viewer sat
+        # on "replay index still building (0 scans)" for ever. `next(iter(...))` rather
+        # than `count()`: on an mcap the two disagree.
         if next(iter(store.streams[DIFF_STREAM]), None) is None:
             return False
-        tags = keyframes.first().tags or {}
-        checks = {
-            "last keyframe": bool(_final(keyframes).tags.get("last")),
-            "format": tags.get("format") == FORMAT_VERSION
-            or _reads_the_same_as_this_build(store, tags),
-            "builder": tags.get("builder") == BUILDER,
-            "voxel_size": abs(float(tags.get("voxel_size", 0.0)) - voxel_size) < 1e-9,
-            "max_range": max_range is None
-            or abs(float(tags.get("max_range", 0.0)) - max_range) < 1e-9,
-            "lidar_stream": tags.get("lidar_stream") == lidar_stream_name,
-            # Streams from before the tag, or built without a frame, fit any frame.
-            "world_frame": world_frame is None or tags.get("world_frame") in (None, world_frame),
-            # The spacing is baked in at build time and cannot be changed by serving
-            # differently, so it belongs with its four siblings above: without it,
-            # replay_keyframe_interval_s had no effect at all on a recording that was
-            # already built, silently and with no log line -- the streams kept the
-            # spacing of whichever run built them first. Streams from before the tag fit
-            # any value, so this does not force a rebuild of anything already on disk.
-            "keyframe_interval_s": keyframe_interval_s is None
-            or tags.get("keyframe_interval_s") is None
-            or abs(float(tags["keyframe_interval_s"]) - keyframe_interval_s) < 1e-9,
-        }
-        failed = [name for name, ok in checks.items() if not ok]
-        if failed:  # a rebuild is half an hour: say why
-            logger.info("replay streams need a rebuild (%s); tags %s", ", ".join(failed), tags)
-        return not failed
+        # An interrupted build has no keyframe tagged `last`, and half a map is not the
+        # map: roscon_setup.derived.db looks complete at 9,196 diffs and 184 keyframes and
+        # is an abandoned run from that afternoon. A ROW COUNT DOES NOT SAY A BUILD
+        # FINISHED; THIS TAG DOES.
+        if not bool(_final(keyframes).tags.get("last")):
+            logger.info("the replay streams in this recording are half-written; ignoring them")
+            return False
+        return True
 
     def _load_index(self) -> ReplayIndex:
         first = self.keyframes.first()
@@ -760,91 +427,3 @@ class VoxelReplay:
         header_bytes = json.dumps(header, separators=(",", ":")).encode("utf-8")
         header_bytes += b" " * (-(4 + len(header_bytes)) % 4)
         return struct.pack("<I", len(header_bytes)) + header_bytes + payload
-
-
-# ---- command line ------------------------------------------------------------
-
-
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(
-        description="Build the voxel replay streams of a recording whose scans are in their"
-        " sensor frame (world-aligned scans need the module)"
-    )
-    parser.add_argument("store_path")
-    parser.add_argument("--lidar-stream", default="lidar")
-    parser.add_argument("--tf-stream", default="tf")
-    parser.add_argument(
-        "--world-frame",
-        default="world",
-        help="the frame to build in; a frame tf lacks means its root. A build that places"
-        " no scan through tf exits non-zero and leaves no replay behind",
-    )
-    parser.add_argument("--voxel-size", type=float, default=0.08)
-    parser.add_argument("--keyframe-interval", type=float, default=5.0)
-    parser.add_argument("--tf-tolerance", type=float, default=0.1)
-    parser.add_argument("--max-range", type=float, default=30.0, help="ray length limit, metres")
-    parser.add_argument("--dry-run", action="store_true", help="only report the statistics")
-    args = parser.parse_args(argv)
-
-    from dimos.teleop.memory_world.recording import build_tf_tree, open_recording, tf_root
-
-    store = open_recording(args.store_path)
-    first = store.streams[args.lidar_stream].first()
-    frame = str(getattr(first.data, "frame_id", "") or "").lower().lstrip("/")
-
-    def refuse_if_aligned(world: str) -> None:
-        # The module's rule (MemoryWorldModule._lidar_world_aligned): the world frame
-        # itself, or a stitched *corrected* frame, holds world-aligned scans.
-        if frame == world.lower().lstrip("/") or "corrected" in frame:
-            raise SystemExit(
-                f"{args.lidar_stream!r} is already in {frame!r}: its rays need the sensor"
-                " pose stamped on each scan, which only the module knows how to read"
-            )
-
-    refuse_if_aligned(args.world_frame)
-    tree = build_tf_tree(store, args.tf_stream)
-    # Like the module: a world frame tf does not know means the tf root.
-    world = (
-        args.world_frame if tree.has_frame(args.world_frame) else tf_root(tree) or args.world_frame
-    )
-    if world != args.world_frame:
-        print(
-            f"--world-frame {args.world_frame!r} is not in tf; using its root {world!r}", flush=True
-        )
-        refuse_if_aligned(world)
-
-    def to_scan(obs: Any) -> SensorScan | None:
-        # Scans must be in their sensor frame here; a world-aligned stream
-        # needs the module, which knows a frame to cast the rays from.
-        scan_frame = str(getattr(obs.data, "frame_id", "") or "").lstrip("/")
-        matrix = tree.lookup(world, scan_frame, float(obs.ts), args.tf_tolerance)
-        if matrix is None:
-            return None
-        return sensor_scan(obs.data.points_f32(), matrix, in_world=False)
-
-    stats = build_replay_streams(
-        store,
-        lidar_stream_name=args.lidar_stream,
-        to_scan=to_scan,
-        voxel_size=args.voxel_size,
-        max_range=args.max_range,
-        keyframe_interval_s=args.keyframe_interval,
-        dry_run=args.dry_run,
-        world_frame=world,
-    )
-    if stats.scans and stats.added == 0:
-        if not args.dry_run:  # the empty streams would pass as a finished replay
-            for name in (DIFF_STREAM, KEYFRAME_STREAM):
-                store.delete_stream(name)
-        raise SystemExit(
-            f"no voxel came out of {stats.scans} scans in {world!r} (tf could not place them, or"
-            " they were empty or out of range); the replay is empty"
-        )
-    print(
-        f"{stats.scans} scans, {stats.keyframes} keyframes, +{stats.added} / -{stats.removed} voxel "
-        f"edits, {stats.final_voxels} voxels at the end, {stats.seconds:.1f} s"
-    )
-
-
-if __name__ == "__main__":
-    main()

@@ -246,8 +246,12 @@ function handleControl(msg) {
         case 'chat':
             appendChat(msg);
             break;
+        case 'chat_summary':
+            applyChatSummary(msg.call_id, msg.summary);
+            break;
         case 'chat_history':
             chatLogEl.textContent = '';
+            chatRows.clear();
             for (const entry of msg.entries || []) appendChat(entry);
             break;
         case 'agent_idle':
@@ -430,18 +434,14 @@ async function startReplay() {
     tickers.push(() => { if (replay === mine) mine.tick(); });
     scene.onQualityChange = () => replay && replay.refill();
     scene.onLayerChange = syncBoxesFromScene;
-    // Polled while the server builds the replay streams (up to half an hour on a long
-    // recording); a build the server remembers as failed will not change, so stop then.
-    // "not started" usually will not change -- with build_replay_on_start off, or the
-    // voxel streams deleted, nothing ever asks for a build -- and polling it every five
-    // seconds left a 503 in the console for as long as the page stayed open. So it backs
-    // OFF rather than giving up: "not started" is also what a worker blocked on the store
-    // lock reports before it reaches "building", and a recording whose first scan takes a
-    // minute to reach would have had its timeline declared missing while it was on its way.
-    const IDLE_ATTEMPTS = 12;   // ~1 min of five-second tries before slowing down
-    const SLOW_MS = 60000;
-    let idle = 0;
-    for (let attempt = 0; scene === owner; attempt++) {
+    // Retried a few times, then given up on. NOTHING IS BUILT ANY MORE: the server reads
+    // the timeline out of the recording (the map stream's own messages, or replay streams
+    // it already carries), so a first answer of "not started" means a worker that has not
+    // reached the store yet -- seconds -- and not a half-hour build to wait out. A
+    // recording with no timeline at all says so and the page stops asking, instead of
+    // leaving a 503 in the console every five seconds for as long as it is open.
+    const ATTEMPTS = 12;   // ~1 min of five-second tries
+    for (let attempt = 0; scene === owner && attempt < ATTEMPTS; attempt++) {
         try {
             const index = await replay.load();
             const orbit = index.orbit;
@@ -450,28 +450,23 @@ async function startReplay() {
                 scene.setOrbitTarget(orbit.positions[orbit.positions.length - 1]);
                 replay.onScan = (scan) => scene.setOrbitTarget(orbit.positions[scan]);
             }
+            diag('replay_index_ready', { mode: index.mode || 'replay', steps: index.scans.length });
             return;
         } catch (e) {
             const reason = String(e.message || e);
             if (attempt === 0) diag('replay_waiting', { error: reason });
-            if (reason.startsWith('replay build failed')) {
-                setStatus(`Timeline unavailable: ${reason}`);
-                return;
-            }
             // A settled answer, not progress: this recording is not going to get one.
-            if (reason.includes('turned off')) {
-                diag('replay_turned_off', { error: reason });
+            if (reason.includes('unavailable') || reason.includes('no voxel timeline')) {
+                diag('replay_unavailable', { error: reason });
                 setStatus('This recording has no timeline');
                 return;
             }
-            idle = reason.includes('not started') ? idle + 1 : 0;
-            const slow = idle >= IDLE_ATTEMPTS;
-            if (slow && idle === IDLE_ATTEMPTS) {   // say it once, on the way down
-                diag('replay_backing_off', { error: reason, attempts: attempt + 1 });
-                setStatus('No timeline for this recording yet; still checking');
-            }
-            await new Promise((resolve) => setTimeout(resolve, slow ? SLOW_MS : 5000));
+            await new Promise((resolve) => setTimeout(resolve, 5000));
         }
+    }
+    if (scene === owner) {
+        diag('replay_gave_up', { attempts: ATTEMPTS });
+        setStatus('This recording has no timeline');
     }
 }
 
@@ -784,24 +779,77 @@ function renderMarkdown(text) {
     return html.join('');
 }
 
+// Rows by tool-call id, so a summary that arrives after the row can find it. Cleared with
+// the log, because a summary for a row nobody can see has nothing to write on.
+const chatRows = new Map();
+
+/** The argument worth showing beside the tool's name: the value, not the JSON. */
+function toolArgSummary(args) {
+    let parsed = null;
+    try {
+        parsed = JSON.parse(args || '{}');
+    } catch (_) {
+        return args || '';
+    }
+    if (!parsed || typeof parsed !== 'object') return args || '';
+    const shown = Object.entries(parsed)
+        // A whole program is never the one-line summary; `python` rows say it in words.
+        .filter(([, v]) => v !== null && v !== '' && String(v).length < 120)
+        .map(([k, v]) => (typeof v === 'string' ? v : `${k}=${JSON.stringify(v)}`));
+    return shown.join(', ');
+}
+
 function appendChat(entry) {
     const row = document.createElement('div');
     row.className = `msg ${entry.role}`;
     if (entry.role === 'tool_call') {
-        const args = entry.args || '';
-        const short = args.length > TOOL_ARGS_CHARS ? `${args.slice(0, TOOL_ARGS_CHARS)}…` : args;
-        const argsEl = document.createElement('span');
-        argsEl.className = 'args';
-        argsEl.textContent = short;
-        row.append(`▶ ${entry.name}(`, argsEl, ')');
-        if (short !== args) {
-            row.classList.add('expandable');
-            row.title = 'Click to expand';
-            row.addEventListener('click', () => {
-                const open = row.classList.toggle('open');
-                argsEl.textContent = open ? args : short;
-            });
+        const name = document.createElement('span');
+        name.className = 'tool';
+        name.textContent = entry.name;
+        row.append(name);
+        if (entry.python) {
+            // A program: the summary is the row and the source folds out of it. Written
+            // this way round because the source is what the panel used to show and what
+            // nobody could read -- see chat.py for who names the calls.
+            const said = document.createElement('span');
+            said.className = 'said';
+            const summary = entry.summary || '';
+            said.textContent = summary || 'reading the program…';
+            if (!summary) said.classList.add('waiting');
+            const more = document.createElement('span');
+            more.className = 'more';
+            more.textContent = 'code';
+            const code = document.createElement('pre');
+            code.className = 'code';
+            let program = '';
+            try {
+                program = String(JSON.parse(entry.args || '{}')[entry.python] || '');
+            } catch (_) {
+                program = entry.args || '';
+            }
+            code.textContent = program;
+            more.addEventListener('click', () => row.classList.toggle('open'));
+            row.append(said, more, code);
+        } else {
+            const args = toolArgSummary(entry.args);
+            const full = entry.args || '';
+            const short = args.length > TOOL_ARGS_CHARS ? `${args.slice(0, TOOL_ARGS_CHARS)}…` : args;
+            const argsEl = document.createElement('span');
+            argsEl.className = 'args';
+            argsEl.textContent = short;
+            row.append(argsEl);
+            // The full JSON is still reachable: a summary that drops an argument must not
+            // be the only thing anyone can see.
+            const more = document.createElement('span');
+            more.className = 'more';
+            more.textContent = 'args';
+            const code = document.createElement('pre');
+            code.className = 'code';
+            code.textContent = full;
+            more.addEventListener('click', () => row.classList.toggle('open'));
+            row.append(more, code);
         }
+        if (entry.call_id) chatRows.set(entry.call_id, row);
     } else if (entry.role === 'tool_result') {
         row.textContent = `↳ ${entry.text}`;
         if (entry.ok === false) row.classList.add('failed');
@@ -818,6 +866,16 @@ function appendChat(entry) {
     const follow = chatLogEl.scrollTop + chatLogEl.clientHeight >= chatLogEl.scrollHeight - 24;
     chatLogEl.appendChild(row);
     if (follow) chatLogEl.scrollTop = chatLogEl.scrollHeight;
+}
+
+/** A summary that arrived after its row: write it where the placeholder was. */
+function applyChatSummary(callId, summary) {
+    const row = chatRows.get(callId);
+    if (!row || !summary) return;
+    const said = row.querySelector('.said');
+    if (!said) return;
+    said.textContent = summary;
+    said.classList.remove('waiting');
 }
 
 function setAgentIdle(idle) {
@@ -1194,6 +1252,7 @@ async function connect() {
         // reconnect used to come back to someone else's answer with no query behind it.
         chatInput.value = '';
         chatLogEl.textContent = '';
+        chatRows.clear();
         if (results) results.clear();
         connectBtn.classList.add('hidden');
         applyIndexStatus(indexStatus);
@@ -1256,6 +1315,7 @@ async function disconnect() {
     replay = null;
     document.body.classList.remove('desktop-view', 'chat-open');
     chatLogEl.textContent = '';
+    chatRows.clear();
     setAgentIdle(true);
     chatStateEl.textContent = 'not connected';
     connectBtn.classList.remove('hidden');
@@ -1308,6 +1368,10 @@ window.app = {
     // label is NOT that: it is initialised to "Show map" and only rewritten when a
     // toggle runs, so it reads the same whether the map is hidden or simply untouched.
     scene: () => scene,
+    // The same read-only handle for the timeline. Whether a scrub is drawing anything is
+    // not visible from the DOM at all -- the map is a WebGL buffer -- so a check has to
+    // read `index.mode` and the cloud the scene is holding.
+    replay: () => replay,
     perf: () => (scene ? scene.getPerfStats() : null),
     resetPerf: () => scene && scene.resetPerf(),
     benchmark: (frames) => (scene ? scene.benchmarkRender(frames) : null),

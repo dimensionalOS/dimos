@@ -14,7 +14,7 @@
 
 """Serving the timeline replay to the viewer: the index (stamps, heights, orbit
 positions) and the camera frame nearest a time. Mixed into MemoryWorldModule;
-the replay streams themselves are built in module.py (_ensure_replay)."""
+nothing builds the replay streams any more; see replay.py."""
 
 from __future__ import annotations
 
@@ -57,6 +57,8 @@ class ReplayServing:
 
         def _ensure_store(self) -> Any: ...
         def _replay_if_ready(self) -> tuple[VoxelReplay, dict[str, Any]]: ...
+        def _replay_read(self, fn: Any, *args: Any) -> Any: ...
+        def _map_timeline(self) -> tuple[str, list[float]] | None: ...
         def _tf_tree(self) -> Any: ...
         def _frame_pose_at(self, frame: str, ts: float) -> Any: ...
         def _camera_frame(self) -> str: ...
@@ -64,6 +66,48 @@ class ReplayServing:
         def _camera_pose_of(self, obs: Any) -> Any: ...
         @staticmethod
         def _encode_jpeg(img: Any, max_size: int, quality: int) -> bytes: ...
+
+    def _timeline_index_json(self) -> dict[str, Any]:
+        """What the viewer seeks over: the map's own messages where it has several,
+        and the ray-traced replay otherwise.
+
+        The map stream wins because it is already there. A recording whose mapper
+        published as it went carries the map at every moment of it, so the timeline is a
+        read. Replay streams are the same picture reconstructed scan by scan; nothing
+        writes them any more, so they are only ever read off a recording made before that.
+        """
+        found = self._map_timeline_index_json()
+        return found if found is not None else self._replay_index_json()
+
+    def _map_timeline_index_json(self) -> dict[str, Any] | None:
+        """The seek index over the map stream's own messages, or None if it has none.
+
+        Deliberately without `height` and `colors`: those exist so the viewer can colour
+        replayed voxels itself on the static map's ramp, and a snapshot arrives coloured
+        by the server on that same ramp (`_map_ramp`). Nothing to match.
+        """
+        return self._replay_read(self._map_timeline_index)
+
+    def _map_timeline_index(self) -> dict[str, Any] | None:
+        """`_map_timeline_index_json` under the store lock, like every read of it."""
+        found = self._map_timeline()
+        if found is None:
+            return None
+        _, stamps = found
+        # `.order_by("ts")`, and for the reason `_build_replay_index_json` gives: the
+        # viewer binary-searches this list and a stream iterates in write order.
+        images = self._ensure_store().streams[self.config.image_stream_name].order_by("ts")
+        return {
+            "mode": "map_snapshots",
+            "voxel_size": float(self.config.voxel_size),
+            # Every snapshot is its own keyframe: there are no diffs to apply between
+            # them, so the viewer's segment machinery maps one-to-one onto them.
+            "scans": stamps,
+            "keyframes": [{"scan": i, "ts": ts} for i, ts in enumerate(stamps)],
+            "frames": [float(obs.ts) for obs in images],
+            "hfov_deg": self._camera_hfov(),
+            "orbit": self._orbit_positions(np.asarray(stamps, dtype=np.float64)),
+        }
 
     def _replay_index_json(self) -> dict[str, Any]:
         return self._replay_if_ready()[1]
@@ -124,7 +168,7 @@ class ReplayServing:
         if tree is not None:
             positions = frame_positions(stamps, lambda ts: self._frame_pose_at(frame, ts))
         else:  # no tf: the pose stamped on the lidar scans is all there is
-            # TIME order, because `build_replay_streams` builds in time order: position n
+            # TIME order, because the builder wrote them in time order: position n
             # has to be the pose of the scan whose voxels are frame n. This read was row
             # order to match a builder that was also row order, and when the builder was
             # put right the two stopped agreeing -- measured, on scans written 1, 2, 0.5,

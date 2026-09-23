@@ -40,12 +40,14 @@ logger = setup_logger()
 
 
 def prebuild(store_path: str, **config: object) -> MemoryWorldModule:
-    """Build the replay streams and the frame index of *store_path*; raise on refusal."""
+    """Build the frame index of *store_path*; raise on refusal.
+
+    The timeline used to be built here too. It is not built anywhere any more: a recording
+    is scrubbed through its map stream's own messages, or through replay streams it
+    already carries (see replay.py), so the only thing left to prepare is the index.
+    """
     module = MemoryWorldModule(store_path=store_path, build_image_index_on_start=True, **config)
     try:
-        started = time.monotonic()
-        module._ensure_replay()  # raises when nothing could be placed
-        logger.info("replay ready in %.0f s", time.monotonic() - started)
         started = time.monotonic()
         module._build_visual_index()  # logs its failure and leaves it in the progress
         if not module._index_progress.startswith("ready"):

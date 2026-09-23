@@ -329,9 +329,44 @@
         .msg.human { color: #8fd6ff; }
         .msg.agent { color: var(--text); border-left: 2px solid var(--accent); padding-left: 8px; }
         .msg.system { color: #ffd166; }
-        .msg.tool_call { color: #7fb3ff; font-size: 11px; }
+        .msg.tool_call { color: #7fb3ff; font-size: 11px; white-space: normal; }
+        /* The call reads as one line: what was called, then what it was asked for. The
+           name is the part a reader scans for, so it gets the weight and the argument
+           gets the room. */
+        .msg.tool_call .tool {
+            display: inline-block;
+            padding: 1px 6px;
+            margin-right: 6px;
+            border: 1px solid var(--accent-soft);
+            border-radius: 2px;
+            color: #bcd9ff;
+            font-size: 10px;
+            letter-spacing: 0.06em;
+        }
         .msg.tool_call .args { color: var(--muted); }
-        .msg.tool_call.expandable { cursor: pointer; }
+        .msg.tool_call .said { color: #cfe4ff; }
+        /* A program's summary, and the program itself folded away behind it. */
+        .msg.tool_call .code {
+            display: none;
+            margin: 4px 0 0;
+            padding: 6px 8px;
+            max-height: 240px;
+            overflow: auto;
+            background: rgba(0, 0, 0, 0.35);
+            border-left: 2px solid var(--accent-soft);
+            color: var(--muted);
+            font-size: 10.5px;
+            white-space: pre;
+        }
+        .msg.tool_call.open .code { display: block; }
+        .msg.tool_call .more {
+            margin-left: 6px;
+            color: var(--accent);
+            cursor: pointer;
+            font-size: 10px;
+            letter-spacing: 0.08em;
+        }
+        .msg.tool_call .waiting { color: var(--muted); font-style: italic; }
         .msg.tool_result { color: #c9b458; font-size: 11px; padding-left: 14px; }
         .msg.tool_result.failed { color: #ff5f6d; }
         #chatForm { display: flex; border-top: 1px solid var(--accent-soft); }

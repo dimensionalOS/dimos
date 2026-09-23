@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Building the cached world payloads a viewer is sent on connect: the voxel cloud
-from the ray-traced replay, the capture poses and their thumbnails, and the top-down
-map rendered from the same cloud. Mixed into MemoryWorldModule, which owns the caches
-these fill and the lock order that protects them."""
+"""Building the cached world payloads a viewer is sent on connect: the voxel cloud, the
+capture poses and their thumbnails -- and, when the recording's map stream holds more
+than one message, the map as it stood at any moment of it. Mixed into
+MemoryWorldModule, which owns the caches these fill and the lock order that protects
+them."""
 
 from __future__ import annotations
 
@@ -40,7 +41,15 @@ def _sibling_map_stream(name: str) -> str:
 
 
 class WorldCache:
-    """The three builders behind the payloads every viewer gets on connect."""
+    """The builders behind the payloads every viewer gets on connect.
+
+    Class attributes, not `__init__` state: module.py owns the constructor and sits on
+    the repo's 75 KB per-file ceiling. `_reopen_store` clears both.
+    """
+
+    # () means "looked, and this recording has no map timeline"; None means "not looked".
+    _map_timeline_cache: tuple[str, list[float]] | tuple[()] | None = None
+    _map_ramp_cache: tuple[float, float] | None = None
 
     def _global_map_cloud(self) -> tuple[str, np.ndarray] | None:
         """The ray-traced global map stored in the recording, when it has one.
@@ -70,18 +79,24 @@ class WorldCache:
                 return name, xyz
         return None
 
-    def _named_map_cloud(self, name: str) -> np.ndarray | None:
+    def _named_map_cloud(self, name: str, at: float | None = None) -> np.ndarray | None:
         """One map stream read and placed in `world_frame`, or None if it cannot be.
 
         None rather than a raise on every way of being unusable -- absent, declared but
         empty, or in a frame tf cannot place -- because both callers have somewhere else
         to go, and the point of returning None is that they get there.
+
+        *at* reads the last message written at or before that stamp rather than the last
+        one in the stream: a mapper publishes its map as it grows, so the same stream
+        that gives the finished world gives every earlier state of it. `before` is
+        exclusive, hence the millisecond -- the stamp asked for is one this stream wrote.
         """
         store = self._ensure_store()
         if name not in store.list_streams():
             return None
         try:
-            latest = store.streams[name].last()
+            stream = store.streams[name].order_by("ts")
+            latest = stream.last() if at is None else stream.before(at + 1e-3).last()
         except LookupError:  # declared but empty
             return None
         xyz = latest.data.points_f32()
@@ -116,20 +131,103 @@ class WorldCache:
         high = self.config.map_z_max if self.config.map_z_max is not None else np.inf
         return np.isfinite(found).all(axis=1) & (z >= low) & (z <= high)
 
+    # ---- the map's own timeline ----------------------------------------------
+
+    def _map_timeline(self) -> tuple[str, list[float]] | None:
+        """The map stream's messages, when it holds more than one: the timeline itself.
+
+        A mapper publishes the map AS IT GROWS -- roscon_setup.mcap carries 119 of them,
+        one every 7.8 s, 812 KB at the start and 50.9 MB at the end -- so the recording
+        already knows what the map looked like at any moment and scrubbing is a read, not
+        a build. This is why the ray-traced `voxel_diff`/`voxel_keyframe` replay is not
+        needed on such a recording: it reconstructs, scan by scan and in half an hour,
+        something the file was handed for free.
+
+        The same two candidates as the drawn world, in the same order, so the timeline
+        scrubs the map the viewer is looking at. Stamps only -- the clouds stay on disk.
+        """
+        if self._map_timeline_cache is not None:
+            return self._map_timeline_cache or None
+        configured = self.config.global_map_stream_name
+        store = self._ensure_store()
+        names = store.list_streams() if configured else []
+        for name in (configured, _sibling_map_stream(configured)) if configured else ():
+            if name not in names:
+                continue
+            stamps = sorted(float(obs.ts) for obs in store.streams[name].order_by("ts"))
+            if len(stamps) > 1:
+                logger.info("map timeline: %d %s messages to scrub through", len(stamps), name)
+                self._map_timeline_cache = (name, stamps)
+                return self._map_timeline_cache
+        self._map_timeline_cache = ()  # asked and answered: not every recording has one
+        return None
+
+    def _map_snapshot(self, number: int) -> tuple[dict[str, Any], bytes] | None:
+        """The map as it stood at snapshot *number*, packed like the static cloud.
+
+        Coloured on the FINISHED map's height ramp rather than its own: a ramp taken
+        from each snapshot would recolour the whole world at every step of the scrub,
+        because the early ones hold a fraction of the building's height range.
+        """
+        found = self._map_timeline()
+        if found is None:
+            return None
+        name, stamps = found
+        if not 0 <= number < len(stamps):
+            return None
+        xyz = self._named_map_cloud(name, at=stamps[number])
+        if xyz is None or xyz.size == 0:
+            return None
+        keep = self._map_height_mask(xyz)
+        if not keep.any():
+            return None
+        xyz = xyz[keep]
+        held = int(xyz.shape[0])
+        cap = self.config.map_timeline_max_points
+        if cap > 0 and xyz.shape[0] > cap:
+            xyz = xyz[:: xyz.shape[0] // cap + 1]
+        positions = np.ascontiguousarray(xyz.astype(np.float32))
+        # `points` is what the message HELD and `n` what was sent: the late snapshots are
+        # strided to the cap and the early ones are not, so comparing `n` across a scrub
+        # says less than it looks like it does.
+        header = {
+            **self._cloud_header(positions),
+            "snapshot": number,
+            "ts": stamps[number],
+            "points": held,
+        }
+        return header, positions.tobytes() + self._height_colors(
+            positions, self._map_ramp()
+        ).tobytes()
+
+    def _map_ramp(self) -> tuple[float, float] | None:
+        """The height ramp of the finished map, measured once and kept."""
+        if self._map_ramp_cache is None:
+            found = self._map_timeline()
+            xyz = self._named_map_cloud(found[0]) if found else None
+            if xyz is None or xyz.size == 0:
+                return None
+            inside = xyz[self._map_height_mask(xyz)]
+            z = (inside if len(inside) else xyz)[:, 2]
+            self._map_ramp_cache = (
+                float(np.percentile(z, self.config.height_ramp_low_percentile)),
+                float(np.percentile(z, self.config.height_ramp_high_percentile)),
+            )
+        return self._map_ramp_cache
+
     def _build_voxel_cloud_from_lidar(self) -> tuple[dict[str, Any], bytes] | None:
         """The voxel map, packed for the wire.
 
         Preference, best first: a ``global_map`` stream written into the recording; the
-        ray-traced replay's final keyframe; a plain accumulation of the scans. The first
-        two are ray-traced -- every scan cleared the voxels its rays passed through, so
-        what is left is what the last look at each place saw, and windows, people and
-        reflections do not pile up the way they do in an accumulation. The cloud is
-        height-coloured so the user gets depth cues without true RGB.
+        final keyframe of ray-traced replay streams it already carries; a plain
+        accumulation of the scans. The first two are ray-traced -- every scan cleared the
+        voxels its rays passed through, so what is left is what the last look at each
+        place saw, and windows, people and reflections do not pile up the way they do in
+        an accumulation. The cloud is height-coloured so the user gets depth cues without
+        true RGB.
         """
 
         def from_replay() -> np.ndarray | None:
-            if not self.config.build_replay_on_start:
-                return None
             try:
                 replay = self._ensure_replay()
                 found = self._replay_read(lambda: replay.final_keyframe().data.points_f32())
@@ -140,8 +238,9 @@ class WorldCache:
             except Exception:
                 if self._stopping.is_set():
                     raise
-                # No seekable replay (a failed build, too few scans): the map still shows.
-                logger.exception("no replay for the cloud; accumulating the scans instead")
+                # No seekable replay (this recording never had one, or too few scans):
+                # the map still shows.
+                logger.info("no replay streams for the cloud; accumulating the scans instead")
                 return None
 
         drawn_from: list[str] = []  # the stream the drawn cloud came from, if it was one
@@ -154,11 +253,10 @@ class WorldCache:
             # the loop into the handler below. That returned None for the WHOLE build, so
             # the replay and the accumulated scans were never tried and the viewer got
             # "world load failed" with a usable map sitting in the recording.
-            # No `if self._stopping.is_set(): raise` here, unlike from_replay. That
-            # re-raise belongs there because _ensure_replay is a long build that WATCHES
-            # _stopping and raises its own cancellation; this is one quick stream read
-            # that never looks at it. Copying the clause turned a bad-data failure into a
-            # total one whenever a stop happened to be in flight: the re-raise is caught
+            # No `if self._stopping.is_set(): raise` here, unlike from_replay, which
+            # keeps it because it opens a whole index while a stop may be in flight.
+            # Copying the clause turned a bad-data failure into a total one whenever a
+            # stop happened to be in flight: the re-raise is caught
             # by this function's own trailing handler, which returns None for the WHOLE
             # build and skips the very fall-through the guard was added to provide.
             #
