@@ -14,10 +14,13 @@
 
 """Rerun presentation helpers kept separate from generated wire types."""
 
+from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image
 from dimos_generated.tf2_msgs.msg import TFMessage
 import matplotlib
 import numpy as np
 import rerun as rr
+
+from dimos.msgs.image import image_to_jpeg, image_view
 
 
 def tf_archetypes(message: TFMessage) -> list[tuple[str, rr.Transform3D]]:
@@ -54,3 +57,35 @@ def register_colormap_annotation(name: str = "turbo") -> None:
         ),
         static=True,
     )
+
+
+def camera_pinhole(info: CameraInfo) -> rr.Pinhole:
+    """Calibration attached to the camera's optical frame."""
+    return rr.Pinhole(
+        focal_length=[info.k[0], info.k[4]],
+        principal_point=[info.k[2], info.k[5]],
+        width=info.width,
+        height=info.height,
+        image_plane_distance=1.0,
+        parent_frame=f"tf#/{info.header.frame_id}" if info.header.frame_id else None,
+    )
+
+
+def image_archetype(message: Image | CompressedImage) -> rr.Image | rr.DepthImage | rr.EncodedImage:
+    """Render ROS image encodings without adding methods to generated values."""
+    if isinstance(message, CompressedImage):
+        format_name = message.format.lower()
+        if "jpeg" in format_name or "jpg" in format_name:
+            media_type = "image/jpeg"
+        elif "png" in format_name:
+            media_type = "image/png"
+        else:
+            raise ValueError(f"unsupported compressed image format {message.format!r}")
+        return rr.EncodedImage(contents=bytes(message.data), media_type=media_type)
+    if message.encoding in ("16UC1", "32FC1"):
+        return rr.DepthImage(
+            image_view(message), meter=1000.0 if message.encoding == "16UC1" else 1.0
+        )
+    if message.encoding == "mono16":
+        return rr.Image(image_view(message), color_model="L")
+    return rr.EncodedImage(contents=image_to_jpeg(message), media_type="image/jpeg")

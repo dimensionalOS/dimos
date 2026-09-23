@@ -1115,3 +1115,15 @@ source is still removed automatically.
 The terrain recording's TF hierarchy is now logged through the live Rerun
 bridge's generated-message callback, including its frame axes. This demo invokes
 the callback directly and does not start a network subscription or viewer.
+
+### Generated camera messages through the bridge
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_camera_bridge.py
+rerun rrd verify build/message-codegen/demo/evidence/camera-bridge.rrd
+```
+
+Open `camera-bridge.rrd` in Rerun to inspect a red/green image, its compressed
+copy, calibration, and two depth images that both represent one metre. The demo
+uses generated CDR messages and the bridge callback; it does not start a network
+subscription. Its only output is the ignored RRD file.

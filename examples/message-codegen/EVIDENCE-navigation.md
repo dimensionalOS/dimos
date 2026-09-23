@@ -128,3 +128,18 @@ The terrain demo now sends its CDR TF message through the actual bridge callback
 before recording terrain and the route; the resulting RRD passed verification.
 This exercises dispatch without starting the viewer or a transport subscription.
 Camera/image and other built-in bridge conversions remain outstanding.
+
+### Generated camera and image bridge
+
+Converted bridge image/calibration dispatch to generated CameraInfo, Image, and
+CompressedImage with separate pinhole/image adapters. Calibration pairs by
+header.frame_id in either arrival order. Depth units are explicit (16UC1 in
+millimetres, 32FC1 in metres). JPEG/PNG compressed formats set the required
+Rerun media type; unsupported formats fail explicitly.
+
+Twelve camera/TF/config checks passed. A warning exposed missing compressed-image
+media metadata in the initial run; fixed it and reran all six camera checks with
+Rerun warnings treated as errors. That rule is now part of the test file. Mypy
+passed for the adapters. The camera demo then logged raw/compressed color and
+both depth representations without warnings, and its RRD passed verification.
+Interactive viewing and bridge transport subscriptions remain unverified here.
