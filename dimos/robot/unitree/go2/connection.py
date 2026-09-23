@@ -167,7 +167,7 @@ def make_connection(
 _T = TypeVar("_T")
 
 
-class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
+class ReplayConnection(CompositeResource):
     def __init__(
         self,
         dataset: str = "go2_china_office",
@@ -198,9 +198,6 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
         store.start()
         return store.replay(loop=self._loop, seek=self._seek, duration=self._duration)
 
-    def connect(self) -> None:
-        pass
-
     def start(self) -> None:
         pass
 
@@ -222,9 +219,6 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
 
     def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
         return True
-
-    def set_motion_mode(self, name: str) -> None:
-        pass
 
     def set_rage_mode(self, enable: bool) -> bool:
         return True
@@ -427,7 +421,9 @@ class GO2Connection(Module, Camera, Pointcloud):
             self.connection.set_motion_mode(self.config.motion_mode)
 
         self.standup()
-        time.sleep(3)
+        if isinstance(self.connection, UnitreeWebRTCConnection):
+            # The physical robot takes about 3 s to stand before it accepts BalanceStand.
+            time.sleep(3)
         self.connection.balance_stand()
 
         if self.config.mode == Go2Mode.RAGE:
