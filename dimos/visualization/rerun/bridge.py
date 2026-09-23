@@ -36,6 +36,7 @@ from typing import (
 )
 from urllib.parse import urlparse
 
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
@@ -45,7 +46,6 @@ from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
@@ -61,6 +61,8 @@ from dimos.visualization.rerun.constants import (
     RerunOpenOption,
 )
 from dimos.visualization.rerun.init import rerun_init, spawn_viewer
+from dimos.visualization.rerun.message_helpers import tf_archetypes
+from dimos.visualization.rerun.tf_tree import TfFrameTree
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -354,10 +356,12 @@ class RerunBridgeModule(Module):
                 return
             self._last_log[entity_path] = now
 
-        if self._tf_tree is not None and isinstance(msg, TFMessage):
+        if isinstance(msg, TFMessage):
             with self._tf_lock:
-                for path, archetype in msg.to_rerun(self._tf_tree):
+                for path, archetype in tf_archetypes(msg):
                     rr.log(path, archetype)
+                if self._tf_tree is not None:
+                    self._tf_tree.update(msg.transforms)
             return
 
         if isinstance(msg, CameraInfo) and entity_path not in self.config.visual_override:

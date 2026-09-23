@@ -1111,3 +1111,7 @@ on its generated SQLite lidar/TF streams. Install the ray-tracing extension as
 above. It writes `build/message-codegen/demo/evidence/raytrace-cli.rrd`; inspect
 that file with Rerun or check it with `rerun rrd verify`. The temporary SQLite
 source is still removed automatically.
+
+The terrain recording's TF hierarchy is now logged through the live Rerun
+bridge's generated-message callback, including its frame axes. This demo invokes
+the callback directly and does not start a network subscription or viewer.

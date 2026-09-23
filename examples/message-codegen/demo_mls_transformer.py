@@ -15,6 +15,7 @@
 """Plan across synthetic terrain using the native MLS backend and CDR messages."""
 
 from pathlib import Path as FilePath
+from types import SimpleNamespace
 
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
@@ -44,7 +45,8 @@ from dimos.navigation.nav_3d.mls_planner.viz import (
     render_surface_map,
 )
 from dimos.protocol.tf.tf import MultiTBuffer
-from dimos.visualization.rerun.message_helpers import register_colormap_annotation, tf_archetypes
+from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.visualization.rerun.message_helpers import register_colormap_annotation
 
 
 def main() -> None:
@@ -104,8 +106,14 @@ def main() -> None:
     rr.init("generated-mls-planner", spawn=False)
     rr.save(str(output))
     register_colormap_annotation()
-    for entity, archetype in tf_archetypes(TFMessage(transforms=[edge])):
-        rr.log(entity, archetype)
+    bridge = RerunBridgeModule()
+    bridge._min_intervals = {}
+    try:
+        bridge._on_message(
+            TFMessage.decode(TFMessage(transforms=[edge]).encode()), SimpleNamespace(name="/tf")
+        )
+    finally:
+        bridge.stop()
     rr.log("world/terrain", render_surface_map(cloud))
     rr.log("world/ray_map", render_surface_map(mapped_cloud))
     nodes = pointcloud_from_xyz(

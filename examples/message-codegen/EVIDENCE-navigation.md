@@ -115,3 +115,16 @@ The combined dannav, evaluator, MLS, and ray-tracing test selection passed all
 legacy geometry/nav/sensor/TF message imports in navigation or ray_tracing Python
 files. This search establishes only that scoped import cleanup, not completion
 of the repository-wide migration or historical dataset replacement.
+
+### Generated TF dispatch in the live Rerun bridge
+
+The bridge now recognizes generated TFMessage directly. Named transforms are
+logged even with axes disabled; enabled axes use a separate generated-message
+frame-tree renderer. Six bridge checks passed, including generated CDR dispatch
+with axes enabled/disabled, reparenting cleanup, and existing bridge configuration
+checks. Mypy passed for the extracted frame-tree renderer.
+
+The terrain demo now sends its CDR TF message through the actual bridge callback
+before recording terrain and the route; the resulting RRD passed verification.
+This exercises dispatch without starting the viewer or a transport subscription.
+Camera/image and other built-in bridge conversions remain outstanding.
