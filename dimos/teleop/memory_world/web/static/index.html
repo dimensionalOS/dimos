@@ -725,13 +725,18 @@
             <button id="menuOrbitResultBtn">Orbit result</button>
             <button id="menuNavigateBtn">Navigate</button>
         </div>
+        <h2>View</h2>
+        <div class="row">
+            <button id="menuJumpRobotBtn">Jump to robot</button>
+            <button id="menuFlyThroughBtn">Fly through</button>
+        </div>
         <h2>Orbit frame</h2>
         <select id="orbitFrameSel" aria-label="Frame to orbit"></select>
         <button id="menuOrbitBtn">Orbit frame</button>
         <h2>Layers</h2>
         <label><input type="checkbox" id="layerVoxels" checked> Voxel map</label>
         <label><input type="checkbox" id="layerCubes"> Draw voxels as cubes (not spheres)</label>
-        <label><input type="checkbox" id="layerPhotos" checked> Photos</label>
+        <label><input type="checkbox" id="layerPhotos"> Photos along the path</label>
         <h2>Lidar height</h2>
         <label class="slider">Min <input type="range" id="heightMin"><span id="heightMinVal">—</span></label>
         <label class="slider">Max <input type="range" id="heightMax"><span id="heightMaxVal">—</span></label>

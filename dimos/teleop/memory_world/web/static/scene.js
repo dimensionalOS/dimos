@@ -159,8 +159,16 @@ export class WorldScene {
         this._queryImageMeshes = [];                  // their quads, so one can be shown alone
         this._queryImageBoxes = [];                   // the detector's box drawn on each, same rules
         this._photosPinnedOff = false;                // set when the user turns Photos off
+        // An ANSWER's photographs are not the path's photographs, and they are not the
+        // same question. The path's are scenery, on a checkbox, and greeting someone
+        // with them is what this flag exists to stop; an answer's are its evidence and
+        // show because an answer is on screen. They were one flag, so the only way to
+        // arrive at a clean world also silenced the evidence -- which is the bug Jeff
+        // reported the other way round in September ("it doesn't show the image").
+        this._evidenceVisible = true;
         this._queryImageCursor = -1;
         this.onOrbitChange = null;   // set by main.js; see setOrbit
+        this.onLocomote = null;      // set by main.js: the viewer took the stick
 
 
         // Head-locked carrier for the VR answer panel and the replay camera frame. It
@@ -658,6 +666,15 @@ export class WorldScene {
 
     applyLocomote(g) {
         this._pendingLocomote = { stickX: g.stickX || 0, stickY: g.stickY || 0, up: g.up || 0 };
+        // Taking the stick ends a fly-through. Here rather than in the key handlers
+        // because this is the one funnel every kind of walking goes through -- keys,
+        // the touch stick and both controllers -- and the alternative is a tour of the
+        // world that ignores the person trying to steer. The deadzone is the walker's
+        // own: this runs every frame, with zeros most of them.
+        if (this.onLocomote && (Math.abs(g.stickX || 0) > 0.1 || Math.abs(g.stickY || 0) > 0.1
+            || Math.abs(g.up || 0) > 0.1)) {
+            this.onLocomote();
+        }
     }
 
     applyYaw(g) {
@@ -1113,9 +1130,9 @@ export class WorldScene {
 
     /** The cut is open exactly while the photograph it was made for is showing. */
     _showSightLine() {
-        // With Photos off there is nothing to see past, so the cut is a hole in the map
-        // with nothing behind it.
-        const cut = this._imageQuadGroup.visible ? this._sightLine : null;
+        // With no evidence showing there is nothing to see past, so the cut would be a
+        // hole in the map with nothing behind it.
+        const cut = this._evidenceVisible ? this._sightLine : null;
         if (!cut) {
             this._sightRadius.value = 0;
             return;
@@ -1145,7 +1162,7 @@ export class WorldScene {
      * and every place that shows or hides one calls it.
      */
     _applyQueryImageVisibility() {
-        const photos = this._imageQuadGroup.visible;
+        const photos = this._evidenceVisible;
         this._showSightLine();
         const cursor = this._queryImageCursor;
         const filter = this.clusterFilter;
@@ -1167,7 +1184,6 @@ export class WorldScene {
         this._imageQuadGroup.visible = !this._imageQuadGroup.visible;
         this._photosPinnedOff = !this._imageQuadGroup.visible;  // the user's own choice
         if (!this._imageQuadGroup.visible) this._releaseAllThumbnails();
-        this._applyQueryImageVisibility();  // an answer's photos are photos too
         this._imageLodAccumS = IMAGE_LOD_INTERVAL_S;
         this.diag('images_toggle', { visible: this._imageQuadGroup.visible });
         if (this.onLayerChange) this.onLayerChange();
@@ -1257,12 +1273,10 @@ export class WorldScene {
 
         this.clusterFilter = -1;
         this._selectedImageIds = new Set(result.observation_ids || []);
-        // An answer turns the photos on to show its evidence, but never over the user:
-        // turning them off and then asking a question used to bring them all back.
-        if (this._selectedImageIds.size > 0 && !this._imageQuadGroup.visible && !this._photosPinnedOff) {
-            this._imageQuadGroup.visible = true;
-            if (this.onLayerChange) this.onLayerChange();  // the photos box follows
-        }
+        // An answer's evidence shows because there is an answer. It used to have to
+        // switch the path's photographs on to be seen, which is why asking a question
+        // used to bring the whole path back with it.
+        this._evidenceVisible = true;
         // The selection changes which poses deserve a texture, so rebuild now.
         this._releaseAllThumbnails();
         this._imageLodAccumS = IMAGE_LOD_INTERVAL_S;
@@ -1370,6 +1384,7 @@ export class WorldScene {
      *  of it; none of them wants half. */
     clearAnswer() {
         this._clearHighlightGroup();
+        this._evidenceVisible = true;   // the next answer starts showing, whatever this one did
         this._queryImages = [];
         this._queryImageMeshes = [];
         this._queryImageBoxes = [];
