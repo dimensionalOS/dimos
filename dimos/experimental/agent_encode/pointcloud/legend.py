@@ -77,7 +77,7 @@ from dimos.experimental.agent_encode.pointcloud.overview import Overview
 | `Occupancy(z=(lo,hi), cell_m, area=None)` | 1 with a return in the band, 0 with only returns below it, NaN otherwise. |
 | `grid.at((x,y))`, `grid.near((x,y), radius)` | The containing cell's value; (min, max) within radius. None: no data. |
 | `grid.window(((x0,y0),(x1,y1)))` | Cell values in an area, rows north to south, at most 4096 cells. |
-| `mask.distance()` | Metres from each cell to the nearest true cell: clearance; inf when no cell is true. |
+| `mask.distance()` | Metres from each cell to the nearest true cell: clearance; inf when no cell is true. `blocked.distance() > r` marks the centres where a disc of radius r fits. |
 | `mask.regions(gap=0, measure=None)` | Connected true cells, largest first; `gap` joins regions that many cells apart, `measure=grid` adds each region's `stats`. |
 | `regions[i]`, `regions[:n]`, `regions.near((x,y), radius)` | `Region` with `id`, `cell_count`, `area_m2`, `centroid`, `bounds`, `stats`; `near` lists regions touching a disc. |
 | `regions.gap(a, b)` | `Gap` with `distance_m` between two regions' closest cells, edge to edge, and its ends `from_m`, `to_m`: the width of the opening between two obstacles. |
