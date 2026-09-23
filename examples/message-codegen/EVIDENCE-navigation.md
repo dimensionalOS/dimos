@@ -256,3 +256,23 @@ six velocity components zero. All received values were encoded and decoded as
 CDR. This exercises the control protocol without requiring a graphical viewer.
 The six server tests passed; production-file mypy passed. The invalid-JSON test
 now proves that a subsequent stop is delivered instead of relying on sleeps.
+
+### Command-center generated message boundary
+
+`WebsocketVisModule` now consumes generated pose/path/occupancy messages and
+publishes generated click goals, exploration flags, and both velocity forms.
+Costmap inflation and gradient use the shared occupancy view; JSON retains
+compressed cells and now reports the origin quaternion's yaw. Local subscribers
+receive velocity commands through the same publication path as configured
+transports.
+
+```sh
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_command_center.py
+```
+
+Observed: printed browser state for robot `(2, 3)`, path to `(5, 3)`, and a 2×2
+compressed costmap; the click produced a CDR-round-tripped world goal `(5, 3, 0)`.
+This demo invokes registered handlers directly; it does not claim browser or
+Socket.IO network acceptance. Two focused tests passed, covering generated
+commands, stamped velocity, pose/path state, exact decompressed cells, rotated
+map origin, and unchanged input bytes. Production-file mypy passed.

@@ -1170,3 +1170,12 @@ PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/mess
 
 This opens a local WebSocket, sends a click, velocity, and stop, and prints the
 verified generated CDR values. It requires no robot or ROS installation.
+
+Inspect command-center JSON and a generated click goal without a GUI:
+
+```sh
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_command_center.py
+```
+
+The demo exercises registered command-center handlers directly and prints the
+state prepared for the browser, including a compressed costmap.
