@@ -50,11 +50,18 @@ from dimos.msgs.control_msgs.ControlValues import ControlValues
 
 
 class DescriptionError(Exception):
-    """A description that cannot be used, carrying every reason at once."""
+    """A description that cannot be used, carrying every reason at once.
+
+    ``args`` holds the error list itself rather than a rendered string, so the
+    exception survives the pickling that carries it back over RPC.
+    """
 
     def __init__(self, errors: list[str]) -> None:
         self.errors = list(errors)
-        super().__init__(f"{len(self.errors)} problem(s): " + "; ".join(self.errors))
+        super().__init__(self.errors)
+
+    def __str__(self) -> str:
+        return f"{len(self.errors)} problem(s): " + "; ".join(self.errors)
 
 
 class FrameRejectedError(Exception):
@@ -63,7 +70,10 @@ class FrameRejectedError(Exception):
     def __init__(self, reason: str, detail: str) -> None:
         self.reason = reason
         self.detail = detail
-        super().__init__(f"{reason}: {detail}")
+        super().__init__(reason, detail)
+
+    def __str__(self) -> str:
+        return f"{self.reason}: {self.detail}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +171,11 @@ def validate_description(desc: ControlDescription) -> None:
                 errors.append(f"mode group {group.name!r} names undeclared resource {name!r}")
                 continue
             commandable |= set(target.command_interfaces)
+            if not (group.interfaces & set(target.command_interfaces)):
+                errors.append(
+                    f"mode group {group.name!r} lists {name!r} but drives none of its "
+                    f"interfaces, so claiming the group would lock the resource for nothing"
+                )
         extra = group.interfaces - commandable
         if extra:
             errors.append(
@@ -332,6 +347,11 @@ def validate_state(desc: ControlDescription, frame: ControlValues) -> dict[str, 
     Raises:
         FrameRejectedError: On a foreign source, or any missing, unknown or duplicate key.
     """
+    if len(frame.interface_names) != len(frame.values):
+        raise FrameRejectedError(
+            "shape",
+            f"{len(frame.interface_names)} names against {len(frame.values)} values",
+        )
     if frame.source != desc.source:
         raise FrameRejectedError(
             "source", f"frame is from {frame.source!r}, expected {desc.source!r}"
@@ -373,7 +393,23 @@ def validate_command(
 
     An empty result is valid and is the heartbeat: it still advances the
     sequence and proves the coordinator is alive.
+
+    Args:
+        desc: The description this source published for ``current_epoch``.
+        frame: The command frame to judge.
+        current_epoch: The epoch the source is currently armed under.
+        last_sequence: The last sequence accepted *within* ``current_epoch``, or
+            ``None`` to accept any sequence. Sequences are only comparable
+            inside one epoch, so pass ``None`` on the first frame of a new
+            epoch rather than carrying the previous epoch's counter across.
     """
+    # ControlValues enforces equal lengths on construction, so this only fires
+    # for a frame built by hand or mutated after the fact. It is still checked
+    # here because this path is specified never to raise.
+    if len(frame.interface_names) != len(frame.values):
+        return Rejected(
+            "shape", f"{len(frame.interface_names)} names against {len(frame.values)} values"
+        )
     if frame.epoch != current_epoch:
         return Rejected("epoch", f"frame epoch {frame.epoch}, current {current_epoch}")
 
@@ -418,9 +454,16 @@ def validate_command(
             bound = lim.lo if low_bad else lim.hi
             side = "below" if low_bad else "above"
             return Rejected("limit", f"{name} = {value} is {side} its limit {bound}")
-        assert lim.lo is not None and lim.hi is not None  # CLAMP is bounded both sides
-        values[name] = lim.lo if low_bad else lim.hi
-        clamped.append(name)
+        # Each side on its own terms. No assert: this runs every cycle, and
+        # asserts vanish under -O, so the narrowing has to be real.
+        if lim.lo is not None and value < lim.lo:
+            values[name] = float(lim.lo)
+            clamped.append(name)
+        elif lim.hi is not None and value > lim.hi:
+            values[name] = float(lim.hi)
+            clamped.append(name)
+        else:
+            values[name] = value
 
     group_result = _resolve_groups(desc, values)
     if isinstance(group_result, Rejected):

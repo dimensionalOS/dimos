@@ -39,6 +39,24 @@ from enum import Enum
 
 from dimos.control.contract.keys import KD, KP, POSITION, Unit
 
+_MAPPING_FIELDS: tuple[str, ...] = ()
+"""Overridden per class below. Frozen dataclasses normalize these to dict."""
+
+
+def _normalize_mappings(instance: object, names: tuple[str, ...]) -> None:
+    """Copy each named Mapping field into a plain dict, in place.
+
+    The fields are typed ``Mapping`` so a caller may pass any mapping, but what
+    is stored is always a dict: these objects are pickled across the RPC
+    boundary, and a ``MappingProxyType`` cannot be pickled. Copying also means a
+    caller mutating the mapping it handed in cannot reach inside a frozen
+    description afterwards.
+    """
+    for name in names:
+        current = getattr(instance, name)
+        if current is not None and not isinstance(current, dict):
+            object.__setattr__(instance, name, dict(current))
+
 
 class ResourceKind(Enum):
     """What a resource is, in the only three ways that change how it is used.
@@ -67,6 +85,9 @@ class Resource:
     state_interfaces: tuple[str, ...] = ()
     command_interfaces: tuple[str, ...] = ()
     units: Mapping[str, Unit] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _normalize_mappings(self, ("units",))
 
 
 class LimitPolicy(Enum):
@@ -144,6 +165,9 @@ class SafeStop:
     kd: Mapping[str, float] | None = None
     ramp_s: float | None = None
     stable_state: str = ""
+
+    def __post_init__(self) -> None:
+        _normalize_mappings(self, ("kd",))
 
 
 class EstopKind(Enum):
@@ -251,6 +275,9 @@ class ShutdownMotion:
     tolerance: float
     timeout_s: float
 
+    def __post_init__(self) -> None:
+        _normalize_mappings(self, ("pose",))
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ControlDescription:
@@ -277,6 +304,23 @@ class ControlDescription:
     shutdown_motion: ShutdownMotion | None = None
     meta: Mapping[str, str] = field(default_factory=dict)
     epoch: int = 0
+
+    def __post_init__(self) -> None:
+        _normalize_mappings(
+            self,
+            (
+                "limits",
+                "omission",
+                "initial_values",
+                "covered_resources",
+                "available_after",
+                "meta",
+            ),
+        )
+        # process_loss is a single value or a per-group mapping; only copy the
+        # mapping form.
+        if not isinstance(self.process_loss, ProcessLoss):
+            object.__setattr__(self, "process_loss", dict(self.process_loss))
 
     def resource(self, name: str) -> Resource | None:
         """The declared resource called ``name``, or ``None``."""

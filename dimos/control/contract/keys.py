@@ -49,6 +49,10 @@ KD = "kd"
 # A ground base declares the planar subset (vx, vy, wz over x, y, yaw); a drone
 # or a free-flyer declares all six. Both are the same vocabulary, so a task that
 # reads vz does not need to know which kind of base it is talking to.
+#
+# The pose terms (x, y, z, roll, pitch, yaw) are state-only today: a base is
+# commanded as a twist, and nothing in the stack commands a pose directly. They
+# are named here so odometry has one spelling, not two.
 VX = "vx"
 VY = "vy"
 VZ = "vz"

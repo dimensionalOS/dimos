@@ -21,6 +21,7 @@ a failing case built by breaking exactly one thing with ``dataclasses.replace``.
 from __future__ import annotations
 
 import dataclasses
+import pickle
 from types import MappingProxyType
 
 import pytest
@@ -47,7 +48,9 @@ from dimos.control.contract.keys import (
     EFFORT,
     PITCH,
     POSITION,
+    QW,
     ROLL,
+    VELOCITY,
     VX,
     VY,
     VZ,
@@ -307,6 +310,61 @@ def test_rule3_interface_commandable_on_no_resource_is_still_caught() -> None:
     )
 
     assert any("not commandable on any" in e for e in errors_of(desc))
+
+
+def test_rule3_member_driving_none_of_its_interfaces(xarm: ControlDescription) -> None:
+    """A group that locks a resource it never drives is a claim for nothing."""
+    broken = dataclasses.replace(
+        xarm,
+        mode_groups=(
+            ModeGroup(
+                name="position",
+                resources=("joint1", "gripper"),
+                interfaces=frozenset({VELOCITY}),
+            ),
+            *xarm.mode_groups[1:],
+        ),
+    )
+
+    assert any("drives none of its interfaces" in e for e in errors_of(broken))
+
+
+def test_rule3_group_with_no_interfaces(xarm: ControlDescription) -> None:
+    """An empty interface set drives nothing on any member."""
+    broken = dataclasses.replace(
+        xarm,
+        mode_groups=(
+            ModeGroup(name="empty", resources=("joint1",), interfaces=frozenset()),
+            *xarm.mode_groups,
+        ),
+    )
+
+    assert any("drives none of its interfaces" in e for e in errors_of(broken))
+
+
+def test_rule3_sensor_listed_in_a_group(xarm: ControlDescription) -> None:
+    """A sensor commands nothing, so a group listing it drives nothing on it."""
+    imu = Resource(
+        name="imu",
+        kind=ResourceKind.SENSOR,
+        state_interfaces=(QW,),
+        command_interfaces=(),
+        units={QW: Unit.UNITLESS},
+    )
+    broken = dataclasses.replace(
+        xarm,
+        resources=(*xarm.resources, imu),
+        mode_groups=(
+            ModeGroup(
+                name="position",
+                resources=(*xarm.mode_groups[0].resources, "imu"),
+                interfaces=frozenset({POSITION}),
+            ),
+            *xarm.mode_groups[1:],
+        ),
+    )
+
+    assert any("drives none of its interfaces" in e for e in errors_of(broken))
 
 
 def test_rule3_uncovered_command_interface(xarm: ControlDescription) -> None:
@@ -571,7 +629,7 @@ def test_a_valid_shutdown_motion_is_accepted(xarm: ControlDescription) -> None:
 
 
 def test_mapping_fields_accept_any_mapping(xarm: ControlDescription) -> None:
-    """The fields are typed Mapping, so a read-only mapping must work."""
+    """Any mapping goes in; a plain dict is stored, so the result still pickles."""
     fine = dataclasses.replace(
         xarm,
         covered_resources=MappingProxyType({"joint1": ("joint2",)}),
@@ -579,6 +637,11 @@ def test_mapping_fields_accept_any_mapping(xarm: ControlDescription) -> None:
     )
 
     validate_description(fine)
+
+    # MappingProxyType cannot be pickled, so storing one would break the RPC hop.
+    assert isinstance(fine.covered_resources, dict)
+    assert isinstance(fine.limits, dict)
+    assert pickle.loads(pickle.dumps(fine)) == fine
 
 
 # Rule 10: per-group process loss.
@@ -612,6 +675,47 @@ def test_rule11_negative_epoch(xarm: ControlDescription) -> None:
 
 
 # validate_state
+
+
+def test_description_error_pickles_and_reads_well() -> None:
+    """It travels back over RPC, so it must survive pickling with its list."""
+    original = DescriptionError(["first problem", "second problem"])
+
+    restored = pickle.loads(pickle.dumps(original))
+
+    assert restored.errors == ["first problem", "second problem"]
+    assert str(restored) == "2 problem(s): first problem; second problem"
+
+
+def test_frame_rejected_error_pickles_and_reads_well() -> None:
+    """Same for the state-frame rejection, which carries a reason and a detail."""
+    original = FrameRejectedError("missing_key", "state frame omits ['arm/j1/position']")
+
+    restored = pickle.loads(pickle.dumps(original))
+
+    assert restored.reason == "missing_key"
+    assert restored.detail == "state frame omits ['arm/j1/position']"
+    assert str(restored) == "missing_key: state frame omits ['arm/j1/position']"
+
+
+def test_mismatched_array_lengths_are_caught_by_both_validators(
+    xarm: ControlDescription,
+) -> None:
+    """ControlValues forbids this at construction, so only a mutated frame gets here.
+
+    Both paths still check it, because validate_command is specified never to
+    raise and a ragged zip would break that promise.
+    """
+    frame = ControlValues("arm", 0.0, 1, 1, ["arm/joint1/position"], [0.1])
+    frame.values = [0.1, 0.2]
+
+    with pytest.raises(FrameRejectedError, match="shape"):
+        validate_state(xarm, frame)
+
+    result = validate_command(xarm, frame, current_epoch=1, last_sequence=None)
+
+    assert isinstance(result, Rejected)
+    assert result.reason == "shape"
 
 
 def test_state_round_trip(xarm: ControlDescription) -> None:
@@ -863,7 +967,9 @@ def test_a_base_may_be_six_dof() -> None:
     Nothing about a base is planar by construction -- a ground base simply
     declares the vx/vy/wz subset, and a free-flyer declares all six.
     """
-    axes = (VX, VY, VZ, WX, WY, WZ)
+    linear = (VX, VY, VZ)
+    angular = (WX, WY, WZ)
+    axes = linear + angular
     drone = ControlDescription(
         source="drone",
         resources=(
@@ -872,7 +978,8 @@ def test_a_base_may_be_six_dof() -> None:
                 kind=ResourceKind.BASE,
                 state_interfaces=(*axes, X, Y, Z, ROLL, PITCH, YAW),
                 command_interfaces=axes,
-                units=dict.fromkeys(axes, Unit.M_PER_S)
+                units=dict.fromkeys(linear, Unit.M_PER_S)
+                | dict.fromkeys(angular, Unit.RAD_PER_S)
                 | {X: Unit.M, Y: Unit.M, Z: Unit.M}
                 | dict.fromkeys((ROLL, PITCH, YAW), Unit.RAD),
             ),
@@ -898,6 +1005,10 @@ def test_a_base_may_be_six_dof() -> None:
     assert result.active_groups == frozenset({"twist"})
     # A base is a resource, not a set of virtual joints.
     assert drone.joint_names() == ()
+    # Linear axes are m/s and angular axes rad/s. This fixture is a reference
+    # someone will copy, so the units have to be physically right.
+    assert all(drone.unit_of(f"drone/body/{a}") is Unit.M_PER_S for a in linear)
+    assert all(drone.unit_of(f"drone/body/{a}") is Unit.RAD_PER_S for a in angular)
 
 
 def test_a_base_twist_is_one_group(chassis: ControlDescription) -> None:
