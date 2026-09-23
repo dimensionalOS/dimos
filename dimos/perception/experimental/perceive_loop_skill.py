@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import os
-from threading import RLock
+from threading import Lock, RLock, Thread
 from typing import TYPE_CHECKING, Any
 
 from dimos.agents.agent_spec import AgentSpec
@@ -33,6 +33,7 @@ from dimos.utils.reactive import backpressure
 if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
 
+    from dimos.models.vl.base import VlModel
     from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
@@ -48,12 +49,24 @@ class PerceiveLoopSkill(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._vl_model = create(self.config.g.detection_model)
+        self._vl_model_instance: VlModel | None = None
+        self._model_lock = Lock()
         self._active_lookout: tuple[str, ...] = ()
         self._then: dict[str, Any] | None = None
         self._lookout_subscription: DisposableBase | None = None
         self._model_started: bool = False
         self._lock = RLock()
+        # Importing the model stack (torch, transformers) takes seconds. Done on
+        # a thread so it overlaps the rest of the blueprint's startup instead of
+        # holding up every deploy on this worker.
+        Thread(target=lambda: self._vl_model, name="warmup-vl-model", daemon=True).start()
+
+    @property
+    def _vl_model(self) -> VlModel:
+        with self._model_lock:
+            if self._vl_model_instance is None:
+                self._vl_model_instance = create(self.config.g.detection_model)
+            return self._vl_model_instance
 
     @rpc
     def start(self) -> None:
