@@ -54,6 +54,7 @@ from dimos.simulation.mujoco.constants import (
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
 )
+from dimos.simulation.mujoco.menagerie import SIM_INSTALL_HINT, ensure_menagerie
 from dimos.simulation.mujoco.shared_memory import ShmWriter
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -71,32 +72,39 @@ class MujocoConnection:
     def __init__(self, global_config: GlobalConfig) -> None:
         try:
             import mujoco  # noqa: F401
-            from mujoco_playground._src import mjx_env
         except ImportError as exc:
-            raise ImportError(
-                "Simulation dependencies are not installed. "
-                "Run `uv sync --extra sim --inexact` to install them."
-            ) from exc
+            raise ImportError(SIM_INSTALL_HINT) from exc
 
         # Pre-download the mujoco_sim data.
         get_data("mujoco_sim")
 
-        # Trigger the download of the mujoco_menagerie package. This is so it
-        # doesn't trigger in the mujoco process where it can time out.
-        mjx_env.ensure_menagerie_exists()
+        # Clone the mujoco_menagerie here rather than in the mujoco process,
+        # where the download can time out.
+        ensure_menagerie()
 
         self.global_config = global_config
         self.process: subprocess.Popen[bytes] | None = None
         self.shm_data: ShmWriter | None = None
-        self._last_video_seq = 0
-        self._last_odom_seq = 0
-        self._last_lidar_seq = 0
         self._stop_timer: threading.Timer | None = None
 
         self._stream_threads: list[threading.Thread] = []
         self._output_thread: threading.Thread | None = None
         self._stop_events: list[threading.Event] = []
         self._is_cleaned_up = False
+        self._launch()
+
+        # Reap the child at interpreter exit even if the blueprint never reaches
+        # start(). weakref so the handler does not keep the connection alive.
+        weak_self = weakref.ref(self)
+
+        def cleanup_on_exit(
+            weak_self: "weakref.ReferenceType[MujocoConnection]" = weak_self,
+        ) -> None:
+            instance = weak_self()
+            if instance is not None:
+                instance.stop()
+
+        atexit.register(cleanup_on_exit)
 
     camera_info_static: CameraInfo = CameraInfo.from_fov(
         fov_deg=VIDEO_CAMERA_FOV,
@@ -106,8 +114,19 @@ class MujocoConnection:
         frame_id="camera_optical",
     )
 
-    def start(self) -> None:
+    def _launch(self) -> None:
+        """Create the shared memory and start the simulator subprocess.
+
+        Called from __init__ so the multi-second MuJoCo start-up overlaps the
+        blueprint's deploy and wiring phases. The simulator loads everything, then
+        holds the world still until start() sets the run flag.
+        """
+        self._is_cleaned_up = False  # stop() followed by start() relaunches
         self.shm_data = ShmWriter()
+        # The new shared memory counts frames from zero again.
+        self._last_video_seq = 0
+        self._last_odom_seq = 0
+        self._last_lidar_seq = 0
 
         config_pickle = base64.b64encode(pickle.dumps(self.global_config)).decode("ascii")
         shm_names_json = json.dumps(self.shm_data.shm.to_names())
@@ -149,29 +168,22 @@ class MujocoConnection:
         )
         self._output_thread.start()
 
+    def start(self) -> None:
+        if self.process is None:  # start() after stop()
+            self._launch()
+        assert self.process is not None and self.shm_data is not None
+
         # Wait for process to be ready
         ready_timeout = 300.0
         start_time = time.time()
-        assert self.process is not None
         while time.time() - start_time < ready_timeout:
             if self.process.poll() is not None:
                 exit_code = self.process.returncode
                 self.stop()
-                raise RuntimeError(f"MuJoCo process failed to start (exit code {exit_code})")
+                raise RuntimeError(f"MuJoCo process exited during start-up (exit code {exit_code})")
             if self.shm_data.is_ready():
+                self.shm_data.signal_run()
                 logger.info("MuJoCo process started successfully")
-                # Register atexit handler to ensure subprocess is cleaned up
-                # Use weakref to avoid preventing garbage collection
-                weak_self = weakref.ref(self)
-
-                def cleanup_on_exit(
-                    weak_self: "weakref.ReferenceType[MujocoConnection]" = weak_self,
-                ) -> None:
-                    instance = weak_self()
-                    if instance is not None:
-                        instance.stop()
-
-                atexit.register(cleanup_on_exit)
                 return
             time.sleep(0.1)
 
@@ -339,10 +351,11 @@ class MujocoConnection:
         if self.shm_data is None:
             return None
 
-        lidar_msg, seq = self.shm_data.read_lidar()
-        if seq > self._last_lidar_seq and lidar_msg is not None:
+        lidar, seq = self.shm_data.read_lidar()
+        if seq > self._last_lidar_seq and lidar is not None:
             self._last_lidar_seq = seq
-            return lidar_msg
+            points, ts = lidar
+            return PointCloud2.from_numpy(points, frame_id="world", timestamp=ts)
 
         return None
 
