@@ -296,3 +296,21 @@ inference is claimed. Twelve VLM-boundary and existing spec tests passed. Covera
 includes stream and RPC image requests, JPEG colors and dimensions, unchanged
 input bytes, and the no-image response. Mypy passed for the six changed production
 files after annotating the request content list.
+
+### Navigation skill goals
+
+The navigation skill's image/odometry streams and goal construction use generated
+messages. Tagged locations now convert quaternion orientation to the Euler angles
+required by RobotLocation, fixing the previous storage of quaternion xyz as
+roll/pitch/yaw. Tagged and semantic goals use explicit generated pose fields.
+
+```sh
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_navigation_skill.py
+```
+
+Observed: a generated odometry pose at `(1, 2, 3)` was tagged as `desk`, retrieved,
+and emitted as a CDR map goal retaining roll/pitch/yaw `(0.2, -0.3, π/2)`.
+Memory and navigation RPCs were stubbed; no inference or robot motion occurred.
+Two focused tests passed for the tagged orientation round trip and semantic-map
+goal construction/rejection. Production mypy passed. Existing agent integration
+test message annotations were converted; those inference tests were not run.

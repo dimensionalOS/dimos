@@ -1188,3 +1188,12 @@ PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/mess
 
 The demo writes `build/message-codegen/demo/evidence/vlm-request.jpg` from a
 generated CDR image through the agent's request builder, using a stubbed model.
+
+Exercise named-location navigation without hardware or inference:
+
+```sh
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_navigation_skill.py
+```
+
+The demo tags generated odometry and verifies that a retrieved CDR goal preserves
+position and orientation, with memory and navigation RPCs stubbed.
