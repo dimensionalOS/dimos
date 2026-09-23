@@ -378,8 +378,8 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
             logger.error("Error during worker provider shutdown", exc_info=True)
 
 
-def _warm_up_stream_types(instance: Any) -> None:
-    """Import the decode dependencies of the module's In/IO stream types.
+def _warm_up(instance: Any) -> None:
+    """Pay the module's first-use imports while the blueprint is still deploying.
 
     LCMEncoderMixin.subscribe() calls ``<type>.lcm_warmup()`` on the
     subscriber's thread, i.e. inside start(); for PointCloud2 that is a 2.5 s
@@ -387,6 +387,10 @@ def _warm_up_stream_types(instance: Any) -> None:
     Running it right after construction overlaps the import with the other
     workers' deploys and the wiring phase. A concurrent lcm_warmup() from
     start() just waits on the module import lock.
+
+    get_skills() imports langchain_core.tools (0.4 s, more on a busy worker)
+    and builds the skill schemas; McpServer asks every module for them right
+    after start(), so the same applies.
     """
     seen: set[Any] = set()
     for stream in [
@@ -401,6 +405,12 @@ def _warm_up_stream_types(instance: Any) -> None:
             warmup()
         except Exception:
             logger.warning("Stream type warm-up failed", type=stream.type_name, exc_info=True)
+    try:
+        instance.get_skills()
+    except ImportError:
+        pass  # no agent stack installed, so nothing will ask for skills
+    except Exception:
+        logger.warning("Skill warm-up failed", module=type(instance).__name__, exc_info=True)
 
 
 def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
@@ -413,7 +423,7 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
             instance = module_class(**kwargs)
             state.instances[module_id] = instance
             threading.Thread(
-                target=_warm_up_stream_types,
+                target=_warm_up,
                 args=(instance,),
                 name=f"warmup-{module_class.__name__}",
                 daemon=True,
