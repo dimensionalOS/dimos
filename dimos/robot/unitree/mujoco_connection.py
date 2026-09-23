@@ -94,6 +94,7 @@ class MujocoConnection:
         self._output_thread: threading.Thread | None = None
         self._stop_events: list[threading.Event] = []
         self._is_cleaned_up = False
+        self._launch()
 
     camera_info_static: CameraInfo = CameraInfo.from_fov(
         fov_deg=VIDEO_CAMERA_FOV,
@@ -103,7 +104,13 @@ class MujocoConnection:
         frame_id="camera_optical",
     )
 
-    def start(self) -> None:
+    def _launch(self) -> None:
+        """Create the shared memory and start the simulator subprocess.
+
+        Called from __init__ so the multi-second MuJoCo start-up overlaps the
+        blueprint's deploy and wiring phases; start() only waits for the ready flag.
+        """
+        self._is_cleaned_up = False  # stop() followed by start() relaunches
         self.shm_data = ShmWriter()
 
         config_pickle = base64.b64encode(pickle.dumps(self.global_config)).decode("ascii")
@@ -135,6 +142,19 @@ class MujocoConnection:
             self.shm_data.cleanup()
             raise RuntimeError(f"Failed to start MuJoCo subprocess: {e}") from e
 
+        # Reap the child at interpreter exit even if the blueprint never reaches
+        # start(). weakref so the handler does not keep the connection alive.
+        weak_self = weakref.ref(self)
+
+        def cleanup_on_exit(
+            weak_self: "weakref.ReferenceType[MujocoConnection]" = weak_self,
+        ) -> None:
+            instance = weak_self()
+            if instance is not None:
+                instance.stop()
+
+        atexit.register(cleanup_on_exit)
+
         # A captured pipe must always be drained. MuJoCo can emit a sustained
         # stream of physics warnings; once an unread OS pipe fills, the child
         # blocks in write(2) and silently stops updating every shared-memory
@@ -146,10 +166,14 @@ class MujocoConnection:
         )
         self._output_thread.start()
 
+    def start(self) -> None:
+        if self.process is None:  # start() after stop()
+            self._launch()
+        assert self.process is not None and self.shm_data is not None
+
         # Wait for process to be ready
         ready_timeout = 300.0
         start_time = time.time()
-        assert self.process is not None
         while time.time() - start_time < ready_timeout:
             if self.process.poll() is not None:
                 exit_code = self.process.returncode
@@ -157,18 +181,6 @@ class MujocoConnection:
                 raise RuntimeError(f"MuJoCo process failed to start (exit code {exit_code})")
             if self.shm_data.is_ready():
                 logger.info("MuJoCo process started successfully")
-                # Register atexit handler to ensure subprocess is cleaned up
-                # Use weakref to avoid preventing garbage collection
-                weak_self = weakref.ref(self)
-
-                def cleanup_on_exit(
-                    weak_self: "weakref.ReferenceType[MujocoConnection]" = weak_self,
-                ) -> None:
-                    instance = weak_self()
-                    if instance is not None:
-                        instance.stop()
-
-                atexit.register(cleanup_on_exit)
                 return
             time.sleep(0.1)
 

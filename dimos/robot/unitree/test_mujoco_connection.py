@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 import subprocess
 import sys
 import threading
-from typing import Any, cast
+from typing import Any
 
+# Imported before subprocess.Popen is patched: mujoco's own import spawns a subprocess.
+import mujoco  # noqa: F401
 from pytest import MonkeyPatch
 
 from dimos.core.global_config import GlobalConfig
@@ -94,9 +96,14 @@ class _QuietProcess:
         self.terminate()
 
 
-def _bare_connection(monkeypatch: MonkeyPatch) -> MujocoConnection:
+def _bare_connection(monkeypatch: MonkeyPatch, popen: Callable[..., Any]) -> MujocoConnection:
+    """A MujocoConnection whose subprocess, shared memory and logging are doubles."""
     monkeypatch.setattr(mujoco_connection, "ensure_menagerie", lambda: None)
     monkeypatch.setattr(mujoco_connection, "get_data", lambda _name: None)
+    monkeypatch.setattr(mujoco_connection, "ShmWriter", _FakeShmWriter)
+    monkeypatch.setattr(mujoco_connection.subprocess, "Popen", popen)
+    monkeypatch.setattr(mujoco_connection.atexit, "register", lambda *_args: None)
+    monkeypatch.setattr(mujoco_connection, "logger", _FakeLogger())
     return MujocoConnection(GlobalConfig())
 
 
@@ -122,14 +129,7 @@ def test_start_drains_subprocess_output_larger_than_a_pipe(
             **kwargs,
         )
 
-    connection = _bare_connection(monkeypatch)
-
-    monkeypatch.setattr(mujoco_connection, "ShmWriter", _FakeShmWriter)
-    monkeypatch.setattr("dimos.robot.unitree.mujoco_connection.subprocess.Popen", noisy_child)
-    monkeypatch.setattr(
-        "dimos.robot.unitree.mujoco_connection.atexit.register", lambda *_args: None
-    )
-    monkeypatch.setattr(mujoco_connection, "logger", _FakeLogger())
+    connection = _bare_connection(monkeypatch, noisy_child)
 
     try:
         connection.start()
@@ -154,18 +154,8 @@ def test_stop_terminates_child_before_closing_pumped_output(
     monkeypatch: MonkeyPatch,
 ) -> None:
     """Stopping a quiet child must not deadlock on the pump's read lock."""
-    monkeypatch.setattr(mujoco_connection, "logger", _FakeLogger())
-    connection = _bare_connection(monkeypatch)
     process = _QuietProcess()
-    state = cast("Any", connection)
-    state.process = process
-    state.shm_data = _FakeShmWriter()
-    state._output_thread = threading.Thread(
-        target=connection._pump_subprocess_output,
-        name="mujoco-output-pump",
-        daemon=True,
-    )
-    state._output_thread.start()
+    connection = _bare_connection(monkeypatch, lambda *_args, **_kwargs: process)
     assert process.stdout.read_started.wait(timeout=1)
 
     stopper = threading.Thread(target=connection.stop)
@@ -179,3 +169,25 @@ def test_stop_terminates_child_before_closing_pumped_output(
 
     assert not stopper.is_alive()
     assert process.terminations == 1
+
+
+def test_start_waits_on_the_process_launched_at_construction(monkeypatch: MonkeyPatch) -> None:
+    launches: list[_QuietProcess] = []
+
+    def popen(*_args: Any, **_kwargs: Any) -> _QuietProcess:
+        launches.append(_QuietProcess())
+        return launches[-1]
+
+    connection = _bare_connection(monkeypatch, popen)
+    assert len(launches) == 1  # launched by __init__
+
+    connection.start()  # the fake shared memory is ready at once: start() only waits
+    assert len(launches) == 1
+
+    connection.stop()
+    assert launches[0].terminations == 1
+
+    connection.start()  # stop() then start() relaunches
+    assert len(launches) == 2
+    assert connection.process is launches[1]
+    connection.stop()
