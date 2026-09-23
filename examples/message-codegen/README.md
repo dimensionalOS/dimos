@@ -1142,3 +1142,16 @@ the path message retains its original coordinates.
 The terrain recording also includes `world/occupancy`, a small generated grid
 with free, occupied, unknown, and intermediate-cost cells. The shared adapter
 places its textured plane using the grid's origin pose.
+
+### Live LCM-to-Rerun bridge
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_live_bridge.py
+```
+
+This starts the real bridge headlessly on an available local gRPC port, publishes
+a generated image over LCM, waits for decoded/rendered delivery, and writes
+`build/message-codegen/demo/evidence/live-bridge.rrd`. It closes the subscriptions
+and transport automatically and never opens a window. A bounded subprocess test
+runs the demo and verifies the recording with Rerun. Multicast loopback must be
+available in the test environment.

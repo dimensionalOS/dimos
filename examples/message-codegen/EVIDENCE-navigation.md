@@ -211,3 +211,17 @@ maps, and malformed dimensions. Bridge and adapter mypy passed.
 The native terrain demo now sends a small generated occupancy grid through the
 bridge alongside its cloud and path. The completed demo's RRD passed verification.
 Interactive rendering acceptance is still outstanding.
+
+### Live LCM bridge verification
+
+Added a bounded headless demo that calls the real bridge start lifecycle,
+creates its gRPC server, subscribes through typed LCM, publishes a generated
+160x120 image on a unique topic, and verifies delivery after bridge rendering.
+The demo passed, and Rerun verified its recorded output. The subprocess regression
+also passed with 30-second bounds on the demo and RRD verification. No transport
+or viewer startup behavior is mocked in this demo; no GUI was opened.
+
+Bridge initialization now imports colormap registration from the separate
+visualization helper instead of the legacy PointCloud2 class. All eight viewer
+integration checks passed after this change. This establishes the LCM headless
+path only; Zenoh and interactive visual acceptance remain outstanding.

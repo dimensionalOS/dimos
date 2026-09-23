@@ -23,9 +23,9 @@ import threading
 from typing import Any
 from urllib.parse import urlparse
 
-from dimos.msgs.sensor_msgs.PointCloud2 import register_colormap_annotation
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RERUN_GRPC_PORT
+from dimos.visualization.rerun.message_helpers import register_colormap_annotation
 
 logger = setup_logger()
 
