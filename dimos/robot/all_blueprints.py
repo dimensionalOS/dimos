@@ -335,7 +335,7 @@ all_modules = {
     "rerun-web-socket-server": "dimos.visualization.rerun.websocket_server.RerunWebSocketServer",
     "rust-recorder": "dimos.experimental.memory.rust_recorder.RustRecorder",
     "security-module": "dimos.experimental.security_demo.security_module.SecurityModule",
-    "semantic-search": "dimos.memory.module.SemanticSearch",
+    "semantic-search": "dimos.memory.semantic_search.SemanticSearch",
     "simple-phone-teleop": "dimos.teleop.phone.phone_extensions.SimplePhoneTeleop",
     "spatial-memory": "dimos.perception.experimental.spatial_perception.SpatialMemory",
     "speak-skill": "dimos.agents.skills.speak_skill.SpeakSkill",
