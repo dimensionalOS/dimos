@@ -850,6 +850,39 @@ function appendChat(entry) {
             row.append(more, code);
         }
         if (entry.call_id) chatRows.set(entry.call_id, row);
+    } else if (entry.role === 'tool_step') {
+        // One row per step of a running analysis, not two: the 'start' makes it and the
+        // 'done' finds it again and writes the time in. An analysis over a four-million
+        // point map runs for tens of seconds, and a panel that says nothing while it does
+        // is indistinguishable from one that has hung.
+        const key = `step:${entry.index}`;
+        if (entry.index === 0 && entry.status === 'start') {
+            // A second analysis starts its numbering again at zero, so without this its
+            // first step would find the FIRST analysis's row and quietly overwrite it.
+            for (const name of [...chatRows.keys()]) {
+                if (name.startsWith('step:')) chatRows.delete(name);
+            }
+        }
+        const existing = chatRows.get(key);
+        if (existing) {
+            if (entry.status === 'done') {
+                existing.classList.remove('running');
+                const took = existing.querySelector('.ms');
+                if (took) took.textContent = `${entry.ms} ms`;
+            }
+            return;
+        }
+        row.classList.add('running');
+        const at = document.createElement('span');
+        at.className = 'at';
+        at.textContent = `${(entry.index || 0) + 1}/${entry.total || 1}`;
+        const source = document.createElement('pre');
+        source.className = 'step';
+        source.textContent = entry.source || '';
+        const took = document.createElement('span');
+        took.className = 'ms';
+        row.append(at, took, source);
+        chatRows.set(key, row);
     } else if (entry.role === 'tool_result') {
         row.textContent = `↳ ${entry.text}`;
         if (entry.ok === false) row.classList.add('failed');

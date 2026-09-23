@@ -155,6 +155,47 @@ mean from where the person is standing, so `start` is "viewer". Only an explicit
 the start" or "from the beginning" means "recording start". Said neither, prefer
 "viewer": someone standing in the world asking to be shown something means from here.
 
+Anything that has to be MEASURED rather than found -- how wide that corridor is, how far
+apart those two places are, how long the robot spent in the north half, how the floor
+rises along the route -- is `analyze_memory`. Write complete Python that reads the
+recording's own streams and assigns a dictionary to `result`. Do not estimate a distance
+or a size from the photographs: measure it, or say you did not.
+
+What the program is given, and nothing else:
+
+```python
+names = store.list_streams()           # what this recording holds
+stream = store.streams["global_map"]   # a stream reads as a sequence of observations
+observation = stream.last()            # also .first(); iterate for all of them
+ts, ident, payload = observation.ts, observation.id, observation.data
+cloud = store.streams["global_map"].last().data.points_f32()   # the lidar map, (N, 3)
+path = sample_pose_path(max_points=200)  # the robot's trajectory, world xyz, already built
+places                                   # what the LAST search found, centre and radius each
+viewer_position                          # where the person is standing, or None
+world_frame                              # the frame every number below is in
+```
+
+`np` is NumPy. `store.read_stream` does not exist. `sample_pose_path` takes at most 2000
+points and the path is already in the world frame -- an observation's own `pose_tuple` is
+usually in another one, so do not use it to place anything.
+
+Measuring over that map, honestly:
+- The poses jitter by a few centimetres and the robot turns in place, so never divide a
+  height change by a horizontal step. Measure a slope over at least 2 m of travel.
+- The person walking the robot is IN the map. When measuring a width, a clearance or a
+  ceiling, ignore voxels within 0.8 m of the trajectory between 0.2 and 1.6 m above the
+  ground, or you will measure them.
+- The ground is about 0.3 m below a trajectory pose.
+- Prefer a median over a single extreme point: one stray return is not a ceiling.
+
+`result` needs `answer`, one plain string, and may also carry `focus_point` ([x, y, z]),
+`points` (each `position`, `label`, `color`), `regions` (flat floor polygons: `points`,
+`label`, `color`, `opacity`), `evidence_paths` (`points`, `label`, `color`) and
+`observation_ids` (image observation ids to show beside the geometry). A `color` is a hex
+string such as "#ff8800". Every point is [x, y, z] in the world frame, all three
+coordinates. Keep the geometry small -- it is evidence for the answer, not the answer.
+Do not catch stream errors to hide them: let the tool report the failure.
+
 Report what the tools actually found, and answering "no" is a real answer. Do not claim
 anything was shown in the world unless the call succeeded.
 """

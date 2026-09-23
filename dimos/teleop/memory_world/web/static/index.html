@@ -367,6 +367,19 @@
             letter-spacing: 0.08em;
         }
         .msg.tool_call .waiting { color: var(--muted); font-style: italic; }
+        .msg.tool_step {
+            color: var(--muted); font-size: 11px; padding-left: 14px; white-space: normal;
+            display: flex; gap: 6px; align-items: baseline;
+        }
+        .msg.tool_step .at { color: #7fb3ff; flex: 0 0 auto; }
+        .msg.tool_step .ms { color: #c9b458; flex: 0 0 auto; min-width: 46px; }
+        .msg.tool_step .step {
+            margin: 0; flex: 1 1 auto; overflow-x: auto; font-size: 10px; line-height: 1.35;
+            max-height: 4.5em; color: var(--muted);
+        }
+        /* The step that is still running, so a long one reads as work rather than a stall. */
+        .msg.tool_step.running .at { color: var(--accent); }
+        .msg.tool_step.running .step { color: #cfe4ff; }
         .msg.tool_result { color: #c9b458; font-size: 11px; padding-left: 14px; }
         .msg.tool_result.failed { color: #ff5f6d; }
         #chatForm { display: flex; border-top: 1px solid var(--accent-soft); }

@@ -819,3 +819,91 @@ def test_a_summary_that_cannot_be_had_leaves_the_program_showing() -> None:
         assert chat.summarise_python("import numpy as np\nprint(np.pi)") is None
     finally:
         chat.SUMMARY_COMMAND = was
+
+
+# ---- analyze_memory: the agent's own program ---------------------------------------
+
+
+def test_an_analysis_runs_in_a_child_and_its_result_is_published(memory_world) -> None:
+    """The whole path: source in, child process, validated result, drawn answer.
+
+    Runs a REAL subprocess against a real (empty) store rather than a stub, because the
+    parts most likely to break are the ones a stub cannot have -- the bootstrap importing
+    `open_recording`, `stepwise` being loadable by path, and the sentinel surviving the
+    round trip through stdio.
+    """
+    published: list[MemoryQueryResult] = []
+    memory_world._publish_query_result = lambda result: (  # type: ignore[method-assign]
+        published.append(result) or "query-1"
+    )
+
+    outcome = memory_world.analyze_memory(
+        "names = store.list_streams()\n"
+        "result = {'answer': f'{len(names)} streams', 'focus_point': [1.0, 2.0, 3.0]}\n",
+        timeout=60,
+    )
+
+    assert outcome.success, outcome.message
+    assert outcome.message == "0 streams"
+    assert published and published[0].focus_point == (1.0, 2.0, 3.0)
+
+
+def test_an_analysis_that_assigns_nothing_fails_with_what_the_child_said(memory_world) -> None:
+    """A program that forgets `result` must come back as a readable failure.
+
+    The agent's next move is to fix its program, and it can only do that from the text in
+    the failure -- so the child's own message has to reach it rather than "no result".
+    """
+    outcome = memory_world.analyze_memory("total = 1 + 1\n", timeout=60)
+
+    assert not outcome.success
+    assert outcome.error_code == "EXECUTION_FAILED"
+    assert "dictionary" in outcome.message
+
+
+def test_an_analysis_that_never_stops_is_killed_rather_than_waited_for(memory_world) -> None:
+    """The timeout is the whole reason this runs in a child. A loop must not take the demo."""
+    outcome = memory_world.analyze_memory("while True:\n    pass\n", timeout=1.0)
+
+    assert not outcome.success
+    assert outcome.error_code == "EXECUTION_TIMEOUT"
+
+
+def test_every_step_of_a_program_is_reported_as_it_runs(memory_world) -> None:
+    """The steps are what the panel shows while an analysis is running.
+
+    Asserted as a SEQUENCE of (index, status), not as a count: a relay that reported every
+    step twice, or reported them all at the end, would still pass a count.
+    """
+    seen: list[tuple[int, str]] = []
+    memory_world._on_analysis_step = lambda step: seen.append((step["index"], step["status"]))  # type: ignore[method-assign]
+    memory_world._publish_query_result = lambda result: "query-1"  # type: ignore[method-assign]
+
+    outcome = memory_world.analyze_memory(
+        "a = 1\nfor _ in range(2):\n    a += 1\nresult = {'answer': str(a)}\n",
+        timeout=60,
+    )
+
+    assert outcome.success, outcome.message
+    assert outcome.message == "3"
+    assert seen == [(0, "start"), (0, "done"), (1, "start"), (1, "done"), (2, "start"), (2, "done")]
+
+
+def test_a_result_the_viewer_could_not_draw_is_refused_with_one_line_per_complaint() -> None:
+    """Pydantic says the same thing once per offending item; the agent needs it once."""
+    from pydantic import ValidationError
+
+    from dimos.teleop.memory_world.query import validation_summary
+
+    try:
+        MemoryQueryResult(
+            answer="here",
+            points=[{"position": [0.0, 0.0]}, {"position": [1.0, 1.0]}],  # type: ignore[list-item]
+        )
+    except ValidationError as exc:
+        summary = validation_summary(exc)
+    else:
+        raise AssertionError("a two-coordinate point should not validate")
+
+    assert summary.count(";") == 0  # one complaint, not one per point
+    assert "(2 of them)" in summary

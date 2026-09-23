@@ -16,9 +16,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
 Point3 = tuple[FiniteFloat, FiniteFloat, FiniteFloat]
@@ -122,3 +123,103 @@ class MemoryQueryResult(BaseModel):
     # the bounds written for the first rejected every answer from the second.
     kind: Literal["embedding", "item", "heatmap", "area"] = "embedding"
     query_text: str = Field(default="", max_length=400)
+
+
+def validation_summary(error: ValidationError) -> str:
+    """Every distinct complaint once, with the fields it applies to.
+
+    From `andrew/feat/vr_demo`. Pydantic reports one line per offending item, so a
+    result with sixty bad points hands the agent sixty identical sentences and no room
+    for the one that differs; this says "points.*.position (60 of them): ..." instead.
+    """
+    groups: dict[tuple[str, str], list[str]] = {}
+    for item in error.errors():
+        loc = [str(part) for part in item["loc"]]
+        shape = ".".join("*" if part.isdigit() else part for part in loc)
+        groups.setdefault((shape, item["msg"]), []).append(".".join(loc))
+    lines = []
+    for (shape, msg), fields in groups.items():
+        where = shape if len(fields) == 1 else f"{shape} ({len(fields)} of them)"
+        lines.append(f"{where}: {msg}")
+    return "; ".join(lines)
+
+
+# ---- the analysis sandbox -----------------------------------------------------------
+# `analyze_memory` runs the agent's program in a SEPARATE PROCESS, which is what makes a
+# runaway loop or a segfault in it survivable: the module kills the child and answers the
+# question with a failure instead of dying with it. The two ends talk over the child's
+# own stdio, which is why both sentinels exist -- a program is free to print whatever it
+# likes, so the result and the step reports have to be findable in the noise. The result
+# is the LAST line matching its sentinel on stdout; the steps go to stderr so that
+# ordinary prints cannot be mistaken for one.
+RESULT_SENTINEL = "__DIMOS_MEMORY_RESULT__="
+STEP_SENTINEL = "__DIMOS_MEMORY_STEP__="
+# Loaded by path in the sandbox: importing the package would pull in the whole module.
+STEPWISE_PATH = Path(__file__).with_name("stepwise.py")
+# `open_recording` rather than `SqliteStore` (which is what andrew's branch opens): this
+# build is pointed at a .mcap as often as a .db, and the mcap path needs the derived
+# store beside it. The package's `__init__` is lazy precisely so a child like this one
+# can import a sibling without paying for torch and FastAPI.
+MEMORY_ANALYSIS_BOOTSTRAP = f"""
+import json
+import sys
+
+import numpy as np
+
+from dimos.teleop.memory_world.recording import open_recording
+
+store = open_recording(sys.argv[1])
+viewer_position = json.loads(sys.argv[2])
+places = json.loads(sys.argv[3])
+trail = json.loads(sys.argv[4])
+world_frame = sys.argv[5]
+
+def sample_pose_path(max_points=200):
+    # The robot's own trajectory, world-frame xyz, thinned to at most `max_points`.
+    # It is passed in already built rather than read here: on this build the poses come
+    # from the tf tree, not from a pose stamped on an observation, and tf is the module's
+    # to read. A recording whose tf could not place the camera gives an empty path.
+    if not isinstance(max_points, int) or not 2 <= max_points <= 2000:
+        raise ValueError("max_points must be an integer from 2 through 2000")
+    if len(trail) <= max_points:
+        return [list(point) for point in trail]
+    stride = (len(trail) - 1) / (max_points - 1)
+    return [list(trail[min(int(index * stride), len(trail) - 1)]) for index in range(max_points)]
+
+namespace = {{
+    "__name__": "__main__",
+    "np": np,
+    "store": store,
+    "viewer_position": viewer_position,
+    "places": places,
+    "world_frame": world_frame,
+    "sample_pose_path": sample_pose_path,
+}}
+import importlib.util
+
+_spec = importlib.util.spec_from_file_location("stepwise", r"{STEPWISE_PATH}")
+stepwise = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(stepwise)
+
+
+def report_step(payload):
+    sys.stderr.write("{STEP_SENTINEL}" + json.dumps(payload) + "\\n")
+    sys.stderr.flush()
+
+
+stepwise.run_stepwise(sys.stdin.read(), namespace, report_step)
+result = namespace.get("result")
+if not isinstance(result, dict):
+    raise TypeError("analysis must assign a dictionary to `result`")
+
+
+def json_default(value):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f"{{type(value).__name__}} is not JSON serializable")
+
+
+print("{RESULT_SENTINEL}" + json.dumps(result, default=json_default, separators=(",", ":")))
+"""

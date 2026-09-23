@@ -44,6 +44,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.memory.store.base import Store
 from dimos.memory.transform import throttle
+from dimos.teleop.memory_world.analysis import MemoryAnalysis
 from dimos.teleop.memory_world.answers import WorldAnswers
 from dimos.teleop.memory_world.chat import WorldChat
 from dimos.teleop.memory_world.clients import (
@@ -222,6 +223,10 @@ class MemoryWorldConfig(ModuleConfig):
     # photographs are framed with. A missing, empty or uncalibrated (zero focal
     # length) camera_info leaves the default field of view.
     camera_info_stream_name: str | None = None
+    # The most JSON one `analyze_memory` result may be. It caps the FAILURE text too: a
+    # program that dies printing a million rows must not put a million rows in front of
+    # the agent, which would then spend its context reading them.
+    memory_analysis_max_output_chars: int = PydanticField(default=400_000, gt=0)
     # ---- the timeline ---------------------------------------------------------
     # There is no knob for building one: a recording is scrubbed through its map stream's
     # own messages, or through `voxel_diff`/`voxel_keyframe` streams it already carries,
@@ -261,6 +266,7 @@ class MemoryWorldConfig(ModuleConfig):
 class MemoryWorldModule(
     WorldAnswers,
     WorldChat,
+    MemoryAnalysis,
     ClientMessages,
     ReplayServing,
     VisualAnswers,
@@ -609,15 +615,18 @@ class MemoryWorldModule(
         self,
     ) -> tuple[
         tuple[dict[str, Any], bytes],
-        tuple[dict[str, Any], bytes] | None,
         tuple[dict[str, Any], bytes],
         list[bytes] | None,
         tuple[dict[str, Any], bytes],
     ]:
-        """Build the cloud, top-down map, markers and trail once, whoever asks first.
+        """Build the cloud, markers and trail once, whoever asks first.
 
         Returns (cloud, image poses, thumbnails, trail) as one
         snapshot taken under the lock: a reopen clears the fields meanwhile.
+
+        The annotation said FIVE for a while after the top-down map was deleted, with
+        the entries off by one from the tuple actually returned -- so anything that
+        trusted it about `[3]` was told "thumbnails" for the trail.
         """
         with self._world_cache_lock:
             if self._cached_cloud is None:
