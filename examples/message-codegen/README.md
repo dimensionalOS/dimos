@@ -1105,3 +1105,9 @@ TF edges, and colormap annotations. Install its additional native extension with
 ```bash
 maturin develop --release --uv -m dimos/mapping/ray_tracing/rust/py/Cargo.toml
 ```
+
+The recorded-navigation demo now also invokes the actual native ray-tracing CLI
+on its generated SQLite lidar/TF streams. Install the ray-tracing extension as
+above. It writes `build/message-codegen/demo/evidence/raytrace-cli.rrd`; inspect
+that file with Rerun or check it with `rerun rrd verify`. The temporary SQLite
+source is still removed automatically.

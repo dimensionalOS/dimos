@@ -101,3 +101,17 @@ three production modules. The terrain demo now prints the generated ray-traced
 map and writes it alongside TF edges, terrain, and the planned route. The updated
 RRD passed `rerun rrd verify`. Full execution of `plan_rrd` against historical
 recordings remains unverified until those datasets are replaced.
+
+### Ray-tracing CLI and combined regression checks
+
+Converted the remaining raytrace_rrd CLI to generated PointCloud2 fields and
+nested TransformStamped values. The recorded-navigation demo now invokes the
+actual CLI in a subprocess on newly written CDR lidar/TF SQLite streams. It
+processed three frames, wrote `raytrace-cli.rrd`, and Rerun verified the file.
+Mypy passed for the CLI after annotating the existing normal-length array.
+
+The combined dannav, evaluator, MLS, and ray-tracing test selection passed all
+75 tests, including both compiled native Python backends. A search found no
+legacy geometry/nav/sensor/TF message imports in navigation or ray_tracing Python
+files. This search establishes only that scoped import cleanup, not completion
+of the repository-wide migration or historical dataset replacement.
