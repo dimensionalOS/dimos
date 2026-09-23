@@ -18,14 +18,21 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
 
-def test_live_lcm_bridge_records_generated_image() -> None:
+
+@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
+def test_live_bridge_records_generated_image(backend: str) -> None:
     demo = Path(__file__).with_name("demo_live_bridge.py")
     result = subprocess.run(
-        [sys.executable, str(demo)], check=True, capture_output=True, text=True, timeout=30
+        [sys.executable, str(demo), "--transport", backend],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
-    assert "LCM CDR image received and rendered" in result.stdout
-    recording = Path("build/message-codegen/demo/evidence/live-bridge.rrd")
+    assert f"{backend.upper()} CDR image received and rendered" in result.stdout
+    recording = Path(f"build/message-codegen/demo/evidence/live-bridge-{backend}.rrd")
     subprocess.run(
         [str(Path(sys.executable).with_name("rerun")), "rrd", "verify", str(recording)],
         check=True,

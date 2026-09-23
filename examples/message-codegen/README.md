@@ -1143,15 +1143,21 @@ The terrain recording also includes `world/occupancy`, a small generated grid
 with free, occupied, unknown, and intermediate-cost cells. The shared adapter
 places its textured plane using the grid's origin pose.
 
-### Live LCM-to-Rerun bridge
+### Live LCM/Zenoh-to-Rerun bridge
 
 ```bash
-PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_live_bridge.py
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_live_bridge.py --transport lcm
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_live_bridge.py --transport zenoh
 ```
 
 This starts the real bridge headlessly on an available local gRPC port, publishes
-a generated image over LCM, waits for decoded/rendered delivery, and writes
-`build/message-codegen/demo/evidence/live-bridge.rrd`. It closes the subscriptions
+a generated image over the selected transport, waits for decoded/rendered delivery, and writes
+`build/message-codegen/demo/evidence/live-bridge-lcm.rrd`. It closes the subscriptions
 and transport automatically and never opens a window. A bounded subprocess test
 runs the demo and verifies the recording with Rerun. Multicast loopback must be
 available in the test environment.
+
+The Zenoh variant writes `live-bridge-zenoh.rrd`. It uses separate publisher and
+subscriber sessions connected explicitly over loopback TCP with scouting and
+gossip disabled. This verifies the transport-to-bridge route without claiming
+default peer-discovery reliability. Both variants have bounded subprocess tests.

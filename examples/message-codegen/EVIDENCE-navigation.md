@@ -225,3 +225,16 @@ Bridge initialization now imports colormap registration from the separate
 visualization helper instead of the legacy PointCloud2 class. All eight viewer
 integration checks passed after this change. This establishes the LCM headless
 path only; Zenoh and interactive visual acceptance remain outstanding.
+
+### Live bridge on both transports
+
+Extended the headless live bridge demo and regression to LCM and Zenoh. The
+Zenoh variant uses two independent session pools and an explicit loopback TCP
+connection. A first run rejected the demo's leading-slash LCM topic name;
+corrected the fixture to a valid `dimos/vb/...` Zenoh key. Both bounded subprocess
+tests then passed, including real bridge startup, CDR image delivery, shutdown,
+and verification of each transport's separate RRD output.
+
+Scouting/gossip are disabled in the explicit Zenoh fixture. This is not evidence
+that the previously observed default discovery issue is fixed, nor is it
+interactive viewer acceptance.
