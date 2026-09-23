@@ -34,6 +34,18 @@ class Box(Shape):
     yaw_deg: float = 0.0
     """Rotation about z."""
 
+    def __post_init__(self) -> None:
+        box = np.asarray([self.center, self.size], dtype=np.float64)
+        if (
+            box.shape != (2, 3)
+            or not np.isfinite([*box.flat, self.yaw_deg]).all()
+            or (box[1] < 0).any()
+        ):
+            raise ValueError(
+                "Box takes a finite (x, y, z) center, three non-negative size extents "
+                "and a finite yaw_deg"
+            )
+
     def _rotation(self) -> NDArray[np.float64]:
         """Box axes to world: the columns are the box's x, y, z in the cloud's frame."""
         c, s = math.cos(math.radians(self.yaw_deg)), math.sin(math.radians(self.yaw_deg))

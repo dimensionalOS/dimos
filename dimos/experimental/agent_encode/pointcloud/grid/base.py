@@ -252,17 +252,16 @@ class Grid:
     def _pair(self, other: Grid) -> tuple[Grid, Grid]:
         """Both grids over the cells they share, at the finer of their cells."""
         cell = min(self.cell_m, other.cell_m)
-        first, second = self._refined(cell), other._refined(cell)
-        origin, mine, theirs = overlap(
-            (first.origin, first.shape), (second.origin, second.shape), cell
+        mine, theirs = self._repeat(cell), other._repeat(cell)
+        origin, first, second = overlap(
+            (self.origin, (self.shape[0] * mine, self.shape[1] * mine)),
+            (other.origin, (other.shape[0] * theirs, other.shape[1] * theirs)),
+            cell,
         )
-        return (
-            Grid(origin, cell, first.values[mine], mask=self.mask),
-            Grid(origin, cell, second.values[theirs], mask=other.mask),
-        )
+        return self._window(origin, cell, first, mine), other._window(origin, cell, second, theirs)
 
-    def _refined(self, cell_m: float) -> Grid:
-        """This grid at ``cell_m``, each cell repeated over the finer cells inside it."""
+    def _repeat(self, cell_m: float) -> int:
+        """How many ``cell_m`` cells span one of this grid's cells."""
         factor = self.cell_m / cell_m
         repeat = round(factor)
         if not math.isclose(factor, repeat, rel_tol=1e-6):
@@ -270,10 +269,14 @@ class Grid:
                 f"cells of {cell_m:g} m and {self.cell_m:g} m do not nest, so the grids cannot "
                 "be combined; use cell sizes where one is a whole multiple of the other"
             )
-        if repeat == 1:
-            return self
-        values = np.repeat(np.repeat(self.values, repeat, axis=0), repeat, axis=1)
-        return Grid(self.origin, cell_m, values, mask=self.mask)
+        return repeat
+
+    def _window(
+        self, origin: tuple[float, float], cell_m: float, window: tuple[slice, slice], repeat: int
+    ) -> Grid:
+        """The ``cell_m`` cells in ``window``, each holding the value of the cell it lies in."""
+        rows, cols = (np.arange(s.start, s.stop) // repeat for s in window)
+        return Grid(origin, cell_m, self.values[np.ix_(rows, cols)], mask=self.mask)
 
     def _logic(
         self,

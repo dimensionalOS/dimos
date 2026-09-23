@@ -41,6 +41,14 @@ class Cylinder(Shape):
 
     def __post_init__(self) -> None:
         check_z_band(self.z)
+        if (
+            len(self.center) != 2
+            or not np.isfinite([*self.center, self.radius]).all()
+            or self.radius < 0
+        ):
+            raise ValueError(
+                "Cylinder takes a finite (x, y) center and a finite, non-negative radius"
+            )
 
     def _horizontal(self, points: NDArray[np.float32] | NDArray[np.float64]) -> NDArray[np.float64]:
         rel = points[:, :2] - np.asarray(self.center, dtype=points.dtype)
