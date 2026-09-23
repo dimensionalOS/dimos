@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import atexit
+import pickle
 
 from IPython.core.completer import provisionalcompleter
 from IPython.core.interactiveshell import InteractiveShell
@@ -20,7 +21,7 @@ import pytest
 from traitlets.config import Config
 
 from dimos.core.demos.stress_test_module import StressTestModule
-from dimos.core.rpc_client import RPCClient
+from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.protocol.rpc.spec import RPCSpec
 
 
@@ -64,3 +65,19 @@ def test_ipython_completes_rpc_without_transport_calls(ipython, proxy):
 
     assert "echo" in {completion.text for completion in completions}
     assert transport.mock_calls == []
+
+
+def test_pickle_carries_the_rpc_names_but_not_the_class(proxy, mocker):
+    client, transport = proxy
+    mocker.patch("dimos.core.rpc_client.rpc_backend", return_value=lambda: transport)
+
+    data = pickle.dumps(client)
+
+    # Unpickling in another worker must not import the module: pickle can only
+    # import what the bytes name.
+    assert StressTestModule.__module__.encode() not in data
+    restored = pickle.loads(data)
+    assert restored.actor_class is None
+    assert restored.remote_name == client.remote_name
+    assert restored.rpcs == client.rpcs
+    assert isinstance(restored.slow, RpcCall)
