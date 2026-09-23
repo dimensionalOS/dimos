@@ -18,7 +18,6 @@ import {
 
 const statusEl = document.getElementById('status');
 const connectBtn = document.getElementById('connectBtn');
-const orbitBtn = document.getElementById('orbitBtn');
 const embedBtn = document.getElementById('embedBtn');
 const searchNote = document.getElementById('searchNote');
 const chatEl = document.getElementById('chat');
@@ -446,7 +445,6 @@ async function startReplay() {
             const index = await replay.load();
             const orbit = index.orbit;
             if (orbit && orbit.positions && orbit.positions.length) {
-                orbitBtn.textContent = `Orbit ${orbit.frame}`;
                 scene.setOrbitTarget(orbit.positions[orbit.positions.length - 1]);
                 replay.onScan = (scan) => scene.setOrbitTarget(orbit.positions[scan]);
             }
@@ -1118,7 +1116,7 @@ async function setOrbitFrame(frame) {
             scene.setOrbitTarget(orbitPositions[at]);
             if (replay) replay.onScan = (scan) => scene.setOrbitTarget(orbitPositions[Math.min(scan, orbitPositions.length - 1)]);
         }
-        orbitBtn.textContent = scene?.isOrbiting() ? 'Stop orbit' : `Orbit ${frame}`;
+        syncOrbitLabels();
         diag('orbit_frame', { frame, positions: orbitPositions.length });
         return orbitPositions;
     } catch (e) {
@@ -1245,10 +1243,10 @@ embedBtn.addEventListener('click', async () => {
 function syncOrbitLabels() {
     if (!scene) return;
     const on = scene.isOrbiting();
-    // The frame the user picked, not the recording's default: OrbitControl keeps
-    // orbiting their choice, so the button has to name it.
-    const frame = orbitFrameSel.value || replay?.index?.orbit?.frame || 'frame';
-    orbitBtn.textContent = on ? 'Stop orbit' : `Orbit ${frame}`;
+    // The menu's button names no frame -- it sits under the frame selector, which says
+    // which one -- so it reports the STATE only. The button that named the frame was the
+    // floating one, and that is gone.
+    document.getElementById('menuOrbitBtn').textContent = on ? 'Stop orbit' : 'Orbit frame';
     document.getElementById('orbitTouchBtn').textContent = on ? 'Walk' : 'Orbit';
     if (results && results._syncOrbitLabel) results._syncOrbitLabel();  // label only, no loop
 }
@@ -1256,7 +1254,6 @@ function setOrbit(enabled) {
     if (!scene) return;
     scene.setOrbit(enabled);   // which calls back into syncOrbitLabels
 }
-orbitBtn.addEventListener('click', () => setOrbit(!scene?.isOrbiting()));
 document.getElementById('orbitTouchBtn').addEventListener('click', () => setOrbit(!scene?.isOrbiting()));
 document.getElementById('cameraBtn').addEventListener('click', () => {
     if (scene) scene.stepQueryImage();  // the same filtered step the P key takes
@@ -1290,7 +1287,6 @@ async function connect() {
         connectBtn.classList.add('hidden');
         applyIndexStatus(indexStatus);
         void loadFrames();
-        if (document.body.classList.contains('desktop-view')) orbitBtn.classList.remove('hidden');
     } catch (e) {
         // The socket may already be open: setupWebSocket resolves before startViewer
         // runs, so anything startViewer throws (no WebXR, a scene that will not build)
@@ -1343,7 +1339,6 @@ async function disconnect() {
     const timeline = document.getElementById('timeline');
     timeline.hidden = true;
     timeline.classList.remove('loading', 'replaying');
-    orbitBtn.textContent = 'Orbit frame';  // the next world names its frame again
     if (replay) replay.dispose();
     replay = null;
     document.body.classList.remove('desktop-view', 'chat-open');
@@ -1355,7 +1350,6 @@ async function disconnect() {
     connectBtn.disabled = false;
     applyAskAvailability();  // ws is null by now: the ask box goes dead with the mic
     embedBtn.classList.add('hidden');
-    orbitBtn.classList.add('hidden');
     menuEl.classList.remove('open');
     if (tour && tour.active) tour.exit();
     if (tour) tour.dispose();
