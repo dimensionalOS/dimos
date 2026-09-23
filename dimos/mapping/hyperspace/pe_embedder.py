@@ -164,13 +164,13 @@ class PEPatches:
     def side(self) -> tuple[int, int]:
         """Pixels the checkpoint takes, (height, width)."""
         size = self.model.visual.image_size
-        return (int(size[0]), int(size[1])) if isinstance(size, (tuple, list)) else (size, size)
+        return (int(size[0]), int(size[1])) if isinstance(size, tuple | list) else (size, size)
 
     @cached_property
     def grid(self) -> tuple[int, int]:
         """Patches down and across."""
         patch = self.trunk.patch_embed.patch_size
-        patch = patch[0] if isinstance(patch, (tuple, list)) else patch
+        patch = patch[0] if isinstance(patch, tuple | list) else patch
         return (self.side[0] // int(patch), self.side[1] // int(patch))
 
     @cached_property

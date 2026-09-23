@@ -35,6 +35,7 @@ from dimos.mapping.hyperspace.ingest import (
     PATCH_STREAM,
     IngestConfig,
     PatchIngestor,
+    info_stream_for,
 )
 from dimos.mapping.hyperspace.query import HyperspaceQuery
 from dimos.mapping.hyperspace.segments import SEGMENT_STREAM
@@ -1343,3 +1344,19 @@ def test_the_text_towers_stay_off_the_card_the_detector_needs(store: SqliteStore
     # And an explicit choice still wins, for a card with room to spare.
     shared = LiveQuery(store, LiveConfig(detect=DetectConfig(device="cuda"), tower_device="cuda"))
     assert shared.towers.device == "cuda"
+
+
+def test_the_camera_is_written_down_even_when_the_frames_are_not(store: SqliteStore) -> None:
+    """`keep_frames` is about colour FRAMES; the camera is what places a box.
+
+    An offline index is built with `keep_frames` off, because the recording already holds
+    its own colour -- and that used to take the intrinsics with it. The query side then
+    looked for `camera_info` or `depth_camera_info` by those exact names, found neither on
+    a recording that calls them something else, and every answer died as "no camera_info
+    for <frame>": measured on roscon_jpeg.db as "0 place(s), 6 refused, 282 ms", which
+    reads as a detector declining rather than as a query that never looked.
+    """
+    fill(store, [look_at(np.array([0.0, -2.0, 0.0]), OBJECT)], flat=True)
+    assert info_stream_for("") in store.list_streams(), "the camera was not written down"
+    held = store.stream(info_stream_for(""), CameraInfo).to_list()
+    assert [observation.data.frame_id for observation in held] == [CAMERA]

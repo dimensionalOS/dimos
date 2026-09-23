@@ -381,6 +381,18 @@ class HyperspaceConfig(MemoryModuleConfig):
     #   is the first lever on a CPU box and it trades recall for latency, so count the
     #   places before and after rather than assuming only the clock moved.
     owl_device: str = "auto"
+    # WHAT THIS RECORDING CALLS ITS CAMERA STREAMS. Empty uses `RecordingFrames`'
+    # defaults -- `color_image`, `depth_image`, `camera_info`, `depth_camera_info` -- which
+    # is not what every recording calls them, and GUESSING WRONG FAILS SILENTLY: measured
+    # on roscon_jpeg.db (`realsense_color_image`, `realsense_depth_image`), every episode
+    # came back "refused" in 282 ms with no forward pass, because there were no frames to
+    # look at, and the answer read as the detector declining. `LiveConfig` has carried
+    # these four fields all along; the module simply never passed them on, so no blueprint
+    # could set them.
+    color_stream: str = ""
+    depth_stream: str = ""
+    color_info_stream: str = ""
+    depth_info_stream: str = ""
     # Models the frames-first search ranks with. [] = every model in the index,
     # which is what the three-way agreement wants.
     # MEMBER TAGS to search, as `dimos map live --models` takes them (for example
@@ -522,6 +534,10 @@ class Hyperspace(MemoryModule):
                 models=list(self.config.detect_models),
                 merge_m=self.config.merge_m,
                 tower_device=self.config.tower_device,
+                color_stream=self.config.color_stream,
+                depth_stream=self.config.depth_stream,
+                color_info_stream=self.config.color_info_stream,
+                depth_info_stream=self.config.depth_info_stream,
             ),
         )
         self.register_disposable(self.live)

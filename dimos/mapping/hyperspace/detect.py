@@ -449,6 +449,18 @@ class RecordingFrames:
             logger.info(f"hyperspace: showing the detector {kept}")
         self._fusion: Any = None
         self._fused_cache: dict[tuple[str, float], NDArray[np.float32]] = {}
+        # SAID OUT LOUD, because the failure it causes reads as an answer. With no colour
+        # stream under this name there is nothing to show the detector, so every episode
+        # comes back "refused" -- with no forward pass, in a couple of hundred
+        # milliseconds -- and a caller sees a detector that looked and declined. Measured
+        # on roscon_jpeg.db, whose stream is `realsense_color_image` while the default is
+        # `color_image`: "0 place(s), 6 refused, 282 ms".
+        if not self._kept_frames and self.color_stream not in recording.list_streams():
+            logger.warning(
+                f"hyperspace: no {self.color_stream!r} stream in this recording -- there are "
+                "no frames to detect in, so every episode will be refused. Name the "
+                f"recording's colour stream ({', '.join(sorted(recording.list_streams()))[:200]})"
+            )
 
     def warm(self) -> float:
         """Do the first lookup's work now, while nobody is waiting on an answer.

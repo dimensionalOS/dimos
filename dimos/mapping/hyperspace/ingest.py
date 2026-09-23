@@ -516,7 +516,15 @@ class PatchIngestor:
         without them every answer dies as "no camera_info for <frame>" -- one warning per
         episode, no exception, no answers.
         """
-        if not self.config.keep_frames or info.frame_id in self._cameras_written:
+        # NOT gated on `keep_frames`. That flag is about keeping the colour FRAMES, which a
+        # recording already holds -- the camera is a different thing and a query cannot
+        # place a single box without it. An offline index built with `keep_frames` off
+        # therefore answered nothing on a recording whose own info stream is not called
+        # `camera_info` or `depth_camera_info`: measured on roscon_jpeg.db, whose streams
+        # are `realsense_color_image_camera_info` and `realsense_depth_image_camera_info`,
+        # where `Detections` warned "no camera_info ... no answer can be placed in the
+        # world" and every query came back empty. One row per camera frame.
+        if info.frame_id in self._cameras_written:
             return
         self.store.stream(info_stream_for(self.slug), CameraInfo).append(
             info,
