@@ -1029,6 +1029,9 @@ document.getElementById('menuOrbitResultBtn').addEventListener('click', () => re
 document.getElementById('menuNavigateBtn').addEventListener('click', () => results && results.navigate());
 document.getElementById('menuOrbitBtn').addEventListener('click', () => setOrbit(!scene?.isOrbiting()));
 document.getElementById('menuJumpRobotBtn').addEventListener('click', () => { menuEl.classList.remove('open'); jumpToRobot(); });
+// The same jump, on screen: losing the robot is the one thing worth a button rather
+// than a trip through the menu.
+document.getElementById('goRobotBtn').addEventListener('click', () => jumpToRobot());
 document.getElementById('menuFlyThroughBtn').addEventListener('click', () => { menuEl.classList.remove('open'); toggleFlyThrough(); });
 // The phone hides the on-screen Disconnect, so the menu has to carry one or there is no
 // way back from a connected session on a device with no keyboard.

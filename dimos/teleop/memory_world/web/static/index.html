@@ -458,6 +458,37 @@
             clip-path: none;
         }
         body.desktop-view #menuBtn { display: block; }
+        /* Go to Robot: the one jump worth a button of its own, in the corner the eye
+           goes to when it has lost the robot. Outside `#ui`, so the overlay's
+           fade-unless-hovered rule does not take it with the hints. */
+        #goRobotBtn {
+            position: absolute;
+            left: 16px;
+            /* Above the timeline, not beside it. The timeline is CENTRED and
+               `min(760px, 100% - 24px)` wide, so on a narrow window -- or with the chat
+               panel open, which is the normal case -- its left edge reaches into the
+               corner: measured, it overlapped at left 122 against a button ending at
+               141. Sitting the button above it clears any width. */
+            bottom: 76px;
+            z-index: 140;
+            display: none;
+            padding: 9px 14px;
+            font-size: 12px;
+            line-height: 1;
+            letter-spacing: 0.12em;
+            background: rgba(6, 9, 15, 0.82);
+            color: var(--accent);
+            border: 1px solid var(--accent-soft);
+            clip-path: none;
+        }
+        /* Not on a phone: the walking stick owns that corner. The menu still has it. */
+        body.desktop-view:not(.touch) #goRobotBtn { display: block; }
+        /* The tour takes the bottom-left for its own panel. `touring` is the class
+           tour.js actually sets -- checked, not guessed. */
+        body.touring #goRobotBtn { display: none; }
+        /* The diag log runs along the bottom; start it clear of the button rather
+           than printing underneath it. */
+        body.desktop-view:not(.touch) #log { left: 170px; }
         body.desktop-view #perf { top: 92px; }
         #menu {
             position: absolute;
@@ -780,6 +811,7 @@
         <span id="timeLabel">0:00 / 0:00</span>
         <button id="exitReplayBtn" title="Back to the full map">✕</button>
     </div>
+    <button id="goRobotBtn" type="button" title="Fly to the robot (base_link)">Go to Robot</button>
     <pre id="log"></pre>
     <script type="module" src="/static_mw/main.js?v=__ASSET_VERSION__"></script>
 </body>
