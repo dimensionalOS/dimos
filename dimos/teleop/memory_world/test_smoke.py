@@ -907,3 +907,106 @@ def test_a_result_the_viewer_could_not_draw_is_refused_with_one_line_per_complai
 
     assert summary.count(";") == 0  # one complaint, not one per point
     assert "(2 of them)" in summary
+
+
+def _hyperspace_host(published: dict):  # type: ignore[no-untyped-def]
+    """The smallest thing `_draw_hyperspace_answer` will run against."""
+    from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
+
+    class Host(HyperspaceAnswers):
+        config = SimpleNamespace(place_radius_m=2.5, world_frame="odom")
+
+        def __init__(self) -> None:
+            self._clients_lock = threading.Lock()
+            self._last_answer = (None, None)
+
+        def _publish_query_result(self, result) -> str:  # type: ignore[no-untyped-def]
+            published["result"] = result
+            return "qid"
+
+        def _markers_near(self, positions):  # type: ignore[no-untyped-def]
+            return []
+
+        def _query_is_current(self, query_id) -> bool:  # type: ignore[no-untyped-def]
+            return True
+
+    return Host()
+
+
+def test_a_measured_object_is_drawn_as_a_box_and_an_unmeasured_place_is_not() -> None:
+    """The detector's own size reaches the viewer instead of dying as a radius.
+
+    Hyperspace backprojects the 2-D box through depth, so `extent` is the thing's
+    measured size -- and the answer used to collapse it to `max(extent)/2` and send a
+    sphere. A heatmap place measured nothing (zero extent) and must still get NO box:
+    a box invented from the configured radius is indistinguishable, on screen, from
+    one something actually measured.
+    """
+    from dimos.mapping.hyperspace.msgs import FoundObject, FoundObjects
+
+    published: dict = {}
+    _hyperspace_host(published)._draw_hyperspace_answer(
+        FoundObjects(
+            query="a fire extinguisher",
+            kind="item",
+            frame="odom",
+            objects=[
+                FoundObject(
+                    frame="odom",
+                    centre=(1.0, 2.0, 0.5),
+                    extent=(0.3, 0.25, 0.73),
+                    confidence=0.9,
+                    place_id=1,
+                ),
+                FoundObject(
+                    frame="odom",
+                    centre=(9.0, 4.0, 0.0),
+                    extent=(0.0, 0.0, 0.0),
+                    confidence=0.4,
+                    place_id=2,
+                ),
+            ],
+        )
+    )
+
+    result = published["result"]
+    assert len(result.clusters) == 2, "both places are still named"
+    assert len(result.boxes) == 1, "the unmeasured place invented a size"
+    assert result.boxes[0].centre == (1.0, 2.0, 0.5)
+    assert result.boxes[0].extent == (0.3, 0.25, 0.73), "the extent was halved or rounded"
+    # The point's radius is still half the longest side, so the voxels under the box
+    # light up too; the box is added beside it, not instead of it.
+    assert result.points[0].radius == pytest.approx(0.365)
+    assert result.points[1].radius is None, "a fallback radius is not a measurement"
+
+
+def test_a_box_too_big_for_the_viewer_is_clamped_rather_than_losing_the_whole_answer() -> None:
+    """One oversized measurement used to raise and take every other place with it."""
+    from dimos.mapping.hyperspace.msgs import FoundObject, FoundObjects
+    from dimos.teleop.memory_world.query import MAX_HIGHLIGHT_RADIUS_M
+
+    published: dict = {}
+    _hyperspace_host(published)._draw_hyperspace_answer(
+        FoundObjects(
+            query="the wall",
+            kind="item",
+            frame="odom",
+            # Flat on the view axis (every depth reading on one plane) AND longer than
+            # the viewer's metre budget: the two ends a measurement can fail at.
+            objects=[
+                FoundObject(
+                    frame="odom",
+                    centre=(0.0, 0.0, 0.0),
+                    extent=(40.0, 0.0, 2.0),
+                    confidence=0.8,
+                    place_id=1,
+                )
+            ],
+        )
+    )
+
+    box = published["result"].boxes[0]
+    assert box.extent[0] == 2 * MAX_HIGHLIGHT_RADIUS_M
+    assert box.extent[1] > 0.0, "a zero side is un-drawable and would have raised"
+    assert box.extent[2] == 2.0, "a side inside the budget was changed"
+    assert published["result"].points[0].radius == MAX_HIGHLIGHT_RADIUS_M

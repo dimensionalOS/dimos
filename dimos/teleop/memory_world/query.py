@@ -57,6 +57,9 @@ MAX_HIGHLIGHT_RADIUS_M = 5.0
 # answer" for what was a setting.
 MAX_ANSWER_PLACES = 64
 
+# A side of a measured box, bounded by the same metre budget as a highlight radius.
+BoxSide = Annotated[FiniteFloat, Field(gt=0.0, le=2 * MAX_HIGHLIGHT_RADIUS_M)]
+
 
 class HighlightPoint(BaseModel):
     """A world-frame point of interest."""
@@ -67,6 +70,27 @@ class HighlightPoint(BaseModel):
     # Metres around the point whose voxels the viewer repaints. Only set when
     # the point is an object, not a capture pose.
     radius: float | None = Field(default=None, gt=0.0, le=MAX_HIGHLIGHT_RADIUS_M)
+
+
+class HighlightBox(BaseModel):
+    """A world-frame, axis-aligned box around a thing whose size was MEASURED.
+
+    Only drawn for a measurement. Hyperspace's item path backprojects the detector's
+    2-D box through depth and merges the looks that agree, so `extent` is the thing's
+    own size; a heatmap or area answer measured no size and gets a point and its
+    configured radius instead. A box invented from a radius would look exactly like
+    this one and mean nothing.
+    """
+
+    centre: Point3
+    # FULL side lengths, not half-extents, in the same order as `centre`. Bounded like
+    # `HighlightPoint.radius` and for the same reason -- a value the config accepts but
+    # this rejects surfaces to the user as "the query failed" -- so a producer CLAMPS
+    # rather than passes a bigger one through.
+    extent: tuple[BoxSide, BoxSide, BoxSide]
+    label: str = Field(default="", max_length=120)
+    color: Color = "#22dd88"
+    opacity: float = Field(default=0.12, ge=0.0, le=1.0)
 
 
 class ClusterSummary(BaseModel):
@@ -99,6 +123,8 @@ class MemoryQueryResult(BaseModel):
     regions: list[HighlightRegion] = Field(default_factory=list, max_length=32)
     evidence_paths: list[HighlightPath] = Field(default_factory=list, max_length=32)
     points: list[HighlightPoint] = Field(default_factory=list, max_length=128)
+    # The measured size of each thing an answer found, where anything measured one.
+    boxes: list[HighlightBox] = Field(default_factory=list, max_length=MAX_ANSWER_PLACES)
     observation_ids: list[int] = Field(default_factory=list, max_length=200)
     route: HighlightPath | None = None
     action: Literal["replace"] = "replace"

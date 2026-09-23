@@ -49,10 +49,23 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.core.module import In
 from dimos.mapping.hyperspace.msgs import FoundObject, FoundObjects
-from dimos.teleop.memory_world.query import ClusterSummary, HighlightPoint, MemoryQueryResult
+from dimos.teleop.memory_world.query import (
+    MAX_HIGHLIGHT_RADIUS_M,
+    ClusterSummary,
+    HighlightBox,
+    HighlightPoint,
+    MemoryQueryResult,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# The thinnest side a measured box may be drawn with. A detection whose depth readings
+# all land on one plane -- a sign, a poster, anything flat on -- measures ZERO along the
+# view axis, and a zero side is both un-drawable and rejected by `HighlightBox`, which
+# would lose the whole answer. A millimetre-thin box is the honest shape of that
+# measurement; it is not padded out to look like a solid.
+_MIN_BOX_SIDE_M = 0.01
 
 
 def _label_for(found: FoundObject, query: str, index: int, kind: str) -> str:
@@ -216,13 +229,30 @@ class HyperspaceAnswers:
         fallback_radius = float(self.config.place_radius_m)
         clusters: list[ClusterSummary] = []
         points: list[HighlightPoint] = []
+        boxes: list[HighlightBox] = []
         for index, obj in enumerate(objects):
             centre = tuple(float(value) for value in obj.centre)
             # Half the longest side, so the marker covers the thing rather than a corner
             # of it. Zero extent is a heatmap or area answer -- nothing measured a size,
             # so the configured radius stands in and is not presented as a measurement.
             measured = max(float(value) for value in obj.extent) if any(obj.extent) else 0.0
-            radius = measured / 2.0 if measured else fallback_radius
+            # CLAMPED, not passed through: `HighlightPoint.radius` and `HighlightBox`
+            # both cap their metres, and a single oversized measurement raising here
+            # loses the WHOLE answer -- every other place with it -- and reads to the
+            # user as a failed query. A box the viewer can draw is worth more than an
+            # exact one it refuses.
+            radius = min(measured / 2.0, MAX_HIGHLIGHT_RADIUS_M) if measured else fallback_radius
+            if measured:
+                boxes.append(
+                    HighlightBox(
+                        centre=centre,
+                        extent=tuple(
+                            min(max(float(side), _MIN_BOX_SIDE_M), 2 * MAX_HIGHLIGHT_RADIUS_M)
+                            for side in obj.extent
+                        ),
+                        label=_label_for(obj, query, index, kind),
+                    )
+                )
             clusters.append(
                 ClusterSummary(
                     index=index,
@@ -257,6 +287,7 @@ class HyperspaceAnswers:
                 answer=answer,
                 focus_point=tuple(float(value) for value in strongest.centre),
                 points=points,
+                boxes=boxes,
                 observation_ids=self._markers_near([point.position for point in points]),
             )
         )

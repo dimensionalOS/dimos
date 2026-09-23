@@ -1198,6 +1198,32 @@ export class WorldScene {
             ));
         }
 
+        // A MEASURED box, drawn only where something measured one: hyperspace's item
+        // path backprojects the detector's 2-D box through depth. The fill is faint and
+        // the edges carry the shape, because a solid box at this opacity hides the very
+        // voxels that are the evidence for it.
+        for (const box of result.boxes || []) {
+            const extent = box.extent || [];
+            if (extent.length !== 3) continue;
+            const geometry = new THREE.BoxGeometry(extent[0], extent[1], extent[2]);
+            const color = box.color || '#22dd88';
+            const fill = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+                color,
+                transparent: true,
+                opacity: box.opacity ?? 0.12,
+                depthWrite: false,
+                side: THREE.DoubleSide,
+            }));
+            fill.position.set(...box.centre);
+            this._highlightGroup.add(fill);
+            const edges = new THREE.LineSegments(
+                new THREE.EdgesGeometry(geometry),
+                new THREE.LineBasicMaterial({ color }),
+            );
+            edges.position.set(...box.centre);
+            this._highlightGroup.add(edges);
+        }
+
         for (const path of result.evidence_paths || []) {
             this._addHighlightTube(path, 0.035, path.color || '#ffd166');
         }
@@ -1245,6 +1271,7 @@ export class WorldScene {
             query_id: result.query_id,
             revision: result.revision,
             regions: (result.regions || []).length,
+            boxes: (result.boxes || []).length,
             evidence_paths: (result.evidence_paths || []).length,
             route: Boolean(result.route),
         });
