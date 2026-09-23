@@ -16,7 +16,7 @@
 ## Which issue(s) does this PR close?
 
 <!-- Usage: "Fixes DIM-XXX / #XXX / URL" -->
-Fixes 
+Fixes
 
 ## Checklist
 
