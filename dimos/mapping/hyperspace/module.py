@@ -449,6 +449,12 @@ class HyperspaceConfig(MemoryModuleConfig):
     depth_stream: str = ""
     color_info_stream: str = ""
     depth_info_stream: str = ""
+    # Take the detector's candidates from where several members AGREE, rather than from
+    # time-split episodes. On by default (it is a smaller and cleaner set), and it needs
+    # more than one member searched to mean anything at all -- which is why a
+    # single-member search behaves like this being off. Measured wrong for roscon: see
+    # `memory_world/blueprints.py`, where it is turned off with the numbers.
+    agreement: bool = True
     # Models the frames-first search ranks with. [] = every model in the index,
     # which is what the three-way agreement wants.
     # MEMBER TAGS to search, as `dimos map live --models` takes them (for example
@@ -584,6 +590,7 @@ class Hyperspace(MemoryModule):
                     max_depth_m=self.config.max_depth_m,
                     world_frame=self.config.world_frame,
                     contrast=self.config.contrast,
+                    agreement=self.config.agreement,
                     rank_with=self.config.rank_with,
                     rank_frames=self.config.rank_frames,
                 ),
