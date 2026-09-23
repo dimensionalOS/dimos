@@ -21,6 +21,7 @@ a failing case built by breaking exactly one thing with ``dataclasses.replace``.
 from __future__ import annotations
 
 import dataclasses
+from types import MappingProxyType
 
 import pytest
 
@@ -39,6 +40,7 @@ from dimos.control.contract.description import (
     ResourceKind,
     SafeStop,
     SafeStopKind,
+    ShutdownMotion,
     Timing,
 )
 from dimos.control.contract.keys import (
@@ -472,6 +474,102 @@ def test_rule9_any_estop_combination_is_allowed(
 ) -> None:
     """Estop policy is vendor business; the contract does not second-guess it."""
     validate_description(dataclasses.replace(xarm, estop=Estop(kind=kind, recovery=recovery)))
+
+
+def test_rule1_duplicate_interface_on_one_resource(xarm: ControlDescription) -> None:
+    """A repeated interface yields a repeated key, and then no state frame is valid.
+
+    validate_state demands each declared key exactly once, so a description that
+    let this through would produce a source that can never report at all.
+    """
+    doubled = dataclasses.replace(xarm.resources[0], state_interfaces=(POSITION, POSITION, EFFORT))
+    broken = dataclasses.replace(xarm, resources=(doubled, *xarm.resources[1:]))
+
+    assert any("more than once" in e for e in errors_of(broken))
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_rule9_non_finite_ramp(chassis: ControlDescription, bad: float) -> None:
+    """NaN compares False to everything, so a bare `<= 0` would wave it through."""
+    broken = dataclasses.replace(
+        chassis, safe_stop=SafeStop(kind=SafeStopKind.ZERO_RAMP, ramp_s=bad)
+    )
+
+    assert any("finite ramp_s" in e for e in errors_of(broken))
+
+
+def test_rule9_non_finite_damp_gain(g1: ControlDescription) -> None:
+    """A NaN damping gain would reach the motors on the safe-stop path."""
+    broken = dataclasses.replace(
+        g1,
+        safe_stop=SafeStop(kind=SafeStopKind.DAMP, kd={"g1/joint1/kd": float("nan")}),
+    )
+
+    assert any("is not finite" in e for e in errors_of(broken))
+
+
+def test_shutdown_motion_pose_must_be_declared_positions(xarm: ControlDescription) -> None:
+    """Parking a brakeless arm at an undeclared key would fail at de-energize time."""
+    broken = dataclasses.replace(
+        xarm,
+        shutdown_motion=ShutdownMotion(
+            pose={"arm/ghost/position": 0.0}, tolerance=0.01, timeout_s=5.0
+        ),
+    )
+
+    assert any("not a declared command key" in e for e in errors_of(broken))
+
+
+def test_shutdown_motion_pose_respects_limits(xarm: ControlDescription) -> None:
+    """A park pose outside the joint's range is unreachable by construction."""
+    broken = dataclasses.replace(
+        xarm,
+        shutdown_motion=ShutdownMotion(
+            pose={"arm/joint1/position": 99.0}, tolerance=0.01, timeout_s=5.0
+        ),
+    )
+
+    assert any("above its limit" in e for e in errors_of(broken))
+
+
+@pytest.mark.parametrize(
+    ("tolerance", "timeout_s"), [(-1.0, 5.0), (0.01, 0.0), (float("nan"), 5.0)]
+)
+def test_shutdown_motion_needs_positive_bounds(
+    xarm: ControlDescription, tolerance: float, timeout_s: float
+) -> None:
+    """An unbounded park wait would hang shutdown."""
+    broken = dataclasses.replace(
+        xarm,
+        shutdown_motion=ShutdownMotion(
+            pose={"arm/joint1/position": 0.0}, tolerance=tolerance, timeout_s=timeout_s
+        ),
+    )
+
+    assert any("must be positive" in e for e in errors_of(broken))
+
+
+def test_a_valid_shutdown_motion_is_accepted(xarm: ControlDescription) -> None:
+    """The Piper park-to-zero shape, which is the reason the field exists."""
+    fine = dataclasses.replace(
+        xarm,
+        shutdown_motion=ShutdownMotion(
+            pose={"arm/joint1/position": 0.0}, tolerance=0.01, timeout_s=5.0
+        ),
+    )
+
+    validate_description(fine)
+
+
+def test_mapping_fields_accept_any_mapping(xarm: ControlDescription) -> None:
+    """The fields are typed Mapping, so a read-only mapping must work."""
+    fine = dataclasses.replace(
+        xarm,
+        covered_resources=MappingProxyType({"joint1": ("joint2",)}),
+        limits=MappingProxyType(dict(xarm.limits)),
+    )
+
+    validate_description(fine)
 
 
 # Rule 10: per-group process loss.

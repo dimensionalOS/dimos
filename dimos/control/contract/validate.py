@@ -32,6 +32,7 @@ path that writes half a frame.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import math
 
@@ -111,6 +112,16 @@ def validate_description(desc: ControlDescription) -> None:
     for res in desc.resources:
         if not is_valid_segment(res.name):
             errors.append(f"resource {res.name!r} is not a valid segment")
+        for label, interfaces in (
+            ("state", res.state_interfaces),
+            ("command", res.command_interfaces),
+        ):
+            repeated = sorted({i for i in interfaces if list(interfaces).count(i) > 1})
+            if repeated:
+                errors.append(
+                    f"resource {res.name!r} declares {label} interface(s) {repeated} "
+                    f"more than once, which would make its keys ambiguous"
+                )
         for iface in tuple(res.state_interfaces) + tuple(res.command_interfaces):
             if not is_valid_segment(iface):
                 errors.append(f"interface {iface!r} on {res.name!r} is not a valid segment")
@@ -233,12 +244,43 @@ def validate_description(desc: ControlDescription) -> None:
         if not desc.safe_stop.kd:
             errors.append("safe_stop DAMP needs a kd table")
         else:
-            for key in desc.safe_stop.kd:
+            for key, gain in desc.safe_stop.kd.items():
                 if key not in command_keys or key.rsplit("/", 1)[-1] != KD:
                     errors.append(f"safe_stop kd key {key!r} is not a declared '<joint>/kd' key")
+                if not _finite(gain):
+                    errors.append(f"safe_stop kd {key!r} is not finite")
     if desc.safe_stop.kind is SafeStopKind.ZERO_RAMP:
-        if desc.safe_stop.ramp_s is None or desc.safe_stop.ramp_s <= 0:
+        # Ordered against 0 first: NaN compares False to everything, so a bare
+        # `<= 0` would wave it through.
+        if desc.safe_stop.ramp_s is None or not _finite(desc.safe_stop.ramp_s):
+            errors.append("safe_stop ZERO_RAMP needs a finite ramp_s")
+        elif desc.safe_stop.ramp_s <= 0:
             errors.append("safe_stop ZERO_RAMP needs a positive ramp_s")
+
+    # 9b. Shutdown parking must name real positions and bounded waits.
+    park = desc.shutdown_motion
+    if park is not None:
+        if not park.pose:
+            errors.append("shutdown_motion declares an empty pose")
+        for key, value in park.pose.items():
+            if key not in command_keys:
+                errors.append(f"shutdown_motion pose key {key!r} is not a declared command key")
+                continue
+            if key.rsplit("/", 1)[-1] != POSITION:
+                errors.append(f"shutdown_motion pose key {key!r} is not a position")
+            if not _finite(value):
+                errors.append(f"shutdown_motion pose {key!r} is not finite")
+                continue
+            park_bound = desc.limits.get(key)
+            if park_bound is not None:
+                lo, hi = park_bound.lo, park_bound.hi
+                if lo is not None and value < lo:
+                    errors.append(f"shutdown_motion pose {key!r} is below its limit {lo}")
+                if hi is not None and value > hi:
+                    errors.append(f"shutdown_motion pose {key!r} is above its limit {hi}")
+        for label, value in (("tolerance", park.tolerance), ("timeout_s", park.timeout_s)):
+            if not _finite(value) or value <= 0:
+                errors.append(f"shutdown_motion.{label} must be positive, got {value}")
 
     # 10. Per-group process loss names mode groups.
     if not isinstance(desc.process_loss, ProcessLoss):
@@ -254,9 +296,8 @@ def validate_description(desc: ControlDescription) -> None:
         raise DescriptionError(errors)
 
 
-def _first_cycle(graph: object) -> list[str]:
+def _first_cycle(graph: Mapping[str, tuple[str, ...]]) -> list[str]:
     """The first cycle in a resource-coverage graph, as a path, or ``[]``."""
-    assert isinstance(graph, dict)
     colour: dict[str, int] = {}
     path: list[str] = []
 
