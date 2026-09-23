@@ -26,6 +26,7 @@ once the transform buffer lets a rewrite win (see test_rewriting_tf_moves_the_an
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import json
 import threading
 import time
@@ -70,6 +71,57 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 logger = setup_logger()
+
+# What one published answer's evidence frames may weigh. **LCM SILENTLY DROPS A PICKLED
+# MESSAGE OVER ~16 MB** -- measured on this transport, 16 MB arrives and 19 MB does not,
+# which is the receiver's fragment buffer, not the publisher's limit. `publish` reports
+# success either way. An item answer carries one 1280x720 colour frame per place, 2.77 MB
+# each, so THREE places fit and SEVEN do not: roscon's "how many fire extinguishers"
+# answered 7 places in words while the viewer drew nothing at all, and the failure looked
+# like a broken viewer rather than a dropped message. Seven frames at half size is 4.8 MB.
+PUBLISHED_FRAME_BUDGET_BYTES = 8 * 1024 * 1024
+
+
+def _fits_the_transport(result: FoundObjects) -> FoundObjects:
+    """The same answer, with its evidence frames scaled down until it will arrive.
+
+    Decimation rather than a resampling filter: this is a thumbnail for a viewer to hang
+    beside a box, the caller that wants the real frame has the returned `result`, and a
+    dependency-free step keeps this out of the way of the answer itself.
+    """
+    frames = [found.image for found in result.objects if found.image is not None]
+    weight = sum(int(image.data.nbytes) for image in frames)
+    if weight <= PUBLISHED_FRAME_BUDGET_BYTES:
+        return result
+    # Integer decimation, so the step is what the budget asks for rounded UP: landing
+    # just over the budget is the one outcome this must not have.
+    step = int(np.ceil(np.sqrt(weight / PUBLISHED_FRAME_BUDGET_BYTES)))
+    logger.info(
+        "hyperspace: %.1f MB of evidence frames is over the %.0f MB a message may carry; "
+        "publishing them at 1/%d scale",
+        weight / 1e6,
+        PUBLISHED_FRAME_BUDGET_BYTES / 1e6,
+        step,
+    )
+    smaller = []
+    for found in result.objects:
+        if found.image is None:
+            smaller.append(found)
+            continue
+        image = found.image
+        smaller.append(
+            replace(
+                found,
+                image=Image(
+                    data=np.ascontiguousarray(image.data[::step, ::step]),
+                    format=image.format,
+                    frame_id=image.frame_id,
+                    ts=image.ts,
+                ),
+            )
+        )
+    # `replace` on the envelope too: the caller holds `result` and is still using it.
+    return replace(result, objects=smaller)
 
 
 def pick_device(device: str, *, allow_mps: bool = True) -> str:
@@ -569,7 +621,7 @@ class Hyperspace(MemoryModule):
         """
         self.live.config.top = top
         result = self.live.ask(text)
-        self.found.publish(result)
+        self.found.publish(_fits_the_transport(result))
         return result
 
     def answer(
@@ -758,7 +810,7 @@ class Hyperspace(MemoryModule):
         self.live.config.top = 0
         result = self.live.ask(query.text, background_prompts=negatives)
         result.kind = "item"
-        self.found.publish(result)
+        self.found.publish(_fits_the_transport(result))
         query.refused = result.refused
         query.timings = dict(result.timings)
         query.places = [

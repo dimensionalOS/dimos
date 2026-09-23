@@ -1360,3 +1360,54 @@ def test_the_camera_is_written_down_even_when_the_frames_are_not(store: SqliteSt
     assert info_stream_for("") in store.list_streams(), "the camera was not written down"
     held = store.stream(info_stream_for(""), CameraInfo).to_list()
     assert [observation.data.frame_id for observation in held] == [CAMERA]
+
+
+def test_an_answer_too_big_for_the_transport_is_published_at_a_smaller_scale() -> None:
+    """Seven evidence frames do not fit, and nothing reports that they did not.
+
+    MEASURED on the pickled-LCM transport: 16 MB arrives, 19 MB does not -- the
+    receiver's fragment buffer drops it and `publish` still returns success. An item
+    answer carries one 1280x720 frame per place at 2.77 MB, so three places fit and
+    seven do not; roscon answered "7 fire extinguishers" in words over a viewer that
+    drew nothing.
+    """
+    import pickle
+
+    from dimos.mapping.hyperspace.module import PUBLISHED_FRAME_BUDGET_BYTES, _fits_the_transport
+    from dimos.mapping.hyperspace.msgs import FoundObject, FoundObjects
+    from dimos.msgs.sensor_msgs.Image import Image
+
+    def frame() -> Image:
+        return Image(data=np.zeros((720, 1280, 3), dtype=np.uint8), frame_id="cam", ts=1.0)
+
+    answer = FoundObjects(
+        query="a fire extinguisher",
+        objects=[FoundObject(image=frame(), centre=(1.0, 2.0, 0.5)) for _ in range(7)],
+    )
+    published = _fits_the_transport(answer)
+
+    assert len(pickle.dumps(answer)) > 16_000_000, "the case under test is not big enough"
+    assert len(pickle.dumps(published)) < PUBLISHED_FRAME_BUDGET_BYTES + 1_000_000
+    assert published.objects[0].image is not None, "the evidence went away entirely"
+    # The caller kept the full frame: only what goes on the wire is shrunk.
+    assert answer.objects[0].image is not None
+    assert answer.objects[0].image.data.shape == (720, 1280, 3)
+
+
+def test_an_answer_that_already_fits_is_published_unchanged() -> None:
+    """A heatmap carries no frames, and three places fit: neither pays for the cap."""
+    from dimos.mapping.hyperspace.module import _fits_the_transport
+    from dimos.mapping.hyperspace.msgs import FoundObject, FoundObjects
+    from dimos.msgs.sensor_msgs.Image import Image
+
+    heat = FoundObjects(query="crowded", kind="heatmap", objects=[FoundObject() for _ in range(48)])
+    assert _fits_the_transport(heat) is heat
+
+    small = FoundObjects(
+        query="a basket",
+        objects=[
+            FoundObject(image=Image(data=np.zeros((720, 1280, 3), dtype=np.uint8)))
+            for _ in range(3)
+        ],
+    )
+    assert _fits_the_transport(small) is small
