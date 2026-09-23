@@ -1411,3 +1411,42 @@ def test_an_answer_that_already_fits_is_published_unchanged() -> None:
         ],
     )
     assert _fits_the_transport(small) is small
+
+
+def test_a_counting_question_spends_more_looks_and_gives_the_budget_back() -> None:
+    """`episodes` raises the budget for one question, and nothing inherits it.
+
+    One LiveQuery serves every question, so a counting question that left its budget
+    behind would quietly make every later question four times slower -- and the way that
+    shows up is a demo that gets worse the longer it runs, which is the hardest kind of
+    slowness to attribute.
+    """
+    from dimos.mapping.hyperspace.module import Hyperspace
+    from dimos.mapping.hyperspace.queries import Query
+
+    spent: list[int] = []
+
+    def ask(text: str, background_prompts: Any = None) -> SimpleNamespace:
+        spent.append(live.config.detect.max_episodes)
+        return SimpleNamespace(kind="", refused=0, timings={}, objects=[])
+
+    live = SimpleNamespace(
+        config=SimpleNamespace(top=1, detect=SimpleNamespace(max_episodes=30)), ask=ask
+    )
+    module = SimpleNamespace(live=live, found=SimpleNamespace(publish=lambda result: None))
+
+    Hyperspace._fill_from_detector(
+        module, Query(query_id="q1", text="a fire extinguisher", kind="item")
+    )
+    Hyperspace._fill_from_detector(
+        module, Query(query_id="q2", text="a fire extinguisher", kind="item"), None, 60
+    )
+    Hyperspace._fill_from_detector(module, Query(query_id="q3", text="a chair", kind="item"))
+    # ...and asking for FEWER than the recording is configured for changes nothing: that
+    # is the capped count this exists to prevent, arriving from the other direction.
+    Hyperspace._fill_from_detector(
+        module, Query(query_id="q4", text="a chair", kind="item"), None, 24
+    )
+
+    assert spent == [30, 60, 30, 30], "raise only, and for one question"
+    assert live.config.detect.max_episodes == 30

@@ -751,6 +751,7 @@ class Hyperspace(MemoryModule):
         within_m: float = 0.0,
         at_time: float = 0.0,
         negative_terms: str = "",
+        episodes: int = 0,
     ) -> Query:
         """Ask once. The one implementation the three skills wrap.
 
@@ -780,7 +781,7 @@ class Hyperspace(MemoryModule):
         )
         started = time.monotonic()
         if kind == "item":
-            self._fill_from_detector(query, negatives)
+            self._fill_from_detector(query, negatives, episodes)
         else:
             self._fill_from_patches(query, kind, negatives)
         query.ms = (time.monotonic() - started) * 1000
@@ -809,10 +810,28 @@ class Hyperspace(MemoryModule):
         )
         return query
 
-    def _fill_from_detector(self, query: Query, negatives: Sequence[str] | None = None) -> None:
-        """The OWLv2 path: boxes, and a detector that is allowed to say no."""
+    def _fill_from_detector(
+        self, query: Query, negatives: Sequence[str] | None = None, episodes: int = 0
+    ) -> None:
+        """The OWLv2 path: boxes, and a detector that is allowed to say no.
+
+        `episodes` is for this question alone and is PUT BACK afterwards: one LiveQuery
+        serves every question, so a counting question that left its budget behind would
+        quietly make every later question four times slower.
+        """
         self.live.config.top = 0
-        result = self.live.ask(query.text, background_prompts=negatives)
+        budget = self.live.config.detect.max_episodes
+        # RAISE ONLY. The failure this exists for is a count that was silently capped, and
+        # a caller who asks for fewer looks than the recording is configured for would
+        # recreate it -- as this did on its first run, asking for 24 against a blueprint
+        # that had already been raised to 30.
+        if episodes > budget:
+            self.live.config.detect.max_episodes = int(episodes)
+            logger.info(f"hyperspace item {query.text!r}: {episodes} looks, not {budget}")
+        try:
+            result = self.live.ask(query.text, background_prompts=negatives)
+        finally:
+            self.live.config.detect.max_episodes = budget
         result.kind = "item"
         self.found.publish(_fits_the_transport(result))
         query.refused = result.refused
@@ -1028,7 +1047,12 @@ class Hyperspace(MemoryModule):
 
     @skill
     def start_item_query(
-        self, text: str, count: int = 1, query_id: str = "", negative_terms: str = ""
+        self,
+        text: str,
+        count: int = 1,
+        query_id: str = "",
+        negative_terms: str = "",
+        episodes: int = 0,
     ) -> SkillResult:
         """Find a THING and get its position and size. E.g. "a fire extinguisher".
 
@@ -1040,8 +1064,20 @@ class Hyperspace(MemoryModule):
         `negative_terms` is a comma separated list of what is in the way -- things the
         search should subtract rather than return, like "a poster, a screen" when asking
         for a thing that is often pictured. Empty subtracts generic room surfaces.
+
+        `episodes` RAISES the number of looks for this question alone; anything at or
+        below the configured budget leaves it as it is. A count is only ever a floor: the
+        detector stops at the budget and refuses most of what it looks at, so the places
+        reported are what was afforded and not what is there. Measured on roscon,
+        "a fire extinguisher", one index member: 6 looks found 5 places, 12 found 5, 30
+        found 7 and 60 found the same 7. The blueprint is set to 30 for that reason, so
+        raising it further buys little -- searching BOTH members at 30 finds a different
+        seven, which says the limiter past this point is which episodes the ranking puts
+        on top rather than how many are looked at.
         """
-        return self._answer_with(text, "item", count, query_id, negative_terms=negative_terms)
+        return self._answer_with(
+            text, "item", count, query_id, negative_terms=negative_terms, episodes=episodes
+        )
 
     @skill
     def start_heatmap_query(
@@ -1121,12 +1157,15 @@ class Hyperspace(MemoryModule):
         within_m: float = 0.0,
         at_time: float = 0.0,
         negative_terms: str = "",
+        episodes: int = 0,
     ) -> SkillResult:
         """Every skill's body: ask, then say what came back in one readable line."""
         if not text.strip():
             return SkillResult.fail("INVALID_INPUT", "text must not be empty")
         try:
-            query = self.run_query(text, kind, count, query_id, within_m, at_time, negative_terms)
+            query = self.run_query(
+                text, kind, count, query_id, within_m, at_time, negative_terms, episodes
+            )
         except ValueError as error:
             # Only the argument checks raise ValueError deliberately; anything else that
             # happens to is a fault in here, and calling it INVALID_INPUT tells the

@@ -126,6 +126,14 @@ run". `within_m` keeps only what is near the robot.
 Pass the THING to look for, not the sentence. "a fire extinguisher", never "where did I
 see a fire extinguisher".
 
+COUNTING IS A DIFFERENT QUESTION FROM FINDING. `start_item_query` spends a fixed number
+of LOOKS and the detector refuses most of them, so a count is a FLOOR: it is what the
+budget afforded, not what is there. The budget here is already set for counting, so ask
+normally and read the number of PLACES -- places are merged, so two looks at one object
+are one place. `episodes` raises the budget for one question if you suspect more are
+hiding, at about a second a look. Say "at least N" whenever the looks ran out rather
+than the objects, and never turn a floor into a total.
+
 An answer is WHERE THE THING IS. This is the important difference from the older memory
 world, which could only say where a thing had been seen FROM. Here a box is a measurement
 of the object itself, so you may tell the person the thing is at those coordinates. Two
