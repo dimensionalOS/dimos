@@ -84,6 +84,14 @@ class McpClientConfig(ModuleConfig):
     model: str = "gpt-5.6-luna"
     model_fixture: str | None = None
     mcp_server_url: str = "http://localhost:9990/mcp"
+    # How long one tool call may take. It was hardcoded at 120 s, and a tool that runs
+    # longer than that fails on this side while the SERVER happily finishes and answers
+    # into nothing: measured on the memory world 2026-09-23, an item query returned 8
+    # correct places at 130 s, 10 s after the call had already errored at 120.071 s. The
+    # module side is configurable (`ModuleConfig.default_rpc_timeout`) and a blueprint
+    # that raised it to 600 s still died here, because this cap is in front of that one.
+    # Default unchanged; a stack whose tools are slow raises it deliberately.
+    tool_timeout_s: float = 120.0
     trace_dir: Path | None = None
 
 
@@ -135,7 +143,9 @@ class McpClient(Module):
         if params is not None:
             body["params"] = params
 
-        resp = self._http_client.post(self.config.mcp_server_url, json=body, timeout=120.0)
+        resp = self._http_client.post(
+            self.config.mcp_server_url, json=body, timeout=self.config.tool_timeout_s
+        )
         resp.raise_for_status()
         data = resp.json()
 

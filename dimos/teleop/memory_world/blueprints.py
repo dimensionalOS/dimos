@@ -324,7 +324,17 @@ memory_world_hyperspace = (
             default_rpc_timeout=600.0,
         ),
         McpServer.blueprint(),
-        McpClient.blueprint(system_prompt=MEMORY_WORLD_HYPERSPACE_PROMPT),
+        McpClient.blueprint(
+            system_prompt=MEMORY_WORLD_HYPERSPACE_PROMPT,
+            # The item query on roscon is 100-130 s -- 30 episodes of OWLv2 on a CPU --
+            # and the client's default cap is 120 s, so it lands on either side of the
+            # line depending on the day. Measured 2026-09-23: a call errored at 120.071 s
+            # and the query answered 8 correct places 10 s later, into nothing, after
+            # which the agent fell back to a tool this recording cannot serve. Raised to
+            # the module's own 600 s so the two caps agree and a slow query is slow rather
+            # than lost.
+            tool_timeout_s=600.0,
+        ),
     )
     .remappings(
         # Streams join by EFFECTIVE NAME, so `hyperspace_found` and Hyperspace's `found` do
