@@ -294,6 +294,28 @@ memory_world_hyperspace = (
             # this number alone will not fix that. 30 is where THIS knob stops paying.
             detect_attempts=1,
             max_episodes=30,
+            # AGREEMENT OFF, and it is not a speed cut -- it FINDS MORE. Where several
+            # members agree is a smaller, cleaner candidate set than time-split episodes,
+            # which is why it is on by default; on roscon it is simply wrong. Measured at
+            # the same 30 episodes, both members, one knob moving:
+            #   agreement on   6 places  24 refused  35.3 s
+            #   agreement off  8 places  22 refused  17.4 s
+            # The three it was discarding -- (-39.4,-0.7), (42.4,-5.8), (47.7,14.4) -- are
+            # real extinguishers, each boxed on its own frame in the evidence sheet, and
+            # no false positive came in with them: all 8 boxes are extinguishers in wall
+            # cabinets. So the agreement step cost three real objects, two extra refusals
+            # and half the query time, and bought nothing here.
+            #
+            # It also explains the "one member finds more" puzzle that sent two sessions
+            # chasing the patch ranking: `_agreed_candidates` needs MORE THAN ONE member
+            # to mean anything, so a single-member search silently skipped it and got the
+            # time-split candidates instead. The member was never the variable.
+            #
+            # ON A DIFFERENT RECORDING THIS MAY WELL BE BACKWARDS -- the docstring's
+            # sf_office traffic cone went from eighteen places to three WITH agreement,
+            # both real cones kept. One recording is not a proof, and this is the one the
+            # demo runs.
+            agreement=False,
             # The MCP server reaches this module over RPC and
             # `ModuleConfig.default_rpc_timeout` caps it -- the 120 s default killed every
             # item query before the cut, and would again on a slower box or a harder word.
