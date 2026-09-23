@@ -76,13 +76,8 @@ from dimos.teleop.memory_world.recording import (
     open_recording,
 )
 from dimos.teleop.memory_world.replay import (
-    DIFF_STREAM,
-    KEYFRAME_STREAM,
-    SensorScan,
     VoxelReplay,
     accumulate_scans,
-    build_replay_streams,
-    sensor_scan,
 )
 from dimos.teleop.memory_world.replay_serving import HEIGHT_COLOR_STOPS, ReplayServing
 from dimos.teleop.memory_world.tf_tree import TfTree, body_camera_pose, pose_matrix
@@ -116,6 +111,10 @@ class MemoryWorldConfig(ModuleConfig):
     # Cap on the static cloud sent to a viewer. A building is about a million
     # voxels; the viewer's quality governor thins what it cannot draw.
     max_points: int = 1_500_000
+    # Cap on ONE STEP of the map timeline, which is fetched and drawn again at every
+    # scrub position rather than once: a quarter of the static cloud keeps a step under
+    # five megabytes and the shape of the map at a glance, which is what a scrub is for.
+    map_timeline_max_points: int = 400_000
     # Which lidar stream, and how many scans (<= 0 uses every frame). The cloud is
     # deduped by voxel_size, so more scans only costs build time. Empty picks the
     # stream whose poses agree with tf (recording.pick_lidar).
@@ -225,15 +224,11 @@ class MemoryWorldConfig(ModuleConfig):
     # photographs are framed with. A missing, empty or uncalibrated (zero focal
     # length) camera_info leaves the default field of view.
     camera_info_stream_name: str | None = None
-    # ---- timeline replay ------------------------------------------------------
-    # Keyframe and per-scan diff streams written once (replay.py); the viewer scrubs
-    # a segment at a time. A longer interval means fewer, larger segments.
-    replay_keyframe_interval_s: float = PydanticField(default=5.0, gt=0.0)
-    build_replay_on_start: bool = True
-    # Rays longer than this are not cast. The replay is ray-traced (each scan
-    # clears the voxels its rays pass through), and its final keyframe is the
-    # static map, so this bounds both.
-    replay_max_range_m: float = PydanticField(default=30.0, gt=0.0)
+    # ---- the timeline ---------------------------------------------------------
+    # There is no knob for building one: a recording is scrubbed through its map stream's
+    # own messages, or through `voxel_diff`/`voxel_keyframe` streams it already carries,
+    # or not at all. `replay_keyframe_interval_s`, `build_replay_on_start` and
+    # `replay_max_range_m` went with the ray-tracing builder on 2026-09-22.
     # Ask the LLM agent rather than the `find_in_memory` skill; why, and what happens when
     # no agent answers, is in `answers.py`'s `_ask_the_agent`. Only `memory-world-agent`
     # has an agent to ask, so it is off here and that blueprint turns it on.
@@ -308,7 +303,7 @@ class MemoryWorldModule(
         # evidence frames are being decoded.
         self._store_lock = threading.RLock()  # re-entered by the world cache build
         self._stopping = threading.Event()
-        self._replay_progress = "not started"
+        self._replay_progress = "not opened"
         self._replay_error: str | None = None  # a failed build is not retried until a reopen
         self._replay_index: dict[str, Any] | None = None
         self._replay_frames: OrderedDict[float, tuple[bytes, dict[str, Any]]] = OrderedDict()
@@ -325,7 +320,6 @@ class MemoryWorldModule(
         self._web_server: RobotWebInterface | None = None
         self._web_server_thread: threading.Thread | None = None
         self._prepare_thread: threading.Thread | None = None
-        self._replay_thread: threading.Thread | None = None  # a build a route started
         self._workers_lock = threading.Lock()  # publishes that handle; held for a moment
 
         super().__init__(**kwargs)
@@ -406,7 +400,7 @@ class MemoryWorldModule(
         async def memory_world_replay_index() -> dict[str, Any]:
             """Scan and keyframe stamps: everything the viewer needs to seek."""
             try:
-                return await asyncio.to_thread(self._replay_index_json)
+                return await asyncio.to_thread(self._timeline_index_json)
             except Exception as error:
                 raise HTTPException(
                     status_code=503, detail=f"replay {self._replay_progress}"
@@ -438,6 +432,19 @@ class MemoryWorldModule(
             else:
                 content = gzip.decompress(gzipped)
             return Response(content=content, media_type="application/octet-stream", headers=headers)
+
+        @app.get(f"{self.config.client_route}/map/snapshot/{{number}}")  # type: ignore[misc]
+        async def memory_world_map_snapshot(number: int) -> Response:
+            """The map as it stood at one message of the map stream, as a point cloud."""
+            found = await asyncio.to_thread(self._replay_read, self._map_snapshot, number)
+            if found is None:
+                raise HTTPException(status_code=404, detail="no such map snapshot")
+            header, payload = found
+            return Response(
+                content=encode_binary(MSG_POINT_CLOUD, header, payload),
+                media_type="application/octet-stream",
+                headers={"Cache-Control": "max-age=3600"},
+            )
 
         @app.get(f"{self.config.client_route}/replay/frame")  # type: ignore[misc]
         async def memory_world_replay_frame(t: float, size: int = 0) -> Response:
@@ -662,7 +669,9 @@ class MemoryWorldModule(
             raise RuntimeError("voxel-from-lidar produced no cloud")
         return built
 
-    def _height_colors(self, positions: np.ndarray) -> np.ndarray:
+    def _height_colors(
+        self, positions: np.ndarray, ramp: tuple[float, float] | None = None
+    ) -> np.ndarray:
         """Map Z (robot up) onto the purple-to-green height ramp.
 
         The ramp spans the cloud's own height range, from the
@@ -673,8 +682,13 @@ class MemoryWorldModule(
         single shade. Returns N x 3 uint8 RGB.
         """
         zc = positions[:, 2]
+        # *ramp* pins it to another cloud's range: one step of the map timeline holds a
+        # fraction of the building's height, and its own percentiles would recolour the
+        # whole world at every scrub position.
         lo = float(np.percentile(zc, self.config.height_ramp_low_percentile)) if zc.size else 0.0
         hi = float(np.percentile(zc, self.config.height_ramp_high_percentile)) if zc.size else 1.0
+        if ramp is not None:
+            lo, hi = ramp
         hi = max(hi, lo + 1e-3)
         t = np.clip((zc - lo) / (hi - lo), 0.0, 1.0)
         stops = np.linspace(0.0, 1.0, len(HEIGHT_COLOR_STOPS))
@@ -805,7 +819,7 @@ class MemoryWorldModule(
             # /replay/index meanwhile must not read a stale "build failed".
             self._replay = None
             self._replay_error = None
-            self._replay_progress = "not started"
+            self._replay_progress = "not opened"
             old = self._store
             self._store = open_recording(self.config.store_path)
             self._replay_index = None
@@ -829,6 +843,7 @@ class MemoryWorldModule(
             self._camera_frame_cache = None
             self._cached_cloud = self._cached_image_poses = self._cached_thumbnails = None
             self._cached_odom = self._map_xyz = None
+            self._map_timeline_cache = self._map_ramp_cache = None
             self._route_planner = None
             self._orbit_cache.clear()
             if old is not None:
@@ -999,30 +1014,6 @@ class MemoryWorldModule(
         stream = self._ensure_store().streams[self.config.lidar_stream_name]
         return accumulate_scans(stream, to_world, self.config.voxel_size, self.config.n_voxel_scans)
 
-    def _scan_frame(self, obs: Any) -> SensorScan | None:
-        """A lidar scan in its sensor frame with the sensor's pose, for ray casting.
-
-        The pose is a tf lookup at the scan's stamp. A world-aligned stream uses
-        the pose stamped on the scan, else the camera, the nearest frame tf knows.
-        """
-        world_aligned = self._lidar_world_aligned()
-        scan_frame = str(getattr(obs.data, "frame_id", "") or "").lstrip("/")
-        stamped = getattr(obs, "pose_tuple", None)
-        if world_aligned and stamped is not None:  # stitched scans carry the sensor pose
-            return sensor_scan(
-                obs.data.points_f32(),
-                pose_matrix(tuple(stamped[:3]), tuple(stamped[3:7])),
-                in_world=True,
-            )
-        pose_frame = self._camera_frame() if world_aligned else scan_frame
-        matrix = self._frame_pose_at(pose_frame, float(obs.ts))
-        if matrix is None:
-            pose = getattr(obs, "pose_tuple", None)
-            if pose is None or self._tf_tree() is not None:
-                return None
-            matrix = pose_matrix(tuple(pose[:3]), tuple(pose[3:7]))
-        return sensor_scan(obs.data.points_f32(), np.asarray(matrix), in_world=world_aligned)
-
     def _scan_to_world(self, obs: Any) -> Any:
         """A sensor-frame lidar scan moved into the world frame, or None.
 
@@ -1078,68 +1069,25 @@ class MemoryWorldModule(
     # ---- timeline replay -----------------------------------------------------
 
     def _ensure_replay(self) -> VoxelReplay:
-        """The recording's replay streams, built on first use if missing. Needs the image
-        stream too: the index lists its frame stamps. A build that places no scan is
-        deleted again and raises; the failure is remembered until a reopen.
+        """The replay streams a recording ALREADY CARRIES, opened for seeking.
 
-        Lock order everywhere: planner, world cache, replay, store, index. The build
-        takes the store lock as well as the replay lock, for its whole length. It used
-        to run under the replay lock alone, on the reasoning that the lidar and derived
-        streams "have their own connections" -- they do not, it is handed the shared
-        `Store` -- and that nothing serves replay data until it is done, which is true
-        and beside the point: evidence frames, `/replay/frame` and the world-cache reads
-        all use that same store and all take the store lock, so the build ran against
-        them. Measured 6 of 10 concurrent trials corrupted, against 0 of 10 under the
-        lock, with short reads and a `ValueError: not enough values to unpack` out of the
-        builder. The cost is that a first build on a new recording serialises questions
-        behind it; the fix that would not is a second connection for the builder.
+        Nothing writes them any more (see replay.py): the timeline is read off the map
+        stream's own messages where there is one, and ray-tracing every scan to
+        reconstruct a picture the recording was handed cost half an hour of an evening.
+        Recordings made before that still carry the streams and are still read here.
+
+        Lock order everywhere: planner, world cache, replay, store, index.
         """
         with self._replay_lock:
             return self._replay_locked()
 
     def _replay_if_ready(self) -> tuple[VoxelReplay, dict[str, Any]]:
-        """The replay and its index json for the serving routes: while a build holds
-        the lock they answer 503 instead of holding a request thread for the whole
-        build. Both come from the one acquisition: a reopen in between would clear them."""
+        """The replay and its index json for the serving routes. Both come from the one
+        acquisition: a reopen in between would clear them. Non-blocking, so a request
+        thread is never held behind another one's first open."""
         if not self._replay_lock.acquire(blocking=False):
             raise RuntimeError(f"replay {self._replay_progress}")
         try:
-            if self._replay is None and self._replay_error is None:
-                # The flag is the operator saying this recording must not GROW the voxel
-                # replay streams, not merely "skip it at startup". It only ever gated the
-                # startup build, so the first viewer to ask for a timeline started one
-                # anyway -- which rebuilt streams that had been deliberately deleted, and
-                # did it while another writer was on the same file. Said as a settled
-                # answer rather than progress, so the viewer stops asking.
-                if not self.config.build_replay_on_start:
-                    # Said through `_replay_progress`, because that is what the routes put
-                    # on the wire: they answer `f"replay {self._replay_progress}"` and
-                    # DISCARD this exception's message. Raising it alone left the browser
-                    # reading "replay not started" -- so the viewer's "turned off" branch
-                    # was unreachable and it went on polling for ever for a build that is
-                    # refused by design.
-                    self._replay_progress = "build is turned off for this recording"
-                    raise RuntimeError(f"replay {self._replay_progress}")
-                # Never build on a request thread: start it (once) and let the viewer poll.
-                with self._workers_lock:  # paired with stop(): nothing starts once it stops
-                    if self._stopping.is_set():
-                        raise RuntimeError("replay not built: stopping")
-                    if self._replay_thread is None or not self._replay_thread.is_alive():
-                        # Said HERE, not deeper in the build. `_replay_locked` only
-                        # reaches its own "building" when the streams are MISSING; on a
-                        # recording that already has them -- every run after the first --
-                        # it goes straight from "not started" to "ready", while this
-                        # thread is alive and every poll meanwhile fails the non-blocking
-                        # lock and answers 503 "replay not started". The viewer now reads
-                        # "not started" as settled, so the server was telling it "there
-                        # will never be a timeline" during the build it had just started.
-                        self._replay_progress = "building"
-                        thread = threading.Thread(
-                            target=self._build_replay, daemon=True, name="MemoryWorldReplay"
-                        )
-                        thread.start()  # started before it is published: join needs that
-                        self._replay_thread = thread
-                raise RuntimeError(f"replay {self._replay_progress}")
             replay = self._replay_locked()
             assert self._replay_index is not None  # set together with _replay
             return replay, self._replay_index
@@ -1157,46 +1105,8 @@ class MemoryWorldModule(
                 if self.config.image_stream_name not in store.list_streams():
                     named = repr(self.config.image_stream_name or "colour")
                     raise RuntimeError(f"no {named} image stream; the replay needs camera frames")
-                available = VoxelReplay.available(
-                    store,
-                    voxel_size=self.config.voxel_size,
-                    lidar_stream_name=self.config.lidar_stream_name,
-                    max_range=self.config.replay_max_range_m,
-                    world_frame=self.config.world_frame,
-                    keyframe_interval_s=self.config.replay_keyframe_interval_s,
-                )
-            if not available:
-                self._replay_progress = "building"
-                logger.info("building the voxel replay streams into %s", self.config.store_path)
-                # Under the store lock, like every other use of this store: it is the
-                # shared one, the build reads and writes it for minutes, and the readers
-                # it was racing take this lock. See the docstring for the measurement.
-                with self._store_lock:
-                    stats = build_replay_streams(
-                        store,
-                        lidar_stream_name=self.config.lidar_stream_name,
-                        to_scan=self._scan_frame,
-                        voxel_size=self.config.voxel_size,
-                        max_range=self.config.replay_max_range_m,
-                        keyframe_interval_s=self.config.replay_keyframe_interval_s,
-                        cancelled=self._stopping.is_set,
-                        world_frame=self.config.world_frame,
-                    )
-                    if self._stopping.is_set():  # cut short: no last keyframe on the streams
-                        raise RuntimeError("cancelled")
-                    if stats.added == 0:  # nothing placed: the streams would pass as finished
-                        for name in (DIFF_STREAM, KEYFRAME_STREAM):
-                            store.delete_stream(name)
-                        raise RuntimeError("no voxel came out of the scans (tf, frame or range)")
-                logger.info(
-                    "voxel replay built: %d scans, %d keyframes, +%d/-%d edits in %.1f s",
-                    stats.scans,
-                    stats.keyframes,
-                    stats.added,
-                    stats.removed,
-                    stats.seconds,
-                )
-            with self._store_lock:
+                if not VoxelReplay.available(store):
+                    raise RuntimeError("this recording holds no voxel timeline streams")
                 # The replay shows the same heights as the static map.
                 replay = VoxelReplay(
                     store,
@@ -1209,12 +1119,13 @@ class MemoryWorldModule(
                 # an mcap that decompresses every chunk), so it is done here, once.
                 self._replay_index = self._build_replay_index_json(replay)
         except (Exception, SystemExit) as error:
-            # The viewer reads this prefix: it stops polling on a failed build. A refusal
-            # is a SystemExit, and missing it here left `_replay_progress` on its starting
-            # value, so the poll never saw the prefix and /replay/index rebuilt for ever.
-            self._replay_progress = f"build failed: {error}"
+            # The viewer reads this prefix and stops polling: there is nothing to wait for
+            # any more, since nothing is being built. A refusal is a SystemExit, and
+            # missing it here left `_replay_progress` on its starting value, so the poll
+            # never saw the prefix and asked for ever.
+            self._replay_progress = f"unavailable: {error}"
             # Remembered: otherwise every viewer connect and every /replay/index retry
-            # would rebuild from scratch. A cancelled build is retried by the next start.
+            # would try to open it again.
             if not self._stopping.is_set():
                 self._replay_error = self._replay_progress
             raise
@@ -1226,14 +1137,6 @@ class MemoryWorldModule(
         """Run one store-reading replay call at a time."""
         with self._store_lock:
             return fn(*args)
-
-    def _build_replay(self) -> None:
-        if self._stopping.is_set():  # stop() may have set it after the caller's check
-            return
-        try:
-            self._ensure_replay()
-        except (Exception, SystemExit):  # a refusal is a SystemExit
-            logger.exception("voxel replay build failed")  # _replay_locked keeps the reason
 
     def _frame_pose_at(self, frame: str, ts: float) -> np.ndarray | None:
         """world_T_frame at *ts* from tf, or None."""
@@ -1355,8 +1258,13 @@ class MemoryWorldModule(
             logger.exception("world cache build failed")
         if self._stopping.is_set():
             return
-        if self.config.build_replay_on_start and not self._stopping.is_set():
-            self._build_replay()
+        # Listing the map stream's stamps is one pass over it -- 47 s on the 75 GB roscon
+        # mcap -- and the viewer's index poll gives up after a minute of tries. Warm it
+        # here, on the thread that already has the store hot, rather than on the request.
+        try:
+            self._replay_read(self._map_timeline)
+        except Exception:
+            logger.exception("could not read the map timeline; the viewer will retry")
         if not self._stopping.is_set():
             try:
                 self._build_visual_index()
@@ -1378,15 +1286,14 @@ class MemoryWorldModule(
             # stop() has shut it down, so leaving it set made a stopped module one that
             # could never serve again, and said "already serving on port N" to explain it.
             self._web_server = None
-            with self._workers_lock:  # paired with _replay_if_ready: no worker starts after this
-                self._stopping.set()  # prepare stops between steps; a replay build per scan
-                threads = (self._prepare_thread, self._replay_thread)
+            with self._workers_lock:  # no worker starts after this
+                self._stopping.set()  # prepare stops between its steps
+                thread = self._prepare_thread
             self._embed_job.terminate()
-            for thread in threads:
-                if thread is not None:
-                    thread.join(timeout=60)
+            if thread is not None:
+                thread.join(timeout=60)
         finally:
-            busy = [t for t in (self._prepare_thread, self._replay_thread) if t and t.is_alive()]
+            busy = [t for t in (self._prepare_thread,) if t and t.is_alive()]
             if busy:
                 logger.warning(
                     "%s is still running; its stores are left to the process exit", busy[0].name

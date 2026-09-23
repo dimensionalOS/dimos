@@ -114,6 +114,8 @@ export class WorldScene {
         this._pointsObj = null;               // THREE.Points of sphere sprites
         this._cloudWanted = true;             // the Voxel map box; the replay hides it meanwhile
         this._replayActive = false;
+        this._mapTimeline = false;   // the timeline is the map stream's own messages
+        this._staticCloud = null;    // the finished map, while a timeline step is drawn
         this._voxelsDrawn = 0;
         this._cloudData = null;               // {n, positions, colors, voxelSize}
         this._roofCut = { value: 1e9 };       // voxels above this robot z are not drawn
@@ -532,12 +534,41 @@ export class WorldScene {
         this._replayGroup.add(layer);
     }
 
+    /** Scrub the map's own messages instead of a replayed voxel layer: there is nothing
+     *  to hang in the world, because each step arrives as a whole cloud and is drawn by
+     *  the static map's own points object (see setTimelineCloud). */
+    attachMapTimeline(hfovDeg) {
+        this._mapTimeline = true;
+        this._replayHfov = hfovDeg || 70;
+    }
+
     setReplayActive(active) {
-        this._replayGroup.visible = active;
+        // In map-timeline mode the cloud on screen IS the timeline, so it must not be
+        // hidden while the timeline is active -- and the replay group, which holds
+        // nothing, must not be shown.
+        this._replayGroup.visible = active && !this._mapTimeline;
         this._replayActive = active;
-        if (this._pointsObj) this._pointsObj.visible = this._cloudWanted && !active;
+        if (this._pointsObj) this._pointsObj.visible = this._cloudWanted && (this._mapTimeline || !active);
         this._cameraPanel.visible = active && Boolean(this._cameraPanel.material.map);
         this._cameraFrustum.visible = active && this._cameraFrustum.userData.posed === true;
+    }
+
+    /** Draw one step of the map timeline, keeping the finished map to come back to. */
+    setTimelineCloud(header, payload) {
+        if (!this._staticCloud && this._cloudData) {
+            this._staticCloud = { data: this._cloudData, bounds: this._cloudBounds };
+        }
+        this.setPointCloud(header, payload);
+    }
+
+    /** Put the finished map back when the viewer leaves the timeline. */
+    restoreStaticCloud() {
+        if (!this._staticCloud) return;
+        this._cloudData = this._staticCloud.data;
+        this._cloudBounds = this._staticCloud.bounds;
+        this._staticCloud = null;
+        this._rebuildCloud();
+        if (this._pointsObj) this._pointsObj.visible = this._cloudWanted;
     }
 
     /** Show a camera frame on the HUD and draw its frustum where it was taken. */
@@ -552,7 +583,9 @@ export class WorldScene {
         texture.needsUpdate = true;
         material.map = texture;
         material.needsUpdate = true;
-        this._cameraPanel.visible = this._replayGroup.visible;
+        // `_replayActive`, not the group's visibility: in map-timeline mode the group is
+        // empty and stays hidden while the timeline is very much on screen.
+        this._cameraPanel.visible = this._replayActive === true;
         if (meta && meta.position && meta.forward && meta.up) {
             const eye = new THREE.Vector3(...meta.position);
             const forward = new THREE.Vector3(...meta.forward).normalize();
@@ -884,7 +917,7 @@ export class WorldScene {
         const points = new THREE.Points(geometry, material);
         points.frustumCulled = false; // the bounding sphere would be recomputed on every compaction
         this._pointsObj = points;
-        points.visible = this._cloudWanted && !this._replayActive;
+        points.visible = this._cloudWanted && (this._mapTimeline || !this._replayActive);
         this._frameRotate.add(this._pointsObj);
         this._highlightedVoxels = [];
         this._highlightVoxels(this._lastResultPoints);
@@ -1098,7 +1131,7 @@ export class WorldScene {
 
     toggleCloud() {
         this._cloudWanted = !this._cloudWanted;
-        if (this._pointsObj) this._pointsObj.visible = this._cloudWanted && !this._replayActive;
+        if (this._pointsObj) this._pointsObj.visible = this._cloudWanted && (this._mapTimeline || !this._replayActive);
         this.diag('cloud_toggle', { visible: this._cloudWanted });
         if (this.onLayerChange) this.onLayerChange();  // keyboard toggles reach the boxes too
     }

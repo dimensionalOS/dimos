@@ -179,28 +179,67 @@ def test_a_pose_survives_the_matrix_round_trip() -> None:
 # ---- the replay -------------------------------------------------------------------
 
 
-def test_a_world_frame_scan_is_moved_back_to_where_the_rays_started() -> None:
-    """The map is ray-traced, so a scan has to be in the SENSOR's frame to be traced.
+def test_the_map_stream_s_own_messages_are_the_timeline_when_there_are_several() -> None:
+    """A mapper that publishes `global_map` as it grows has already recorded the timeline.
 
-    Some recordings store the cloud already registered in the world. Taking those points
-    as if they were sensor-relative casts every ray from the wrong origin, and the map
-    that comes out is carved in the wrong places -- a quiet, total corruption that still
-    renders as a plausible building.
+    This is the whole reason the ray-traced replay builder could be deleted: roscon's
+    recording carries 119 of those messages, 812 KB to 50.9 MB, and scrubbing it is a
+    read. The two halves worth asserting are the DECISION (several messages, so this
+    recording is scrubbed through them; one message, so it is not) and the SELECTION --
+    seeking to a stamp must hand back the map as it was then, not the finished one, which
+    is a failure that looks like a working scrub over a map that never changes.
     """
-    from dimos.teleop.memory_world.replay import sensor_scan
+    from dimos.teleop.memory_world.world_cache import WorldCache
 
-    world_from_sensor = pose_matrix((10.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
-    in_world = np.array([[11.0, 0.0, 0.0], [12.0, 0.0, 0.0]])
+    class Stream:
+        def __init__(self, clouds: dict[float, np.ndarray]) -> None:
+            self.clouds = clouds
 
-    scan = sensor_scan(in_world, world_from_sensor, in_world=True)
+        def order_by(self, field: str, desc: bool = False) -> Stream:
+            return self
 
-    assert scan.position == (10.0, 0.0, 0.0), "the rays do not start at the sensor"
-    assert np.allclose(scan.points, [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]), (
-        "a world-frame scan was traced from the origin of the world, not the sensor"
+        def before(self, t: float) -> Stream:
+            return Stream({ts: xyz for ts, xyz in self.clouds.items() if ts < t})
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            for ts, xyz in sorted(self.clouds.items()):
+                yield self._obs(ts, xyz)
+
+        def last(self):  # type: ignore[no-untyped-def]
+            ts = max(self.clouds)
+            return self._obs(ts, self.clouds[ts])
+
+        @staticmethod
+        def _obs(ts: float, xyz: np.ndarray):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(
+                ts=ts, data=SimpleNamespace(points_f32=lambda: xyz, frame_id="odom")
+            )
+
+    def reading(**streams: Stream) -> WorldCache:
+        world = WorldCache()
+        world.config = SimpleNamespace(global_map_stream_name="global_map", world_frame="odom")
+        world._ensure_store = lambda: SimpleNamespace(
+            list_streams=lambda: list(streams), streams=streams
+        )
+        return world
+
+    growing = Stream(
+        {
+            10.0: np.zeros((1, 3), dtype=np.float32),
+            20.0: np.zeros((2, 3), dtype=np.float32),
+            30.0: np.zeros((3, 3), dtype=np.float32),
+        }
     )
-    # ...and a scan already in the sensor frame is left exactly alone.
-    same = sensor_scan(in_world, world_from_sensor, in_world=False)
-    assert np.allclose(same.points, in_world)
+    world = reading(global_map=growing)
+    assert world._map_timeline() == ("global_map", [10.0, 20.0, 30.0])
+    # The stamp asked for is one the stream wrote, and `before` is exclusive: off by one
+    # message here would scrub a map that is always one step stale.
+    assert len(world._named_map_cloud("global_map", at=20.0)) == 2
+    assert len(world._named_map_cloud("global_map", at=29.9)) == 2
+    assert len(world._named_map_cloud("global_map")) == 3, "no stamp means the finished map"
+
+    one = reading(global_map=Stream({10.0: np.zeros((1, 3), dtype=np.float32)}))
+    assert one._map_timeline() is None, "one message is a map, not a timeline"
 
 
 def test_a_tf_gap_holds_the_last_position_instead_of_dropping_to_the_origin() -> None:
@@ -487,15 +526,18 @@ def test_the_smoothed_global_map_wins_but_an_empty_one_falls_back_to_the_raw() -
     """
 
     def store_of(**clouds: np.ndarray) -> SimpleNamespace:
-        streams = {
-            name: SimpleNamespace(
+        streams = {}
+        for name, points in clouds.items():
+            # `order_by("ts")` first, because the reader takes the last message IN TIME:
+            # a map stream with several messages is the map as it grew.
+            stream = SimpleNamespace(
                 last=lambda points=points: SimpleNamespace(
                     ts=0.0,
                     data=SimpleNamespace(points_f32=lambda: points, frame_id="odom"),
                 )
             )
-            for name, points in clouds.items()
-        }
+            stream.order_by = lambda field, stream=stream: stream
+            streams[name] = stream
         return SimpleNamespace(list_streams=lambda: list(streams), streams=streams)
 
     def reading(store: SimpleNamespace) -> WorldCache:
@@ -675,11 +717,13 @@ def test_a_question_becomes_places_with_photographs() -> None:
 def test_prebuild_refuses_a_recording_it_cannot_build_instead_of_leaving_half_of_it(
     memory_world,  # type: ignore[no-untyped-def]
 ) -> None:
-    # The empty store has no camera frames, which the replay needs; prebuild must say so
-    # and exit non-zero rather than move on to the index over a recording with no replay.
+    # The empty store has no camera frames, so there is nothing to embed; prebuild must
+    # say so and exit non-zero rather than leave a half-prepared recording behind looking
+    # ready. (It used to fail one step earlier, on the replay the timeline needed built;
+    # nothing builds a replay any more, so the index is the whole of prebuild.)
     from dimos.teleop.memory_world import prebuild
 
     with pytest.raises(SystemExit) as refused:
         prebuild.main([memory_world.config.store_path])
     assert "prebuild failed" in str(refused.value)
-    assert "image stream" in str(refused.value)
+    assert "visual index" in str(refused.value)

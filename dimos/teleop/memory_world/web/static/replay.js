@@ -1,5 +1,11 @@
-// Timeline replay: the voxel map as it was at any moment of the recording,
-// scrubbed entirely on the client.
+// Timeline replay: the voxel map as it was at any moment of the recording.
+//
+// Two sources, chosen by the server (see `_timeline_index_json`) and told apart here by
+// `index.mode`. A recording whose mapper published the map AS IT GREW already holds it
+// at every moment: a step is then one whole cloud, fetched and drawn as it comes
+// ("map_snapshots"), with nothing built and nothing to reconstruct. Otherwise the
+// server ray-traces the scans into keyframes and diffs, and the rest of this file is
+// that: the map is rebuilt on the client, one diff at a time.
 //
 // The server hands out segments (see replay.py): a table of every voxel a
 // keyframe's stretch of the recording can show, plus each scan's diff as
@@ -12,6 +18,7 @@
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
 import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms } from '/static_mw/voxel_sprites.js';
+import { decodeBinary } from '/static_mw/protocol.js';
 
 const OP_ADD = 1;
 const OP_REMOVE = 2;
@@ -80,6 +87,23 @@ export class ReplaySegment {
     entryRange(index) {
         const i = index - this.firstScan;
         return [this.scanStart[i], this.scanStart[i + 1]];
+    }
+}
+
+/** One message of the map stream, as /map/snapshot/{n} sends it: the whole cloud, in the
+ *  same binary frame the static map arrives in, already coloured on the finished map's
+ *  ramp. It stands in for a ReplaySegment so the fetching, caching, eviction and
+ *  preloading around it do not have to know which kind of timeline they are serving. */
+export class MapSnapshot {
+    constructor(buffer) {
+        const { header, payload } = decodeBinary(buffer);
+        this.header = header;
+        this.payload = payload;
+        this.number = header.snapshot;
+        this.bytes = buffer.byteLength;
+        this.slotCount = header.n;
+        this.keyframeScan = header.snapshot;
+        this.scans = [{ index: header.snapshot, ts: header.ts, n: header.n }];
     }
 }
 
@@ -177,6 +201,7 @@ export class ReplayController {
         this.visible = null;                 // Uint8Array(slotCount)
         this.freshSlots = null;              // Uint8Array(slotCount), the last scan's additions
         this._freshList = [];
+        this.mapMode = false;                // set by load(): the map's own messages
         this.scan = -1;                      // scan index currently shown
         this.targetScan = -1;
         this.active = false;
@@ -215,8 +240,16 @@ export class ReplayController {
         this.index.keyframeScans = this.index.keyframes.map((k) => k.scan);
         this.t0 = this.index.scans[0];
         this.t1 = this.index.scans[this.index.scans.length - 1];
-        this.layer = new ReplayLayer(this.index.voxel_size, this.index.height, this.index.colors);
-        this.scene.attachReplay(this.layer, this.index.hfov_deg);
+        // The snapshots come coloured and complete, so there is no voxel layer to build
+        // and no ramp to match: each one replaces the static cloud for as long as the
+        // scrub is on it, and leaving puts the finished map back.
+        this.mapMode = index.mode === 'map_snapshots';
+        if (this.mapMode) {
+            this.scene.attachMapTimeline(this.index.hfov_deg);
+        } else {
+            this.layer = new ReplayLayer(this.index.voxel_size, this.index.height, this.index.colors);
+            this.scene.attachReplay(this.layer, this.index.hfov_deg);
+        }
         this._bindUi();
         this.diag('replay_index_loaded', {
             scans: this.index.scans.length, keyframes: this.index.keyframes.length,
@@ -297,6 +330,15 @@ export class ReplayController {
     }
 
     _applyScan(segment, scan) {
+        if (this.mapMode) {
+            // One message of the map stream IS the map at that moment; there is nothing
+            // to apply forward or backward, so the cloud simply goes up.
+            if (this.segment !== segment) this.scene.setTimelineCloud(segment.header, segment.payload);
+            this.segment = segment;
+            this.scan = scan;
+            if (this.onScan) this.onScan(scan);
+            return;
+        }
         if (this.segment !== segment) {
             this.segment = segment;
             this.visible = new Uint8Array(segment.slotCount);
@@ -333,6 +375,7 @@ export class ReplayController {
 
     /** Re-run the fill after a quality change without moving in time. */
     refill() {
+        if (this.mapMode) return;  // the scene's own cloud, and it honours quality itself
         if (this.segment && this.scan >= 0) this.layer.fill(this.segment, this.visible, this.freshSlots);
     }
 
@@ -342,7 +385,10 @@ export class ReplayController {
         const inFlight = this.pending.get(number);
         if (inFlight) return inFlight.promise;
         const controller = new AbortController();
-        const promise = fetch(`${this.baseUrl}/replay/segment/${number}`, { signal: controller.signal })
+        const url = this.mapMode
+            ? `${this.baseUrl}/map/snapshot/${number}`
+            : `${this.baseUrl}/replay/segment/${number}`;
+        const promise = fetch(url, { signal: controller.signal })
             .then(async (r) => {
                 if (!r.ok) {
                     const detail = await r.json().then((body) => body.detail).catch(() => null);
@@ -351,14 +397,14 @@ export class ReplayController {
                 return r.arrayBuffer();
             })
             .then((buffer) => {
-                const segment = new ReplaySegment(buffer, this.index);
+                const segment = this.mapMode ? new MapSnapshot(buffer) : new ReplaySegment(buffer, this.index);
                 this.segments.set(number, segment);
                 this.cacheBytes += segment.bytes;   // retained, not transferred
                 this.stats.fetches++;
                 this.stats.bytes += buffer.byteLength;   // this one IS the transfer
                 if (preload) this.stats.preloaded++;
                 this._evictSegments();
-                this.diag('replay_segment', { number, slots: segment.slotCount, scans: segment.scans.length, bytes: buffer.byteLength, preload });
+                this.diag('replay_segment', { number, slots: segment.slotCount, scans: segment.scans.length, bytes: buffer.byteLength, preload, map: !!this.mapMode });
                 return segment;
             })
             .finally(() => this.pending.delete(number));
@@ -573,6 +619,7 @@ export class ReplayController {
     /** Leave replay: the full map comes back. */
     exit() {
         this.setActive(false);
+        if (this.mapMode) { this.scene.restoreStaticCloud(); this.segment = null; }
         // A download in flight would otherwise turn replay back ON when it lands, because
         // its continuation calls seekScan. And the loading timer armed by _setLoading is
         // not cancelled by going inactive: it fires on the exited bar and writes
