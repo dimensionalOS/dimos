@@ -28,6 +28,7 @@ const DESKTOP_MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE
 const ANSWER_PANEL_H = 0.155;
 const CAMERA_PANEL_W = 0.40;          // replay camera frame, 16:9, above the answer
 const CAMERA_FRUSTUM_M = 0.5;         // how far the drawn frustum reaches from the camera
+const ODOM_TRAIL_RADIUS_M = 0.07;     // the walked path is a tube: a LINE is 1px at any width
 const IMAGE_QUAD_W = 0.60;
 const IMAGE_QUAD_H = 0.34;            // 16:9-ish
 // Photo markers hang at the height the camera actually was; a recording whose odom
@@ -1449,19 +1450,27 @@ export class WorldScene {
             this._odomLine.geometry.dispose();
             this._odomLine.material.dispose();
         }
-        const geom = new THREE.BufferGeometry();
-        // Lift slightly so it doesn't z-fight with floor.
-        const lifted = new Float32Array(n * 3);
+        // A TUBE, not a line. `LineBasicMaterial.linewidth` is ignored by every browser
+        // on core-profile WebGL, so a THREE.Line is one pixel wide however thick you ask
+        // for -- and one pixel of path in a world of voxels is invisible from any
+        // distance. A tube is real geometry and thickens in metres, like the route does.
+        // Lifted slightly so it does not z-fight with the floor.
+        const lifted = [];
         for (let i = 0; i < n; i++) {
-            lifted[i * 3 + 0] = positions[i * 3 + 0];
-            lifted[i * 3 + 1] = positions[i * 3 + 1];
-            lifted[i * 3 + 2] = (positions[i * 3 + 2] || 0) + 0.03;
+            const point = new THREE.Vector3(
+                positions[i * 3], positions[i * 3 + 1], (positions[i * 3 + 2] || 0) + 0.03,
+            );
+            // A repeated sample has no direction, and CatmullRom turns that into NaN
+            // for the whole curve -- one standing-still robot would erase the path.
+            if (!lifted.length || point.distanceTo(lifted[lifted.length - 1]) > 1e-3) lifted.push(point);
         }
-        geom.setAttribute('position', new THREE.BufferAttribute(lifted, 3));
-        const mat = new THREE.LineBasicMaterial({ color: 0xff9944, transparent: true, opacity: 0.85 });
-        this._odomLine = new THREE.Line(geom, mat);
+        if (lifted.length < 2) return;
+        const curve = new THREE.CatmullRomCurve3(lifted, false, 'centripetal');
+        const geom = new THREE.TubeGeometry(curve, Math.max(16, lifted.length * 2), ODOM_TRAIL_RADIUS_M, 8, false);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff9944, transparent: true, opacity: 0.85 });
+        this._odomLine = new THREE.Mesh(geom, mat);
         this._frameRotate.add(this._odomLine);
-        this.diag('odom_trail_loaded', { n });
+        this.diag('odom_trail_loaded', { n, drawn: lifted.length });
     }
 
     _spawnAtCentroid() {
