@@ -1273,3 +1273,15 @@ poses. No tests were skipped for a missing native backend.
 points, 900 voxels, and 18 decoded path poses ending at `(2, 2, 0)`. The exact
 cloud timestamp survived into the output path. This is a native planning and
 serialization demo; it does not establish network or hardware performance.
+
+### Generated MLS visualization adapters
+
+Planner visualization now reads generated PointCloud2 fields through shared
+layout helpers and renders explicit generated LineSegments3D endpoints/weights.
+Three tests passed against actual Rerun archetypes: clearance filtering,
+missing-intensity coloring, raised nodes, weighted edge colors, empty geometry,
+and unchanged source messages after rendering. Mypy passed for the adapter.
+
+The native MLS terrain demo successfully wrote `mls-planner.rrd` with terrain,
+path nodes, and edges. `rerun rrd verify` accepted the recording. This is
+headless recording verification; interactive viewer acceptance remains pending.

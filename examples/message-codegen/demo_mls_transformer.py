@@ -14,8 +14,12 @@
 
 """Plan across synthetic terrain using the native MLS backend and CDR messages."""
 
+from pathlib import Path as FilePath
+
 from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
 from dimos_generated.geometry_msgs.msg import (
+    Point,
     PoseStamped,
     Quaternion,
     Transform,
@@ -27,11 +31,17 @@ from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
+import rerun as rr
 
 from dimos.memory.type.observation import Observation
 from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
 from dimos.navigation.nav_3d.mls_planner.transformer import MLSPlan
+from dimos.navigation.nav_3d.mls_planner.viz import (
+    render_node_edges,
+    render_nodes,
+    render_surface_map,
+)
 from dimos.protocol.tf.tf import MultiTBuffer
 
 
@@ -80,6 +90,30 @@ def main() -> None:
         f"CDR terrain: {len(points)} points → {result.tags['voxels']} voxels → {len(path.poses)} path poses"
     )
     print(f"Header: {path.header.frame_id} {path.header.stamp.sec}.{path.header.stamp.nanosec:09d}")
+    output = FilePath("build/message-codegen/demo/evidence/mls-planner.rrd")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    rr.init("generated-mls-planner", spawn=False)
+    rr.save(str(output))
+    rr.log("world/terrain", render_surface_map(cloud))
+    nodes = pointcloud_from_xyz(
+        np.array([[p.pose.position.x, p.pose.position.y, p.pose.position.z] for p in path.poses]),
+        header=path.header,
+    )
+    rr.log("world/path_nodes", render_nodes(nodes))
+    segments = LineSegments3D(
+        header=path.header,
+        segments=[
+            LineSegment3D(
+                start=Point(x=a.pose.position.x, y=a.pose.position.y, z=a.pose.position.z),
+                end=Point(x=b.pose.position.x, y=b.pose.position.y, z=b.pose.position.z),
+            )
+            for a, b in zip(path.poses, list(path.poses)[1:], strict=False)
+        ],
+    )
+    rr.log("world/path_edges", render_node_edges(LineSegments3D.decode(segments.encode())))
+    rr.disconnect()
+    assert output.stat().st_size > 0
+    print(f"Rerun recording: {output}")
     for index, pose in enumerate(path.poses):
         p = pose.pose.position
         print(f"  waypoint {index}: ({p.x:.2f}, {p.y:.2f}, {p.z:.2f})")

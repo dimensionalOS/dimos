@@ -1080,3 +1080,10 @@ floor to the native MLS planner and prints the CDR-decoded path waypoints and
 exact source timestamp. It requires no robot, model download, or ROS install.
 It runs in one process and writes no output artifacts; native build products
 remain in Cargo's ignored target directory.
+
+The MLS terrain demo also writes
+`build/message-codegen/demo/evidence/mls-planner.rrd`, containing the floor,
+raised path nodes, and connecting segments through the planner's Rerun adapters.
+Open it with `rerun build/message-codegen/demo/evidence/mls-planner.rrd`.
+For headless verification, use `rerun rrd verify` on that file. The recording is
+an ignored build artifact and may be deleted after review.

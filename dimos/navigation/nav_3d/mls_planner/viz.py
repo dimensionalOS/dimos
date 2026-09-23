@@ -27,10 +27,12 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.dimos_msgs.msg import LineSegments3D
+from dimos_generated.sensor_msgs.msg import PointCloud2
 import numpy as np
+import rerun as rr
 
-from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_view, pointcloud_xyz
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -61,26 +63,22 @@ def render_surface_map(
     Clearance rides the cloud's intensity channel; cells below ``wall_clearance_m`` are
     untraversable and dropped. Falls back to a flat color when the channel is absent.
     """
-    import rerun as rr
-
-    pts = msg.points_f32()
-    clearance = msg.intensities_f32()
+    pts = pointcloud_xyz(msg)
+    records = pointcloud_view(msg)
+    clearance = records["intensity"].ravel() if "intensity" in (records.dtype.names or ()) else None
     if clearance is None or len(clearance) != len(pts):
-        return msg.to_rerun(voxel_size=voxel_size, colors=[40, 75, 130])
+        return rr.Points3D(positions=pts, radii=voxel_size * 0.5, colors=[40, 75, 130])
     passable = clearance >= wall_clearance_m
-    pts, clearance = pts[passable], clearance[passable]
     return rr.Points3D(
-        positions=pts,
-        colors=clearance_colors(clearance, clearance_clamp_m),
+        positions=pts[passable],
+        colors=clearance_colors(clearance[passable], clearance_clamp_m),
         radii=voxel_size * 0.5,
     )
 
 
 def render_nodes(msg: PointCloud2) -> Archetype:
-    import rerun as rr
-
-    pts, _ = msg.as_numpy()
-    if pts is None or len(pts) == 0:
+    pts = pointcloud_xyz(msg)
+    if len(pts) == 0:
         return rr.Points3D([])
     pts = pts.copy()
     pts[:, 2] += _GRAPH_Z_LIFT
@@ -88,7 +86,21 @@ def render_nodes(msg: PointCloud2) -> Archetype:
 
 
 def render_node_edges(msg: LineSegments3D) -> Archetype:
-    return msg.to_rerun(z_offset=_GRAPH_Z_LIFT, radii=0.01)
+    if not msg.segments:
+        return rr.LineStrips3D([])
+    strips = np.array(
+        [[[s.start.x, s.start.y, s.start.z], [s.end.x, s.end.y, s.end.z]] for s in msg.segments],
+        dtype=np.float32,
+    )
+    strips[:, :, 2] += _GRAPH_Z_LIFT
+    weights = np.array([s.weight for s in msg.segments], dtype=np.float64)
+    log_weights = np.log10(np.maximum(weights, 1e-6))
+    low, high = float(log_weights.min()), float(log_weights.max())
+    norm = (log_weights - low) / (high - low) if high > low else np.zeros_like(log_weights)
+    red = (255 * norm).astype(np.uint8)
+    green = (255 * (1 - norm)).astype(np.uint8)
+    colors = np.column_stack([red, green, np.full_like(red, 60), np.full_like(red, 220)])
+    return rr.LineStrips3D(strips, colors=colors, radii=0.01)
 
 
 def planner_visual_override(
