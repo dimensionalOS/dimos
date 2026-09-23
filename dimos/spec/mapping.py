@@ -14,10 +14,10 @@
 
 from typing import Protocol
 
+from dimos_generated.nav_msgs.msg import OccupancyGrid
 from dimos_generated.sensor_msgs.msg import PointCloud2
 
 from dimos.core.stream import Out
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 
 
 class GlobalPointcloud(Protocol):

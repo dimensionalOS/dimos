@@ -1179,3 +1179,12 @@ PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/mess
 
 The demo exercises registered command-center handlers directly and prints the
 state prepared for the browser, including a compressed costmap.
+
+Inspect a VLM request image without credentials or model inference:
+
+```sh
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_vlm_image.py
+```
+
+The demo writes `build/message-codegen/demo/evidence/vlm-request.jpg` from a
+generated CDR image through the agent's request builder, using a stubbed model.

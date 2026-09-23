@@ -276,3 +276,23 @@ This demo invokes registered handlers directly; it does not claim browser or
 Socket.IO network acceptance. Two focused tests passed, covering generated
 commands, stamped velocity, pose/path state, exact decompressed cells, rotated
 map origin, and unchanged input bytes. Production-file mypy passed.
+
+### Shared interfaces and VLM image requests
+
+Control and mapping protocols now reference generated Twist and OccupancyGrid.
+The VLM agent, its RPC protocol, and stream tester reference generated Image;
+model requests use the shared JPEG encoder and explicit base64 content instead
+of methods on legacy values. The unused manipulator identity-transform factory
+was removed along with its legacy imports.
+
+```sh
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_vlm_image.py
+```
+
+Observed: `build/message-codegen/demo/evidence/vlm-request.jpg` is a 160×120 image
+with red left and green right halves, also inspected directly. The demo exercises
+CDR decode and the actual agent request assembly with a stubbed model; no external
+inference is claimed. Twelve VLM-boundary and existing spec tests passed. Coverage
+includes stream and RPC image requests, JPEG colors and dimensions, unchanged
+input bytes, and the no-image response. Mypy passed for the six changed production
+files after annotating the request content list.
