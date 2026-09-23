@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.core.module import In
 from dimos.mapping.hyperspace.msgs import FoundObject, FoundObjects
+from dimos.teleop.memory_world.messages import MSG_QUERY_IMAGE, encode_binary
 from dimos.teleop.memory_world.query import (
     MAX_HIGHLIGHT_RADIUS_M,
     ClusterSummary,
@@ -129,6 +130,26 @@ def _is_better_look(candidate: FoundObject, held: FoundObject) -> bool:
     return float(candidate.confidence) > float(held.confidence)
 
 
+def _box_fraction(
+    box2d: tuple[float, float, float, float], width: int, height: int
+) -> list[float] | None:
+    """`(x0, y0, x1, y1)` in pixels as fractions of the image, or None if it says nothing.
+
+    An all-zero box is what a `FoundObject` carries when no box was drawn -- a heatmap
+    cell, say -- and drawing that would put a dot in the corner of the picture and call
+    it the answer.
+    """
+    x0, y0, x1, y1 = (float(value) for value in box2d)
+    if width <= 0 or height <= 0 or x1 <= x0 or y1 <= y0:
+        return None
+    return [
+        max(0.0, min(1.0, x0 / width)),
+        max(0.0, min(1.0, y0 / height)),
+        max(0.0, min(1.0, x1 / width)),
+        max(0.0, min(1.0, y1 / height)),
+    ]
+
+
 class HyperspaceAnswers:
     """Draw what Hyperspace found, without having asked it.
 
@@ -139,6 +160,8 @@ class HyperspaceAnswers:
     config: Any
     _clients_lock: threading.Lock
     _last_answer: tuple[Any | None, str | None]
+    # The photographs the wire replays to a viewer that connects after the answer.
+    _active_query_images: list[tuple[dict[str, Any], bytes]]
 
     # Declared HERE rather than on `MemoryWorldModule`: `get_type_hints` resolves the
     # whole MRO, so the framework sees this exactly as if it were on the module -- and
@@ -152,6 +175,13 @@ class HyperspaceAnswers:
         def _markers_near(self, positions: list[Any]) -> list[int]: ...
         def _query_is_current(self, query_id: str) -> bool: ...
         def register_disposable(self, disposable: Any) -> None: ...
+        def _frame_pose_at(self, frame: str, ts: float) -> Any: ...
+        def _camera_frame(self) -> str: ...
+        def _camera_hfov(self) -> float: ...
+        def _broadcast(self, message: Any) -> None: ...
+
+        @staticmethod
+        def _encode_jpeg(img: Any, max_size: int, quality: int) -> bytes: ...
 
     def _watch_hyperspace(self) -> None:
         """Start drawing Hyperspace's answers, if there is a Hyperspace to hear.
@@ -291,6 +321,7 @@ class HyperspaceAnswers:
                 observation_ids=self._markers_near([point.position for point in points]),
             )
         )
+        self._send_hyperspace_evidence(objects, query, query_id)
         # `_publish_query_result` CLEARS `_last_answer`, and whoever published is
         # expected to set it again -- `visual_answers` does. Without this the answer
         # draws and `navigate_to_place` has nothing to walk to: the Navigate button goes
@@ -310,6 +341,80 @@ class HyperspaceAnswers:
                     ),
                     query_id,
                 )
+
+    def _send_hyperspace_evidence(
+        self, objects: list[FoundObject], query: str, query_id: str
+    ) -> None:
+        """Hang the frame the detector looked at behind each place, box and all.
+
+        This path used to send NO photographs: the colour frame crossed the transport
+        and was read by one line, `n_evidence = 1 if obj.image is not None`, so an
+        item answer drew places with nothing behind them while the siglip path showed
+        its evidence. Stepping through the places with next/prev had nothing to show.
+
+        Unlike the siglip path it does NOT go back to the recording for the frame: the
+        detector has already handed us the exact one it looked at, so there is no
+        nearest-frame search to get wrong, and `box2d` says where in it the thing was
+        -- which one vector per image can never say, and is why the other path sends
+        no in-frame mark at all.
+        """
+        if not any(obj.image is not None for obj in objects):
+            return  # a heatmap or area answer chose no photograph; nothing to hang
+        sent: list[tuple[dict[str, Any], bytes]] = []
+        hfov_deg = self._camera_hfov()
+        for index, obj in enumerate(objects):
+            if obj.image is None:
+                continue
+            try:
+                camera = self._frame_pose_at(
+                    obj.camera_frame or self._camera_frame(), float(obj.stamp)
+                )
+                if camera is None:
+                    logger.warning(
+                        "no pose for %s at %.3f; its photograph has nowhere to hang",
+                        obj.camera_frame,
+                        float(obj.stamp),
+                    )
+                    continue
+                jpeg = self._encode_jpeg(
+                    obj.image, self.config.query_image_max_size, self.config.thumbnail_jpeg_quality
+                )
+            except Exception:
+                logger.exception("could not prepare the photograph behind place %d", index)
+                continue
+            height, width = obj.image.data.shape[:2]
+            header = {
+                "query_id": query_id,
+                "index": index,
+                # One photograph per place here, so index and cluster are the same
+                # number -- and it still has to be SAID: `/navigate` and the viewer's
+                # place filter both reject an image whose `cluster` is missing.
+                "cluster": index,
+                "label": _label_for(obj, query, index, "item"),
+                "position": [float(v) for v in camera[:3, 3]],
+                "forward": [float(v) for v in camera[:3, 2]],
+                "up": [float(v) for v in -camera[:3, 1]],
+                "hfov_deg": hfov_deg,
+                "aspect": float(width) / float(height),
+                "distance_m": float(self.config.query_image_distance_m),
+                "point": [float(value) for value in obj.centre],
+            }
+            # The detector's own box, as fractions of THIS image. Fractions rather than
+            # pixels because the viewer scales the photograph to hang it, and because
+            # `_fits_the_transport` may have shrunk both together -- a fraction survives
+            # that, a pixel count does not.
+            box = _box_fraction(obj.box2d, width, height)
+            if box is not None:
+                header["box_uv"] = box
+            sent.append((header, jpeg))
+        if not sent:
+            return
+        with self._clients_lock:
+            if not self._query_is_current(query_id):
+                return  # a newer question replaced this one while these encoded
+            self._active_query_images = sent
+        for header, jpeg in sent:
+            self._broadcast(encode_binary(MSG_QUERY_IMAGE, header, jpeg))
 
     @staticmethod
     def _hyperspace_sentence(query: str, objects: list[FoundObject], refused: int) -> str:

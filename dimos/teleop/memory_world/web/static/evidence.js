@@ -79,6 +79,29 @@ export function addQueryImage(scene, header, jpegArrayBuffer) {
         if (header.cluster !== undefined) frustum.userData.cluster = header.cluster;
 
         scene._highlightGroup.add(frustum);
+
+        // The detector's own box, drawn ON the photograph. `box_uv` is [x0, y0, x1, y1]
+        // as fractions with the origin at the picture's TOP-LEFT, so v grows downward
+        // while `up` points up -- hence `0.5 - v`. Only the hyperspace path sends it: one
+        // vector per image scores the whole picture and has no in-frame answer to mark.
+        const box = header.box_uv;
+        if (box && box.length === 4) {
+            const at = (u, v) => centre.clone()
+                .addScaledVector(right, (u - 0.5) * width)
+                .addScaledVector(up, (0.5 - v) * height);
+            const ring = new THREE.LineLoop(
+                new THREE.BufferGeometry().setFromPoints([
+                    at(box[0], box[1]), at(box[2], box[1]), at(box[2], box[3]), at(box[0], box[3]),
+                ]),
+                new THREE.LineBasicMaterial({ color: 0x22dd88 }),
+            );
+            // Toward the eye, or it z-fights with the picture it is drawn on.
+            ring.position.addScaledVector(forward, -0.004);
+            if (header.cluster !== undefined) ring.userData.cluster = header.cluster;
+            scene._highlightGroup.add(ring);
+            scene._queryImageBoxes[header.index] = ring;
+        }
+
         scene._queryImages[header.index] = header;
         scene._queryImageMeshes[header.index] = quad;
         // Frames from nearby poses overlap; while standing at one camera only its frame

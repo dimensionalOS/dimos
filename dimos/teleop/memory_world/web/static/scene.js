@@ -157,6 +157,7 @@ export class WorldScene {
         this._activeQueryId = null;                   // query images for any other id are stale
         this._queryImages = [];                       // headers of the frames behind the last answer
         this._queryImageMeshes = [];                  // their quads, so one can be shown alone
+        this._queryImageBoxes = [];                   // the detector's box drawn on each, same rules
         this._photosPinnedOff = false;                // set when the user turns Photos off
         this._queryImageCursor = -1;
         this.onOrbitChange = null;   // set by main.js; see setOrbit
@@ -1155,6 +1156,10 @@ export class WorldScene {
                 && (cursor < 0 || i === cursor)
                 && !(filter >= 0 && cluster !== undefined && cluster !== filter);
             mesh.visible = shown;
+            // The box is drawn ON the photograph, so it lives and dies with it. Left to
+            // itself it hangs in mid-air where a hidden picture used to be.
+            const box = this._queryImageBoxes[i];
+            if (box) box.visible = shown;
         });
     }
 
@@ -1265,6 +1270,7 @@ export class WorldScene {
         this._activeQueryId = result.query_id || null;
         this._queryImages = [];
         this._queryImageMeshes = [];
+        this._queryImageBoxes = [];
         this._queryImageCursor = -1;
         this._setAnswer(result.answer || 'Memory result');
         this.diag('query_result_loaded', {
@@ -1366,6 +1372,7 @@ export class WorldScene {
         this._clearHighlightGroup();
         this._queryImages = [];
         this._queryImageMeshes = [];
+        this._queryImageBoxes = [];
         this._queryImageCursor = -1;
         this._activeQueryId = null;
         this.setSightLine(null);

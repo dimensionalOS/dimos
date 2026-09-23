@@ -118,6 +118,10 @@ def _fits_the_transport(result: FoundObjects) -> FoundObjects:
                     frame_id=image.frame_id,
                     ts=image.ts,
                 ),
+                # `box2d` is pixels, so it moves WITH the picture. A subscriber drawing
+                # the box on the frame it was handed would otherwise put it at twice the
+                # coordinates, off the edge; the two only mean anything together.
+                box2d=tuple(value / step for value in found.box2d),
             )
         )
     # `replace` on the envelope too: the caller holds `result` and is still using it.

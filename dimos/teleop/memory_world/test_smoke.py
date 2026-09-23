@@ -914,11 +914,35 @@ def _hyperspace_host(published: dict):  # type: ignore[no-untyped-def]
     from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
 
     class Host(HyperspaceAnswers):
-        config = SimpleNamespace(place_radius_m=2.5, world_frame="odom")
+        config = SimpleNamespace(
+            place_radius_m=2.5,
+            world_frame="odom",
+            query_image_max_size=640,
+            thumbnail_jpeg_quality=70,
+            query_image_distance_m=1.0,
+        )
 
         def __init__(self) -> None:
             self._clients_lock = threading.Lock()
             self._last_answer = (None, None)
+            self._active_query_images: list = []
+
+        def _frame_pose_at(self, frame, ts):  # type: ignore[no-untyped-def]
+            published.setdefault("posed", []).append((frame, ts))
+            return np.eye(4)
+
+        def _camera_frame(self) -> str:
+            return "camera_optical"
+
+        def _camera_hfov(self) -> float:
+            return 70.0
+
+        def _broadcast(self, message) -> None:  # type: ignore[no-untyped-def]
+            published.setdefault("images", []).append(message)
+
+        @staticmethod
+        def _encode_jpeg(img, max_size, quality) -> bytes:  # type: ignore[no-untyped-def]
+            return b"jpeg-bytes"
 
         def _publish_query_result(self, result) -> str:  # type: ignore[no-untyped-def]
             published["result"] = result
@@ -1010,3 +1034,66 @@ def test_a_box_too_big_for_the_viewer_is_clamped_rather_than_losing_the_whole_an
     assert box.extent[1] > 0.0, "a zero side is un-drawable and would have raised"
     assert box.extent[2] == 2.0, "a side inside the budget was changed"
     assert published["result"].points[0].radius == MAX_HIGHLIGHT_RADIUS_M
+
+
+def _answered_with_a_photograph(published: dict, box2d, shape=(720, 1280, 3)):  # type: ignore[no-untyped-def]
+    """One item answer whose single place carries the frame the detector looked at."""
+    from dimos.mapping.hyperspace.msgs import FoundObject, FoundObjects
+    from dimos.msgs.sensor_msgs.Image import Image
+
+    host = _hyperspace_host(published)
+    host._draw_hyperspace_answer(
+        FoundObjects(
+            query="a fire extinguisher",
+            kind="item",
+            frame="odom",
+            objects=[
+                FoundObject(
+                    frame="odom",
+                    centre=(1.0, 2.0, 0.5),
+                    extent=(0.2, 0.2, 0.5),
+                    confidence=0.9,
+                    place_id=1,
+                    camera_frame="cam_optical",
+                    stamp=4.0,
+                    box2d=box2d,
+                    image=Image(data=np.zeros(shape, dtype=np.uint8), frame_id="cam", ts=4.0),
+                )
+            ],
+        )
+    )
+    return host
+
+
+def test_each_place_hangs_the_frame_the_detector_looked_at_with_its_box_on_it() -> None:
+    """This path sent NO photographs, so stepping through the places showed nothing.
+
+    The frame crossed the transport and was read by one line -- `n_evidence = 1 if
+    obj.image is not None` -- while the siglip path showed its evidence. And unlike
+    that path, this one knows WHERE in the picture the thing is: `box2d`, which one
+    vector scoring a whole image can never say.
+    """
+    published: dict = {}
+    host = _answered_with_a_photograph(published, (320.0, 180.0, 640.0, 540.0))
+
+    assert len(published.get("images", [])) == 1, "the place has no photograph behind it"
+    assert published["posed"] == [("cam_optical", 4.0)], "posed from the wrong frame or time"
+
+    # `_active_query_images` is what a viewer connecting later is replayed, so it is
+    # the same pair that went out live.
+    header, jpeg = host._active_query_images[-1]
+    assert jpeg == b"jpeg-bytes"
+    assert header["cluster"] == 0, "/navigate and the place filter both reject an image without it"
+    assert header["aspect"] == pytest.approx(1280 / 720)
+    # Fractions of THIS image, so the mark survives the picture being scaled to hang.
+    assert header["box_uv"] == pytest.approx([0.25, 0.25, 0.5, 0.75])
+
+
+def test_a_place_with_no_box_drawn_gets_its_photograph_and_no_mark_on_it() -> None:
+    """An all-zero `box2d` means no box was drawn, NOT a box in the corner."""
+    published: dict = {}
+    host = _answered_with_a_photograph(published, (0.0, 0.0, 0.0, 0.0))
+
+    header, _ = host._active_query_images[-1]
+    assert len(published["images"]) == 1, "the photograph went missing with its box"
+    assert "box_uv" not in header, "a corner dot would be drawn as the detector's answer"
