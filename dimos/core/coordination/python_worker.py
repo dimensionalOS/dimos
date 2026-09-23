@@ -372,6 +372,31 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
             logger.error("Error during worker provider shutdown", exc_info=True)
 
 
+def _warm_up_stream_types(instance: Any) -> None:
+    """Import the decode dependencies of the module's In/IO stream types.
+
+    LCMEncoderMixin.subscribe() calls ``<type>.lcm_warmup()`` on the
+    subscriber's thread, i.e. inside start(); for PointCloud2 that is a 2.5 s
+    open3d import serialised into the start phase of every cloud subscriber.
+    Running it right after construction overlaps the import with the other
+    workers' deploys and the wiring phase. A concurrent lcm_warmup() from
+    start() just waits on the module import lock.
+    """
+    seen: set[Any] = set()
+    for stream in [
+        *getattr(instance, "inputs", {}).values(),
+        *getattr(instance, "ios", {}).values(),
+    ]:
+        warmup = getattr(stream.type, "lcm_warmup", None)
+        if warmup is None or stream.type in seen:
+            continue
+        seen.add(stream.type)
+        try:
+            warmup()
+        except Exception:
+            logger.warning("Stream type warm-up failed", type=stream.type_name, exc_info=True)
+
+
 def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
     match request:
         case DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs):
@@ -379,7 +404,14 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
             if host_config is not None:
                 global_config.update(**host_config.model_dump())
 
-            state.instances[module_id] = module_class(**kwargs)
+            instance = module_class(**kwargs)
+            state.instances[module_id] = instance
+            threading.Thread(
+                target=_warm_up_stream_types,
+                args=(instance,),
+                name=f"warmup-{module_class.__name__}",
+                daemon=True,
+            ).start()
 
             return WorkerResponse(result=module_id)
 
