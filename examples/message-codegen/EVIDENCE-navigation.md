@@ -143,3 +143,18 @@ Rerun warnings treated as errors. That rule is now part of the test file. Mypy
 passed for the adapters. The camera demo then logged raw/compressed color and
 both depth representations without warnings, and its RRD passed verification.
 Interactive viewing and bridge transport subscriptions remain unverified here.
+
+### Generated 3D detections in the Rerun bridge
+
+Added a separate generated Detection3DArray renderer and wired it into bridge
+conversion. It preserves box centers, half sizes, orientations, class labels,
+and detection IDs, including empty arrays. Updated the existing bridge fixture
+to generated CDR messages. The two detection checks passed after fixing a
+missing adapter import and an unintended early return caught by the dispatch
+test. Nine camera/TF checks
+also passed during this increment, and mypy passed for the adapter module.
+
+The camera demo now sends a labeled generated detection through the bridge in
+addition to images and calibration. Its final successful run produced an RRD
+that passed verification. This is callback/serialization verification, with
+interactive viewer inspection still outstanding.

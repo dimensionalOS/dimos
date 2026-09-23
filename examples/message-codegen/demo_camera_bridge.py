@@ -17,8 +17,16 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
 from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import (
+    BoundingBox3D,
+    Detection3D,
+    Detection3DArray,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+)
 import numpy as np
 import rerun as rr
 
@@ -58,6 +66,24 @@ def main() -> None:
             ),
         ),
     ]
+    detections = Detection3DArray(
+        header=header,
+        detections=[
+            Detection3D(
+                id="4",
+                bbox=BoundingBox3D(
+                    center=Pose(position=Point(z=1), orientation=Quaternion(w=1)),
+                    size=Vector3(x=0.5, y=0.5, z=0.2),
+                ),
+                results=[
+                    ObjectHypothesisWithPose(
+                        hypothesis=ObjectHypothesis(class_id="demo-box", score=1)
+                    )
+                ],
+            )
+        ],
+    )
+    messages.append(("detections", detections))
     try:
         for name, value in messages:
             bridge._on_message(

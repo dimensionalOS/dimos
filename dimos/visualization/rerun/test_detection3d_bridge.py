@@ -15,16 +15,20 @@
 from dataclasses import dataclass
 from unittest.mock import patch
 
-from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos_generated.std_msgs.msg import Header
+from dimos_generated.vision_msgs.msg import (
+    BoundingBox3D,
+    Detection3D,
+    Detection3DArray,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+)
 import rerun as rr
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.visualization.rerun.message_helpers import detection_boxes
 
 
 @dataclass
@@ -34,7 +38,7 @@ class Topic:
 
 def _detection_array() -> Detection3DArray:
     det = Detection3D()
-    det.header = Header(10.0, "world")
+    det.header = Header(stamp=Time(sec=10), frame_id="world")
     det.id = "4"
     det.results = [
         ObjectHypothesisWithPose(
@@ -44,18 +48,16 @@ def _detection_array() -> Detection3DArray:
             )
         )
     ]
-    det.results_length = len(det.results)
     det.bbox = BoundingBox3D(
         center=Pose(
-            position=Vector3(1.0, 2.0, 3.0),
-            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            position=Point(x=1.0, y=2.0, z=3.0),
+            orientation=Quaternion(w=1.0),
         ),
-        size=Vector3(0.1, 0.1, 0.0),
+        size=Vector3(x=0.1, y=0.1),
     )
     return Detection3DArray(
-        header=Header(10.0, "world"),
+        header=Header(stamp=Time(sec=10), frame_id="world"),
         detections=[det],
-        detections_length=1,
     )
 
 
@@ -65,7 +67,10 @@ def test_detection3darray_bridge_attaches_topic_entity_to_message_frame() -> Non
 
     try:
         with patch("rerun.log") as mock_log:
-            bridge._on_message(_detection_array(), Topic("/marker_detection/detections"))
+            bridge._on_message(
+                Detection3DArray.decode(_detection_array().encode()),
+                Topic("/marker_detection/detections"),
+            )
     finally:
         bridge.stop()
 
@@ -77,3 +82,12 @@ def test_detection3darray_bridge_attaches_topic_entity_to_message_frame() -> Non
     transform = mock_log.call_args_list[1].args[1]
     assert isinstance(transform, rr.Transform3D)
     assert transform.parent_frame.as_arrow_array().to_pylist() == ["tf#/world"]
+
+
+def test_generated_detection_boxes_preserve_geometry_and_labels() -> None:
+    boxes = detection_boxes(Detection3DArray.decode(_detection_array().encode()))
+    assert boxes.centers.as_arrow_array().to_pylist() == [[1, 2, 3]]
+    assert boxes.labels.as_arrow_array().to_pylist() == ["DICT_APRILTAG_36h11:4 id=4"]
+    assert boxes.quaternions.as_arrow_array().to_pylist() == [[0, 0, 0, 1]]
+    empty = detection_boxes(Detection3DArray())
+    assert empty.centers.as_arrow_array().to_pylist() == []

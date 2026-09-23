@@ -1127,3 +1127,6 @@ Open `camera-bridge.rrd` in Rerun to inspect a red/green image, its compressed
 copy, calibration, and two depth images that both represent one metre. The demo
 uses generated CDR messages and the bridge callback; it does not start a network
 subscription. Its only output is the ignored RRD file.
+
+The camera demo also logs a generated 3D box labelled `demo-box id=4` in the
+camera's optical frame, exercising the same bridge used for image dispatch.

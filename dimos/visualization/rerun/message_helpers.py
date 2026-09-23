@@ -16,6 +16,7 @@
 
 from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_generated.vision_msgs.msg import Detection3DArray
 import matplotlib
 import numpy as np
 import rerun as rr
@@ -89,3 +90,32 @@ def image_archetype(message: Image | CompressedImage) -> rr.Image | rr.DepthImag
     if message.encoding == "mono16":
         return rr.Image(image_view(message), color_model="L")
     return rr.EncodedImage(contents=image_to_jpeg(message), media_type="image/jpeg")
+
+
+def detection_boxes(message: Detection3DArray) -> rr.Boxes3D:
+    """Render detection geometry and labels from generated values."""
+    centers = []
+    half_sizes = []
+    rotations = []
+    labels = []
+    for detection in message.detections:
+        box = detection.bbox
+        p, q, size = box.center.position, box.center.orientation, box.size
+        centers.append((p.x, p.y, p.z))
+        half_sizes.append((size.x / 2, size.y / 2, size.z / 2))
+        rotations.append((q.x, q.y, q.z, q.w))
+        identifier = detection.id.strip()
+        label = next(
+            (
+                result.hypothesis.class_id.strip()
+                for result in detection.results
+                if result.hypothesis.class_id.strip()
+            ),
+            "",
+        )
+        labels.append(
+            f"{label} id={identifier}"
+            if label and identifier
+            else label or (f"id={identifier}" if identifier else "")
+        )
+    return rr.Boxes3D(centers=centers, half_sizes=half_sizes, quaternions=rotations, labels=labels)

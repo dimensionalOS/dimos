@@ -38,6 +38,7 @@ from urllib.parse import urlparse
 
 from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_generated.vision_msgs.msg import Detection3DArray
 import numpy as np
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
@@ -60,7 +61,12 @@ from dimos.visualization.rerun.constants import (
     RerunOpenOption,
 )
 from dimos.visualization.rerun.init import rerun_init, spawn_viewer
-from dimos.visualization.rerun.message_helpers import camera_pinhole, image_archetype, tf_archetypes
+from dimos.visualization.rerun.message_helpers import (
+    camera_pinhole,
+    detection_boxes,
+    image_archetype,
+    tf_archetypes,
+)
 from dimos.visualization.rerun.tf_tree import TfFrameTree
 
 if TYPE_CHECKING:
@@ -315,6 +321,8 @@ class RerunBridgeModule(Module):
                 return msg
             if is_rerun_multi(msg):
                 return msg
+            if isinstance(msg, Detection3DArray):
+                return detection_boxes(msg)
             if isinstance(msg, (Image, CompressedImage)):
                 return image_archetype(msg)
             if isinstance(msg, RerunConvertible):
