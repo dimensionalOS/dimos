@@ -463,26 +463,26 @@ class ModuleBase(Configurable, CompositeResource):
         from langchain_core.tools import tool  # ~170ms: deferred to avoid CLI startup cost
 
         skills: list[SkillInfo] = []
-        for name in dir(self):
-            try:
-                attr = getattr(self, name)
-            except Exception:
-                # Properties may legitimately raise when unconfigured (e.g.
-                # tfbuffer without a tf port); they are not skills.
+        cls = type(self)
+        # Scan the class, not the instance: getattr on every instance attribute
+        # would evaluate properties, and those may raise when unconfigured
+        # (tfbuffer without a tf port) or block on a lazy load.
+        for name in dir(cls):
+            if not hasattr(getattr(cls, name, None), "__skill__"):
                 continue
-            if callable(attr) and hasattr(attr, "__skill__"):
-                schema = json.dumps(tool(attr).args_schema.model_json_schema())
-                uses = tuple(getattr(attr, "__skill_uses__", ()) or ())
-                lifecycle = getattr(attr, "__skill_lifecycle__", "instant")
-                skills.append(
-                    SkillInfo(
-                        class_name=self.__class__.__name__,
-                        func_name=name,
-                        args_schema=schema,
-                        uses=uses,
-                        lifecycle=lifecycle,
-                    )
+            attr = getattr(self, name)
+            schema = json.dumps(tool(attr).args_schema.model_json_schema())
+            uses = tuple(getattr(attr, "__skill_uses__", ()) or ())
+            lifecycle = getattr(attr, "__skill_lifecycle__", "instant")
+            skills.append(
+                SkillInfo(
+                    class_name=cls.__name__,
+                    func_name=name,
+                    args_schema=schema,
+                    uses=uses,
+                    lifecycle=lifecycle,
                 )
+            )
         return skills
 
     def spawn(self, coro: Any) -> Any:
