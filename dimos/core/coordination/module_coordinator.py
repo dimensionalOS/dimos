@@ -23,6 +23,7 @@ import inspect
 import shutil
 import sys
 import threading
+import time
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
@@ -262,14 +263,24 @@ class ModuleCoordinator(Resource):
             self.stop()
             raise
 
-    def start_all_modules(self) -> None:
-        modules = list(self._deployed_modules.values())
+    def start_all_modules(self) -> dict[str, float]:
+        """Start every deployed module in parallel; returns each start() duration in seconds."""
+        modules = list(self._deployed_modules.items())
         if not modules:
             raise ValueError("No modules deployed. Call deploy() before start_all_modules().")
 
-        safe_thread_map(modules, lambda m: m.start())
+        durations: dict[str, float] = {}
+
+        def start(item: tuple[str, ModuleProxyProtocol]) -> None:
+            name, module = item
+            t0 = time.perf_counter()
+            module.start()
+            durations[name] = time.perf_counter() - t0
+
+        safe_thread_map(modules, start)
 
         self._send_on_system_modules()
+        return durations
 
     def _resolve_class(self, cls: type[ModuleBase]) -> type[ModuleBase]:
         return self._class_aliases.get(cls, cls)
@@ -381,12 +392,15 @@ class ModuleCoordinator(Resource):
         coordinator.start()
 
         try:
+            t0 = time.perf_counter()
             _deploy_all_modules(blueprint, coordinator, global_config, module_kwargs)
+            t1 = time.perf_counter()
             coordinator._connect_streams(blueprint, transports)
             _connect_module_refs(blueprint, coordinator)
-
             coordinator.build_all_modules()
-            coordinator.start_all_modules()
+            t2 = time.perf_counter()
+            start_durations = coordinator.start_all_modules()
+            t3 = time.perf_counter()
         except BaseException:
             # The caller never gets a coordinator to stop, so stop it here.
             with suppress(Exception):
@@ -394,6 +408,15 @@ class ModuleCoordinator(Resource):
             raise
 
         _log_blueprint_graph(blueprint, coordinator)
+
+        slowest = sorted(start_durations.items(), key=lambda item: item[1], reverse=True)[:3]
+        logger.info(
+            "Blueprint started",
+            deploy_s=round(t1 - t0, 2),
+            wire_s=round(t2 - t1, 2),
+            start_s=round(t3 - t2, 2),
+            slowest_starts={name: round(secs, 2) for name, secs in slowest},
+        )
 
         return coordinator
 
