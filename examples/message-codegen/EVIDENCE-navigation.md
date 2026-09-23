@@ -198,3 +198,16 @@ not interactive visual acceptance. No dependency manifest changed.
 
 Mypy passed for the bridge, message adapters, and frame tree after giving the TF
 loop distinct variable names to avoid an incompatible archetype assignment.
+
+### Generated occupancy grids through the bridge
+
+Added generated OccupancyGrid dispatch to a separate textured-quad adapter.
+The quad uses the complete origin pose, including rotation and elevation; its
+texture preserves row orientation and default free/occupied/unknown colors.
+Two focused tests passed with Rerun warnings as errors, checking a 90-degree
+rotated grid, exact texture bytes, frame attachment, source immutability, empty
+maps, and malformed dimensions. Bridge and adapter mypy passed.
+
+The native terrain demo now sends a small generated occupancy grid through the
+bridge alongside its cloud and path. The completed demo's RRD passed verification.
+Interactive rendering acceptance is still outstanding.

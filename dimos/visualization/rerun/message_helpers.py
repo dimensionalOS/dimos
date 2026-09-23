@@ -15,7 +15,7 @@
 """Rerun presentation helpers kept separate from generated wire types."""
 
 from dimos_generated.geometry_msgs.msg import PointStamped, PoseStamped
-from dimos_generated.nav_msgs.msg import Odometry, Path
+from dimos_generated.nav_msgs.msg import OccupancyGrid, Odometry, Path
 from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
 from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_generated.vision_msgs.msg import Detection3DArray
@@ -24,6 +24,7 @@ import numpy as np
 import rerun as rr
 
 from dimos.msgs.image import image_to_jpeg, image_view
+from dimos.msgs.occupancy import grid_to_world, occupancy_view
 from dimos.msgs.pointcloud import pointcloud_rgb, pointcloud_xyz
 
 
@@ -159,4 +160,25 @@ def navigation_archetype(
         translation=[p.x, p.y, p.z],
         quaternion=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w]),
         parent_frame=f"tf#/{message.header.frame_id}" if message.header.frame_id else None,
+    )
+
+
+def occupancy_mesh(message: OccupancyGrid) -> rr.Mesh3D:
+    """Render an occupancy texture on the grid's fully transformed plane."""
+    cells = occupancy_view(message)
+    if cells.size == 0:
+        return rr.Mesh3D(vertex_positions=[])
+    intensity = 1 - np.clip(cells.astype(np.float32), 0, 100) / 100
+    colors = (intensity[..., None] * np.array([72, 73, 129])).astype(np.uint8)
+    colors[cells < 0] = 0
+    rgba = np.concatenate([colors, np.full((*cells.shape, 1), 255, dtype=np.uint8)], axis=2)
+    width, height = message.info.width, message.info.height
+    corners = [
+        grid_to_world(message, xy) for xy in ((0, 0), (width, 0), (width, height), (0, height))
+    ]
+    return rr.Mesh3D(
+        vertex_positions=[[p.x, p.y, p.z] for p in corners],
+        triangle_indices=[[0, 1, 2], [0, 2, 3]],
+        vertex_texcoords=[[0, 1], [1, 1], [1, 0], [0, 0]],
+        albedo_texture=np.ascontiguousarray(rgba[::-1]),
     )

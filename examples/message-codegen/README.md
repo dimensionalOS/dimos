@@ -1138,3 +1138,7 @@ RGB colors when supplied by a cloud producer.
 The terrain demo's `world/planned_path` entity now comes from the shared bridge's
 generated Path adapter. It is displayed 0.5m above the original route for clarity;
 the path message retains its original coordinates.
+
+The terrain recording also includes `world/occupancy`, a small generated grid
+with free, occupied, unknown, and intermediate-cost cells. The shared adapter
+places its textured plane using the grid's origin pose.

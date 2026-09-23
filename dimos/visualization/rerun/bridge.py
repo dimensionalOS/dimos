@@ -37,7 +37,7 @@ from typing import (
 from urllib.parse import urlparse
 
 from dimos_generated.geometry_msgs.msg import PointStamped, PoseStamped
-from dimos_generated.nav_msgs.msg import Odometry, Path
+from dimos_generated.nav_msgs.msg import OccupancyGrid, Odometry, Path
 from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
 from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_generated.vision_msgs.msg import Detection3DArray
@@ -69,6 +69,7 @@ from dimos.visualization.rerun.message_helpers import (
     detection_boxes,
     image_archetype,
     navigation_archetype,
+    occupancy_mesh,
     tf_archetypes,
 )
 from dimos.visualization.rerun.tf_tree import TfFrameTree
@@ -325,6 +326,8 @@ class RerunBridgeModule(Module):
                 return msg
             if is_rerun_multi(msg):
                 return msg
+            if isinstance(msg, OccupancyGrid):
+                return occupancy_mesh(msg)
             if isinstance(msg, (PointStamped, PoseStamped, Odometry, Path)):
                 return navigation_archetype(msg)
             if isinstance(msg, PointCloud2):

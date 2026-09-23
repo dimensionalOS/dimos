@@ -27,7 +27,7 @@ from dimos_generated.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
-from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid, Path
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
@@ -119,6 +119,12 @@ def main() -> None:
     try:
         bridge._on_message(PointCloud2.decode(cloud.encode()), SimpleNamespace(name="/terrain"))
         bridge._on_message(Path.decode(path.encode()), SimpleNamespace(name="/planned_path"))
+        grid = OccupancyGrid(
+            header=path.header,
+            info=MapMetaData(width=2, height=2, resolution=1.0, origin=poses[0].pose),
+            data=[0, 100, -1, 50],
+        )
+        bridge._on_message(OccupancyGrid.decode(grid.encode()), SimpleNamespace(name="/occupancy"))
     finally:
         bridge.stop()
     rr.log("world/ray_map", render_surface_map(mapped_cloud))
