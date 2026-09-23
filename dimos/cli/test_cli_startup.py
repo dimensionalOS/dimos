@@ -99,6 +99,14 @@ BLUEPRINT_MUST_NOT_IMPORT = (
     "uvicorn",
     "mujoco_playground",
 )
+# McpServer builds its FastAPI app at import, so uvicorn is expected here.
+AGENTIC_BLUEPRINT_MUST_NOT_IMPORT = (
+    *CLI_MUST_NOT_IMPORT,
+    "mujoco_playground",
+    "transformers",
+    "hydra",
+    "chromadb",
+)
 
 
 def _leaked_modules(
@@ -130,6 +138,16 @@ def test_go2_blueprint_import_does_not_pull_heavy_deps() -> None:
     leaked = _leaked_modules(
         "import dimos.robot.unitree.go2.blueprints.smart.unitree_go2",
         BLUEPRINT_MUST_NOT_IMPORT,
+        env=env,
+    )
+    assert leaked == []
+
+
+def test_go2_cockpit_blueprint_import_does_not_pull_heavy_deps() -> None:
+    env = {**os.environ, "LCM_DEFAULT_URL": "memq://"}
+    leaked = _leaked_modules(
+        "import dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic_cockpit",
+        AGENTIC_BLUEPRINT_MUST_NOT_IMPORT,
         env=env,
     )
     assert leaked == []
