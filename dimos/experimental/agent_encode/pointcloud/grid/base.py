@@ -24,10 +24,10 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.spatial import cKDTree
+from scipy.ndimage import distance_transform_edt
 
 from dimos.experimental.agent_encode.pointcloud.grid.lib import mask
-from dimos.experimental.agent_encode.pointcloud.grid.lib.cells import overlap
+from dimos.experimental.agent_encode.pointcloud.grid.lib.cells import check_area, overlap
 from dimos.experimental.agent_encode.pointcloud.grid.regions import Regions, label
 from dimos.experimental.agent_encode.pointcloud.image.lib.canvas import Drawable
 from dimos.experimental.agent_encode.pointcloud.image.map import MapImage, grid_image
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True, eq=False)
 class Grid:
     """Top-down cells over the cloud's x/y, world-aligned; values[row, col], row 0 is
-    the south edge. A mask is a grid whose values are only 1, 0 or NaN."""
+    the south edge."""
 
     origin: tuple[float, float]
     """World x, y of the south-west corner."""
@@ -48,6 +48,8 @@ class Grid:
     """(rows, columns); NaN is no data, never free."""
     cloud: PointCloud2 | None = None
     """The returns the cells were made from; None for grids computed from other grids."""
+    mask: bool = False
+    """Values are only 1, 0 or NaN, from a comparison or from combining masks."""
 
     def __post_init__(self) -> None:
         values = np.asarray(self.values, dtype=np.float64)
@@ -57,6 +59,8 @@ class Grid:
             raise ValueError("origin must be two finite coordinates")
         if not np.isfinite(self.cell_m) or self.cell_m <= 0:
             raise ValueError("cell_m must be positive and finite")
+        if self.mask and not mask.is_mask(values):
+            raise ValueError("a mask holds only 1, 0 or NaN")
         object.__setattr__(self, "origin", (float(self.origin[0]), float(self.origin[1])))
         object.__setattr__(self, "values", values)
 
@@ -86,13 +90,13 @@ class Grid:
         if cell is None:
             return None
         value = float(self.values[cell[1], cell[0]])
-        return value if math.isfinite(value) else None
+        return None if math.isnan(value) else value
 
     def near(self, xy: tuple[float, float], radius: float) -> tuple[float, float] | None:
         """(min, max) over the cells with data whose centre lies within ``radius`` of the
         point, and the cell containing it; None when there are none."""
         values = self.values[self.within(xy, radius)]
-        values = values[np.isfinite(values)]
+        values = values[~np.isnan(values)]
         if not len(values):
             return None
         return float(values.min()), float(values.max())
@@ -115,6 +119,7 @@ class Grid:
     ) -> list[list[float | None]]:
         """Values of the cells whose centre lies in the closed area ((x0, y0), (x1, y1)),
         rows north to south; None where there is no data."""
+        check_area(area)
         (x0, y0), (x1, y1) = area
         centres = self.centres()
         cols = np.flatnonzero((centres[0, :, 0] >= x0) & (centres[0, :, 0] <= x1))
@@ -124,18 +129,16 @@ class Grid:
                 f"the area holds {len(cols)} x {len(rows)} cells, more than 4096; "
                 "pass a smaller area"
             )
-        block = np.round(self.values[np.ix_(rows[::-1], cols)], decimals)
-        return [[float(v) if math.isfinite(v) else None for v in row] for row in block]
+        block = self.values[np.ix_(rows[::-1], cols)].tolist()
+        return [[None if math.isnan(v) else round(v, decimals) for v in row] for row in block]
 
     def distance(self) -> Grid:
         """Metres from each cell centre to the nearest true cell centre of this mask; all
-        NaN when no cell is true."""
+        inf when no cell is true."""
         self._require_mask("distance()")
-        targets = self.centres()[self.values == 1]
-        distance = np.full(self.values.shape, np.nan)
-        if len(targets):
-            found, _ = cKDTree(targets).query(self.centres().reshape(-1, 2), workers=1)
-            distance = found.reshape(self.values.shape)
+        if not (self.values == 1).any():
+            return self._derived(self.origin, np.full(self.values.shape, np.inf))
+        distance = distance_transform_edt(self.values != 1) * self.cell_m
         return self._derived(self.origin, distance)
 
     def regions(
@@ -201,7 +204,7 @@ class Grid:
 
     def __invert__(self) -> Grid:
         self._require_mask("~")
-        return self._derived(self.origin, mask.negate(self.values))
+        return self._derived(self.origin, mask.negate(self.values), mask=True)
 
     def __add__(self, other: Grid | float) -> Grid:
         return self._arithmetic(other, np.add)
@@ -218,20 +221,22 @@ class Grid:
     def __repr__(self) -> str:
         cols, rows = self.shape
         x0, y0 = self.origin
-        finite = self.values[np.isfinite(self.values)]
-        span = f"{finite.min():.4g}..{finite.max():.4g}" if len(finite) else "none"
-        missing = 100 * (1 - len(finite) / self.values.size)
+        known = self.values[~np.isnan(self.values)]
+        span = f"{known.min():.4g}..{known.max():.4g}" if len(known) else "none"
+        missing = 100 * (1 - len(known) / self.values.size)
         return (
             f"Grid(cell {self.cell_m:g} m, {cols} x {rows} cells, "
             f"x {x0:.3f}..{x0 + cols * self.cell_m:.3f}, y {y0:.3f}..{y0 + rows * self.cell_m:.3f}, "
             f"values {span}, {missing:.0f}% no data)"
         )
 
-    def _derived(self, origin: tuple[float, float], values: NDArray[np.float64]) -> Grid:
-        return Grid(origin, self.cell_m, values)
+    def _derived(
+        self, origin: tuple[float, float], values: NDArray[np.float64], mask: bool = False
+    ) -> Grid:
+        return Grid(origin, self.cell_m, values, mask=mask)
 
     def _require_mask(self, operation: str) -> None:
-        if not mask.is_mask(self.values):
+        if not self.mask:
             raise ValueError(f"{operation} requires a mask (a Grid of 1/0/no data), e.g. count > 0")
 
     def _compare(
@@ -239,8 +244,10 @@ class Grid:
     ) -> Grid:
         if isinstance(other, Grid) or not math.isfinite(other):
             raise TypeError("compare a Grid with a finite number, e.g. count > 0")
-        finite = np.isfinite(self.values)
-        return self._derived(self.origin, np.where(finite, compare(self.values, other), np.nan))
+        known = ~np.isnan(self.values)
+        return self._derived(
+            self.origin, np.where(known, compare(self.values, other), np.nan), mask=True
+        )
 
     def _pair(self, other: Grid) -> tuple[Grid, Grid]:
         """Both grids over the cells they share, at the finer of their cells."""
@@ -249,7 +256,10 @@ class Grid:
         origin, mine, theirs = overlap(
             (first.origin, first.shape), (second.origin, second.shape), cell
         )
-        return Grid(origin, cell, first.values[mine]), Grid(origin, cell, second.values[theirs])
+        return (
+            Grid(origin, cell, first.values[mine], mask=self.mask),
+            Grid(origin, cell, second.values[theirs], mask=other.mask),
+        )
 
     def _refined(self, cell_m: float) -> Grid:
         """This grid at ``cell_m``, each cell repeated over the finer cells inside it."""
@@ -263,7 +273,7 @@ class Grid:
         if repeat == 1:
             return self
         values = np.repeat(np.repeat(self.values, repeat, axis=0), repeat, axis=1)
-        return Grid(self.origin, cell_m, values)
+        return Grid(self.origin, cell_m, values, mask=self.mask)
 
     def _logic(
         self,
@@ -276,7 +286,7 @@ class Grid:
         self._require_mask(operation)
         other._require_mask(operation)
         first, second = self._pair(other)
-        return Grid(first.origin, first.cell_m, combine(first.values, second.values))
+        return Grid(first.origin, first.cell_m, combine(first.values, second.values), mask=True)
 
     def _arithmetic(
         self,

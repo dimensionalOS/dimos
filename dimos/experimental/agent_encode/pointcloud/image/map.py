@@ -25,7 +25,6 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image as PILImage, ImageDraw
 
-from dimos.experimental.agent_encode.pointcloud.grid.lib.mask import is_mask
 from dimos.experimental.agent_encode.pointcloud.image.base import Drawn, Image, draw_items
 from dimos.experimental.agent_encode.pointcloud.image.lib.canvas import Drawable
 from dimos.experimental.agent_encode.pointcloud.image.lib.colour import (
@@ -33,8 +32,8 @@ from dimos.experimental.agent_encode.pointcloud.image.lib.colour import (
     colour_table,
 )
 from dimos.experimental.agent_encode.pointcloud.image.lib.files import (
-    artifact,
     digest_stem,
+    draw_bytes,
     output_dir,
 )
 from dimos.experimental.agent_encode.pointcloud.queries.lib.points import as_cloud, finite_points
@@ -57,7 +56,7 @@ class MapImage(Image):
         u, v = grid_pixels(
             np.array([point[:2]], dtype=np.float64), self.grid, self.pixels_per_cell
         )[0]
-        return round(float(u), 2), round(float(v), 2)
+        return float(u), float(v)
 
     def world(self, uv: tuple[int, int]) -> tuple[float, float] | None:
         """World (x, y) at the centre of pixel ``uv``; None outside the image."""
@@ -138,8 +137,9 @@ def grid_image(
         )
     scale = 1024 // max(cols, rows)
     values = grid.values
+    known = ~np.isnan(values)
     finite = np.isfinite(values)
-    if value_range is None and is_mask(values):
+    if value_range is None and grid.mask:
         rgb = np.full((*values.shape, 3), 190, dtype=np.uint8)
         rgb[values == 0] = 255
         rgb[values == 1] = 0
@@ -157,10 +157,10 @@ def grid_image(
         if not np.isfinite([low, high]).all() or high < low:
             raise ValueError("value_range must be two finite values, lower first")
         denominator = high - low if high != low else 1.0
-        fractions = np.where(finite, np.clip((values - low) / denominator, 0, 1), 0)
+        fractions = np.where(known, np.clip((values - low) / denominator, 0, 1), 0)
         _, table = colour_table()
         rgb = table[(fractions * 255).astype(int)].astype(np.uint8)
-        rgb[~finite] = (96, 96, 96)
+        rgb[~known] = (96, 96, 96)
         scale_read = colour_scale(low, high)
     picture = PILImage.fromarray(np.ascontiguousarray(rgb[::-1])).resize(
         (cols * scale, rows * scale), PILImage.Resampling.NEAREST
@@ -168,12 +168,13 @@ def grid_image(
     _metre_lines(picture, grid, scale)
     drawn = draw_on_grid(picture, grid, scale, draw, z_extent_of(grid.cloud))
     stem = digest_stem(
-        repr((grid.origin, grid.cell_m, value_range, draw)).encode(),
+        repr((grid.origin, grid.cell_m, grid.mask, value_range)).encode(),
         np.ascontiguousarray(values).tobytes(),
+        *draw_bytes(draw),
     )
     path = output_dir(out_dir) / f"{stem}_grid.png"
-    with artifact(path) as staging:
-        picture.save(staging)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    picture.save(path)
     return MapImage(path, picture.size, scale_read, drawn, grid, scale)
 
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from numbers import Real
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -33,7 +34,6 @@ from dimos.experimental.agent_encode.pointcloud.image.lib.colour import (
     depth_rgb,
 )
 from dimos.experimental.agent_encode.pointcloud.image.lib.files import (
-    artifact,
     file_stem,
     output_dir,
 )
@@ -69,7 +69,7 @@ class CameraImage(Image):
         u, v = project(
             np.array([point], dtype=np.float64), self.pose, self.fov_deg, self.size, self.max_depth
         )[0]
-        return None if np.isnan(u) else (round(float(u), 2), round(float(v), 2))
+        return None if np.isnan(u) else (float(u), float(v))
 
     def world(self, uv: tuple[int, int]) -> tuple[float, float, float] | None:
         """The return drawn at pixel ``uv``; None where no return reached it (black, or
@@ -116,7 +116,7 @@ class CameraView(Query[CameraImage]):
         if (
             not isinstance(self.pose, tuple)
             or len(self.pose) != 5
-            or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in self.pose)
+            or not all(isinstance(v, Real) and math.isfinite(v) for v in self.pose)
         ):
             raise ValueError(
                 f"pose must be five finite numbers (x, y, z, yaw_deg, pitch_deg), not {self.pose!r}"
@@ -136,9 +136,9 @@ class CameraView(Query[CameraImage]):
         z = points[:, 2]
         z_extent = (float(z.min()), float(z.max())) if len(z) else (0.0, 0.0)
         drawn = draw_items(picture, self.draw, project_many, z_extent)
-        path = output_dir(self.out_dir) / f"{file_stem(self, cloud)}_camera.png"
-        with artifact(path) as staging:
-            picture.save(staging)
+        path = output_dir(self.out_dir) / f"{file_stem(self, cloud, self.draw)}_camera.png"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        picture.save(path)
         return CameraImage(
             path,
             self.size,

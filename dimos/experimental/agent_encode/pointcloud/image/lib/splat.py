@@ -111,26 +111,18 @@ def depth_raster(
     depth = np.full((height, width), np.inf, dtype=np.float32)
     ids = np.full((height, width), -1, dtype=np.int64)
     provenance = np.zeros((height, width), dtype=np.uint8)
-    projected = np.full((len(points), 2), np.nan)
-    if len(points) == 0:
-        return DepthRaster(depth, None, ids, provenance, projected)
-    forward, right, up = axes(pose)
-    rel = points - np.array(pose[:3], dtype=points.dtype)
-    d = rel @ forward
-    keep = d > 0.05
-    if max_depth is not None:
-        keep &= d <= max_depth
-    rel, d = rel[keep], d[keep]
+    world = points.astype(np.float64)
+    projected = project(world, pose, fov_deg, size, max_depth)
+    keep = ~np.isnan(projected[:, 0])
     source_ids = np.flatnonzero(keep)
-    if len(d) == 0:
+    if len(source_ids) == 0:
         return DepthRaster(depth, None, ids, provenance, projected)
+    forward, _, _ = axes(pose)
+    d = (world[keep] - np.array(pose[:3])) @ forward
     focal = (width / 2.0) / math.tan(math.radians(fov_deg) / 2.0)
-    u = (rel @ right) / d * focal + width / 2.0
-    v = -(rel @ up) / d * focal + height / 2.0
-    projected[source_ids] = np.column_stack((u, v))
-    col = np.floor(u).astype(np.int64)
-    row = np.floor(v).astype(np.int64)
-    width_m = point_spacing(rel) if point_size_m is None else np.full(len(d), point_size_m)
+    col = np.floor(projected[keep, 0]).astype(np.int64)
+    row = np.floor(projected[keep, 1]).astype(np.int64)
+    width_m = point_spacing(points[keep]) if point_size_m is None else np.full(len(d), point_size_m)
     radius = np.clip(np.round(focal * width_m / d / 2.0), 0, max_splat_px).astype(np.int64)
     # Positive float32 bit order equals numeric depth order; low bits break ties by return ID.
     keys = (d.astype(np.float32).view(np.uint32).astype(np.uint64) << 32) | source_ids.astype(

@@ -34,16 +34,19 @@ class Box(Shape):
     yaw_deg: float = 0.0
     """Rotation about z."""
 
+    def _rotation(self) -> NDArray[np.float64]:
+        """Box axes to world: the columns are the box's x, y, z in the cloud's frame."""
+        c, s = math.cos(math.radians(self.yaw_deg)), math.sin(math.radians(self.yaw_deg))
+        return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
     def _local(
         self, points: NDArray[np.float32] | NDArray[np.float64]
     ) -> NDArray[np.float32] | NDArray[np.float64]:
         """Points in the box frame: origin at the centre, x along the yaw."""
         rel = points - np.asarray(self.center, dtype=points.dtype)
-        c, s = math.cos(math.radians(self.yaw_deg)), math.sin(math.radians(self.yaw_deg))
-        local: NDArray[np.float32] | NDArray[np.float64] = np.empty_like(rel)
-        local[:, 0] = rel[:, 0] * c + rel[:, 1] * s
-        local[:, 1] = -rel[:, 0] * s + rel[:, 1] * c
-        local[:, 2] = rel[:, 2]
+        local: NDArray[np.float32] | NDArray[np.float64] = rel @ self._rotation().astype(
+            points.dtype
+        )
         return local
 
     def contains(self, points: NDArray[np.float32] | NDArray[np.float64]) -> NDArray[np.bool_]:
@@ -58,8 +61,7 @@ class Box(Shape):
         return d
 
     def chord(self, direction: NDArray[np.float64]) -> float:
-        c, s = math.cos(math.radians(self.yaw_deg)), math.sin(math.radians(self.yaw_deg))
-        along = np.abs(np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]]) @ direction)
+        along = np.abs(self._rotation().T @ direction)
         lengths = np.divide(self.size, along, out=np.full(3, np.inf), where=along > 0)
         return float(lengths.min())
 
@@ -68,9 +70,7 @@ class Box(Shape):
 
     def wireframe(self, z_extent: tuple[float, float]) -> list[NDArray[np.float64]]:
         signs = np.array([[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)])
-        c, s = math.cos(math.radians(self.yaw_deg)), math.sin(math.radians(self.yaw_deg))
-        rotation = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
-        corners = (signs * np.asarray(self.size, dtype=np.float64) / 2) @ rotation.T + self.anchor(
-            z_extent
-        )
+        corners = (
+            signs * np.asarray(self.size, dtype=np.float64) / 2
+        ) @ self._rotation().T + self.anchor(z_extent)
         return [corners[[i, i ^ bit]] for i in range(8) for bit in (1, 2, 4) if i < i ^ bit]

@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from dimos.experimental.agent_encode.pointcloud.queries.base import Query
 from dimos.experimental.agent_encode.pointcloud.queries.lib.points import finite_points
 
@@ -26,7 +28,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Bounds(Query["tuple[tuple[float, float, float], tuple[float, float, float]] | None"]):
-    """The lowest and highest corner of the finite returns; None when there are none."""
+    """The lowest and highest corner of the finite returns, rounded outward to the
+    millimetre; None when there are none."""
 
     def run(
         self, cloud: PointCloud2
@@ -34,8 +37,7 @@ class Bounds(Query["tuple[tuple[float, float, float], tuple[float, float, float]
         points = finite_points(cloud)
         if not len(points):
             return None
-        (x0, y0, z0), (x1, y1, z1) = (
-            (round(float(v), 3) for v in corner)
-            for corner in (points.min(axis=0), points.max(axis=0))
-        )
+        low = np.floor(points.min(axis=0).astype(np.float64) * 1000) / 1000
+        high = np.ceil(points.max(axis=0).astype(np.float64) * 1000) / 1000
+        (x0, y0, z0), (x1, y1, z1) = low.tolist(), high.tolist()
         return (x0, y0, z0), (x1, y1, z1)

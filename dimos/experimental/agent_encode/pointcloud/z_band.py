@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import math
+from numbers import Real
 from typing import TypeAlias
 
 import numpy as np
@@ -31,7 +32,7 @@ def check_z_band(band: ZBand) -> None:
         raise ValueError("z must be a (low, high) pair; use None for an unbounded end")
     low, high = band
     for end in (low, high):
-        if end is not None and (not isinstance(end, (int, float)) or not math.isfinite(end)):
+        if end is not None and (not isinstance(end, Real) or not math.isfinite(end)):
             raise ValueError(f"z ends must be finite numbers or None, not {end!r}")
     if low is not None and high is not None and low > high:
         raise ValueError(f"z low {low:g} is above z high {high:g}")

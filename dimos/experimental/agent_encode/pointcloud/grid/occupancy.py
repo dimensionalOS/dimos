@@ -53,4 +53,4 @@ class Occupancy(Query[Grid]):
         free = binned.any(binned.z < (-np.inf if low is None else low))
         values = np.where(occupied, 1.0, np.where(free, 0.0, np.nan))
         used = Select(z=(None, self.z[1])).run(cloud) if self.z[1] is not None else cloud
-        return Grid(binned.origin, self.cell_m, binned.rows(values), used)
+        return Grid(binned.origin, self.cell_m, binned.rows(values), used, mask=True)

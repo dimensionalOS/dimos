@@ -171,8 +171,8 @@ class Overview(Query[OverviewResult]):
         pooled = OverviewGrid(pooled_origin, pooled_shape, pooled_m, pooled_limited)
 
         occupied = int(np.count_nonzero(Count(fine_m, area).run(cloud).values))
-        ptp = np.round(np.ptp(points, axis=0), 3)
-        span = (float(ptp[0]), float(ptp[1]), float(ptp[2]))
+        dx, dy, dz = (round(v, 3) for v in np.ptp(points, axis=0).tolist())
+        span = (dx, dy, dz)
         coverage = Coverage(fine, occupied, round(occupied * fine_m**2, 3))
 
         lower = ZPercentile(10.0, pooled_m, min_count=4, area=area).run(cloud)
@@ -269,8 +269,7 @@ def _offsets(region: Region) -> tuple[float | None, float | None, float | None]:
 
 
 def _rounded(xy: tuple[float, float]) -> tuple[float, float]:
-    x, y = np.round(xy, 3).tolist()
-    return x, y
+    return round(float(xy[0]), 3), round(float(xy[1]), 3)
 
 
 def _rounded_bounds(region: Region) -> tuple[tuple[float, float], tuple[float, float]]:
