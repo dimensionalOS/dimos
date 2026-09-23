@@ -455,6 +455,14 @@ class HyperspaceConfig(MemoryModuleConfig):
     # single-member search behaves like this being off. Measured wrong for roscon: see
     # `memory_world/blueprints.py`, where it is turned off with the numbers.
     agreement: bool = True
+    # Hold every Nth patch of each member instead of all of them. 1 is everything.
+    # **IT BUYS MEMORY, NOT QUERY TIME** -- a query on roscon is `detect=113 index=0
+    # search=0`, so the whole of it is the detector and the search over these vectors is
+    # already under a second. What it buys is 5.9 GB of resident patches across two
+    # members becoming 3.0 at 2 or 2.0 at 3, which is the difference between this Mac
+    # swapping and not. A blueprint can name it, unlike `agreement` before `681fa1205f`
+    # and the stream names before `6e9dc216f3`: that boundary has cost us twice today.
+    patch_stride: int = 1
     # Models the frames-first search ranks with. [] = every model in the index,
     # which is what the three-way agreement wants.
     # MEMBER TAGS to search, as `dimos map live --models` takes them (for example
@@ -596,6 +604,7 @@ class Hyperspace(MemoryModule):
                 ),
                 models=list(self.config.detect_models),
                 merge_m=self.config.merge_m,
+                patch_stride=self.config.patch_stride,
                 tower_device=self.config.tower_device,
                 color_stream=self.config.color_stream,
                 depth_stream=self.config.depth_stream,

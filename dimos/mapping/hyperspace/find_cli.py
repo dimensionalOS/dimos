@@ -85,6 +85,12 @@ def main(
         help="comma-separated member tags to search (default: the cheapest one in the index). "
         "'all' searches every model.",
     ),
+    patch_stride: int = typer.Option(
+        1,
+        "--patch-stride",
+        help="hold every Nth patch instead of all of them (2 = half the memory). It buys "
+        "MEMORY, not query time: the detector is the query, the search is under a second.",
+    ),
     max_episodes: int = typer.Option(12, "--max-episodes", help="episodes to run the detector on"),
     min_episode_frames: int = typer.Option(2, "--min-frames", help="drop runs shorter than this"),
     gap_s: float = typer.Option(1.0, "--gap", help="quiet this long ends an episode (s)"),
@@ -190,7 +196,7 @@ def main(
 
     # The index is read once, here, and every query after is a matrix multiply. There
     # is no second way to search: going through sqlite was fifty times slower.
-    held = ResidentIndex()
+    held = ResidentIndex(patch_stride)
     members = [(tag, name) for tag, name in member_streams(store) if tag in wanted]
     spent = held.warm(store, members)
     loaded = [held.of(store, tag, name) for tag, name in members]

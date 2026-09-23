@@ -88,6 +88,10 @@ class LiveConfig:
     # 6-14 s query -- about a tenth of the time for six gigabytes.
     # Set it to the detector's device on a card with room to spare.
     tower_device: str = "cpu"
+    # Keep every Nth patch when a model is pulled into memory. 1 is everything. It buys
+    # MEMORY, not query time -- see `resident.load` for the measurement -- and is here
+    # rather than only in a CLI flag because the demo machine is the one that swaps.
+    patch_stride: int = 1
 
 
 class LiveQuery:
@@ -114,7 +118,7 @@ class LiveQuery:
         self.frames = RecordingFrames(store, config=self.config.detect, **named)
         self.boxes = Owlv2Boxes(self.config.detect)
         self.towers = TextTowers(self.config.tower_device or self.config.detect.device or "cpu")
-        self.held = ResidentIndex()
+        self.held = ResidentIndex(self.config.patch_stride)
         self._lock = threading.Lock()
         self.loaded: dict[str, float] = {}
 

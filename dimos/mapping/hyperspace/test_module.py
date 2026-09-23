@@ -22,6 +22,8 @@ import itertools
 import math
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -1450,3 +1452,73 @@ def test_a_counting_question_spends_more_looks_and_gives_the_budget_back() -> No
 
     assert spent == [30, 60, 30, 30], "raise only, and for one question"
     assert live.config.detect.max_episodes == 30
+
+
+def test_a_stride_keeps_every_nth_patch_and_still_knows_where_the_stream_ends() -> None:
+    """`patch_stride` halves what is held without losing the place to grow from.
+
+    The rows are read either way -- the vector table comes in chunks -- so this is a
+    memory and payload-parsing saving, not a query one. `last_id` has to stay the TRUE
+    last row: `grow` reads from it, and a strided load that reported the last KEPT row
+    would re-read everything after it on the next look.
+    """
+    import numpy as np
+
+    from dimos.mapping.hyperspace import resident
+
+    rows = 10
+    calls: dict = {}
+
+    class Conn:
+        def execute(self, sql, *args):  # type: ignore[no-untyped-def]
+            if "COUNT(*)" in sql:
+                return _One((rows,))
+            if "embedding" in sql and "LIMIT 1" in sql:
+                return _One((np.zeros(4, dtype=np.float32).tobytes(),))
+            return [(i,) for i in range(1, rows + 1)]
+
+    class _One:
+        def __init__(self, row):  # type: ignore[no-untyped-def]
+            self._row = row
+
+        def fetchone(self):  # type: ignore[no-untyped-def]
+            return self._row
+
+    def placements(stream, blobs, codec, ids):  # type: ignore[no-untyped-def]
+        calls["ids"] = list(ids)
+        n = len(ids)
+        return {
+            "camera_frames": ["cam"],
+            "frame_of": np.zeros(n, dtype=np.int32),
+            "ts": np.zeros(n, dtype=np.float64),
+            "cell": np.zeros(n, dtype=np.int32),
+            "grid": np.zeros((n, 2), dtype=np.int16),
+            "ray": np.zeros((n, 2), dtype=np.float32),
+            "depth": np.zeros(n, dtype=np.float32),
+        }
+
+    store = SimpleNamespace(
+        stream=lambda name, kind: SimpleNamespace(
+            _source=SimpleNamespace(blob_store=None, codec=None)
+        ),
+        _registry_conn=Conn(),
+    )
+    with (
+        mock.patch.object(
+            resident,
+            "_from_chunks",
+            lambda *a: np.arange(rows * 4, dtype=np.float32).reshape(rows, 4),
+        ),
+        mock.patch.object(resident, "_placements", placements),
+        mock.patch.object(resident, "_warn_if_it_will_not_fit", lambda *a: None),
+    ):
+        whole = resident.load(store, "m", "patches")
+        assert whole.rows == rows
+        assert whole.last_id == rows
+
+        held = resident.load(store, "m", "patches", stride=3)
+
+    assert held.rows == 4, "every third of ten is four"
+    assert calls["ids"] == [1, 4, 7, 10], "the payloads read must be the kept rows"
+    assert held.last_id == rows, "grow would re-read the tail from the last KEPT row"
+    assert held.vectors.shape == (4, 4)

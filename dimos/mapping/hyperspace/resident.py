@@ -422,12 +422,20 @@ def _placements(stream: str, blobs: Any, codec: Any, ids: Sequence[int]) -> dict
     }
 
 
-def load(store: Any, tag: str, stream: str) -> ResidentPatches:
-    """Pull one model's whole patch index into memory.
+def load(store: Any, tag: str, stream: str, stride: int = 1) -> ResidentPatches:
+    """Pull one model's patch index into memory, optionally every `stride`-th row.
 
     Minutes for a big model, and that is the point of doing it once. Vectors come from
     the vector table; the rest comes from the same rows' payloads, which are cheap
     (about six microseconds each) next to the vectors.
+
+    `stride` > 1 keeps every Nth patch. **It buys MEMORY and payload-parsing time, not
+    query time** -- measured on roscon, a query is `detect=113 index=0 search=0`, so the
+    whole of it is the detector and the search over these vectors is already under a
+    second. What it does buy is real on a machine that is swapping: 1.9M patches at
+    768-wide fp32 is 5.9 GB across two members, and halving that took this Mac off swap.
+    The rows are read either way -- the vector table is read in chunks and there is no
+    cheap way to ask it for every second row -- so the read time is unchanged.
     """
     # Reaching past the Stream for the backend and the connection. There is no public
     # way to read a whole vector table or to fetch a payload by id -- `Stream.filter` is
@@ -441,6 +449,7 @@ def load(store: Any, tag: str, stream: str) -> ResidentPatches:
     rows = int(conn.execute(f'SELECT COUNT(*) FROM "{stream}"').fetchone()[0])
     if not rows:
         raise ValueError(f"{stream!r} holds no patches")
+    stride = max(1, int(stride))
     ids = [row[0] for row in conn.execute(f'SELECT id FROM "{stream}" ORDER BY id')]
 
     started = time.monotonic()
@@ -457,6 +466,19 @@ def load(store: Any, tag: str, stream: str) -> ResidentPatches:
         vectors = _vectors_of(conn, stream, width, rows)
     read = time.monotonic() - started
 
+    # Thinned AFTER the read and BEFORE the payloads: the vectors arrive in chunks
+    # whatever we do, but `_placements` decodes one blob per row and is the half that
+    # shrinks with the stride. `last_id` stays the true last row so that `grow` picks up
+    # from where the stream really ends, not from the last one we chose to keep.
+    last_id = ids[-1]
+    if stride > 1:
+        kept = len(ids[::stride])
+        logger.info(
+            f"hyperspace: {tag} at 1/{stride} scale -- keeping {kept} of {len(ids)} patches"
+        )
+        vectors = np.ascontiguousarray(vectors[::stride])
+        ids = ids[::stride]
+
     started = time.monotonic()
     placements = _placements(stream, blobs, codec, ids)
     meta = time.monotonic() - started
@@ -465,7 +487,7 @@ def load(store: Any, tag: str, stream: str) -> ResidentPatches:
         f"hyperspace: {tag} resident -- {len(vectors)} x {width} "
         f"({vectors.nbytes / 1e6:.0f} MB) in {read:.1f}s, payloads in {meta:.1f}s"
     )
-    return ResidentPatches(tag=tag, stream=stream, vectors=vectors, last_id=ids[-1], **placements)
+    return ResidentPatches(tag=tag, stream=stream, vectors=vectors, last_id=last_id, **placements)
 
 
 class ResidentIndex:
@@ -475,8 +497,10 @@ class ResidentIndex:
     array instead of each paying the read.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, stride: int = 1) -> None:
         self._held: dict[str, ResidentPatches] = {}
+        # Every load through this holder keeps every Nth patch; see `load`.
+        self.stride = max(1, int(stride))
 
     def __contains__(self, stream: str) -> bool:
         return stream in self._held
@@ -487,7 +511,7 @@ class ResidentIndex:
     def of(self, store: Any, tag: str, stream: str) -> ResidentPatches:
         held = self._held.get(stream)
         if held is None:
-            held = self._held[stream] = load(store, tag, stream)
+            held = self._held[stream] = load(store, tag, stream, self.stride)
         return held
 
     def warm(self, store: Any, members: Sequence[tuple[str, str]]) -> float:
@@ -512,7 +536,7 @@ class ResidentIndex:
                 # Nothing held yet, and `load` refuses an empty stream, so wait for the
                 # first patches rather than treating "not written yet" as an error.
                 try:
-                    self._held[stream] = load(store, tag, stream)
+                    self._held[stream] = load(store, tag, stream, self.stride)
                 except (ValueError, KeyError, TypeError):
                     continue
                 added += self._held[stream].rows
