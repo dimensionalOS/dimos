@@ -375,8 +375,8 @@ class RerunBridgeModule(Module):
 
         if isinstance(msg, TFMessage):
             with self._tf_lock:
-                for path, archetype in tf_archetypes(msg):
-                    rr.log(path, archetype)
+                for tf_path, tf_archetype in tf_archetypes(msg):
+                    rr.log(tf_path, tf_archetype)
                 if self._tf_tree is not None:
                     self._tf_tree.update(msg.transforms)
             return

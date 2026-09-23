@@ -186,3 +186,15 @@ kind, CDR round-trips, coordinates, parent frames, source immutability, and empt
 paths. Adapter mypy passed. The native terrain demo routed its planned path
 through the shared bridge and its RRD passed verification. Network subscriptions
 and interactive viewer acceptance remain outside this check.
+
+### Combined bridge and viewer environment verification
+
+Installed the exact repository-pinned `dimos-viewer==0.32.0a2` into the local
+verification environment. Two initial viewer binary-discovery checks failed
+because the package was absent; after installation and venv activation, all
+29 generated adapter, bridge configuration, and viewer integration checks passed.
+These viewer checks cover installation and mocked launch/lifecycle behavior,
+not interactive visual acceptance. No dependency manifest changed.
+
+Mypy passed for the bridge, message adapters, and frame tree after giving the TF
+loop distinct variable names to avoid an incompatible archetype assignment.
