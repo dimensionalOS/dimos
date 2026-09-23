@@ -797,7 +797,9 @@ jobs:
           - os: macOS
             container: null  # run on host — `container:` is Linux-only
             # web_browser: the cockpit browser e2e that Linux runs in the `web` job.
-            markers: "self_hosted or web_browser"
+            # native_e2e: livox live loopback that Linux runs in the rust job.
+            # macos_ci: hosted job tests also collected here; not in hosted not (...).
+            markers: "self_hosted or web_browser or native_e2e or macos_ci"
             experimental: true
     runs-on:
       - self-hosted

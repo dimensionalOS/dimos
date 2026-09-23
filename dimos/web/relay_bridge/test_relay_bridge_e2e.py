@@ -73,6 +73,8 @@ from dimos.web.relay_bridge.relay_bridge_module import (
 from dimos.web.relay_bridge.relay_process import RelayProcess
 from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError, fetch_relay_info
 
+pytestmark = pytest.mark.macos_ci
+
 ROBOT_ID = "bridge-e2e"
 POSE = PoseStamped(ts=42.5, position=[1.5, -2.5, 0.25], orientation=[0.0, 0.0, 0.0, 1.0])
 COSTMAP_GRID = OccupancyGrid(
