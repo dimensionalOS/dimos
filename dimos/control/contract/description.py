@@ -41,19 +41,16 @@ from dimos.control.contract.keys import KD, KP, POSITION, Unit
 
 
 class ResourceKind(Enum):
-    """What a resource is. Informational: behaviour comes from the other fields."""
+    """What a resource is, in the only three ways that change how it is used.
+
+    A gripper is a JOINT: it has a position a task drives, and what makes it a
+    gripper -- its unit, metres or normalized -- is declared in ``units``, not
+    here. An IMU is a SENSOR. Behaviour otherwise comes from the other fields.
+    """
 
     JOINT = "joint"
-    GRIPPER = "gripper"
     BASE = "base"
-    IMU = "imu"
     SENSOR = "sensor"
-
-
-#: Resource kinds a task claims as a joint and that ``coordinator_joint_state``
-#: reports. A base is claimed as a resource, not a joint; IMU and sensors are
-#: state-only.
-JOINT_LIKE_KINDS = frozenset({ResourceKind.JOINT, ResourceKind.GRIPPER})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -305,13 +302,13 @@ class ControlDescription:
         )
 
     def joint_names(self) -> tuple[str, ...]:
-        """``"<source>/<resource>"`` for every joint-like resource, in order.
+        """``"<source>/<resource>"`` for every joint, in order.
 
-        Joints and grippers, not bases or sensors -- a base is claimed as a
-        resource with vx/vy/wz, never as a virtual joint (D3).
+        A base is claimed as a resource carrying its twist, never as a set of
+        virtual joints (D3), and a sensor is never claimed at all.
         """
         return tuple(
-            f"{self.source}/{res.name}" for res in self.resources if res.kind in JOINT_LIKE_KINDS
+            f"{self.source}/{res.name}" for res in self.resources if res.kind is ResourceKind.JOINT
         )
 
     def is_state_key(self, key: str) -> bool:

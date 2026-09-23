@@ -81,7 +81,7 @@ def xarm() -> ControlDescription:
     )
     gripper = Resource(
         name="gripper",
-        kind=ResourceKind.GRIPPER,
+        kind=ResourceKind.JOINT,
         state_interfaces=(POSITION,),
         command_interfaces=(POSITION,),
         units={POSITION: Unit.M},

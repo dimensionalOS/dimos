@@ -44,12 +44,22 @@ EFFORT = "effort"
 KP = "kp"
 KD = "kd"
 
-# Twist-base interfaces: body-frame velocities, then the integrated planar pose.
+# Base interfaces: body-frame twist, then the integrated pose.
+#
+# A ground base declares the planar subset (vx, vy, wz over x, y, yaw); a drone
+# or a free-flyer declares all six. Both are the same vocabulary, so a task that
+# reads vz does not need to know which kind of base it is talking to.
 VX = "vx"
 VY = "vy"
+VZ = "vz"
+WX = "wx"
+WY = "wy"
 WZ = "wz"
 X = "x"
 Y = "y"
+Z = "z"
+ROLL = "roll"
+PITCH = "pitch"
 YAW = "yaw"
 
 # IMU scalars. Orientation quaternion, angular rate, linear acceleration.

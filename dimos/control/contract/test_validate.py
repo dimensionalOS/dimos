@@ -45,11 +45,20 @@ from dimos.control.contract.description import (
 )
 from dimos.control.contract.keys import (
     EFFORT,
+    PITCH,
     POSITION,
+    ROLL,
     VX,
     VY,
+    VZ,
+    WX,
+    WY,
     WZ,
+    YAW,
     Unit,
+    X,
+    Y,
+    Z,
 )
 from dimos.control.contract.validate import (
     CommandBatch,
@@ -846,6 +855,49 @@ def test_the_whole_body_drives_five_interfaces_at_once(g1: ControlDescription) -
 
     assert isinstance(result, CommandBatch)
     assert result.active_groups == frozenset({"pd"})
+
+
+def test_a_base_may_be_six_dof() -> None:
+    """A drone declares the full twist; the vocabulary is the same one.
+
+    Nothing about a base is planar by construction -- a ground base simply
+    declares the vx/vy/wz subset, and a free-flyer declares all six.
+    """
+    axes = (VX, VY, VZ, WX, WY, WZ)
+    drone = ControlDescription(
+        source="drone",
+        resources=(
+            Resource(
+                name="body",
+                kind=ResourceKind.BASE,
+                state_interfaces=(*axes, X, Y, Z, ROLL, PITCH, YAW),
+                command_interfaces=axes,
+                units=dict.fromkeys(axes, Unit.M_PER_S)
+                | {X: Unit.M, Y: Unit.M, Z: Unit.M}
+                | dict.fromkeys((ROLL, PITCH, YAW), Unit.RAD),
+            ),
+        ),
+        mode_groups=(ModeGroup(name="twist", resources=("body",), interfaces=frozenset(axes)),),
+        safe_stop=SafeStop(kind=SafeStopKind.ZERO, stable_state="holds station"),
+        estop=Estop(kind=EstopKind.ZERO, recovery=EstopRecovery.CLEAR),
+        activation_policy=ActivationPolicy.OPERATOR_CONFIRMED,
+        timing=Timing(state_rate_hz=100.0, stale_timeout_s=0.05, watchdog_timeout_s=0.1),
+        process_loss=ProcessLoss.UNKNOWN,
+    )
+
+    validate_description(drone)
+
+    result = validate_command(
+        drone,
+        command("c", {f"drone/body/{a}": 0.1 for a in axes}),
+        current_epoch=1,
+        last_sequence=None,
+    )
+
+    assert isinstance(result, CommandBatch)
+    assert result.active_groups == frozenset({"twist"})
+    # A base is a resource, not a set of virtual joints.
+    assert drone.joint_names() == ()
 
 
 def test_a_base_twist_is_one_group(chassis: ControlDescription) -> None:

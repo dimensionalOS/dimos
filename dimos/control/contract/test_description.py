@@ -217,7 +217,7 @@ def test_whole_descriptions_pickle(
 @pytest.mark.parametrize(
     "enum_member",
     [
-        ResourceKind.GRIPPER,
+        ResourceKind.SENSOR,
         LimitPolicy.CLAMP,
         Omission.UNSET,
         SafeStopKind.ZERO_RAMP,
