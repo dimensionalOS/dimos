@@ -16,7 +16,6 @@ from collections.abc import Iterator
 import subprocess
 import sys
 import threading
-from types import ModuleType
 from typing import Any, cast
 
 from pytest import MonkeyPatch
@@ -96,11 +95,7 @@ class _QuietProcess:
 
 
 def _bare_connection(monkeypatch: MonkeyPatch) -> MujocoConnection:
-    mjx_env = ModuleType("mujoco_playground._src.mjx_env")
-    mjx_env.ensure_menagerie_exists = lambda: None
-    playground_src = ModuleType("mujoco_playground._src")
-    playground_src.mjx_env = mjx_env
-    monkeypatch.setitem(sys.modules, "mujoco_playground._src", playground_src)
+    monkeypatch.setattr(mujoco_connection, "ensure_menagerie", lambda: None)
     monkeypatch.setattr(mujoco_connection, "get_data", lambda _name: None)
     return MujocoConnection(GlobalConfig())
 
