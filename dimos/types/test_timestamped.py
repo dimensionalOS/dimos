@@ -282,7 +282,6 @@ def test_time_window_collection() -> None:
 
 
 @pytest.mark.self_hosted
-@pytest.mark.skipif_macos_bug
 def test_timestamp_alignment(test_scheduler) -> None:
     speed = 5.0
 

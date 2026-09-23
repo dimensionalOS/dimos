@@ -43,7 +43,7 @@ class TestQual:
         assert qual(SubjectNotifier) == "dimos.memory.notifier.subject.SubjectNotifier"
 
 
-@pytest.mark.skipif_macos
+@pytest.mark.macos_ci
 @pytest.mark.skipif_aarch64
 class TestRegistryStore:
     def test_put_get_round_trip(self, tmp_path) -> None:
@@ -110,7 +110,7 @@ class TestComponentSerialization:
         restored = SqliteBlobStoreConfig(**dumped)
         assert restored.path == "/tmp/test.db"
 
-    @pytest.mark.skipif_macos
+    @pytest.mark.macos_ci
     @pytest.mark.skipif_aarch64
     def test_sqlite_blob_store_roundtrip(self, tmp_path) -> None:
         store = SqliteBlobStore(path=str(tmp_path / "blob.db"))
@@ -133,7 +133,7 @@ class TestComponentSerialization:
         restored = SqliteVectorStoreConfig(**dumped)
         assert restored.path == "/tmp/vec.db"
 
-    @pytest.mark.skipif_macos
+    @pytest.mark.macos_ci
     @pytest.mark.skipif_aarch64
     def test_sqlite_vector_store_roundtrip(self, tmp_path) -> None:
         store = SqliteVectorStore(path=str(tmp_path / "vec.db"))
@@ -192,7 +192,7 @@ class TestBackendSerialization:
         assert data["notifier"]["class"] == qual(SubjectNotifier)
 
 
-@pytest.mark.skipif_macos
+@pytest.mark.macos_ci
 @pytest.mark.skipif_aarch64
 class TestStoreReopen:
     def test_reopen_preserves_data(self, tmp_path) -> None:

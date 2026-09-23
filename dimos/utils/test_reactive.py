@@ -170,7 +170,6 @@ def test_getter_streaming_blocking() -> None:
     assert source.is_disposed(), "Observable should be disposed"
 
 
-@pytest.mark.skipif_macos_bug
 def test_getter_streaming_blocking_timeout() -> None:
     source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
     with pytest.raises(Exception):
@@ -244,7 +243,6 @@ def test_getter_ondemand() -> None:
         test_scheduler.executor.shutdown(wait=True)
 
 
-@pytest.mark.skipif_macos_bug
 def test_getter_ondemand_timeout() -> None:
     source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
     getter = getter_ondemand(source, timeout=0.1)
