@@ -33,6 +33,7 @@ from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 import rerun as rr
 
+from dimos.mapping.ray_tracing.transformer import RayTraceMap
 from dimos.memory.type.observation import Observation
 from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
@@ -43,6 +44,7 @@ from dimos.navigation.nav_3d.mls_planner.viz import (
     render_surface_map,
 )
 from dimos.protocol.tf.tf import MultiTBuffer
+from dimos.visualization.rerun.message_helpers import register_colormap_annotation, tf_archetypes
 
 
 def main() -> None:
@@ -82,6 +84,13 @@ def main() -> None:
         tags={"region_bounds": (0.0, 0.0, 5.0, -1.0, 2.0)},
         _data=PointCloud2.decode(cloud.encode()),
     )
+    ray_input = obs.derive(data=cloud, pose_tuple=(0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0))
+    [mapped] = list(RayTraceMap(voxel_size=0.2)(iter([ray_input])))
+    mapped_cloud = PointCloud2.decode(mapped.data.encode())
+    assert mapped_cloud.header.stamp.nanosec == 123456789
+    print(
+        f"Ray-traced CDR local map: {mapped_cloud.width * mapped_cloud.height} points, frame={mapped_cloud.header.frame_id}"
+    )
     [result] = list(MLSPlan(goal=(2.0, 2.0, 0.0), voxel_size=0.2, robot_height=1.0)(iter([obs])))
     path = Path.decode(result.data.encode())
     assert result.tags["planned"] and len(path.poses) >= 2
@@ -94,7 +103,11 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     rr.init("generated-mls-planner", spawn=False)
     rr.save(str(output))
+    register_colormap_annotation()
+    for entity, archetype in tf_archetypes(TFMessage(transforms=[edge])):
+        rr.log(entity, archetype)
     rr.log("world/terrain", render_surface_map(cloud))
+    rr.log("world/ray_map", render_surface_map(mapped_cloud))
     nodes = pointcloud_from_xyz(
         np.array([[p.pose.position.x, p.pose.position.y, p.pose.position.z] for p in path.poses]),
         header=path.header,

@@ -23,6 +23,9 @@ from pathlib import Path as FsPath
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from dimos_generated.geometry_msgs.msg import TransformStamped
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.tf2_msgs.msg import TFMessage
 import numpy as np
 from numpy.typing import NDArray
 import typer
@@ -34,9 +37,7 @@ from dimos.memory.tf import StreamTF, tf_stream
 from dimos.memory.transform import FnTransformer
 from dimos.memory.type.observation import Observation
 from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
-from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
+from dimos.msgs.pointcloud import pointcloud_xyz
 from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
 from dimos.robot.unitree.go2.constants import (
     BASE_LINK_HEIGHT,
@@ -45,6 +46,7 @@ from dimos.robot.unitree.go2.constants import (
     ROBOT_WIDTH,
 )
 from dimos.utils.data import resolve_named_path
+from dimos.visualization.rerun.message_helpers import register_colormap_annotation, tf_archetypes
 
 if TYPE_CHECKING:
     import rerun.blueprint as rrb
@@ -127,7 +129,7 @@ def _pose_from_tf(tf: StreamTF, world_frame: str) -> FnTransformer[PointCloud2, 
     def attach(obs: Observation[PointCloud2]) -> Observation[PointCloud2]:
         t = tf.get(
             world_frame,
-            obs.data.frame_id,
+            obs.data.header.frame_id,
             time_point=obs.ts,
             time_tolerance=TF_MATCH_TOLERANCE_S,
         )
@@ -181,14 +183,13 @@ class _TfSync:
     def __init__(self, tf: Stream[TFMessage] | None) -> None:
         self._pending = iter(tf) if tf is not None else iter(())
         self._next = next(self._pending, None)
-        self._tree = TfFrameTree()
 
     def up_to(self, ts: float) -> None:
         import rerun as rr
 
         while self._next is not None and self._next.ts <= ts:
             rr.set_time(TIMELINE, timestamp=self._next.ts)
-            for path, archetype in self._next.data.to_rerun(self._tree):
+            for path, archetype in tf_archetypes(self._next.data):
                 rr.log(path, archetype)
             self._next = next(self._pending, None)
 
@@ -197,7 +198,7 @@ def _log_odometry(
     pose: tuple[float, ...],
     ts: float,
     trail: list[tuple[float, float, float]],
-    base: Transform | None,
+    base: TransformStamped | None,
 ) -> None:
     """Trace the sensor moving throughout the scene."""
     import rerun as rr
@@ -214,9 +215,18 @@ def _log_odometry(
     rr.log(
         "world/robot_body",
         rr.Transform3D(
-            translation=[base.translation.x, base.translation.y, base.translation.z],
+            translation=[
+                base.transform.translation.x,
+                base.transform.translation.y,
+                base.transform.translation.z,
+            ],
             quaternion=rr.Quaternion(
-                xyzw=[base.rotation.x, base.rotation.y, base.rotation.z, base.rotation.w]
+                xyzw=[
+                    base.transform.rotation.x,
+                    base.transform.rotation.y,
+                    base.transform.rotation.z,
+                    base.transform.rotation.w,
+                ]
             ),
         ),
     )
@@ -422,11 +432,13 @@ def _process_frame(
 
     bounds = ray_obs.tags["region_bounds"]
     ox, oy, radius, z_min, z_max = bounds
-    pts = ray_obs.data.points_f32()
+    pts = pointcloud_xyz(ray_obs.data).astype(np.float32)
     rr.set_time(TIMELINE, timestamp=ray_obs.ts)
 
     ref_timing: dict[str, float] = {}
-    surface = nodes = edges = np.empty((0,), dtype=np.float32)
+    surface: NDArray[np.float32] = np.empty((0,), dtype=np.float32)
+    nodes: NDArray[np.float32] = np.empty((0,), dtype=np.float32)
+    edges: NDArray[np.float32] = np.empty((0,), dtype=np.float32)
     for j, (label, color, planner) in enumerate(planners):
         t0 = perf_counter()
         planner.update_region(pts, (ox, oy), radius, z_min, z_max, sensor_z)
@@ -666,11 +678,11 @@ def main(
                 if base is None:
                     continue
                 start = (
-                    float(base.translation.x),
-                    float(base.translation.y),
-                    float(base.translation.z) - start_z_offset,
+                    float(base.transform.translation.x),
+                    float(base.transform.translation.y),
+                    float(base.transform.translation.z) - start_z_offset,
                 )
-                sensor_z = float(base.translation.z)
+                sensor_z = float(base.transform.translation.z)
                 ref_timing = _process_frame(
                     ray_obs,
                     planners,

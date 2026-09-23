@@ -1098,3 +1098,10 @@ The demo writes generated lidar and odometry messages to temporary SQLite
 streams, reads them through the navigation evaluator, and prints sensor-to-world
 point registration and accumulated trajectory distance. It removes the temporary
 database automatically. No recording download or hardware is required.
+
+The terrain demo also exercises native ray tracing and records its local map,
+TF edges, and colormap annotations. Install its additional native extension with:
+
+```bash
+maturin develop --release --uv -m dimos/mapping/ray_tracing/rust/py/Cargo.toml
+```
