@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import PointCloud2
+
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.utils.data import resolve_named_path
 
@@ -72,8 +74,8 @@ class Suite:
 
     def frame_count(self) -> int:
         """Upper bound on the frames world_frames yields, for a progress bar."""
+
         from dimos.memory.store.sqlite import SqliteStore
-        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
         store = SqliteStore(path=str(self.db_path()))
         with store:

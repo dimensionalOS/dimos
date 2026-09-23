@@ -1087,3 +1087,14 @@ raised path nodes, and connecting segments through the planner's Rerun adapters.
 Open it with `rerun build/message-codegen/demo/evidence/mls-planner.rrd`.
 For headless verification, use `rerun rrd verify` on that file. The recording is
 an ignored build artifact and may be deleted after review.
+
+### Recorded navigation evaluation
+
+```bash
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_navigation_recording.py
+```
+
+The demo writes generated lidar and odometry messages to temporary SQLite
+streams, reads them through the navigation evaluator, and prints sensor-to-world
+point registration and accumulated trajectory distance. It removes the temporary
+database automatically. No recording download or hardware is required.

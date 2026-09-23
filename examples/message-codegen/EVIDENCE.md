@@ -1285,3 +1285,19 @@ and unchanged source messages after rendering. Mypy passed for the adapter.
 The native MLS terrain demo successfully wrote `mls-planner.rrd` with terrain,
 path nodes, and edges. `rerun rrd verify` accepted the recording. This is
 headless recording verification; interactive viewer acceptance remains pending.
+
+### Navigation evaluator on generated SQLite streams
+
+Converted recording registration and suite frame counting to generated
+PointCloud2/Odometry, nested pose fields, and shared point-cloud/pose helpers.
+The evaluator's 14 tests passed after replacing its recording fixtures with
+generated CDR messages. These include recorded frame alignment, rotation,
+trajectory loading, suite generation, and causal/final evaluation paths.
+Mypy passed for recording and case handling.
+
+`demo_navigation_recording.py` wrote and reopened actual SQLite streams and
+verified three sensor points rotated by 90 degrees and translated along the
+recorded trajectory: `(0,1,0)`, `(1,1,0)`, `(2,1,0)`. Loaded odometry yielded
+2m total distance. The temporary database was removed automatically. This
+validates newly written recordings; historical dataset replacement remains a
+separate outstanding part of the full migration.
