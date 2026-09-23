@@ -233,6 +233,7 @@ function handleControl(msg) {
             if (scene) scene.setQueryResult(msg);
             else pendingQueryResult = msg;
             if (results) results.setResult(msg);
+            hideThinking();   // the answer is on screen; the placeholder has done its job
             // The answer has its own element now (`#answerText`, set by scene.onAnswerText),
             // which persists; the status line is transient and gets overwritten by the next
             // thing that happens. Printing the answer in both showed it twice on screen.
@@ -632,6 +633,9 @@ async function sendRecording(blob) {
         return;
     }
     setStatus('Transcribing…');
+    // Spoken questions go through the same agent as typed ones and took just as long
+    // while showing nothing: the chat header sat on "idle" until the answer arrived.
+    setAgentIdle(false);
     diag('voice_recording_sent', { bytes: blob.size, type: blob.type });
     const body = new FormData();
     body.append('audio', blob, 'query.webm');
@@ -810,6 +814,9 @@ function toolArgSummary(args) {
 }
 
 function appendChat(entry) {
+    // Whatever the turn has to say, it is saying it now -- and it must land BELOW the
+    // placeholder's old position, not above it.
+    hideThinking();
     const row = document.createElement('div');
     row.className = `msg ${entry.role}`;
     if (entry.role === 'tool_call') {
@@ -921,9 +928,39 @@ function applyChatSummary(callId, summary) {
     said.classList.remove('waiting');
 }
 
+/** The "working on it" row, at the BOTTOM of the log where the answer will appear.
+ *
+ *  NOT in the header. It lived there as a word, and a word in a header is a label: it
+ *  read as a permanent property of the panel rather than as something happening, and
+ *  when a turn ended without saying so it sat there claiming the world was thinking
+ *  while nothing was. Down here it is a row like any other, it is removed by the same
+ *  things that end a turn, and it cannot be mistaken for a title. */
+function showThinking() {
+    hideThinking();
+    document.body.classList.add('asking');
+    const row = document.createElement('div');
+    row.className = 'msg thinking-row';
+    row.id = 'thinkingRow';
+    const dots = document.createElement('span');
+    dots.className = 'dots';          // the animation is CSS; nothing here runs a timer
+    row.append(dots);
+    chatLogEl.append(row);
+    chatLogEl.scrollTop = chatLogEl.scrollHeight;
+}
+
+function hideThinking() {
+    // The row and the pulsing button are ONE state. They were two, and the answer
+    // arriving removed the row while `body.asking` stayed on -- so the button went on
+    // saying the world was working long after it had answered, which is the same
+    // complaint ("showing even when its not thinking") in its other form.
+    document.body.classList.remove('asking');
+    const row = document.getElementById('thinkingRow');
+    if (row) row.remove();
+}
+
 function setAgentIdle(idle) {
-    chatEl.classList.toggle('thinking', !idle);
-    chatStateEl.textContent = idle ? 'idle' : 'thinking…';
+    if (idle) hideThinking();
+    else showThinking();
 }
 
 chatForm.addEventListener('submit', (event) => {
@@ -1349,6 +1386,7 @@ async function connect() {
         chatInput.value = '';
         chatLogEl.textContent = '';
         chatRows.clear();
+        chatStateEl.textContent = '';   // the header says CONNECTION, and there is one
         if (results) results.clear();
         connectBtn.classList.add('hidden');
         applyIndexStatus(indexStatus);

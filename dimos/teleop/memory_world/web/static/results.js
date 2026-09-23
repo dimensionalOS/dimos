@@ -60,7 +60,15 @@ export class ResultsNav {
         this.kind = msg.kind || 'embedding';
         this.current = -1;
         this.clearRoute();
-        this.scene.clusterFilter = -1;
+        // ONE place's photograph, not all of them. The places of a single answer can be
+        // a hundred metres apart -- roscon's eight extinguishers span -59 to +47 in x --
+        // so showing every photo at once hangs pictures in mid-air all over the hall,
+        // and from any one of them the others read as junk floating in the distance.
+        // Jeff, on seeing it: "why is there an image floating way far off in the
+        // distance". The best place is the one the answer is about until you step.
+        this.scene.clusterFilter = this.clusters.length ? 0 : -1;
+        // Photographs that already arrived were placed under the old filter.
+        if (this.scene._applyQueryImageVisibility) this.scene._applyQueryImageVisibility();
         this._render();
         this.diag('results', { clusters: this.clusters.length, engine: msg.engine });
     }
