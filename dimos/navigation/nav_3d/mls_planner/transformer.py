@@ -17,17 +17,20 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.nav_msgs.msg import Path
+from dimos_generated.sensor_msgs.msg import PointCloud2
+from dimos_generated.std_msgs.msg import Header
+import numpy as np
+
 from dimos.memory.transform import Transformer
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.pointcloud import pointcloud_xyz
 from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    import numpy as np
     from numpy.typing import NDArray
 
     from dimos.memory.type.observation import Observation
@@ -51,19 +54,20 @@ class MLSPlan(Transformer[PointCloud2, Path]):
         self.robot_height = robot_height
         self._planner_kwargs = planner_kwargs
 
-    def _path_from_waypoints(self, waypoints: NDArray[np.float32] | None, ts: float) -> Path:
+    def _path_from_waypoints(self, waypoints: NDArray[np.float32] | None, header: Header) -> Path:
         poses: list[PoseStamped] = []
         if waypoints is not None:
             for x, y, z in waypoints:
                 poses.append(
                     PoseStamped(
-                        ts=ts,
-                        frame_id="world",
-                        position=(float(x), float(y), float(z)),
-                        orientation=(0.0, 0.0, 0.0, 1.0),
+                        header=header,
+                        pose=Pose(
+                            position=Point(x=float(x), y=float(y), z=float(z)),
+                            orientation=Quaternion(w=1.0),
+                        ),
                     )
                 )
-        return Path(ts=ts, frame_id="world", poses=poses)
+        return Path(header=header, poses=poses)
 
     def __call__(
         self,
@@ -83,11 +87,18 @@ class MLSPlan(Transformer[PointCloud2, Path]):
 
             ox, oy, radius, z_min, z_max = obs.tags["region_bounds"]
             t_update = time.perf_counter()
-            planner.update_region(obs.data.points_f32(), (ox, oy), radius, z_min, z_max, float(z))
+            planner.update_region(
+                pointcloud_xyz(obs.data).astype(np.float32),
+                (ox, oy),
+                radius,
+                z_min,
+                z_max,
+                float(z),
+            )
             t_plan = time.perf_counter()
             waypoints = planner.plan(start, self.goal)
             t_done = time.perf_counter()
-            path = self._path_from_waypoints(waypoints, obs.ts)
+            path = self._path_from_waypoints(waypoints, obs.data.header)
 
             timings = {
                 "update_ms": (t_plan - t_update) * 1000,

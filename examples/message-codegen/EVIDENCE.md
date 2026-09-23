@@ -1254,3 +1254,22 @@ disabled gating, and smoothing with exact sec/nanosec header preservation.
 Mypy passed for the production module. The cumulative holonomic path demo now
 runs this gate first: it prints 10 resampled poses and suppression of a duplicate
 replan, then the threaded follower arrives at `(0.926, 0)` and publishes zero.
+
+### Generated MLS Python boundary and TF start relay
+
+MLSPlan now reads generated PointCloud2 via the shared layout-aware XYZ helper
+and emits generated Path/PoseStamped with the cloud's exact Header. The start
+relay consumes generated TFMessage and emits generated PoseStamped.
+
+Built the actual Rust/PyO3 extension with maturin 1.13.3, release mode, offline
+from cached dependencies. Installation succeeded after allowing uv's cache lock
+outside the sandbox. Seven tests passed against that extension: terrain planning,
+missing-pose skipping, robot-height offset, no-route output, TF chain composition,
+missing-chain suppression, and retry throttling. Mypy passed for both production
+modules. Tests check CDR path headers at `1700000000.123456789` and decoded relay
+poses. No tests were skipped for a missing native backend.
+
+`demo_mls_transformer.py` ran successfully: TF start `(-2, -2, 1)`, 3,600 terrain
+points, 900 voxels, and 18 decoded path poses ending at `(2, 2, 0)`. The exact
+cloud timestamp survived into the output path. This is a native planning and
+serialization demo; it does not establish network or hardware performance.

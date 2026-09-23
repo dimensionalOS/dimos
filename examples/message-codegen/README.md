@@ -1062,3 +1062,21 @@ This is an in-process control demo, not network transport verification.
 The holonomic path demo also exercises `DanLocalPlanner`'s core: it smooths and
 resamples the incoming CDR path and visibly suppresses a duplicate replan inside
 the configured commit window before starting the follower.
+
+### Native MLS planning from generated clouds
+
+With the generated demo bindings already built, install the native Python
+planner into the checkout environment and run the terrain demo:
+
+```bash
+uv pip install --python .venv/bin/python 'maturin>=1,<2'
+source .venv/bin/activate
+maturin develop --release --uv -m dimos/navigation/nav_3d/mls_planner/rust/py/Cargo.toml
+PYTHONPATH=.:build/message-codegen/demo/cpp/build .venv/bin/python examples/message-codegen/demo_mls_transformer.py
+```
+
+The demo prints a TF-derived starting pose, then sends a CDR-decoded synthetic
+floor to the native MLS planner and prints the CDR-decoded path waypoints and
+exact source timestamp. It requires no robot, model download, or ROS install.
+It runs in one process and writes no output artifacts; native build products
+remain in Cargo's ignored target directory.
