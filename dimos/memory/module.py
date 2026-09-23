@@ -28,20 +28,13 @@ from pydantic import Field, field_validator
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
-from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT, RECORDINGS_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.memory.embed import EmbedImages
 from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
-from dimos.memory.transform import QualityWindow
-from dimos.memory.type.observation import EmbeddedObservation, Observation
-from dimos.models.embedding.base import EmbeddingModel
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
@@ -209,63 +202,6 @@ class MemoryModule(Module):
         )
         self._store.start()
         return self._store
-
-
-class SemanticSearchConfig(MemoryModuleConfig):
-    embedding_model: type[EmbeddingModel] | None = None
-
-
-class SemanticSearch(MemoryModule):
-    config: SemanticSearchConfig
-    model: EmbeddingModel | None = None
-    embeddings: Stream[Any] | None = None
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-
-        embedding_cls = self.config.embedding_model
-        if embedding_cls is None:
-            from dimos.models.embedding.clip import CLIPModel
-
-            embedding_cls = CLIPModel
-
-        self.model = self.register_disposable(embedding_cls())
-        self.model.start()
-
-        self.embeddings = self.store.stream("color_image_embedded", Image)
-
-        # fmt: off
-        self.store.streams.color_image \
-           .live() \
-           .filter(lambda obs: obs.data.brightness > 0.1) \
-           .transform(QualityWindow(lambda img: img.sharpness, window=0.5)) \
-           .transform(EmbedImages(self.model, batch_size=2)) \
-           .save(self.embeddings) \
-           .drain_thread()
-        # fmt: on
-
-    @skill
-    def search(self, query: str) -> PoseStamped:
-        from dimos.memory.transform import peaks
-
-        assert self.model is not None and self.embeddings is not None, (
-            "SemanticSearch.search() called before start()"
-        )
-
-        query_vector = self.model.embed_text(query)
-
-        # TODO(lesh): cluster results by peaks, then sort by time/distance
-        # depending on the desired weighting.
-        results = self.embeddings.search(query_vector)
-
-        def _similarity(obs: Observation[Any]) -> float:
-            return cast("EmbeddedObservation[Any]", obs).similarity or 0.0
-
-        best = results.transform(peaks(key=_similarity, distance=1.0)).last()
-        if best.pose_stamped is None:
-            raise LookupError("No pose on best search result")
-        return best.pose_stamped
 
 
 class OnExisting(str, enum.Enum):
