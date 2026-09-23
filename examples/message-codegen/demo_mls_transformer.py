@@ -114,7 +114,12 @@ def main() -> None:
         )
     finally:
         bridge.stop()
-    rr.log("world/terrain", render_surface_map(cloud))
+    bridge = RerunBridgeModule()
+    bridge._min_intervals = {}
+    try:
+        bridge._on_message(PointCloud2.decode(cloud.encode()), SimpleNamespace(name="/terrain"))
+    finally:
+        bridge.stop()
     rr.log("world/ray_map", render_surface_map(mapped_cloud))
     nodes = pointcloud_from_xyz(
         np.array([[p.pose.position.x, p.pose.position.y, p.pose.position.z] for p in path.poses]),

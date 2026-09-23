@@ -1130,3 +1130,7 @@ subscription. Its only output is the ignored RRD file.
 
 The camera demo also logs a generated 3D box labelled `demo-box id=4` in the
 camera's optical frame, exercising the same bridge used for image dispatch.
+
+The terrain demo sends the generated terrain cloud through the shared bridge,
+which renders explicit height colors. The same adapter preserves standard packed
+RGB colors when supplied by a cloud producer.

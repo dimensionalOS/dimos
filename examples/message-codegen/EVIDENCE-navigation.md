@@ -158,3 +158,17 @@ The camera demo now sends a labeled generated detection through the bridge in
 addition to images and calibration. Its final successful run produced an RRD
 that passed verification. This is callback/serialization verification, with
 interactive viewer inspection still outstanding.
+
+### Generated point clouds through the shared bridge
+
+Added generated PointCloud2 dispatch with shared XYZ/RGB layout helpers. The
+adapter filters non-finite coordinates with the same mask for packed colors,
+uses explicit height colors for colorless clouds, and never mutates the source.
+The padded big-endian FLOAT32-packed-RGB test verifies color alignment, CDR
+round-trip, frame attachment, and source-byte preservation. Empty and height-only
+clouds are also covered. Both focused tests and the combined 13 generated
+cloud/camera/TF/detection bridge tests passed; adapter mypy passed.
+
+The terrain demo now sends its 3,600-point cloud through the bridge callback.
+The native planning demo completed and the resulting RRD passed verification.
+This remains headless callback verification, not interactive viewer acceptance.

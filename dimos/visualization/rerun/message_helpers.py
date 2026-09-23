@@ -14,7 +14,7 @@
 
 """Rerun presentation helpers kept separate from generated wire types."""
 
-from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image
+from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
 from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_generated.vision_msgs.msg import Detection3DArray
 import matplotlib
@@ -22,6 +22,7 @@ import numpy as np
 import rerun as rr
 
 from dimos.msgs.image import image_to_jpeg, image_view
+from dimos.msgs.pointcloud import pointcloud_rgb, pointcloud_xyz
 
 
 def tf_archetypes(message: TFMessage) -> list[tuple[str, rr.Transform3D]]:
@@ -119,3 +120,20 @@ def detection_boxes(message: Detection3DArray) -> rr.Boxes3D:
             else label or (f"id={identifier}" if identifier else "")
         )
     return rr.Boxes3D(centers=centers, half_sizes=half_sizes, quaternions=rotations, labels=labels)
+
+
+def cloud_archetype(message: PointCloud2, *, voxel_size: float = 0.05) -> rr.Points3D:
+    """Render finite XYZ points with packed RGB or an explicit height colormap."""
+    points = pointcloud_xyz(message)
+    colors = pointcloud_rgb(message)
+    keep = np.isfinite(points).all(axis=1)
+    points = points[keep]
+    if len(points) == 0:
+        return rr.Points3D([])
+    if colors is not None:
+        colors = colors[keep]
+    else:
+        height = points[:, 2]
+        normalized = (height - height.min()) / (height.max() - height.min() + 1e-8)
+        colors = (matplotlib.colormaps["turbo"](normalized)[:, :3] * 255).astype(np.uint8)
+    return rr.Points3D(positions=points, colors=colors, radii=voxel_size / 2)

@@ -36,7 +36,7 @@ from typing import (
 )
 from urllib.parse import urlparse
 
-from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image
+from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
 from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_generated.vision_msgs.msg import Detection3DArray
 import numpy as np
@@ -63,6 +63,7 @@ from dimos.visualization.rerun.constants import (
 from dimos.visualization.rerun.init import rerun_init, spawn_viewer
 from dimos.visualization.rerun.message_helpers import (
     camera_pinhole,
+    cloud_archetype,
     detection_boxes,
     image_archetype,
     tf_archetypes,
@@ -321,6 +322,8 @@ class RerunBridgeModule(Module):
                 return msg
             if is_rerun_multi(msg):
                 return msg
+            if isinstance(msg, PointCloud2):
+                return cloud_archetype(msg)
             if isinstance(msg, Detection3DArray):
                 return detection_boxes(msg)
             if isinstance(msg, (Image, CompressedImage)):
