@@ -1097,3 +1097,42 @@ def test_a_place_with_no_box_drawn_gets_its_photograph_and_no_mark_on_it() -> No
     header, _ = host._active_query_images[-1]
     assert len(published["images"]) == 1, "the photograph went missing with its box"
     assert "box_uv" not in header, "a corner dot would be drawn as the detector's answer"
+
+
+def test_the_planner_walks_the_path_and_the_viewer_orbits_the_steps() -> None:
+    """Two questions, two answers, and mixing them up is what refused to navigate.
+
+    `_orbit_positions_for` is indexed BY STEP -- the viewer does `positions[scan]` -- so on
+    a recording scrubbed through map snapshots it is one position every 7.8 s. Measured on
+    roscon: 119 samples over 659.7 m, median gap 5.54 m. Planning a costmap route across
+    that plans across a dotted line, and "navigate to the entrance" answered NO_ROUTE on a
+    recording whose robot had walked past the entrance.
+    """
+    from dimos.teleop.memory_world.answers import WorldAnswers
+
+    dense = [[float(i) * 0.3, 0.0, 0.0] for i in range(40)]
+    steps = [[0.0, 0.0, 0.0], [6.0, 0.0, 0.0], [11.7, 0.0, 0.0]]
+
+    class Host(WorldAnswers):
+        def __init__(self) -> None:
+            self.index: dict[str, object] = {
+                "orbit": {"frame": "base_link", "positions": steps},
+                "path": {"frame": "base_link", "positions": dense},
+            }
+
+        def _timeline_index_json(self) -> dict[str, object]:
+            return self.index
+
+        def _orbit_positions_for(self, frame: str) -> dict[str, object]:
+            return self.index["orbit"]  # type: ignore[return-value]
+
+    host = Host()
+    assert host._robot_path_for("base_link") == dense, "the planner gets every pose"
+    assert host._orbit_positions_for("base_link")["positions"] == steps, (
+        "the viewer keeps its steps"
+    )
+
+    # A recording whose steps are already dense carries no `path` -- a ray-traced replay is
+    # one step per lidar scan -- and the orbit is then exactly what the planner wanted.
+    host.index.pop("path")
+    assert host._robot_path_for("base_link") == steps

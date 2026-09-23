@@ -42,6 +42,20 @@ HEIGHT_COLOR_STOPS = np.array(
 )
 
 
+# How often to ask tf where the robot was, when building the PATH rather than the orbit.
+# The orbit is one position per step of whatever the viewer seeks over; the path is the
+# free corridor a route is planned across, and its density has to be a property of the
+# PATH, not of how often a mapper happened to publish. Measured on roscon: one position
+# per map snapshot is 119 samples over 659.7 m -- a median gap of 5.54 m, 109 of 118 gaps
+# over 2 m -- which is a dotted line, not a corridor. At half a second it is ~1,840
+# samples and a third of a metre.
+PATH_SAMPLE_S = 0.5
+# Samples closer together than this are dropped: a parked robot otherwise spends the
+# corridor on one pose, which is the same failure `_recording_start_candidates` guards
+# against at the other end.
+PATH_MIN_STEP_M = 0.05
+
+
 class ReplayServing:
     """Needs, from the module: ``config``, ``_ensure_store``, ``_replay_if_ready``,
     ``_replay_index``, ``_replay_frames``, ``_sharp_frames``, ``_tf_tree``,
@@ -106,7 +120,11 @@ class ReplayServing:
             "keyframes": [{"scan": i, "ts": ts} for i, ts in enumerate(stamps)],
             "frames": [float(obs.ts) for obs in images],
             "hfov_deg": self._camera_hfov(),
+            # Two different questions, and on this index they have two different answers:
+            # `orbit` is one position per SNAPSHOT because the viewer indexes it by step,
+            # `path` is the corridor at its own cadence because the planner walks it.
             "orbit": self._orbit_positions(np.asarray(stamps, dtype=np.float64)),
+            "path": self._robot_path(self._effective_orbit_frame(), stamps[0], stamps[-1]),
         }
 
     def _replay_index_json(self) -> dict[str, Any]:
@@ -183,6 +201,36 @@ class ReplayServing:
             if positions and len(positions) < len(stamps):
                 positions = positions + [positions[-1]] * (len(stamps) - len(positions))
         return {"frame": frame, "positions": positions}
+
+    def _robot_path(self, frame: str, first: float, last: float) -> dict[str, Any]:
+        """Where *frame* went between two stamps, sampled at the PATH's own cadence.
+
+        Separate from `_orbit_positions` on purpose. The orbit is indexed BY STEP -- the
+        viewer does `positions[scan]` -- so it must stay one position per step whatever
+        that costs the geometry. The planner wants the opposite: every place the robot
+        demonstrably was, close enough together that the space between two of them is
+        space it actually crossed.
+        """
+        if last <= first:
+            return {"frame": frame, "positions": []}
+        stamps = np.arange(first, last, PATH_SAMPLE_S, dtype=np.float64)
+        walked = frame_positions(stamps, lambda ts: self._frame_pose_at(frame, ts))
+        kept: list[list[float]] = []
+        for where in walked:
+            if (
+                kept
+                and float(np.linalg.norm(np.asarray(where) - np.asarray(kept[-1])))
+                < PATH_MIN_STEP_M
+            ):
+                continue
+            kept.append(where)
+        logger.info(
+            "robot path: %d samples over %.1f s of %r (the orbit has one per step)",
+            len(kept),
+            last - first,
+            frame,
+        )
+        return {"frame": frame, "positions": kept}
 
     def _replay_frame(
         self, ts: float, max_size: int | None = None

@@ -114,7 +114,7 @@ class WorldAnswers:
     """The ask/navigate/orbit half of the module. Expects the host module's
     ``config``, ``_ensure_store``, ``_broadcast``, ``_publish_query_result``,
     ``_clients_lock``, ``_active_query_images``, ``_tf_tree``, ``_frame_pose_at``,
-    ``_replay_index_json`` and ``_cached_cloud``."""
+    ``_timeline_index_json`` and ``_cached_cloud``."""
 
     # The host's attributes and methods this mixin relies on.
     config: Any
@@ -135,7 +135,7 @@ class WorldAnswers:
         def _tf_tree(self) -> Any: ...
         def _effective_orbit_frame(self) -> str: ...
         def _frame_pose_at(self, frame: str, ts: float) -> Any: ...
-        def _replay_index_json(self) -> dict[str, Any]: ...
+        def _timeline_index_json(self) -> dict[str, Any]: ...
         def _index_status(self) -> dict[str, Any]: ...
         def find_in_memory(
             self, query: str, from_fraction: float = 0.0, to_fraction: float = 1.0
@@ -229,7 +229,7 @@ class WorldAnswers:
                     "present" if mls_available() else "missing",
                     len(voxels),
                 )
-                known = self._orbit_positions_for(self._effective_orbit_frame()).get("positions")
+                known = self._robot_path_for(self._effective_orbit_frame())
                 if not known:
                     # The costmap's free corridor IS the robot's path. With no path there
                     # is nothing to plan over, and a 500 out of RoutePlanner says less than
@@ -241,7 +241,7 @@ class WorldAnswers:
 
     def _robot_end_pose(self) -> tuple[float, float, float]:
         """Where the robot's orbit frame was at the end of the recording."""
-        positions = self._orbit_positions_for(self._effective_orbit_frame()).get("positions") or []
+        positions = self._robot_path_for(self._effective_orbit_frame())
         if positions:
             return tuple(float(v) for v in positions[-1])  # type: ignore[return-value]
         raise HTTPException(status_code=503, detail="the robot's path is not known yet")
@@ -265,7 +265,7 @@ class WorldAnswers:
         island the map never connected. That mistake made the first version of this fix
         return the very first pose and refuse exactly as before.
         """
-        positions = self._orbit_positions_for(self._effective_orbit_frame()).get("positions") or []
+        positions = self._robot_path_for(self._effective_orbit_frame())
         if not positions:
             raise HTTPException(status_code=503, detail="the robot's path is not known yet")
         starts: list[tuple[float, float, float]] = []
@@ -335,7 +335,7 @@ class WorldAnswers:
                 viewer = self._viewer_position
         if viewer is None:
             return None
-        known = self._orbit_positions_for(self._effective_orbit_frame()).get("positions")
+        known = self._robot_path_for(self._effective_orbit_frame())
         if not known:
             return None
         path = np.asarray(known, dtype=np.float64).reshape(-1, 3)
@@ -599,13 +599,41 @@ class WorldAnswers:
         tree = self._tf_tree()
         return sorted(tree.frames) if tree is not None else []
 
+    def _robot_path_for(self, frame: str) -> list[list[float]]:
+        """Every place the robot demonstrably was, for the planner to walk.
+
+        NOT `_orbit_positions_for`, and the difference is the whole point. That array is
+        indexed by STEP -- one position per thing the viewer seeks over -- so on a
+        recording scrubbed through map snapshots it is one position every 7.8 s: measured
+        on roscon, 119 samples over 659.7 m, a median gap of 5.54 m and 109 of 118 gaps
+        over 2 m. A costmap route planned across that is planned across a dotted line, and
+        the space between two dots is space nothing ever said was free. It answered
+        NO_ROUTE to "navigate to the entrance" on a recording whose robot had walked past
+        the entrance.
+
+        The timeline index carries `path` for exactly this, sampled at its own cadence.
+        Recordings whose steps ARE dense -- a ray-traced replay is one step per lidar scan
+        -- carry no `path` and fall back to the orbit, which is already what this wants.
+        """
+        index = self._timeline_index_json()
+        walked = (index.get("path") or {}).get("positions")
+        if walked and (index["path"].get("frame") or frame) == frame:
+            return list(walked)
+        return list(self._orbit_positions_for(frame).get("positions") or [])
+
     def _orbit_positions_for(self, frame: str) -> dict[str, Any]:
         """Where *frame* was at each replay scan (cached per frame)."""
         with self._planner_lock:  # a reopen clears the cache under it
             if frame in self._orbit_cache:
                 return self._orbit_cache[frame]
             try:
-                index = self._replay_index_json()
+                # The TIMELINE index, not the replay's. Both carry `orbit` -- the frame's
+                # position at every step -- but a recording whose mapper published as it
+                # went has map snapshots and NO voxel replay, and asking the replay there
+                # raises "this recording holds no voxel timeline streams". That is what
+                # navigation answered on roscon: it found the entrance and refused to walk
+                # to it, because the only thing missing was a path the file already knew.
+                index = self._timeline_index_json()
             except Exception as error:  # building, or failed: 503, like the replay routes
                 raise HTTPException(
                     status_code=503, detail=f"replay {self._replay_progress}"
