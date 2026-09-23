@@ -348,10 +348,11 @@ class MujocoConnection:
         if self.shm_data is None:
             return None
 
-        lidar_msg, seq = self.shm_data.read_lidar()
-        if seq > self._last_lidar_seq and lidar_msg is not None:
+        lidar, seq = self.shm_data.read_lidar()
+        if seq > self._last_lidar_seq and lidar is not None:
             self._last_lidar_seq = seq
-            return lidar_msg
+            points, ts = lidar
+            return PointCloud2.from_numpy(points, frame_id="world", timestamp=ts)
 
         return None
 

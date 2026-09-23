@@ -15,13 +15,11 @@
 from dataclasses import dataclass
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
-import pickle
 from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.simulation.mujoco.constants import VIDEO_HEIGHT, VIDEO_WIDTH
 from dimos.utils.logging_config import setup_logger
 
@@ -37,6 +35,7 @@ _odom_size = 8 * 8  # 8 float64 values
 _cmd_size = 6 * 4  # 6 float32 values
 # Lidar message buffer: for serialized lidar data
 _lidar_size = 1024 * 1024 * 4  # 4MB should be enough for point cloud
+_lidar_header_size = 8  # one float64 timestamp before the N x 3 float32 points
 # Sequence/version numbers for detecting updates
 _seq_size = 8 * 8  # 8 int64 values for different data types
 # Control buffer: ready flag + stop flag
@@ -147,23 +146,21 @@ class ShmReader:
         odom_array[7] = timestamp
         self._increment_seq(2)
 
-    def write_lidar(self, lidar_msg: PointCloud2) -> None:
-        data = pickle.dumps(lidar_msg)
-        data_len = len(data)
-
-        if data_len > self.shm.lidar.size:
-            logger.error(f"Lidar data too large: {data_len} > {self.shm.lidar.size}")
+    def write_lidar(self, points: NDArray[Any], ts: float) -> None:
+        n_points = len(points)
+        nbytes = _lidar_header_size + n_points * 3 * 4
+        if nbytes > self.shm.lidar.size:
+            logger.error(f"Lidar data too large: {nbytes} > {self.shm.lidar.size}")
             return
 
-        # Write length
-        len_array: NDArray[Any] = np.ndarray((1,), dtype=np.uint32, buffer=self.shm.lidar_len.buf)
-        len_array[0] = data_len
-
-        # Write data
+        header: NDArray[Any] = np.ndarray((1,), dtype=np.float64, buffer=self.shm.lidar.buf)
+        header[0] = ts
         lidar_array: NDArray[Any] = np.ndarray(
-            (data_len,), dtype=np.uint8, buffer=self.shm.lidar.buf
+            (n_points, 3), dtype=np.float32, buffer=self.shm.lidar.buf, offset=_lidar_header_size
         )
-        lidar_array[:] = np.frombuffer(data, dtype=np.uint8)
+        lidar_array[:] = points
+        len_array: NDArray[Any] = np.ndarray((1,), dtype=np.uint32, buffer=self.shm.lidar_len.buf)
+        len_array[0] = n_points
 
         self._increment_seq(4)
 
@@ -241,27 +238,23 @@ class ShmWriter:
         cmd_array[3:6] = angular
         self._increment_seq(3)
 
-    def read_lidar(self) -> tuple[PointCloud2 | None, int]:
+    def read_lidar(self) -> tuple[tuple[NDArray[Any], float] | None, int]:
+        """The latest lidar frame as (N x 3 float32 points, timestamp) and its sequence number."""
         seq = self._get_seq(4)
         if seq > 0:
-            # Read length
             len_array: NDArray[Any] = np.ndarray(
                 (1,), dtype=np.uint32, buffer=self.shm.lidar_len.buf
             )
-            data_len = int(len_array[0])
-
-            if data_len > 0 and data_len <= self.shm.lidar.size:
-                # Read data
+            n_points = int(len_array[0])
+            if _lidar_header_size + n_points * 3 * 4 <= self.shm.lidar.size:
+                header: NDArray[Any] = np.ndarray((1,), dtype=np.float64, buffer=self.shm.lidar.buf)
                 lidar_array: NDArray[Any] = np.ndarray(
-                    (data_len,), dtype=np.uint8, buffer=self.shm.lidar.buf
+                    (n_points, 3),
+                    dtype=np.float32,
+                    buffer=self.shm.lidar.buf,
+                    offset=_lidar_header_size,
                 )
-                data = bytes(lidar_array)
-
-                try:
-                    lidar_msg = pickle.loads(data)
-                    return lidar_msg, seq
-                except Exception as e:
-                    logger.error(f"Failed to deserialize lidar message: {e}")
+                return (lidar_array.copy(), float(header[0])), seq
         return None, 0
 
     def _increment_seq(self, index: int) -> None:

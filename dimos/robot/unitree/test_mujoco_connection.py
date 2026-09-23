@@ -20,6 +20,8 @@ from typing import Any
 
 # Imported before subprocess.Popen is patched: mujoco's own import spawns a subprocess.
 import mujoco  # noqa: F401
+import numpy as np
+import pytest
 from pytest import MonkeyPatch
 
 from dimos.core.global_config import GlobalConfig
@@ -191,3 +193,28 @@ def test_start_waits_on_the_process_launched_at_construction(monkeypatch: Monkey
     assert len(launches) == 2
     assert connection.process is launches[1]
     connection.stop()
+
+
+@pytest.fixture
+def quiet_connection(monkeypatch: MonkeyPatch) -> Iterator[MujocoConnection]:
+    connection = _bare_connection(monkeypatch, lambda *_args, **_kwargs: _QuietProcess())
+    yield connection
+    connection.stop()
+
+
+def test_get_lidar_message_builds_a_point_cloud_once_per_frame(
+    quiet_connection: MujocoConnection, monkeypatch: MonkeyPatch
+) -> None:
+    points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+    assert quiet_connection.shm_data is not None
+    monkeypatch.setattr(
+        quiet_connection.shm_data, "read_lidar", lambda: ((points, 3.5), 1), raising=False
+    )
+
+    message = quiet_connection.get_lidar_message()
+    assert message is not None
+    assert message.frame_id == "world"
+    assert message.ts == 3.5
+    np.testing.assert_allclose(message.points_f32(), points)
+
+    assert quiet_connection.get_lidar_message() is None  # same frame again

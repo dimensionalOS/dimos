@@ -28,7 +28,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.simulation.mujoco.constants import (
     DEPTH_CAMERA_FOV,
     LIDAR_FPS,
@@ -37,7 +36,7 @@ from dimos.simulation.mujoco.constants import (
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
 )
-from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud
+from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud, voxel_down_sample
 from dimos.simulation.mujoco.model import load_model, load_scene_xml
 from dimos.simulation.mujoco.person_on_track import PersonPositionController
 from dimos.simulation.mujoco.shared_memory import ShmReader
@@ -104,8 +103,6 @@ def _shadow_render_is_slow(model: mujoco.MjModel, data: mujoco.MjData) -> bool:
 
 
 def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
-    import open3d as o3d  # type: ignore[import-untyped]
-
     robot_name = config.robot_model or "unitree_go1"
     if robot_name == "unitree_go2":
         robot_name = "unitree_go1"
@@ -249,17 +246,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
                         all_points.append(points)
 
                 if all_points:
-                    combined_points = np.vstack(all_points)
-                    pcd = o3d.geometry.PointCloud()
-                    pcd.points = o3d.utility.Vector3dVector(combined_points)
-                    pcd = pcd.voxel_down_sample(voxel_size=LIDAR_RESOLUTION)
-
-                    lidar_msg = PointCloud2(
-                        pointcloud=pcd,
-                        ts=time.time(),
-                        frame_id="world",
-                    )
-                    shm.write_lidar(lidar_msg)
+                    points = voxel_down_sample(np.vstack(all_points), LIDAR_RESOLUTION)
+                    shm.write_lidar(points, time.time())
 
                 last_lidar_time = current_time
 
