@@ -98,12 +98,15 @@ let voxelStyle = null;
 let heightBand = null;
 // Per-frame work hung off the scene's tick: flights, replay, the tour.
 let tickers = [];
+let FlyThrough = null;
+let flyThrough = null;
 
 try {
     const mod = await import(`/static_mw/scene.js${assetVersion}`);
     WorldScene = mod.WorldScene;
     ReplayController = (await import(`/static_mw/replay.js${assetVersion}`)).ReplayController;
     Flight = (await import(`/static_mw/flight.js${assetVersion}`)).Flight;
+    FlyThrough = (await import(`/static_mw/flythrough.js${assetVersion}`)).FlyThrough;
     ResultsNav = (await import(`/static_mw/results.js${assetVersion}`)).ResultsNav;
     Tour = (await import(`/static_mw/tour.js${assetVersion}`)).Tour;
     const sprites = await import('/static_mw/voxel_sprites.js');  // same instances as scene.js
@@ -326,6 +329,15 @@ function buildScene() {
         };
         flight = Flight ? new Flight(scene) : null;
         if (flight) tickers.push((dt) => flight.tick(dt));
+        flyThrough = FlyThrough ? new FlyThrough(scene) : null;
+        if (flyThrough) {
+            tickers.push((dt) => flyThrough.tick(dt));
+            flyThrough.onChange = () => syncFlyThroughButton();
+            // Only one thing drives the world at a time: a flight to a place, or the
+            // stick, ends the tour of the path rather than fighting it for the camera.
+            if (flight) flight.onStart = () => flyThrough.stop('a flight took over');
+            scene.onLocomote = () => flyThrough.stop('the viewer took the stick');
+        }
         syncLayerBoxes();  // the layers are new objects; the boxes kept their state
         results = ResultsNav ? new ResultsNav({
             scene, flight, baseUrl, diag,
@@ -1016,6 +1028,8 @@ document.getElementById('menuNextBtn').addEventListener('click', () => results &
 document.getElementById('menuOrbitResultBtn').addEventListener('click', () => results && results.orbitCurrent());
 document.getElementById('menuNavigateBtn').addEventListener('click', () => results && results.navigate());
 document.getElementById('menuOrbitBtn').addEventListener('click', () => setOrbit(!scene?.isOrbiting()));
+document.getElementById('menuJumpRobotBtn').addEventListener('click', () => { menuEl.classList.remove('open'); jumpToRobot(); });
+document.getElementById('menuFlyThroughBtn').addEventListener('click', () => { menuEl.classList.remove('open'); toggleFlyThrough(); });
 // The phone hides the on-screen Disconnect, so the menu has to carry one or there is no
 // way back from a connected session on a device with no keyboard.
 document.getElementById('menuDisconnectBtn').addEventListener('click', () => {
@@ -1131,6 +1145,7 @@ window.addEventListener('keydown', (event) => {
     const typing = event.target && (event.target.tagName === 'INPUT' || event.target.tagName === 'SELECT' || event.target.tagName === 'TEXTAREA');
     if (event.code === 'Escape') {
         if (tour && tour.active) tour.exit();
+        if (flyThrough && flyThrough.flying) flyThrough.stop('escape');
         menuEl.classList.remove('open');
         if (typing) event.target.blur();
         return;
@@ -1253,6 +1268,54 @@ function syncOrbitLabels() {
 function setOrbit(enabled) {
     if (!scene) return;
     scene.setOrbit(enabled);   // which calls back into syncOrbitLabels
+}
+
+/** Where the robot is right now, robot coords, or null if nothing says.
+ *
+ *  The orbit target FIRST, because the timeline moves it: orbit mode is already fed
+ *  the frame's position at every scan, so during a scrub this is where the robot is at
+ *  the moment being shown, not where it ended up. The trail's end is the fallback, and
+ *  it is the end of the recording whatever the timeline is showing. */
+function robotPosition() {
+    const held = scene?._orbit?.target;
+    if (held) return held.slice();
+    // `orbitPositions` is null until a frame has been chosen, and the timeline starts
+    // at scan -1, which is not "the last one" -- indexing it with either is how the
+    // orbit frame silently did nothing before.
+    const path = orbitPositions || [];
+    const step = replay && replay.scan >= 0 ? replay.scan : path.length - 1;
+    const at = path.length ? path[Math.min(Math.max(step, 0), path.length - 1)] : null;
+    if (at) return [at[0], at[1], at[2] || 0];
+    const trail = scene?._odomTrailPoints;
+    return trail && trail.length ? trail[trail.length - 1].slice() : null;
+}
+
+/** Fly to the robot and look at it. */
+function jumpToRobot() {
+    const at = robotPosition();
+    if (!at) { setStatus('No robot frame in this recording'); return false; }
+    if (flyThrough) flyThrough.stop('jumped to the robot');
+    if (flight) flight.lookAt([at[0], at[1], at[2] + 0.4], { distance: 4.0, pitch: -0.2 });
+    else scene.focusOn(at);
+    diag('jump_to_robot', { x: Number(at[0].toFixed(2)), y: Number(at[1].toFixed(2)) });
+    return true;
+}
+
+function toggleFlyThrough() {
+    if (!flyThrough) return false;
+    if (flyThrough.flying) { flyThrough.stop('pressed again'); return false; }
+    if (!flyThrough.start()) {
+        setStatus('This recording has no path to fly through');
+        return false;
+    }
+    setStatus('Flying the recorded path — walk or press Esc to stop');
+    return true;
+}
+
+/** The fly-through button says what pressing it will do, like the orbit ones. */
+function syncFlyThroughButton() {
+    const button = document.getElementById('menuFlyThroughBtn');
+    if (button) button.textContent = flyThrough && flyThrough.flying ? 'Stop flying' : 'Fly through';
 }
 document.getElementById('orbitTouchBtn').addEventListener('click', () => setOrbit(!scene?.isOrbiting()));
 document.getElementById('cameraBtn').addEventListener('click', () => {

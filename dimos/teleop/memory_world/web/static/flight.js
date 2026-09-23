@@ -27,6 +27,7 @@ export class Flight {
         this.scene = scene;
         this._active = null;
         this.onArrive = null;
+        this.onStart = null;   // set by main.js: a flight ends a fly-through
     }
 
     get flying() {
@@ -84,6 +85,10 @@ export class Flight {
             pitch1: endPitch,
         };
         if (scene._orbit && scene._orbit.active) scene.setOrbit(false);
+        // A fly-through writes `_worldGroup.position` every frame, so it would simply
+        // overwrite this tween -- the camera would appear to ignore the place you asked
+        // for. Only one thing may be driving the world at a time.
+        if (this.onStart) this.onStart();
     }
 
     cancel() {
