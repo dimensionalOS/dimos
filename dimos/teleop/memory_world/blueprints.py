@@ -219,10 +219,32 @@ memory_world_hyperspace = (
             #   a shopping basket   3 places -> the SAME 3, same scores, same radii
             #   a fire extinguisher 1 place  -> the SAME 1, centre identical to 2 dp
             #   a person            0 places -> 0 either way (the detector refuses)
-            # Three queries on one recording is not a proof. An object whose only good
-            # look is in the 7th-ranked episode WOULD be lost, and nothing here says so.
+            #
+            # THAT HYPOTHETICAL CAME TRUE, on roscon, at exactly the seventh episode it
+            # named. `a fire extinguisher` over roscon_jpeg.db, one member, everything
+            # else held still (on Metal, in a plain process, so the knob is the only
+            # thing moving):
+            #   6 episodes  -> 5 places      12 -> 5      30 -> 7      60 -> 7
+            # Every one of those 7 is a real extinguisher, checked in the evidence sheet.
+            # Six episodes could not have found them however long it ran, so the answer
+            # was a CEILING wearing a count's clothes -- and the agent said "there are 3
+            # fire extinguishers". A cut that silently caps a COUNT is not the same kind
+            # of cut as one that loses a far-away duplicate.
+            #
+            # Attempts stay at 1: 30 x 1 finds the same 7 as 30 x 2 and 30 x 3 (7.7 s
+            # against 13.0 s and 17.8 s). The tail argument above is untouched by that --
+            # it is about ATTEMPTS, since a refusal spends all of them, and the cost stays
+            # bounded at one pass per episode.
+            #
+            # 30 IS NOT ENOUGH AND NOTHING HERE PRETENDS IT IS. 45 and 60 episodes find
+            # the same 7 -- but searching BOTH members instead of one, at the same 30,
+            # finds a DIFFERENT 7: two new ones on the loading dock, two of the first
+            # seven gone. Nine distinct real extinguishers between the two runs, all
+            # photographed. So past 30 the limiter is no longer how many episodes are
+            # looked at, it is which episodes the patch ranking puts on top, and raising
+            # this number alone will not fix that. 30 is where THIS knob stops paying.
             detect_attempts=1,
-            max_episodes=6,
+            max_episodes=30,
             # The MCP server reaches this module over RPC and
             # `ModuleConfig.default_rpc_timeout` caps it -- the 120 s default killed every
             # item query before the cut, and would again on a slower box or a harder word.
