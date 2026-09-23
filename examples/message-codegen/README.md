@@ -1134,3 +1134,7 @@ camera's optical frame, exercising the same bridge used for image dispatch.
 The terrain demo sends the generated terrain cloud through the shared bridge,
 which renders explicit height colors. The same adapter preserves standard packed
 RGB colors when supplied by a cloud producer.
+
+The terrain demo's `world/planned_path` entity now comes from the shared bridge's
+generated Path adapter. It is displayed 0.5m above the original route for clarity;
+the path message retains its original coordinates.

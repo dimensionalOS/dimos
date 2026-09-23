@@ -172,3 +172,17 @@ cloud/camera/TF/detection bridge tests passed; adapter mypy passed.
 The terrain demo now sends its 3,600-point cloud through the bridge callback.
 The native planning demo completed and the resulting RRD passed verification.
 This remains headless callback verification, not interactive viewer acceptance.
+
+### Generated navigation rendering in the bridge
+
+Added generated PointStamped, PoseStamped, Odometry, and Path dispatch through a
+separate adapter. Poses and odometry carry their declared parent frame in the
+Rerun transform. Points and paths use bridge frame attachment; paths preserve the
+existing 0.5m display lift without changing message coordinates. Empty paths emit
+empty geometry for clearing.
+
+Five focused tests passed with Rerun warnings as errors, covering each message
+kind, CDR round-trips, coordinates, parent frames, source immutability, and empty
+paths. Adapter mypy passed. The native terrain demo routed its planned path
+through the shared bridge and its RRD passed verification. Network subscriptions
+and interactive viewer acceptance remain outside this check.

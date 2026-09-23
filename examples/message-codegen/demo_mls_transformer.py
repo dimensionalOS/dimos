@@ -118,6 +118,7 @@ def main() -> None:
     bridge._min_intervals = {}
     try:
         bridge._on_message(PointCloud2.decode(cloud.encode()), SimpleNamespace(name="/terrain"))
+        bridge._on_message(Path.decode(path.encode()), SimpleNamespace(name="/planned_path"))
     finally:
         bridge.stop()
     rr.log("world/ray_map", render_surface_map(mapped_cloud))

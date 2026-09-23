@@ -14,6 +14,8 @@
 
 """Rerun presentation helpers kept separate from generated wire types."""
 
+from dimos_generated.geometry_msgs.msg import PointStamped, PoseStamped
+from dimos_generated.nav_msgs.msg import Odometry, Path
 from dimos_generated.sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
 from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_generated.vision_msgs.msg import Detection3DArray
@@ -137,3 +139,24 @@ def cloud_archetype(message: PointCloud2, *, voxel_size: float = 0.05) -> rr.Poi
         normalized = (height - height.min()) / (height.max() - height.min() + 1e-8)
         colors = (matplotlib.colormaps["turbo"](normalized)[:, :3] * 255).astype(np.uint8)
     return rr.Points3D(positions=points, colors=colors, radii=voxel_size / 2)
+
+
+def navigation_archetype(
+    message: PointStamped | PoseStamped | Odometry | Path,
+) -> rr.Points3D | rr.Transform3D | rr.LineStrips3D:
+    """Render generated navigation values in their declared parent frame."""
+    if isinstance(message, PointStamped):
+        p = message.point
+        return rr.Points3D([[p.x, p.y, p.z]])
+    if isinstance(message, Path):
+        points = [
+            [p.pose.position.x, p.pose.position.y, p.pose.position.z + 0.5] for p in message.poses
+        ]
+        return rr.LineStrips3D([points] if points else [], colors=[0, 255, 128], radii=0.05)
+    pose = message.pose.pose if isinstance(message, Odometry) else message.pose
+    p, q = pose.position, pose.orientation
+    return rr.Transform3D(
+        translation=[p.x, p.y, p.z],
+        quaternion=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w]),
+        parent_frame=f"tf#/{message.header.frame_id}" if message.header.frame_id else None,
+    )
