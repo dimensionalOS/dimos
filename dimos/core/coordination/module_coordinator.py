@@ -95,9 +95,6 @@ class ModuleCoordinator(Resource):
         self._shutdown_event = threading.Event()
 
     def start(self) -> None:
-        from dimos.core.o3dpickle import register_picklers
-
-        register_picklers()
         for m in self._managers.values():
             m.start()
         self._started = True
