@@ -22,6 +22,7 @@ from collections.abc import Callable, Iterator
 import threading
 import time
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -31,6 +32,7 @@ from reactivex import Subject
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 
@@ -226,3 +228,39 @@ def test_odom_to_tf_prefixed() -> None:
         "robot0/camera_link",
         "robot0/camera_optical",
     )
+
+
+@pytest.fixture
+def start_over(mocker: MockerFixture) -> Iterator[Callable[[Any], MagicMock]]:
+    """start() a GO2Connection built over the given connection object; returns
+    the mocked ``time`` module of go2.connection, and stops the modules after."""
+    built: list[GO2Connection] = []
+
+    def run(robot_connection: Any) -> MagicMock:
+        mocker.patch.object(go2_conn, "make_connection", return_value=robot_connection)
+        time_mod = mocker.patch.object(go2_conn, "time")
+        conn = GO2Connection(g=GlobalConfig(robot_ip="127.0.0.1"), camera=False, lidar=False)
+        conn.cmd_vel = MagicMock()
+        conn.tf = MagicMock()
+        conn.odom = MagicMock()
+        built.append(conn)
+        conn.start()
+        return time_mod
+
+    yield run
+    for conn in built:
+        conn.stop()
+
+
+def test_start_waits_for_a_physical_robot_to_stand(
+    start_over: Callable[[Any], MagicMock],
+) -> None:
+    time_mod = start_over(MagicMock(spec=UnitreeWebRTCConnection))
+    time_mod.sleep.assert_called_once_with(3)
+
+
+def test_start_does_not_wait_for_a_simulated_robot(
+    start_over: Callable[[Any], MagicMock],
+) -> None:
+    time_mod = start_over(MagicMock())
+    time_mod.sleep.assert_not_called()
