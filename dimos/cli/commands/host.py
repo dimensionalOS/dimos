@@ -74,11 +74,16 @@ def _zenoh_kwargs() -> dict[str, Any]:
 
 @contextmanager
 def _host_rpc() -> Iterator[ZenohRPC]:
+    from dimos.hosted.rpc_auth import HostRpcAuth
     from dimos.protocol.rpc.zenohrpc import ZenohRPC
     from dimos.protocol.service.zenohservice import ZenohSessionPool
 
     pool = ZenohSessionPool()
-    rpc = ZenohRPC(session_pool=pool, **_zenoh_kwargs())
+    rpc = ZenohRPC(
+        session_pool=pool,
+        payload_auth=HostRpcAuth.from_client_env(),
+        **_zenoh_kwargs(),
+    )
     with ExitStack() as cleanup:
         cleanup.callback(pool.close_all)
         rpc.start()
@@ -312,6 +317,7 @@ def serve(
         HostDaemon,
     )
     from dimos.hosted.fragment import FRAGMENT_SCHEMA_VERSION
+    from dimos.hosted.rpc_auth import HostRpcAuth
     from dimos.protocol.rpc.zenohrpc import ZenohRPC
     from dimos.protocol.service.zenohservice import ZenohSessionPool
 
@@ -335,7 +341,11 @@ def serve(
             },
         )
         pool = ZenohSessionPool()
-        rpc = ZenohRPC(session_pool=pool, **_zenoh_kwargs())
+        rpc = ZenohRPC(
+            session_pool=pool,
+            payload_auth=HostRpcAuth.from_host_env(),
+            **_zenoh_kwargs(),
+        )
         cleanup.callback(pool.close_all)
         cleanup.callback(daemon.shutdown)
         rpc.start()
