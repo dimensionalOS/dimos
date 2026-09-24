@@ -131,6 +131,15 @@ def _cgroup_io_bytes() -> tuple[int, int]:
     return read, written
 
 
+def _cpu_model() -> str:
+    """The CPU model name, so a run's numbers can be attributed to its hardware."""
+    for line in Path("/proc/cpuinfo").read_text().splitlines():
+        key, _, value = line.partition(":")
+        if key.strip() == "model name":
+            return value.strip()
+    return "unknown"
+
+
 def _net_bytes() -> tuple[int, int, int]:
     """(multicast, external rx, external tx) byte counters.
 
@@ -290,10 +299,11 @@ def test_go2_replay_realtime_load() -> None:
                 "MB",
             ),
         )
+        extra = f"cpu: {_cpu_model()}"
         Path(METRICS_PATH).write_text(
             json.dumps(
                 [
-                    {"name": name, "unit": unit, "value": round(value, 3)}
+                    {"name": name, "unit": unit, "value": round(value, 3), "extra": extra}
                     for name, value, unit in entries
                 ],
                 indent=2,
