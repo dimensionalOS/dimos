@@ -149,13 +149,13 @@ python -m dimos.teleop.openarm_mini.cli.joint_tui --help
 python -m dimos.teleop.openarm_mini.cli.setup_motor_id --help
 ```
 
-## Visualization-only Viser bring-up
+## Viser bring-up (mock follower)
 
-Use the left-side Viser blueprint to validate real OpenArm Mini leader motion
-before connecting any OpenArm follower hardware:
+Use the left-side blueprint to validate real OpenArm Mini leader motion before
+connecting any OpenArm follower hardware:
 
 ```bash
-dimos run openarm-mini-left-teleop-viser \
+dimos run teleop-openarm-mini-left \
   -o openarmminiteleopmodule.port_left=<left-feetech-port>
 ```
 
@@ -170,60 +170,51 @@ The blueprint requires:
 - a valid left calibration artifact
 - Viser dependencies from `uv sync --extra manipulation` or `uv sync --extra all`
 
-This workflow is visualization-only on the follower side. It routes the
-leader-derived `joint_command` through `ControlCoordinator` into mock follower
-hardware, then renders `coordinator_joint_state` in `ManipulationModule`'s Viser
-backend. It never connects real OpenArm follower hardware.
+Without CAN ports the follower is in-memory. The leader-derived `joint_command`
+streams through the coordinator's `joint_trajectory` task into mock follower
+hardware, and `ManipulationModule` renders the follower-observed
+`coordinator_joint_state` in Viser. Leader joint N drives follower joint N with no
+reordering; each target is clamped to the OpenArm v2.0 joint limits on the sender
+side and rate-limited by the trajectory task on the follower side.
 
-## Right-arm coordinator + Viser bring-up
-
-Use `openarm-mini-right-teleop-viser` to route a real OpenArm Mini right leader
-through `ControlCoordinator` and render the right follower state in
-`ManipulationModule`'s Viser backend. The leader is always physical; the follower
-is always mock in this blueprint.
-
-Run with the required right leader connection settings:
+Use `teleop-openarm-mini-right` for the right leader:
 
 ```bash
-uv run dimos run openarm-mini-right-teleop-viser \
+dimos run teleop-openarm-mini-right \
   -o openarmminiteleopmodule.port_right=<right-feetech-port>
 ```
 
-The blueprint requires:
+The blueprints publish the coordinator joint names `openarm_left_joint1` through
+`openarm_left_joint7` and `openarm_right_joint1` through `openarm_right_joint7`.
 
-- a real OpenArm Mini right leader connected to the configured right Feetech
-  serial port
-- a valid right calibration artifact at the default right calibration path, or a
-  configured `right_calibration_path`
-- Viser dependencies from `uv sync --extra manipulation` or `uv sync --extra all`
+## Dual-arm bring-up
 
-The right blueprint publishes ManipulationModule-compatible coordinator joint
-names (`openarm_right_joint1` through `openarm_right_joint7`). Viser renders
-follower-observed `coordinator_joint_state`, not the raw sender-side command, so
-mock mode validates the same coordinator routing used before real hardware is
-connected. Real follower hardware is intentionally out of scope for these Viser
-demo blueprints.
-
-## Dual-arm coordinator + Viser bring-up
-
-Use `openarm-mini-dual-teleop-viser` for bimanual OpenArm Mini leader teleop with
-the same coordinator-observed Viser path. It uses one bimanual
-`OpenArmMiniTeleopModule`, one `ControlCoordinator`, and one `ManipulationModule`
-with both left and right OpenArm models.
-
-Run with the required leader connection settings:
+Use `teleop-openarm-mini` for bimanual leader teleop. It runs one bimanual
+`OpenArmMiniTeleopModule`, one coordinator, and one `ManipulationModule` with the
+bimanual OpenArm model:
 
 ```bash
-uv run dimos run openarm-mini-dual-teleop-viser \
+dimos run teleop-openarm-mini \
   -o openarmminiteleopmodule.port_left=<left-feetech-port> \
   -o openarmminiteleopmodule.port_right=<right-feetech-port>
 ```
 
-The dual blueprint publishes ManipulationModule-compatible coordinator joint
-names for both arms:
+## Driving the real OpenArm follower
 
-- `openarm_left_joint1` through `openarm_left_joint7`
-- `openarm_right_joint1` through `openarm_right_joint7`
+The same blueprints drive the physical bimanual OpenArm 2.0 when both CAN ports
+are supplied. Bring the CAN interfaces up first as described in
+[OpenArm Integration](/docs/capabilities/manipulation/openarm_integration.md),
+then add the coordinator ports:
 
-Each follower side remains mocked. Real follower hardware is intentionally out of
-scope for these Viser demo blueprints.
+```bash
+dimos run teleop-openarm-mini \
+  -o openarmminiteleopmodule.port_left=<left-feetech-port> \
+  -o openarmminiteleopmodule.port_right=<right-feetech-port> \
+  --controlcoordinator.left-can-port can0 \
+  --controlcoordinator.right-can-port can1
+```
+
+Both CAN ports are required for the physical adapter, including the single-side
+blueprints; the non-driven arm holds its position. Start with the leader posed
+near the follower so the first streamed target is a short move, and keep the
+follower workspace clear.
