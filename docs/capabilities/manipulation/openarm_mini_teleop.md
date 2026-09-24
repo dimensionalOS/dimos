@@ -218,3 +218,28 @@ Both CAN ports are required for the physical adapter, including the single-side
 blueprints; the non-driven arm holds its position. Start with the leader posed
 near the follower so the first streamed target is a short move, and keep the
 follower workspace clear.
+
+## Leaders on a separate machine
+
+When the leaders plug into an operator laptop and the follower hangs off the
+robot computer, run the two halves as separate blueprints linked over zenoh.
+Both halves name the stream `joint_command`, so it rides the `/joint_command`
+topic once the sessions are linked. A stock zenoh session is pinned to
+localhost, so each side dials the other, which also opens its own listener:
+
+```bash
+# robot computer (follower, mock until CAN ports are given)
+ZENOH_CONNECT=tcp/<laptop-ip>:7447 dimos run teleop-openarm-mini-follower \
+  --left-can-port can1 --right-can-port can0
+
+# operator laptop (leaders)
+ZENOH_CONNECT=tcp/<robot-ip>:7447 dimos run teleop-openarm-mini-leader \
+  -o openarmminiteleopmodule.port_left=<left-feetech-port> \
+  -o openarmminiteleopmodule.port_right=<right-feetech-port>
+```
+
+`teleop-openarm-mini-leader-left` and `-right` publish one side only; the
+follower's other arm holds. Confirm `/joint_command` arrives on the robot with
+`dimos spy` before powering the follower. Viser binds to localhost on the robot;
+reach it through an SSH tunnel to port 8095 or pass
+`--visualization.host 0.0.0.0`.

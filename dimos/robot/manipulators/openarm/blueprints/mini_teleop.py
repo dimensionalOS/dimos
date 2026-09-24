@@ -92,3 +92,23 @@ teleop_openarm_mini_right = autoconnect(
         visualization={"backend": "viser"},
     ),
 )
+
+# Split deployment: leaders on an operator machine, follower on the robot.
+# Both sides name the stream joint_command, so it rides one zenoh topic once
+# the two sessions are linked (ZENOH_CONNECT on each side).
+teleop_openarm_mini_leader = OpenArmMiniTeleopModule.blueprint(enabled_sides=("left", "right"))
+
+teleop_openarm_mini_leader_left = OpenArmMiniTeleopModule.blueprint(enabled_sides=("left",))
+
+teleop_openarm_mini_leader_right = OpenArmMiniTeleopModule.blueprint(enabled_sides=("right",))
+
+teleop_openarm_mini_follower = autoconnect(
+    OpenArmTeleopCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        tasks=[_trajectory_task(("left", "right"))],
+    ),
+    _OpenArmManipulationModule.blueprint(
+        model=openarm_bimanual_model_config(),
+        visualization={"backend": "viser"},
+    ),
+)

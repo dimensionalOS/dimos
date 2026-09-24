@@ -23,6 +23,7 @@ from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.module_coordinator import _is_name_unique
 from dimos.robot.manipulators.openarm.blueprints import mini_teleop
 from dimos.robot.manipulators.openarm.blueprints.teleop import (
     OpenArmTeleopCoordinator,
@@ -130,3 +131,29 @@ def test_dual_openarm_mini_cli_overrides_reach_leader_ports_and_can_ports() -> N
     coordinator_kwargs = parsed.module_kwargs("ControlCoordinator")
     assert coordinator_kwargs["left_can_port"] == "can0"
     assert coordinator_kwargs["right_can_port"] == "can1"
+
+
+@pytest.mark.parametrize(
+    ("blueprint", "enabled_sides"),
+    [
+        pytest.param(mini_teleop.teleop_openarm_mini_leader, ("left", "right"), id="dual"),
+        pytest.param(mini_teleop.teleop_openarm_mini_leader_left, ("left",), id="left"),
+        pytest.param(mini_teleop.teleop_openarm_mini_leader_right, ("right",), id="right"),
+    ],
+)
+def test_leader_blueprints_publish_joint_command_on_its_own_topic(
+    blueprint: Blueprint,
+    enabled_sides: tuple[str, ...],
+) -> None:
+    assert _module_types(blueprint) == [OpenArmMiniTeleopModule]
+    config = OpenArmMiniTeleopModuleConfig(**_module_kwargs(blueprint, OpenArmMiniTeleopModule))
+    assert config.enabled_sides == enabled_sides
+    assert _is_name_unique(blueprint, "joint_command")
+
+
+def test_follower_blueprint_consumes_joint_command_for_both_arms() -> None:
+    blueprint = mini_teleop.teleop_openarm_mini_follower
+    assert _module_types(blueprint) == [OpenArmTeleopCoordinator, _OpenArmManipulationModule]
+    assert _is_name_unique(blueprint, "joint_command")
+    (task,) = _module_kwargs(blueprint, OpenArmTeleopCoordinator)["tasks"]
+    assert task.joint_names == [*openarm_urdf_joints("left"), *openarm_urdf_joints("right")]
