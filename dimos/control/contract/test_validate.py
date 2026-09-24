@@ -313,7 +313,10 @@ def test_rule3_interface_commandable_on_no_resource_is_still_caught() -> None:
 
 
 def test_rule3_member_driving_none_of_its_interfaces(xarm: ControlDescription) -> None:
-    """A group that locks a resource it never drives is a claim for nothing."""
+    """Taking control of a part you cannot then command would leave it stuck.
+
+    Nothing else could use it, and this group could not move it either.
+    """
     broken = dataclasses.replace(
         xarm,
         mode_groups=(
@@ -859,8 +862,7 @@ def test_command_rejects_out_of_limit_under_reject_policy(xarm: ControlDescripti
 
 
 def test_clamp_policy_clamps_and_records_the_key(g1: ControlDescription) -> None:
-    """A robot balancing itself, overshooting by a hair, is pulled back rather
-    than stopped dead."""
+    """A value a hair past its limit is trimmed and sent, not thrown away."""
     result = validate_command(
         g1, command("c", {"g1/joint1/position": 99.0}), current_epoch=1, last_sequence=None
     )

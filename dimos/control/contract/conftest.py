@@ -68,7 +68,11 @@ G1_JOINTS = tuple(f"joint{i}" for i in range(1, 30))
 
 @pytest.fixture
 def xarm() -> ControlDescription:
-    """An xArm: two exclusive arm groups, a gripper group of its own."""
+    """An arm that can be told where to go or how fast to move, not both.
+
+    Its gripper is separate, so it stays usable either way. The arm cannot
+    measure how fast its joints are turning, so it does not claim to.
+    """
     joints = tuple(
         Resource(
             name=name,
@@ -119,7 +123,12 @@ def xarm() -> ControlDescription:
 
 @pytest.fixture
 def g1() -> ControlDescription:
-    """A G1 whole body: one PD group, clamped limits, seeded gains, damp stop."""
+    """A humanoid whose 29 joints are all driven together.
+
+    Each is held by a stiffness and a damping, which are stored here rather
+    than sent with every instruction. Out-of-range values are trimmed rather
+    than refused, and it stops by going slack.
+    """
     joints = tuple(
         Resource(
             name=name,
@@ -139,8 +148,11 @@ def g1() -> ControlDescription:
     return ControlDescription(
         source="g1",
         resources=joints,
-        # Clamp, not reject: a balance policy overshooting by a milliradian
-        # must not stop the whole robot dead.
+        # CLAMP, not REJECT. One instruction covers all 29 joints and is
+        # applied all or not at all, so under REJECT a single joint asked to
+        # go a hair past its limit throws the whole instruction away and the
+        # robot gets nothing. Balancing on two legs, it would fall over.
+        # CLAMP trims that one value to the limit and sends the rest.
         limits={
             make_key("g1", j, POSITION): Limits(-2.0, 2.0, LimitPolicy.CLAMP) for j in G1_JOINTS
         },
@@ -151,8 +163,10 @@ def g1() -> ControlDescription:
                 interfaces=frozenset({POSITION, VELOCITY, EFFORT, KP, KD}),
             ),
         ),
-        # 0.0 is not "no command" here: the firmware reads it as VEL_STOP, so
-        # an omitted speed has to arrive as nothing at all instead.
+        # This robot's firmware reads a commanded speed of zero as a real
+        # instruction to hold still, not as "no instruction". So when an
+        # instruction says nothing about speed, nothing must be sent for it
+        # rather than a zero.
         omission={make_key("g1", j, VELOCITY): Omission.UNSET for j in G1_JOINTS},
         initial_values={make_key("g1", j, KP): 60.0 for j in G1_JOINTS}
         | {make_key("g1", j, KD): 1.5 for j in G1_JOINTS},
@@ -179,7 +193,11 @@ def g1() -> ControlDescription:
 
 @pytest.fixture
 def chassis() -> ControlDescription:
-    """A holonomic base: body twist commanded, pose and twist reported."""
+    """A base that can drive in any direction, including sideways.
+
+    It is told how fast to move and turn, and reports both that and where it
+    has got to.
+    """
     base = Resource(
         name="base",
         kind=ResourceKind.BASE,
