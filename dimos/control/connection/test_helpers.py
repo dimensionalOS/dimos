@@ -153,6 +153,49 @@ def test_a_yaw_crossing_pi_reports_the_small_rate_it_actually_turned_at() -> Non
     assert wz == pytest.approx(1.0, abs=1e-12)
 
 
+def test_a_yaw_that_counts_turns_keeps_its_whole_turn() -> None:
+    # R1Pro never wraps. Between two samples more than half a turn apart,
+    # wrapping would throw away the 2 pi: four radians in a second comes back
+    # as -2.28 rad/s, a base reported as turning backwards.
+    prev = (0.0, 0.0, 0.0)
+    curr = integrate_planar_twist(*prev, 1.0, 0.0, 4.0, 1.0, wrap=False)
+    assert se2_body_twist(prev, curr, 1.0, wrap=False)[2] == pytest.approx(4.0)
+    assert se2_body_twist(prev, curr, 1.0, wrap=True)[2] == pytest.approx(4.0 - 2 * math.pi)
+
+
+def test_the_wrap_flag_tilts_the_heading_too_not_just_the_rate() -> None:
+    # The mid-heading comes from the same difference, so the wrong flag rotates
+    # the body frame as well: vx and vy land somewhere else entirely.
+    prev = (0.0, 0.0, 0.0)
+    curr = integrate_planar_twist(*prev, 1.0, 0.0, 4.0, 1.0, wrap=False)
+    right = se2_body_twist(prev, curr, 1.0, wrap=False)
+    wrong = se2_body_twist(prev, curr, 1.0, wrap=True)
+    assert right[:2] != pytest.approx(wrong[:2], abs=1e-3)
+
+
+def test_a_wrapped_yaw_still_needs_wrapping() -> None:
+    # The other half of the contract: on a wrapped yaw the samples are only
+    # known modulo 2 pi, so the shortest rotation is the best anyone can do and
+    # wrap=False would report the 2 pi/dt spike instead.
+    prev = (0.0, 0.0, math.pi - 0.05)
+    curr = (0.0, 0.0, -math.pi + 0.05)
+    assert se2_body_twist(prev, curr, 0.1, wrap=True)[2] == pytest.approx(1.0, abs=1e-12)
+    assert se2_body_twist(prev, curr, 0.1, wrap=False)[2] == pytest.approx(
+        (0.1 - 2 * math.pi) / 0.1
+    )
+
+
+def test_a_big_unwrapped_turn_round_trips_with_matching_flags() -> None:
+    # Several turns in one step: only meaningful unwrapped, and exact there
+    # because the pair agree on the convention.
+    rng = random.Random(99)
+    for _ in range(200):
+        pose = (rng.uniform(-9, 9), rng.uniform(-9, 9), rng.uniform(-20.0, 20.0))
+        wz, dt = rng.uniform(-30, 30), rng.uniform(0.5, 2.0)
+        moved = integrate_planar_twist(*pose, 0.0, 0.0, wz, dt, wrap=False)
+        assert se2_body_twist(pose, moved, dt, wrap=False)[2] == pytest.approx(wz, abs=1e-9)
+
+
 @pytest.mark.parametrize("dt", [0.0, -0.001])
 def test_differentiating_over_no_time_raises(dt: float) -> None:
     with pytest.raises(ValueError, match="dt must be positive"):
@@ -168,7 +211,7 @@ def test_integrate_then_differentiate_round_trips_a_straight_run() -> None:
         vx, vy = rng.uniform(-2, 2), rng.uniform(-2, 2)
         dt = rng.uniform(0.001, 0.2)
         moved = integrate_planar_twist(*pose, vx, vy, 0.0, dt, wrap=False)
-        assert se2_body_twist(pose, moved, dt) == pytest.approx((vx, vy, 0.0), abs=1e-9)
+        assert se2_body_twist(pose, moved, dt, wrap=False) == pytest.approx((vx, vy, 0.0), abs=1e-9)
 
 
 def test_a_turning_round_trip_differs_by_exactly_the_midpoint_correction() -> None:
@@ -188,7 +231,7 @@ def test_a_turning_round_trip_differs_by_exactly_the_midpoint_correction() -> No
             -vx * math.sin(half) + vy * math.cos(half),
             wz,
         )
-        assert se2_body_twist(pose, moved, dt) == pytest.approx(expected, abs=1e-9)
+        assert se2_body_twist(pose, moved, dt, wrap=False) == pytest.approx(expected, abs=1e-9)
 
 
 def test_the_round_trip_is_tight_at_a_real_state_rate() -> None:
@@ -196,7 +239,7 @@ def test_the_round_trip_is_tight_at_a_real_state_rate() -> None:
     # rotation, so the recovered twist is the commanded one to 4 decimals.
     pose = (0.0, 0.0, 0.3)
     moved = integrate_planar_twist(*pose, 1.0, 0.0, 2.0, 0.02, wrap=False)
-    assert se2_body_twist(pose, moved, 0.02) == pytest.approx((1.0, 0.0, 2.0), abs=2e-2)
+    assert se2_body_twist(pose, moved, 0.02, wrap=False) == pytest.approx((1.0, 0.0, 2.0), abs=2e-2)
 
 
 # --- pd_torque --------------------------------------------------------------
