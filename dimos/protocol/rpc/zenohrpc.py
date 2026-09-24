@@ -19,7 +19,7 @@ from itertools import count
 import pickle
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import zenoh
 import zenoh.handlers
@@ -38,11 +38,20 @@ logger = setup_logger()
 EXCEPTION_ENCODING = zenoh.Encoding("dimos/rpc-exception")
 
 
+class RPCPayloadAuth(Protocol):
+    """Authenticate a raw RPC message before pickle processes its contents."""
+
+    def seal(self, scope: str, name: str, payload: bytes) -> bytes: ...
+
+    def open(self, scope: str, name: str, payload: bytes) -> bytes: ...
+
+
 class ZenohRPC(RPCSpec, ZenohService):
     def __init__(
         self,
         rpc_timeouts: dict[str, float] | None = None,
         default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT,
+        payload_auth: RPCPayloadAuth | None = None,
         **kwargs: Any,
     ) -> None:
         if rpc_timeouts is None:
@@ -50,6 +59,7 @@ class ZenohRPC(RPCSpec, ZenohService):
         ZenohService.__init__(self, **kwargs)
         self.rpc_timeouts = dict(rpc_timeouts)
         self.default_rpc_timeout = default_rpc_timeout
+        self._payload_auth = payload_auth
         self._call_thread_pool: ThreadPoolExecutor | None = None
         self._call_thread_pool_lock = threading.RLock()
         self._call_thread_pool_max_workers = 50
@@ -116,27 +126,42 @@ class ZenohRPC(RPCSpec, ZenohService):
         )
         call_id = next(self._call_counter)
         self._pending[call_id] = cb
-        self._issue_query(
-            call_id, f"dimos/rpc/{name}", pickle.dumps(arguments), time.monotonic() + timeout
-        )
+        payload = pickle.dumps(arguments)
+        self._issue_query(call_id, name, payload, time.monotonic() + timeout)
 
         def unsubscribe_callback() -> None:
             self._pending.pop(call_id, None)
 
         return unsubscribe_callback
 
-    def _issue_query(self, call_id: int, key: str, payload: bytes, deadline: float) -> None:
+    def _issue_query(self, call_id: int, name: str, payload: bytes, deadline: float) -> None:
         def on_reply(reply: zenoh.Reply) -> None:
             err = reply.err
             if err is None:
                 cb = self._pending.pop(call_id, None)
                 if cb is not None:
-                    cb(pickle.loads(reply.ok.payload.to_bytes()))  # type: ignore[union-attr]
+                    try:
+                        data = reply.ok.payload.to_bytes()  # type: ignore[union-attr]
+                        if self._payload_auth is not None:
+                            data = self._payload_auth.open("reply", name, data)
+                        result = pickle.loads(data)
+                    except Exception as exc:
+                        cb(exc)
+                    else:
+                        cb(result)
                 return
             if err.encoding == EXCEPTION_ENCODING:
                 cb = self._pending.pop(call_id, None)
                 if cb is not None:
-                    cb(deserialize_exception(pickle.loads(err.payload.to_bytes())))
+                    try:
+                        data = err.payload.to_bytes()
+                        if self._payload_auth is not None:
+                            data = self._payload_auth.open("error", name, data)
+                        result = deserialize_exception(pickle.loads(data))
+                    except Exception as exc:
+                        cb(exc)
+                    else:
+                        cb(result)
                 return
             self._pending.pop(call_id, None)
 
@@ -149,16 +174,19 @@ class ZenohRPC(RPCSpec, ZenohService):
                 return
             time.sleep(min(0.05, remaining))
             if call_id in self._pending:
-                self._issue_query(call_id, key, payload, deadline)
+                self._issue_query(call_id, name, payload, deadline)
 
+        wire_payload = payload
+        if self._payload_auth is not None:
+            wire_payload = self._payload_auth.seal("request", name, payload)
         self.session.get(
-            key,
+            f"dimos/rpc/{name}",
             zenoh.handlers.Callback(on_reply, drop=on_finalize),
             target=zenoh.QueryTarget.ALL,
             consolidation=zenoh.ConsolidationMode.NONE,
             congestion_control=zenoh.CongestionControl.BLOCK,
             timeout=max(deadline - time.monotonic(), 0.001),
-            payload=payload,
+            payload=wire_payload,
         )
 
     def call_nowait(self, name: str, arguments: Args) -> None:
@@ -166,6 +194,9 @@ class ZenohRPC(RPCSpec, ZenohService):
         timeout = self.rpc_timeouts.get(name) or self.rpc_timeouts.get(
             method, self.default_rpc_timeout
         )
+        payload = pickle.dumps(arguments)
+        if self._payload_auth is not None:
+            payload = self._payload_auth.seal("request-nowait", name, payload)
         self.session.get(
             f"dimos/rpc/{name}",
             lambda _: None,
@@ -173,7 +204,7 @@ class ZenohRPC(RPCSpec, ZenohService):
             consolidation=zenoh.ConsolidationMode.NONE,
             congestion_control=zenoh.CongestionControl.BLOCK,
             timeout=timeout,
-            payload=pickle.dumps(arguments),
+            payload=payload,
             attachment=b"nowait",
         )
 
@@ -193,17 +224,28 @@ class ZenohRPC(RPCSpec, ZenohService):
         return unsubscribe
 
     def _execute_rpc(self, f: Callable[..., Any], name: str, query: zenoh.Query) -> None:
-        args = pickle.loads(query.payload.to_bytes())  # type: ignore[union-attr]
         nowait = query.attachment is not None
         try:
+            data = query.payload.to_bytes()  # type: ignore[union-attr]
+            if self._payload_auth is not None:
+                scope = "request-nowait" if nowait else "request"
+                data = self._payload_auth.open(scope, name, data)
+            args = pickle.loads(data)
             response = f(*args[0], **args[1])
             if not nowait:
-                query.reply(query.key_expr, pickle.dumps(response))
+                data = pickle.dumps(response)
+                if self._payload_auth is not None:
+                    data = self._payload_auth.seal("reply", name, data)
+                query.reply(query.key_expr, data)
         except Exception as e:
             logger.exception(f"Exception in RPC handler for {name}: {e}", exc_info=e)
             if not nowait:
-                query.reply_err(pickle.dumps(serialize_exception(e)), encoding=EXCEPTION_ENCODING)
-        query.drop()
+                data = pickle.dumps(serialize_exception(e))
+                if self._payload_auth is not None:
+                    data = self._payload_auth.seal("error", name, data)
+                query.reply_err(data, encoding=EXCEPTION_ENCODING)
+        finally:
+            query.drop()
 
     def stop(self) -> None:
         self._shutdown_thread_pool()
