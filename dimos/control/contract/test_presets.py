@@ -290,7 +290,8 @@ def test_a_gain_table_is_read_per_joint() -> None:
 
 
 def test_a_partial_gain_table_raises() -> None:
-    # The joint somebody forgot is the one that gets no gain and falls over.
+    # A joint left out of the table would be given no stiffness, so it would
+    # hang slack while every other joint held its position.
     partial = {joint: 60.0 for joint in G1_JOINTS[:-1]}
     with pytest.raises(ValueError, match=r"kp does not cover joint\(s\)"):
         pd_joint_description("g1", G1_JOINTS, limits=G1_LIMITS, kp=partial, kd=1.5, damp_kd=5.0)
