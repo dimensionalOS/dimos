@@ -29,6 +29,8 @@ docs/capabilities/mapping/assets/** filter=lfs diff=lfs merge=lfs -text
 # The docs deploy does not fetch all of Git LFS; keep site branding as normal blobs.
 docs/assets/dimensional-logo-master-transparent.png -filter -diff -merge
 docs/assets/favicon.png -filter -diff -merge
+# Small Habitat scene previews must render in GitHub without the custom LFS server.
+dimos/evals/suites/habitat/*/*_scene_*.jpg -filter -diff -merge -text
 # DimSim scene data and agent model
 misc/DimSim/public/sims/*.json filter=lfs diff=lfs merge=lfs -text
 misc/DimSim/public/embodiment/*.glb filter=lfs diff=lfs merge=lfs -text
