@@ -113,6 +113,52 @@ def test_a_continuous_joint_under_clamp_is_fine_if_position_is_not_wanted() -> N
     }
 
 
+def test_a_half_written_position_range_raises() -> None:
+    # The dangerous one: dropping the side the model does declare would leave
+    # the joint unlimited under REJECT, the description would validate, and
+    # command validation would then accept any position at all.
+    only_lower = TOY_URDF.replace(
+        '<limit lower="-1.5" upper="2.5" velocity="3.0" effort="40.0"/>',
+        '<limit lower="-1.5" velocity="3.0" effort="40.0"/>',
+    )
+    with pytest.raises(ValueError, match="declares a lower position bound but no upper"):
+        limits_from_urdf(only_lower, {"arm/j1": "bounded_joint"})
+
+    only_upper = TOY_URDF.replace(
+        '<limit lower="-1.5" upper="2.5" velocity="3.0" effort="40.0"/>',
+        '<limit upper="2.5" velocity="3.0" effort="40.0"/>',
+    )
+    with pytest.raises(ValueError, match="declares a upper position bound but no lower"):
+        limits_from_urdf(only_upper, {"arm/j1": "bounded_joint"})
+
+
+def test_only_a_continuous_joint_may_come_back_unbounded() -> None:
+    # Same empty <limit> as the spinner, but typed revolute: that is a broken
+    # model, not a free spinner, and guessing "unbounded" would take a real
+    # arm's limits away.
+    mistyped = TOY_URDF.replace(
+        '<joint name="spinner_joint" type="continuous">',
+        '<joint name="spinner_joint" type="revolute">',
+    )
+    with pytest.raises(ValueError, match="is revolute but declares no position bounds"):
+        limits_from_urdf(mistyped, {"arm/spin": "spinner_joint"})
+
+
+def test_a_half_written_range_is_still_caught_when_position_is_wanted_alone() -> None:
+    only_lower = TOY_URDF.replace(
+        '<limit lower="-1.5" upper="2.5" velocity="3.0" effort="40.0"/>',
+        '<limit lower="-1.5" velocity="3.0" effort="40.0"/>',
+    )
+    with pytest.raises(ValueError, match="no upper"):
+        limits_from_urdf(only_lower, {"arm/j1": "bounded_joint"}, velocity=False, effort=False)
+    # Asking for no position at all is the one way past it, and then the
+    # velocity and effort bounds are still real.
+    assert limits_from_urdf(only_lower, {"arm/j1": "bounded_joint"}, position=False) == {
+        "arm/j1/velocity": Limits(-3.0, 3.0, LimitPolicy.REJECT),
+        "arm/j1/effort": Limits(-40.0, 40.0, LimitPolicy.REJECT),
+    }
+
+
 def test_a_joint_with_no_limit_element_raises() -> None:
     # A wrong limits table stops a real arm halfway through a motion, so this
     # never returns a quietly smaller table.
