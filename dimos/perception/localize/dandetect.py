@@ -16,7 +16,7 @@
 
 Enter once, query many times on warm weights; ``stop()`` releases whatever
 loaded. Every entry point takes an optional
-:class:`~dimos.perception.memory.rig.Rig`; without one the store's shape
+:class:`~dimos.perception.localize.rig.Rig`; without one the store's shape
 decides.
 """
 
@@ -27,8 +27,8 @@ from typing import TYPE_CHECKING, Any
 from dimos.core.resource import Resource
 from dimos.memory.embed import EmbedImages
 from dimos.memory.transform import QualityWindow
-from dimos.perception.memory.localize import embed_index, localize
-from dimos.perception.memory.rig import Rig
+from dimos.perception.localize.localize import embed_index, localize
+from dimos.perception.localize.rig import Rig
 
 if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from dimos.models.embedding.siglip import SigLIPModel
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
     from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
-    from dimos.perception.memory.types import Localization, LocalizePolicy
+    from dimos.perception.localize.types import Localization, LocalizePolicy
 
 
 class DanDetector(Resource):

@@ -14,7 +14,7 @@
 
 """Query memory for objects, localize them in 3D, render in rerun.
 
-Run: uv run python -m dimos.perception.memory.tool_localize [query ...] [out.rrd]
+Run: uv run python -m dimos.perception.localize.tool_localize [query ...] [out.rrd]
          [--dataset <db>] [--from <s>] [--duration <s>] [--multi]
 
 The recording's shape decides the rig: an xArm-style store lifts through
@@ -39,9 +39,9 @@ from typing import Any
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.transform import throttle
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC, lattice_quantum
-from dimos.perception.memory.localize import LocalizeTrace
-from dimos.perception.memory.rig import Rig
-from dimos.perception.memory.types import Localization
+from dimos.perception.localize.localize import LocalizeTrace
+from dimos.perception.localize.rig import Rig
+from dimos.perception.localize.types import Localization
 from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, GO2Connection
 from dimos.utils.data import get_data
 
@@ -328,7 +328,7 @@ def main() -> int:
     after = lo + args.start
     before = lo + args.start + args.duration if args.duration is not None else hi
 
-    from dimos.perception.memory.dandetect import DanDetector
+    from dimos.perception.localize.dandetect import DanDetector
 
     traces: list[tuple[str, LocalizeTrace]] = []
     hits = 0

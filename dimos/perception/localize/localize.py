@@ -34,8 +34,8 @@ from dimos.memory.transform import QualityWindow, peaks
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.perception.memory.rig import Rig
-from dimos.perception.memory.types import Localization, LocalizePolicy, Support
+from dimos.perception.localize.rig import Rig
+from dimos.perception.localize.types import Localization, LocalizePolicy, Support
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -343,7 +343,7 @@ def localize(
 
     plane = None
     if candidate_count:
-        from dimos.perception.memory.support_plane import fit_support_plane
+        from dimos.perception.localize.support_plane import fit_support_plane
 
         mean = anchor / anchor_count
         cell = (round(mean[0] / policy.plane_cell_m), round(mean[1] / policy.plane_cell_m))

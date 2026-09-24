@@ -41,8 +41,8 @@ from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     range_cluster,
     statistical,
 )
-from dimos.perception.memory.support_plane import PLANE_DISTANCE_CLOUD
-from dimos.perception.memory.types import LocalizePolicy
+from dimos.perception.localize.support_plane import PLANE_DISTANCE_CLOUD
+from dimos.perception.localize.types import LocalizePolicy
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-    from dimos.perception.memory.support_plane import SupportPlane
+    from dimos.perception.localize.support_plane import SupportPlane
     from dimos.protocol.tf.tf import TFLookup
 
 logger = setup_logger()

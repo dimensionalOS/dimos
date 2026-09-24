@@ -20,7 +20,7 @@ older store-backed shape and is kept as the lidar example.
 Terminal 1, the sensors. One coordinator per bus is allowed, so the feed runs
 as a plain process publishing on the same topics a robot connection would:
 
-    uv run python -m dimos.perception.memory.demo_blueprints.xarm_feed
+    uv run python -m dimos.perception.localize.demo_blueprints.xarm_feed
 
 The recording is ten minutes. `--seek 427 --duration 76` plays only the window
 `tool_localize` uses in its reference command; `--speed`, `--dataset` exist too.

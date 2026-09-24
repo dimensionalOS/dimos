@@ -56,9 +56,9 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
-from dimos.perception.memory.dandetect import DanDetector
-from dimos.perception.memory.localize import Groups, LocalizeTrace
-from dimos.perception.memory.rig import DEPTH_TOLERANCE, EMBED_HZ, WALK_EMBED_HZ, Rig
+from dimos.perception.localize.dandetect import DanDetector
+from dimos.perception.localize.localize import Groups, LocalizeTrace
+from dimos.perception.localize.rig import DEPTH_TOLERANCE, EMBED_HZ, WALK_EMBED_HZ, Rig
 from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
 

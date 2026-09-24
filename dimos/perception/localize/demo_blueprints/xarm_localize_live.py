@@ -20,7 +20,7 @@ memory. Nothing here reads a file. In development the ports are fed by
 ``xarm-feed`` in another terminal; on a robot they are fed by its connection.
 
 Usage:
-    uv run python -m dimos.perception.memory.demo_blueprints.xarm_feed    # terminal 1
+    uv run python -m dimos.perception.localize.demo_blueprints.xarm_feed    # terminal 1
     dimos run xarm-localize-live                                     # terminal 2
     uv run dimos shell                                               # terminal 3
     app.LiveLocalizeModule.state()
@@ -35,7 +35,7 @@ from typing import Any
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.perception.memory.demo_blueprints.live_localize import LiveLocalizeModule
+from dimos.perception.localize.demo_blueprints.live_localize import LiveLocalizeModule
 from dimos.visualization.vis_module import vis_module
 
 OPTICAL_FRAME = "camera_color_optical_frame"

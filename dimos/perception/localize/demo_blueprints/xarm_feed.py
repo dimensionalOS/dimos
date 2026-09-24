@@ -22,7 +22,7 @@ One coordinator per bus is allowed, so beside a running blueprint the feed
 runs as a plain process, with its port transports built the way the
 coordinator builds them:
 
-    uv run python -m dimos.perception.memory.demo_blueprints.xarm_feed [--seek 427 --duration 76]
+    uv run python -m dimos.perception.localize.demo_blueprints.xarm_feed [--seek 427 --duration 76]
 
 The ``xarm-feed`` blueprint is the same module for composing into one
 blueprint with its consumers.

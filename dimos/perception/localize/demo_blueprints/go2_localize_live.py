@@ -71,9 +71,9 @@ from dimos.perception.detection.type.detection3d.pointcloud import (
     Detection3DPC,
     lattice_quantum,
 )
-from dimos.perception.memory.dandetect import DanDetector
-from dimos.perception.memory.localize import Groups
-from dimos.perception.memory.rig import Rig
+from dimos.perception.localize.dandetect import DanDetector
+from dimos.perception.localize.localize import Groups
+from dimos.perception.localize.rig import Rig
 from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, GO2Connection
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.vis_module import vis_module
