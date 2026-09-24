@@ -1171,9 +1171,15 @@ jobs:
     runs-on: ubuntu-latest
     permissions:  # Restricted to run untested code. Reporting in next job.
       contents: read  # For checkout
+    env:
+      # Compile bytecode at install rather than at first import.
+      UV_COMPILE_BYTECODE: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # PRs also measure HEAD^1: the base branch tip under the merge commit.
+          fetch-depth: 2
       - name: Cache the replay dataset archive
         uses: actions/cache@v6
         with:
@@ -1201,36 +1207,44 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync --group tests --frozen
-        env:
-          # Compile bytecode at install rather than at first import.
-          UV_COMPILE_BYTECODE: "1"
       - name: Pre-extract the replay database
         run: uv run python -c "from dimos.utils.data import get_data; print(get_data('go2_short.db'))"
-      - name: Precompile the numba kernels
+      - name: Run the replay under cgroup accounting
+        env:
+          # Hash randomization is per-process; pin it so the processes don't
+          # each bring their own dict-ordering jitter.
+          PYTHONHASHSEED: "0"
         run: |
-          uv run python -c "
+          measure() {  # $1 = metrics file
+            uv sync --group tests --frozen &&
+            uv run python - <<'EOF' &&
           import numpy as np
           from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
           from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
           points = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
           height_cost_occupancy(PointCloud2.from_numpy(points, timestamp=1.0))
-          "
-      # Avoid pending disk writes getting recorded in the benchmark.
-      - name: Flush pending writeback
-        run: sync
-      - name: Run the replay under cgroup accounting
-        run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
-        env:
-          DIMOS_BENCH_METRICS: benchmark.json
-          # Hash randomization is per-process; pin it so the processes don't
-          # each bring their own dict-ordering jitter.
-          PYTHONHASHSEED: "0"
+          EOF
+            sync &&
+            DIMOS_BENCH_METRICS="$1" uv run pytest -m '' --no-cov \
+              dimos/robot/unitree/go2/test_replay_benchmark.py
+          }
+          # PRs measure the base first, compares to next run, to handle different runners.
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git checkout -q HEAD^1
+            git rev-parse HEAD > base.sha
+            measure base.json
+            git checkout -q "$GITHUB_SHA"
+          fi
+          measure benchmark.json
       - name: Upload the metrics
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-metrics
-          path: benchmark.json
+          path: |
+            benchmark.json
+            base.json
+            base.sha
 
   benchmark-track:
     needs: benchmark
@@ -1239,6 +1253,8 @@ jobs:
     permissions:
       contents: write  # To push the benchmark series to gh-pages branch
       pull-requests: write  # For PR comments
+    env:
+      SERIES: go2 replay realtime
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -1246,6 +1262,16 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: benchmark-metrics
+      # PRs compare against the base run from the same machine: stage it as
+      # the series' previous entry for the action to diff against.
+      - name: Stage the base run
+        if: github.event_name == 'pull_request'
+        run: |
+          sha=$(cat base.sha)
+          [[ $sha =~ ^[0-9a-f]{40}$ ]]
+          jq --arg sha "$sha" --arg series "$SERIES" \
+            '{entries: {($series): [{commit: {id: $sha}, tool: "customSmallerIsBetter", benches: .}]}}' \
+            base.json > base-series.json
       # Re-runs reuse the original event payload, which predates any label
       # added in response to a failure — so query the live labels instead.
       - name: Check for an acknowledged regression
@@ -1261,11 +1287,13 @@ jobs:
         id: track
         uses: benchmark-action/github-action-benchmark@v1
         with:
-          name: go2 replay realtime
+          name: ${{ env.SERIES }}
           tool: customSmallerIsBetter
           output-file-path: benchmark.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          # Append to the tracked series on main; PRs only compare against it.
+          # PRs diff against their staged base run; everything else against
+          # the gh-pages series, which only main pushes extend.
+          external-data-json-path: ${{ github.event_name == 'pull_request' && 'base-series.json' || '' }}
           auto-push: ${{ github.event_name == 'push' }}
           save-data-file: ${{ github.event_name == 'push' }}
           alert-threshold: 108%
