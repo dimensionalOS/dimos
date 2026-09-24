@@ -15,17 +15,10 @@
 """The arithmetic a vendor hook needs and should not be writing again.
 
 Everything here is pure, is called from a vendor's own hooks, and is unknown to
-``ConnectedHardware``. It is not a base class and not a mixin: the reason these
-live together is that more than one vendor needs them, and the vendors that
-need each one are not the same set. SE(2) integration is shared by a chassis
-and a mock, PD emulation by a simulator alone.
+``ConnectedHardware``. The reason these live together is that more than one vendor
+needs them, and the vendors that need each one are not the same set.
+SE(2) integration is shared by a chassis and a mock, PD emulation by a simulator alone.
 
-The audit found the existing copies of the first two already disagreeing about
-yaw wrapping and the dt guard, which is the whole argument for one copy with
-the disagreement turned into an argument.
-
-Nothing here reads a clock except ``await_state``, and that only through
-callables the caller can replace, so a test never has to sleep.
 """
 
 from __future__ import annotations
@@ -59,13 +52,8 @@ def integrate_planar_twist(
 ) -> tuple[float, float, float]:
     """One step of a body-frame twist integrated into a world pose.
 
-    Euler integration about the heading at the start of the step, which is what
-    every copy of this in the tree already does and what a base publishing at
-    50 Hz has the resolution for.
-
-    ``wrap`` is the disagreement between the existing copies made explicit. The
-    mock base wraps and R1Pro does not, and both are right for what they are:
-    a wrapped yaw is what a consumer comparing headings wants, an unwrapped one
+    ``wrap`` is the disagreement between the existing copies made explicit.
+    A wrapped yaw is what a consumer comparing headings wants, an unwrapped one
     is what a consumer counting turns wants. Whichever a base does, it says so
     in its description's ``yaw_convention``.
 
@@ -104,50 +92,43 @@ def se2_body_twist(
     *,
     wrap: bool = True,
 ) -> tuple[float, float, float]:
-    """The body-frame twist that carried a base from ``prev`` to ``curr``.
+    """Work out how fast a robot was moving, from two positions and a time.
 
-    The world displacement is rotated into the body frame using the heading
-    halfway through the step, not the heading at either end. Over a step where
-    the base also turned, the midpoint is the heading it actually spent the
-    step pointing near, so this is the twist that best explains the arc.
+    The reverse of ``integrate_planar_twist``. Give it where the robot was,
+    where it is now, and how long that took, and it reports the speed from the
+    robot's own point of view: how fast it was driving forwards, sliding
+    sideways, and turning.
 
-    That makes it the midpoint rule rather than the exact inverse of
-    ``integrate_planar_twist``, which is Euler. Feeding one into the other
-    round-trips exactly when ``wz`` is zero; when it is not, the recovered
-    twist is the original rotated by ``-wz * dt / 2``, which is the correction
-    the midpoint rule is making. Over one step of a base running at its state
-    rate that is well under a degree.
+    That last part is the whole job. Knowing the robot moved two metres
+    north-east does not say whether it drove forwards or slid sideways -- that
+    depends on which way it was pointing while it moved.
 
-    ``wrap`` must match the convention the two poses are in -- the same flag
-    ``integrate_planar_twist`` took, and the ``yaw_convention`` the base
-    declares in its description.
-
-    On a wrapped yaw it has to be True and the shortest rotation is the best
-    anyone can do: the samples are only known modulo 2 pi, and subtracting them
-    raw would report a base that merely crossed +/-pi as spinning at
-    ``2 pi / dt``.
-
-    On a yaw that counts turns it has to be False. There the difference is
-    already unambiguous, and wrapping would throw away whole turns: four
-    radians over a second comes back as -2.28 rad/s, having quietly lost the
-    2 pi. That only bites when more than half a turn happens between two
-    samples -- impossible for a chassis at its state rate, ordinary after a
-    dropped-sample gap or on a sparsely replayed bag. The heading is taken from
-    the same difference, so a wrong flag tilts ``vx`` and ``vy`` too, not just
-    ``wz``.
+    Use it when a robot reports its position but not its speed.
 
     Args:
-        prev: The earlier ``(x, y, yaw)``.
-        curr: The later ``(x, y, yaw)``.
-        dt: Seconds between them.
-        wrap: Whether these poses carry a wrapped yaw.
+        prev: Where the robot was, as ``(x, y, yaw)`` in metres and radians.
+        curr: Where it is now, in the same form.
+        dt: Seconds between the two readings. Must be positive.
+        wrap: Which convention ``yaw`` uses in ``prev`` and ``curr``. ``True``
+            if the heading stays within one turn, jumping from ``+pi`` to
+            ``-pi`` as it passes. ``False`` if it keeps counting up, so two
+            full turns read as ``12.6``. A wrong value gives badly wrong
+            answers: with a counting heading, wrapping silently drops whole
+            turns, and a robot turning four radians in a second is reported as
+            turning 2.28 rad/s the other way.
 
     Returns:
-        The body-frame ``(vx, vy, wz)``.
+        ``(vx, vy, wz)``: forwards speed in m/s, leftwards speed in m/s, and
+        turn rate in rad/s.
 
     Raises:
-        ValueError: If ``dt`` is zero or less. Unlike integration, there is no
-            sensible twist to report over no time at all.
+        ValueError: If ``dt`` is zero or negative. There is no speed to report
+            over no time at all.
+
+    The robot is assumed to have curved smoothly between the two positions,
+    which holds when they are close together in time. The more it turned
+    between them, the rougher the forwards and sideways figures get; the turn
+    rate stays exact either way.
     """
     if dt <= 0.0:
         raise ValueError(f"dt must be positive to differentiate a pose, got {dt}")
@@ -157,6 +138,9 @@ def se2_body_twist(
     d_yaw = curr_yaw - prev_yaw
     if wrap:
         d_yaw = wrap_to_pi(d_yaw)
+    # Measure against the heading halfway through the step rather than the one
+    # at either end: over a step where the robot also turned, that is the
+    # direction it spent most of the step pointing nearest to.
     mid_yaw = prev_yaw + d_yaw / 2.0
     cos_mid, sin_mid = math.cos(mid_yaw), math.sin(mid_yaw)
     dx, dy = curr_x - prev_x, curr_y - prev_y
@@ -179,12 +163,6 @@ def pd_torque(
     """The torque a PD joint with feedforward should be producing.
 
     ``kp (q_target - q) + kd (dq_target - dq) + tau_ff``.
-
-    The ``dq_target`` term is the one today's MuJoCo emulation leaves out: it
-    computes ``kd (0 - dq)``, which damps against the world instead of tracking
-    a commanded velocity, so a sim joint asked to move at a steady rate fights
-    itself the whole way. Real PD firmware -- Unitree's among them -- includes
-    it, so the sim was not emulating the thing it stood in for.
 
     Args:
         q_target: Commanded position.
@@ -209,34 +187,34 @@ def await_state(
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> bool:
-    """Poll ``predicate`` until it holds or ``timeout_s`` passes.
+    """Wait for something to become true, and give up if it takes too long.
 
-    For the bounded waits in lifecycle hooks: an arm converging on its park
-    pose, an SDK finishing a bring-up. The point is the bound -- a hook that
-    waits forever is a hook that hangs the whole connection, which is what a
-    bare ``.result()`` does today.
+    Calls ``predicate`` over and over until it returns True or the time runs
+    out. It is checked once before any waiting, so a condition that already
+    holds returns immediately and costs nothing.
 
-    ``predicate`` is checked before the first sleep, so something already true
-    costs nothing and a non-positive timeout still gets one look.
-
-    ``clock`` and ``sleep`` are arguments because this is the only helper here
-    that touches time. Injecting them is what lets the tests cover a timeout
-    without taking as long as the timeout.
+    Use it for waits that must not hang: an arm moving into position, a motor
+    controller finishing its start-up. A wait with no timeout will eventually
+    block the robot's whole driver.
 
     Args:
-        predicate: The condition to wait for. Called repeatedly, so it should
-            be cheap and must not block.
-        timeout_s: How long to keep trying, in seconds.
-        poll_s: Gap between attempts, in seconds. The last gap is shortened so
-            the wait does not overrun the deadline.
-        clock: Monotonic clock, in seconds.
-        sleep: How to wait, in seconds.
+        predicate: Called repeatedly to test whether the thing has happened.
+            Should return quickly and must not block.
+        timeout_s: How long to keep trying, in seconds. Zero or negative still
+            gets one attempt.
+        poll_s: How long to wait between attempts, in seconds. The last wait is
+            shortened so the total never runs past ``timeout_s``.
+        clock: Returns the current time in seconds. Only replaced in tests, so
+            a timeout can be exercised without waiting out the timeout.
+        sleep: Waits for the given number of seconds. Replaced alongside
+            ``clock``.
 
     Returns:
-        True if the predicate held, False if the timeout passed first.
+        True if the condition came true in time, False if the time ran out.
 
     Raises:
-        ValueError: If ``poll_s`` is zero or less, which would spin.
+        ValueError: If ``poll_s`` is zero or negative, which would spin the CPU
+            at full speed instead of waiting.
     """
     if poll_s <= 0.0:
         raise ValueError(f"poll_s must be positive, got {poll_s}")
