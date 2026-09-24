@@ -101,6 +101,8 @@ def se2_body_twist(
     prev: tuple[float, float, float],
     curr: tuple[float, float, float],
     dt: float,
+    *,
+    wrap: bool = True,
 ) -> tuple[float, float, float]:
     """The body-frame twist that carried a base from ``prev`` to ``curr``.
 
@@ -116,14 +118,29 @@ def se2_body_twist(
     the midpoint rule is making. Over one step of a base running at its state
     rate that is well under a degree.
 
-    The yaw difference is wrapped before it is divided, so a base crossing
-    +/-pi reports the small rate it actually turned at instead of a spike of
+    ``wrap`` must match the convention the two poses are in -- the same flag
+    ``integrate_planar_twist`` took, and the ``yaw_convention`` the base
+    declares in its description.
+
+    On a wrapped yaw it has to be True and the shortest rotation is the best
+    anyone can do: the samples are only known modulo 2 pi, and subtracting them
+    raw would report a base that merely crossed +/-pi as spinning at
     ``2 pi / dt``.
+
+    On a yaw that counts turns it has to be False. There the difference is
+    already unambiguous, and wrapping would throw away whole turns: four
+    radians over a second comes back as -2.28 rad/s, having quietly lost the
+    2 pi. That only bites when more than half a turn happens between two
+    samples -- impossible for a chassis at its state rate, ordinary after a
+    dropped-sample gap or on a sparsely replayed bag. The heading is taken from
+    the same difference, so a wrong flag tilts ``vx`` and ``vy`` too, not just
+    ``wz``.
 
     Args:
         prev: The earlier ``(x, y, yaw)``.
         curr: The later ``(x, y, yaw)``.
         dt: Seconds between them.
+        wrap: Whether these poses carry a wrapped yaw.
 
     Returns:
         The body-frame ``(vx, vy, wz)``.
@@ -137,7 +154,9 @@ def se2_body_twist(
     prev_x, prev_y, prev_yaw = prev
     curr_x, curr_y, curr_yaw = curr
 
-    d_yaw = wrap_to_pi(curr_yaw - prev_yaw)
+    d_yaw = curr_yaw - prev_yaw
+    if wrap:
+        d_yaw = wrap_to_pi(d_yaw)
     mid_yaw = prev_yaw + d_yaw / 2.0
     cos_mid, sin_mid = math.cos(mid_yaw), math.sin(mid_yaw)
     dx, dy = curr_x - prev_x, curr_y - prev_y
