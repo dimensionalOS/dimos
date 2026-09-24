@@ -29,11 +29,18 @@ failure can be bisected by dropping down a level:
 - ``go2-zenoh-motion-pointlio``: ``go2-zenoh-motion`` running its own ``PointLioRust``,
   for when the MID-360 hangs off this box rather than the robot.
 - ``go2-viewer``: the rerun half alone, as a zenoh client of the robot's router.
+- ``go2-dds-basic``: ``go2-zenoh-basic`` with :class:`GO2DDS` in place of the bridge, for the
+  Jetson (or the Go2 itself) talking DDS to the robot directly.
+- ``go2-dds-motion-pointlio``: ``go2-zenoh-motion-pointlio`` over DDS, GO2DDS being the
+  zenoh router the viewer dials.
 """
 
+from collections.abc import Mapping
+from functools import partial
 import os
 from typing import Any
 
+from dimos.core.coordination.blueprint_config.sources import configuration_environment
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
@@ -49,12 +56,14 @@ from dimos.navigation.local_planner.viz import motion_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
 from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
+from dimos.protocol.service.zenohservice import ZenohConfig
 from dimos.robot.unitree.go2.constants import (
     BASE_LINK_HEIGHT,
     ROBOT_HEIGHT,
     ROBOT_LENGTH,
     ROBOT_WIDTH,
 )
+from dimos.robot.unitree.go2.dds.module import GO2DDS
 from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh
 from dimos.visualization.vis_module import vis_module
 
@@ -79,29 +88,30 @@ def _static_robot_body(rr: Any) -> list[Any]:
     ]
 
 
-def _camera_info_to_pinhole(camera_info: Any) -> Any:
-    """Log the pinhole onto the video's entity instead of camera_info's own.
+def _camera_info_to_pinhole(camera_info: Any, camera: str = "world/video") -> Any:
+    """Log the pinhole onto the camera image's entity instead of camera_info's own.
 
     Entities are named after topics, so the two land on sibling paths, and a Pinhole only
     projects its own entity and its children, hence a frustum that draws but stays empty.
     No ``optical_frame``: the video's frame_id already anchors it, a second parent is
     rejected.
     """
-    return camera_info.to_rerun(image_topic="world/video")
+    return camera_info.to_rerun(image_topic=camera)
 
 
-def _rerun_blueprint() -> Any:
+def _rerun_blueprint(camera: str = "world/video") -> Any:
     """Split layout: camera feed + 3D world, as the WebRTC go2 blueprint has.
 
-    The 2D view sits on ``world/video``, not ``world/color_image``: over zenoh the camera
-    arrives as H.264 on the ``video`` port, which is also where the pinhole is logged.
+    The 2D view sits on the camera's own entity, not ``world/color_image``: over zenoh the
+    camera arrives as H.264 on the ``video`` port, and off GO2DDS in jpeg mode as
+    ``CompressedImage`` on ``image``. Either way that entity is where the pinhole is logged.
     """
     import rerun as rr
     import rerun.blueprint as rrb
 
     return rrb.Blueprint(
         rrb.Horizontal(
-            rrb.Spatial2DView(origin="world/video", name="Camera"),
+            rrb.Spatial2DView(origin=camera, name="Camera"),
             rrb.Spatial3DView(
                 origin="world",
                 name="3D",
@@ -126,10 +136,23 @@ def _render_map(msg: Any) -> Any:
     return msg.to_rerun(voxel_size=0.01)
 
 
-def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, Any]:
+def _dds_camera(environ: Mapping[str, str] | None = None) -> str:
+    """The entity GO2DDS puts the camera on, off the same knob GO2DDS reads.
+
+    h264 off the RTP multicast lands on `video`, jpeg polled off the videohub on `image`,
+    so one `.env` line (``GO2DDS__VIDEO_ENCODING=jpeg``, plus ``GO2DDS__VIDEO_FPS``) moves
+    the robot's encoder and the pane watching it together.
+    """
+    env = {key.lower(): value for key, value in configuration_environment(environ).items()}
+    return "world/image" if env.get("go2dds__video_encoding") == "jpeg" else "world/video"
+
+
+def _rerun_config(
+    visual_override: dict[str, Any] | None = None, camera: str = "world/video"
+) -> dict[str, Any]:
     """The bridge's own view, plus whatever the layer above it adds."""
     return {
-        "blueprint": _rerun_blueprint,
+        "blueprint": partial(_rerun_blueprint, camera),
         "tf_axes": 0.5,
         # The robot box hangs off base_link on its own entity: a static transform
         # under world/tf would override the live one.
@@ -137,7 +160,7 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
             "world/robot_body": _static_robot_body,
         },
         "visual_override": {
-            "world/camera_info": _camera_info_to_pinhole,
+            "world/camera_info": partial(_camera_info_to_pinhole, camera=camera),
             "world/pointlio_map": _render_map,
             "world/lidar": _render_map,
             "world/local_map": _render_map,
@@ -156,6 +179,17 @@ def _rerun_config(visual_override: dict[str, Any] | None = None) -> dict[str, An
 go2_zenoh_basic = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config()),
     GO2Zenoh.blueprint(),
+    MovementManager.blueprint(),
+).global_config(transport="zenoh", n_workers=4, robot_model="unitree_go2")
+
+# The same layer over DDS: the native module is the robot side, so this runs on the box
+# that has the Go2 on a wire. No pointlio_map: the L1 cloud arrives already in `odom`.
+go2_dds_basic = autoconnect(
+    vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config=_rerun_config({"world/pointlio_map": None}),
+    ),
+    GO2DDS.blueprint(),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=4, robot_model="unitree_go2")
 
@@ -292,6 +326,55 @@ go2_zenoh_motion_pointlio = autoconnect(
 )
 
 
+# `go2-zenoh-motion-pointlio` with GO2DDS as the robot side, no go2web bridge anywhere.
+# Its native process is the zenoh router (the Go2 forwards 7447 to the Jetson, so the
+# viewer still dials go22); every other process dials it on loopback. The head L1 stays
+# off and Point-LIO owns odom, so GO2DDS publishes no lidar, odometry or odom tf edge; its
+# body IMU moves aside for the MID-360's, which Point-LIO reads on `imu`.
+_go2_dds_pointlio = GO2DDS.blueprint(
+    iface="enP8p1s0",
+    lidar_on=False,
+    tf_root="mid360_link",
+    session=ZenohConfig(mode="router", listen=["tcp/0.0.0.0:7447"], connect=[]),
+).remappings(
+    [
+        (GO2DDS, "odometry", "go2_odometry_unused"),
+        (GO2DDS, "lidar", "go2_lidar_unused"),
+        (GO2DDS, "imu", "body_imu"),
+    ]
+)
+
+go2_dds_motion_pointlio = autoconnect(
+    vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config=_rerun_config(
+            {
+                "world/pointlio_map": None,
+                "world/lidar": None,
+                "world/lidar_raw": None,
+                "world/region_bounds": None,
+            },
+            camera=_dds_camera(),
+        ),
+    ),
+    _go2_dds_pointlio,
+    MovementManager.blueprint(),
+    RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
+    _mls_planner_motion.remappings([(MLSPlannerNative, "path", "planner_path")]),
+    LocalPlannerNative.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),
+    TrajectoryFollowerNative.blueprint(),
+    mid360_for_pointlio(lidar_ip="192.168.123.157", host_ip="192.168.123.5"),
+    PointLioRust.blueprint(),
+).global_config(
+    transport="zenoh",
+    zenoh_connect="tcp/127.0.0.1:7447",
+    # the router is a native process; the peers keep dialing until it is up
+    zenoh_connect_timeout=15.0,
+    n_workers=11,
+    robot_model="unitree_go2",
+)
+
+
 # The viewer half alone, for the machine with the screen. Zenoh keeps the newest sample
 # per topic, so the drop sits in front of the wifi instead of rerun's lossless stream
 # replaying history. `topics` is one subscription per name: unlisted never crosses the link.
@@ -303,7 +386,9 @@ go2_viewer = autoconnect(
     vis_module(
         viewer_backend=global_config.viewer,
         rerun_config={
-            **_rerun_config(),
+            # the camera pane follows the encoder of the stack it dials: set
+            # GO2DDS__VIDEO_ENCODING here too when the robot is serving jpeg
+            **_rerun_config(camera=_dds_camera()),
             "topics": [
                 "tf",
                 "odometry",
@@ -316,7 +401,9 @@ go2_viewer = autoconnect(
                 "goal",
                 "way_point",
                 "goal_reached",
+                # h264 off the zenoh stacks, jpeg off GO2DDS: one of the two arrives
                 "video",
+                "image",
                 "camera_info",
             ],
             # the map's own rate is the lidar's, more than a screen or a bad link needs

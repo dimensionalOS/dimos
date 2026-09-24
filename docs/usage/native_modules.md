@@ -90,6 +90,7 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 | `shutdown_timeout` | `float`          | `10.0`        | Seconds to wait for SIGTERM before SIGKILL                  |
 | `log_format`       | `LogFormat`      | `TEXT`        | How to parse subprocess output (`TEXT` or `JSON`)           |
 | `cli_exclude`      | `frozenset[str]` | `frozenset()` | Config fields to skip when generating CLI args              |
+| `python_ports`     | `frozenset[str]` | `frozenset()` | Ports the Python wrapper publishes itself; not handed to the native process |
 
 ### Auto CLI arg generation
 
