@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Limits read out of a URDF, on a toy model and on a real one.
+"""Tests for reading joint limits out of a URDF.
 
-The inline model carries the three joint shapes that matter -- bounded,
-continuous, and one with no ``<limit>`` at all -- because no single real URDF
-has all three. The G1 in this repo then proves the reader against 29 joints
-somebody else wrote, with the numbers spelled out here rather than read back
-out of the same file the code just parsed.
+Two models are used. A small one written here covers the three kinds of joint
+that matter -- one with proper limits, one that spins freely, and one missing
+its limits altogether -- because no real robot has all three at once.
+
+Then the G1 humanoid included in this repo, to check the reader against 29
+joints nobody here wrote. Its expected numbers are typed out in the test
+rather than read back from the same file, so if the model changes the test
+fails instead of quietly agreeing with it.
 """
 
 from __future__ import annotations
@@ -56,9 +59,6 @@ TOY_URDF = """<?xml version="1.0"?>
   </joint>
 </robot>
 """
-
-
-# --- The toy model ----------------------------------------------------------
 
 
 def test_a_bounded_joint_gives_all_three_interfaces() -> None:
@@ -219,9 +219,6 @@ def test_a_non_numeric_limit_raises() -> None:
     broken = TOY_URDF.replace('velocity="3.0"', 'velocity="fast"')
     with pytest.raises(ValueError, match="velocity='fast' is not a number"):
         limits_from_urdf(broken, {"arm/j1": "bounded_joint"})
-
-
-# --- The real G1 in this repo ----------------------------------------------
 
 
 def test_the_in_repo_g1_urdf_is_there() -> None:

@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The helper arithmetic, including the parts the existing copies get wrong.
+"""Tests for the shared maths helpers.
 
-The SE(2) pair is tested as a pair: integrating a twist and differentiating the
-result has to give the twist back, and where it does not, the discrepancy is
-asserted exactly rather than hidden under a tolerance.
+The two position helpers are tested against each other: work out where a robot
+ends up, then work backwards from that to how fast it was going, and the answer
+should be what you started with. Where it cannot be exactly that, the test says
+by how much and why, rather than hiding it behind a loose tolerance.
 
-``await_state`` is tested on an injected clock, so a one-second timeout costs
-microseconds and nothing here ever sleeps for real.
+``await_state`` is given a fake clock, so a test of a one-second timeout takes
+microseconds and nothing here ever waits for real.
 """
 
 from __future__ import annotations
@@ -54,9 +55,6 @@ class FakeTime:
         self.now += seconds
 
 
-# --- wrap_to_pi -------------------------------------------------------------
-
-
 def test_wrap_keeps_the_positive_end_of_the_interval() -> None:
     # (-pi, pi], so both ends of the same heading land on +pi and a yaw
     # sitting behind the robot does not flip sign every sample.
@@ -79,9 +77,6 @@ def test_wrap_keeps_the_positive_end_of_the_interval() -> None:
 def test_wrap_folds_any_angle_into_the_interval(angle: float, expected: float) -> None:
     assert wrap_to_pi(angle) == pytest.approx(expected, abs=1e-12)
     assert -math.pi < wrap_to_pi(angle) <= math.pi
-
-
-# --- integrate_planar_twist -------------------------------------------------
 
 
 def test_a_still_base_does_not_move() -> None:
@@ -130,9 +125,6 @@ def test_a_non_positive_dt_leaves_the_pose_alone(dt: float) -> None:
     # and the pose should stand still rather than integrate in reverse.
     pose = (1.0, 2.0, 0.5)
     assert integrate_planar_twist(*pose, 9.0, 9.0, 9.0, dt) == pose
-
-
-# --- se2_body_twist ---------------------------------------------------------
 
 
 def test_differentiating_a_pure_rotation() -> None:
@@ -242,9 +234,6 @@ def test_the_round_trip_is_tight_at_a_real_state_rate() -> None:
     assert se2_body_twist(pose, moved, 0.02, wrap=False) == pytest.approx((1.0, 0.0, 2.0), abs=2e-2)
 
 
-# --- pd_torque --------------------------------------------------------------
-
-
 def test_pd_torque_sums_its_three_terms() -> None:
     # 10 * (1.0 - 0.5) + 3 * (2.0 - 0.5) + 1.0
     assert pd_torque(1.0, 2.0, 0.5, 0.5, 10.0, 3.0, 1.0) == pytest.approx(10.5)
@@ -266,9 +255,6 @@ def test_a_joint_already_on_target_produces_only_the_feedforward() -> None:
 
 def test_zero_gains_leave_the_feedforward_alone() -> None:
     assert pd_torque(1.0, 2.0, 0.0, 0.0, 0.0, 0.0, -4.0) == pytest.approx(-4.0)
-
-
-# --- await_state ------------------------------------------------------------
 
 
 def test_a_condition_already_true_costs_nothing() -> None:

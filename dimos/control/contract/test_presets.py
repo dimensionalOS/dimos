@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The presets are sugar and nothing more.
+"""Tests that the presets are a shortcut and nothing more.
 
-The first three tests are the whole argument: each preset rebuilds, field for
-field, the description ``conftest.py`` writes out by hand. If a preset ever
-starts deciding something on its own, one of them breaks.
+The first three tests are the important ones. ``conftest.py`` writes out three
+descriptions by hand -- an arm, a humanoid body, a base -- and each test
+rebuilds one through its preset and checks they match exactly. If a preset
+ever starts making a decision of its own, one of these fails.
 
-Everything after that covers what the presets add on top of the fixtures: the
-gripper, gain broadcasting, the six-DOF base, and the guarantee that nothing
-invalid can leave one.
+The rest cover what the presets add on top: grippers, spreading one gain
+across every joint, bases that can only move some ways, and the promise that
+an invalid description can never come out of one.
 """
 
 from __future__ import annotations
@@ -143,9 +144,6 @@ def preset_chassis() -> ControlDescription:
     )
 
 
-# --- The presets are only sugar --------------------------------------------
-
-
 def test_manipulator_preset_rebuilds_the_hand_written_arm(xarm: ControlDescription) -> None:
     assert preset_arm() == xarm
 
@@ -172,9 +170,6 @@ def test_every_preset_output_survives_a_pickle(build) -> None:
     # Descriptions cross the RPC boundary to reach the coordinator.
     described = build()
     assert pickle.loads(pickle.dumps(described)) == described
-
-
-# --- Manipulator ------------------------------------------------------------
 
 
 def test_group_names_come_from_the_interfaces_they_drive() -> None:
@@ -278,9 +273,6 @@ def test_an_interface_with_no_preset_unit_raises() -> None:
         manipulator_description(
             "arm", ARM_JOINTS, limits=ARM_LIMITS, state=(POSITION, "temperature")
         )
-
-
-# --- PD joints --------------------------------------------------------------
 
 
 def test_a_float_gain_broadcasts_to_every_joint() -> None:
@@ -393,9 +385,6 @@ def test_imu_meta_joins_the_caller_meta() -> None:
 def test_a_pd_body_with_no_joints_raises() -> None:
     with pytest.raises(ValueError, match="no joints"):
         pd_joint_description("g1", (), limits={}, kp=1.0, kd=1.0, damp_kd=1.0)
-
-
-# --- Twist base -------------------------------------------------------------
 
 
 def test_a_six_dof_base_declares_the_full_pose() -> None:

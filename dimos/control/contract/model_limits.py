@@ -12,21 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Joint limits read out of a URDF.
+"""Read joint limits out of a URDF robot model.
 
-Every preset wants a limits table and nobody should be typing one in by hand:
-the numbers already exist in the model the planner and the sim both load, and a
-table that disagrees with the model is a table that stops a real arm halfway
-through a motion.
+A URDF describes a robot: its parts, and for each joint how far it may turn,
+how fast, and how hard it may push. This pulls those numbers out so nobody has
+to copy them by hand, where they could drift out of step with the model and
+let a joint be driven further than the real robot can go.
 
-Parsing is ``xml.etree`` and nothing else. Pulling in pinocchio or mujoco to
-read six numbers would put a heavyweight import behind every description, and
-the contract package is meant to stay importable from anywhere. MJCF comes with
-the sim work, not here.
-
-Nothing is inferred and nothing is skipped. A joint in the table that the model
-does not have, or that the model gives no limits for, raises rather than
-quietly returning a smaller table than the caller asked for.
+Anything the model does not answer clearly is an error here, never a guess. A
+limits table that is quietly wrong is more dangerous than one that refuses to
+load.
 """
 
 from __future__ import annotations
@@ -76,46 +71,48 @@ def limits_from_urdf(
     velocity: bool = True,
     effort: bool = True,
 ) -> dict[str, Limits]:
-    """Limits for the mapped joints, keyed by canonical control key.
+    """Read the limits for a set of joints out of a URDF.
 
-    ``joints`` maps the canonical joint name onto the name the URDF uses, which
-    is normally where the two naming schemes are reconciled::
+    A URDF names its joints its own way, so ``joints`` maps the name you want
+    to use onto the name the model uses::
 
-        limits_from_urdf(G1_URDF, {f"g1/{j}": f"{j}_joint" for j in G1_JOINTS})
+        limits_from_urdf(G1_URDF, {"g1/left_knee": "left_knee_joint"})
 
-    A URDF ``<limit>`` gives one position range and a symmetric bound on each of
-    velocity and effort, so that is what comes back::
+    You get up to three limits back per joint::
 
-        "<joint>/position"  ->  Limits(lower, upper, policy)
-        "<joint>/velocity"  ->  Limits(-velocity, velocity, policy)
-        "<joint>/effort"    ->  Limits(-effort, effort, policy)
+        "g1/left_knee/position"  ->  how far it may turn, in radians
+        "g1/left_knee/velocity"  ->  how fast it may turn, in rad/s
+        "g1/left_knee/effort"    ->  how hard it may push, in Nm
 
-    A continuous joint turns without end and has no position range. Under
-    REJECT it gets ``Limits(None, None)``, which is an honest "unbounded"; under
-    CLAMP there is nothing to clamp to, so it raises rather than inventing a
-    bound the validator would have to reject anyway.
+    Position has a separate lower and upper bound, which are often not
+    symmetric. Velocity and effort have one figure each, applied the same in
+    both directions.
 
-    That is the *only* joint allowed to come back unbounded. A revolute joint
-    missing its bounds, or a ``<limit>`` carrying one side of a range and not
-    the other, is a broken model: reading either as unbounded would hand back a
-    table that passes validation and then accepts any position at all.
+    A joint that spins freely, with no end stops, has no position range and
+    comes back with both bounds unset. It is the only joint allowed to do so.
+    Any other joint missing a bound means the model is broken and raises,
+    because treating it as unlimited would let it be driven anywhere.
 
     Args:
-        urdf: A path to a URDF, or the XML text itself.
-        joints: Canonical ``"<source>/<resource>"`` name -> URDF joint name.
-        policy: Limit policy for every key produced.
-        position: Whether to emit position limits.
-        velocity: Whether to emit velocity limits.
-        effort: Whether to emit effort limits.
+        urdf: Path to a URDF file, or the XML text itself.
+        joints: The name you want to use -> the name used in the URDF. Your
+            names look like ``"<source>/<resource>"``, e.g. ``"g1/left_knee"``.
+        policy: What should happen to a command that falls outside these
+            limits. REJECT turns it away; CLAMP pulls it back to the nearest
+            bound. CLAMP needs both bounds, so it cannot be used on a joint
+            that spins freely.
+        position: Include the position limits.
+        velocity: Include the velocity limits.
+        effort: Include the effort limits.
 
     Returns:
-        Limits keyed by full ``"<source>/<resource>/<interface>"`` key.
+        The limits, keyed by ``"<source>/<resource>/<interface>"``.
 
     Raises:
-        ValueError: On a mapped joint the URDF does not have, a mapped joint
-            with no ``<limit>``, a missing bound the caller asked for, a
-            non-continuous joint with no position range, a half-written
-            position range, or a continuous joint under CLAMP.
+        ValueError: If a joint is not in the URDF, has no limits at all, is
+            missing one you asked for, is missing a position bound without
+            being a freely spinning joint, or spins freely while you asked
+            for CLAMP.
     """
     root = _parse(urdf)
     by_name: dict[str, ET.Element] = {}
