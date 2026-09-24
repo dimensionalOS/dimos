@@ -802,7 +802,7 @@ def test_heartbeat_is_accepted(xarm: ControlDescription) -> None:
 
 
 def test_other_sources_are_ignored_not_rejected(xarm: ControlDescription) -> None:
-    """One coordinator frame carries every source's keys on the shared stream (D15)."""
+    """One instruction can carry commands for several robots at once."""
     result = validate_command(
         xarm,
         command(
@@ -859,7 +859,8 @@ def test_command_rejects_out_of_limit_under_reject_policy(xarm: ControlDescripti
 
 
 def test_clamp_policy_clamps_and_records_the_key(g1: ControlDescription) -> None:
-    """A balance policy overshooting by a hair is clamped, not stalled (D13)."""
+    """A robot balancing itself, overshooting by a hair, is pulled back rather
+    than stopped dead."""
     result = validate_command(
         g1, command("c", {"g1/joint1/position": 99.0}), current_epoch=1, last_sequence=None
     )
@@ -893,7 +894,7 @@ def test_a_rejected_batch_applies_nothing(xarm: ControlDescription) -> None:
 def test_mode_group_velocity_and_position_on_one_arm_is_rejected(
     xarm: ControlDescription,
 ) -> None:
-    """The case that starves tasks today: j1 in servo while j5 runs velocity (D10)."""
+    """One joint told where to go while another is told how fast to move."""
     result = validate_command(
         xarm,
         command("c", {"arm/joint1/position": 0.1, "arm/joint5/velocity": 0.2}),
@@ -962,10 +963,10 @@ def test_the_whole_body_drives_five_interfaces_at_once(g1: ControlDescription) -
 
 
 def test_a_base_may_be_six_dof() -> None:
-    """A drone declares the full twist; the vocabulary is the same one.
+    """Something that flies uses all six axes, with the same names.
 
-    Nothing about a base is planar by construction -- a ground base simply
-    declares the vx/vy/wz subset, and a free-flyer declares all six.
+    Nothing forces a base to stay on the floor. One that drives declares the
+    few axes it has; one that flies declares all six.
     """
     linear = (VX, VY, VZ)
     angular = (WX, WY, WZ)

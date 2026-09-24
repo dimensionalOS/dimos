@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Three descriptions shaped like real hardware, for the contract tests.
+"""Three example robots for the tests, written out by hand.
 
-Hand-written on purpose. These are the shapes PR 3a turns into presets, so
-keeping them explicit here is what proves the preset functions are only sugar.
+  arm      a 7-joint arm with a gripper. It can be told where to go or how
+           fast to move, but not both at once, and it cannot measure how fast
+           its joints are turning
+  g1       a humanoid body whose joints are held in place by stiffness and
+           damping
+  chassis  a base that drives around on the floor, in any direction
 
-  arm      an xArm: 7 joints plus a gripper, position and velocity as two
-           exclusive groups, gripper on its own, and no velocity state at all
-  g1       a whole body: PD joints in one group, clamped limits, seeded gains
-  chassis  a holonomic base: vx/vy/wz commanded, pose and twist reported
+They are written out in full rather than built by a shortcut, so that tests
+elsewhere can check the shortcuts produce exactly these.
 """
 
 from __future__ import annotations
@@ -138,7 +140,7 @@ def g1() -> ControlDescription:
         source="g1",
         resources=joints,
         # Clamp, not reject: a balance policy overshooting by a milliradian
-        # must not stall the whole body (D13).
+        # must not stop the whole robot dead.
         limits={
             make_key("g1", j, POSITION): Limits(-2.0, 2.0, LimitPolicy.CLAMP) for j in G1_JOINTS
         },
@@ -150,7 +152,7 @@ def g1() -> ControlDescription:
             ),
         ),
         # 0.0 is not "no command" here: the firmware reads it as VEL_STOP, so
-        # an omitted velocity has to arrive as None instead (D11).
+        # an omitted speed has to arrive as nothing at all instead.
         omission={make_key("g1", j, VELOCITY): Omission.UNSET for j in G1_JOINTS},
         initial_values={make_key("g1", j, KP): 60.0 for j in G1_JOINTS}
         | {make_key("g1", j, KD): 1.5 for j in G1_JOINTS},

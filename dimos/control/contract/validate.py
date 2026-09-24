@@ -12,22 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Validators for descriptions, state frames and command batches.
+"""Checks that a robot's description, readings and commands all make sense.
 
-Three entry points, with deliberately different failure styles:
+Three checks, which fail in three different ways because they are used at
+three different times:
 
-``validate_description`` runs once at startup and reports *every* problem at
-once, because a vendor fixing one typo at a time is a bad afternoon.
+``validate_description`` runs once when a robot starts up, and reports
+everything wrong at once rather than the first thing, so a bad description can
+be fixed in one go instead of one typo per attempt.
 
-``validate_state`` raises, because an unusable state frame is a bug in the
-source, not a routine event.
+``validate_state`` checks a reading from the robot, and raises. A reading that
+does not match what the robot said it would send is a fault in the robot's
+driver, not something to expect.
 
-``validate_command`` returns ``CommandBatch | Rejected`` and never raises, because
-it runs every cycle and a rejected batch is an ordinary thing that gets counted
-and logged, not an exception to unwind.
+``validate_command`` checks an instruction being sent to the robot, and
+returns a result instead of raising. It runs on every command, and a refused
+command is an ordinary event to be counted, not an error to unwind.
 
-A batch is all-or-nothing. On any rejection nothing is applied -- there is no
-path that writes half a frame.
+An instruction is all or nothing. If any part of it is refused, none of it is
+applied -- the robot is never left half-told.
 """
 
 from __future__ import annotations
@@ -50,10 +53,10 @@ from dimos.msgs.control_msgs.ControlValues import ControlValues
 
 
 class DescriptionError(Exception):
-    """A description that cannot be used, carrying every reason at once.
+    """A description that cannot be used, listing everything wrong with it.
 
-    ``args`` holds the error list itself rather than a rendered string, so the
-    exception survives the pickling that carries it back over RPC.
+    Every problem at once rather than the first one, so a bad description can
+    be fixed in one pass.
     """
 
     def __init__(self, errors: list[str]) -> None:
@@ -65,7 +68,7 @@ class DescriptionError(Exception):
 
 
 class FrameRejectedError(Exception):
-    """A state frame that does not match the description it claims to describe."""
+    """A reading from a robot that does not match what the robot said it sends."""
 
     def __init__(self, reason: str, detail: str) -> None:
         self.reason = reason
@@ -78,7 +81,8 @@ class FrameRejectedError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Rejected:
-    """Why a command batch was not applied. Returned, never raised."""
+    """Why an instruction was refused. Returned rather than raised, because a
+    refusal is an ordinary event to count, not an error to unwind."""
 
     reason: str
     detail: str
@@ -86,10 +90,14 @@ class Rejected:
 
 @dataclass(frozen=True, slots=True)
 class CommandBatch:
-    """An accepted command batch, ready to be merged into a retained frame.
+    """An accepted instruction, ready to send to the robot.
 
-    ``clamped`` names the keys a CLAMP-policy limit moved, so the caller can
-    count them without diffing against what it sent.
+    Attributes:
+        values: The numbers to send, by name.
+        active_groups: Which ways of driving this puts into use.
+        clamped: Any values that were outside the limits and got pulled back,
+            so the caller can count them without comparing against what it
+            sent.
     """
 
     values: dict[str, float]
@@ -102,10 +110,15 @@ def _finite(value: float) -> bool:
 
 
 def validate_description(desc: ControlDescription) -> None:
-    """Check a description against every contract rule.
+    """Check a robot's description for anything that would not work.
+
+    Run once when the robot starts up.
+
+    Args:
+        desc: The description to check.
 
     Raises:
-        DescriptionError: Carrying one message per problem found.
+        DescriptionError: Listing every problem found, not just the first.
     """
     errors: list[str] = []
     state_keys = set(desc.state_keys())
@@ -339,13 +352,21 @@ def _first_cycle(graph: Mapping[str, tuple[str, ...]]) -> list[str]:
 
 
 def validate_state(desc: ControlDescription, frame: ControlValues) -> dict[str, float]:
-    """Check a state frame against ``desc`` and return it as a mapping.
+    """Check a reading from a robot, and return it as a lookup by name.
 
-    A state frame is a full report, not a sparse one: every declared state key
-    must be present exactly once and nothing else may be.
+    A reading is a full report, not a partial one. Everything the robot said it
+    would send must be there exactly once, and nothing else may be.
+
+    Args:
+        desc: What the robot said it would send.
+        frame: The reading that arrived.
+
+    Returns:
+        The reading, as a value per name.
 
     Raises:
-        FrameRejectedError: On a foreign source, or any missing, unknown or duplicate key.
+        FrameRejectedError: If the reading is from a different robot, or leaves
+            something out, adds something unexpected, or repeats a name.
     """
     if len(frame.interface_names) != len(frame.values):
         raise FrameRejectedError(
@@ -385,23 +406,27 @@ def validate_command(
     current_epoch: int,
     last_sequence: int | None,
 ) -> CommandBatch | Rejected:
-    """Check a command frame and return the batch to apply, or why not.
+    """Check an instruction for a robot, and return what to send, or why not.
 
-    Only keys prefixed with this source are considered. A coordinator frame
-    carries every source's commands on the shared stream, so another source's
-    keys are ignored rather than rejected (D15).
+    Only names belonging to this robot are looked at. One instruction can carry
+    commands for several robots at once, so another robot's names are skipped
+    rather than treated as a mistake.
 
-    An empty result is valid and is the heartbeat: it still advances the
-    sequence and proves the coordinator is alive.
+    An instruction that carries nothing is valid. It is how the sender proves
+    it is still alive without changing anything.
 
     Args:
-        desc: The description this source published for ``current_epoch``.
-        frame: The command frame to judge.
-        current_epoch: The epoch the source is currently armed under.
-        last_sequence: The last sequence accepted *within* ``current_epoch``, or
-            ``None`` to accept any sequence. Sequences are only comparable
-            inside one epoch, so pass ``None`` on the first frame of a new
-            epoch rather than carrying the previous epoch's counter across.
+        desc: What this robot said it accepts.
+        frame: The instruction that arrived.
+        current_epoch: Which run of the robot this instruction must belong to.
+            One from an older run is refused, since it was meant for a robot
+            that has since been restarted or re-described.
+        last_sequence: The last instruction number accepted in this run, so
+            anything older or repeated can be refused. Pass ``None`` for the
+            first instruction of a run.
+
+    Returns:
+        The values to send, or the reason they were refused.
     """
     # ControlValues enforces equal lengths on construction, so this only fires
     # for a frame built by hand or mutated after the fact. It is still checked
@@ -475,7 +500,7 @@ def validate_command(
 def _resolve_groups(
     desc: ControlDescription, values: dict[str, float]
 ) -> frozenset[str] | Rejected:
-    """Which mode groups a set of commanded keys puts into effect (D10)."""
+    """Work out which ways of driving a set of commands puts into use."""
     by_resource: dict[str, set[str]] = {}
     for key in values:
         _, resource, iface = key.split("/")

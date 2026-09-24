@@ -86,7 +86,7 @@ def test_unit_of(xarm: ControlDescription) -> None:
 
 
 def test_gripper_units_are_per_gripper(xarm: ControlDescription) -> None:
-    """Metres here, but a normalized gripper is equally declarable (D19)."""
+    """Metres here, but a gripper measured 0 to 1 is just as declarable."""
     normalized = dataclasses.replace(
         xarm.resource("gripper"),  # type: ignore[arg-type]
         units={POSITION: Unit.NORMALIZED},
@@ -147,7 +147,7 @@ def test_explicit_write_rate_is_used(chassis: ControlDescription) -> None:
 
 
 def test_write_on_receipt_is_distinct_from_none() -> None:
-    """The D16 escape hatch is its own sentinel, so None never means two things."""
+    """ "Only when told" is its own value, so None never means two things."""
     timing = Timing(
         state_rate_hz=100.0,
         stale_timeout_s=0.05,

@@ -12,23 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""What one control source can do, as plain data.
+"""What a robot can do, written down as plain data.
 
-``ControlDescription`` is the whole vendor-facing surface: the resources a
-source owns, the interfaces on each, their units and limits, which interfaces
-may be driven together, what happens to an omitted value, and how the thing
-stops. The coordinator reads it to arbitrate; ``ConnectedHardware`` reads it to
-assemble frames. Neither has vendor-specific code, because everything that used
-to be a subclass is a field here.
+Before anything will talk to a robot it has to know what the robot is: which
+parts it has, what each part can be told to do and report back, in what units,
+within what limits, which things can be driven at the same time, and how it
+stops. ``ControlDescription`` holds all of that.
 
-A connection module's ``describe_control()`` RPC returns ``list[ControlDescription]``
--- one per ``ConnectedHardware`` it owns, so an R1Pro module returns two (upper
-body and chassis) on one port pair (D15). That RPC lives on the module; this
-package is pure data and knows nothing about transport.
+It is only data. Nothing here talks to hardware or over the network, and
+nothing checks itself as you build it. Build it however you like, then call
+``validate_description``, which reports everything wrong with it at once.
 
-Everything here is frozen, pickles, and maps onto a Rust struct or enum without
-cleverness. Nothing validates itself on construction -- build freely, then call
-``validate_description``, which reports every problem at once.
+A robot with two separate halves, such as a body and the wheels under it, has
+one of these for each.
 """
 
 from __future__ import annotations
@@ -44,13 +40,11 @@ _MAPPING_FIELDS: tuple[str, ...] = ()
 
 
 def _normalize_mappings(instance: object, names: tuple[str, ...]) -> None:
-    """Copy each named Mapping field into a plain dict, in place.
+    """Store a plain copy of each named mapping field.
 
-    The fields are typed ``Mapping`` so a caller may pass any mapping, but what
-    is stored is always a dict: these objects are pickled across the RPC
-    boundary, and a ``MappingProxyType`` cannot be pickled. Copying also means a
-    caller mutating the mapping it handed in cannot reach inside a frozen
-    description afterwards.
+    Callers may hand in any kind of mapping, but only a plain dict can be sent
+    between processes. Copying also means a caller changing their own mapping
+    afterwards cannot reach inside a description that is meant to be fixed.
     """
     for name in names:
         current = getattr(instance, name)
@@ -59,11 +53,12 @@ def _normalize_mappings(instance: object, names: tuple[str, ...]) -> None:
 
 
 class ResourceKind(Enum):
-    """What a resource is, in the only three ways that change how it is used.
+    """What kind of part this is.
 
-    A gripper is a JOINT: it has a position a task drives, and what makes it a
-    gripper -- its unit, metres or normalized -- is declared in ``units``, not
-    here. An IMU is a SENSOR. Behaviour otherwise comes from the other fields.
+    Only three kinds, because only three behave differently. A gripper counts
+    as a JOINT: it has a position something drives, and what makes it a gripper
+    is the unit it measures in, not its kind. An orientation sensor is a
+    SENSOR.
     """
 
     JOINT = "joint"
@@ -73,11 +68,20 @@ class ResourceKind(Enum):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Resource:
-    """One addressable thing on a source, and the interfaces it exposes.
+    """One part of a robot, and the numbers it accepts and reports.
 
-    ``state_interfaces`` and ``command_interfaces`` deliberately differ: an IMU
-    is state-only, a gripper is often command-only ``position``, and an xArm
-    reports no joint velocity at all rather than publishing fabricated zeros.
+    What it reports and what it accepts are listed separately, because they
+    are usually different. A sensor only reports. Some joints accept a
+    position but cannot measure how fast they are turning, and those leave
+    velocity out of what they report rather than sending zeros that would look
+    like real readings.
+
+    Attributes:
+        name: What this part is called, e.g. "joint1".
+        kind: Whether it is a joint, a base, or a sensor.
+        state_interfaces: What it can tell you about itself.
+        command_interfaces: What it can be told to do.
+        units: The unit of each of those.
     """
 
     name: str
@@ -91,7 +95,12 @@ class Resource:
 
 
 class LimitPolicy(Enum):
-    """What a batch outside a limit does. Per interface, default reject (D13)."""
+    """What to do with a command that falls outside the limits.
+
+    REJECT turns the whole command away. CLAMP pulls the value back to the
+    nearest limit and carries on, which suits a robot balancing itself, where
+    overshooting by a fraction should not stop it dead.
+    """
 
     REJECT = "reject"
     CLAMP = "clamp"
@@ -99,7 +108,10 @@ class LimitPolicy(Enum):
 
 @dataclass(frozen=True, slots=True)
 class Limits:
-    """Closed range for one key. ``None`` means unbounded on that side."""
+    """How far one number is allowed to go.
+
+    ``None`` on either side means no limit in that direction.
+    """
 
     lo: float | None = None
     hi: float | None = None
@@ -108,11 +120,20 @@ class Limits:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ModeGroup:
-    """A set of interfaces over a set of resources that may be driven together.
+    """A set of things that can be driven at the same time.
 
-    This replaces ``ControlMode``. Two exclusive groups over overlapping
-    resources cannot be active at once, which is what stops a velocity task and
-    a trajectory task from starving each other on one arm (D10).
+    An arm can usually be told where to go, or how fast to move, but not both
+    at once -- the two instructions would contradict each other. Each way of
+    driving it is one of these groups, and marking them exclusive means only
+    one can be in use at a time.
+
+    Attributes:
+        name: What this way of driving is called, e.g. "position".
+        resources: The parts it covers.
+        interfaces: What it drives on them.
+        exclusive: Whether using this rules out the other groups covering the
+            same parts. A gripper is not exclusive, so it stays usable
+            whichever way the arm is being driven.
     """
 
     name: str
@@ -122,12 +143,13 @@ class ModeGroup:
 
 
 class Omission(Enum):
-    """What a frame means when it does not mention a command key.
+    """What it means when an instruction does not mention something.
 
-    ``UNSET`` is opt-in per key and is the only value that lets ``None`` reach a
-    vendor's ``write()``. It exists because 0.0 is not "no command" everywhere:
-    R1Pro reads ``dq=0`` as "use the tracking speed" and G1 encodes no-command as
-    its ``VEL_STOP`` sentinel (D11).
+    RETAIN_LAST keeps whatever it was last told. ZERO sets it to zero. UNSET
+    passes nothing through at all, for hardware that reads a commanded zero as
+    a real instruction rather than as silence -- on some robots a commanded
+    speed of zero means "use your own default speed", so sending zero would be
+    saying something quite different from saying nothing.
     """
 
     RETAIN_LAST = "retain_last"
@@ -148,7 +170,7 @@ FALLBACK_OMISSION = Omission.ZERO
 
 
 class SafeStopKind(Enum):
-    """How a source comes to rest when command authority is withdrawn."""
+    """How a robot comes to rest when whatever was driving it lets go."""
 
     HOLD = "hold"
     ZERO = "zero"
@@ -159,7 +181,15 @@ class SafeStopKind(Enum):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SafeStop:
-    """Safe-stop policy. ``stable_state`` says in words where the robot ends up."""
+    """How the robot stops, and where that leaves it.
+
+    Attributes:
+        kind: The way it stops.
+        kd: For DAMP, how strongly to resist movement as it goes slack.
+        ramp_s: For ZERO_RAMP, how many seconds to slow down over.
+        stable_state: Where this leaves it, in words, e.g. "rolls to a stop".
+            For whoever has to decide whether it is safe to stand nearby.
+    """
 
     kind: SafeStopKind
     kd: Mapping[str, float] | None = None
@@ -171,7 +201,7 @@ class SafeStop:
 
 
 class EstopKind(Enum):
-    """How a source drops authority immediately."""
+    """What the robot does when stopped in an emergency."""
 
     DISABLE = "disable"
     DAMP = "damp"
@@ -181,7 +211,7 @@ class EstopKind(Enum):
 
 
 class EstopRecovery(Enum):
-    """What it takes to leave a latched estop."""
+    """What it takes to get going again after an emergency stop."""
 
     CLEAR = "clear"
     PREPARE_ARM_REQUIRED = "prepare_arm_required"
@@ -189,10 +219,16 @@ class EstopRecovery(Enum):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Estop:
-    """Estop policy. Recovery is declared because it differs per vendor.
+    """What an emergency stop does to this robot, and how to recover.
 
-    A Go2 ``Damp`` drops the dog on the floor and a Damiao recovery recalibrates
-    the gripper, so a caller cannot assume clearing is free.
+    Recovery is stated because it is not free and it differs. Some robots start
+    again at the touch of a button; others end up on the floor, or have to be
+    recalibrated before they will move.
+
+    Attributes:
+        kind: What the emergency stop does.
+        recovery: What it takes to get going again.
+        stable_state: Where the stop leaves it, in words, e.g. "limp".
     """
 
     kind: EstopKind
@@ -201,31 +237,41 @@ class Estop:
 
 
 class ActivationPolicy(Enum):
-    """Whether arming needs an operator step. Replaces ``auto_enable``."""
+    """Whether a person has to confirm before the robot will move."""
 
     DIRECT = "direct"
     OPERATOR_CONFIRMED = "operator_confirmed"
 
 
 class WriteMode(Enum):
-    """Non-numeric values for ``Timing.write_rate_hz``."""
+    """The one non-numeric setting ``Timing.write_rate_hz`` accepts."""
 
     ON_RECEIPT = "on_receipt"
 
 
-#: Write once per accepted command frame instead of on a clock. The D16 escape
-#: hatch for SDKs that replan per message. Distinct from ``None``, which means
-#: "re-emit the retained frame at ``state_rate_hz``", so neither value is
-#: overloaded.
+#: Send an instruction only when a new one arrives, rather than repeating the
+#: last one on a clock. For robots that re-plan every time they are told
+#: something, where repeating would keep restarting the plan.
 WRITE_ON_RECEIPT = WriteMode.ON_RECEIPT
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Timing:
-    """Rates and deadlines, all in seconds or hertz.
+    """How often the robot is expected to speak, and how long to wait for it.
 
-    ``write_rate_hz`` of ``None`` means "same as ``state_rate_hz``"; the sentinel
-    ``WRITE_ON_RECEIPT`` means "only when a frame arrives".
+    Attributes:
+        state_rate_hz: How many times a second it reports.
+        stale_timeout_s: How long without a report before it counts as gone
+            quiet.
+        watchdog_timeout_s: How long without an instruction before it stops
+            itself.
+        hook_timeout_s: How long any one call into the robot's own software
+            may take before giving up.
+        prepare_arm_timeout_s: How long its start-up may take.
+        write_rate_hz: How often to repeat the last instruction. ``None``
+            means the same rate it reports at. ``WRITE_ON_RECEIPT`` means only
+            when a new instruction arrives, for robots that re-plan every time
+            they are told something.
     """
 
     state_rate_hz: float
@@ -246,10 +292,10 @@ class Timing:
 
 
 class ProcessLoss(Enum):
-    """What the hardware does if the commanding process dies.
+    """What the hardware does by itself if the program driving it dies.
 
-    ``UNKNOWN`` is the honest default and is what every audited physical device
-    is entitled to claim until someone runs the bench checklist (D23).
+    UNKNOWN is the honest default. No robot should claim better until somebody
+    has actually pulled the plug and watched what happens.
     """
 
     UNPROTECTED = "unprotected"
@@ -261,7 +307,8 @@ class ProcessLoss(Enum):
 
 
 class AvailableAfter(Enum):
-    """The lifecycle point at which a resource starts reporting real state."""
+    """When a part starts giving real readings: as soon as it is connected, or
+    only after the robot has been started up."""
 
     CONNECT = "connect"
     PREPARE_ARM = "prepare_arm"
@@ -269,7 +316,15 @@ class AvailableAfter(Enum):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ShutdownMotion:
-    """A pose to park at before de-energizing, for arms without brakes."""
+    """Where to put the robot before switching it off.
+
+    For an arm with no brakes, which would otherwise drop under its own weight.
+
+    Attributes:
+        pose: Where each joint should be, in its own unit.
+        tolerance: How close is close enough.
+        timeout_s: How long to allow for getting there.
+    """
 
     pose: Mapping[str, float]
     tolerance: float
@@ -281,11 +336,12 @@ class ShutdownMotion:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ControlDescription:
-    """Everything the coordinator and ConnectedHardware need about one source.
+    """Everything anyone needs to know about one robot in order to drive it.
 
-    Immutable per epoch. A disarmed re-describe bumps ``epoch``, which is how a
-    Go2 switching into rage mode publishes a different velocity envelope without
-    anyone mutating a live description.
+    This never changes while the robot is running. If something about it does
+    change -- a different speed limit, say -- the robot is stopped, a fresh
+    description is published, and ``epoch`` goes up to mark it as a new one.
+    Nothing edits a description in place.
     """
 
     source: str
@@ -346,10 +402,10 @@ class ControlDescription:
         )
 
     def joint_names(self) -> tuple[str, ...]:
-        """``"<source>/<resource>"`` for every joint, in order.
+        """Name every joint, in order.
 
-        A base is claimed as a resource carrying its twist, never as a set of
-        virtual joints (D3), and a sensor is never claimed at all.
+        Only joints. A base is one thing that is told how fast to move, not a
+        set of pretend joints, and a sensor is never driven at all.
         """
         return tuple(
             f"{self.source}/{res.name}" for res in self.resources if res.kind is ResourceKind.JOINT

@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Ordering and freshness, with no clock of their own.
+"""Telling which message is newer, and when a robot has gone quiet.
 
-Every function here takes the current time as an argument. Nothing calls
-``time.monotonic()`` inside this package, which is what makes staleness
-testable without sleeping and portable to Rust without a runtime.
+Messages arrive out of order and get repeated, so each carries two counters: an
+epoch, which changes whenever the robot is restarted or re-described, and a
+sequence, which counts up within one epoch. A message from a later epoch is
+always newer. Within one epoch, the higher sequence wins.
 
-Sequences are only comparable inside one epoch. A new epoch restarts them, so a
-frame from a newer epoch is newer whatever its sequence says.
+Nothing here reads a clock. The current time is passed in, so a test can decide
+a robot has gone quiet without waiting for it to happen.
 """
 
 from __future__ import annotations
@@ -28,15 +29,19 @@ from dataclasses import dataclass
 
 
 def is_newer(epoch: int, sequence: int, last: tuple[int, int] | None) -> bool:
-    """Whether ``(epoch, sequence)`` supersedes ``last``.
+    """Whether this message is newer than the last one accepted.
 
-    A higher epoch always wins and a lower one never does; within one epoch the
-    sequence must be strictly greater, so a replayed or duplicated frame loses.
+    A message from a later run of the robot is always newer. Within one run,
+    its number has to be strictly higher, so a repeated or delayed message
+    loses.
 
     Args:
-        epoch: Epoch of the frame being judged.
-        sequence: Sequence of the frame being judged.
-        last: The last accepted ``(epoch, sequence)``, or ``None`` if none yet.
+        epoch: Which run of the robot this message belongs to.
+        sequence: Its number within that run.
+        last: The run and number last accepted, or ``None`` if none yet.
+
+    Returns:
+        True if this message should be used.
     """
     if last is None:
         return True
@@ -48,33 +53,36 @@ def is_newer(epoch: int, sequence: int, last: tuple[int, int] | None) -> bool:
 
 @dataclass(slots=True)
 class Freshness:
-    """When a source was last heard from.
+    """When a robot was last heard from.
 
-    Deliberately the one mutable type in this package: it is updated on every
-    state sample, at up to 500 Hz, and making the caller rebind a frozen value
-    that often buys nothing. It still owns no clock -- receipts come from the
-    caller's ``time.monotonic()``.
+    Updated on every reading, up to 500 times a second, so unlike everything
+    else here it is changed in place rather than replaced. It still holds no
+    clock of its own; the time is passed in.
     """
 
     last_receipt: float | None = None
 
     def mark(self, now: float) -> None:
-        """Record that a frame arrived at monotonic time ``now``."""
+        """Note that a reading arrived, at time ``now`` in seconds."""
         self.last_receipt = now
 
     def is_stale(self, now: float, timeout_s: float) -> bool:
-        """Whether nothing has arrived within ``timeout_s`` of ``now``.
+        """Whether the robot has gone quiet.
 
-        A source that has never reported is stale. Landing exactly on the
-        timeout is not: the comparison is strictly greater, so a source running
-        precisely at its declared rate does not flap.
+        A robot that has never reported counts as quiet. One that last reported
+        exactly ``timeout_s`` ago does not, so a robot running at precisely its
+        stated rate does not flicker in and out.
+
+        Args:
+            now: The current time, in seconds.
+            timeout_s: How long without a reading counts as quiet.
         """
         if self.last_receipt is None:
             return True
         return (now - self.last_receipt) > timeout_s
 
     def age(self, now: float) -> float | None:
-        """Seconds since the last receipt, or ``None`` if nothing has arrived."""
+        """Seconds since the last reading, or ``None`` if there has been none."""
         if self.last_receipt is None:
             return None
         return now - self.last_receipt
