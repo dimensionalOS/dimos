@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The arithmetic a vendor hook needs and should not be writing again.
+"""Shared maths for robot drivers.
 
-Everything here is pure, is called from a vendor's own hooks, and is unknown to
-``ConnectedHardware``. The reason these live together is that more than one vendor
-needs them, and the vendors that need each one are not the same set.
-SE(2) integration is shared by a chassis and a mock, PD emulation by a simulator alone.
+Four small things that several drivers each need:
 
+  - work out where a robot has got to, from how fast it has been going
+  - work out how fast it was going, from where it has got to
+  - how hard to push a joint to get it where it should be
+  - wait for something to happen, but give up if it takes too long
+
+None of it holds state or talks to hardware, so any driver can use any of it.
 """
 
 from __future__ import annotations
@@ -29,11 +32,20 @@ import time
 
 
 def wrap_to_pi(angle: float) -> float:
-    """``angle`` folded into ``(-pi, pi]``.
+    """Fold an angle into the range -pi to +pi.
 
-    The half-open end matters: a heading of exactly -pi and one of +pi are the
-    same heading, and picking one of them keeps a wrapped yaw from flipping
-    sign every time it passes behind the robot.
+    Angles a whole turn apart point the same way, so 0, 2*pi and -2*pi all
+    come back as 0.
+
+    Exactly backwards comes back as +pi, never -pi. Both mean the same
+    direction, but always giving the same one stops a heading appearing to
+    flip sign every time the robot turns past it.
+
+    Args:
+        angle: Any angle, in radians.
+
+    Returns:
+        The same direction, in radians, above -pi and up to and including +pi.
     """
     wrapped = math.remainder(angle, math.tau)
     return math.pi if wrapped == -math.pi else wrapped
@@ -50,29 +62,31 @@ def integrate_planar_twist(
     *,
     wrap: bool = True,
 ) -> tuple[float, float, float]:
-    """One step of a body-frame twist integrated into a world pose.
+    """Work out where a robot gets to, from where it is and how fast it is going.
 
-    ``wrap`` is the disagreement between the existing copies made explicit.
-    A wrapped yaw is what a consumer comparing headings wants, an unwrapped one
-    is what a consumer counting turns wants. Whichever a base does, it says so
-    in its description's ``yaw_convention``.
+    The opposite of ``se2_body_twist``.
 
-    A ``dt`` of zero or less returns the pose unchanged rather than integrating
-    backwards. Timestamps do go backwards -- a replayed bag, a resynchronized
-    clock -- and the pose should stand still when they do.
+    The speed is given in the robot's own terms -- forwards, sideways, turning
+    -- while the position is in the world frame.
 
     Args:
-        x: World x of the pose to advance, in metres.
-        y: World y, in metres.
-        yaw: World heading, in radians.
-        vx: Body-frame forward velocity, in m/s.
-        vy: Body-frame left velocity, in m/s.
-        wz: Yaw rate, in rad/s.
-        dt: Step, in seconds. Zero or less is a no-op.
-        wrap: Whether to fold the new yaw into ``(-pi, pi]``.
+        x: Where the robot is now, in metres.
+        y: Where the robot is now, in metres, at right angles to x.
+        yaw: Which way it is facing, in radians. 0 faces along x, and the
+            angle grows as it turns left.
+        vx: How fast it is driving forwards, in m/s. Negative is backwards.
+        vy: How fast it is sliding to its left, in m/s. Always 0 for a robot
+            that cannot move sideways, such as a car.
+        wz: How fast it is turning, in rad/s. Positive is to the left.
+        dt: How long it moves for, in seconds. Zero or less gives the position
+            back unchanged, so a repeated or out-of-order timestamp cannot
+            make the robot appear to jump or run backwards.
+        wrap: Keep the heading it returns between -pi and +pi. Pass False to
+            let it keep counting, so a robot that has turned twice reads 12.6
+            rather than 0. Use whichever the robot itself uses.
 
     Returns:
-        The advanced ``(x, y, yaw)``.
+        Where it gets to, as ``(x, y, yaw)`` in metres and radians.
     """
     if dt <= 0.0:
         return (x, y, yaw)
@@ -160,21 +174,32 @@ def pd_torque(
     kd: float,
     tau_ff: float,
 ) -> float:
-    """The torque a PD joint with feedforward should be producing.
+    """Work out how hard to push a joint to get it where it should be.
 
-    ``kp (q_target - q) + kd (dq_target - dq) + tau_ff``.
+    The joint is pushed harder the further it is from where it should be, and
+    braked the further its speed is from the speed it should be going at::
+
+        kp * (how far off it is) + kd * (how far off its speed is) + tau_ff
+
+    The speed is measured against ``dq_target``, not against zero. Braking
+    towards zero instead would fight every commanded movement, treating any
+    motion at all as something to damp out.
 
     Args:
-        q_target: Commanded position.
-        dq_target: Commanded velocity.
-        q: Measured position.
-        dq: Measured velocity.
-        kp: Proportional gain.
-        kd: Derivative gain.
-        tau_ff: Feedforward torque.
+        q_target: Where the joint should be, in radians.
+        dq_target: How fast it should be moving, in rad/s. Pass 0 to hold it
+            still.
+        q: Where the joint actually is, in radians.
+        dq: How fast it actually is moving, in rad/s.
+        kp: Stiffness, in Nm per radian. Higher pulls harder towards
+            ``q_target``.
+        kd: Damping, in Nm per rad/s. Higher resists moving at the wrong
+            speed.
+        tau_ff: Extra torque added on regardless, in Nm. Used to cancel out a
+            known force such as gravity. Pass 0.0 if there is none.
 
     Returns:
-        The torque, in the units kp, kd and tau_ff were given in.
+        How hard to push, in Nm.
     """
     return kp * (q_target - q) + kd * (dq_target - dq) + tau_ff
 
