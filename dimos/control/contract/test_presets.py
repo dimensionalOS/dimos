@@ -416,7 +416,11 @@ def test_a_six_dof_base_declares_the_full_pose() -> None:
     assert described.unit_of("drone/base/pitch") is Unit.RAD
 
 
-def test_a_differential_base_declares_only_what_it_drives() -> None:
+def test_a_differential_base_reaches_the_whole_plane() -> None:
+    # It drives forward and turns, so it cannot strafe -- but driving forward
+    # while turning traces an arc, which reaches world y just the same. A pose
+    # term per commanded axis would declare only x and then reject an honest
+    # odometry frame carrying y.
     described = twist_base_description(
         "diff",
         axes=(VX, WZ),
@@ -425,7 +429,60 @@ def test_a_differential_base_declares_only_what_it_drives() -> None:
     base = described.resource("base")
     assert base is not None
     assert base.command_interfaces == (VX, WZ)
-    assert base.state_interfaces == (VX, WZ, X, YAW)
+    assert base.state_interfaces == (VX, WZ, X, Y, YAW)
+    assert described.unit_of("diff/base/y") is Unit.M
+    # Reaching world y is not the same as having a lateral velocity to report:
+    # vy stays undeclared rather than published as a fabricated zero.
+    assert VY not in base.state_interfaces
+    assert VY not in base.command_interfaces
+
+
+def test_a_base_that_cannot_turn_keeps_its_heading() -> None:
+    # A gantry: two linear axes, no rotation, so no yaw to report.
+    described = twist_base_description(
+        "gantry",
+        axes=(VX, VY),
+        limits={make_key("gantry", "base", VX): Limits(-1.0, 1.0)},
+    )
+    base = described.resource("base")
+    assert base is not None
+    assert base.state_interfaces == (VX, VY, X, Y)
+
+
+def test_a_single_linear_axis_is_a_rail() -> None:
+    described = twist_base_description(
+        "rail",
+        axes=(VX,),
+        limits={make_key("rail", "base", VX): Limits(-1.0, 1.0)},
+    )
+    base = described.resource("base")
+    assert base is not None
+    assert base.state_interfaces == (VX, X)
+
+
+def test_a_base_that_only_turns_reports_only_its_heading() -> None:
+    # A turret: it spins in place and never goes anywhere.
+    described = twist_base_description(
+        "turret",
+        axes=(WZ,),
+        limits={make_key("turret", "base", WZ): Limits(-1.0, 1.0)},
+    )
+    base = described.resource("base")
+    assert base is not None
+    assert base.state_interfaces == (WZ, YAW)
+
+
+def test_two_rotations_compose_to_reach_every_orientation() -> None:
+    # Roll and pitch generate yaw between them, and each rotation opens the
+    # linear plane perpendicular to it, so this reaches the full pose.
+    described = twist_base_description(
+        "gimbal",
+        axes=(VX, WX, WY),
+        limits={make_key("gimbal", "base", VX): Limits(-1.0, 1.0)},
+    )
+    base = described.resource("base")
+    assert base is not None
+    assert base.state_interfaces == (VX, WX, WY, X, Y, Z, ROLL, PITCH, YAW)
 
 
 def test_a_base_without_odometry_reports_only_its_twist() -> None:
@@ -451,7 +508,7 @@ def test_a_base_that_cannot_measure_reports_only_its_pose() -> None:
     )
     base = described.resource("base")
     assert base is not None
-    assert base.state_interfaces == (X, YAW)
+    assert base.state_interfaces == (X, Y, YAW)
 
 
 def test_an_axis_outside_the_six_raises() -> None:

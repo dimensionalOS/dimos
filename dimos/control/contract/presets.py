@@ -124,14 +124,76 @@ _IMU_UNITS: Mapping[str, Unit] = {
 #: integrates into, and the unit of each. A ground base declares the planar
 #: subset and a free-flyer declares all six; neither is a different kind of
 #: thing, which is why there is one table and not two presets.
-_BASE_AXES: Mapping[str, tuple[str, Unit, Unit]] = {
-    VX: (X, Unit.M_PER_S, Unit.M),
-    VY: (Y, Unit.M_PER_S, Unit.M),
-    VZ: (Z, Unit.M_PER_S, Unit.M),
-    WX: (ROLL, Unit.RAD_PER_S, Unit.RAD),
-    WY: (PITCH, Unit.RAD_PER_S, Unit.RAD),
-    WZ: (YAW, Unit.RAD_PER_S, Unit.RAD),
+_TWIST_UNITS: Mapping[str, Unit] = {
+    VX: Unit.M_PER_S,
+    VY: Unit.M_PER_S,
+    VZ: Unit.M_PER_S,
+    WX: Unit.RAD_PER_S,
+    WY: Unit.RAD_PER_S,
+    WZ: Unit.RAD_PER_S,
 }
+
+#: The world pose terms a base can report, in canonical order, with their units.
+_POSE_UNITS: Mapping[str, Unit] = {
+    X: Unit.M,
+    Y: Unit.M,
+    Z: Unit.M,
+    ROLL: Unit.RAD,
+    PITCH: Unit.RAD,
+    YAW: Unit.RAD,
+}
+
+#: The pose term each twist axis integrates into when nothing rotates.
+_POSITION_OF: Mapping[str, str] = {VX: X, VY: Y, VZ: Z}
+_ORIENTATION_OF: Mapping[str, str] = {WX: ROLL, WY: PITCH, WZ: YAW}
+
+#: The two linear axes each rotation mixes. Turning about z carries body
+#: forward into world y, which is the whole reason a base that can only drive
+#: forward and turn still reaches every point in the plane.
+_ROTATION_PLANE: Mapping[str, tuple[str, str]] = {
+    WX: (VY, VZ),
+    WY: (VZ, VX),
+    WZ: (VX, VY),
+}
+
+
+def _pose_interfaces(axes: Sequence[str]) -> tuple[str, ...]:
+    """The world pose terms a base with these twist axes moves through.
+
+    Not one term per axis: the pose a base reaches is the span of its linear
+    axes closed under the rotations it can perform. A differential drive
+    commands only ``vx`` and ``wz``, but driving forward while turning traces
+    an arc, so it reaches world x *and* y -- which is exactly what
+    ``integrate_planar_twist`` computes. Declaring only x would make an
+    honest odometry frame get rejected as undeclared.
+
+    Body-frame velocity is a different question and stays one-to-one with the
+    axes: that same base has no lateral velocity to measure, and declaring
+    ``vy`` as measured state would be fabricating one.
+    """
+    linear = {axis for axis in axes if axis in _POSITION_OF}
+    angular = {axis for axis in axes if axis in _ORIENTATION_OF}
+
+    # Close the linear set under the available rotations, to a fixpoint: a
+    # rotation reached through one plane can open another.
+    changed = True
+    while changed:
+        changed = False
+        for rotation in angular:
+            plane = set(_ROTATION_PLANE[rotation])
+            if (linear & plane) and not plane <= linear:
+                linear |= plane
+                changed = True
+
+    # Any two independent rotation generators compose to reach every
+    # orientation, so a base with two of them has all three pose terms.
+    if len(angular) >= 2:
+        orientation = set(_ORIENTATION_OF.values())
+    else:
+        orientation = {_ORIENTATION_OF[axis] for axis in angular}
+
+    reached = {_POSITION_OF[axis] for axis in linear} | orientation
+    return tuple(term for term in _POSE_UNITS if term in reached)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -481,7 +543,9 @@ def twist_base_description(
         axes: Commandable twist axes, from ``vx vy vz wx wy wz``.
         limits: Per-axis limits. This is the velocity envelope, so a Go2
             entering rage mode re-describes with a different one.
-        odometry: Whether the base reports the integrated pose of its axes.
+        odometry: Whether the base reports its integrated world pose. Which
+            pose terms that is follows from the axes: a base that can turn
+            reaches the whole plane, not just the line it drives along.
         measured_velocity: Whether the base reports measured twist. False for a
             base that can only echo what it was commanded, which is not a
             measurement and must not be declared as one.
@@ -499,21 +563,21 @@ def twist_base_description(
     """
     if not axes:
         raise ValueError(f"base {source!r} declares no axes")
-    unknown = [axis for axis in axes if axis not in _BASE_AXES]
+    unknown = [axis for axis in axes if axis not in _TWIST_UNITS]
     if unknown:
         raise ValueError(
-            f"base {source!r} declares non-twist axes {unknown}: expected {sorted(_BASE_AXES)}"
+            f"base {source!r} declares non-twist axes {unknown}: expected {sorted(_TWIST_UNITS)}"
         )
     repeated = sorted({axis for axis in axes if list(axes).count(axis) > 1})
     if repeated:
         raise ValueError(f"base {source!r} repeats axes {repeated}")
 
-    units = {axis: _BASE_AXES[axis][1] for axis in axes}
+    units = {axis: _TWIST_UNITS[axis] for axis in axes}
     state_interfaces: tuple[str, ...] = tuple(axes) if measured_velocity else ()
     if odometry:
-        pose = tuple(_BASE_AXES[axis][0] for axis in axes)
+        pose = _pose_interfaces(axes)
         state_interfaces += pose
-        units |= {_BASE_AXES[axis][0]: _BASE_AXES[axis][2] for axis in axes}
+        units |= {term: _POSE_UNITS[term] for term in pose}
 
     description = ControlDescription(
         source=source,
