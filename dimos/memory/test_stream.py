@@ -194,6 +194,17 @@ class TestOrderLimitOffset:
         assert make_stream(5).after(2.0).drain() == 2
         assert make_stream(0).drain() == 0
 
+    def test_drain_thread_logs_error(self, make_stream, monkeypatch):
+        # a dying pipeline is logged, not silent
+        died = threading.Event()
+        monkeypatch.setattr("dimos.memory.stream.logger.error", lambda *a, **kw: died.set())
+
+        def explode(obs):
+            raise RuntimeError("boom")
+
+        make_stream(3).map(explode).drain_thread()
+        assert died.wait(timeout=2.0)
+
 
 class TestFunctionalAPI:
     """Functional combinators receive the full Observation."""
