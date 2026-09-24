@@ -94,7 +94,8 @@ class Groups:
     latest_ts: list[float] = field(default_factory=list)
     members: list[list[float]] = field(default_factory=list)  # flat, M_WIDTH per row
     trace: list[list[Detection3DPC]] = field(default_factory=list)
-    ingested: set[float] = field(default_factory=set)  # frame ts already lifted
+    ingested: set[tuple[float, LocalizePolicy]] = field(default_factory=set)  # frames read
+    folded: set[tuple[float, tuple[int, ...]]] = field(default_factory=set)  # boxes lifted in
     ungrounded: tuple[float, float] | None = None  # best (score, ts) with no depth
 
     def add(self, det: Detection3DPC, radius: float, voxel: float) -> int:
@@ -166,6 +167,10 @@ class Groups:
 
 def _similarity(obs: Any) -> float:
     return float(obs.similarity)
+
+
+def _box_key(box: Any) -> tuple[int, ...]:
+    return tuple(round(float(v)) for v in box)
 
 
 def _settled(index: Stream[Any, Any], spacing: float) -> set[int]:
@@ -283,8 +288,9 @@ def localize(
     A list *query* shares one detection pass and returns one list per label, in
     input order; ``trace`` then takes a list of the same length. The index, the
     rig and the models belong to the caller. A ``groups`` dict makes evidence
-    cumulative across calls: frames already ingested for a label are skipped,
-    and an object stays answerable after it leaves the window.
+    cumulative across calls: frames already read for a label under the same
+    policy are skipped, a box is lifted in once, and an object stays answerable
+    after it leaves the window.
     """
     rig = rig or Rig.from_store(store)
     policy = policy or rig.default_localize_policy()
@@ -364,7 +370,7 @@ def localize(
 
     def _detect(upstream: Iterator[Any]) -> Iterator[Any]:
         for obs in upstream:
-            active = [j for j in range(len(queries)) if obs.ts not in state[j].ingested]
+            active = [j for j in range(len(queries)) if (obs.ts, policy) not in state[j].ingested]
             if not active:
                 continue
             keys = [(obs.ts, queries[j], floor) for j in active]
@@ -379,7 +385,7 @@ def localize(
             for key in keys:
                 cache.move_to_end(key)
             for j in active:
-                state[j].ingested.add(obs.ts)
+                state[j].ingested.add((obs.ts, policy))
             if not any(len(cache[key][1]) for key in keys):
                 continue
             img = img if img is not None else rig.frame_at(obs)
@@ -387,6 +393,8 @@ def localize(
             detections: list[Detection2DBBox] = []
             for j, key in zip(active, keys, strict=True):
                 for box, score in zip(*cache[key], strict=True):
+                    if (obs.ts, _box_key(box)) in state[j].folded:
+                        continue
                     det = Detection2DBBox(
                         bbox=(float(box[0]), float(box[1]), float(box[2]), float(box[3])),
                         track_id=len(detections),
@@ -403,7 +411,7 @@ def localize(
 
     def _ingest(upstream: Iterator[Any]) -> Iterator[Any]:
         for obs in upstream:
-            frame = obs.data
+            boxes, frame = obs.data
             lifted = _lift(frame, rig, policy, plane)
             grounded = {det3d.track_id for det3d in lifted}
             for det2d in frame:
@@ -414,6 +422,7 @@ def localize(
             for det3d in lifted:
                 j = det3d.class_id
                 slot = state[j].add(det3d, policy.cluster_radius_m, policy.fuse_voxel_m)
+                state[j].folded.add((obs.ts, _box_key(boxes.detections[det3d.track_id].bbox)))
                 if traces[j] is not None:
                     state[j].trace[slot].append(det3d)
                     if traces[j].first_match_ts is None:  # type: ignore[union-attr]
@@ -427,7 +436,7 @@ def localize(
             yield obs
 
     candidates.transform(_detect).map(
-        lambda obs: obs.derive(data=segmenter.segment(obs.data))
+        lambda obs: obs.derive(data=(obs.data, segmenter.segment(obs.data)))
     ).transform(_ingest).drain()
 
     results = [
