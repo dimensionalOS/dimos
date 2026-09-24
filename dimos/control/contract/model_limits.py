@@ -95,6 +95,11 @@ def limits_from_urdf(
     CLAMP there is nothing to clamp to, so it raises rather than inventing a
     bound the validator would have to reject anyway.
 
+    That is the *only* joint allowed to come back unbounded. A revolute joint
+    missing its bounds, or a ``<limit>`` carrying one side of a range and not
+    the other, is a broken model: reading either as unbounded would hand back a
+    table that passes validation and then accepts any position at all.
+
     Args:
         urdf: A path to a URDF, or the XML text itself.
         joints: Canonical ``"<source>/<resource>"`` name -> URDF joint name.
@@ -108,8 +113,9 @@ def limits_from_urdf(
 
     Raises:
         ValueError: On a mapped joint the URDF does not have, a mapped joint
-            with no ``<limit>``, a missing bound the caller asked for, or a
-            continuous joint under CLAMP.
+            with no ``<limit>``, a missing bound the caller asked for, a
+            non-continuous joint with no position range, a half-written
+            position range, or a continuous joint under CLAMP.
     """
     root = _parse(urdf)
     by_name: dict[str, ET.Element] = {}
@@ -140,9 +146,20 @@ def limits_from_urdf(
 
         if position:
             lower, upper = _attr(limit, "lower"), _attr(limit, "upper")
-            if lower is None or upper is None:
-                # A continuous joint is the legitimate case; anything else with
-                # a half-written <limit> lands here too, and both are unbounded.
+            if lower is not None and upper is not None:
+                out[make_key(source, resource, POSITION)] = Limits(lower, upper, policy)
+            elif lower is None and upper is None:
+                # Only a continuous joint legitimately has no position range.
+                # A revolute one that lost its bounds is a broken model, not a
+                # free spinner, and reading it as unbounded would take a real
+                # arm's limits away.
+                joint_type = joint_element.get("type", "")
+                if joint_type != "continuous":
+                    raise ValueError(
+                        f"joint {urdf_name!r} (for {canonical!r}) is {joint_type or 'untyped'} "
+                        f"but declares no position bounds; only a continuous joint may "
+                        f"leave them out"
+                    )
                 if policy is LimitPolicy.CLAMP:
                     raise ValueError(
                         f"joint {urdf_name!r} (for {canonical!r}) has no position bounds "
@@ -150,7 +167,15 @@ def limits_from_urdf(
                     )
                 out[make_key(source, resource, POSITION)] = Limits(None, None, policy)
             else:
-                out[make_key(source, resource, POSITION)] = Limits(lower, upper, policy)
+                # Half a range is worse than none: dropping the side the model
+                # does declare would leave the joint unlimited under REJECT,
+                # and nothing downstream would ever say so.
+                missing, given = ("upper", "lower") if upper is None else ("lower", "upper")
+                raise ValueError(
+                    f"joint {urdf_name!r} (for {canonical!r}) declares a {given} position "
+                    f"bound but no {missing} one; a half-written <limit> would silently "
+                    f"leave the joint unlimited"
+                )
 
         for wanted_it, name, interface in (
             (velocity, "velocity", VELOCITY),
