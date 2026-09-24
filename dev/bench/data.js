@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790258706351,
+  "lastUpdate": 1790282848839,
   "repoUrl": "https://github.com/dimensionalOS/dimos",
   "entries": {
     "go2 replay realtime": [
@@ -167,6 +167,90 @@ window.BENCHMARK_DATA = {
           {
             "name": "network (external tx)",
             "value": 0.151,
+            "unit": "MB"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "paul@nechifor.net",
+            "name": "Paul Nechifor",
+            "username": "paul-nechifor"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6043c7371a45d72ac2f167f86a78f30a357094b6",
+          "message": "make ./bin/pytest-slow run all tests (#4269)",
+          "timestamp": "2026-09-24T23:43:51+03:00",
+          "tree_id": "a0004039ef84255d39ea610f5a8c4f8fc4408380",
+          "url": "https://github.com/dimensionalOS/dimos/commit/6043c7371a45d72ac2f167f86a78f30a357094b6"
+        },
+        "date": 1790282847700,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "first frame wall",
+            "value": 9.989,
+            "unit": "s"
+          },
+          {
+            "name": "first frame cpu",
+            "value": 20.561,
+            "unit": "s"
+          },
+          {
+            "name": "run cpu",
+            "value": 31.719,
+            "unit": "s"
+          },
+          {
+            "name": "run cpu (user)",
+            "value": 23.554,
+            "unit": "s"
+          },
+          {
+            "name": "run cpu (system)",
+            "value": 8.165,
+            "unit": "s"
+          },
+          {
+            "name": "peak memory",
+            "value": 2748.402,
+            "unit": "MB"
+          },
+          {
+            "name": "peak threads",
+            "value": 409,
+            "unit": "threads"
+          },
+          {
+            "name": "disk read",
+            "value": 20.223,
+            "unit": "MB"
+          },
+          {
+            "name": "disk write",
+            "value": 816.309,
+            "unit": "MB"
+          },
+          {
+            "name": "network (multicast)",
+            "value": 0.003,
+            "unit": "MB"
+          },
+          {
+            "name": "network (external rx)",
+            "value": 0.114,
+            "unit": "MB"
+          },
+          {
+            "name": "network (external tx)",
+            "value": 0.154,
             "unit": "MB"
           }
         ]
