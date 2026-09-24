@@ -12,25 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Descriptions for the three shapes hardware actually comes in.
+"""Ready-made descriptions for the three kinds of hardware we drive.
 
-A vendor's ``describe()`` hook is meant to be one call plus whatever its SDK
-only learns at connect time. These functions are that call. They are sugar and
-nothing else: every description they build could be written out by hand, and
-the contract tests prove it by rebuilding the hand-written fixtures through
-them.
+Every robot driver has to describe itself before anything will talk to it:
+which parts it has, what each one can be told to do, in what units, within
+what limits, and how it comes to a stop. Writing all that out by hand is long
+and easy to get subtly wrong, so these three functions build it for you.
 
-  ``manipulator_description``  an arm: joints driven one mode group at a time,
-                               optionally a gripper in a group of its own
-  ``pd_joint_description``     a PD-controlled body: one impedance group over
-                               every joint, gains seeded from the description
-  ``twist_base_description``   a mobile base: one resource commanded as a body
-                               twist, pose and velocity reported back
+  ``manipulator_description``  an arm, optionally with a gripper
+  ``pd_joint_description``     a body whose joints are held in place by
+                               stiffness and damping, such as a humanoid
+  ``twist_base_description``   something that drives around on the floor
 
-Each one validates before returning, so a preset can never hand out a
-description the coordinator would reject later. Anything a preset does not
-cover is a keyword away, and anything a keyword does not cover is a reason to
-build the ``ControlDescription`` by hand rather than to grow a fourth preset.
+Each one checks its own result before handing it back, so a description built
+this way is always a valid one. Anything they do not cover by default can be
+passed in as a keyword argument.
 """
 
 from __future__ import annotations
@@ -88,13 +84,13 @@ from dimos.control.contract.keys import (
 )
 from dimos.control.contract.validate import validate_description
 
-#: Declaration order for joint interfaces. Alphabetical would read
-#: ``effort, kd, kp, position, velocity``, which is nobody's mental model of a
-#: joint; this is the order the fixtures and every vendor table already use.
+#: The order joint interfaces are listed in, chosen to read the way people
+#: describe a joint rather than alphabetically.
 _JOINT_INTERFACE_ORDER: tuple[str, ...] = (POSITION, VELOCITY, EFFORT, KP, KD)
 
-#: The unit every preset joint interface is carried in. A gripper is the one
-#: joint that escapes this table, which is exactly what makes it a gripper (D19).
+#: The unit each joint interface is measured in. A gripper is the exception:
+#: it sets its own, because some are measured in metres and some in a 0-to-1
+#: fraction of fully closed.
 _JOINT_UNITS: Mapping[str, Unit] = {
     POSITION: Unit.RAD,
     VELOCITY: Unit.RAD_PER_S,
@@ -120,10 +116,8 @@ _IMU_UNITS: Mapping[str, Unit] = {
     AZ: Unit.M_PER_S2,
 }
 
-#: The six-DOF base vocabulary: each commandable twist axis, the pose term it
-#: integrates into, and the unit of each. A ground base declares the planar
-#: subset and a free-flyer declares all six; neither is a different kind of
-#: thing, which is why there is one table and not two presets.
+#: How fast a base may be told to move along or turn about each axis. A base
+#: on the floor uses a few of these; something that flies uses all six.
 _TWIST_UNITS: Mapping[str, Unit] = {
     VX: Unit.M_PER_S,
     VY: Unit.M_PER_S,
@@ -133,7 +127,8 @@ _TWIST_UNITS: Mapping[str, Unit] = {
     WZ: Unit.RAD_PER_S,
 }
 
-#: The world pose terms a base can report, in canonical order, with their units.
+#: Where a base can report itself as being: its position, and which way it is
+#: facing.
 _POSE_UNITS: Mapping[str, Unit] = {
     X: Unit.M,
     Y: Unit.M,
@@ -143,13 +138,13 @@ _POSE_UNITS: Mapping[str, Unit] = {
     YAW: Unit.RAD,
 }
 
-#: The pose term each twist axis integrates into when nothing rotates.
+#: Moving along an axis changes the matching position; turning about an axis
+#: changes the matching facing.
 _POSITION_OF: Mapping[str, str] = {VX: X, VY: Y, VZ: Z}
 _ORIENTATION_OF: Mapping[str, str] = {WX: ROLL, WY: PITCH, WZ: YAW}
 
-#: The two linear axes each rotation mixes. Turning about z carries body
-#: forward into world y, which is the whole reason a base that can only drive
-#: forward and turn still reaches every point in the plane.
+#: Turning about an axis swaps the two directions at right angles to it. Turn
+#: left, and what used to be "forwards" now points where "left" did.
 _ROTATION_PLANE: Mapping[str, tuple[str, str]] = {
     WX: (VY, VZ),
     WY: (VZ, VX),
@@ -158,18 +153,22 @@ _ROTATION_PLANE: Mapping[str, tuple[str, str]] = {
 
 
 def _pose_interfaces(axes: Sequence[str]) -> tuple[str, ...]:
-    """The world pose terms a base with these twist axes moves through.
+    """Work out where a base can get to, given the ways it can move.
 
-    Not one term per axis: the pose a base reaches is the span of its linear
-    axes closed under the rotations it can perform. A differential drive
-    commands only ``vx`` and ``wz``, but driving forward while turning traces
-    an arc, so it reaches world x *and* y -- which is exactly what
-    ``integrate_planar_twist`` computes. Declaring only x would make an
-    honest odometry frame get rejected as undeclared.
+    Not simply one answer per axis. A base that can only drive forwards and
+    turn cannot move sideways, but by turning first it can still reach any
+    point on the floor, so its position has to be reported in both directions
+    and not just one.
 
-    Body-frame velocity is a different question and stays one-to-one with the
-    axes: that same base has no lateral velocity to measure, and declaring
-    ``vy`` as measured state would be fabricating one.
+    The rule: start with the directions it can move in, then add any direction
+    it can turn to face. Two independent ways of turning let it face any
+    direction at all.
+
+    Args:
+        axes: The ways this base can be told to move.
+
+    Returns:
+        The parts of its position and facing it can report, in order.
     """
     linear = {axis for axis in axes if axis in _POSITION_OF}
     angular = {axis for axis in axes if axis in _ORIENTATION_OF}
@@ -198,11 +197,20 @@ def _pose_interfaces(axes: Sequence[str]) -> tuple[str, ...]:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GripperSpec:
-    """A gripper to hang off a manipulator, in the unit its vendor speaks.
+    """A gripper to add to an arm.
 
-    Metres for an xArm, normalized for a Damiao. Forcing one on both breaks the
-    other, so the unit is declared here and the gripper task reads it back off
-    the description (D19).
+    Grippers do not agree on how to measure how open they are: some report
+    metres between the fingers, some a fraction from 0 (shut) to 1 (open). So
+    each one states its own unit and range here, rather than everything being
+    forced into the same one.
+
+    Attributes:
+        name: What to call it, e.g. "gripper".
+        unit: How its opening is measured.
+        lo: Fully closed, in that unit.
+        hi: Fully open, in that unit.
+        policy: What to do with a command outside that range. REJECT turns it
+            away; CLAMP pulls it back to the nearest end.
     """
 
     name: str = "gripper"
@@ -214,21 +222,30 @@ class GripperSpec:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ImuSpec:
-    """An IMU to hang off a PD body. State-only; never commanded."""
+    """An orientation sensor to add to a body.
+
+    Reports which way the body is tilted, how fast it is rotating, and how
+    hard it is accelerating. It only ever reports; nothing is sent to it.
+
+    Attributes:
+        name: What to call it, e.g. "imu".
+        frame_id: Which part of the robot it is bolted to, so its readings can
+            be related to everything else.
+    """
 
     name: str = "imu"
     frame_id: str
 
 
 def _ordered_interfaces(interfaces: Iterable[str]) -> tuple[str, ...]:
-    """The given interfaces in canonical order, unknown ones sorted at the end."""
+    """Put interfaces into a consistent order, so two equal sets read alike."""
     present = set(interfaces)
     known = tuple(i for i in _JOINT_INTERFACE_ORDER if i in present)
     return known + tuple(sorted(present - set(_JOINT_INTERFACE_ORDER)))
 
 
 def _joint_units(interfaces: Iterable[str]) -> dict[str, Unit]:
-    """Units for joint interfaces, refusing anything the preset cannot name."""
+    """Look up the unit of each joint interface, refusing unfamiliar ones."""
     units: dict[str, Unit] = {}
     for iface in interfaces:
         unit = _JOINT_UNITS.get(iface)
@@ -242,12 +259,12 @@ def _joint_units(interfaces: Iterable[str]) -> dict[str, Unit]:
 
 
 def _group_name(interfaces: Iterable[str]) -> str:
-    """The name of a mode group, derived from what it drives.
+    """Name a group of interfaces after the things it drives.
 
-    ``{position}`` is ``"position"`` and ``{position, velocity}`` is
-    ``"position+velocity"``. Deriving the name means two groups that drive the
-    same interfaces collide on it, which the validator then reports as the
-    duplicate they are.
+    ``{position}`` becomes ``"position"``, and ``{position, velocity}``
+    becomes ``"position+velocity"``. Building the name this way means two
+    groups driving the same things end up with the same name, which is then
+    caught as the duplicate it is.
     """
     return "+".join(sorted(interfaces))
 
@@ -255,10 +272,11 @@ def _group_name(interfaces: Iterable[str]) -> str:
 def _broadcast(
     value: Mapping[str, float] | float, joints: Sequence[str], label: str
 ) -> dict[str, float]:
-    """A per-joint table from either one number for all of them or a full map.
+    """Spread one value across every joint, or check a per-joint table.
 
-    A partial mapping is an error rather than a default, because the joint
-    somebody forgot is the one that gets no gain and falls over.
+    Pass a single number to use it for all of them, or a table giving each
+    joint its own. A table that misses a joint is an error rather than a
+    default: the joint left out would be the one that goes slack.
     """
     if not isinstance(value, Mapping):
         return {joint: float(value) for joint in joints}
@@ -287,40 +305,45 @@ def manipulator_description(
     omission: Mapping[str, Omission] | None = None,
     meta: Mapping[str, str] | None = None,
 ) -> ControlDescription:
-    """An arm: every joint the same, one mode group live at a time.
+    """Describe an arm, optionally with a gripper on the end.
 
-    Each entry of ``groups`` becomes one exclusive group over every arm joint,
-    named after the interfaces it drives, and the joints command the union of
-    them. Two groups is the xArm shape -- position or velocity, never both on
-    one joint -- and one group is everything else.
+    An arm can usually be driven in more than one way -- told where to go, or
+    told how fast to move -- but only one way at a time, or the instructions
+    would contradict each other. ``groups`` lists the ways this arm accepts,
+    and only one of them can be in use at any moment.
 
-    The gripper, if there is one, is a joint like any other except for its unit,
-    and it lands in a non-exclusive group of its own so it stays commandable
-    alongside whichever arm group is live.
+    A gripper is treated as one more joint, except that it can be worked at
+    the same time as the arm rather than instead of it, and it uses its own
+    unit.
 
     Args:
-        source: Key prefix for this hardware. Also its watchdog and epoch scope.
-        joints: Arm joint names, in the order the vendor orders them.
-        limits: Per-key limits, normally from ``limits_from_urdf``. Passed
-            through as given; the gripper's own limit is added from ``gripper``.
-        state: Interfaces the hardware actually reports. An xArm reports no
-            velocity, so it passes ``(position, effort)`` rather than publishing
-            fabricated zeros.
-        groups: One frozenset of interfaces per mode group.
-        gripper: A gripper to add, or ``None``.
-        safe_stop: How the arm comes to rest. Holding position by default.
-        estop: How the arm drops authority.
-        activation: Whether arming needs an operator step.
-        timing: Rates and deadlines.
-        process_loss: What happens if this process dies. UNKNOWN until somebody
-            runs the bench checklist (D23).
-        omission: Per-key overrides of what an unmentioned key means. This is
-            how a vendor opts a key into UNSET (D11).
-        meta: Free-form strings for the description view.
+        source: Short name for this piece of hardware. Every name it reports
+            starts with it, e.g. "arm".
+        joints: The arm's joint names, in the order the hardware lists them.
+        limits: How far each joint may go, usually from ``limits_from_urdf``.
+            The gripper's own limits are added from ``gripper``.
+        state: What the arm can actually tell you about itself. Leave out
+            anything it cannot measure, rather than having it report zeros
+            that look like real readings.
+        groups: The ways this arm can be driven, one set of interfaces each.
+        gripper: A gripper to add, or ``None`` for none.
+        safe_stop: How it comes to a stop when it is told to give up control.
+            By default it stays where it is.
+        estop: What it does when stopped in an emergency.
+        activation: Whether a person has to confirm before it will move.
+        timing: How often it reports, and how long to wait before deciding it
+            has gone quiet.
+        process_loss: What the hardware does if the program driving it dies.
+            Leave as UNKNOWN until someone has actually tested it.
+        meta: Any extra notes to carry along, as text.
+
+    Returns:
+        A complete, checked description of the arm.
 
     Raises:
-        ValueError: On no joints, no groups, or an interface with no preset unit.
-        DescriptionError: If the result breaks any contract rule.
+        ValueError: If there are no joints, no groups, or an interface whose
+            unit this function does not know.
+        DescriptionError: If the finished description breaks a rule.
     """
     if not joints:
         raise ValueError(f"manipulator {source!r} declares no joints")
@@ -407,47 +430,49 @@ def pd_joint_description(
     omission: Mapping[str, Omission] | None = None,
     meta: Mapping[str, str] | None = None,
 ) -> ControlDescription:
-    """A PD-controlled body: one impedance group over every joint.
+    """Describe a body whose joints are held by stiffness and damping.
 
-    Position, velocity, effort, kp and kd all travel together in one group, so
-    there is no mode to switch and nothing to sequence. The gains ride in
-    ``initial_values``: a position-only task that wins one of these joints gets
-    the declared kp and kd through the retain-last rule rather than having to
-    emit gains it has no opinion about (D12).
+    Used for humanoids and similar robots. Rather than being commanded to a
+    position and getting there however it likes, each joint is given a target
+    and two numbers that say how hard to pull towards it:
 
-    ``damp_kd`` is the separate, higher gain table the damping safe stop runs
-    at. It is required even when ``safe_stop`` is overridden, because a body
-    that stops by going limp needs to know how limp.
+      kp  stiffness -- how strongly it pulls towards the target
+      kd  damping   -- how strongly it resists moving at the wrong speed
+
+    Those two are stored with the description rather than being sent with
+    every command, so something that only knows where it wants the joints to
+    go does not have to invent them.
 
     Args:
-        source: Key prefix for this hardware.
-        joints: Joint names, in the vendor's own order -- for a Unitree that is
-            the order of the motor slots, so it is load-bearing.
-        limits: Per-key limits, normally from ``limits_from_urdf``. A whole-body
-            policy overshooting by a milliradian must not stall the robot, so
-            these are usually CLAMP (D13).
-        kp: Proportional gain: one number for every joint, or a full table keyed
-            by joint name.
-        kd: Derivative gain, same shape.
-        damp_kd: Derivative gain for the damping safe stop, same shape.
-        imu: An IMU to report alongside the joints, or ``None``.
-        safe_stop: Overrides the damping stop built from ``damp_kd``. A DAMP
-            policy passed without its own kd table is filled in from
-            ``damp_kd``, so overriding one only to say where the robot ends up
-            does not mean restating the gains.
-        estop: How the body drops authority. Disabling the motors by default,
-            which is not recoverable without a fresh bring-up.
-        activation: Whether arming needs an operator step.
-        timing: Rates and deadlines.
-        process_loss: What happens if this process dies.
-        omission: Per-key overrides. A G1 declares its velocity keys UNSET,
-            because 0.0 reaches that firmware as VEL_STOP rather than as no
-            command at all (D11).
-        meta: Free-form strings. ``imu_frame_id`` is added when ``imu`` is given.
+        source: Short name for this piece of hardware, e.g. "g1".
+        joints: Joint names, in the order the hardware lists them. This order
+            matters -- it is how commands line up with the right motors.
+        limits: How far each joint may go, usually from ``limits_from_urdf``.
+        kp: Stiffness. One number for every joint, or a table naming each.
+        kd: Damping, same form.
+        damp_kd: The damping used when the robot is told to stop and go limp,
+            normally higher than ``kd``. Same form.
+        imu: An orientation sensor to report alongside the joints, or ``None``.
+        safe_stop: How it comes to a stop. By default it goes limp using
+            ``damp_kd`` and sinks under its own weight.
+        estop: What it does when stopped in an emergency. By default the
+            motors are switched off, which is not recoverable without starting
+            the robot up again.
+        activation: Whether a person has to confirm before it will move.
+        timing: How often it reports, and how long before it counts as quiet.
+        process_loss: What the hardware does if the program driving it dies.
+        omission: What it means when a command leaves something out. Some
+            hardware reads a commanded speed of zero as "no instruction"
+            rather than "hold still", and this is where that is declared.
+        meta: Any extra notes to carry along, as text.
+
+    Returns:
+        A complete, checked description of the body.
 
     Raises:
-        ValueError: On no joints, or a gain table that misses one.
-        DescriptionError: If the result breaks any contract rule.
+        ValueError: If there are no joints, or a stiffness or damping table
+            misses one.
+        DescriptionError: If the finished description breaks a rule.
     """
     if not joints:
         raise ValueError(f"PD body {source!r} declares no joints")
@@ -527,39 +552,47 @@ def twist_base_description(
     process_loss: ProcessLoss | Mapping[str, ProcessLoss] = ProcessLoss.UNKNOWN,
     meta: Mapping[str, str] | None = None,
 ) -> ControlDescription:
-    """A mobile base: one resource, commanded as a body-frame twist.
+    """Describe something that drives around on the floor.
 
-    There are no virtual joints. A base is a single resource carrying the axes
-    it can actually drive, which is what a base task claims and already emits
-    (D3). A differential drive declares ``(vx, wz)``, a holonomic chassis adds
-    ``vy``, and a free-flyer declares all six.
+    The base is one thing, not a set of wheels or legs: it is told how fast to
+    move and how fast to turn, and whatever is underneath works out the rest.
 
-    Omission is left at its default, so an axis nobody claims is driven to zero
-    every cycle rather than coasting on the last thing it was told. A task that
-    wants the base to hold keeps claiming it (D17).
+    It is commanded in its own terms -- forwards, sideways, turning -- rather
+    than in terms of the room it is in. "Forwards" means forwards whichever
+    way it happens to be facing.
+
+    If nothing is steering it, it is told to stop rather than left to carry on
+    at whatever it was last doing. Anything that wants it to keep moving has
+    to keep saying so.
 
     Args:
-        source: Key prefix for this hardware.
-        axes: Commandable twist axes, from ``vx vy vz wx wy wz``.
-        limits: Per-axis limits. This is the velocity envelope, so a Go2
-            entering rage mode re-describes with a different one.
-        odometry: Whether the base reports its integrated world pose. Which
-            pose terms that is follows from the axes: a base that can turn
-            reaches the whole plane, not just the line it drives along.
-        measured_velocity: Whether the base reports measured twist. False for a
-            base that can only echo what it was commanded, which is not a
-            measurement and must not be declared as one.
-        safe_stop: How the base comes to rest. Zeroing by default.
-        estop: How the base drops authority.
-        activation: Whether arming needs an operator step.
-        timing: Rates and deadlines.
-        process_loss: What happens if this process dies.
-        meta: Free-form strings, typically the odometry frame and whether this
-            base's yaw is wrapped.
+        source: Short name for this piece of hardware, e.g. "chassis".
+        axes: The ways it can be told to move. ``vx`` forwards, ``vy``
+            sideways, ``wz`` turning, and ``vz``/``wx``/``wy`` for something
+            that also flies. A base that cannot move sideways leaves out
+            ``vy``.
+        limits: The fastest it may be told to go along each axis.
+        odometry: Whether it keeps track of where it has got to. What it can
+            report follows from ``axes``: a base that can turn can reach
+            anywhere on the floor, not just the line it drives along.
+        measured_velocity: Whether it can actually measure how fast it is
+            going. False for one that can only repeat back what it was told,
+            which is not a measurement.
+        safe_stop: How it comes to a stop. By default it is told to stop
+            moving.
+        estop: What it does when stopped in an emergency.
+        activation: Whether a person has to confirm before it will move.
+        timing: How often it reports, and how long before it counts as quiet.
+        process_loss: What the hardware does if the program driving it dies.
+        meta: Any extra notes to carry along, as text.
+
+    Returns:
+        A complete, checked description of the base.
 
     Raises:
-        ValueError: On no axes, a repeated axis, or an axis outside the six.
-        DescriptionError: If the result breaks any contract rule.
+        ValueError: If there are no axes, an axis is repeated, or an axis is
+            not one of the six.
+        DescriptionError: If the finished description breaks a rule.
     """
     if not axes:
         raise ValueError(f"base {source!r} declares no axes")
