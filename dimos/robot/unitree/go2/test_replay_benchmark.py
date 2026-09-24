@@ -133,9 +133,12 @@ def _cgroup_io_bytes() -> tuple[int, int]:
 
 def _cpu_model() -> str:
     """The CPU model name, so a run's numbers can be attributed to its hardware."""
-    for line in Path("/proc/cpuinfo").read_text().splitlines():
+    lscpu = subprocess.run(
+        ["lscpu"], capture_output=True, text=True, check=True, env={**os.environ, "LC_ALL": "C"}
+    )
+    for line in lscpu.stdout.splitlines():
         key, _, value = line.partition(":")
-        if key.strip() == "model name":
+        if key.strip() == "Model name":
             return value.strip()
     return "unknown"
 
