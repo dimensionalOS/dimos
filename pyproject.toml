@@ -300,6 +300,14 @@ manipulation = [
     "dimos[planning,base,sim,cpu]",
 ]
 
+openarm-mini-teleop = [
+    "ftservo-python-sdk",
+    "rich",
+    # The demo viser blueprints load the DAE OpenArm meshes; without this
+    # the mesh conversion fails and viser startup crashes.
+    "pycollada",
+]
+
 cpu = [
     # CPU inference backends
     "onnxruntime",
@@ -373,7 +381,7 @@ scene = [
 ]
 
 all = [
-    "dimos[apriltag,cuda,drone,manipulation,misc,scene,unitree,webrtc]",
+    "dimos[apriltag,cuda,drone,manipulation,misc,openarm-mini-teleop,scene,unitree,webrtc]",
 ]
 
 [dependency-groups]
@@ -669,6 +677,8 @@ module = [
     "reportlab",
     "reportlab.*",
     "sam2.*",
+    "scservo_sdk",
+    "scservo_sdk.*",
     "scipy",
     "scipy.*",
     "sensor_msgs.*",
