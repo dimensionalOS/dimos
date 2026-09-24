@@ -24,6 +24,7 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.memory.buffer import KeepLast, Unbounded
 from dimos.memory.store.memory import MemoryStore
@@ -197,13 +198,17 @@ class TestOrderLimitOffset:
     def test_drain_thread_logs_error(self, make_stream, monkeypatch):
         # a dying pipeline is logged, not silent
         died = threading.Event()
+        scheduler = ThreadPoolScheduler(max_workers=1)
+        monkeypatch.setattr("dimos.utils.threadpool.get_scheduler", lambda: scheduler)
         monkeypatch.setattr("dimos.memory.stream.logger.error", lambda *a, **kw: died.set())
 
         def explode(obs):
             raise RuntimeError("boom")
 
         make_stream(3).map(explode).drain_thread()
-        assert died.wait(timeout=2.0)
+        logged = died.wait(timeout=2.0)
+        scheduler.executor.shutdown(wait=True)
+        assert logged
 
 
 class TestFunctionalAPI:
