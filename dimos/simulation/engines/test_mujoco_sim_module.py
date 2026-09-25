@@ -171,6 +171,48 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
         module.stop()
 
 
+def test_tracked_bodies_are_published_on_tf_in_world() -> None:
+    module = MujocoSimModule(tracked_bodies=["apple", "ghost"])
+    try:
+        module.config = MujocoSimModuleConfig(tracked_bodies=["apple", "ghost"])
+
+        class _FakeEngine:
+            def get_body_pose(self, body_name: str) -> tuple[np.ndarray, np.ndarray] | None:
+                if body_name == "apple":
+                    return np.array([0.4, 0.08, 0.17]), np.array([0.0, 0.0, 0.0, 1.0])
+                return None
+
+            def disconnect(self) -> None:
+                pass
+
+        messages: list[Any] = []
+        module._engine = _FakeEngine()
+        module.tf.subscribe(messages.append)
+        frame = CameraFrame(
+            rgb=np.zeros((1, 1, 3), dtype=np.uint8),
+            depth=np.ones((1, 1), dtype=np.float32),
+            cam_pos=np.array([1.0, 2.0, 3.0]),
+            cam_mat=np.eye(3),
+            fovy=60.0,
+            timestamp=1.0,
+        )
+        module._publish_tf(10.0, frame)
+        module._publish_tf(11.0, frame)  # the unknown body warns once and is skipped again
+        children = [t.child_frame_id for t in messages[-1].transforms]
+        assert children[:3] == [
+            "wrist_camera_color_optical_frame",
+            "wrist_camera_depth_optical_frame",
+            "wrist_camera_link",
+        ]
+        assert children[3:] == ["apple"]
+        apple = messages[-1].transforms[3]
+        assert apple.frame_id == "world"
+        assert apple.ts == 11.0
+        assert np.allclose(apple.translation.to_numpy(), [0.4, 0.08, 0.17])
+    finally:
+        module.stop()
+
+
 def test_reset_requests_engine_reset_and_clears_latched_commands() -> None:
     engine = _FakeRespawnEngine()
     hooks = _FakeSimHooks()
