@@ -14,6 +14,7 @@
 
 import asyncio
 from collections.abc import Callable
+from functools import wraps
 import threading
 from types import MappingProxyType
 from typing import Any, Protocol, overload
@@ -94,14 +95,20 @@ class RPCClient(Protocol):
         future = loop.create_future()
 
         def receive_value(val) -> None:  # type: ignore[no-untyped-def]
-            if isinstance(val, BaseException):
-                loop.call_soon_threadsafe(future.set_exception, val)
-            else:
-                loop.call_soon_threadsafe(future.set_result, val)
+            def deliver() -> None:
+                if not future.done():
+                    if isinstance(val, BaseException):
+                        future.set_exception(val)
+                    else:
+                        future.set_result(val)
 
-        self.call(name, arguments, receive_value)
+            loop.call_soon_threadsafe(deliver)
 
-        return await future
+        unsubscribe = self.call(name, arguments, receive_value)
+        try:
+            return await future
+        finally:
+            unsubscribe()
 
 
 class RPCServer(Protocol):
@@ -112,14 +119,22 @@ class RPCServer(Protocol):
             if not name:
                 name = module.__class__.__name__
 
-            def override_f(*args, fname=fname, **kwargs):  # type: ignore[no-untyped-def]
-                return getattr(module, fname)(*args, **kwargs)
-
             topic = name + "/" + fname
-            self.serve_rpc(override_f, topic)
+            self.serve_rpc(_call_later(module, fname), topic)
+
+
+def _call_later(module: RPCInspectable, fname: str) -> Callable[..., Any]:
+    # Preserve the declaration's signature without resolving a runtime-backed method.
+    @wraps(object.__getattribute__(module, fname))
+    def call(*args: Any, **kwargs: Any) -> Any:
+        return getattr(module, fname)(*args, **kwargs)
+
+    return call
 
 
 class RPCSpec(RPCServer, RPCClient):
+    named_params = False
+
     def start(self) -> None:
         if hasattr(super(), "start"):
             super().start()  # type: ignore[misc]
