@@ -1,0 +1,74 @@
+name: message-codegen
+
+on:
+  pull_request:
+    paths:
+      - dimos/message_codegen/**
+      - examples/message-codegen/**
+      - native/rust/dimos-lcm-transport/**
+      - scripts/*message*codegen*
+      - scripts/vendor_message_definitions.py
+      - .github/workflows/message-codegen.yml
+      - .github/docker/message-codegen-reference.Dockerfile
+      - Cargo.toml
+      - Cargo.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  standalone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Set up a ROS-free Python environment
+        run: |
+          test ! -d /opt/ros
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python pybind11==3.0.1 rosbags==0.11.0 numpy pytest pytest-asyncio pytest-env lcm-dimos-fork
+          .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rclpy') is None"
+      - name: Build the pinned standalone CDR library
+        run: bash scripts/setup_message_codegen.sh
+      - name: Generate, build, test, and demonstrate all three languages
+        run: bash scripts/test_message_codegen.sh
+      - name: Retain executable demo evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: message-codegen-evidence
+          path: build/message-codegen/demo/evidence/
+          if-no-files-found: error
+
+  jazzy-reference:
+    needs: standalone
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: message-codegen-evidence
+          path: build/message-codegen/demo/evidence/
+      - name: Build independent ROS2 reference environment
+        run: docker build -f .github/docker/message-codegen-reference.Dockerfile -t dimos-cdr-jazzy-reference .github/docker
+      - name: Compare native payloads with independently generated ROS2 types
+        run: |
+          docker run --rm \
+            -v "$PWD:/source:ro" \
+            -v "$PWD/build/message-codegen/demo:/demo" \
+            dimos-cdr-jazzy-reference '
+              set -e
+              source /opt/ros/jazzy/setup.bash
+              mkdir -p /tmp/reference/src
+              cp -r /source/examples/message-codegen/demo_msgs /tmp/reference/src/
+              cd /tmp/reference
+              colcon build --packages-select demo_msgs --event-handlers console_direct+
+              source install/setup.bash
+              python3 /source/examples/message-codegen/demo_ros_reference.py --build /demo
+            ' | tee build/message-codegen/demo/evidence/jazzy-reference.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: message-codegen-jazzy-reference
+          path: build/message-codegen/demo/evidence/

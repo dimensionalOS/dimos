@@ -561,6 +561,7 @@ explicit = true
 
 [tool.ruff]
 line-length = 100
+extend-exclude = ["dimos/message_codegen/_vendor"]
 exclude = [
     ".git",
     ".pytest_cache",
