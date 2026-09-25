@@ -30,11 +30,12 @@ the thing was seen, and tf turns that into **where the camera stood** -- so a
 place is a spot the robot saw the thing FROM, not the thing's own coordinates.
 Nothing here back-projects a match into the map.
 
-**The lookup is DimOS's own vector database.** Each frame's embedding is appended to
-the index stream with ``embedding=``, which puts it in the store's vector index
-(``SqliteVectorStore``), and a question is answered by ``Stream.search(query_vec, k)``
-from ``dimos/memory/stream.py`` -- plain cosine, ranked by the store. Nothing in this
-module scores vectors itself, and there is no in-memory copy of the index.
+**The vectors live in the recording; the search runs in RAM.** Each frame's embedding
+is appended to the index stream with ``embedding=``, so it is stored in the recording
+itself (a ``.db``'s vector table, or the observation's own message in an ``.mcap``). A
+question is answered from an in-memory matrix of all of them, loaded on the first search:
+one matrix multiply, exact and uncapped. The sqlite vector lookup it replaces was the
+slow part of a query, and it capped k at 4096.
 
 Two things fill that index and both end up in the same place, so there is ONE query
 path. ``build()`` embeds the frames here. ``_import_precomputed()`` copies the rows
@@ -58,6 +59,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -113,11 +115,6 @@ def index_stream_name_of(model_name: str, image_stream_name: str) -> str:
     return f"{image_stream_name}_index_{model_slug(model_name)}"
 
 
-# The most a knn query may ask the vector store for. sqlite-vec refuses a larger k
-# outright -- "k value in knn query too large, provided 4819 and the limit is 4096" -- so
-# a recording with more indexed frames than this cannot be asked for all of them at once,
-# which is what a windowed search would like to do.
-MAX_VECTOR_SEARCH_K = 4096
 # An mcap embedding names its frame only by stamp; this is how close it must be.
 STAMP_MATCH_TOLERANCE_S = 1e-3
 
@@ -294,6 +291,7 @@ class VisualMemoryIndex:
         self._index_stream: Any = None
         self._precomputed: str | None | _Unresolved = _UNRESOLVED
         self._span: tuple[float, float] | None = None
+        self._frames: _ResidentFrames | None = None
 
     @property
     def model(self) -> SigLIPModel:
@@ -573,6 +571,7 @@ class VisualMemoryIndex:
             self.store.delete_stream(self.index_stream_name)
             self._index_stream = None
         self._span = None
+        self._frames = None
         return added
 
     def load(self) -> None:
@@ -680,6 +679,7 @@ class VisualMemoryIndex:
             logger.warning("%d of %d rows of %r have no placeable frame", dropped, total, name)
         logger.info("imported %d embedded frames of %r into the index", imported, name)
         self._span = None
+        self._frames = None
         return imported
 
     def time_span(self) -> tuple[float, float]:
@@ -714,31 +714,39 @@ class VisualMemoryIndex:
     ) -> list[Place]:
         """The *k* frames most like *text*, most similar first.
 
-        This is DimOS's own vector-database lookup: ``Stream.search`` over the embeddings
-        recorded into the store, scored by cosine and ranked by the vector store. Each
-        result is placed at the camera pose the frame was taken from -- with one vector
-        per image that is the only location the match supports.
+        Scored in RAM: every frame's vector, held as one matrix since the first search,
+        multiplied by the text's -- exact, uncapped, and no database lookup per question
+        (the sqlite vector table was the slow part). Each result is placed at the camera
+        pose the frame was taken from; with one vector per image that is the only
+        location the match supports.
 
         *window* restricts the answer to frames stamped within ``(since, until)``, which
         is how a question about part of a recording is asked.
         """
-        stream = self._ensure_searchable()
-        query = self.model.embed_text(text)
-        if window is None:
-            hits: Iterable[Any] = stream.search(query, k=min(k, MAX_VECTOR_SEARCH_K))
+        frames = self._resident_frames(self._ensure_searchable())
+        if not len(frames.ids):
+            return []
+        query = np.asarray(self.model.embed_text(text).to_numpy(), np.float32).ravel()
+        scores = frames.vectors @ query
+        if window is not None:
+            inside = (frames.ts >= window[0]) & (frames.ts <= window[1])
+            scores = np.where(inside & frames.placeable, scores, -np.inf)
         else:
-            hits = self._search_window(stream, query, k, window)
+            scores = np.where(frames.placeable, scores, -np.inf)
+        wanted = min(k, int(np.isfinite(scores).sum()))
+        if wanted <= 0:
+            return []
+        top = np.argpartition(-scores, wanted - 1)[:wanted]
+        top = top[np.argsort(-scores[top])]
         places: list[Place] = []
-        for obs in hits:
-            pose = obs.pose_tuple
-            if pose is None:  # not placeable: an answer cannot point at it
-                continue
+        for at in top:
+            pose = frames.poses[at]
             places.append(
                 Place(
                     position=(float(pose[0]), float(pose[1]), float(pose[2])),
-                    similarity=float(obs.similarity),
-                    source_id=int(obs.data.source_id),
-                    ts=float(obs.ts),
+                    similarity=float(scores[at]),
+                    source_id=int(frames.source_ids[at]),
+                    ts=float(frames.ts[at]),
                     orientation=(
                         tuple(float(value) for value in pose[3:7])  # type: ignore[misc]
                         if len(pose) >= 7
@@ -746,44 +754,57 @@ class VisualMemoryIndex:
                     ),
                 )
             )
-            if len(places) >= k:
-                break
         return places
 
-    def _search_window(
-        self,
-        stream: Any,
-        query: Any,
-        k: int,
-        window: tuple[float, float],
-    ) -> list[Any]:
-        """The *k* best hits stamped inside *window*, asking the store for as few as will do.
+    def _resident_frames(self, stream: Any) -> _ResidentFrames:
+        """The index as arrays, loaded once and again only when the index has grown."""
+        count = int(stream.count())
+        if self._frames is None or self._frames.count != count:
+            from dimos.mapping.hyperspace.resident import stored_vectors
 
-        Search FIRST, then narrow: `time_range(...).search(...)` reads as the natural
-        order and silently returns NOTHING, because the range never reaches the vector
-        store, which ranks the whole stream regardless. Since the narrowing therefore
-        happens AFTER the ranking, a plain top-`k` that all falls outside the window would
-        answer "nothing there" about a window it never looked in.
-
-        So the ask widens until the window is filled -- rather than asking for every frame
-        at once, which is both wasteful and, past `MAX_VECTOR_SEARCH_K`, refused outright
-        by the store. When the ceiling is reached with fewer than *k* in hand, that is the
-        honest answer: the store has been asked for as much as it will rank.
-        """
-        total = int(stream.count())
-        ceiling = min(total, MAX_VECTOR_SEARCH_K)
-        asked = min(max(k, 1) * 4, ceiling)
-        while True:
-            hits = list(stream.search(query, k=asked).time_range(*window))
-            if len(hits) >= k or asked >= ceiling:
-                return hits
-            asked = min(asked * 4, ceiling)
+            started = time.monotonic()
+            ids, vectors = stored_vectors(self.store, self.index_stream_name)
+            row_of = {int(row): at for at, row in enumerate(ids)}
+            ts = np.zeros(len(ids))
+            source_ids = np.zeros(len(ids), np.int64)
+            poses: list[Any] = [None] * len(ids)
+            for obs in stream:
+                at = row_of.get(int(obs.id))
+                if at is None:
+                    continue
+                ts[at] = float(obs.ts)
+                poses[at] = obs.pose_tuple
+                source_ids[at] = int(obs.data.source_id)
+            placeable = np.asarray([pose is not None for pose in poses], bool)
+            self._frames = _ResidentFrames(ids, vectors, ts, poses, source_ids, placeable, count)
+            logger.info(
+                "%s: %d frame vectors in RAM (%.0f MB) in %.1fs",
+                self.index_stream_name,
+                len(ids),
+                vectors.nbytes / 1e6,
+                time.monotonic() - started,
+            )
+        return self._frames
 
     def stop(self) -> None:
         if self._model is not None:
             self._model.stop()
             self._model = None
         self._span = None
+        self._frames = None
+
+
+@dataclass
+class _ResidentFrames:
+    """The frame index held in RAM, parallel by row."""
+
+    ids: np.ndarray
+    vectors: np.ndarray
+    ts: np.ndarray
+    poses: list[Any]
+    source_ids: np.ndarray
+    placeable: np.ndarray
+    count: int
 
 
 class _Unresolved:

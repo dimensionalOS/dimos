@@ -16,8 +16,7 @@
 
     python -m dimos.teleop.memory_world.prebuild <recording.db|.mcap> [--image-index-stride 5]
 
-Two things are written into the recording (into ``<name>.derived.db`` beside a
-read-only mcap): the voxel replay streams the timeline scrubs, and the SigLIP frame
+Two things are written into the recording itself, .db or .mcap alike: the voxel replay streams the timeline scrubs, and the SigLIP frame
 index the questions are answered from. Both are the module's own builds, called
 directly, so what this leaves behind is exactly what a first server start would have
 built -- and a later start finds both and is ready in seconds. Running it again on a

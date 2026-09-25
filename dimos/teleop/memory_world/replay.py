@@ -249,7 +249,7 @@ class VoxelReplay:
         if next(iter(store.streams[DIFF_STREAM]), None) is None:
             return False
         # An interrupted build has no keyframe tagged `last`, and half a map is not the
-        # map: roscon_setup.derived.db looks complete at 9,196 diffs and 184 keyframes and
+        # map: roscon's old companion db looked complete at 9,196 diffs and 184 keyframes and
         # is an abandoned run from that afternoon. A ROW COUNT DOES NOT SAY A BUILD
         # FINISHED; THIS TAG DOES.
         if not bool(_final(keyframes).tags.get("last")):
