@@ -53,7 +53,7 @@ def test_lcm_encode_decode(img: Image) -> None:
 
 def test_rgb_bgr_conversion(img: Image) -> None:
     rgb = img.to_rgb()
-    assert not rgb == img
+    assert rgb != img
     assert rgb.to_bgr() == img
 
 

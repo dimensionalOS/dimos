@@ -112,17 +112,13 @@ class Space:
 
     def add_dimos_msg(self, msg: DimosMsg, **kwargs: Any) -> None:
         """Dispatch a DimosMsg to its default element type."""
-        if isinstance(msg, PoseStamped):
-            self._elements.append(Pose(msg=msg, **kwargs))
-        elif isinstance(msg, GeoPose):
+        if isinstance(msg, (PoseStamped, GeoPose)):
             self._elements.append(Pose(msg=msg, **kwargs))
         elif isinstance(msg, GeoPoint):
             self._elements.append(Point(msg=msg, **kwargs))
         elif isinstance(msg, NavPath):
             self._elements.append(Polyline(msg=msg, **kwargs))
-        elif isinstance(msg, OccupancyGrid):
-            self._elements.append(msg)
-        elif isinstance(msg, PointCloud2):
+        elif isinstance(msg, (OccupancyGrid, PointCloud2)):
             self._elements.append(msg)
         elif isinstance(msg, Detection3D):
             self._elements.append(

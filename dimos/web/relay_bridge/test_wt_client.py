@@ -520,7 +520,7 @@ async def test_connect_handshake_timeout_is_bounded(monkeypatch: pytest.MonkeyPa
         async def __aenter__(self) -> None:
             await asyncio.Event().wait()
 
-        async def __aexit__(self, *args: Any) -> None:
+        async def __aexit__(self, *args: object) -> None:
             raise AssertionError("a timed-out __aenter__ must not be exited twice")
 
     monkeypatch.setattr(wt_client, "aioquic_connect", lambda *args, **kwargs: HangingConnect())
@@ -537,7 +537,7 @@ async def test_connect_defaults_port_to_443_and_loads_relay_ca(
         async def __aenter__(self) -> None:
             raise ConnectionRefusedError
 
-        async def __aexit__(self, *args: Any) -> None:
+        async def __aexit__(self, *args: object) -> None:
             pass
 
     def fake_connect(host: str, port: int, *, configuration: Any, **kwargs: Any) -> Refused:

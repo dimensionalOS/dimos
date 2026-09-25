@@ -129,8 +129,6 @@ class DroneTrackingModule(Module):
         if self.follow_object_cmd.transport:
             self.follow_object_cmd.subscribe(self._on_follow_object_cmd)
 
-        return
-
     @rpc
     def stop(self) -> None:
         self._stop_tracking()

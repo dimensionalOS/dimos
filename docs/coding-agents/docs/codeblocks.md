@@ -93,19 +93,21 @@ Node version: v24.11.1
 
 ```python output=assets/matplotlib-demo.svg
 import matplotlib
-matplotlib.use('Agg')
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-plt.style.use('dark_background')
+
+plt.style.use("dark_background")
 x = np.linspace(0, 4 * np.pi, 200)
 plt.figure(figsize=(8, 4))
-plt.plot(x, np.sin(x), label='sin(x)', linewidth=2)
-plt.plot(x, np.cos(x), label='cos(x)', linewidth=2)
-plt.xlabel('x')
-plt.ylabel('y')
+plt.plot(x, np.sin(x), label="sin(x)", linewidth=2)
+plt.plot(x, np.cos(x), label="cos(x)", linewidth=2)
+plt.xlabel("x")
+plt.ylabel("y")
 plt.legend()
 plt.grid(alpha=0.3)
-plt.savefig('{output}', transparent=True)
+plt.savefig("{output}", transparent=True)
 ```
 
 ![output](assets/matplotlib-demo.svg)

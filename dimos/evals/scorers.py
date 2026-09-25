@@ -119,7 +119,7 @@ def choice(options: Sequence[str], *, case_sensitive: bool = False) -> Callable[
     import re
 
     words = "|".join(re.escape(o) for o in sorted(options, key=len, reverse=True))
-    pattern = re.compile(rf"\b({words})\b", 0 if case_sensitive else re.I)
+    pattern = re.compile(rf"\b({words})\b", 0 if case_sensitive else re.IGNORECASE)
 
     def parse(text: str) -> str:
         # "north-west" must read as northwest, not as west.

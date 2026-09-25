@@ -71,7 +71,7 @@ class TableStr:
 
         first_dict = detection_dicts[0]
         table.add_column("#", style="dim")
-        for col in first_dict.keys():
+        for col in first_dict:
             color = _hash_to_color(col)
             table.add_column(col.title(), style=color)
 
@@ -79,7 +79,7 @@ class TableStr:
         for i, d in enumerate(detection_dicts):
             row = [str(i)]
 
-            for key in first_dict.keys():
+            for key in first_dict:
                 if key == "conf":
                     # Color-code confidence
                     conf_color = (
