@@ -37,8 +37,8 @@ import urllib.error
 import urllib.request
 
 SERIES = "go2 replay realtime"
-# Series that measure the pipeline. Disk read and external network traffic
-# follow the runner (page cache, agent chatter), not the code.
+# Every series the benchmark emits; listed so a new one is a deliberate
+# addition here rather than an automatic source of issues.
 METRICS = (
     "first frame wall",
     "first frame cpu",
