@@ -23,7 +23,7 @@ observable directly.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 import threading
 import time
 from typing import Any
@@ -31,12 +31,70 @@ from typing import Any
 import pytest
 
 from dimos.web.relay_bridge import relay_bridge_module
-from dimos.web.relay_bridge.protocol import PROTOCOL_VERSION, DataFrame, Msg
+from dimos.web.relay_bridge.protocol import PROTOCOL_VERSION, DataFrame, IceServer, Msg, RtcTrack
 from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
 from dimos.web.relay_bridge.wt_client import RelayClient, RelayInfo
 
 # What the fake /api/info answers; the URL is never dialed.
 FAKE_INFO = RelayInfo(wt_url="https://127.0.0.1:1", cert_hash="fake", v=PROTOCOL_VERSION)
+# A relay with Cloudflare configured: track channels (v7).
+FAKE_INFO_RTC = RelayInfo(
+    wt_url="https://127.0.0.1:1", cert_hash="fake", v=PROTOCOL_VERSION, rtc=True
+)
+
+
+class FakePublisher:
+    """RtcPublisher stand-in: records the handshake and the frames fed. The
+    connection "fails" through `accept_error`, and is "lost" once connected
+    through `lost` (set on the module loop: fail_peer)."""
+
+    def __init__(self, channels: Sequence[str]) -> None:
+        self.channels = tuple(channels)
+        self.ice: list[IceServer] | None = None
+        self.accepted: str | None = None
+        self.accept_error: Exception | None = None
+        self.fed: list[tuple[str, Any]] = []
+        self.closed = 0
+        self.lost = asyncio.Event()
+        # Channels whose next feed reports a media gap past the track lifetime.
+        self.stalled: set[str] = set()
+
+    async def start(self, ice_servers: Sequence[IceServer]) -> tuple[str, list[RtcTrack]]:
+        self.ice = list(ice_servers)
+        tracks = [RtcTrack(ch=ch, mid=str(i)) for i, ch in enumerate(self.channels)]
+        return "v=0\r\nfake-offer\r\n", tracks
+
+    async def accept(self, answer_sdp: str) -> None:
+        self.accepted = answer_sdp
+        if self.accept_error is not None:
+            raise self.accept_error
+
+    async def wait_lost(self) -> str:
+        await self.lost.wait()
+        return "failed"
+
+    def feed(self, ch: str, image: Any) -> bool:
+        self.fed.append((ch, image))
+        if ch not in self.stalled:
+            return False
+        self.stalled.discard(ch)
+        return True
+
+    async def close(self) -> None:
+        self.closed += 1
+
+
+def install_fake_publisher(monkeypatch: pytest.MonkeyPatch) -> list[FakePublisher]:
+    """Route the bridge's SFU peer construction to FakePublisher (no aiortc);
+    returns the list every constructed publisher is appended to."""
+    made: list[FakePublisher] = []
+
+    def factory(channels: Sequence[str]) -> FakePublisher:
+        made.append(FakePublisher(channels))
+        return made[-1]
+
+    monkeypatch.setattr(relay_bridge_module, "_make_rtc_publisher", factory)
+    return made
 
 
 class FakeWriter:
@@ -188,12 +246,14 @@ def flush_loop(module: RelayBridgeModule) -> None:
     assert flushed.wait(timeout=5.0)
 
 
-def patch_relay(monkeypatch: pytest.MonkeyPatch, fake_connect: Callable[..., Any]) -> None:
+def patch_relay(
+    monkeypatch: pytest.MonkeyPatch, fake_connect: Callable[..., Any], info: RelayInfo = FAKE_INFO
+) -> None:
     """Route the module's relay discovery and connect to fakes: /api/info
-    answers FAKE_INFO and RelayClient.connect is `fake_connect(url, role, **kw)`."""
+    answers `info` and RelayClient.connect is `fake_connect(url, role, **kw)`."""
 
     async def fake_fetch(base_url: str, **kwargs: Any) -> RelayInfo:
-        return FAKE_INFO
+        return info
 
     monkeypatch.setattr(relay_bridge_module, "fetch_relay_info", fake_fetch)
     monkeypatch.setattr(RelayClient, "connect", fake_connect)
@@ -207,6 +267,8 @@ def make_bridge(
     manifest: dict[str, Any] | None = None,
     hello_errors: tuple[Exception | None, ...] = (),
     relay: FakeRelay | None = None,
+    info: RelayInfo = FAKE_INFO,
+    rtc: bool = True,
 ) -> tuple[RelayBridgeModule, list[FakeClient]]:
     clients: list[FakeClient] = []
 
@@ -215,13 +277,14 @@ def make_bridge(
         clients.append(FakeClient(hello_error=error))
         return clients[-1]
 
-    patch_relay(monkeypatch, fake_connect)
+    patch_relay(monkeypatch, fake_connect, info)
     module = RelayBridgeModule(
         relay_url="http://127.0.0.1:1",
         open_browser=False,
         robot_id="unit-bot",
         available_channels=available_channels,
         manifest=manifest,
+        rtc=rtc,
     )
     module._relay = relay  # type: ignore[assignment]  # duck-typed RelayProcess stand-in
     for ch in wire:
@@ -239,6 +302,12 @@ def push(module: RelayBridgeModule, client: FakeClient, msg: Msg | DataFrame) ->
 def kill_session(module: RelayBridgeModule, client: FakeClient) -> None:
     assert module._loop is not None
     module._loop.call_soon_threadsafe(client.closed.set)
+
+
+def fail_peer(module: RelayBridgeModule, publisher: FakePublisher) -> None:
+    """The connected SFU peer fails (ICE/DTLS), as the bridge's task sees it."""
+    assert module._loop is not None
+    module._loop.call_soon_threadsafe(publisher.lost.set)
 
 
 def image_transport(module: RelayBridgeModule) -> FakeTransport:
