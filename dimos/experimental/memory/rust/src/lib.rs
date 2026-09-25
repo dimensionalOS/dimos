@@ -33,6 +33,8 @@ use crate::store::{Observation, RecordingStore};
 
 mod decoding;
 mod encoding;
+mod mcap_encoding;
+mod ros;
 pub mod store;
 
 const TF_PAYLOAD_TYPE: &str = "dimos.msgs.tf2_msgs.TFMessage.TFMessage";
@@ -48,6 +50,10 @@ pub enum Codec {
     Jpeg,
     #[serde(rename = "lz4+lcm")]
     Lz4Lcm,
+    Cdr,
+    Json,
+    #[serde(rename = "ros-jpeg")]
+    RosJpeg,
 }
 
 impl Codec {
@@ -56,6 +62,8 @@ impl Codec {
             Self::Lcm => "lcm",
             Self::Jpeg => "jpeg",
             Self::Lz4Lcm => "lz4+lcm",
+            Self::Cdr | Self::RosJpeg => "cdr",
+            Self::Json => "json",
         }
     }
 }
@@ -145,6 +153,20 @@ pub struct RecorderEngine {
 
 impl RecorderEngine {
     pub fn start(config: RecorderConfig) -> Result<Self> {
+        // Validate every stream before the writer thread can create/truncate a file.
+        for stream in &config.streams {
+            match config.store {
+                store::RecordingStoreConfig::Mcap { .. } => {
+                    mcap_encoding::mapping(stream)?;
+                }
+                store::RecordingStoreConfig::Sqlite { .. } => {
+                    anyhow::ensure!(
+                        matches!(stream.codec, Codec::Lcm | Codec::Lz4Lcm | Codec::Jpeg),
+                        "MCAP codec selected for SQLite"
+                    );
+                }
+            }
+        }
         let (write_tx, write_rx) = bounded(QUEUE_CAPACITY);
         let (permit_tx, permit_rx) = bounded(QUEUE_CAPACITY);
         let (failure_tx, failure_rx) = bounded(1);
@@ -233,6 +255,9 @@ fn process(
     data: &[u8],
     reception_ts: f64,
 ) -> Result<Vec<StoredObservation>> {
+    if matches!(stream.codec, Codec::Cdr | Codec::Json | Codec::RosJpeg) {
+        return mcap_encoding::encode(stream, data, reception_ts);
+    }
     decoding::decode(stream, data, reception_ts)?
         .into_iter()
         .map(|observation| encoding::encode(stream, observation))
@@ -691,7 +716,7 @@ mod tests {
     #[test]
     fn mcap_store_writes_indexed_storage_encoded_messages() {
         let file = NamedTempFile::new().unwrap();
-        let samples = stream("samples", Codec::Lz4Lcm, false);
+        let samples = typed_stream("samples", "dimos.msgs.sensor_msgs.Imu.Imu", Codec::Cdr);
         let mut recording_store = store::open(
             &store::RecordingStoreConfig::Mcap {
                 path: file.path().to_string_lossy().into_owned(),
@@ -700,7 +725,14 @@ mod tests {
             1,
         )
         .unwrap();
-        let encoded = encoding::lz4_frame(&[1, 2, 3]).unwrap();
+        let encoded = mcap_encoding::encode(
+            &samples,
+            &lcm_msgs::sensor_msgs::Imu::default().encode(),
+            12.5,
+        )
+        .unwrap()
+        .remove(0)
+        .data;
         recording_store
             .write_batch(&[Observation {
                 stream: Arc::clone(&samples),
@@ -728,8 +760,15 @@ mod tests {
         assert_eq!(messages.len(), 1);
         let message = &messages[0];
         assert_eq!(message.channel.topic, "samples");
-        assert_eq!(message.channel.message_encoding, "lz4+lcm");
-        assert_eq!(message.channel.metadata["dimos.payload_type"], "test.Raw");
+        assert_eq!(message.channel.message_encoding, "cdr");
+        let schema = message.channel.schema.as_ref().unwrap();
+        assert_eq!(schema.name, "sensor_msgs/msg/Imu");
+        assert_eq!(schema.encoding, "ros2msg");
+        assert!(!schema.data.is_empty());
+        assert_eq!(
+            message.channel.metadata["dimos.payload_type"],
+            "dimos.msgs.sensor_msgs.Imu.Imu"
+        );
         assert_eq!(message.log_time, 13_000_000_000);
         assert_eq!(message.publish_time, 12_500_000_000);
         assert_eq!(message.data.as_ref(), encoded);

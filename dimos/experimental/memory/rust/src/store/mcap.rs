@@ -22,6 +22,7 @@ use mcap::records::MessageHeader;
 use mcap::{Compression, WriteOptions, Writer};
 
 use super::{Observation, RecordingStore};
+use crate::mcap_encoding;
 use crate::StreamConfig;
 
 pub struct McapRecordingStore {
@@ -32,6 +33,10 @@ pub struct McapRecordingStore {
 
 impl McapRecordingStore {
     pub fn open(path: &str, streams: &[StreamConfig], compression_threads: usize) -> Result<Self> {
+        let mappings = streams
+            .iter()
+            .map(mcap_encoding::mapping)
+            .collect::<Result<Vec<_>>>()?;
         let file = File::create(path).with_context(|| format!("failed to create {path}"))?;
         let options = WriteOptions::new()
             .profile("dimos")
@@ -40,7 +45,13 @@ impl McapRecordingStore {
             .compression_threads(compression_threads.try_into().unwrap_or(u32::MAX));
         let mut writer = Writer::with_options(BufWriter::new(file), options)?;
         let mut channels = HashMap::new();
-        for stream in streams {
+        for (stream, mapping) in streams.iter().zip(mappings) {
+            // The MCAP writer coalesces identical schema definitions.
+            let schema_id = writer.add_schema(
+                mapping.schema_name,
+                mapping.schema_encoding,
+                mapping.schema.as_bytes(),
+            )?;
             let metadata = BTreeMap::from([
                 (
                     "dimos.payload_type".to_string(),
@@ -53,7 +64,8 @@ impl McapRecordingStore {
                     "publish_time".to_string(),
                 ),
             ]);
-            let channel = writer.add_channel(0, &stream.name, stream.codec.id(), &metadata)?;
+            let channel =
+                writer.add_channel(schema_id, &stream.name, stream.codec.id(), &metadata)?;
             channels.insert(stream.name.clone(), channel);
         }
         Ok(Self {

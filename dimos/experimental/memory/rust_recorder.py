@@ -38,6 +38,36 @@ logger = setup_logger()
 
 _SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm"}
 
+# Explicit input mappings mirrored by the native registry; no schema-name imports.
+_MCAP_TYPES = {
+    "dimos.msgs.sensor_msgs.Image.Image",
+    "dimos.msgs.sensor_msgs.PointCloud2.PointCloud2",
+    "dimos.msgs.sensor_msgs.CameraInfo.CameraInfo",
+    "dimos.msgs.sensor_msgs.Imu.Imu",
+    "dimos.msgs.sensor_msgs.JointState.JointState",
+    "dimos.msgs.geometry_msgs.PoseStamped.PoseStamped",
+    "dimos.msgs.nav_msgs.Odometry.Odometry",
+    "dimos.msgs.nav_msgs.Path.Path",
+    "dimos.msgs.tf2_msgs.TFMessage.TFMessage",
+}
+_MCAP_SEGMENTS = "dimos.msgs.nav_msgs.LineSegments3D.LineSegments3D"
+
+
+def mcap_codec(payload_type: type[Any], codec: str | None = None) -> str:
+    """Validate an input mapping and resolve its native MCAP codec before startup."""
+    name = f"{payload_type.__module__}.{payload_type.__qualname__}"
+    if name == _MCAP_SEGMENTS:
+        if codec not in (None, "json"):
+            raise ValueError("LineSegments3D MCAP recording requires the json codec")
+        return "json"
+    if name not in _MCAP_TYPES:
+        raise TypeError(f"No MCAP recording mapping for {name}")
+    if codec == "jpeg" and payload_type is Image:
+        return "ros-jpeg"
+    if codec not in (None, "cdr"):
+        raise ValueError(f"Unsupported MCAP codec {codec!r} for {name}; use cdr or jpeg for Image")
+    return "cdr"
+
 
 class RustStreamSpec(BaseModel):
     """Fully resolved stream settings sent to the native process."""
@@ -158,12 +188,12 @@ class RustRecorder(NativeModule):
         class CameraRecorder(RustRecorder):
             color_image: In[Image]
 
-    Both stores use the Python Mem2 codec configuration: images default to
-    JPEG, and ``stream_codecs`` may select ``lcm`` or ``lz4+lcm``. MCAP uses
-    indexed Zstd chunks around those storage-encoded observations. The native
-    path preserves source timestamps for common stamped message types. Other
-    LCM messages use their reception timestamp. Spatial pose attachment is not
-    supported yet.
+    MCAP uses embedded schemas, CDR for supported ROS messages, and JSON for
+    LineSegments3D, with indexed Zstd chunks. Images are lossless by default;
+    ``stream_codecs={"color_image": "jpeg"}`` selects ROS CompressedImage.
+    SQLite retains its LCM/JPEG codecs. Encoding runs entirely in Rust, using
+    positive source timestamps when available and reception time otherwise.
+    Spatial pose attachment is not supported yet.
     """
 
     config: RustRecorderConfig
@@ -200,14 +230,21 @@ class RustRecorder(NativeModule):
                             port=port_name,
                             name="tf",
                             payload_type=f"{TFMessage.__module__}.{TFMessage.__qualname__}",
-                            codec="lcm",
+                            codec=(
+                                mcap_codec(TFMessage, self.config.stream_codecs.get("tf"))
+                                if self.config.store.kind == "mcap"
+                                else "lcm"
+                            ),
                         )
                     )
                 continue
 
             stream_name = self.config.stream_remapping.get(port_name, port_name)
-            codec = self.config.stream_codecs.get(stream_name, self._default_codec(port.type))
-            self._validate_codec(stream_name, port.type, codec)
+            if self.config.store.kind == "mcap":
+                codec = mcap_codec(port.type, self.config.stream_codecs.get(stream_name))
+            else:
+                codec = self.config.stream_codecs.get(stream_name, self._default_codec(port.type))
+                self._validate_codec(stream_name, port.type, codec)
             specs.append(
                 RustStreamSpec(
                     port=port_name,

@@ -262,6 +262,11 @@ unitree = [
     "unitree-webrtc-connect>=2.1.2",
 ]
 
+recording = [
+    "mcap>=1.2.0",
+    "mcap-ros2-support>=0.5.7",
+]
+
 unitree-dds = [
     "dimos[unitree]",
     "unitree-sdk2py-dimos>=1.0.2",
@@ -428,6 +433,7 @@ tests = [
     "watchdog>=3.0.0",
     "md-babel-py>=1.4.0",
     "py-spy",
+    "dimos[recording]",
     # Builds the pyo3 Rust extension modules into the venv.
     "maturin>=1.7",
 

@@ -30,7 +30,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import session_config
-from dimos.experimental.memory.rust_recorder import RustStreamSpec
+from dimos.experimental.memory.rust_recorder import RustStreamSpec, mcap_codec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
 from dimos.msgs.sensor_msgs.Image import Image
@@ -99,13 +99,17 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
     for index, ((name, payload_type), transport) in enumerate(transports.items()):
         if name not in selected:
             continue
-        if not hasattr(payload_type, "lcm_encode") or not hasattr(payload_type, "lcm_decode"):
+        if global_config.record == "mcap":
+            codec = mcap_codec(payload_type)
+        elif not hasattr(payload_type, "lcm_encode") or not hasattr(payload_type, "lcm_decode"):
             logger.info(
                 "--record: stream is not a DimOS LCM message type; skipped",
                 stream=name,
                 payload_type=str(payload_type),
             )
             continue
+        else:
+            codec = "jpeg" if issubclass(payload_type, Image) else "lcm"
         if type(transport) is LCMTransport:
             backend = "lcm"
         elif type(transport) is ZenohTransport:
@@ -121,7 +125,7 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
                 port=port,
                 name=name,
                 payload_type=f"{payload_type.__module__}.{payload_type.__qualname__}",
-                codec="jpeg" if issubclass(payload_type, Image) else "lcm",
+                codec=codec,
             )
         )
         topics[port] = transport.channel

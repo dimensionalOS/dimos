@@ -7,6 +7,7 @@ license = "Apache-2.0"
 
 [dependencies]
 anyhow = "1"
+cdr = "0.2.4"
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"
 dimos-module = { path = "../../../../native/rust/dimos-module" }
