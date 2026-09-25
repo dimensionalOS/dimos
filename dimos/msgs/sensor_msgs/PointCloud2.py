@@ -850,7 +850,7 @@ class PointCloud2(Timestamped):
         self,
         voxel_size: float = 0.05,
         colors: list[int] | None = None,
-        mode: str = "spheres",
+        mode: str = "points",
         fill_mode: str = "solid",
         bottom_cutoff: float | None = None,
         ui_radius: float = 2.0,
@@ -864,9 +864,9 @@ class PointCloud2(Timestamped):
             colors: Optional RGB color [r, g, b] for all points (0-255).
                 If None, uses height-based turbo colormap via class_ids
                 (requires register_colormap_annotation() called once).
-            mode: "points" for flat screen-space dots, "boxes" for cubes, or
-                "spheres" (default) for world-sized spheres. Only "points" holds a
-                constant on-screen size as you zoom; the others scale with voxel_size.
+            mode: "points" (default) for flat screen-space dots, "boxes" for cubes,
+                or "spheres" for world-sized spheres. Only "points" holds a constant
+                on-screen size as you zoom; the others scale with voxel_size.
             fill_mode: Fill mode for boxes - "solid", "majorwireframe", or "densewireframe"
             ui_radius: Dot radius in screen-space UI points; "points" mode only.
             rgb: Paint with the cloud's own per-point colors when it has any (an
