@@ -677,6 +677,8 @@ module = [
     "sensor_msgs.*",
     "sqlite_vec",
     "std_msgs.*",
+    "tars_sdk",
+    "tars_sdk.*",
     "tf2_msgs.*",
     "transformers",
     "transformers.*",
