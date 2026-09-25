@@ -26,29 +26,23 @@ from __future__ import annotations
 from collections.abc import Callable
 import math
 
-from dimos.evals.environments.mujoco_sim import (
-    MujocoEnvironment,
-    first_body_transform,
-    last_body_transform,
-)
+from dimos.evals.environments.lib.body_poses import first_body_transform, last_body_transform
+from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.scorers import ramp
 from dimos.evals.types import EvalCase, Outcome, Suite, recording
 
 TRACKED = ("apple", "orange", "cup")
 
 
-# The blueprint pins Moondream (a 3.85 GB Hugging Face download on first use) and
-# EdgeTAM (the ``dimos[perception]`` extra). OWLv2 takes text prompts natively at a
-# ~600 MB download, and YOLOE box segmentation ships in LFS data. Pre-fetch once:
-#     hf download google/owlv2-base-patch16-ensemble
+# The blueprint's Moondream detector and EdgeTAM segmenter need a 3.85 GB download and
+# the ``dimos[perception]`` extra; OWLv2 plus YOLOE box segmentation run from LFS data.
 LOCAL_PERCEPTION = {
     "OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND": "owlv2",
     "OBJECTSCENEREGISTRATIONMODULE__SEGMENTATION_BACKEND": "yolo",
 }
 
 
-# Everything above the arm: detector, segmenter, grasp ranking and the pick pipeline.
-# Without them the agent has the wrist camera (``observe``) and the planner skills.
+# Detector, segmenter, grasp ranking and the pick pipeline.
 PERCEPTION_MODULES = (
     "object-scene-registration-module",
     "pick-and-place-module",
@@ -70,16 +64,12 @@ def arm_only_environment(*, headless: bool = True, rerun: bool = False) -> Mujoc
     )
 
 
-def environment(
-    *, headless: bool = True, module_env: dict[str, str] | None = None
-) -> MujocoEnvironment:
-    """The xArm7 table scene; ``headless=False`` opens the MuJoCo viewer window."""
+def environment() -> MujocoEnvironment:
     return MujocoEnvironment(
         blueprint=["xarm-perception-sim", "mcp-server"],
         disable=("rerun-bridge-module",),
         tracked_bodies=TRACKED,
-        headless=headless,
-        module_env=LOCAL_PERCEPTION if module_env is None else module_env,
+        module_env=LOCAL_PERCEPTION,
     )
 
 

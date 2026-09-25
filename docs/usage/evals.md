@@ -433,11 +433,8 @@ environment only launches `dimos --simulation mujoco --record run <blueprint>
 `last_body_transform` read them back from the recording:
 
 ```python session=evals ansi=false no-result
-from dimos.evals.environments.mujoco_sim import (
-    MujocoEnvironment,
-    first_body_transform,
-    last_body_transform,
-)
+from dimos.evals.environments.lib.body_poses import first_body_transform, last_body_transform
+from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 
 
 def lifted_apple(o):

@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import Field
 
+from dimos.evals.environments.lib.body_poses import last_body_transform
 from dimos.evals.environments.sim import Sim, SimConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -32,7 +33,6 @@ if TYPE_CHECKING:
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
     from dimos.memory.store.base import Store
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.geometry_msgs.Transform import Transform
 
 logger = setup_logger()
 
@@ -153,24 +153,3 @@ class MujocoEnvironment(Sim):
             "module_env": dict(self.config.module_env),
             "initial_body_positions": self._initial_body_positions,
         }
-
-
-def last_body_transform(recording: Store, body: str) -> Transform:
-    """The newest ``world -> body`` transform in the recording."""
-    return _body_transform(recording, body, newest=True)
-
-
-def first_body_transform(recording: Store, body: str) -> Transform:
-    """The oldest ``world -> body`` transform in the recording."""
-    return _body_transform(recording, body, newest=False)
-
-
-def _body_transform(recording: Store, body: str, *, newest: bool) -> Transform:
-    # Several modules publish on tf, so scan messages until one names the body.
-    if "tf" not in recording.streams:
-        raise LookupError("No tf recorded")
-    for record in recording.streams.tf.order_by("ts", desc=newest):
-        for transform in record.data.transforms:
-            if transform.child_frame_id == body:
-                return cast("Transform", transform)
-    raise LookupError(f"No tf for body {body!r}; is it in tracked_bodies?")

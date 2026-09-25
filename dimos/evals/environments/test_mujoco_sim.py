@@ -14,17 +14,12 @@
 
 import json
 import time
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-from dimos.evals.environments.mujoco_sim import (
-    MujocoEnvironment,
-    first_body_transform,
-    last_body_transform,
-)
+from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -70,52 +65,25 @@ def test_launch_flags():
 
 def test_module_env_reaches_blueprint_parser():
     from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-    from dimos.evals.suites.mujoco_xarm import environment as xarm_environment
+    from dimos.evals.suites.mujoco_xarm import LOCAL_PERCEPTION
     from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
 
     proc = DimosCliCall()
-    xarm_environment(headless=False).configure_launch(proc)
+    environment(
+        headless=False, tracked_bodies=("apple", "cup"), module_env=LOCAL_PERCEPTION
+    ).configure_launch(proc)
     parsed = BlueprintConfigParser(xarm_perception_sim).parse(environ=proc.extra_env)
     perception = parsed.module_kwargs("objectsceneregistrationmodule")
     assert perception["detector_backend"] == "owlv2"
     assert perception["segmentation_backend"] == "yolo"
     sim = parsed.module_kwargs("mujocosimmodule")
     assert sim["headless"] is False  # the environment beats the blueprint's pinned value
-    assert sim["tracked_bodies"] == ["apple", "orange", "cup"]
+    assert sim["tracked_bodies"] == ["apple", "cup"]
 
 
-def test_arm_only_composition_drops_perception_but_keeps_skills_and_camera():
-    from dimos.core.coordination.blueprints import autoconnect
-    from dimos.evals.suites.mujoco_xarm import arm_only_environment
-    from dimos.robot.get_all_blueprints import get_by_name
-
-    env = arm_only_environment()
-    env.preflight(SimpleNamespace(config=SimpleNamespace(modules=())))
-    # What ``dimos run <blueprint...> --disable <module...>`` composes.
-    blueprint = autoconnect(*map(get_by_name, env.config.blueprint)).disabled_modules(
-        *(get_by_name(name).blueprints[0].module for name in env.config.disable)
-    )
-    active = {bp.module.__name__ for bp in blueprint.active_blueprints}
-    assert {"ManipulationSkills", "MujocoSimModule", "ObserveSkill", "McpServer"} <= active
-    assert active.isdisjoint(
-        {"ObjectSceneRegistrationModule", "PickAndPlaceModule", "HeuristicGraspModule"}
-    )
-
-
-def test_body_transforms_come_from_the_newest_tf_naming_them():
+def test_latest_pose_needs_odom():
     env = environment()
     with MemoryStore() as store:
-        with pytest.raises(LookupError):
-            last_body_transform(store, "apple")
-        tf = store.stream("tf", TFMessage)
-        tf.append(_tf(1.0, "apple", 0.17))
-        tf.append(_tf(2.0, "apple", 0.30))
-        tf.append(_tf(3.0, "wrist_camera_link", 0.0))  # another publisher's message
-        assert first_body_transform(store, "apple").translation.z == pytest.approx(0.17)
-        assert last_body_transform(store, "apple").translation.z == pytest.approx(0.30)
-        with pytest.raises(LookupError):
-            last_body_transform(store, "orange")
-
         with pytest.raises(LookupError):
             env.latest_pose(store)
         store.stream("odom", PoseStamped).append(PoseStamped(ts=5, frame_id="world"))

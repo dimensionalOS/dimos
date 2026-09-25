@@ -12,15 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One question for the xArm7 table scene, no perception stack: pick up the cylinder.
+"""Pick up the cylinder (the ``cup`` body) with planner skills and the wrist camera only.
 
-The agent gets the planner skills (``move_to_pose``, ``set_gripper``, ...) and
-``observe`` for wrist-camera frames, nothing that detects or localises objects.
-The cylinder is the ``cup`` body in ``data/xarm7/scene.xml`` (radius 3.5 cm,
-12 cm tall, standing at x=0.50 m in front of the arm). Full credit once it ends
-the episode 5 cm or more above where it started.
-
-    dimos evals run dimos.evals.suites.mujoco_xarm_pick_cylinder --agent dimos.evals.agents.pi
+dimos evals run dimos.evals.suites.mujoco_xarm_pick_cylinder --agent dimos.evals.agents.pi
 """
 
 from __future__ import annotations
