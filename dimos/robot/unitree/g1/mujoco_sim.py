@@ -59,14 +59,12 @@ class G1SimConnection(G1ConnectionBase):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stop_event = threading.Event()
+        # Launches the simulator now so its start-up overlaps the deploy phase.
+        self.connection = MujocoConnection(self.config.g)
 
     @rpc
     def start(self) -> None:
         super().start()
-
-        from dimos.robot.unitree.mujoco_connection import MujocoConnection
-
-        self.connection = MujocoConnection(self.config.g)
         assert self.connection is not None
         self.connection.start()
 
