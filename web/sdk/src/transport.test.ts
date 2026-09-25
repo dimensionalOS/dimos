@@ -435,3 +435,19 @@ describe("ReconnectingTransport", () => {
     expect(phases.filter((p) => p.phase === "reconnecting")).toEqual([]);
   });
 });
+
+describe("fetchRelayInfo rtc flag", () => {
+  it("accepts an absent or boolean rtc and rejects other types", async () => {
+    const fetchJson = (body: unknown) => {
+      vi.stubGlobal("fetch", () => Promise.resolve(new Response(JSON.stringify(body))));
+      return fetchRelayInfo("http://relay/api/info", new AbortController().signal);
+    };
+    try {
+      expect(await fetchJson(INFO)).toEqual(INFO);
+      expect(await fetchJson({ ...INFO, rtc: true })).toEqual({ ...INFO, rtc: true });
+      await expect(fetchJson({ ...INFO, rtc: "yes" })).rejects.toThrow("unexpected shape");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
