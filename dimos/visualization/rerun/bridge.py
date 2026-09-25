@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import field
+import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -40,6 +42,8 @@ import numpy as np
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
 
+from dimos.constants import RECORDINGS_DIR
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
@@ -234,6 +238,8 @@ class Config(ModuleConfig):
     memory_limit: str = "25%"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
+    # Also write everything logged to recordings/<run-id>/rerun.rrd.
+    rerun_save: bool = False
     web_port: int = RERUN_WEB_VIEWER_PORT
     blueprint: BlueprintFactory | None = _default_blueprint
 
@@ -441,6 +447,9 @@ class RerunBridgeModule(Module):
         parsed = urlparse(connect_url.replace("rerun+", "", 1))
         grpc_port = parsed.port or RERUN_GRPC_PORT
 
+        if self.config.rerun_save:
+            self._save_client = _start_save_client(server_uri)
+
         if self.config.rerun_open not in get_args(RerunOpenOption):
             logger.warning(
                 f"rerun_open was {self.config.rerun_open} which is not one of "
@@ -646,7 +655,53 @@ class RerunBridgeModule(Module):
         self._override_cache.clear()
         self._frame_attached.clear()
         self._tf_tree = None
+        self._stop_save_client()
         super().stop()
+
+    _save_client: subprocess.Popen[bytes] | None = None
+
+    def _stop_save_client(self) -> None:
+        """Hand the save client everything logged so far, then let it close the file."""
+        client, self._save_client = self._save_client, None
+        if client is None or client.poll() is not None:
+            return
+        import rerun as rr
+
+        try:
+            rr.get_global_data_recording().flush()  # type: ignore[union-attr]
+        except Exception:
+            logger.warning("Rerun flush before closing the .rrd failed", exc_info=True)
+        client.send_signal(signal.SIGINT)
+        try:
+            client.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            logger.warning("rerun --save did not exit; killing it, the .rrd may be truncated")
+            client.kill()
+            client.wait()
+
+
+def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:
+    """A headless ``rerun --save`` client of our gRPC server.
+
+    It streams every incoming log event to ``recordings/<run-id>/rerun.rrd``, the
+    folder ``--record`` writes ``memory.db`` to, so a run's sensor recording and
+    its visualization sit together. Running it as a client keeps the server, and
+    any live viewer on it, exactly as they are.
+    """
+    cli = shutil.which("rerun")
+    if cli is None:
+        logger.warning("rerun_save: no `rerun` CLI on PATH, the stream is not saved")
+        return None
+    run_id = os.environ.get(DIMOS_RUN_ID_ENV) or time.strftime("%Y%m%d-%H%M%S")
+    path = RECORDINGS_DIR / run_id / "rerun.rrd"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Saving the Rerun stream", path=str(path))
+    return subprocess.Popen(
+        [cli, "--save", str(path), server_uri],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def run_bridge(

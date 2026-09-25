@@ -1,0 +1,49 @@
+# A pool of idle eval workers. Scale it, then drive it from the host:
+#   docker compose -f docker/evals/compose.yaml up -d --scale worker=4
+#   python docker/evals/dispatch.py --suite ... --agent ...
+#
+# Each container has its own network namespace, so every dimos runs on its
+# default ports and multicast groups without colliding with its neighbours.
+# Add compose.gpu.yaml on a host with the NVIDIA container toolkit and an
+# Xorg server on the GPU (see README.md); without it DimSim renders on the CPU.
+services:
+  worker:
+    image: ${EVALS_IMAGE:-dimensional/evals:latest}
+    build:
+      context: ../..
+      dockerfile: docker/evals/Dockerfile
+    command: ["sleep", "infinity"]
+    init: true
+    # Chromium needs more than Docker's 64 MB default /dev/shm.
+    shm_size: 2g
+    # Zenoh's shared-memory pool wants 64 MB of locked memory; Docker's default is 8 MB.
+    ulimits:
+      memlock: -1
+    # dimos's LCM setup enables multicast on lo and adds the 224.0.0.0/4 route
+    # inside the container at startup; that needs NET_ADMIN.
+    cap_add:
+      - NET_ADMIN
+    environment:
+      # DimSim's Deno bridge publishes odom and takes cmd_vel over LCM only;
+      # under the default zenoh transport nothing reaches the sim or comes back.
+      # Habitat's native process speaks zenoh instead: run those with
+      # DIMOS_TRANSPORT=zenoh exported on the host.
+      DIMOS_TRANSPORT: ${DIMOS_TRANSPORT:-lcm}
+      DIMSIM_RENDER: ${DIMSIM_RENDER:-cpu}
+      # Log to Rerun but never open a viewer; every run writes
+      # recordings/<run-id>/rerun.rrd next to its memory.db for offline replay.
+      # RERUN_SAVE=0 on the host skips the file (the bridge still runs).
+      VIEWER: rerun
+      RERUN_OPEN: none
+      RERUN_SAVE: ${RERUN_SAVE:-1}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      # Eval results, recordings and logs of every worker.
+      - ${EVAL_RUNS_DIR:-./eval-runs}:/state
+      # The run registry must stay private to each container: it is keyed by pid,
+      # and a shared one lets container A's stale-entry sweep delete container B's
+      # live run (B's pids are invisible to A), after which B's eval never finds
+      # its recording. An anonymous volume gives every container its own.
+      - /state/dimos/runs

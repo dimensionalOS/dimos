@@ -17,12 +17,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import time
 from typing import TYPE_CHECKING, cast
 
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.evals.environments.sim import Sim, SimConfig
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
     from dimos.memory.store.base import Store
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -31,6 +34,8 @@ if TYPE_CHECKING:
 class DimSimEnvironmentConfig(SimConfig):
     scene: str = "apartment"
     setup: Callable[[DimSimClient], None] | None = None
+    # A recorded odom row younger than this proves the sim engine is up.
+    fresh_odom_s: float = 10.0
 
 
 class DimSimEnvironment(Sim):
@@ -46,6 +51,30 @@ class DimSimEnvironment(Sim):
             self._resources.callback(client.stop)
             client.start()
             self.config.setup(client)
+
+    def prepare_recording(self, recording: Store, path: Path, deadline: float) -> dict[str, Path]:
+        """Block until the sim engine publishes odometry.
+
+        MCP answers long before the headless browser finishes booting (a cold
+        start downloads Deno and Chromium and builds the frontend), so waiting
+        on MCP alone hands the agent a robot that does not exist yet.
+        """
+        self.wait_ready(recording, deadline=deadline)
+        return {}
+
+    def wait_ready(self, recording: Store, *, deadline: float) -> None:
+        # The Observation's ts is the recorder's wall clock, which is set even
+        # when the sim leaves PoseStamped.ts at zero.
+        while time.monotonic() < deadline:
+            try:
+                if "odom" in recording.streams:
+                    latest = recording.streams.odom.last()
+                    if time.time() - latest.ts < self.config.fresh_odom_s:
+                        return
+            except LookupError:
+                pass
+            time.sleep(0.1)
+        raise TimeoutError("DimSim did not publish fresh odometry before the launch deadline")
 
     def latest_pose(self, recording: Store) -> PoseStamped:
         if "odom" not in recording.streams:

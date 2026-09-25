@@ -1,0 +1,12 @@
+# Overlay for Habitat datasets that do not belong in the image: HSSD, ReplicaCAD,
+# licensed HM3D splits. Point HABITAT_DATA_DIR at a host directory laid out the
+# way habitat-sim's downloader leaves it (hssd-hab/, versioned_data/...), and it
+# replaces the container's target/habitat/data, so the suites' default paths
+# resolve unchanged. Populate it once with the image's own tooling, e.g.
+#   docker compose -f docker/evals/compose.yaml -f docker/evals/compose.habitat-data.yaml run --rm worker \
+#     /app/target/habitat/env/bin/python -m habitat_sim.utils.datasets_download \
+#       --uids hm3d_example replica_cad_dataset --data-path /app/target/habitat/data --no-replace
+services:
+  worker:
+    volumes:
+      - ${HABITAT_DATA_DIR:-./habitat-data}:/app/target/habitat/data

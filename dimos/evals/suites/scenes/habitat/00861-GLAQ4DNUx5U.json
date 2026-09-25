@@ -1,0 +1,2499 @@
+{
+  "frame_id": "world",
+  "scene_id": "00861-GLAQ4DNUx5U",
+  "count": 160,
+  "detections": [
+    {
+      "id": "chair_796",
+      "label": "chair",
+      "center_xyz": [
+        -1.41,
+        11.32,
+        0.59
+      ],
+      "size_xyz": [
+        0.58,
+        0.43,
+        0.47
+      ]
+    },
+    {
+      "id": "door_769",
+      "label": "door",
+      "center_xyz": [
+        -2.21,
+        6.5,
+        -1.59
+      ],
+      "size_xyz": [
+        2.11,
+        0.25,
+        0.89
+      ]
+    },
+    {
+      "id": "storage cabinet_841",
+      "label": "storage cabinet",
+      "center_xyz": [
+        -1.57,
+        10.21,
+        -2.67
+      ],
+      "size_xyz": [
+        0.82,
+        2.6,
+        0.39
+      ]
+    },
+    {
+      "id": "door/window_433",
+      "label": "door/window",
+      "center_xyz": [
+        0.53,
+        11.62,
+        -6.57
+      ],
+      "size_xyz": [
+        2.1,
+        0.04,
+        3.3
+      ]
+    },
+    {
+      "id": "paper towel_258",
+      "label": "paper towel",
+      "center_xyz": [
+        1.27,
+        2.98,
+        -5.79
+      ],
+      "size_xyz": [
+        0.25,
+        0.45,
+        0.26
+      ]
+    },
+    {
+      "id": "sink_721",
+      "label": "sink",
+      "center_xyz": [
+        -1.99,
+        1.67,
+        0.97
+      ],
+      "size_xyz": [
+        0.15,
+        0.56,
+        0.39
+      ]
+    },
+    {
+      "id": "window_760",
+      "label": "window",
+      "center_xyz": [
+        -2.56,
+        11.53,
+        -1.27
+      ],
+      "size_xyz": [
+        0.92,
+        0.16,
+        0.86
+      ]
+    },
+    {
+      "id": "laundry basket_695",
+      "label": "laundry basket",
+      "center_xyz": [
+        -1.44,
+        0.07,
+        0.9
+      ],
+      "size_xyz": [
+        0.54,
+        0.5,
+        0.52
+      ]
+    },
+    {
+      "id": "shower floor_503",
+      "label": "shower floor",
+      "center_xyz": [
+        -1.2,
+        9.83,
+        -4.09
+      ],
+      "size_xyz": [
+        0.06,
+        1.0,
+        0.97
+      ]
+    },
+    {
+      "id": "kitchen cabinet_304",
+      "label": "kitchen cabinet",
+      "center_xyz": [
+        1.06,
+        9.73,
+        -2.6
+      ],
+      "size_xyz": [
+        1.07,
+        3.01,
+        0.73
+      ]
+    },
+    {
+      "id": "container_555",
+      "label": "container",
+      "center_xyz": [
+        -1.46,
+        4.66,
+        -7.91
+      ],
+      "size_xyz": [
+        0.59,
+        0.72,
+        0.54
+      ]
+    },
+    {
+      "id": "clothes rack_71",
+      "label": "clothes rack",
+      "center_xyz": [
+        0.59,
+        0.17,
+        -1.68
+      ],
+      "size_xyz": [
+        2.05,
+        1.85,
+        0.57
+      ]
+    },
+    {
+      "id": "shower floor_706",
+      "label": "shower floor",
+      "center_xyz": [
+        -1.18,
+        -0.04,
+        -1.52
+      ],
+      "size_xyz": [
+        0.03,
+        2.08,
+        1.0
+      ]
+    },
+    {
+      "id": "closet area for hanging clothes_685",
+      "label": "closet area for hanging clothes",
+      "center_xyz": [
+        -2.08,
+        -1.39,
+        -8.25
+      ],
+      "size_xyz": [
+        1.84,
+        1.21,
+        1.2
+      ]
+    },
+    {
+      "id": "container_311",
+      "label": "container",
+      "center_xyz": [
+        1.05,
+        3.73,
+        0.67
+      ],
+      "size_xyz": [
+        0.11,
+        0.41,
+        0.35
+      ]
+    },
+    {
+      "id": "recessed wall_5",
+      "label": "recessed wall",
+      "center_xyz": [
+        -0.05,
+        -1.31,
+        -3.29
+      ],
+      "size_xyz": [
+        0.9,
+        0.53,
+        0.2
+      ]
+    },
+    {
+      "id": "chair_336",
+      "label": "chair",
+      "center_xyz": [
+        1.2,
+        5.01,
+        -1.17
+      ],
+      "size_xyz": [
+        0.83,
+        0.65,
+        0.68
+      ]
+    },
+    {
+      "id": "hanger_673",
+      "label": "hanger",
+      "center_xyz": [
+        -2.74,
+        1.47,
+        -8.18
+      ],
+      "size_xyz": [
+        0.07,
+        0.87,
+        0.88
+      ]
+    },
+    {
+      "id": "shower ceiling_745",
+      "label": "shower ceiling",
+      "center_xyz": [
+        -3.78,
+        3.44,
+        -2.55
+      ],
+      "size_xyz": [
+        0.07,
+        1.68,
+        1.12
+      ]
+    },
+    {
+      "id": "shower floor_759",
+      "label": "shower floor",
+      "center_xyz": [
+        -1.18,
+        3.39,
+        -2.58
+      ],
+      "size_xyz": [
+        0.03,
+        1.56,
+        1.0
+      ]
+    },
+    {
+      "id": "refrigerator cabinet_313",
+      "label": "refrigerator cabinet",
+      "center_xyz": [
+        0.91,
+        3.72,
+        0.63
+      ],
+      "size_xyz": [
+        1.4,
+        1.71,
+        0.57
+      ]
+    },
+    {
+      "id": "washing machine_219",
+      "label": "washing machine",
+      "center_xyz": [
+        1.18,
+        3.52,
+        -3.97
+      ],
+      "size_xyz": [
+        0.84,
+        0.36,
+        0.66
+      ]
+    },
+    {
+      "id": "door_626",
+      "label": "door",
+      "center_xyz": [
+        -2.2,
+        2.14,
+        -4.01
+      ],
+      "size_xyz": [
+        2.06,
+        0.1,
+        0.78
+      ]
+    },
+    {
+      "id": "trash can_508",
+      "label": "trash can",
+      "center_xyz": [
+        -1.23,
+        11.42,
+        -4.47
+      ],
+      "size_xyz": [
+        0.4,
+        0.63,
+        0.27
+      ]
+    },
+    {
+      "id": "ironing board_221",
+      "label": "ironing board",
+      "center_xyz": [
+        0.77,
+        4.76,
+        -4.35
+      ],
+      "size_xyz": [
+        1.66,
+        0.44,
+        0.29
+      ]
+    },
+    {
+      "id": "wardrobe_484",
+      "label": "wardrobe",
+      "center_xyz": [
+        -2.08,
+        9.87,
+        -8.6
+      ],
+      "size_xyz": [
+        1.8,
+        1.98,
+        0.34
+      ]
+    },
+    {
+      "id": "bathroom cabinet_16",
+      "label": "bathroom cabinet",
+      "center_xyz": [
+        1.09,
+        -0.99,
+        -2.28
+      ],
+      "size_xyz": [
+        0.67,
+        0.34,
+        0.66
+      ]
+    },
+    {
+      "id": "closet area for hanging clothes_674",
+      "label": "closet area for hanging clothes",
+      "center_xyz": [
+        -2.1,
+        1.61,
+        -8.26
+      ],
+      "size_xyz": [
+        1.84,
+        1.31,
+        1.36
+      ]
+    },
+    {
+      "id": "bed_490",
+      "label": "bed",
+      "center_xyz": [
+        -1.58,
+        9.41,
+        -6.54
+      ],
+      "size_xyz": [
+        0.88,
+        2.21,
+        1.87
+      ]
+    },
+    {
+      "id": "bed stand_789",
+      "label": "bed stand",
+      "center_xyz": [
+        -1.5,
+        8.8,
+        0.62
+      ],
+      "size_xyz": [
+        0.71,
+        0.53,
+        0.41
+      ]
+    },
+    {
+      "id": "heater_699",
+      "label": "heater",
+      "center_xyz": [
+        -2.22,
+        -2.17,
+        -0.87
+      ],
+      "size_xyz": [
+        1.46,
+        0.13,
+        0.55
+      ]
+    },
+    {
+      "id": "toilet_3",
+      "label": "toilet",
+      "center_xyz": [
+        1.34,
+        -1.31,
+        -2.93
+      ],
+      "size_xyz": [
+        0.47,
+        0.46,
+        0.59
+      ]
+    },
+    {
+      "id": "container_554",
+      "label": "container",
+      "center_xyz": [
+        -1.44,
+        3.02,
+        -7.91
+      ],
+      "size_xyz": [
+        0.56,
+        0.66,
+        0.5
+      ]
+    },
+    {
+      "id": "showerhead_496",
+      "label": "showerhead",
+      "center_xyz": [
+        -2.77,
+        9.4,
+        -4.21
+      ],
+      "size_xyz": [
+        1.96,
+        0.18,
+        0.22
+      ]
+    },
+    {
+      "id": "air conditioner_468",
+      "label": "air conditioner",
+      "center_xyz": [
+        -4.05,
+        10.34,
+        -4.79
+      ],
+      "size_xyz": [
+        0.45,
+        0.88,
+        0.22
+      ]
+    },
+    {
+      "id": "desk chair_802",
+      "label": "desk chair",
+      "center_xyz": [
+        -1.59,
+        7.96,
+        -2.63
+      ],
+      "size_xyz": [
+        0.87,
+        0.56,
+        0.58
+      ]
+    },
+    {
+      "id": "bed_791",
+      "label": "bed",
+      "center_xyz": [
+        -1.61,
+        9.96,
+        -0.23
+      ],
+      "size_xyz": [
+        1.15,
+        1.62,
+        2.19
+      ]
+    },
+    {
+      "id": "sofa chair_405",
+      "label": "sofa chair",
+      "center_xyz": [
+        1.28,
+        10.02,
+        -6.73
+      ],
+      "size_xyz": [
+        0.67,
+        0.82,
+        0.82
+      ]
+    },
+    {
+      "id": "window_725",
+      "label": "window",
+      "center_xyz": [
+        -2.68,
+        -0.1,
+        1.15
+      ],
+      "size_xyz": [
+        0.62,
+        1.63,
+        0.3
+      ]
+    },
+    {
+      "id": "rug_703",
+      "label": "rug",
+      "center_xyz": [
+        -1.17,
+        1.27,
+        -1.52
+      ],
+      "size_xyz": [
+        0.01,
+        0.42,
+        0.66
+      ]
+    },
+    {
+      "id": "bathroom cabinet_742",
+      "label": "bathroom cabinet",
+      "center_xyz": [
+        -1.49,
+        -1.07,
+        0.94
+      ],
+      "size_xyz": [
+        0.38,
+        0.86,
+        0.5
+      ]
+    },
+    {
+      "id": "vacuum cleaner_141",
+      "label": "vacuum cleaner",
+      "center_xyz": [
+        1.37,
+        -0.25,
+        -5.26
+      ],
+      "size_xyz": [
+        0.25,
+        0.77,
+        0.38
+      ]
+    },
+    {
+      "id": "plant_165",
+      "label": "plant",
+      "center_xyz": [
+        -0.03,
+        4.87,
+        -6.17
+      ],
+      "size_xyz": [
+        0.7,
+        0.27,
+        0.24
+      ]
+    },
+    {
+      "id": "stand_231",
+      "label": "stand",
+      "center_xyz": [
+        1.21,
+        3.56,
+        -5.62
+      ],
+      "size_xyz": [
+        0.81,
+        0.48,
+        0.6
+      ]
+    },
+    {
+      "id": "desk clutter_807",
+      "label": "desk clutter",
+      "center_xyz": [
+        -2.0,
+        8.65,
+        -2.98
+      ],
+      "size_xyz": [
+        0.17,
+        0.55,
+        0.26
+      ]
+    },
+    {
+      "id": "storage cabinet_143",
+      "label": "storage cabinet",
+      "center_xyz": [
+        0.4,
+        -0.31,
+        -5.28
+      ],
+      "size_xyz": [
+        2.46,
+        2.86,
+        0.47
+      ]
+    },
+    {
+      "id": "shelf_549",
+      "label": "shelf",
+      "center_xyz": [
+        -1.7,
+        5.22,
+        -6.11
+      ],
+      "size_xyz": [
+        0.53,
+        0.39,
+        1.51
+      ]
+    },
+    {
+      "id": "door_222",
+      "label": "door",
+      "center_xyz": [
+        0.43,
+        4.43,
+        -3.77
+      ],
+      "size_xyz": [
+        2.31,
+        0.14,
+        0.87
+      ]
+    },
+    {
+      "id": "tv_480",
+      "label": "tv",
+      "center_xyz": [
+        -2.31,
+        11.21,
+        -7.7
+      ],
+      "size_xyz": [
+        0.83,
+        0.28,
+        1.1
+      ]
+    },
+    {
+      "id": "dresser_775",
+      "label": "dresser",
+      "center_xyz": [
+        -1.55,
+        6.58,
+        -0.48
+      ],
+      "size_xyz": [
+        0.74,
+        0.47,
+        0.88
+      ]
+    },
+    {
+      "id": "sink_303",
+      "label": "sink",
+      "center_xyz": [
+        0.7,
+        9.71,
+        -2.6
+      ],
+      "size_xyz": [
+        0.2,
+        0.85,
+        0.49
+      ]
+    },
+    {
+      "id": "bed stand_483",
+      "label": "bed stand",
+      "center_xyz": [
+        -1.35,
+        8.59,
+        -7.53
+      ],
+      "size_xyz": [
+        0.41,
+        0.53,
+        0.51
+      ]
+    },
+    {
+      "id": "chair_306",
+      "label": "chair",
+      "center_xyz": [
+        1.25,
+        8.05,
+        -0.85
+      ],
+      "size_xyz": [
+        0.73,
+        0.45,
+        0.46
+      ]
+    },
+    {
+      "id": "chair_337",
+      "label": "chair",
+      "center_xyz": [
+        1.21,
+        4.99,
+        -0.55
+      ],
+      "size_xyz": [
+        0.81,
+        0.73,
+        0.65
+      ]
+    },
+    {
+      "id": "recessed wall_638",
+      "label": "recessed wall",
+      "center_xyz": [
+        -2.83,
+        4.15,
+        -4.1
+      ],
+      "size_xyz": [
+        1.08,
+        0.26,
+        0.68
+      ]
+    },
+    {
+      "id": "heater_878",
+      "label": "heater",
+      "center_xyz": [
+        -2.24,
+        4.25,
+        -1.68
+      ],
+      "size_xyz": [
+        1.37,
+        0.11,
+        0.56
+      ]
+    },
+    {
+      "id": "compound wall_315",
+      "label": "compound wall",
+      "center_xyz": [
+        0.39,
+        4.69,
+        0.65
+      ],
+      "size_xyz": [
+        2.42,
+        0.16,
+        0.63
+      ]
+    },
+    {
+      "id": "desk clutter_810",
+      "label": "desk clutter",
+      "center_xyz": [
+        -1.93,
+        9.14,
+        -2.76
+      ],
+      "size_xyz": [
+        0.05,
+        0.5,
+        0.21
+      ]
+    },
+    {
+      "id": "door/window_162",
+      "label": "door/window",
+      "center_xyz": [
+        0.54,
+        0.54,
+        -9.17
+      ],
+      "size_xyz": [
+        2.2,
+        1.84,
+        0.27
+      ]
+    },
+    {
+      "id": "door_95",
+      "label": "door",
+      "center_xyz": [
+        0.56,
+        2.04,
+        -3.5
+      ],
+      "size_xyz": [
+        2.17,
+        0.17,
+        0.89
+      ]
+    },
+    {
+      "id": "bath towel_874",
+      "label": "bath towel",
+      "center_xyz": [
+        -2.66,
+        4.2,
+        -1.67
+      ],
+      "size_xyz": [
+        0.54,
+        0.16,
+        0.42
+      ]
+    },
+    {
+      "id": "bathroom cabinet_741",
+      "label": "bathroom cabinet",
+      "center_xyz": [
+        -1.76,
+        -1.68,
+        1.0
+      ],
+      "size_xyz": [
+        0.36,
+        0.9,
+        0.33
+      ]
+    },
+    {
+      "id": "bar_710",
+      "label": "bar",
+      "center_xyz": [
+        -4.0,
+        -0.07,
+        -0.89
+      ],
+      "size_xyz": [
+        0.09,
+        4.28,
+        0.22
+      ]
+    },
+    {
+      "id": "desk clutter_557",
+      "label": "desk clutter",
+      "center_xyz": [
+        -2.05,
+        4.72,
+        -7.71
+      ],
+      "size_xyz": [
+        0.29,
+        0.63,
+        0.96
+      ]
+    },
+    {
+      "id": "bed_618",
+      "label": "bed",
+      "center_xyz": [
+        -1.51,
+        0.0,
+        -3.3
+      ],
+      "size_xyz": [
+        0.72,
+        2.14,
+        2.18
+      ]
+    },
+    {
+      "id": "door/window frame_434",
+      "label": "door/window frame",
+      "center_xyz": [
+        0.52,
+        11.58,
+        -6.52
+      ],
+      "size_xyz": [
+        2.19,
+        0.13,
+        3.6
+      ]
+    },
+    {
+      "id": "small table/stand_406",
+      "label": "small table/stand",
+      "center_xyz": [
+        1.39,
+        9.63,
+        -5.64
+      ],
+      "size_xyz": [
+        0.45,
+        0.46,
+        0.52
+      ]
+    },
+    {
+      "id": "chair_334",
+      "label": "chair",
+      "center_xyz": [
+        1.2,
+        5.62,
+        -0.56
+      ],
+      "size_xyz": [
+        0.83,
+        0.64,
+        0.67
+      ]
+    },
+    {
+      "id": "bathroom shelf_510",
+      "label": "bathroom shelf",
+      "center_xyz": [
+        -1.46,
+        11.3,
+        -4.11
+      ],
+      "size_xyz": [
+        0.21,
+        0.42,
+        1.0
+      ]
+    },
+    {
+      "id": "window shutter_144",
+      "label": "window shutter",
+      "center_xyz": [
+        -0.74,
+        0.59,
+        -8.66
+      ],
+      "size_xyz": [
+        0.29,
+        2.2,
+        0.25
+      ]
+    },
+    {
+      "id": "recycle bin_780",
+      "label": "recycle bin",
+      "center_xyz": [
+        -1.43,
+        7.63,
+        -2.38
+      ],
+      "size_xyz": [
+        0.53,
+        0.28,
+        0.54
+      ]
+    },
+    {
+      "id": "bathroom cabinet_723",
+      "label": "bathroom cabinet",
+      "center_xyz": [
+        -1.5,
+        0.85,
+        0.93
+      ],
+      "size_xyz": [
+        0.4,
+        0.85,
+        0.48
+      ]
+    },
+    {
+      "id": "desk_559",
+      "label": "desk",
+      "center_xyz": [
+        -1.56,
+        4.76,
+        -7.51
+      ],
+      "size_xyz": [
+        0.79,
+        0.7,
+        1.33
+      ]
+    },
+    {
+      "id": "ceiling dome_295",
+      "label": "ceiling dome",
+      "center_xyz": [
+        -0.78,
+        7.35,
+        -1.03
+      ],
+      "size_xyz": [
+        0.1,
+        6.55,
+        3.99
+      ]
+    },
+    {
+      "id": "refrigerator cabinet_902",
+      "label": "refrigerator cabinet",
+      "center_xyz": [
+        0.91,
+        4.29,
+        0.61
+      ],
+      "size_xyz": [
+        1.41,
+        0.68,
+        0.57
+      ]
+    },
+    {
+      "id": "recessed wall_382",
+      "label": "recessed wall",
+      "center_xyz": [
+        -0.16,
+        9.7,
+        -3.24
+      ],
+      "size_xyz": [
+        1.03,
+        1.24,
+        0.48
+      ]
+    },
+    {
+      "id": "refrigerator cabinet_903",
+      "label": "refrigerator cabinet",
+      "center_xyz": [
+        0.91,
+        2.87,
+        0.64
+      ],
+      "size_xyz": [
+        1.39,
+        1.1,
+        0.56
+      ]
+    },
+    {
+      "id": "door_329",
+      "label": "door",
+      "center_xyz": [
+        0.51,
+        11.63,
+        -0.97
+      ],
+      "size_xyz": [
+        2.23,
+        0.31,
+        2.47
+      ]
+    },
+    {
+      "id": "bath cabinet_888",
+      "label": "bath cabinet",
+      "center_xyz": [
+        -1.77,
+        2.72,
+        -1.41
+      ],
+      "size_xyz": [
+        0.61,
+        0.89,
+        0.97
+      ]
+    },
+    {
+      "id": "desk chair_556",
+      "label": "desk chair",
+      "center_xyz": [
+        -1.64,
+        4.64,
+        -7.37
+      ],
+      "size_xyz": [
+        0.96,
+        0.7,
+        0.62
+      ]
+    },
+    {
+      "id": "kitchen cabinet_322",
+      "label": "kitchen cabinet",
+      "center_xyz": [
+        0.39,
+        9.45,
+        0.58
+      ],
+      "size_xyz": [
+        2.47,
+        3.13,
+        0.77
+      ]
+    },
+    {
+      "id": "stairs_462",
+      "label": "stairs",
+      "center_xyz": [
+        0.31,
+        5.41,
+        -6.46
+      ],
+      "size_xyz": [
+        2.61,
+        2.58,
+        3.72
+      ]
+    },
+    {
+      "id": "lamp_465",
+      "label": "lamp",
+      "center_xyz": [
+        -3.5,
+        9.88,
+        -6.4
+      ],
+      "size_xyz": [
+        0.48,
+        0.53,
+        0.53
+      ]
+    },
+    {
+      "id": "ventilation hood_294",
+      "label": "ventilation hood",
+      "center_xyz": [
+        -0.75,
+        9.45,
+        -0.99
+      ],
+      "size_xyz": [
+        0.03,
+        1.1,
+        0.54
+      ]
+    },
+    {
+      "id": "lamp_594",
+      "label": "lamp",
+      "center_xyz": [
+        -4.12,
+        -0.06,
+        -3.45
+      ],
+      "size_xyz": [
+        1.24,
+        0.73,
+        0.8
+      ]
+    },
+    {
+      "id": "chair_149",
+      "label": "chair",
+      "center_xyz": [
+        1.21,
+        1.8,
+        -8.23
+      ],
+      "size_xyz": [
+        0.84,
+        0.63,
+        0.66
+      ]
+    },
+    {
+      "id": "toilet_529",
+      "label": "toilet",
+      "center_xyz": [
+        -1.43,
+        4.86,
+        -2.59
+      ],
+      "size_xyz": [
+        0.46,
+        0.64,
+        0.43
+      ]
+    },
+    {
+      "id": "chair_330",
+      "label": "chair",
+      "center_xyz": [
+        1.21,
+        4.41,
+        -0.89
+      ],
+      "size_xyz": [
+        0.82,
+        0.7,
+        0.63
+      ]
+    },
+    {
+      "id": "window_478",
+      "label": "window",
+      "center_xyz": [
+        -2.58,
+        11.51,
+        -5.35
+      ],
+      "size_xyz": [
+        1.01,
+        0.24,
+        0.94
+      ]
+    },
+    {
+      "id": "refrigerator_220",
+      "label": "refrigerator",
+      "center_xyz": [
+        0.65,
+        3.07,
+        -4.66
+      ],
+      "size_xyz": [
+        1.91,
+        0.82,
+        0.82
+      ]
+    },
+    {
+      "id": "washing machine_218",
+      "label": "washing machine",
+      "center_xyz": [
+        0.31,
+        3.49,
+        -3.97
+      ],
+      "size_xyz": [
+        0.9,
+        0.22,
+        0.66
+      ]
+    },
+    {
+      "id": "storage cabinet_677",
+      "label": "storage cabinet",
+      "center_xyz": [
+        -2.13,
+        0.55,
+        -8.52
+      ],
+      "size_xyz": [
+        1.7,
+        0.9,
+        0.6
+      ]
+    },
+    {
+      "id": "basket of something_131",
+      "label": "basket of something",
+      "center_xyz": [
+        1.34,
+        -1.3,
+        -5.22
+      ],
+      "size_xyz": [
+        0.28,
+        0.65,
+        0.34
+      ]
+    },
+    {
+      "id": "table_682",
+      "label": "table",
+      "center_xyz": [
+        -1.52,
+        -1.57,
+        -8.28
+      ],
+      "size_xyz": [
+        0.44,
+        0.72,
+        1.12
+      ]
+    },
+    {
+      "id": "decorative plant_22",
+      "label": "decorative plant",
+      "center_xyz": [
+        0.59,
+        -1.56,
+        -0.08
+      ],
+      "size_xyz": [
+        1.51,
+        0.62,
+        1.37
+      ]
+    },
+    {
+      "id": "chair_335",
+      "label": "chair",
+      "center_xyz": [
+        1.2,
+        5.62,
+        -1.18
+      ],
+      "size_xyz": [
+        0.83,
+        0.62,
+        0.65
+      ]
+    },
+    {
+      "id": "window_625",
+      "label": "window",
+      "center_xyz": [
+        -2.67,
+        -2.22,
+        -3.22
+      ],
+      "size_xyz": [
+        1.37,
+        0.28,
+        2.08
+      ]
+    },
+    {
+      "id": "device_558",
+      "label": "device",
+      "center_xyz": [
+        -2.0,
+        4.8,
+        -7.08
+      ],
+      "size_xyz": [
+        0.15,
+        0.46,
+        0.35
+      ]
+    },
+    {
+      "id": "backpack_86",
+      "label": "backpack",
+      "center_xyz": [
+        1.18,
+        -0.48,
+        -2.24
+      ],
+      "size_xyz": [
+        0.39,
+        0.47,
+        0.46
+      ]
+    },
+    {
+      "id": "heater_194",
+      "label": "heater",
+      "center_xyz": [
+        0.56,
+        4.96,
+        -7.39
+      ],
+      "size_xyz": [
+        1.43,
+        0.11,
+        0.54
+      ]
+    },
+    {
+      "id": "plush toy_771",
+      "label": "plush toy",
+      "center_xyz": [
+        -2.1,
+        6.52,
+        -0.26
+      ],
+      "size_xyz": [
+        0.41,
+        0.34,
+        0.53
+      ]
+    },
+    {
+      "id": "chair_333",
+      "label": "chair",
+      "center_xyz": [
+        1.2,
+        6.25,
+        -1.2
+      ],
+      "size_xyz": [
+        0.83,
+        0.66,
+        0.68
+      ]
+    },
+    {
+      "id": "table_338",
+      "label": "table",
+      "center_xyz": [
+        1.22,
+        5.66,
+        -0.93
+      ],
+      "size_xyz": [
+        0.79,
+        2.51,
+        1.01
+      ]
+    },
+    {
+      "id": "flowerpot_23",
+      "label": "flowerpot",
+      "center_xyz": [
+        1.43,
+        -1.63,
+        -0.06
+      ],
+      "size_xyz": [
+        0.37,
+        0.61,
+        1.37
+      ]
+    },
+    {
+      "id": "plant_534",
+      "label": "plant",
+      "center_xyz": [
+        -2.78,
+        4.53,
+        -2.19
+      ],
+      "size_xyz": [
+        0.72,
+        0.24,
+        0.22
+      ]
+    },
+    {
+      "id": "storage cabinet_123",
+      "label": "storage cabinet",
+      "center_xyz": [
+        0.39,
+        -0.32,
+        -3.73
+      ],
+      "size_xyz": [
+        2.44,
+        2.87,
+        0.68
+      ]
+    },
+    {
+      "id": "bed stand_470",
+      "label": "bed stand",
+      "center_xyz": [
+        -1.34,
+        8.55,
+        -5.27
+      ],
+      "size_xyz": [
+        0.39,
+        0.44,
+        0.48
+      ]
+    },
+    {
+      "id": "exercise bike_151",
+      "label": "exercise bike",
+      "center_xyz": [
+        0.82,
+        -0.93,
+        -8.31
+      ],
+      "size_xyz": [
+        1.62,
+        1.38,
+        0.6
+      ]
+    },
+    {
+      "id": "door_567",
+      "label": "door",
+      "center_xyz": [
+        -2.19,
+        2.62,
+        -5.71
+      ],
+      "size_xyz": [
+        2.04,
+        0.1,
+        0.29
+      ]
+    },
+    {
+      "id": "bath sink_174",
+      "label": "bath sink",
+      "center_xyz": [
+        0.59,
+        2.26,
+        -4.21
+      ],
+      "size_xyz": [
+        1.47,
+        3.73,
+        4.78
+      ]
+    },
+    {
+      "id": "cabinet_481",
+      "label": "cabinet",
+      "center_xyz": [
+        -1.56,
+        11.21,
+        -7.59
+      ],
+      "size_xyz": [
+        0.74,
+        0.51,
+        1.24
+      ]
+    },
+    {
+      "id": "sink_516",
+      "label": "sink",
+      "center_xyz": [
+        -1.98,
+        11.23,
+        -4.08
+      ],
+      "size_xyz": [
+        0.2,
+        0.45,
+        0.52
+      ]
+    },
+    {
+      "id": "kitchen island_310",
+      "label": "kitchen island",
+      "center_xyz": [
+        1.16,
+        8.92,
+        -1.02
+      ],
+      "size_xyz": [
+        0.94,
+        2.35,
+        0.91
+      ]
+    },
+    {
+      "id": "rack_256",
+      "label": "rack",
+      "center_xyz": [
+        0.39,
+        2.88,
+        -5.62
+      ],
+      "size_xyz": [
+        2.43,
+        0.48,
+        0.62
+      ]
+    },
+    {
+      "id": "rug_506",
+      "label": "rug",
+      "center_xyz": [
+        -1.19,
+        10.71,
+        -4.03
+      ],
+      "size_xyz": [
+        0.04,
+        0.46,
+        0.7
+      ]
+    },
+    {
+      "id": "basket_786",
+      "label": "basket",
+      "center_xyz": [
+        -1.4,
+        7.61,
+        0.83
+      ],
+      "size_xyz": [
+        0.48,
+        0.85,
+        0.58
+      ]
+    },
+    {
+      "id": "wardrobe_873",
+      "label": "wardrobe",
+      "center_xyz": [
+        -2.48,
+        5.07,
+        -0.72
+      ],
+      "size_xyz": [
+        2.62,
+        1.38,
+        1.54
+      ]
+    },
+    {
+      "id": "chair_602",
+      "label": "chair",
+      "center_xyz": [
+        -1.59,
+        -1.7,
+        -5.51
+      ],
+      "size_xyz": [
+        0.83,
+        0.62,
+        0.62
+      ]
+    },
+    {
+      "id": "air conditioner_566",
+      "label": "air conditioner",
+      "center_xyz": [
+        -4.08,
+        3.54,
+        -4.7
+      ],
+      "size_xyz": [
+        0.5,
+        0.88,
+        0.24
+      ]
+    },
+    {
+      "id": "container_655",
+      "label": "container",
+      "center_xyz": [
+        -1.42,
+        1.74,
+        -7.91
+      ],
+      "size_xyz": [
+        0.33,
+        0.67,
+        0.43
+      ]
+    },
+    {
+      "id": "door_1",
+      "label": "door",
+      "center_xyz": [
+        0.56,
+        -1.72,
+        -1.86
+      ],
+      "size_xyz": [
+        2.09,
+        0.15,
+        0.9
+      ]
+    },
+    {
+      "id": "couch_432",
+      "label": "couch",
+      "center_xyz": [
+        1.13,
+        9.4,
+        -4.54
+      ],
+      "size_xyz": [
+        0.98,
+        3.33,
+        2.01
+      ]
+    },
+    {
+      "id": "case_84",
+      "label": "case",
+      "center_xyz": [
+        1.47,
+        -0.47,
+        -2.27
+      ],
+      "size_xyz": [
+        0.26,
+        0.49,
+        0.5
+      ]
+    },
+    {
+      "id": "pouffe_866",
+      "label": "pouffe",
+      "center_xyz": [
+        -1.37,
+        4.73,
+        0.84
+      ],
+      "size_xyz": [
+        0.41,
+        0.44,
+        0.46
+      ]
+    },
+    {
+      "id": "bed_161",
+      "label": "bed",
+      "center_xyz": [
+        1.24,
+        -0.21,
+        -6.85
+      ],
+      "size_xyz": [
+        0.77,
+        1.97,
+        2.48
+      ]
+    },
+    {
+      "id": "stack of papers_837",
+      "label": "stack of papers",
+      "center_xyz": [
+        -1.64,
+        10.37,
+        -2.68
+      ],
+      "size_xyz": [
+        0.08,
+        0.46,
+        0.31
+      ]
+    },
+    {
+      "id": "wardrobe_669",
+      "label": "wardrobe",
+      "center_xyz": [
+        -0.99,
+        6.07,
+        -6.58
+      ],
+      "size_xyz": [
+        5.21,
+        9.25,
+        2.64
+      ]
+    },
+    {
+      "id": "wardrobe_898",
+      "label": "wardrobe",
+      "center_xyz": [
+        -2.3,
+        3.76,
+        -0.02
+      ],
+      "size_xyz": [
+        2.24,
+        1.35,
+        1.35
+      ]
+    },
+    {
+      "id": "blanket_133",
+      "label": "blanket",
+      "center_xyz": [
+        1.02,
+        0.86,
+        -5.28
+      ],
+      "size_xyz": [
+        0.19,
+        0.42,
+        0.35
+      ]
+    },
+    {
+      "id": "pouffe_387",
+      "label": "pouffe",
+      "center_xyz": [
+        1.41,
+        6.05,
+        -5.36
+      ],
+      "size_xyz": [
+        0.38,
+        0.6,
+        0.61
+      ]
+    },
+    {
+      "id": "shower hose/head_746",
+      "label": "shower hose/head",
+      "center_xyz": [
+        -2.37,
+        2.65,
+        -2.6
+      ],
+      "size_xyz": [
+        1.06,
+        0.13,
+        0.3
+      ]
+    },
+    {
+      "id": "desk_811",
+      "label": "desk",
+      "center_xyz": [
+        -1.54,
+        8.19,
+        -2.8
+      ],
+      "size_xyz": [
+        0.78,
+        1.41,
+        0.62
+      ]
+    },
+    {
+      "id": "storage cabinet_92",
+      "label": "storage cabinet",
+      "center_xyz": [
+        0.6,
+        -0.54,
+        -2.4
+      ],
+      "size_xyz": [
+        2.05,
+        0.48,
+        1.19
+      ]
+    },
+    {
+      "id": "heater_698",
+      "label": "heater",
+      "center_xyz": [
+        -2.23,
+        2.04,
+        -0.88
+      ],
+      "size_xyz": [
+        1.45,
+        0.12,
+        0.55
+      ]
+    },
+    {
+      "id": "bathroom shelf_511",
+      "label": "bathroom shelf",
+      "center_xyz": [
+        -1.85,
+        11.23,
+        -4.09
+      ],
+      "size_xyz": [
+        0.18,
+        0.48,
+        1.0
+      ]
+    },
+    {
+      "id": "bar_862",
+      "label": "bar",
+      "center_xyz": [
+        -3.98,
+        4.59,
+        -0.94
+      ],
+      "size_xyz": [
+        0.13,
+        2.76,
+        0.25
+      ]
+    },
+    {
+      "id": "backpack_87",
+      "label": "backpack",
+      "center_xyz": [
+        1.16,
+        -0.49,
+        -2.66
+      ],
+      "size_xyz": [
+        0.29,
+        0.42,
+        0.44
+      ]
+    },
+    {
+      "id": "bar_763",
+      "label": "bar",
+      "center_xyz": [
+        -3.82,
+        7.99,
+        -0.98
+      ],
+      "size_xyz": [
+        1.71,
+        0.19,
+        4.23
+      ]
+    },
+    {
+      "id": "air conditioner_768",
+      "label": "air conditioner",
+      "center_xyz": [
+        -3.65,
+        6.41,
+        -0.93
+      ],
+      "size_xyz": [
+        0.4,
+        0.29,
+        0.85
+      ]
+    },
+    {
+      "id": "shower door frame_501",
+      "label": "shower door frame",
+      "center_xyz": [
+        -2.19,
+        10.31,
+        -4.1
+      ],
+      "size_xyz": [
+        2.02,
+        0.08,
+        0.99
+      ]
+    },
+    {
+      "id": "chair_332",
+      "label": "chair",
+      "center_xyz": [
+        1.2,
+        6.21,
+        -0.58
+      ],
+      "size_xyz": [
+        0.81,
+        0.66,
+        0.66
+      ]
+    },
+    {
+      "id": "chair_331",
+      "label": "chair",
+      "center_xyz": [
+        1.2,
+        6.83,
+        -0.91
+      ],
+      "size_xyz": [
+        0.82,
+        0.69,
+        0.64
+      ]
+    },
+    {
+      "id": "shelf with clutter_83",
+      "label": "shelf with clutter",
+      "center_xyz": [
+        0.57,
+        0.02,
+        -3.05
+      ],
+      "size_xyz": [
+        2.06,
+        0.84,
+        0.55
+      ]
+    },
+    {
+      "id": "wall panel_620",
+      "label": "wall panel",
+      "center_xyz": [
+        -2.81,
+        -0.06,
+        -2.11
+      ],
+      "size_xyz": [
+        3.27,
+        2.43,
+        0.33
+      ]
+    },
+    {
+      "id": "kitchen cabinet_314",
+      "label": "kitchen cabinet",
+      "center_xyz": [
+        -0.3,
+        3.72,
+        0.58
+      ],
+      "size_xyz": [
+        1.03,
+        1.81,
+        0.44
+      ]
+    },
+    {
+      "id": "toilet_175",
+      "label": "toilet",
+      "center_xyz": [
+        1.31,
+        4.61,
+        -6.53
+      ],
+      "size_xyz": [
+        0.37,
+        0.4,
+        0.51
+      ]
+    },
+    {
+      "id": "hanger_684",
+      "label": "hanger",
+      "center_xyz": [
+        -2.75,
+        -1.31,
+        -8.2
+      ],
+      "size_xyz": [
+        0.1,
+        0.89,
+        0.89
+      ]
+    },
+    {
+      "id": "vacuum cleaner_227",
+      "label": "vacuum cleaner",
+      "center_xyz": [
+        1.03,
+        4.68,
+        -4.94
+      ],
+      "size_xyz": [
+        1.26,
+        0.61,
+        0.98
+      ]
+    },
+    {
+      "id": "storage cabinet_679",
+      "label": "storage cabinet",
+      "center_xyz": [
+        -2.09,
+        -0.45,
+        -8.55
+      ],
+      "size_xyz": [
+        1.74,
+        1.09,
+        0.65
+      ]
+    },
+    {
+      "id": "sink_739",
+      "label": "sink",
+      "center_xyz": [
+        -2.0,
+        -1.91,
+        0.98
+      ],
+      "size_xyz": [
+        0.16,
+        0.6,
+        0.39
+      ]
+    },
+    {
+      "id": "chair_305",
+      "label": "chair",
+      "center_xyz": [
+        1.23,
+        8.0,
+        -1.24
+      ],
+      "size_xyz": [
+        0.7,
+        0.42,
+        0.44
+      ]
+    },
+    {
+      "id": "cabinet_404",
+      "label": "cabinet",
+      "center_xyz": [
+        1.35,
+        9.05,
+        -8.87
+      ],
+      "size_xyz": [
+        0.49,
+        1.97,
+        0.45
+      ]
+    },
+    {
+      "id": "wardrobe_692",
+      "label": "wardrobe",
+      "center_xyz": [
+        -2.47,
+        -1.65,
+        -6.91
+      ],
+      "size_xyz": [
+        2.6,
+        0.73,
+        1.74
+      ]
+    },
+    {
+      "id": "small table/stand_407",
+      "label": "small table/stand",
+      "center_xyz": [
+        1.34,
+        9.17,
+        -5.59
+      ],
+      "size_xyz": [
+        0.5,
+        0.64,
+        0.61
+      ]
+    },
+    {
+      "id": "case_115",
+      "label": "case",
+      "center_xyz": [
+        1.31,
+        0.72,
+        -3.71
+      ],
+      "size_xyz": [
+        0.36,
+        0.58,
+        0.34
+      ]
+    },
+    {
+      "id": "shower floor_211",
+      "label": "shower floor",
+      "center_xyz": [
+        1.62,
+        3.83,
+        -8.38
+      ],
+      "size_xyz": [
+        0.04,
+        2.34,
+        1.0
+      ]
+    },
+    {
+      "id": "bathroom cabinet_722",
+      "label": "bathroom cabinet",
+      "center_xyz": [
+        -1.78,
+        1.46,
+        1.0
+      ],
+      "size_xyz": [
+        0.36,
+        0.89,
+        0.35
+      ]
+    },
+    {
+      "id": "stairs railing_445",
+      "label": "stairs railing",
+      "center_xyz": [
+        -0.58,
+        7.29,
+        -5.96
+      ],
+      "size_xyz": [
+        3.25,
+        1.76,
+        2.65
+      ]
+    },
+    {
+      "id": "book rack_593",
+      "label": "book rack",
+      "center_xyz": [
+        -2.31,
+        2.79,
+        -6.8
+      ],
+      "size_xyz": [
+        2.29,
+        0.41,
+        1.8
+      ]
+    },
+    {
+      "id": "toilet_636",
+      "label": "toilet",
+      "center_xyz": [
+        -1.47,
+        3.77,
+        -4.01
+      ],
+      "size_xyz": [
+        0.36,
+        0.57,
+        0.42
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "label": "chair",
+      "object_id": "chair_336",
+      "spawn_xyz": [
+        -0.209,
+        -0.059,
+        -1.593
+      ],
+      "spawn_yaw_deg": 0.0,
+      "end_xy": [
+        1.2,
+        5.01
+      ],
+      "geodesic_m": 5.9
+    },
+    {
+      "label": "bed",
+      "object_id": "bed_791",
+      "spawn_xyz": [
+        -0.209,
+        -0.059,
+        -1.593
+      ],
+      "spawn_yaw_deg": 0.0,
+      "end_xy": [
+        -1.61,
+        9.96
+      ],
+      "geodesic_m": 11.16
+    },
+    {
+      "label": "table",
+      "object_id": "table_338",
+      "spawn_xyz": [
+        -0.209,
+        -0.059,
+        -1.593
+      ],
+      "spawn_yaw_deg": 0.0,
+      "end_xy": [
+        1.22,
+        5.66
+      ],
+      "geodesic_m": 7.39
+    },
+    {
+      "label": "bath cabinet",
+      "object_id": "bath cabinet_888",
+      "spawn_xyz": [
+        -0.209,
+        -0.059,
+        -1.593
+      ],
+      "spawn_yaw_deg": 0.0,
+      "end_xy": [
+        -1.77,
+        2.72
+      ],
+      "geodesic_m": 4.41
+    }
+  ],
+  "tour": [
+    [
+      -0.21,
+      -0.06
+    ],
+    [
+      -0.16,
+      0.47
+    ],
+    [
+      -0.12,
+      1.0
+    ],
+    [
+      -0.07,
+      1.52
+    ],
+    [
+      -0.03,
+      2.05
+    ],
+    [
+      0.02,
+      2.58
+    ],
+    [
+      0.06,
+      3.1
+    ],
+    [
+      0.11,
+      3.63
+    ],
+    [
+      0.15,
+      4.16
+    ],
+    [
+      0.2,
+      4.69
+    ],
+    [
+      0.3,
+      5.25
+    ],
+    [
+      0.4,
+      5.81
+    ],
+    [
+      0.31,
+      6.34
+    ],
+    [
+      0.22,
+      6.86
+    ],
+    [
+      0.13,
+      7.39
+    ],
+    [
+      0.04,
+      7.92
+    ],
+    [
+      -0.04,
+      8.45
+    ],
+    [
+      -0.13,
+      8.98
+    ],
+    [
+      -0.22,
+      9.51
+    ],
+    [
+      -0.31,
+      10.04
+    ],
+    [
+      -0.39,
+      10.56
+    ],
+    [
+      -0.48,
+      11.09
+    ],
+    [
+      -0.38,
+      10.55
+    ],
+    [
+      -0.27,
+      10.01
+    ],
+    [
+      -0.17,
+      9.46
+    ],
+    [
+      -0.06,
+      8.92
+    ],
+    [
+      0.04,
+      8.38
+    ],
+    [
+      0.15,
+      7.84
+    ],
+    [
+      0.26,
+      7.31
+    ],
+    [
+      0.19,
+      6.8
+    ],
+    [
+      0.12,
+      6.28
+    ],
+    [
+      0.04,
+      5.77
+    ],
+    [
+      -0.03,
+      5.25
+    ],
+    [
+      -0.1,
+      4.74
+    ],
+    [
+      -0.3,
+      4.34
+    ],
+    [
+      -0.55,
+      3.94
+    ],
+    [
+      -1.05,
+      3.9
+    ],
+    [
+      -1.56,
+      3.86
+    ],
+    [
+      -2.07,
+      3.82
+    ],
+    [
+      -1.58,
+      3.33
+    ],
+    [
+      -1.1,
+      2.84
+    ],
+    [
+      -0.95,
+      2.35
+    ],
+    [
+      -0.8,
+      1.87
+    ],
+    [
+      -0.66,
+      1.39
+    ],
+    [
+      -0.51,
+      0.91
+    ],
+    [
+      -0.36,
+      0.42
+    ],
+    [
+      -0.21,
+      -0.06
+    ]
+  ]
+}
