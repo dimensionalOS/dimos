@@ -14,13 +14,17 @@
 
 """Open a recording for the memory world: a mem2 ``.db`` or a ROS 2 ``.mcap``.
 
-A ``.db`` is a :class:`SqliteStore` and everything (the SigLIP index, the
-replay keyframes and diffs) is written back into it. An ``.mcap`` is not opened for
-writing HERE -- the format itself is editable and appendable, and dimos has a command
-for it; it is `McapStore` that reads only --
-so those derived streams go into ``<name>.derived.db`` beside it, and
-:class:`RecordingWithDerivedStreams` presents both as one store: reads look in
-the mcap first, new streams are created in the companion database.
+Either way everything built from the recording -- the SigLIP index, the replay
+keyframes and diffs -- is written back INTO it. A ``.db`` is a
+:class:`SqliteStore`; an ``.mcap`` is a :class:`McapStore`, which appends those
+streams to the file on channels of its own.
+
+It used to be otherwise: ``McapStore`` read only, so derived streams went into a
+``<name>.derived.db`` beside the recording and a wrapper presented the two as one
+store. A companion is one more thing to keep together, and it goes stale as soon
+as either half is moved, trimmed or copied alone, so there is no longer one.
+``mcap_to_db`` remains the way to convert a recording, not a way to store
+alongside it.
 
 The mcap channels are decoded by ROS 2 schema name (CDR): the point cloud,
 odometry and IMU decoders come from the Go2 DDS layer; raw images, camera
@@ -39,10 +43,9 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.memory.store.base import Store, StreamAccessor
+from dimos.memory.store.base import Store
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.stream import Stream
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -61,8 +64,6 @@ if TYPE_CHECKING:
     from dimos.teleop.memory_world.tf_tree import TfTree
 
 logger = setup_logger()
-
-DERIVED_SUFFIX = ".derived.db"
 
 # ROS image encoding -> (dimos format, numpy dtype, channels); the inverse of
 # the table ~/Commands/db_to_mcap writes with.
@@ -396,57 +397,11 @@ def open_ros2_mcap(path: str | Path) -> McapStore:
     return McapStore(path=str(path), codecs=codecs, streams=names)
 
 
-class RecordingWithDerivedStreams(Store):
-    """A read-only recording plus a writable database for the streams built from it.
-
-    ``stream(name)`` returns the recording's stream when it has one and
-    otherwise a stream of the companion database, so code that reads a
-    recording and appends its own streams works unchanged on an mcap.
-    """
-
-    def __init__(self, recording: Store, derived: SqliteStore) -> None:
-        super().__init__()
-        self.recording = recording
-        self.derived = derived
-
-    @property
-    def streams(self) -> StreamAccessor[Stream[Any]]:
-        return StreamAccessor(self)
-
-    def stream(self, name: str, payload_type: type | None = None, **overrides: Any) -> Stream[Any]:
-        if name in self.recording.list_streams():
-            return self.recording.stream(name)
-        return self.derived.stream(name, payload_type, **overrides)
-
-    def list_streams(self) -> list[str]:
-        return sorted(set(self.recording.list_streams()) | set(self.derived.list_streams()))
-
-    def delete_stream(self, name: str) -> None:
-        if name in self.recording.list_streams():
-            raise ValueError(f"{name!r} is part of the recording and cannot be deleted")
-        self.derived.delete_stream(name)
-
-    def summary(self) -> str:
-        return f"{self.recording.summary()}\n{self.derived.summary()}".strip()
-
-    def stop(self) -> None:
-        self.recording.stop()
-        self.derived.stop()
-        super().stop()
-
-
-def derived_db_path(mcap_path: str | Path) -> Path:
-    path = Path(mcap_path)
-    return path.with_name(path.stem + DERIVED_SUFFIX)
-
-
 def open_recording(path: str | Path) -> Store:
-    """Open a ``.db`` directly, or an ``.mcap`` with its companion derived database."""
+    """Open a ``.db`` or an ``.mcap``. Both are read-write; both must already exist."""
     text = str(path)
     if text.endswith(".mcap"):
-        return RecordingWithDerivedStreams(
-            open_ros2_mcap(text), SqliteStore(path=str(derived_db_path(text)))
-        )
+        return open_ros2_mcap(text)
     return RecordingDb(path=text, must_exist=True)
 
 

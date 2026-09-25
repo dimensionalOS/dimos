@@ -29,6 +29,14 @@ those streams use and :mod:`dimos.memory.store.mcap_append` for the mechanics.
 
 Payloads decode lazily on ``obs.data``; ts and counts are cheap (counts come
 from the mcap index).
+
+One caveat, the same one ``dtk mcap_edit`` carries: a flush rewrites the file's
+summary over where the old one sat, with no lock and no way for a reader to
+notice, so a reader that is part-way through the index while a flush lands can
+read a torn file. Within this process that window is small -- a flush happens
+once per chunk written, not once per observation -- and a reader that opens the
+file after the flush sees a consistent one. A viewer in another process that is
+up while a recording is being written to is on its own.
 """
 
 from __future__ import annotations
