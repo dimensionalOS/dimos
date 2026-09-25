@@ -1,0 +1,145 @@
+<?xml version="1.0" ?>
+<mujoco model="tars">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.00141421" integrator="implicitfast"/>
+  <visual>
+    <global offwidth="1920" offheight="1440" azimuth="150" elevation="-15"/>
+    <quality shadowsize="8192" offsamples="8"/>
+    <headlight ambient="0.15 0.15 0.15" diffuse="0.3 0.3 0.3" specular="0.1 0.1 0.1"/>
+    <map znear="0.01" haze="0.05"/>
+  </visual>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.55 0.62 0.72" rgb2="0.08 0.09 0.12" width="512" height="512"/>
+    <texture name="floor" type="2d" builtin="checker" rgb1="0.78 0.72 0.6" rgb2="0.7 0.64 0.53" width="512" height="512" mark="edge" markrgb="0.6 0.55 0.45"/>
+    <material name="floor" texture="floor" texrepeat="8 8" reflectance="0.05"/>
+    <material name="aluminum" rgba="0.52 0.53 0.55 1" specular="0.6" shininess="0.7" reflectance="0.15"/>
+    <material name="sleeve" rgba="0.45 0.46 0.48 1" specular="0.5" shininess="0.6" reflectance="0.1"/>
+    <material name="seam" rgba="0.08 0.08 0.09 1" specular="0.2" shininess="0.2" reflectance="0"/>
+    <material name="rubber" rgba="0.05 0.05 0.05 1" specular="0.2" shininess="0.2" reflectance="0"/>
+    <material name="display" rgba="0.05 0.35 0.4 1" specular="0.9" shininess="0.9" reflectance="0.3" emission="0.25"/>
+    <material name="axle" rgba="0.25 0.25 0.27 1" specular="0.2" shininess="0.2" reflectance="0"/>
+  </asset>
+  <default>
+    <geom friction="1.2 0.01 0.0005" solref="0.00282843 1"/>
+    <default class="visual">
+      <geom contype="0" conaffinity="0" group="1"/>
+    </default>
+    <default class="collision">
+      <geom group="0"/>
+    </default>
+    <default class="hinge">
+      <joint type="hinge" axis="0 1 0" range="-3.14159 3.14159" damping="0.220971" armature="0.0015625"/>
+      <motor ctrlrange="-37.5 37.5"/>
+    </default>
+    <default class="slide">
+      <joint type="slide" axis="0 0 -1" range="0 0.35" damping="8.83883" armature="0.0125"/>
+      <motor ctrlrange="-100 100"/>
+    </default>
+  </default>
+  <worldbody>
+    <light name="key" pos="3 -2 5" dir="-0.5 0.35 -1" diffuse="0.7 0.7 0.7" castshadow="true"/>
+    <light name="fill" pos="-3 3 4" dir="0.5 -0.5 -1" diffuse="0.25 0.25 0.3" castshadow="false"/>
+    <geom name="floor" type="plane" size="0 0 0.05" material="floor"/>
+    <body name="base_link" pos="0 0 0.685">
+      <freejoint name="root"/>
+      <inertial pos="0 0 0" mass="0.5" diaginertia="0.00942917 5.625e-05 0.00942917"/>
+      <geom name="axle" type="cylinder" size="0.015 0.2375" zaxis="0 1 0" material="axle" class="visual"/>
+      <site name="imu" size="0.01"/>
+      <body name="slab_1_upper" pos="0 0.18 0">
+        <joint name="slab_1_hinge" class="hinge"/>
+        <inertial pos="0 0 -0.1625" mass="1.25" diaginertia="0.0248802 0.0255443 0.00341927"/>
+        <geom name="slab_1_upper_body" type="box" size="0.07 0.0575 0.2375" pos="0 0 -0.1625" material="aluminum" class="collision"/>
+        <geom name="slab_1_seam_front_0" type="box" size="0.002 0.0475 0.0015" pos="0.07 0 -0.125" material="seam" class="visual"/>
+        <geom name="slab_1_seam_back_0" type="box" size="0.002 0.0475 0.0015" pos="-0.07 0 -0.125" material="seam" class="visual"/>
+        <geom name="slab_1_seam_front_1" type="box" size="0.002 0.0475 0.0015" pos="0.07 0 -0.275" material="seam" class="visual"/>
+        <geom name="slab_1_seam_back_1" type="box" size="0.002 0.0475 0.0015" pos="-0.07 0 -0.275" material="seam" class="visual"/>
+        <body name="slab_1_lower" pos="0 0 -0.4">
+          <joint name="slab_1_slide" class="slide"/>
+          <inertial pos="0 0 -0.1425" mass="0.5" diaginertia="0.00393542 0.00420104 0.00136771"/>
+          <geom name="slab_1_lower_body" type="box" size="0.07 0.0575 0.1395" pos="0 0 -0.1395" material="aluminum" class="collision"/>
+          <geom name="slab_1_foot_pad" type="box" size="0.07 0.0575 0.003" pos="0 0 -0.282" material="rubber" class="collision"/>
+          <geom name="slab_1_sleeve" type="box" size="0.064 0.0515 0.18" pos="0 0 0.18" material="sleeve" class="visual"/>
+          <site name="slab_1_foot" type="box" pos="0 0 -0.282" size="0.075 0.0625 0.013" rgba="0 0 0 0"/>
+        </body>
+      </body>
+      <body name="slab_2_upper" pos="0 0.06 0">
+        <joint name="slab_2_hinge" class="hinge"/>
+        <inertial pos="0 0 -0.1625" mass="1.25" diaginertia="0.0248802 0.0255443 0.00341927"/>
+        <geom name="slab_2_upper_body" type="box" size="0.07 0.0575 0.2375" pos="0 0 -0.1625" material="aluminum" class="collision"/>
+        <geom name="slab_2_seam_front_0" type="box" size="0.002 0.0475 0.0015" pos="0.07 0 -0.125" material="seam" class="visual"/>
+        <geom name="slab_2_seam_back_0" type="box" size="0.002 0.0475 0.0015" pos="-0.07 0 -0.125" material="seam" class="visual"/>
+        <geom name="slab_2_seam_front_1" type="box" size="0.002 0.0475 0.0015" pos="0.07 0 -0.275" material="seam" class="visual"/>
+        <geom name="slab_2_seam_back_1" type="box" size="0.002 0.0475 0.0015" pos="-0.07 0 -0.275" material="seam" class="visual"/>
+        <geom name="slab_2_display" type="box" size="0.003 0.0425 0.03" pos="0.07 0 -0.02" material="display" class="visual"/>
+        <camera name="front_camera" pos="0.075 0 0.05" xyaxes="0 -1 0 0 0 1" fovy="70"/>
+        <geom name="camera_lens" type="cylinder" size="0.012 0.004" pos="0.073 0 0.05" zaxis="1 0 0" material="rubber" class="visual"/>
+        <body name="slab_2_lower" pos="0 0 -0.4">
+          <joint name="slab_2_slide" class="slide"/>
+          <inertial pos="0 0 -0.1425" mass="0.5" diaginertia="0.00393542 0.00420104 0.00136771"/>
+          <geom name="slab_2_lower_body" type="box" size="0.07 0.0575 0.1395" pos="0 0 -0.1395" material="aluminum" class="collision"/>
+          <geom name="slab_2_foot_pad" type="box" size="0.07 0.0575 0.003" pos="0 0 -0.282" material="rubber" class="collision"/>
+          <geom name="slab_2_sleeve" type="box" size="0.064 0.0515 0.18" pos="0 0 0.18" material="sleeve" class="visual"/>
+          <site name="slab_2_foot" type="box" pos="0 0 -0.282" size="0.075 0.0625 0.013" rgba="0 0 0 0"/>
+        </body>
+      </body>
+      <body name="slab_3_upper" pos="0 -0.06 0">
+        <joint name="slab_3_hinge" class="hinge"/>
+        <inertial pos="0 0 -0.1625" mass="1.25" diaginertia="0.0248802 0.0255443 0.00341927"/>
+        <geom name="slab_3_upper_body" type="box" size="0.07 0.0575 0.2375" pos="0 0 -0.1625" material="aluminum" class="collision"/>
+        <geom name="slab_3_seam_front_0" type="box" size="0.002 0.0475 0.0015" pos="0.07 0 -0.125" material="seam" class="visual"/>
+        <geom name="slab_3_seam_back_0" type="box" size="0.002 0.0475 0.0015" pos="-0.07 0 -0.125" material="seam" class="visual"/>
+        <geom name="slab_3_seam_front_1" type="box" size="0.002 0.0475 0.0015" pos="0.07 0 -0.275" material="seam" class="visual"/>
+        <geom name="slab_3_seam_back_1" type="box" size="0.002 0.0475 0.0015" pos="-0.07 0 -0.275" material="seam" class="visual"/>
+        <body name="slab_3_lower" pos="0 0 -0.4">
+          <joint name="slab_3_slide" class="slide"/>
+          <inertial pos="0 0 -0.1425" mass="0.5" diaginertia="0.00393542 0.00420104 0.00136771"/>
+          <geom name="slab_3_lower_body" type="box" size="0.07 0.0575 0.1395" pos="0 0 -0.1395" material="aluminum" class="collision"/>
+          <geom name="slab_3_foot_pad" type="box" size="0.07 0.0575 0.003" pos="0 0 -0.282" material="rubber" class="collision"/>
+          <geom name="slab_3_sleeve" type="box" size="0.064 0.0515 0.18" pos="0 0 0.18" material="sleeve" class="visual"/>
+          <site name="slab_3_foot" type="box" pos="0 0 -0.282" size="0.075 0.0625 0.013" rgba="0 0 0 0"/>
+        </body>
+      </body>
+      <body name="slab_4_upper" pos="0 -0.18 0">
+        <joint name="slab_4_hinge" class="hinge"/>
+        <inertial pos="0 0 -0.1625" mass="1.25" diaginertia="0.0248802 0.0255443 0.00341927"/>
+        <geom name="slab_4_upper_body" type="box" size="0.07 0.0575 0.2375" pos="0 0 -0.1625" material="aluminum" class="collision"/>
+        <geom name="slab_4_seam_front_0" type="box" size="0.002 0.0475 0.0015" pos="0.07 0 -0.125" material="seam" class="visual"/>
+        <geom name="slab_4_seam_back_0" type="box" size="0.002 0.0475 0.0015" pos="-0.07 0 -0.125" material="seam" class="visual"/>
+        <geom name="slab_4_seam_front_1" type="box" size="0.002 0.0475 0.0015" pos="0.07 0 -0.275" material="seam" class="visual"/>
+        <geom name="slab_4_seam_back_1" type="box" size="0.002 0.0475 0.0015" pos="-0.07 0 -0.275" material="seam" class="visual"/>
+        <body name="slab_4_lower" pos="0 0 -0.4">
+          <joint name="slab_4_slide" class="slide"/>
+          <inertial pos="0 0 -0.1425" mass="0.5" diaginertia="0.00393542 0.00420104 0.00136771"/>
+          <geom name="slab_4_lower_body" type="box" size="0.07 0.0575 0.1395" pos="0 0 -0.1395" material="aluminum" class="collision"/>
+          <geom name="slab_4_foot_pad" type="box" size="0.07 0.0575 0.003" pos="0 0 -0.282" material="rubber" class="collision"/>
+          <geom name="slab_4_sleeve" type="box" size="0.064 0.0515 0.18" pos="0 0 0.18" material="sleeve" class="visual"/>
+          <site name="slab_4_foot" type="box" pos="0 0 -0.282" size="0.075 0.0625 0.013" rgba="0 0 0 0"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="slab_1_hinge" joint="slab_1_hinge" class="hinge"/>
+    <motor name="slab_1_slide" joint="slab_1_slide" class="slide"/>
+    <motor name="slab_2_hinge" joint="slab_2_hinge" class="hinge"/>
+    <motor name="slab_2_slide" joint="slab_2_slide" class="slide"/>
+    <motor name="slab_3_hinge" joint="slab_3_hinge" class="hinge"/>
+    <motor name="slab_3_slide" joint="slab_3_slide" class="slide"/>
+    <motor name="slab_4_hinge" joint="slab_4_hinge" class="hinge"/>
+    <motor name="slab_4_slide" joint="slab_4_slide" class="slide"/>
+  </actuator>
+  <sensor>
+    <framequat name="imu_quat" objtype="site" objname="imu"/>
+    <gyro name="imu_gyro" site="imu"/>
+    <accelerometer name="imu_acc" site="imu"/>
+    <touch name="slab_1_foot_touch" site="slab_1_foot"/>
+    <touch name="slab_2_foot_touch" site="slab_2_foot"/>
+    <touch name="slab_3_foot_touch" site="slab_3_foot"/>
+    <touch name="slab_4_foot_touch" site="slab_4_foot"/>
+  </sensor>
+  <keyframe>
+    <key name="stand" qpos="0 0 0.685 1 0 0 0 0 0 0 0 0 0 0 0"/>
+    <key name="stride" qpos="0 0 0.709003 1 0 0 0 0.35 0.04421 -0.35 0.04421 -0.35 0.04421 0.35 0.04421"/>
+    <key name="wheel" qpos="0 0 0.685 1 0 0 0 0 0 3.14159 0 1.5708 0 -1.5708 0"/>
+  </keyframe>
+</mujoco>

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tars-sdk"
+version = "0.1.0"
+description = "SDK for the TARS slab robot (MuJoCo simulation backend)"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = [
+    "mujoco>=3.2",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+model = ["trimesh>=4", "pillow>=10"]  # URDF/STL export + renders
+
+[tool.setuptools.packages.find]
+include = ["tars_sdk*"]
+
+[tool.setuptools.package-data]
+"tars_sdk" = ["py.typed"]
+"tars_sdk.model" = ["tars.xml"]

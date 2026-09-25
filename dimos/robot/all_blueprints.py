@@ -38,6 +38,8 @@ all_blueprints = {
     "coordinator-openyam": "dimos.robot.manipulators.openyam.blueprints.basic:coordinator_openyam",
     "coordinator-piper": "dimos.robot.manipulators.piper.blueprints.basic:coordinator_piper",
     "coordinator-piper-xarm": "dimos.robot.manipulators.common.mixed:coordinator_piper_xarm",
+    "coordinator-tars-sim": "dimos.robot.tars.blueprints:coordinator_tars_sim",
+    "coordinator-tars-sim-keyboard-teleop": "dimos.robot.tars.blueprints:coordinator_tars_sim_keyboard_teleop",
     "coordinator-teleop-a1z": "dimos.robot.manipulators.a1z.blueprints.teleop:coordinator_teleop_a1z",
     "coordinator-teleop-dual": "dimos.robot.manipulators.common.mixed:coordinator_teleop_dual",
     "coordinator-teleop-piper": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_teleop_piper",
