@@ -55,6 +55,10 @@ MAX_MANIFEST_ID_LEN = 64
 # and can never be declared by a manifest.
 RESERVED_CHANNEL_PREFIX = "@"
 
+# A video channel delivered as a WebRTC track through the relay's SFU: no
+# frame ever rides the relay for it.
+TRACK_ENCODING = "video.webrtc.v1"
+
 
 class ManifestError(ValueError):
     """`code` is the machine-readable reason, pinned by the golden vectors."""
@@ -302,10 +306,14 @@ def parse_manifest(data: Any) -> Manifest:
                     "invalid_video_panel", f"video panel {panel.id} must bind exactly one channel"
                 )
             bound = ch_ids[panel.channels[0]]
-            if bound.encoding != "jpeg.v1" or bound.delivery != "latest" or bound.dir != "rx":
+            if (
+                bound.encoding not in ("jpeg.v1", TRACK_ENCODING)
+                or bound.delivery != "latest"
+                or bound.dir != "rx"
+            ):
                 raise ManifestError(
                     "invalid_video_panel",
-                    f"video panel {panel.id} needs a jpeg.v1 latest rx channel",
+                    f"video panel {panel.id} needs a jpeg.v1 or {TRACK_ENCODING} latest rx channel",
                 )
         map_encoding = _MAP_ENCODINGS.get(panel.kind)
         if map_encoding is not None:

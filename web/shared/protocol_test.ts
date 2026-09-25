@@ -14,14 +14,18 @@ import {
   frameHeaderFromUnknown,
   MAX_DATA_FRAME_BYTES,
   MAX_HEADER_LEN,
+  MAX_MID_LEN,
   MAX_PUB_DATA_BYTES,
   MAX_REQUEST_ID_LEN,
+  MAX_RTC_TRACKS,
+  MAX_SDP_LEN,
   type Msg,
   msgFromUnknown,
   peekDataFrameLengths,
   PROTOCOL_VERSION,
   RESERVED_CHANNEL_PREFIX,
 } from "./protocol.ts";
+import { MAX_MANIFEST_ID_LEN } from "./manifest.ts";
 import controlFixture from "./fixtures/control_frames.json" with { type: "json" };
 import datagramFixture from "./fixtures/datagrams.json" with { type: "json" };
 import dataFixture from "./fixtures/data_frames.json" with { type: "json" };
@@ -95,6 +99,21 @@ Deno.test("the control_subs vector's payload is the subs datagram encoding", () 
   assertEquals(control.header.ch, CONTROL_CHANNEL);
   const subs = datagramFixture.vectors.find((v) => v.name === "subs_snapshot")!;
   assertEquals(decodeDatagram(fromB64(control.payload_b64)), subs.message as Msg);
+});
+
+Deno.test("the control_rtc vectors' payloads are the rtc datagram encodings", () => {
+  for (
+    const [frame, datagram] of [
+      ["control_rtc_offer", "rtc_offer_robot"],
+      ["control_rtc_answer", "rtc_answer"],
+      ["control_rtc_stalled", "rtc_stalled"],
+    ]
+  ) {
+    const control = dataFixture.vectors.find((v) => v.name === frame)!;
+    assertEquals(control.header.ch, CONTROL_CHANNEL);
+    const msg = datagramFixture.vectors.find((v) => v.name === datagram)!;
+    assertEquals(decodeDatagram(fromB64(control.payload_b64)), msg.message as Msg, frame);
+  }
 });
 
 Deno.test("data frames match golden vectors byte-exactly", () => {
@@ -326,6 +345,43 @@ Deno.test("msgFromUnknown validates publish-message shapes", () => {
   assertEquals(msgFromUnknown({ t: "error", code: "c", message: "m", requestId: null }), null);
   assertEquals(msgFromUnknown({ t: "error", code: "c", message: "m", requestId: "" }), null);
   assertEquals(msgFromUnknown({ t: "error", code: "c", message: "m", requestId: longId }), null);
+});
+
+Deno.test("msgFromUnknown validates rtc signaling shapes", () => {
+  // Also pins the rtc bounds against the Python mirror (test_protocol.py).
+  assertEquals(MAX_SDP_LEN, 48 * 1024);
+  assertEquals(MAX_MID_LEN, 16);
+  assertEquals(MAX_RTC_TRACKS, 8);
+  const ice = {
+    t: "rtc_ice",
+    iceServers: [{ urls: ["stun:s"] }, { urls: ["turn:t"], username: "u", credential: "c" }],
+  };
+  assertEquals(msgFromUnknown(ice) !== null, true);
+  assertEquals(msgFromUnknown({ t: "rtc_ice", iceServers: [{ urls: [] }] }), null);
+  assertEquals(
+    msgFromUnknown({ t: "rtc_ice", iceServers: [{ urls: ["stun:s"], username: null }] }),
+    null,
+  );
+  const offer = { t: "rtc_offer", sdp: "v=0\r\n", tracks: [{ ch: "cam", mid: "0" }] };
+  assertEquals(msgFromUnknown(offer) !== null, true);
+  assertEquals(msgFromUnknown({ t: "rtc_offer", sdp: "v=0\r\n" }) !== null, true);
+  assertEquals(msgFromUnknown({ t: "rtc_offer", sdp: "x".repeat(MAX_SDP_LEN + 1) }), null);
+  assertEquals(msgFromUnknown({ ...offer, tracks: null }), null);
+  assertEquals(
+    msgFromUnknown({ ...offer, tracks: [{ ch: "cam", mid: "m".repeat(MAX_MID_LEN + 1) }] }),
+    null,
+  );
+  const many = Array.from({ length: MAX_RTC_TRACKS + 1 }, (_, i) => ({ ch: `c${i}`, mid: `${i}` }));
+  assertEquals(msgFromUnknown({ ...offer, tracks: many }), null);
+  assertEquals(msgFromUnknown({ ...offer, robotId: null }), null);
+  assertEquals(msgFromUnknown({ t: "rtc_answer", sdp: "v=0\r\n" }) !== null, true);
+  assertEquals(msgFromUnknown({ t: "rtc_answer" }), null);
+  assertEquals(msgFromUnknown({ t: "rtc_stalled", ch: "cam" }) !== null, true);
+  assertEquals(msgFromUnknown({ t: "rtc_stalled", ch: "" }), null);
+  assertEquals(
+    msgFromUnknown({ t: "rtc_stalled", ch: "c".repeat(MAX_MANIFEST_ID_LEN + 1) }),
+    null,
+  );
 });
 
 Deno.test("frameHeaderFromUnknown validates the header shape", () => {

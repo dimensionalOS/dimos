@@ -24,8 +24,11 @@ import { type Delivery, MAX_MANIFEST_ID_LEN } from "./manifest.ts";
 // Channel/manifest domain types live in manifest.ts; re-exported so protocol
 // consumers keep a single import surface.
 export type { ChannelSpec, Delivery, Dir, PanelSpec, Publish } from "./manifest.ts";
-export { RESERVED_CHANNEL_PREFIX } from "./manifest.ts";
+export { RESERVED_CHANNEL_PREFIX, TRACK_ENCODING } from "./manifest.ts";
 
+// v7: WebRTC video signaling (rtc_ice, rtc_offer, rtc_answer) and
+// video.webrtc.v1 track channels. An older peer would drop the unknown
+// messages and show a video panel that never draws, hence the bump.
 // v6 (amended, T12d): hello gains an optional `token` (a robot key or viewer
 // token for a relay started with --auth-file) and the relay answers
 // auth_failed; no bump: an older peer omits the field and an auth-on relay
@@ -50,7 +53,7 @@ export { RESERVED_CHANNEL_PREFIX } from "./manifest.ts";
 // misread in both directions). v2: a reliable channel packs all its frames
 // onto one persistent stream. Bump on any change an old peer would silently
 // misparse.
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 // The reserved data-frame channel carrying robot-leg control messages (v5+:
 // the robot's hello upstream, subs snapshots downstream on the robot control
@@ -75,6 +78,14 @@ export const MAX_REQUEST_ID_LEN = 64;
 
 // Bound for hello.token (a robot key or viewer token, see relay/auth.ts).
 export const MAX_TOKEN_LEN = 256;
+
+// An SDP rides a control frame or an @control payload, so it stays well under
+// MAX_CONTROL_PAYLOAD_BYTES (aiortc emits ~2 KB per m-section, at most
+// MAX_RTC_TRACKS of them). SDP is ASCII, so this length and the Python
+// mirror's character count agree.
+export const MAX_SDP_LEN = 48 * 1024;
+export const MAX_MID_LEN = 16;
+export const MAX_RTC_TRACKS = 8;
 
 // Reject absurd header lengths before allocating.
 export const MAX_HEADER_LEN = 65536;
@@ -259,11 +270,54 @@ export interface PubNackMsg {
   message: string;
 }
 
+// WebRTC video signaling (v7): rtc_ice hands a peer its ICE servers after
+// welcome and again after every TURN credential refresh; the robot offers once
+// with its ch->mid map and reports a track the SFU collected (rtc_stalled);
+// the viewer offers once and answers every relay-sent pull offer.
+// docs/web/protocol.md has the legs.
+export interface IceServer {
+  urls: string[];
+  username?: string;
+  credential?: string;
+}
+
+export interface RtcIceMsg {
+  t: "rtc_ice";
+  iceServers: IceServer[];
+}
+
+export interface RtcTrack {
+  ch: string;
+  mid: string;
+}
+
+export interface RtcOfferMsg {
+  t: "rtc_offer";
+  sdp: string;
+  tracks?: RtcTrack[];
+  /** Relay-sent pulls only: the robot whose tracks these are. */
+  robotId?: string;
+}
+
+export interface RtcAnswerMsg {
+  t: "rtc_answer";
+  sdp: string;
+}
+
+/** Robot to relay: track `ch` carried no media for the SFU's track lifetime
+ * (30 s) and does again. The SFU collected it meanwhile, so the relay closes
+ * its pulls, declares it again and pulls it afresh. */
+export interface RtcStalledMsg {
+  t: "rtc_stalled";
+  ch: string;
+}
+
 export type ControlMsg = HelloMsg | WelcomeMsg | PingMsg | PongMsg | ErrorMsg;
 export type SessionMsg = RobotsMsg | WatchMsg | ManifestMsg | SubMsg | UnsubMsg | SubsMsg;
 export type TeleopMsg = TwistMsg | StopMsg | TeleopStartMsg | TeleopStartedMsg | TeleopStopMsg;
 export type PublishMsg = PubMsg | PubAckMsg | PubNackMsg;
-export type Msg = ControlMsg | SessionMsg | TeleopMsg | PublishMsg;
+export type RtcMsg = RtcIceMsg | RtcOfferMsg | RtcAnswerMsg | RtcStalledMsg;
+export type Msg = ControlMsg | SessionMsg | TeleopMsg | PublishMsg | RtcMsg;
 
 // Data-plane frame header. `delivery` tells the relay how to forward frames
 // on channels the robot's manifest does not declare (the manifest's delivery
@@ -311,6 +365,10 @@ const MSG_FIELDS: Record<string, Record<string, "string" | "number">> = {
   pub: { id: "string", ch: "string" },
   pub_ack: { id: "string", ch: "string", relayTs: "number", bridgeTs: "number" },
   pub_nack: { id: "string", code: "string", message: "string" },
+  rtc_ice: {},
+  rtc_offer: { sdp: "string" },
+  rtc_answer: { sdp: "string" },
+  rtc_stalled: { ch: "string" },
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -337,6 +395,16 @@ const absentOrNumber = (v: unknown) => v === undefined || typeof v === "number";
 const requestIdOk = (v: unknown) =>
   typeof v === "string" && v.length >= 1 && v.length <= MAX_REQUEST_ID_LEN;
 const tokenOk = (v: unknown) => typeof v === "string" && v.length <= MAX_TOKEN_LEN;
+const sdpOk = (v: unknown) => typeof v === "string" && v.length >= 1 && v.length <= MAX_SDP_LEN;
+const absentOrString = (v: unknown) => v === undefined || typeof v === "string";
+const isIceServer = (v: unknown) =>
+  isRecord(v) &&
+  Array.isArray(v.urls) && v.urls.length >= 1 && v.urls.every((u) => typeof u === "string") &&
+  absentOrString(v.username) && absentOrString(v.credential);
+const isRtcTrack = (v: unknown) =>
+  isRecord(v) &&
+  typeof v.ch === "string" && v.ch.length >= 1 && v.ch.length <= MAX_MANIFEST_ID_LEN &&
+  typeof v.mid === "string" && v.mid.length >= 1 && v.mid.length <= MAX_MID_LEN;
 const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean> = {
   hello: (v) =>
     (v.robot === undefined || isRobotInfo(v.robot)) &&
@@ -353,6 +421,16 @@ const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean
   pub: (v) => requestIdOk(v.id) && v.data !== undefined && absentOrNumber(v.clientTs),
   pub_ack: (v) => requestIdOk(v.id),
   pub_nack: (v) => requestIdOk(v.id),
+  rtc_ice: (v) => Array.isArray(v.iceServers) && v.iceServers.every(isIceServer),
+  rtc_offer: (v) =>
+    sdpOk(v.sdp) &&
+    (v.tracks === undefined ||
+      (Array.isArray(v.tracks) && v.tracks.length <= MAX_RTC_TRACKS &&
+        v.tracks.every(isRtcTrack))) &&
+    absentOrString(v.robotId),
+  rtc_answer: (v) => sdpOk(v.sdp),
+  rtc_stalled: (v) =>
+    typeof v.ch === "string" && v.ch.length >= 1 && v.ch.length <= MAX_MANIFEST_ID_LEN,
 };
 
 /** Validated message from parsed JSON; null for unknown or malformed ones. */
