@@ -598,6 +598,16 @@ class MujocoEngine(SimulationEngine):
         mujoco.mj_forward(self._model, self._data)
 
     def _sim_loop(self) -> None:
+        # Worker processes send stderr to /dev/null, so an unhandled exception here
+        # would kill the physics thread without a trace. Log it where operators look.
+        try:
+            self._run_sim_loop()
+        except Exception:
+            logger.exception("sim loop crashed", cls=self.__class__.__name__)
+            with self._lock:
+                self._connected = False
+
+    def _run_sim_loop(self) -> None:
         logger.info("sim loop started", cls=self.__class__.__name__)
         dt = 1.0 / self._control_frequency
 
@@ -623,7 +633,7 @@ class MujocoEngine(SimulationEngine):
                     logger.error("on_before_step failed", error=str(exc))
             self._apply_control()
             mujoco.mj_step(self._model, self._data)
-            if sync_viewer:
+            if sync_viewer and m_viewer is not None:
                 m_viewer.sync()
             self._update_joint_state()
             if self._on_after_step is not None:
@@ -639,13 +649,26 @@ class MujocoEngine(SimulationEngine):
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-        if self._headless:
+        m_viewer = None
+        if not self._headless:
+            try:
+                m_viewer = viewer.launch_passive(
+                    self._model, self._data, show_left_ui=False, show_right_ui=False
+                )
+            except RuntimeError as exc:
+                # On macOS the passive viewer needs mjpython, which a worker process
+                # is not. Keep the physics alive instead of dying silently here.
+                logger.error(
+                    "MuJoCo viewer unavailable; stepping headless",
+                    cls=self.__class__.__name__,
+                    error=str(exc),
+                )
+                self._headless = True
+        if m_viewer is None:
             while not self._stop_event.is_set():
                 _step_once(sync_viewer=False)
         else:
-            with viewer.launch_passive(
-                self._model, self._data, show_left_ui=False, show_right_ui=False
-            ) as m_viewer:
+            with m_viewer:
                 while m_viewer.is_running() and not self._stop_event.is_set():
                     _step_once(sync_viewer=True)
 
@@ -860,6 +883,18 @@ class MujocoEngine(SimulationEngine):
             return None
         position = self._data.qpos[qpos_adr : qpos_adr + 3].copy()
         qw, qx, qy, qz = self._data.qpos[qpos_adr + 3 : qpos_adr + 7].copy()
+        return position, np.array([qx, qy, qz, qw], dtype=np.float64)
+
+    def get_body_pose(
+        self, body_name: str
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
+        """World position and xyzw orientation of a named body; None if the model has none."""
+        body_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+        if body_id < 0:
+            return None
+        with self._lock:
+            position = self._data.xpos[body_id].copy()
+            qw, qx, qy, qz = self._data.xquat[body_id].copy()
         return position, np.array([qx, qy, qz, qw], dtype=np.float64)
 
     def get_actuator_ctrl_range(self, joint_index: int) -> tuple[float, float] | None:

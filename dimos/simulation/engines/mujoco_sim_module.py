@@ -252,6 +252,9 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     spawn_yaw: float | None = None
     reset_joint_positions: list[float] | None = None
     headless: bool = False
+    # Free bodies whose world pose is published on ``tf`` (``world -> <body>``)
+    # next to the camera frames, so a recording holds ground-truth object poses.
+    tracked_bodies: list[str] = Field(default_factory=list)
     dof: int = 7
 
     # Camera config (matches former MujocoCameraConfig).
@@ -348,6 +351,7 @@ class MujocoSimModule(
         self._camera_info_base: CameraInfo | None = None
         self._shm_ready_signaled = False
         self._latest_frame_ts: float | None = None
+        self._missing_bodies: set[str] = set()
 
         # IMU sensor slices into MjData.sensordata, resolved once at start.
         # None if the MJCF has no recognized IMU sensors (e.g. arm-only sims).
@@ -1000,8 +1004,34 @@ class MujocoSimModule(
                     child_frame_id=self._camera_link,
                     ts=ts,
                 ),
+                *self._body_transforms(ts),
             )
         )
+
+    def _body_transforms(self, ts: float) -> list[Transform]:
+        """World poses of ``tracked_bodies``; a name missing from the model is skipped after one warning."""
+        engine = self._engine
+        if engine is None or not self.config.tracked_bodies:
+            return []
+        transforms: list[Transform] = []
+        for name in self.config.tracked_bodies:
+            pose = engine.get_body_pose(name)
+            if pose is None:
+                if name not in self._missing_bodies:
+                    self._missing_bodies.add(name)
+                    logger.warning("MujocoSimModule: tracked body not in model", body=name)
+                continue
+            position, (qx, qy, qz, qw) = pose
+            transforms.append(
+                Transform(
+                    translation=Vector3(float(position[0]), float(position[1]), float(position[2])),
+                    rotation=Quaternion(float(qx), float(qy), float(qz), float(qw)),
+                    frame_id="world",
+                    child_frame_id=name,
+                    ts=ts,
+                )
+            )
+        return transforms
 
     def _generate_pointcloud(self) -> None:
         if self._engine is None:
