@@ -30,7 +30,10 @@ from dimos.robot.manipulators.openarm.config import (
 from dimos.teleop.openarm_mini.calibration import OpenArmMiniSide
 from dimos.teleop.openarm_mini.teleop_module import OpenArmMiniTeleopModule
 
-_OPENARM_ARM_VELOCITY_PROFILE_RAD_S = (1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0)
+# Per-joint follower speed cap. Leader-follower needs human arm speeds, well
+# above the WebXR IK profile; a rejected leader jump (0.75 rad) still plays
+# out over a quarter second instead of stepping the PD loop.
+_OPENARM_ARM_VELOCITY_PROFILE_RAD_S = (3.0, 3.0, 3.0, 3.0, 6.0, 6.0, 6.0)
 
 
 def _trajectory_task(sides: tuple[OpenArmMiniSide, ...]) -> TaskConfig:
