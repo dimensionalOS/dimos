@@ -31,7 +31,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
           prune-cache: true
@@ -80,7 +80,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
           prune-cache: true
@@ -130,7 +130,7 @@ jobs:
       - name: Build cockpit dist  # setup.py copies it into the wheel's _relay_dist
         uses: ./.github/actions/build-cockpit
       - name: Build wheels
-        uses: pypa/cibuildwheel@v4.2.0
+        uses: pypa/cibuildwheel@v4.2.1
       - name: Attestation
         uses: actions/attest-build-provenance@v4
         with:
@@ -158,7 +158,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v10.1.0
       - name: Install twine
         run: uv tool install twine
       - name: Validate distributions
@@ -187,7 +187,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v10.1.0
       - name: Install twine
         run: uv tool install twine
       - name: Validate distributions
