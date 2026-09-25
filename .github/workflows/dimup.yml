@@ -1,0 +1,41 @@
+name: DimOS SDK onboarding
+on:
+  pull_request:
+    paths:
+      - 'installer/**'
+      - 'dimos_build.py'
+      - 'setup.py'
+      - 'MANIFEST.in'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'dimos/core/native*'
+      - 'dimos/cli/doctor.py'
+      - 'dimos/cli/entrypoint.py'
+      - 'native/**'
+      - '.github/workflows/dimup.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  macos-runner:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - name: Installer process tests
+        run: uv run --project installer --with pytest pytest --noconftest -c installer/pyproject.toml installer/src/dimup/test_process.py
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - name: Install shells for configuration tests
+        run: sudo apt-get update && sudo apt-get install -y zsh fish
+      - name: Installer tests
+        env:
+          PYTHONPATH: .
+        run: uv run --project installer --with pytest pytest --noconftest -c installer/pyproject.toml installer/src
+      - name: Type check dimup
+        env:
+          MYPYPATH: installer/src
+        run: uv run --project installer --with mypy mypy --strict --follow-imports=silent installer/src/dimup/cli.py installer/src/dimup/process.py installer/src/dimup/setup.py installer/src/dimup/shell.py
