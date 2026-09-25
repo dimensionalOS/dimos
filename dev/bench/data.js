@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790372928019,
+  "lastUpdate": 1790373694274,
   "repoUrl": "https://github.com/dimensionalOS/dimos",
   "entries": {
     "go2 replay realtime": [
@@ -404,6 +404,75 @@ window.BENCHMARK_DATA = {
           {
             "name": "disk write",
             "value": 251.051,
+            "unit": "MB"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "paul@nechifor.net",
+            "name": "Paul Nechifor",
+            "username": "paul-nechifor"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fc67929389b95d1ba3eabb3835d092faaeb9f72b",
+          "message": "perf(go2): only wait for the stand-up on a physical robot (#4280)",
+          "timestamp": "2026-09-25T21:57:50Z",
+          "tree_id": "091a326775a01ed6c183481067b4b353e1dcdeb7",
+          "url": "https://github.com/dimensionalOS/dimos/commit/fc67929389b95d1ba3eabb3835d092faaeb9f72b"
+        },
+        "date": 1790373693329,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "first frame wall",
+            "value": 10.825,
+            "unit": "s"
+          },
+          {
+            "name": "first frame cpu",
+            "value": 22.928,
+            "unit": "s"
+          },
+          {
+            "name": "run cpu",
+            "value": 34.135,
+            "unit": "s"
+          },
+          {
+            "name": "run cpu (user)",
+            "value": 24.851,
+            "unit": "s"
+          },
+          {
+            "name": "run cpu (system)",
+            "value": 9.284,
+            "unit": "s"
+          },
+          {
+            "name": "peak memory",
+            "value": 2728.246,
+            "unit": "MB"
+          },
+          {
+            "name": "peak threads",
+            "value": 401,
+            "unit": "threads"
+          },
+          {
+            "name": "disk read",
+            "value": 16.848,
+            "unit": "MB"
+          },
+          {
+            "name": "disk write",
+            "value": 727.031,
             "unit": "MB"
           }
         ]
