@@ -1,0 +1,11 @@
+# Environment for bin/benchmark-analysis. Its own project because Otava pins
+# numpy, scipy and ruamel.yaml at versions the main lock does not use;
+# Dependabot keeps it current through the `uv` entry for this directory.
+[project]
+name = "benchmark-analysis"
+version = "0"
+requires-python = ">=3.12"
+dependencies = ["apache-otava==0.8.0"]
+
+[tool.uv]
+package = false

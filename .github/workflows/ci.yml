@@ -1268,7 +1268,7 @@ jobs:
           # Append to the tracked series on main; PRs only compare against it.
           auto-push: ${{ github.event_name == 'push' }}
           save-data-file: ${{ github.event_name == 'push' }}
-          alert-threshold: 108%
+          alert-threshold: 150%
           # Fork PRs run with a read-only token that can't post comments;
           # there the numbers land in the job summary and the step log only.
           comment-on-alert: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -1284,6 +1284,30 @@ jobs:
             echo 'label to the PR and re-run this job in order to merge.'
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::error title=Benchmark regression::If expected, add the 'benchmark-ack' label and re-run."
+
+  benchmark-analysis:
+    if: github.event_name == 'push'
+    needs: benchmark-track
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout and the gh-pages series
+      issues: write  # To file regressions
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Fetch the benchmark series
+        run: |
+          git fetch --depth=1 origin gh-pages
+          git show FETCH_HEAD:dev/bench/data.js > data.js
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+      - name: Install Otava
+        run: uv sync --project .github/benchmark-analysis --frozen
+      - name: Analyse the series and file regressions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: uv run --project .github/benchmark-analysis python bin/benchmark-analysis data.js --create-issues
 
   # Cross-job fail-fast: GitHub Actions only fail-fasts within a matrix,
   # not across sibling jobs. This watcher fires the moment `tests` fails
