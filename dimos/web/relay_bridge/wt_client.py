@@ -31,6 +31,7 @@ from urllib.parse import urljoin, urlparse
 import urllib.request
 
 from aioquic.asyncio.client import connect as aioquic_connect
+from typing_extensions import Self
 
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge._wt_session import SessionProtocol, make_quic_configuration
@@ -218,7 +219,7 @@ class RelayClient:
         logger.info(f"WebTransport session established: {url} path={path}")
         return cls(url, role, session, ctx)
 
-    async def __aenter__(self) -> RelayClient:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(

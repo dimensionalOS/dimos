@@ -272,10 +272,7 @@ def test_planar_base_rejects_invalid_configuration(
 
 def test_planar_base_definition_coerces_config_values() -> None:
     definition = robot_model.PlanarBaseDefinition(
-        **{
-            "velocity_limits": [1, 1, 2],
-            "acceleration_limits": [2, 2, 4],
-        }
+        velocity_limits=[1, 1, 2], acceleration_limits=[2, 2, 4]
     )
 
     assert definition.velocity_limits == (1.0, 1.0, 2.0)
@@ -291,8 +288,10 @@ def test_planar_base_definition_coerces_config_values() -> None:
             "one URDF root",
         ),
         (
-            "<robot name='r'><link name='base'/><joint name='base/x' type='fixed'>"
-            "<parent link='base'/><child link='tool'/></joint><link name='tool'/></robot>",
+            (
+                "<robot name='r'><link name='base'/><joint name='base/x' type='fixed'>"
+                "<parent link='base'/><child link='tool'/></joint><link name='tool'/></robot>"
+            ),
             "joint names already exist",
         ),
     ],
@@ -523,14 +522,18 @@ def test_structural_model_view_rejects_duplicate_configuration(tmp_path: Path) -
     [
         ("", ("missing",), "Joint not found"),
         (
-            "<joint name='tool_joint' type='fixed'>"
-            "<parent link='base'/><child link='tool'/></joint>",
+            (
+                "<joint name='tool_joint' type='fixed'>"
+                "<parent link='base'/><child link='tool'/></joint>"
+            ),
             ("tool_joint",),
             "already fixed",
         ),
         (
-            "<joint name='tool_joint' type='revolute'>"
-            "<parent link='base'/><child link='tool'/></joint>",
+            (
+                "<joint name='tool_joint' type='revolute'>"
+                "<parent link='base'/><child link='tool'/></joint>"
+            ),
             ("tool_joint", "tool_joint"),
             "already requested",
         ),

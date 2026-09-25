@@ -385,8 +385,10 @@ class LocalizeModule(MemoryModule):
         self.detections.publish(_as_detection_array(queries, results, self.rig.world_frame))
 
         lines: list[str] = [
-            f"window {lo - first:.1f}s to {lo + duration - first:.1f}s of "
-            f"{head - first:.1f}s of feed, {index.count()} frames"
+            (
+                f"window {lo - first:.1f}s to {lo + duration - first:.1f}s of "
+                f"{head - first:.1f}s of feed, {index.count()} frames"
+            )
         ]
         for query, hits in zip(queries, results, strict=True):
             if not hits:

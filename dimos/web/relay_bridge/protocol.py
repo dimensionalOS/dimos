@@ -60,12 +60,7 @@ from dimos.utils.logging_config import setup_logger
 # single import surface, mirroring protocol.ts.
 from dimos.web.relay_bridge.manifest import (
     MAX_MANIFEST_ID_LEN,
-    RESERVED_CHANNEL_PREFIX as RESERVED_CHANNEL_PREFIX,
-    ChannelSpec as ChannelSpec,
-    Delivery as Delivery,
-    Dir as Dir,
-    PanelSpec as PanelSpec,
-    Publish as Publish,
+    Delivery,
 )
 
 logger = setup_logger()

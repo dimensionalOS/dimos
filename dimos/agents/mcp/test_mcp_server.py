@@ -31,10 +31,7 @@ def _make_rpc_calls(
     rpc_calls: dict[str, MagicMock] = {}
     for skill in skills:
         mock_call = MagicMock()
-        if skill.func_name in call_results:
-            mock_call.return_value = call_results[skill.func_name]
-        else:
-            mock_call.return_value = None
+        mock_call.return_value = call_results.get(skill.func_name, None)
         rpc_calls[skill.func_name] = mock_call
     return rpc_calls
 

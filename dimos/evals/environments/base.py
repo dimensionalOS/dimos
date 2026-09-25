@@ -47,7 +47,7 @@ class Environment(Configurable, ABC):
 
     def preflight(self, agent: Agent) -> None:
         """Check compatibility before any environment starts."""
-        return None
+        return
 
     @abstractmethod
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
@@ -55,7 +55,7 @@ class Environment(Configurable, ABC):
 
     def settle(self, budget_s: float) -> None:
         """Wait for ongoing actions to finish, within the remaining case budget."""
-        return None
+        return
 
     def stop(self) -> None:
         """Release every acquired resource, including after a failed start."""

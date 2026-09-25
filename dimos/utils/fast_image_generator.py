@@ -263,7 +263,7 @@ class FastImageGenerator:
         # Simple horizontal lines pattern (faster than sine wave)
         line_y = int(self.height * 0.8)
         line_spacing = 10
-        for i in range(0, 5):
+        for i in range(5):
             y = line_y + i * line_spacing
             if y < self.height:
                 self.canvas[y : y + 2, :] = [255, 200, 100]

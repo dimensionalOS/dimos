@@ -244,12 +244,14 @@ def encode_lidar_xy(msg: PointCloud2) -> EncodedPayload:
 ```
 
 ```python skip
+(
     cockpit(
         channels=[
             Channel("health", Health, max_hz=1.0),
             Channel("lidar", PointCloud2, encoding="lidar.xy.v1", delivery="latest", max_hz=5.0),
         ]
     ),
+)
 ```
 
 `autoconnect` wires `lidar` to the driver's `lidar: Out[PointCloud2]` already inside `unitree_go2`. An encoder returns `bytes`, an `EncodedPayload` (payload plus a small JSON meta mapping sent in the frame header), or `None` to skip a sample. Because dimOS modules live in different processes, codec functions must be importable by name (the registry ships them by reference). A function defined inline in a script or a lambda is rejected.
@@ -295,9 +297,11 @@ A decoder is `(payload: Uint8Array, header) => { value, preview? }`, looked up b
 A `dir="tx"` channel with `publish="shared"` is a browser input. Any viewer may publish on it. The bridge decodes the JSON value with the matching decoder and publishes it on a typed `Out` port, and your modules consume it like any other stream.
 
 ```python skip
-cockpit(channels=[
-    Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
-])
+cockpit(
+    channels=[
+        Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
+    ]
+)
 ```
 
 ```js

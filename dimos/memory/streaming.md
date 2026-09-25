@@ -92,13 +92,13 @@ stream.live().transform(process).drain()
 
 **One-shot** — get a single observation:
 ```python
-obs = stream.live().transform(xf).first()   # blocks until one arrives
-has_data = stream.exists()                    # quick check
+obs = stream.live().transform(xf).first()  # blocks until one arrives
+has_data = stream.exists()  # quick check
 ```
 
 **Bounded live** — collect a fixed number from a live stream:
 ```python
-batch = stream.live().limit(100).to_list()     # OK — limit makes it finite
+batch = stream.live().limit(100).to_list()  # OK — limit makes it finite
 ```
 
 ### Error summary

@@ -29,7 +29,7 @@ import math
 from pathlib import Path
 import threading
 import time
-from typing import Any, TypeVar
+from typing import Any
 
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
 from dimos_lcm.sensor_msgs import Joy as LCMJoy
@@ -87,9 +87,6 @@ class WebXRTeleopConfig(ModuleConfig):
     server_port: int = 8443
     input_timeout_s: float = Field(default=1.0, gt=0)
     body_tracking_mode: BodyTrackingMode = "off"
-
-
-_Config = TypeVar("_Config", bound=WebXRTeleopConfig)
 
 
 class WebXRTeleopModule(Module):

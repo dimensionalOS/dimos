@@ -81,7 +81,7 @@ def test_a_pooled_session_is_still_shared_by_matching_configs(zenoh_defaults, mo
 
 def test_a_session_waits_for_its_links_only_once(zenoh_defaults, monkeypatch):
     """After one timed-out wait, later services on the same session start at once."""
-    unlinked = SimpleNamespace(info=SimpleNamespace(links=lambda: []))
+    unlinked = SimpleNamespace(info=SimpleNamespace(links=list))
     monkeypatch.setattr(zenohservice.zenoh, "open", lambda zconfig: unlinked)
     pool = ZenohSessionPool()
 

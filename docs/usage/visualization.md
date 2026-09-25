@@ -73,7 +73,6 @@ camera_demo = autoconnect(
     CameraModule.blueprint(),
     vis_module(viewer_backend=global_config.viewer),
 )
-
 ```
 
 Run the stack locally (this blocks until you stop the process):
@@ -104,10 +103,10 @@ Edit [`dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py`](/dimos/robot/un
 
 ```python skip
 # Before (high detail, slower on large maps)
-voxel_mapper(voxel_size=0.05),  # 5cm voxels
+(voxel_mapper(voxel_size=0.05),)  # 5cm voxels
 
 # After (lower detail, 8x faster)
-voxel_mapper(voxel_size=0.1),   # 10cm voxels
+(voxel_mapper(voxel_size=0.1),)  # 10cm voxels
 ```
 
 **Trade-off:**

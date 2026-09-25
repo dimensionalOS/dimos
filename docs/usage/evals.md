@@ -232,8 +232,11 @@ store = SqliteStore(path="/tmp/evals_intro.db")
 odom = store.stream("odom", PoseStamped)
 for i in range(20):
     odom.append(
-        PoseStamped(position=make_vector3(float(i), 2.5, 0.0),
-                    orientation=Quaternion(0, 0, 0, 1), frame_id="world"),
+        PoseStamped(
+            position=make_vector3(float(i), 2.5, 0.0),
+            orientation=Quaternion(0, 0, 0, 1),
+            frame_id="world",
+        ),
         ts=1000.0 + i,
     )
 store.stop()
@@ -271,7 +274,9 @@ from dimos.evals.runner import EvalRunner, summarize
 
 agent = QuestionAnswer(chat_model=FakeListChatModel(responses=["about 19 meters"]))
 result = EvalRunner().run([case], agent)[0]
-print(f"score={result.score} passed={result.passed} answer={result.final_answer!r} steps={result.steps}")
+print(
+    f"score={result.score} passed={result.passed} answer={result.final_answer!r} steps={result.steps}"
+)
 s = summarize([result])
 print(f"n={s.n} mean={s.mean_score} pass_rate={s.pass_rate} errors={s.errors}")
 ```
@@ -331,7 +336,11 @@ plain functions that compose inside `grade`:
 from dimos.evals.scorers import choice, exact, first_number, ramp, within, yes_no
 
 print(exact("yes", "yes"), within(2.0)(10.0, 11.0), ramp(1.0, band=2.0))
-print(first_number("around 12.5 m"), yes_no("Yes, clearly."), choice(["chairs", "sofas"])("Mostly chairs."))
+print(
+    first_number("around 12.5 m"),
+    yes_no("Yes, clearly."),
+    choice(["chairs", "sofas"])("Mostly chairs."),
+)
 ```
 
 ```results

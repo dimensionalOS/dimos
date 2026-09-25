@@ -22,6 +22,8 @@ import multiprocessing
 import threading
 from typing import TYPE_CHECKING
 
+from typing_extensions import Self
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from contextlib import AbstractContextManager
@@ -81,7 +83,7 @@ class QueueProgress:
 class RunProgress:
     """The live display. Hand factory() to evaluate for a bar per stage."""
 
-    def __enter__(self) -> RunProgress:
+    def __enter__(self) -> Self:
         # Lazy: rich stays off the CLI startup path.
         from rich.progress import (
             BarColumn,

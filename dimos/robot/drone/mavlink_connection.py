@@ -1017,7 +1017,7 @@ class MavlinkConnection:
     def get_video_stream(self, fps: int = 30) -> None:
         """Get video stream (to be implemented with GStreamer)."""
         # Will be implemented in camera module
-        return None
+        return
 
 
 class FakeMavlinkConnection(MavlinkConnection):
@@ -1077,11 +1077,9 @@ class FakeMavlinkConnection(MavlinkConnection):
 
             def wait_heartbeat(self, timeout: int = 30) -> None:
                 """Fake heartbeat received."""
-                pass
 
             def close(self) -> None:
                 """Fake close."""
-                pass
 
             # Command methods that get called but don't need to do anything in replay
             def command_long_send(self, *args: Any, **kwargs: Any) -> None:

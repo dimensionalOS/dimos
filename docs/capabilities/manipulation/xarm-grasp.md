@@ -165,7 +165,7 @@ on the provider directly:
 
 ```python skip
 cloud = scene.get_object_pointcloud_by_object_id("<object_id>")
-candidates = app.GraspGenXModule.propose_grasps(cloud)   # HeuristicGraspModule in the base blueprint
+candidates = app.GraspGenXModule.propose_grasps(cloud)  # HeuristicGraspModule in the base blueprint
 print(len(candidates.candidates), [c.score for c in candidates.candidates[:5]])
 ```
 
