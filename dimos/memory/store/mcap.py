@@ -41,7 +41,7 @@ up while a recording is being written to is on its own.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import replace
 from functools import partial
 import json
@@ -56,7 +56,7 @@ from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.base import ObservationStore, ObservationStoreConfig
 from dimos.memory.store.base import Store, StoreConfig
-from dimos.memory.store.mcap_append import CHUNK_TARGET, McapAppender, read_metadata
+from dimos.memory.store.mcap_append import McapAppender, read_metadata
 from dimos.memory.store.mcap_derived import (
     ENVELOPE_ENCODING,
     REGISTRY_METADATA,
@@ -75,6 +75,10 @@ from dimos.memory.type.filter import (
     TimeRangeFilter,
 )
 from dimos.memory.type.observation import Observation, PoseTuple
+
+# A flush rewrites the whole summary -- 7 MB on a 75 GB recording -- so a stream being
+# written flushes per 64 MiB of observations rather than per 4 MiB chunk.
+FLUSH_BYTES = 64 << 20
 
 
 @runtime_checkable
@@ -132,7 +136,7 @@ class McapObservationStore(ObservationStore[Any]):
         codec: StreamCodec,
         count: int,
         observation_uses_publish_time: bool,
-        appender: McapAppender | None = None,
+        appender: Callable[[], McapAppender] | None = None,
         channel_id: int | None = None,
         enveloped: bool = False,
         payload_type: type | None = None,
@@ -149,7 +153,10 @@ class McapObservationStore(ObservationStore[Any]):
         # Immutable channel metadata: each iterator owns its own file reader, so
         # timestamp selection has no async state.
         self._observation_uses_publish_time = observation_uses_publish_time
-        self._appender = appender
+        # Opened on the first insert, not here: opening one takes the file's write lock,
+        # and a process that only READS a dimos stream must not hold it.
+        self._appender_of = appender
+        self._appender: McapAppender | None = None
         self._channel_id = channel_id
         self._enveloped = enveloped
         # Inserted but not yet flushed. A flush rewrites the file's summary, so
@@ -305,12 +312,14 @@ class McapObservationStore(ObservationStore[Any]):
         one record. Ids count up from zero in insertion order, which is the order a
         read comes back in, because a dimos stream is only ever appended to.
         """
-        if self._appender is None or self._channel_id is None:
+        if self._appender_of is None or self._channel_id is None:
             raise NotImplementedError(
                 f"{self._topic!r} was written by the recorder; dimos appends to its own "
                 "channels only. Write to a new stream name instead."
             )
         payload = self._codec.encode(obs.data)  # type: ignore[attr-defined]  # write streams get a real Codec
+        if self._appender is None:
+            self._appender = self._appender_of()
         envelope = write_observation(self._appender, self._channel_id, obs, payload)
         row_id = self._count
         self._count += 1
@@ -326,7 +335,7 @@ class McapObservationStore(ObservationStore[Any]):
         once the unflushed envelopes are worth a chunk -- until then they are
         served out of :attr:`_pending`, so a read still sees them.
         """
-        if self._pending_bytes >= CHUNK_TARGET:
+        if self._pending_bytes >= FLUSH_BYTES:
             self.flush()
 
     def flush(self) -> None:
@@ -407,9 +416,10 @@ class McapStore(Store):
 
     def _writer(self) -> McapAppender:
         """The one appender this store writes through, opened on first write."""
-        if self._appender is None:
-            self._appender = McapAppender(self.config.path)
-        return self._appender
+        with self._write_lock:
+            if self._appender is None:
+                self._appender = McapAppender(self.config.path)
+            return self._appender
 
     def list_streams(self) -> list[str]:
         return sorted(set(self._available) | set(self._registry) | set(self._streams))
@@ -499,7 +509,6 @@ class McapStore(Store):
     def _backend_for(self, name: str, payload_type: type, codec: Any) -> Backend[Any]:
         """The read/write backend over a dimos channel, however it was reached."""
         with self._write_lock:
-            writer = self._writer()
             channel_id = self._enveloped.get(name)
             if channel_id is None:
                 raise KeyError(f"{name!r} is in the registry but has no channel in the file")
@@ -510,7 +519,7 @@ class McapStore(Store):
             codec=codec,
             count=self._available.get(name, 0),
             observation_uses_publish_time=False,
-            appender=writer,
+            appender=self._writer,
             channel_id=channel_id,
             enveloped=True,
             payload_type=payload_type,

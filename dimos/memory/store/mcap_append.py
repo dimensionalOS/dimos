@@ -34,6 +34,7 @@ at https://mcap.dev/spec.
 
 from __future__ import annotations
 
+import fcntl
 import os
 from pathlib import Path
 import struct
@@ -352,6 +353,7 @@ class McapAppender:
             f.write(MAGIC)
             f.write(_record(OP_HEADER, header))
         self.file = open(self.path, "r+b")
+        self._lock_for_writing()
         self.compression = compression
         self.schemas: dict[int, bytes] = {}
         self.schema_names: dict[int, str] = {}
@@ -375,8 +377,18 @@ class McapAppender:
         self._dirty = True  # an mcap without its DataEnd, summary and footer is not one yet
         self.flush()
 
+    def _lock_for_writing(self) -> None:
+        """One writer per file, across processes: two appenders would each write a
+        summary that knows nothing of the other's chunks. Held until :meth:`close`."""
+        try:
+            fcntl.flock(self.file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            self.file.close()
+            raise RuntimeError(f"{self.path} is already being written by another process") from None
+
     def _open(self) -> None:
         self.file = open(self.path, "r+b")
+        self._lock_for_writing()
         size = self.file.seek(0, os.SEEK_END)
         if size < len(MAGIC) + 29 + len(MAGIC) or self._read_at(0, 8) != MAGIC:
             raise ValueError(f"{self.path}: not an mcap")
