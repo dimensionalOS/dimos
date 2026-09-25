@@ -30,7 +30,10 @@ SUITE: Suite = [
             "hold it in the air. The table top is at z=0.12 m in the world frame and "
             "spans roughly x=0.30 to 0.60 m ahead of the arm base; the cylinder is about "
             "12 cm tall and 7 cm wide, standing near x=0.5 m, y=0. Look through the wrist "
-            "camera whenever you need to check where things are."
+            "camera whenever you need to check where things are. The gripper starts "
+            "pointing straight down: for top-down moves omit roll/pitch/yaw in move_to_pose "
+            "to keep the current orientation, or pass roll=3.1416, pitch=0. "
+            "roll=pitch=yaw=0 points the gripper up."
         ),
         # MuJoCo window on Linux; on macOS the sim is headless and Rerun is the view.
         environment=arm_only_environment(headless=False, rerun=True),
