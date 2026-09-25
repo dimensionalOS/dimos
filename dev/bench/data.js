@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790282848839,
+  "lastUpdate": 1790372833784,
   "repoUrl": "https://github.com/dimensionalOS/dimos",
   "entries": {
     "go2 replay realtime": [
@@ -251,6 +251,90 @@ window.BENCHMARK_DATA = {
           {
             "name": "network (external tx)",
             "value": 0.154,
+            "unit": "MB"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "paul@nechifor.net",
+            "name": "Paul Nechifor",
+            "username": "paul-nechifor"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3dca350086795831dcc59d452f4deac5772f9220",
+          "message": "fix chat scroll bug (#4300)",
+          "timestamp": "2026-09-25T21:44:00Z",
+          "tree_id": "094e1f2ea2531e19638310f6af3562deda53f7c6",
+          "url": "https://github.com/dimensionalOS/dimos/commit/3dca350086795831dcc59d452f4deac5772f9220"
+        },
+        "date": 1790372832681,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "first frame wall",
+            "value": 10.651,
+            "unit": "s"
+          },
+          {
+            "name": "first frame cpu",
+            "value": 22.932,
+            "unit": "s"
+          },
+          {
+            "name": "run cpu",
+            "value": 31.612,
+            "unit": "s"
+          },
+          {
+            "name": "run cpu (user)",
+            "value": 24.412,
+            "unit": "s"
+          },
+          {
+            "name": "run cpu (system)",
+            "value": 7.2,
+            "unit": "s"
+          },
+          {
+            "name": "peak memory",
+            "value": 2716.805,
+            "unit": "MB"
+          },
+          {
+            "name": "peak threads",
+            "value": 404,
+            "unit": "threads"
+          },
+          {
+            "name": "disk read",
+            "value": 15.941,
+            "unit": "MB"
+          },
+          {
+            "name": "disk write",
+            "value": 265.641,
+            "unit": "MB"
+          },
+          {
+            "name": "network (multicast)",
+            "value": 0.003,
+            "unit": "MB"
+          },
+          {
+            "name": "network (external rx)",
+            "value": 0.059,
+            "unit": "MB"
+          },
+          {
+            "name": "network (external tx)",
+            "value": 0.147,
             "unit": "MB"
           }
         ]
