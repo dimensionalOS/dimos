@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
 import inspect
@@ -101,6 +101,7 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 
 
 Deployment = Literal["python", "docker"]
+WorkerRuntime = Literal["python", "mjpython"]
 
 
 class ModuleConfig(BaseConfig):
@@ -134,6 +135,11 @@ class ModuleBase(Configurable, CompositeResource):
     # process. Used for heavy modules that would otherwise contend with
     # each other for CPU and the GIL.
     dedicated_worker: ClassVar[bool] = False
+
+    @classmethod
+    def worker_runtime(cls, config_args: Mapping[str, Any]) -> WorkerRuntime:
+        """Select the interpreter runtime for this module's Python worker."""
+        return "python"
 
     _rpc: RPCSpec | None = None
     _tf: TF | None = None
