@@ -21,6 +21,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import signal
 import time
 
@@ -98,10 +99,15 @@ class RunEntry:
 
 
 def generate_run_id(blueprint: str) -> str:
-    """Generate a human-readable, timestamp-prefixed run ID."""
+    """Generate a human-readable, timestamp-prefixed run ID.
+
+    The trailing token keeps two runs of one blueprint started in the same
+    second apart: the run ID names the recording and log directories, and
+    parallel runs (eval workers on one host) would otherwise write into one.
+    """
     ts = time.strftime("%Y%m%d-%H%M%S")
     safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", blueprint)
-    return f"{ts}-{safe_name}"
+    return f"{ts}-{safe_name}-{secrets.token_hex(2)}"
 
 
 def is_pid_alive(pid: int) -> bool:
