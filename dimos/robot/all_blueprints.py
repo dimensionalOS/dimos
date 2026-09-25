@@ -225,6 +225,7 @@ all_modules = {
     "desk-static-tf-module": "dimos.perception.fiducial.blueprints.desk_marker_tf.DeskStaticTfModule",
     "detection2-d-module": "dimos.perception.detection.module2D.Detection2DModule",
     "detection3-d-module": "dimos.perception.detection.module3D.Detection3DModule",
+    "depth2-depth": "dimos.perception.depth2depth.module.Depth2Depth",
     "dim-slam": "dimos.mapping.dim_slam.dim_slam.DimSlam",
     "drone-camera-module": "dimos.robot.drone.camera_module.DroneCameraModule",
     "drone-connection-module": "dimos.robot.drone.connection_module.DroneConnectionModule",
