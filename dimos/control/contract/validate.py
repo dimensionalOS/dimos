@@ -45,7 +45,6 @@ from dimos.control.contract.description import (
     Omission,
     ProcessLoss,
     SafeStopKind,
-    WriteMode,
 )
 from dimos.control.contract.keys import KD, POSITION, is_valid_segment
 from dimos.control.contract.sequence import is_newer
@@ -257,9 +256,6 @@ def validate_description(desc: ControlDescription) -> None:
     ):
         if not _finite(value) or value <= 0:
             errors.append(f"timing.{label} must be positive, got {value}")
-    if isinstance(t.write_rate_hz, float | int) and not isinstance(t.write_rate_hz, WriteMode):
-        if not _finite(float(t.write_rate_hz)) or float(t.write_rate_hz) <= 0:
-            errors.append(f"timing.write_rate_hz must be positive, got {t.write_rate_hz}")
     if _finite(t.state_rate_hz) and t.state_rate_hz > 0 and _finite(t.stale_timeout_s):
         if t.stale_timeout_s < 1.0 / t.state_rate_hz:
             errors.append(

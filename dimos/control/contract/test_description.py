@@ -22,7 +22,6 @@ import pickle
 import pytest
 
 from dimos.control.contract.description import (
-    WRITE_ON_RECEIPT,
     ActivationPolicy,
     AvailableAfter,
     ControlDescription,
@@ -135,30 +134,6 @@ def test_resource_lookup(xarm: ControlDescription) -> None:
     assert xarm.resource("missing") is None
 
 
-def test_write_rate_defaults_to_the_state_rate(g1: ControlDescription) -> None:
-    """None means 'the state rate', so a description need not repeat itself."""
-    assert g1.timing.write_rate_hz is None
-    assert g1.timing.effective_write_rate_hz() == 500.0
-
-
-def test_explicit_write_rate_is_used(chassis: ControlDescription) -> None:
-    """A declared rate wins over the state rate."""
-    assert chassis.timing.effective_write_rate_hz() == 50.0
-
-
-def test_write_on_receipt_is_distinct_from_none() -> None:
-    """ "Only when told" is its own value, so None never means two things."""
-    timing = Timing(
-        state_rate_hz=100.0,
-        stale_timeout_s=0.05,
-        watchdog_timeout_s=0.1,
-        write_rate_hz=WRITE_ON_RECEIPT,
-    )
-
-    assert timing.effective_write_rate_hz() is None
-    assert WRITE_ON_RECEIPT is not None
-
-
 def test_process_loss_scalar_and_per_group(g1: ControlDescription) -> None:
     """A source may answer once, or per mode group."""
     assert g1.process_loss_of() is ProcessLoss.UNPROTECTED
@@ -226,7 +201,6 @@ def test_whole_descriptions_pickle(
         ActivationPolicy.OPERATOR_CONFIRMED,
         ProcessLoss.UNKNOWN,
         AvailableAfter.PREPARE_ARM,
-        WRITE_ON_RECEIPT,
     ],
 )
 def test_enums_pickle_by_identity(enum_member: object) -> None:

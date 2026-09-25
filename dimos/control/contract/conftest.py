@@ -230,7 +230,6 @@ def chassis() -> ControlDescription:
             state_rate_hz=50.0,
             stale_timeout_s=0.2,
             watchdog_timeout_s=0.2,
-            write_rate_hz=50.0,
         ),
         process_loss=ProcessLoss.EXTERNAL_SUPERVISOR,
         meta={"command_frame": "body", "yaw_convention": "unwrapped"},

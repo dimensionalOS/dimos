@@ -243,18 +243,6 @@ class ActivationPolicy(Enum):
     OPERATOR_CONFIRMED = "operator_confirmed"
 
 
-class WriteMode(Enum):
-    """The one non-numeric setting ``Timing.write_rate_hz`` accepts."""
-
-    ON_RECEIPT = "on_receipt"
-
-
-#: Send an instruction only when a new one arrives, rather than repeating the
-#: last one on a clock. For robots that re-plan every time they are told
-#: something, where repeating would keep restarting the plan.
-WRITE_ON_RECEIPT = WriteMode.ON_RECEIPT
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Timing:
     """How often the robot is expected to speak, and how long to wait for it.
@@ -268,10 +256,6 @@ class Timing:
         hook_timeout_s: How long any one call into the robot's own software
             may take before giving up.
         prepare_arm_timeout_s: How long its start-up may take.
-        write_rate_hz: How often to repeat the last instruction. ``None``
-            means the same rate it reports at. ``WRITE_ON_RECEIPT`` means only
-            when a new instruction arrives, for robots that re-plan every time
-            they are told something.
     """
 
     state_rate_hz: float
@@ -279,16 +263,6 @@ class Timing:
     watchdog_timeout_s: float
     hook_timeout_s: float = 1.0
     prepare_arm_timeout_s: float = 10.0
-    write_rate_hz: float | WriteMode | None = None
-
-    def effective_write_rate_hz(self) -> float | None:
-        """The clock to re-emit on, or ``None`` when writing only on receipt."""
-        if self.write_rate_hz is WRITE_ON_RECEIPT:
-            return None
-        if self.write_rate_hz is None:
-            return self.state_rate_hz
-        assert isinstance(self.write_rate_hz, float | int)
-        return float(self.write_rate_hz)
 
 
 class ProcessLoss(Enum):
