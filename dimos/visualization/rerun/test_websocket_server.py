@@ -160,6 +160,24 @@ def test_twist_publishes_on_tele_cmd_vel(
     assert received[0].angular.z == pytest.approx(0.8)
 
 
+def test_twist_publishes_raw_axes_on_joystick(
+    server: RerunWebSocketServer, publisher: MockViewerPublisher
+) -> None:
+    """Twist event also arrives as a Joy on joystick, axes in JOY_AXES order."""
+    received: list[Any] = []
+    done = threading.Event()
+
+    unsub = server.joystick.subscribe(lambda joy: (received.append(joy), done.set()))
+
+    publisher.send_twist(0.5, 0.1, 0.0, 0.0, 0.0, 0.8)
+    publisher.flush()
+    done.wait(timeout=2.0)
+    unsub()
+
+    assert len(received) == 1
+    assert received[0].axes == pytest.approx([0.5, 0.1, 0.0, 0.0, 0.0, 0.8])
+
+
 def test_stop_publishes_zero_twist(
     server: RerunWebSocketServer, publisher: MockViewerPublisher
 ) -> None:
