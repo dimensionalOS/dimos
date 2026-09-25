@@ -39,7 +39,7 @@ WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image)
 # near-lossless; lidar and color_image are large frames whose delivery relies
 # on the 64MB rmem tuning, so leave headroom for designed shedding.
 FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.9, "color_image": 0.5}
-# When set, write the tracked series (wall/CPU/memory/threads/disk/network) to this path.
+# When set, write the tracked series (wall/CPU/memory/threads/disk) to this path.
 METRICS_PATH = os.environ.get("DIMOS_BENCH_METRICS")
 
 
@@ -131,34 +131,6 @@ def _cgroup_io_bytes() -> tuple[int, int]:
     return read, written
 
 
-def _net_bytes() -> tuple[int, int, int]:
-    """(multicast, external rx, external tx) byte counters.
-
-    cgroup v2 has no network accounting, so these are netns-wide — fine on a
-    runner where the job is the only real user. LCM's ttl=0 UDP multicast is
-    invisible to every interface counter (the kernel loops clones to local
-    listeners inside the IP stack — not via lo — and nothing reaches a NIC),
-    so the transport volume between the workers comes from IpExt
-    InMcastOctets, which counts each looped datagram once. External
-    interfaces should stay ~flat across the run: growth means something
-    inside the measured region talks to the network.
-    """
-    lines = [
-        line
-        for line in Path("/proc/net/netstat").read_text().splitlines()
-        if line.startswith("IpExt:")
-    ]
-    ipext = dict(zip(lines[0].split()[1:], lines[1].split()[1:], strict=True))
-    ext_rx = ext_tx = 0
-    for line in Path("/proc/net/dev").read_text().splitlines()[2:]:
-        name, _, rest = line.partition(":")
-        fields = rest.split()
-        if name.strip() != "lo":
-            ext_rx += int(fields[0])
-            ext_tx += int(fields[8])
-    return int(ipext["InMcastOctets"]), ext_rx, ext_tx
-
-
 @pytest.mark.self_hosted_large  # Needs 8+ GB memory
 # macOS: coordinator->worker zenoh RPC times out (set_transport), and the
 # in-test LCM subscriptions would need lo0 route + maxdgram host tuning.
@@ -177,13 +149,11 @@ def test_go2_replay_realtime_load() -> None:
     lock = threading.Lock()
     cpu_marks: dict[str, tuple[float, float, float]] = {}
     io_marks: dict[str, tuple[int, int]] = {}
-    net_marks: dict[str, tuple[int, int, int]] = {}
 
     def mark(name: str) -> None:
         if METRICS_PATH:
             cpu_marks[name] = _cpu_mark()
             io_marks[name] = _cgroup_io_bytes()
-            net_marks[name] = _net_bytes()
 
     def record(name: str) -> None:
         with lock:
@@ -272,23 +242,6 @@ def test_go2_replay_realtime_load() -> None:
             # Block-device totals; page-cache hits are free.
             ("disk read", (io_marks["end"][0] - io_marks["start"][0]) / 2**20, "MB"),
             ("disk write", (io_marks["end"][1] - io_marks["start"][1]) / 2**20, "MB"),
-            # Multicast = LCM transport volume; external ~0 unless something
-            # in the run talks to the network.
-            (
-                "network (multicast)",
-                (net_marks["end"][0] - net_marks["start"][0]) / 2**20,
-                "MB",
-            ),
-            (
-                "network (external rx)",
-                (net_marks["end"][1] - net_marks["start"][1]) / 2**20,
-                "MB",
-            ),
-            (
-                "network (external tx)",
-                (net_marks["end"][2] - net_marks["start"][2]) / 2**20,
-                "MB",
-            ),
         )
         Path(METRICS_PATH).write_text(
             json.dumps(
