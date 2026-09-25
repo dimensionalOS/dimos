@@ -32,6 +32,7 @@ from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
     import open3d as o3d  # type: ignore[import-untyped]
+    from pydantic import JsonValue
     from rerun._baseclasses import Archetype
 
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -338,6 +339,24 @@ class PointCloud2(Timestamped):
 
     def __str__(self) -> str:
         return f"PointCloud2(frame_id='{self.frame_id}', num_points={len(self)})"
+
+    @staticmethod
+    def agent_encode_legend() -> str:
+        """How an agent script measures a cloud with the point-cloud API; delivered once
+        per stream by consumers."""
+        # the encoder pulls in scipy and PIL, which message classes do not load
+        from dimos.experimental.agent_encode.pointcloud import legend
+
+        return legend.legend()
+
+    def agent_encode(self) -> dict[str, JsonValue]:
+        """A compact first look at this cloud for an agent: frame, timestamp, size, bounds
+        and centroid, and an ``Overview`` of coverage, height-band structure and
+        lower-surface relief. ``agent_encode_legend()`` explains how to measure more."""
+        # the encoder pulls in scipy and PIL, which message classes do not load
+        from dimos.experimental.agent_encode.pointcloud import overview
+
+        return overview.encode(self)
 
     @functools.cached_property
     def center(self) -> Vector3:
