@@ -42,7 +42,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.perception.localize.module import LiveLocalizeModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
     XARM7_COLLISION_LINKS,
@@ -169,30 +169,14 @@ def _sensing() -> tuple[Blueprint, ...]:
 def _scene_registration() -> Blueprint:
     """Detector settings differ: synthetic renders score far below real images."""
     if SIMULATED:
-        return ObjectSceneRegistrationModule.blueprint(
-            target_frame="world",
-            detector_backend="owlv2",
-            # OWLv2 is box-only; YOLO-E visual prompts refine its boxes into masks.
-            segmentation_backend="yolo",
-            detector_confidence=0.07,
-            segmentation_confidence=0.05,
-            # Keep adjacent tabletop targets distinct instead of merging by label.
-            distance_threshold=0.05,
-            detect_on_request=True,
-            # The obstacle stream carries permanent objects only, so one explicit
-            # scan must promote its first sightings immediately.
-            min_detections_for_permanent=1,
+        return LiveLocalizeModule.blueprint(
+            world_frame="world",
+            optical_frame="wrist_camera_color_optical_frame",
+            policy={"candidate_floor": 0.07, "accept_score": 0.07, "cluster_radius_m": 0.05},
         )
-    return ObjectSceneRegistrationModule.blueprint(
-        target_frame="world",
-        detector_backend="moondream",
-        segmentation_backend="edgetam",
-        detect_on_request=True,
-        distance_threshold=0.08,
-        min_detections_for_permanent=3,
-        max_distance=1.0,
-        use_aabb=True,
-        max_obstacle_width=0.06,
+    return LiveLocalizeModule.blueprint(
+        world_frame="world",
+        optical_frame="camera_color_optical_frame",
     )
 
 

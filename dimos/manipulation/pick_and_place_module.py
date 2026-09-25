@@ -40,7 +40,8 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
+from dimos.perception.localize.spec import LocalizationSpec
+from dimos.perception.localize.types import Localization
 
 
 class PickAndPlaceModuleConfig(ModuleConfig):
@@ -57,62 +58,92 @@ class PickAndPlaceModule(Module):
     """Coordinate scene registration, grasp generation, and manipulation execution."""
 
     config: PickAndPlaceModuleConfig
-    _scene: ObjectSceneRegistrationSpec
+    _scene: LocalizationSpec
     _grasp_generator: GraspGenSpec
     _manipulation: ManipulationSpec
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._objects: dict[str, dict[str, Any]] = {}
+        self._objects: dict[int, dict[str, Any]] = {}
+        self._localizations: dict[int, Localization] = {}
+        self._next_selection = 0
         self._grasp_candidates = GraspCandidateArray()
-        self._selected_object_id: str | None = None
+        self._selected_object: int | None = None
         self._selected_grasp: PoseStamped | None = None
         self._holding_object = False
 
     @skill
-    def scan_objects(self, prompts: list[str]) -> SkillResult[ManipulationSkillError]:
-        """Scan the latest RGB-D frame for prompted objects.
+    def scan_objects(
+        self,
+        prompts: list[str],
+        start: float = -10.0,
+        duration: float = 10.0,
+        policy: str = "",
+        max_age: float | None = None,
+    ) -> SkillResult[ManipulationSkillError]:
+        """Localize all matching instances from wrist-camera memory.
+
+        Move the arm to gather distinct views if objects are not verified. Each
+        scan replaces the selectable snapshot; old selections cannot be reused.
 
         Args:
-            prompts: Object labels to detect. Use an ID from this scan with pick_object.
+            prompts: Unique object labels to localize. Use a selection from this scan
+                with pick_object.
+            start: Seconds from the oldest retained frame, or negative from the newest.
+            duration: Window of frames to examine, in seconds.
+            policy: JSON LocalizePolicy overrides, e.g. {"min_views": 1}.
+            max_age: Optional maximum last-seen age relative to the newest RGB frame.
         """
         prompts = [prompt.strip() for prompt in prompts if prompt.strip()]
         if not prompts:
             return SkillResult.fail("INVALID_INPUT", "At least one object prompt is required")
+        if len(set(prompts)) != len(prompts):
+            return SkillResult.fail("INVALID_INPUT", "Object prompts must be unique")
         if not self._holding_object:
             self._clear_selection()
         self._objects = {}
+        self._localizations = {}
         try:
-            detections = self._scene.scan_scene(text=prompts)
-        except RuntimeError as exc:
+            localizations = self._scene.localize_objects(
+                prompts, start=start, duration=duration, policy=policy, max_age=max_age
+            )
+        except (RuntimeError, ValueError) as exc:
             return SkillResult.fail("PERCEPTION_FAILED", str(exc))
-        objects = [
-            {
-                "object_id": str(detection.id),
-                "name": str(detection.results[0].hypothesis.class_id),
-            }
-            for detection in detections.detections
-            if detection.id and detection.results
-        ]
-        self._objects = {str(obj["object_id"]): obj for obj in objects if "object_id" in obj}
+        for prompt, hits in zip(prompts, localizations, strict=True):
+            for localization in hits:
+                selection = self._next_selection
+                self._next_selection += 1
+                self._localizations[selection] = localization
+                self._objects[selection] = {
+                    "selection": selection,
+                    "name": prompt,
+                    "score": localization.semantic_score,
+                    "position": localization.position_world_xyz,
+                    "frame_id": localization.frame_id,
+                    "last_seen_timestamp": localization.last_seen_timestamp,
+                    "n_views": localization.n_views,
+                    "coverage": localization.coverage,
+                    "ambiguity_margin": localization.ambiguity_margin,
+                    "reason": localization.reason,
+                }
         return SkillResult.ok(
-            f"Detected {detections.detections_length} object(s)",
+            f"Localized {len(self._localizations)} object(s)",
             prompts=prompts,
             objects=list(self._objects.values()),
         )
 
     @rpc
-    def get_object(self, object_id: str) -> dict[str, Any] | None:
-        return self._objects.get(object_id)
+    def get_object(self, selection: int) -> dict[str, Any] | None:
+        return self._objects.get(selection)
 
     @skill(uses=[CAP_MOVEMENT])
     def pick_object(
-        self, object_id: str, planning_group: PlanningGroupID | None = None
+        self, selection: int, planning_group: PlanningGroupID | None = None
     ) -> SkillResult[ManipulationSkillError]:
-        """Generate ranked grasps and pick one object from the latest scan.
+        """Generate ranked grasps and pick one localization from the latest scan.
 
         Args:
-            object_id: Exact object ID returned by the latest scan_objects call.
+            selection: Integer selection returned by the latest scan_objects call.
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
         """
         if self._holding_object:
@@ -120,15 +151,15 @@ class PickAndPlaceModule(Module):
                 "INVALID_STATE", "Place the held object before starting another pick"
             )
         self._clear_selection()
-        if object_id not in self._objects:
-            return SkillResult.fail("OBJECT_NOT_DETECTED", f"Unknown object_id: {object_id}")
+        localization = self._localizations.get(selection)
+        if localization is None:
+            return SkillResult.fail("OBJECT_NOT_DETECTED", f"Unknown selection: {selection}")
         try:
-            pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
-            if pointcloud is None:
+            if localization.point_cloud is None:
                 return SkillResult.fail(
-                    "OBJECT_NOT_DETECTED", f"No pointcloud for object_id: {object_id}"
+                    "OBJECT_NOT_DETECTED", f"No pointcloud for selection: {selection}"
                 )
-            candidates = self._grasp_generator.propose_grasps(pointcloud)
+            candidates = self._grasp_generator.propose_grasps(localization.point_cloud)
         except (RuntimeError, ValueError) as exc:
             return SkillResult.fail("GRASP_GENERATION_FAILED", str(exc))
         self._grasp_candidates = candidates
@@ -171,14 +202,14 @@ class PickAndPlaceModule(Module):
             if failure := self._close_and_verify(group):
                 return failure
 
-            self._selected_object_id = object_id
+            self._selected_object = selection
             self._selected_grasp = grasp
             self._holding_object = True
             if failure := self._servo(grasp, pregrasp, group):
                 return failure
             return SkillResult.ok(
                 "Pick complete",
-                object_id=object_id,
+                selection=selection,
                 rank=rank,
                 score=candidate.score,
                 candidates=len(candidates.candidates),
@@ -233,7 +264,7 @@ class PickAndPlaceModule(Module):
     def _clear_selection(self) -> None:
         self._grasp_candidates = GraspCandidateArray()
         self._manipulation.show_grasp_proposals(GraspCandidateArray())
-        self._selected_object_id = None
+        self._selected_object = None
         self._selected_grasp = None
 
     def _resolve_group(self, planning_group: PlanningGroupID | None) -> PlanningGroupID | None:

@@ -8,10 +8,10 @@ recording so they work without a robot.
 | `xarm-feed` + `xarm-localize-live` | depth camera, tf | port-only module with in-memory memory, feed in a second process |
 | `go2-localize-live` | lidar, odom | one blueprint, feeder writes a SQLite store, module reads it |
 
-`LiveLocalizeModule` in `live_localize.py` is the module a robot blueprint
+`LiveLocalizeModule` in `dimos/perception/localize/module.py` is the module a robot blueprint
 takes. It consumes `color_image`, `depth_image`, `camera_info` and `tf`, keeps a
 bounded memory in RAM, embeds the colour feed as it arrives, and answers
-`localize` from what it has embedded. It opens no file and does not know
+`localize` and the structured `localize_objects` RPC from what it has embedded. It opens no file and does not know
 whether its ports carry a robot or a replay. `go2_localize_live.py` is the
 older store-backed shape and is kept as the lidar example.
 
@@ -47,7 +47,7 @@ With the seek above, that call names the reference window once the feed has
 played the whole 76 s, and its six answers match `tool_localize` on the same
 recording. Rerun shows the camera on the left and, on the right, the tf axes,
 the camera frustum, every verified instance as a labelled box under
-`world/detections`, and its sightings as image-textured points under
+`world/detections`, and its fused geometry under
 `world/hit_points`.
 
 Configuration of `LiveLocalizeModule`, set on the blueprint:

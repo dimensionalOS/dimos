@@ -22,6 +22,7 @@ decides.
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.resource import Resource
@@ -47,6 +48,10 @@ class DanDetector(Resource):
     detector: Owlv2Detector
     segmenter: EdgeTAMImageSegmenter
 
+    def __init__(self) -> None:
+        self._live: list[DisposableBase] = []
+        self._models = ExitStack()
+
     def start(self) -> None:
         import torch
 
@@ -55,16 +60,17 @@ class DanDetector(Resource):
         from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
 
         self.siglip = SigLIPModel()
+        self._models.callback(self.siglip.stop)
         self.detector = Owlv2Detector(dtype=torch.float16)
+        self._models.callback(self.detector.stop)
         self.segmenter = EdgeTAMImageSegmenter()
-        self._live: list[DisposableBase] = []
+        self._models.callback(self.segmenter.stop)
 
     def stop(self) -> None:
         for disposable in self._live:
             disposable.dispose()
-        self.siglip.stop()
-        self.detector.stop()
-        del self.segmenter
+        self._live.clear()
+        self._models.close()
 
     def embed(
         self, store: Any, after: float, before: float, *, rig: Rig | None = None

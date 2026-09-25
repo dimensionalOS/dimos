@@ -14,10 +14,16 @@
 
 from typing import Protocol
 
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.perception.localize.types import Localization
 from dimos.spec.utils import Spec
 
 
-class GraspGenSpec(Spec, Protocol):
-    def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray: ...
+class LocalizationSpec(Spec, Protocol):
+    def localize_objects(
+        self,
+        prompts: list[str],
+        start: float = -10.0,
+        duration: float = 10.0,
+        policy: str = "",
+        max_age: float | None = None,
+    ) -> list[list[Localization]]: ...

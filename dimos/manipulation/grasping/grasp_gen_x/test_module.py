@@ -26,7 +26,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, LegacyGraspGenSpec
+from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
@@ -82,15 +82,9 @@ def test_messages_round_trip_empty_and_score() -> None:
     )
 
 
-def test_ranked_spec_is_canonical_during_legacy_contract_transition() -> None:
-    legacy_signature = inspect.signature(LegacyGraspGenSpec.generate_grasps)
+def test_ranked_spec_is_canonical() -> None:
     signature = inspect.signature(GraspGenSpec.propose_grasps)
 
-    assert list(legacy_signature.parameters) == [
-        "self",
-        "pointcloud",
-        "scene_pointcloud",
-    ]
     assert list(signature.parameters) == ["self", "object_pointcloud"]
     assert signature.parameters["object_pointcloud"].annotation.__name__ == "PointCloud2"
     assert signature.return_annotation is GraspCandidateArray

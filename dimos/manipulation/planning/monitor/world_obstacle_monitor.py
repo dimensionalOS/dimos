@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import (
@@ -37,8 +37,6 @@ from dimos.manipulation.planning.spec.models import (
     Obstacle,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -46,7 +44,6 @@ if TYPE_CHECKING:
 
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
     from dimos.msgs.vision_msgs.Detection3D import Detection3D
-    from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
 
@@ -73,30 +70,21 @@ class WorldObstacleMonitor:
         self,
         parent: WorldMonitor,
         detection_timeout: float = 2.0,
-        use_mesh_obstacles: bool = False,
     ) -> None:
         """Create a world obstacle monitor.
 
         Args:
             parent: Owning WorldMonitor instance
             detection_timeout: Time before removing stale detections (seconds)
-            use_mesh_obstacles: Use convex hull meshes from pointclouds instead of bounding boxes
         """
         self._parent = parent
         self._lock = parent._lock
         self._detection_timeout = detection_timeout
-        self._use_mesh_obstacles = use_mesh_obstacles
 
         # Track obstacles from different sources
         self._collision_objects: dict[str, str] = {}  # msg_id -> obstacle_id
         self._perception_objects: dict[str, str] = {}  # detection_id -> obstacle_id
         self._perception_timestamps: dict[str, float] = {}  # detection_id -> timestamp
-
-        # Object-based cache (from ObjectDB, keyed by object_id)
-        # object_id -> (Object, first_seen, last_seen)
-        self._object_cache: dict[str, tuple[Object, float, float]] = {}
-        # object_id -> obstacle_id (objects currently added to Drake world)
-        self._object_obstacles: dict[str, str] = {}
 
         # Running state
         self._running = False
@@ -119,12 +107,11 @@ class WorldObstacleMonitor:
         return self._running
 
     def clear_tracking(self) -> None:
-        """Forget IDs for cleared obstacles while retaining the object cache."""
+        """Forget IDs for cleared obstacles."""
         with self._lock:
             self._collision_objects.clear()
             self._perception_objects.clear()
             self._perception_timestamps.clear()
-            self._object_obstacles.clear()
 
     def on_collision_object(self, msg: CollisionObjectMessage) -> None:
         """Handle explicit collision object message.
@@ -445,235 +432,3 @@ class WorldObstacleMonitor:
         """Remove an obstacle callback."""
         if callback in self._obstacle_callbacks:
             self._obstacle_callbacks.remove(callback)
-
-    # Object-Based Perception (from ObjectDB)
-
-    def on_objects(self, objects: list[object]) -> None:
-        """Cache objects from ObjectDB (preserves stable object_id).
-
-        Unlike on_detections(), this receives Object instances with stable IDs
-        from ObjectDB deduplication, making the cache trivially keyed by object_id.
-
-        Args:
-            objects: List of Object instances from ObjectDB
-        """
-        if not self._running:
-            return
-
-        from dimos.perception.experimental.object import Object
-
-        now = time.time()
-        seen: set[str] = set()
-
-        with self._lock:
-            for obj in objects:
-                if not isinstance(obj, Object):
-                    continue
-                oid = obj.object_id
-                seen.add(oid)
-                if oid in self._object_cache:
-                    _, first, _ = self._object_cache[oid]
-                    self._object_cache[oid] = (obj, first, now)
-                else:
-                    self._object_cache[oid] = (obj, now, now)
-
-            # Remove objects no longer reported by ObjectDB
-            stale = [oid for oid in self._object_cache if oid not in seen]
-            for oid in stale:
-                del self._object_cache[oid]
-
-    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, Any]]:
-        """Full sync: remove all object obstacles, re-add from cache.
-
-        Args:
-            min_duration: Minimum seconds an object must have been seen to be included
-
-        Returns:
-            List of added obstacles with object_id, obstacle_id, name, center, size
-        """
-        from dimos.perception.experimental.object import Object
-
-        # Step 1: snapshot eligible objects under lock (fast)
-        eligible: list[tuple[str, Object]] = []
-        with self._lock:
-            for oid, (obj, first_seen, last_seen) in self._object_cache.items():
-                if not isinstance(obj, Object):
-                    continue
-                if last_seen - first_seen < min_duration:
-                    continue
-                eligible.append((oid, obj))
-
-        # Step 2: compute obstacles OUTSIDE lock (convex hull can be slow)
-        prepared: list[tuple[str, Object, Obstacle]] = []
-        for oid, obj in eligible:
-            obstacle = self._object_to_obstacle(obj)
-            prepared.append((oid, obj, obstacle))
-
-        # Step 3: apply to Drake world under lock (fast)
-        with self._lock:
-            # TODO: Diff stable ObjectDB IDs and update existing obstacles
-            # instead of removing and re-adding the complete set.
-            for obs_id in self._object_obstacles.values():
-                self._parent.remove_obstacle(obs_id)
-            self._object_obstacles.clear()
-
-            result: list[dict[str, Any]] = []
-            for oid, obj, obstacle in prepared:
-                assert isinstance(obj, Object)
-                obs_id = self._parent.add_obstacle(obstacle)
-                if not obs_id:
-                    continue
-                self._object_obstacles[oid] = obs_id
-                result.append(
-                    {
-                        "object_id": oid,
-                        "obstacle_id": obs_id,
-                        "name": obj.name,
-                        "center": [float(obj.center.x), float(obj.center.y), float(obj.center.z)],
-                        "size": [float(obj.size.x), float(obj.size.y), float(obj.size.z)],
-                    }
-                )
-                logger.debug(f"Added object obstacle '{oid}' ({obj.name}) as '{obs_id}'")
-
-            return result
-
-    def remove_object_obstacle(self, object_id: str) -> bool:
-        """Remove a single object's obstacle from the planning world.
-
-        Args:
-            object_id: The exact object_id to remove.
-
-        Returns:
-            True if found and removed, False otherwise.
-        """
-        with self._lock:
-            obs_id = self._object_obstacles.pop(object_id, None)
-            if obs_id is None:
-                return False
-            self._parent.remove_obstacle(obs_id)
-            logger.info(f"Removed obstacle for object '{object_id}'")
-            return True
-
-    def clear_perception_obstacles(self) -> int:
-        """Remove all object obstacles from the planning world.
-
-        Returns:
-            Number of obstacles removed
-        """
-        with self._lock:
-            count = len(self._object_obstacles)
-            for obs_id in self._object_obstacles.values():
-                self._parent.remove_obstacle(obs_id)
-            self._object_obstacles.clear()
-            return count
-
-    def get_perception_status(self) -> dict[str, int]:
-        """Get perception obstacle status."""
-        with self._lock:
-            return {
-                "cached": len(self._object_cache),
-                "added": len(self._object_obstacles),
-            }
-
-    def get_cached_objects(self) -> list[Object]:
-        """Get cached Object instances from perception.
-
-        Returns raw Object instances for typed access to .name, .center, .size etc.
-        """
-        from dimos.perception.experimental.object import Object as _Object
-
-        with self._lock:
-            return [obj for obj, _, _ in self._object_cache.values() if isinstance(obj, _Object)]
-
-    def list_cached_detections(self) -> list[dict[str, Any]]:
-        """List cached detections from perception."""
-        from dimos.perception.experimental.object import Object
-
-        with self._lock:
-            result: list[dict[str, Any]] = []
-            for oid, (obj, first_seen, last_seen) in self._object_cache.items():
-                if not isinstance(obj, Object):
-                    continue
-                result.append(
-                    {
-                        "object_id": oid,
-                        "name": obj.name,
-                        "center": [float(obj.center.x), float(obj.center.y), float(obj.center.z)],
-                        "size": [float(obj.size.x), float(obj.size.y), float(obj.size.z)],
-                        "duration": round(last_seen - first_seen, 1),
-                        "in_world": oid in self._object_obstacles,
-                    }
-                )
-            return result
-
-    def list_added_obstacles(self) -> list[dict[str, Any]]:
-        """List perception obstacles currently in the planning world."""
-        from dimos.perception.experimental.object import Object
-
-        with self._lock:
-            result: list[dict[str, Any]] = []
-            for oid, obs_id in self._object_obstacles.items():
-                entry = self._object_cache.get(oid)
-                if entry is None:
-                    continue
-                obj, _first_seen, _last_seen = entry
-                if not isinstance(obj, Object):
-                    continue
-                result.append(
-                    {
-                        "object_id": oid,
-                        "obstacle_id": obs_id,
-                        "name": obj.name,
-                        "center": [float(obj.center.x), float(obj.center.y), float(obj.center.z)],
-                        "size": [float(obj.size.x), float(obj.size.y), float(obj.size.z)],
-                    }
-                )
-            return result
-
-    def _object_to_obstacle(self, obj: object) -> Obstacle:
-        """Convert Object to obstacle. Uses bounding box by default, convex hull if use_mesh_obstacles=True."""
-        from dimos.perception.experimental.object import Object
-
-        assert isinstance(obj, Object)
-        name = f"object_{obj.object_id}"
-
-        # Try convex hull from pointcloud (opt-in)
-        if self._use_mesh_obstacles and obj.pointcloud is not None:
-            try:
-                from dimos.manipulation.planning.utils.mesh_utils import (
-                    pointcloud_to_convex_hull_obj,
-                )
-
-                points, _ = obj.pointcloud.as_numpy()
-                if points is not None and points.shape[0] >= 4:
-                    # Keyed on the object's stable unique id: rescans overwrite
-                    # in place, and no two objects share a file.
-                    hull = pointcloud_to_convex_hull_obj(points, cache_key=name)
-                    if hull is not None:
-                        # The hull is world-axis-aligned about its own centroid,
-                        # so that is the only pose that leaves it on its points.
-                        # obj.pose carries the bbox center and the oriented-box
-                        # rotation, neither of which the vertices were built from.
-                        return Obstacle(
-                            name=name,
-                            obstacle_type=ObstacleType.MESH,
-                            pose=PoseStamped(
-                                ts=obj.pose.ts,
-                                frame_id=obj.pose.frame_id,
-                                position=Vector3(hull.centroid),
-                                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                            ),
-                            color=(0.2, 0.8, 0.2, 0.6),
-                            mesh_path=hull.path,
-                        )
-            except Exception as e:
-                logger.debug(f"Convex hull failed for {name}, falling back to box: {e}")
-
-        # Default: bounding box
-        return Obstacle(
-            name=name,
-            obstacle_type=ObstacleType.BOX,
-            pose=obj.pose or PoseStamped(position=obj.center),
-            dimensions=(float(obj.size.x), float(obj.size.y), float(obj.size.z)),
-            color=(0.2, 0.8, 0.2, 0.6),
-        )
