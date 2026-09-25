@@ -116,19 +116,18 @@ def _cgroup_tasks() -> int:
     return int((_cgroup_path() / "pids.current").read_text())
 
 
-def _cgroup_io_bytes() -> tuple[int, int]:
-    """(read, written) block-device bytes charged to this cgroup so far.
+def _cgroup_io_bytes() -> int:
+    """Block-device bytes written by this cgroup so far.
 
-    Device-level, not syscall-level: reads served from the page cache are
-    free, so with the DB pre-extracted (and therefore cache-warm) reads
-    mostly reflect cold imports, and writes reflect actual writeback.
+    Device-level, not syscall-level, so it reflects actual writeback. Reads
+    are deliberately not tracked: served from the page cache they are free,
+    so the number only says how cold the runner's cache happened to be.
     """
-    read = written = 0
+    written = 0
     for line in (_cgroup_path() / "io.stat").read_text().splitlines():
         fields = dict(part.split("=") for part in line.split()[1:])
-        read += int(fields.get("rbytes", 0))
         written += int(fields.get("wbytes", 0))
-    return read, written
+    return written
 
 
 def _cpu_model() -> str:
@@ -143,19 +142,19 @@ def _cpu_model() -> str:
     return "unknown"
 
 
-def _net_bytes() -> tuple[int, int, int]:
-    """(transport, external rx, external tx) byte counters.
+def _net_bytes() -> int:
+    """Bytes the transport moved between the workers so far.
 
-    cgroup v2 has no network accounting, so these are netns-wide — fine on a
-    runner where the job is the only real user. Where the transport volume
-    between the workers shows up depends on the backend: zenoh's loopback TCP
-    is counted on lo (once, as rx), while LCM's ttl=0 UDP multicast is
-    invisible to every interface counter (the kernel loops clones to local
-    listeners inside the IP stack — not via lo — and nothing reaches a NIC)
-    and only appears as IpExt InMcastOctets, which counts each looped datagram
-    once. Their sum covers either backend. External interfaces should stay
-    ~flat across the run: growth means something inside the measured region
-    talks to the network.
+    cgroup v2 has no network accounting, so this is netns-wide — fine on a
+    runner where the job is the only real user. Where the volume shows up
+    depends on the backend: zenoh's loopback TCP is counted on lo (once, as
+    rx), while LCM's ttl=0 UDP multicast is invisible to every interface
+    counter (the kernel loops clones to local listeners inside the IP stack —
+    not via lo — and nothing reaches a NIC) and only appears as IpExt
+    InMcastOctets, which counts each looped datagram once. Their sum covers
+    either backend. External interfaces are deliberately not tracked: their
+    traffic is the runner agent's own chatter, a fraction of a megabyte that
+    swings by half between identical runs.
     """
     lines = [
         line
@@ -163,16 +162,12 @@ def _net_bytes() -> tuple[int, int, int]:
         if line.startswith("IpExt:")
     ]
     ipext = dict(zip(lines[0].split()[1:], lines[1].split()[1:], strict=True))
-    loopback = ext_rx = ext_tx = 0
+    loopback = 0
     for line in Path("/proc/net/dev").read_text().splitlines()[2:]:
         name, _, rest = line.partition(":")
-        fields = rest.split()
         if name.strip() == "lo":
-            loopback += int(fields[0])
-        else:
-            ext_rx += int(fields[0])
-            ext_tx += int(fields[8])
-    return loopback + int(ipext["InMcastOctets"]), ext_rx, ext_tx
+            loopback += int(rest.split()[0])
+    return loopback + int(ipext["InMcastOctets"])
 
 
 @pytest.mark.self_hosted_large  # Needs 8+ GB memory
@@ -192,8 +187,8 @@ def test_go2_replay_realtime_load() -> None:
     counts = dict.fromkeys(FLOOR_FRACTION, 0)
     lock = threading.Lock()
     cpu_marks: dict[str, tuple[float, float, float]] = {}
-    io_marks: dict[str, tuple[int, int]] = {}
-    net_marks: dict[str, tuple[int, int, int]] = {}
+    io_marks: dict[str, int] = {}
+    net_marks: dict[str, int] = {}
 
     def mark(name: str) -> None:
         if METRICS_PATH:
@@ -285,27 +280,11 @@ def test_go2_replay_realtime_load() -> None:
             # Maxima sampled at 10Hz across the run, whole process tree.
             ("peak memory", peak_anon / 2**20, "MB"),
             ("peak threads", float(peak_tasks), "threads"),
-            # Block-device totals; page-cache hits are free.
-            ("disk read", (io_marks["end"][0] - io_marks["start"][0]) / 2**20, "MB"),
-            ("disk write", (io_marks["end"][1] - io_marks["start"][1]) / 2**20, "MB"),
-            # Transport = bytes between the workers (loopback for zenoh,
-            # looped multicast for LCM); external ~0 unless something in the
-            # run talks to the network.
-            (
-                "network (transport)",
-                (net_marks["end"][0] - net_marks["start"][0]) / 2**20,
-                "MB",
-            ),
-            (
-                "network (external rx)",
-                (net_marks["end"][1] - net_marks["start"][1]) / 2**20,
-                "MB",
-            ),
-            (
-                "network (external tx)",
-                (net_marks["end"][2] - net_marks["start"][2]) / 2**20,
-                "MB",
-            ),
+            # Block-device writeback across the run.
+            ("disk write", (io_marks["end"] - io_marks["start"]) / 2**20, "MB"),
+            # Bytes between the workers: loopback for zenoh, looped multicast
+            # for LCM.
+            ("network (transport)", (net_marks["end"] - net_marks["start"]) / 2**20, "MB"),
         )
         extra = f"cpu: {_cpu_model()}"
         Path(METRICS_PATH).write_text(
