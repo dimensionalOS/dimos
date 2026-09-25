@@ -56,10 +56,10 @@ from dimos.control.contract.keys import (
     VY,
     WZ,
     YAW,
+    Key,
     Unit,
     X,
     Y,
-    make_key,
 )
 
 ARM_JOINTS = tuple(f"joint{i}" for i in range(1, 8))
@@ -92,9 +92,9 @@ def xarm() -> ControlDescription:
         command_interfaces=(POSITION,),
         units={POSITION: Unit.M},
     )
-    limits = {make_key("arm", j, POSITION): Limits(-3.14, 3.14) for j in ARM_JOINTS}
-    limits |= {make_key("arm", j, VELOCITY): Limits(-1.0, 1.0) for j in ARM_JOINTS}
-    limits[make_key("arm", "gripper", POSITION)] = Limits(0.0, 0.085)
+    limits = {Key.of("arm", j, POSITION): Limits(-3.14, 3.14) for j in ARM_JOINTS}
+    limits |= {Key.of("arm", j, VELOCITY): Limits(-1.0, 1.0) for j in ARM_JOINTS}
+    limits[Key.of("arm", "gripper", POSITION)] = Limits(0.0, 0.085)
     return ControlDescription(
         source="arm",
         resources=(*joints, gripper),
@@ -153,9 +153,7 @@ def g1() -> ControlDescription:
         # go a hair past its limit throws the whole instruction away and the
         # robot gets nothing. Balancing on two legs, it would fall over.
         # CLAMP trims that one value to the limit and sends the rest.
-        limits={
-            make_key("g1", j, POSITION): Limits(-2.0, 2.0, LimitPolicy.CLAMP) for j in G1_JOINTS
-        },
+        limits={Key.of("g1", j, POSITION): Limits(-2.0, 2.0, LimitPolicy.CLAMP) for j in G1_JOINTS},
         mode_groups=(
             ModeGroup(
                 name="pd",
@@ -167,12 +165,12 @@ def g1() -> ControlDescription:
         # instruction to hold still, not as "no instruction". So when an
         # instruction says nothing about speed, nothing must be sent for it
         # rather than a zero.
-        omission={make_key("g1", j, VELOCITY): Omission.UNSET for j in G1_JOINTS},
-        initial_values={make_key("g1", j, KP): 60.0 for j in G1_JOINTS}
-        | {make_key("g1", j, KD): 1.5 for j in G1_JOINTS},
+        omission={Key.of("g1", j, VELOCITY): Omission.UNSET for j in G1_JOINTS},
+        initial_values={Key.of("g1", j, KP): 60.0 for j in G1_JOINTS}
+        | {Key.of("g1", j, KD): 1.5 for j in G1_JOINTS},
         safe_stop=SafeStop(
             kind=SafeStopKind.DAMP,
-            kd={make_key("g1", j, KD): 5.0 for j in G1_JOINTS},
+            kd={Key.of("g1", j, KD): 5.0 for j in G1_JOINTS},
             stable_state="sinks to the floor",
         ),
         estop=Estop(
@@ -216,9 +214,9 @@ def chassis() -> ControlDescription:
         source="chassis",
         resources=(base,),
         limits={
-            make_key("chassis", "base", VX): Limits(-1.5, 1.5),
-            make_key("chassis", "base", VY): Limits(-1.0, 1.0),
-            make_key("chassis", "base", WZ): Limits(-2.0, 2.0),
+            Key.of("chassis", "base", VX): Limits(-1.5, 1.5),
+            Key.of("chassis", "base", VY): Limits(-1.0, 1.0),
+            Key.of("chassis", "base", WZ): Limits(-2.0, 2.0),
         },
         mode_groups=(
             ModeGroup(name="twist", resources=("base",), interfaces=frozenset({VX, VY, WZ})),

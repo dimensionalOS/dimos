@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Key spelling: three segments, and what each one means."""
+
+"""Key spelling: three parts, and what each one means."""
 
 from __future__ import annotations
 
@@ -20,17 +21,7 @@ import pickle
 
 import pytest
 
-from dimos.control.contract.keys import (
-    POSITION,
-    Unit,
-    interface_of,
-    is_valid_key,
-    is_valid_segment,
-    joint_of,
-    make_key,
-    source_of,
-    split_key,
-)
+from dimos.control.contract.keys import POSITION, Key, Unit, is_valid_key, is_valid_segment
 
 
 @pytest.mark.parametrize("segment", ["arm", "joint1", "left_hip_pitch", "A", "_", "9", "a_1_B"])
@@ -39,27 +30,36 @@ def test_valid_segments(segment: str) -> None:
     assert is_valid_segment(segment)
 
 
-@pytest.mark.parametrize("segment", ["", "a-b", "a b", "a/b", "a.b", "ä", "a\n", "a:b"])
+@pytest.mark.parametrize("segment", ["", "a-b", "a b", "a/b", "a.b", "\u00e4", "a\n", "a:b"])
 def test_invalid_segments(segment: str) -> None:
     """Anything else, including the separator and the empty string."""
     assert not is_valid_segment(segment)
 
 
-def test_make_and_split_round_trip() -> None:
-    """The three segments come back exactly as they went in."""
-    key = make_key("arm", "joint1", POSITION)
+def test_build_from_parts() -> None:
+    """Key.of joins three parts and checks each one."""
+    key = Key.of("arm", "joint1", POSITION)
 
     assert key == "arm/joint1/position"
-    assert split_key(key) == ("arm", "joint1", "position")
 
 
-def test_accessors() -> None:
-    """Each accessor picks out its own segment; joint_of keeps the first two."""
-    key = "g1/left_hip_pitch/kp"
+def test_parts_read_back() -> None:
+    """Each part is available by name; joint is the first two."""
+    key = Key("g1/left_hip_pitch/kp")
 
-    assert source_of(key) == "g1"
-    assert joint_of(key) == "g1/left_hip_pitch"
-    assert interface_of(key) == "kp"
+    assert key.source == "g1"
+    assert key.resource == "left_hip_pitch"
+    assert key.interface == "kp"
+    assert key.joint == "g1/left_hip_pitch"
+
+
+def test_a_key_is_a_string() -> None:
+    """It goes on the wire and works as a dict key with no conversion."""
+    key = Key.of("arm", "joint1", POSITION)
+
+    assert isinstance(key, str)
+    assert {key: 1.0}["arm/joint1/position"] == 1.0
+    assert key.startswith("arm/")
 
 
 @pytest.mark.parametrize(
@@ -71,27 +71,27 @@ def test_accessors() -> None:
         ("arm", "joint1", "pos/ition", "pos/ition"),
     ],
 )
-def test_make_key_names_the_offending_segment(
+def test_of_names_the_offending_part(
     source: str, resource: str, interface: str, offender: str
 ) -> None:
-    """The error says which segment was wrong, not just that one was."""
+    """The error says which part was wrong, not just that one was."""
     with pytest.raises(ValueError, match="invalid") as excinfo:
-        make_key(source, resource, interface)
+        Key.of(source, resource, interface)
 
     assert repr(offender) in str(excinfo.value)
 
 
-@pytest.mark.parametrize("key", ["arm/joint1", "arm/joint1/position/extra", "arm//position", ""])
-def test_split_key_rejects_wrong_shape(key: str) -> None:
-    """Two segments, four segments and an empty one are all malformed."""
+@pytest.mark.parametrize("value", ["arm/joint1", "arm/joint1/position/extra", "arm//position", ""])
+def test_wrong_shape_is_rejected(value: str) -> None:
+    """Two parts, four parts and an empty one are all malformed."""
     with pytest.raises(ValueError):
-        split_key(key)
+        Key(value)
 
 
-def test_split_key_error_quotes_the_key() -> None:
-    """A malformed key appears in its own error, so a log line is actionable."""
+def test_error_quotes_the_key() -> None:
+    """A malformed name appears in its own error, so a log line is actionable."""
     with pytest.raises(ValueError, match="arm/joint1"):
-        split_key("arm/joint1")
+        Key("arm/joint1")
 
 
 @pytest.mark.parametrize(
@@ -105,19 +105,21 @@ def test_split_key_error_quotes_the_key() -> None:
     ],
 )
 def test_is_valid_key(key: str, valid: bool) -> None:
-    """is_valid_key agrees with split_key on every shape."""
+    """is_valid_key agrees with the type on every shape."""
     assert is_valid_key(key) is valid
 
 
-def test_accessors_reject_malformed_keys() -> None:
-    """An accessor never quietly returns a segment of a broken key."""
-    for accessor in (source_of, joint_of, interface_of):
-        with pytest.raises(ValueError):
-            accessor("arm/joint1")
+def test_keys_pickle_with_their_parts() -> None:
+    """Descriptions cross a process boundary, so the parts must survive."""
+    restored = pickle.loads(pickle.dumps(Key.of("arm", "joint1", POSITION)))
+
+    assert restored == "arm/joint1/position"
+    assert restored.source == "arm"
+    assert restored.interface == "position"
 
 
 def test_units_pickle_by_identity() -> None:
-    """Units cross the RPC boundary and come back as the same member."""
+    """Units cross the same boundary and come back as the same member."""
     assert pickle.loads(pickle.dumps(Unit.RAD_PER_S)) is Unit.RAD_PER_S
 
 

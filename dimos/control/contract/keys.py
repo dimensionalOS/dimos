@@ -105,61 +105,75 @@ def is_valid_key(key: str) -> bool:
     return len(parts) == 3 and all(_SEGMENT.fullmatch(p) for p in parts)
 
 
-def make_key(source: str, resource: str, interface: str) -> str:
-    """Build a name from its three parts.
+class Key(str):
+    """The name of one number on a robot, such as "arm/joint1/position".
 
-    Args:
-        source: Which robot, e.g. "arm".
-        resource: Which part of it, e.g. "joint1".
-        interface: What about that part, e.g. "position".
+    Three parts joined by "/": which robot, which part of it, and what about
+    that part. Checked once when built, so reading the parts afterwards costs
+    nothing.
 
-    Returns:
-        The three joined by "/", e.g. "arm/joint1/position".
-
-    Raises:
-        ValueError: If any part contains anything but letters, digits and
-            underscores, naming the one at fault.
-    """
-    for label, segment in (("source", source), ("resource", resource), ("interface", interface)):
-        if not is_valid_segment(segment):
-            raise ValueError(f"invalid {label} segment {segment!r}: expected [A-Za-z0-9_]+")
-    return f"{source}{SEPARATOR}{resource}{SEPARATOR}{interface}"
-
-
-def split_key(key: str) -> tuple[str, str, str]:
-    """Take a name apart into its three parts.
-
-    Args:
-        key: A name such as "arm/joint1/position".
-
-    Returns:
-        Which robot, which part, and what about it.
+    It is a string, so it goes on the wire and works as a dictionary key with
+    no conversion.
 
     Raises:
-        ValueError: If the name is not three valid parts, naming it.
+        ValueError: If the name is not three parts of letters, digits and
+            underscores, naming the part at fault.
     """
-    parts = key.split(SEPARATOR)
-    if len(parts) != 3:
-        raise ValueError(f"invalid key {key!r}: expected <source>/<resource>/<interface>")
-    for label, segment in zip(("source", "resource", "interface"), parts, strict=True):
-        if not is_valid_segment(segment):
-            raise ValueError(f"invalid {label} segment {segment!r} in key {key!r}")
-    return parts[0], parts[1], parts[2]
 
+    __slots__ = ("_interface", "_resource", "_source")
 
-def source_of(key: str) -> str:
-    """Which robot a name belongs to."""
-    return split_key(key)[0]
+    _source: str
+    _resource: str
+    _interface: str
 
+    def __new__(cls, value: str) -> Key:
+        parts = value.split(SEPARATOR)
+        if len(parts) != 3:
+            raise ValueError(f"invalid key {value!r}: expected <source>/<resource>/<interface>")
+        for label, segment in zip(("source", "resource", "interface"), parts, strict=True):
+            if not is_valid_segment(segment):
+                raise ValueError(f"invalid {label} segment {segment!r} in key {value!r}")
+        key = super().__new__(cls, value)
+        key._source, key._resource, key._interface = parts
+        return key
 
-def joint_of(key: str) -> str:
-    """Which part of which robot a name refers to, e.g. "arm/joint1".
+    @classmethod
+    def of(cls, source: str, resource: str, interface: str) -> Key:
+        """Build a name from its three parts.
 
-    This is what something asks to take control of."""
-    source, resource, _ = split_key(key)
-    return f"{source}{SEPARATOR}{resource}"
+        Args:
+            source: Which robot, e.g. "arm".
+            resource: Which part of it, e.g. "joint1".
+            interface: What about that part, e.g. "position".
+        """
+        for label, segment in (
+            ("source", source),
+            ("resource", resource),
+            ("interface", interface),
+        ):
+            if not is_valid_segment(segment):
+                raise ValueError(f"invalid {label} segment {segment!r}: expected [A-Za-z0-9_]+")
+        return cls(f"{source}{SEPARATOR}{resource}{SEPARATOR}{interface}")
 
+    @property
+    def source(self) -> str:
+        """Which robot this belongs to, e.g. "arm"."""
+        return self._source
 
-def interface_of(key: str) -> str:
-    """What a name says about its part, e.g. "position"."""
-    return split_key(key)[2]
+    @property
+    def resource(self) -> str:
+        """Which part of the robot, e.g. "joint1"."""
+        return self._resource
+
+    @property
+    def interface(self) -> str:
+        """What this says about the part, e.g. "position"."""
+        return self._interface
+
+    @property
+    def joint(self) -> str:
+        """Which part of which robot, e.g. "arm/joint1".
+
+        This is what something asks to take control of.
+        """
+        return f"{self._source}{SEPARATOR}{self._resource}"
