@@ -149,6 +149,7 @@ def test_leader_blueprints_publish_joint_command_on_its_own_topic(
     config = OpenArmMiniTeleopModuleConfig(**_module_kwargs(blueprint, OpenArmMiniTeleopModule))
     assert config.enabled_sides == enabled_sides
     assert _is_name_unique(blueprint, "joint_command")
+    assert blueprint.global_config_overrides["serve_coordinator_rpc"] is False
 
 
 def test_follower_blueprint_consumes_joint_command_for_both_arms() -> None:

@@ -222,18 +222,28 @@ follower workspace clear.
 ## Leaders on a separate machine
 
 When the leaders plug into an operator laptop and the follower hangs off the
-robot computer, run the two halves as separate blueprints linked over zenoh.
+robot computer, run the two halves as separate blueprints on one zenoh bus.
 Both halves name the stream `joint_command`, so it rides the `/joint_command`
-topic once the sessions are linked. A stock zenoh session is pinned to
-localhost, so each side dials the other, which also opens its own listener:
+topic with no remapping.
+
+A stock dimos zenoh session is pinned to localhost, and an unpinned peer
+listens on a random port, so the robot needs a fixed address to dial: a zenoh
+router on port 7447, the same arrangement the Go2 blueprints use. Every dimos
+process on the robot joins the router, and the laptop joins it as a client
+with `--robot-ip`. The leader blueprints do not claim the bus-wide
+`Coordinator` name (`serve_coordinator_rpc=False`), because the robot stack
+owns it.
 
 ```bash
-# robot computer (follower, mock until CAN ports are given)
-ZENOH_CONNECT=tcp/<laptop-ip>:7447 dimos run teleop-openarm-mini-follower \
-  --left-can-port can1 --right-can-port can0
+# robot computer, once per boot: a zenoh router on 7447
+nix run nixpkgs#zenoh -- --listen tcp/0.0.0.0:7447
 
-# operator laptop (leaders)
-ZENOH_CONNECT=tcp/<robot-ip>:7447 dimos run teleop-openarm-mini-leader \
+# robot computer: the follower, mock until CAN ports are given
+ZENOH_CONNECT=tcp/127.0.0.1:7447 dimos run teleop-openarm-mini-follower \
+  --left-can-port can1 --right-can-port can2
+
+# operator laptop: the leaders
+dimos run teleop-openarm-mini-leader --zenoh-mode client --robot-ip <robot-ip> \
   -o openarmminiteleopmodule.port_left=<left-feetech-port> \
   -o openarmminiteleopmodule.port_right=<right-feetech-port>
 ```
@@ -243,3 +253,7 @@ follower's other arm holds. Confirm `/joint_command` arrives on the robot with
 `dimos spy` before powering the follower. Viser binds to localhost on the robot;
 reach it through an SSH tunnel to port 8095 or pass
 `--visualization.host 0.0.0.0`.
+
+Start the follower before the leaders and pose each leader like its arm first:
+the first streamed target is rate limited, but a limited move across a large
+gap is still a swing. If the link drops, the follower holds its last target.
