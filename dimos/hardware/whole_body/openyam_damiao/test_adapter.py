@@ -28,7 +28,11 @@ from dimos.robot.manipulators.openyam.config import OPENYAM_DOF
 
 @pytest.fixture
 def openyam_adapter(mocker: MockerFixture) -> Iterator[OpenYamDamiaoAdapter]:
-    mocker.patch.object(can_motor_control, "SocketCanBus", can_motor_control.MockCanBus)
+    mocker.patch.object(
+        OpenYamDamiaoAdapter,
+        "_make_can_bus",
+        side_effect=lambda _name: can_motor_control.MockCanBus("openyam"),
+    )
     adapter = OpenYamDamiaoAdapter(
         runtime_config=DamiaoRuntimeConfig(gravity_comp=False),
     )

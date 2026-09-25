@@ -29,15 +29,18 @@ from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import (
     joint_names,
 )
+from dimos.robot.manipulators.openyam.joints import (
+    OPENYAM_ARM_JOINTS as OPENYAM_ARM_JOINTS,
+    OPENYAM_DOF as OPENYAM_DOF,
+    OPENYAM_GRIPPER_JOINT as OPENYAM_GRIPPER_JOINT,
+    OPENYAM_JOINTS as OPENYAM_JOINTS,
+)
 from dimos.utils.data import LfsPath
 
-OPENYAM_DOF = 6
 OPENYAM_HARDWARE_ID = "openyam"
-OPENYAM_ARM_JOINTS = joint_names(OPENYAM_DOF, prefix="yam_joint")
-OPENYAM_GRIPPER_JOINT = "arm/gripper"
-OPENYAM_JOINTS = [*OPENYAM_ARM_JOINTS, OPENYAM_GRIPPER_JOINT]
+OPENYAM_HOME_JOINTS = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0]
 OPENYAM_PACKAGE = LfsPath("yam_description")
-OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "urdf/yam_gripper.urdf.xacro"
+OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
 
 
@@ -53,8 +56,11 @@ def openyam_hardware() -> HardwareComponent:
             velocity_max=[None] * len(OPENYAM_JOINTS),
         )
     else:
+        bus_devices = (
+            {"openyam": global_config.can_port} if global_config.can_port is not None else {}
+        )
         adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
-            bus_addresses={"openyam": global_config.can_port or "can0"},
+            bus_devices=bus_devices,
             gravity_comp=True,
         )
     return HardwareComponent(
@@ -76,22 +82,26 @@ def make_openyam_model_config(
     *,
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
-    """Build a planning config for the gripper-equipped OpenYAM."""
+    """Build the canonical visualization and planning config for OpenYAM."""
     model_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
+    model = RobotModel.from_file(
+        OPENYAM_MODEL_PATH,
+        package_paths=OPENYAM_PACKAGE_PATHS,
+    ).with_renamed_joints(dict(zip(joint_names(OPENYAM_DOF), model_joint_names, strict=True)))
     return RobotModelConfig(
-        model=RobotModel.from_file(OPENYAM_MODEL_PATH, package_paths=OPENYAM_PACKAGE_PATHS),
+        model=model.with_default_joint_acceleration_limit(2.0),
         joint_names=model_joint_names,
-        base_link="yam_base_link",
+        base_link="base",
         planning_groups=[
             PlanningGroupDefinition(
                 name="manipulator",
                 joint_names=tuple(model_joint_names),
-                base_link="yam_base_link",
-                tip_link="yam_hand_tcp",
+                base_link="base",
+                tip_link="gripper_tip",
             )
         ],
         auto_convert_meshes=True,
         collision_exclusion_pairs=[],
-        gripper_hardware_id="arm",
-        home_joints=home_joints or [0.0] * OPENYAM_DOF,
+        gripper_hardware_id=OPENYAM_HARDWARE_ID,
+        home_joints=list(OPENYAM_HOME_JOINTS if home_joints is None else home_joints),
     )

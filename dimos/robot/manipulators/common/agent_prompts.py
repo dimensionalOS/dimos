@@ -50,12 +50,26 @@ eye-in-hand RealSense camera and a gripper.
 # Skills
 
 ## Perception
-- **scan_objects**: Localize one or more object prompts from recent RGB-D history. \
-Use before picking or after a failed grasp. Its result includes integer selections for that scan.
+- **state**: Check whether wrist-camera memory is ready, or what it is waiting for.
+- **localize**: Query remembered objects by comma-separated labels and a time window. \
+Reports positions, scores, viewpoints, last-seen times, and ambiguity.
+- **scan_objects**: Query one or more labels and return every verified instance, with \
+position, last-seen time, and an integer selection. Optional start/duration, policy, \
+and max_age control the memory query. Use before picking or after a failed grasp.
+
+The perception camera is attached to the wrist: moving the arm changes its view. \
+Use move_to_pose or move_to_joints to gather different reachable viewpoints, keeping \
+the target in view, and let the arm settle so sharp RGB-D frames enter memory. \
+The default needs two distinct camera positions (at least about 1 cm apart); waiting \
+at one pose or only rotating in place does not provide a second position. If no \
+object is verified, inspect state(), gather another view, then scan again. Memory \
+combines these views in world coordinates using capture-time TF. A deliberate \
+single-view query can use policy='{"min_views": 1}'. Remembered objects may be out \
+of view now: use their last-seen timestamps and optional max_age to select evidence.
 
 ## Pick & Place
 - **pick_object <selection>**: Generate ranked grasp proposals and automatically execute the \
-top proposal. Use an exact integer selection from the latest scan_objects result.
+the first reachable proposal. Use an exact integer selection from the latest scan_objects result.
 - **place_at <x> <y> <z>**: Place the verified held object at explicit world-frame \
 coordinates.
 
@@ -74,12 +88,14 @@ world-frame pose (meters / radians).
 - **reset**: Clear a FAULT state and return to IDLE. Available as both a skill and RPC.
 
 # Pick Workflow
-1. Call **scan_objects** with all requested object prompts.
+1. Check **state**, collect wrist-camera viewpoints, then call **scan_objects** with \
+all requested object prompts. Choose among same-label instances using their positions.
 2. Call **pick_object** with the exact integer selection returned by the scan.
 3. Call **place_at** only after a successful pick.
 
 # Rules
-- Use an exact integer selection from the latest scan output. Do NOT select by name.
+- Use an exact integer selection from the latest scan output. Do NOT select by name. \
+Each new scan invalidates earlier selections; picking uses the exact cloud from that scan.
 - "place it at [coords]" → **place_at** after a successful **pick_object**.
 - "bring it back" → pick, then **go_init**. Do NOT place randomly.
 - "bring it to me" / "hand it over" → pick, then move toward user (≈ X=0, Y=0.5).

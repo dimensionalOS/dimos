@@ -13,7 +13,9 @@ import {
 } from "@dimos/shared";
 
 // Reliable channels: a viewer this far behind is dead weight; kick it so it
-// reconnects with a clean slate.
+// reconnects with a clean slate. A lone frame over the byte cap (up to
+// MAX_DATA_FRAME_BYTES) still queues, as on the Python leg: kicking would
+// repeat on every frame of that size and never deliver one.
 const RELIABLE_MAX_QUEUE = 64;
 const RELIABLE_MAX_BYTES = 16 * 1024 * 1024;
 
@@ -147,6 +149,36 @@ export class Rate {
     for (const n of this.#bytes) bytes += n;
     const windowS = (Rate.BUCKETS * Rate.BUCKET_MS) / 1000;
     return { fps: Math.round((frames / windowS) * 10) / 10, bps: Math.round(bytes / windowS) };
+  }
+}
+
+/**
+ * Publish-rate limiter: `capacity` tokens refilled continuously at
+ * `ratePerSec`, so a short burst up to the capacity passes and the sustained
+ * rate converges on ratePerSec. take() consumes one token when available.
+ * No clock inside: callers pass nowMs (tests fabricate time).
+ */
+export class TokenBucket {
+  #tokens: number;
+  #lastMs: number | null = null;
+
+  constructor(
+    readonly ratePerSec: number,
+    readonly capacity: number = Math.max(1, Math.ceil(ratePerSec)),
+  ) {
+    this.#tokens = this.capacity;
+  }
+
+  take(nowMs: number): boolean {
+    if (this.#lastMs !== null) {
+      // max(0, ...): clock wobble must not drain tokens.
+      const refill = (Math.max(0, nowMs - this.#lastMs) / 1000) * this.ratePerSec;
+      this.#tokens = Math.min(this.capacity, this.#tokens + refill);
+    }
+    this.#lastMs = nowMs;
+    if (this.#tokens < 1) return false;
+    this.#tokens -= 1;
+    return true;
   }
 }
 
@@ -357,7 +389,10 @@ export class ReliableChannel implements ChannelPolicy {
     if (this.#disposed) return;
     this.#fifo.push(bytes);
     this.#bytes += bytes.byteLength;
-    if (this.#fifo.length > RELIABLE_MAX_QUEUE || this.#bytes > RELIABLE_MAX_BYTES) {
+    if (
+      this.#fifo.length > RELIABLE_MAX_QUEUE ||
+      (this.#bytes > RELIABLE_MAX_BYTES && this.#fifo.length > 1)
+    ) {
       this.sink.kick("reliable channel overflow");
       // wt.closed teardown is async; until it runs, later offers must be
       // no-ops, not re-queue + re-kick.

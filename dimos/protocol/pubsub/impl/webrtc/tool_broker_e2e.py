@@ -19,9 +19,9 @@ protocol as the teleop web client (join -> wait connected -> bridge-datachannel
 -> negotiated cmd_unreliable channel). The robot side is the exact transport
 object the teleop-hosted-go2-transport blueprint binds to cmd_vel.
 
-Needs live-broker credentials, so it only runs when all three are set:
+Needs live-broker credentials, so it only runs when both are set:
 
-    TELEOP_API_KEY        dtk_live_... (dashboard -> New Key)
+    TELEOP_API_KEY        dimos_sk_... (Dimensional console -> API keys -> Create key)
     TELEOP_OPERATOR_TOKEN Cognito ID token of the key's owner
 
 TELEOP_ROBOT_ID is optional (the broker derives identity from the key).
@@ -51,7 +51,7 @@ async def _wait_for(cond: Callable[[], bool], timeout: float, what: str) -> None
         await asyncio.sleep(0.05)
 
 
-BROKER = os.environ.get("TELEOP_BROKER_URL", "https://teleop.dimensionalos.com")
+BROKER = os.environ.get("TELEOP_BROKER_URL", "https://api.dimensional.org")
 CREDS_PRESENT = all(os.environ.get(k) for k in ("TELEOP_API_KEY", "TELEOP_OPERATOR_TOKEN"))
 
 skip_unless_broker = pytest.mark.skipif(

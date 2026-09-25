@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   canvasToWorld,
+  drawPath,
   fitTransform,
   gridBlit,
   gridToImageData,
   OCCUPANCY_PALETTE,
+  PATH_COLOR,
   posePath,
   worldToCanvas,
 } from "./mapRenderer.ts";
@@ -190,5 +192,26 @@ describe("posePath", () => {
     expect(left[0] - cx).toBeCloseTo(-9.6, 9);
     expect(left[1] - cy).toBeCloseTo(8.4, 9);
     expect(right[1] - cy).toBeCloseTo(-8.4, 9);
+  });
+});
+
+describe("drawPath", () => {
+  it("strokes one polyline through the world points, dpr-scaled", () => {
+    const t = fitTransform({ w: 100, h: 100, res: 1.0, origin: [0.0, 0.0, 0.0] }, 100, 100);
+    const ctx = {
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      stroke: vi.fn(),
+      strokeStyle: "",
+      lineWidth: 0,
+    };
+    const points: [number, number][] = [[10, 20], [30, 40], [50, 50]];
+    drawPath(ctx as unknown as CanvasRenderingContext2D, t, points, 2);
+    expect(ctx.moveTo.mock.calls).toEqual([[10, 80]]);
+    expect(ctx.lineTo.mock.calls).toEqual([[30, 60], [50, 50]]);
+    expect(ctx.strokeStyle).toBe(PATH_COLOR);
+    expect(ctx.lineWidth).toBe(4);
+    expect(ctx.stroke).toHaveBeenCalledTimes(1);
   });
 });

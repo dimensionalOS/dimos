@@ -24,6 +24,8 @@ import hashlib
 import json
 import statistics
 import time
+from typing import Any
+import urllib.error
 import urllib.request
 
 import pytest
@@ -36,6 +38,7 @@ from dimos.web.relay_bridge.protocol import (
     RobotInfo,
     RobotManifest,
     Sub,
+    Subs,
     Unsub,
     Watch,
     encode_datagram,
@@ -102,7 +105,7 @@ async def fetch_stats(relay: RelayReadyInfo) -> dict:
 def test_info_matches_ready_line(relay: RelayReadyInfo) -> None:
     with urllib.request.urlopen(f"http://127.0.0.1:{relay.http_port}/api/info") as response:
         info = json.load(response)
-    assert info == {"wtUrl": f"{relay.wt_url}/viewer", "certHash": relay.cert_hash, "v": relay.v}
+    assert info == {"wtUrl": relay.wt_url, "certHash": relay.cert_hash, "v": relay.v}
     assert relay.wt_url.startswith("https://127.0.0.1:")
 
 
@@ -136,17 +139,19 @@ async def test_datagram_hello_from_an_old_bridge_is_rejected(relay: RelayReadyIn
 async def test_fat_manifest_registers_beyond_the_datagram_budget(relay: RelayReadyInfo) -> None:
     # The whole point of the v5 stream hello: a manifest far beyond the old
     # ~1100 B datagram budget registers, gates subs, and forwards frames.
+    # Ids long enough that the full subs snapshot also dwarfs a datagram.
+    fat_chs = [f"ch_{i}_" + "pad" * 8 for i in range(40)]
     manifest: RobotManifest = {
         "version": 1,
         "channels": [
             {
-                "ch": f"ch_{i}",
+                "ch": ch,
                 "encoding": "pose.json.v1",
                 "delivery": "reliable",
                 "maxHz": 10.5,
                 "params": {"note": f"padding for channel {i} so the hello dwarfs a datagram"},
             }
-            for i in range(40)
+            for i, ch in enumerate(fat_chs)
         ],
     }
     fat_robot = RobotInfo(id="fat-bot", name="Fat Bot", model="test")
@@ -165,16 +170,16 @@ async def test_fat_manifest_registers_beyond_the_datagram_budget(relay: RelayRea
             deadline = time.monotonic() + 10.0
             while True:
                 viewer.send_control(Watch(robotId=fat_robot.id))
-                viewer.send_control(Sub(ch="ch_7"))
+                viewer.send_control(Sub(ch=fat_chs[7]))
                 try:
-                    await wait_subs(robot, {"ch_7"}, timeout=1.0)
+                    await wait_subs(robot, {fat_chs[7]}, timeout=1.0)
                     break
                 except TimeoutError:
                     if time.monotonic() >= deadline:
                         raise
-            # The sub was accepted only because the fat manifest declared
-            # ch_7: an undeclared channel is refused, proving the relay
-            # parsed and enforces the whole manifest.
+            # The sub was accepted only because the fat manifest declared it:
+            # an undeclared channel is refused, proving the relay parsed and
+            # enforces the whole manifest.
             viewer.send_control(Sub(ch="undeclared"))
             while viewer._session.relay_error is None:
                 if time.monotonic() >= deadline:
@@ -182,9 +187,62 @@ async def test_fat_manifest_registers_beyond_the_datagram_budget(relay: RelayRea
                 await asyncio.sleep(0.05)
             assert viewer._session.relay_error.code == "unknown_channel"
 
-            robot.send_frame("ch_7", b"fat-frame", delivery="reliable")
-            frames = await collect_until(viewer, lambda fs: any(f.header.ch == "ch_7" for f in fs))
-            assert [bytes(f.payload) for f in frames if f.header.ch == "ch_7"] == [b"fat-frame"]
+            # Subscribing to every channel produces a snapshot far beyond the
+            # old datagram budget; the robot control carrier must deliver it
+            # whole and exact. Subs ride lossy viewer datagrams, so resend
+            # the idempotent set until the snapshot converges.
+            snapshot_size = len(encode_datagram(Subs(chs=sorted(fat_chs), n=99)))
+            assert snapshot_size > 1200, f"snapshot must exceed the old budget, got {snapshot_size}"
+            while True:
+                for ch in fat_chs:
+                    viewer.send_control(Sub(ch=ch))
+                try:
+                    await wait_subs(robot, set(fat_chs), exact=True, timeout=2.0)
+                    break
+                except TimeoutError:
+                    if time.monotonic() >= deadline:
+                        raise
+
+            robot.send_frame(fat_chs[7], b"fat-frame", delivery="reliable")
+            frames = await collect_until(
+                viewer, lambda fs: any(f.header.ch == fat_chs[7] for f in fs)
+            )
+            assert [bytes(f.payload) for f in frames if f.header.ch == fat_chs[7]] == [b"fat-frame"]
+
+
+async def test_sub_unsub_churn_converges_to_the_final_set(
+    relay: RelayReadyInfo, robot: RelayClient, viewer: RelayClient
+) -> None:
+    # This viewer's control plane is datagrams (lossy), so the e2e pins
+    # convergence to the exact final set; strict per-transition carrier
+    # ordering is pinned by the Deno-side churn test.
+    await attach(robot, viewer, ["odom"])
+    deadline = time.monotonic() + 10.0
+    while True:
+        for _ in range(5):
+            viewer.send_control(Unsub(ch="odom"))
+            viewer.send_control(Sub(ch="odom"))
+        viewer.send_control(Sub(ch="camera"))
+        viewer.send_control(Unsub(ch="odom"))
+        try:
+            await wait_subs(robot, {"camera"}, exact=True, timeout=2.0)
+            break
+        except TimeoutError:
+            if time.monotonic() >= deadline:
+                raise
+
+
+async def test_robot_reconnect_rebaselines_surviving_viewer_subs(
+    relay: RelayReadyInfo, viewer: RelayClient
+) -> None:
+    # Viewers keep watch/subs across a robot disconnect; the returning robot's
+    # forced baseline snapshot must reattach them on its fresh carrier.
+    async with await RelayClient.connect(relay.wt_url, "robot") as first:
+        await first.hello(robot=ROBOT)
+        await attach(first, viewer, ["odom"])
+    async with await RelayClient.connect(relay.wt_url, "robot") as second:
+        await second.hello(robot=ROBOT)
+        await wait_subs(second, {"odom"}, exact=True)
 
 
 async def test_invalid_manifest_hello_is_rejected(relay: RelayReadyInfo) -> None:
@@ -462,3 +520,83 @@ async def test_close_signal_stops_writer_and_wakes_waiter(own_relay: RelayProces
         # A dead channel is visible at the producer.
         with pytest.raises(RuntimeError):
             writer.offer(b"y")
+
+
+# --auth-file: both hellos carry a secret and /api/stats wants a bearer token.
+
+ROBOT_KEY = "robot-key-e2e-0123456789abcdef"
+VIEWER_TOKEN = "viewer-token-e2e-0123456789abcdef"
+
+
+@pytest.fixture(scope="module")
+def auth_relay(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RelayReadyInfo]:
+    auth_file = tmp_path_factory.mktemp("auth") / "auth.json"
+    auth_file.write_text(
+        json.dumps(
+            {
+                "robots": {ROBOT.id: ROBOT_KEY, "other-bot": "other-key-e2e-0123456789abcdef"},
+                "viewers": {"tester": VIEWER_TOKEN},
+            }
+        )
+    )
+    process = RelayProcess(auth_file=auth_file)
+    try:
+        yield process.start()
+    finally:
+        process.stop()
+
+
+@pytest.mark.parametrize(
+    ("token", "message"),
+    [
+        (None, "missing robot key"),
+        ("wrong-key-e2e-0123456789abcdef", "invalid robot key"),
+        ("other-key-e2e-0123456789abcdef", "invalid robot key"),  # another id's key
+    ],
+)
+async def test_robot_hello_needs_its_own_key(
+    auth_relay: RelayReadyInfo, token: str | None, message: str
+) -> None:
+    async with await RelayClient.connect(auth_relay.wt_url, "robot") as robot:
+        with pytest.raises(RelayRejectedError) as exc_info:
+            await robot.hello(robot=ROBOT, token=token)
+    assert (exc_info.value.code, exc_info.value.message) == ("auth_failed", message)
+
+
+async def test_viewer_hello_needs_a_token(auth_relay: RelayReadyInfo) -> None:
+    async with await RelayClient.connect(auth_relay.wt_url, "viewer") as viewer:
+        with pytest.raises(RelayRejectedError, match="auth_failed: missing viewer token"):
+            await viewer.hello()
+    async with await RelayClient.connect(auth_relay.wt_url, "viewer") as viewer:
+        with pytest.raises(RelayRejectedError, match="auth_failed: invalid viewer token"):
+            await viewer.hello(token="wrong-token-e2e-0123456789abcdef")
+
+
+async def test_secrets_register_and_gate_stats(auth_relay: RelayReadyInfo) -> None:
+    async with (
+        await RelayClient.connect(auth_relay.wt_url, "robot") as robot,
+        await RelayClient.connect(auth_relay.wt_url, "viewer") as viewer,
+    ):
+        await robot.hello(robot=ROBOT, token=ROBOT_KEY)
+        await viewer.hello(token=VIEWER_TOKEN)
+        await attach_viewer(viewer, ROBOT.id, [])  # its manifest proves registration
+
+        url = f"http://127.0.0.1:{auth_relay.http_port}/api/stats"
+
+        def _get(headers: dict[str, str]) -> tuple[int, Any, str]:
+            request = urllib.request.Request(url, headers=headers)
+            try:
+                with urllib.request.urlopen(request) as response:
+                    return response.status, response.headers, response.read().decode()
+            except urllib.error.HTTPError as e:
+                return e.code, e.headers, ""
+
+        status, headers, _ = await asyncio.to_thread(_get, {})
+        assert status == 401 and headers.get("WWW-Authenticate") == "Bearer"
+        status, headers, body = await asyncio.to_thread(
+            _get, {"Authorization": f"Bearer {VIEWER_TOKEN}"}
+        )
+        assert status == 200 and "Access-Control-Allow-Origin" not in headers
+        # Names, never tokens.
+        assert [v["name"] for v in json.loads(body)["perViewer"]] == ["tester"]
+        assert VIEWER_TOKEN not in body and ROBOT_KEY not in body

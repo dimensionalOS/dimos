@@ -34,6 +34,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Verify dispatched from a release/* branch
         run: |
           branch="${GITHUB_REF#refs/heads/}"
@@ -82,6 +83,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Build cockpit dist  # shipped pre-built in the sdist and wheels
         uses: ./.github/actions/build-cockpit
       - name: Build sdist
@@ -255,6 +257,17 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           gh release create "v$VERSION" --verify-tag --notes-from-tag dist/*
+      - name: Move latest branch to the release commit
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          # Pre-releases (a/b/rc/dev) leave `latest` alone, like GitHub's "Latest" release badge.
+          if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+)*(\.post[0-9]+)?$ ]]; then
+            echo "v$VERSION is a pre-release, leaving latest unchanged"
+            exit 0
+          fi
+          # `latest` may sit on an older release line that this commit does not descend from.
+          git push --force origin HEAD:refs/heads/latest
 
   merge-back:
     if: ${{ ! inputs.dry-run }}

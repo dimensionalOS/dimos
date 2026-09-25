@@ -25,6 +25,7 @@ The site also serves the markdown it was built from, for agents: every page
 at its docs/ path, indexed by llms.txt (overrides/llms.txt).
 """
 
+import hashlib
 from pathlib import Path
 import posixpath
 import re
@@ -137,7 +138,8 @@ def _rewrite_link(match: re.Match[str], src_uri: str) -> str:
         return f"]({rel}{anchor}{title})"
 
     root = target.lstrip("/").split("/", 1)[0]
-    if root in SOURCE_ROOTS:
+    # A file at the repo root (`/setup.py`) is source too: it has no page here.
+    if root in SOURCE_ROOTS or root == target.lstrip("/"):
         return f"]({GITHUB_BLOB}{target}{anchor}{title})"
 
     return match.group(0)
@@ -168,6 +170,9 @@ def _readme_as_home() -> str:
     # hack. Here the cells already carry width="20%", and the spacer only adds
     # a line box, plus a lightbox anchor around a blank image.
     text = re.sub(r"\s*<img[^>]*spacer\.png[^>]*>", "", text)
+
+    # A bare <br> between blocks becomes an empty paragraph: a 1.5em hole.
+    text = re.sub(r"^<br\s*/?>\s*$", "", text, flags=re.M)
 
     # <big> is deprecated, and being an inline tag it re-blocks markdown even
     # inside a div that asked for it. Material sizes the banner text anyway.
@@ -203,11 +208,18 @@ def _readme_as_home() -> str:
     return f'---\ntitle: "Welcome to dimOS"\n---\n\n{text}'
 
 
+def on_config(config):
+    """Content-hash the theme stylesheet's name so a restyle busts caches."""
+    digest = hashlib.md5(THEME_CSS.read_bytes()).hexdigest()[:8]
+    config.extra_css = [f"assets/mkdocs-theme.{digest}.css"]
+    return config
+
+
 def on_files(files, config):
     """Ship the theme and the readme-as-home without adding files to docs/."""
     from mkdocs.structure.files import File
 
-    files.append(File.generated(config, "assets/mkdocs-theme.css", content=THEME_CSS.read_text()))
+    files.append(File.generated(config, config.extra_css[0], content=THEME_CSS.read_text()))
     files.append(File.generated(config, "index.md", content=_readme_as_home()))
 
     # The readme's screenshots live outside docs/, so pull them in by path
@@ -224,6 +236,29 @@ def on_page_markdown(markdown, page, config, files):
     markdown = _github_alerts(markdown)
     markdown = _normalize_fences(markdown)
     return _LINK.sub(lambda m: _rewrite_link(m, page.file.src_uri), markdown)
+
+
+_SVG_VIEWBOX = re.compile(r"<svg(?![^>]* width=)[^>]*?viewBox=['\"]0 0 ([\d.]+) ([\d.]+)['\"]")
+
+# An <img> of an svg cannot use the page's stylesheet, so without a font of
+# its own every diagram label falls back to the browser's default serif.
+_SVG_FONT = "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+
+
+def on_post_build(config):
+    """Pikchr svgs carry only a viewBox; an <img> of one has no intrinsic size,
+    so the browser stretches it to the column. Stamp the natural size and the
+    font on."""
+    for svg in Path(config["site_dir"]).rglob("*.svg"):
+        text = svg.read_text(encoding="utf-8")
+        if 'class="pikchr"' not in text[:300]:
+            continue
+        match = _SVG_VIEWBOX.search(text)
+        if match:
+            size = (
+                f'<svg width="{match.group(1)}" height="{match.group(2)}" font-family="{_SVG_FONT}"'
+            )
+            svg.write_text(text.replace("<svg", size, 1), encoding="utf-8")
 
 
 def on_post_page(output, page, config):

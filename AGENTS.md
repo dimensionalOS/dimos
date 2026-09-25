@@ -9,8 +9,8 @@ The agentic operating system for generalist robotics. `Modules` communicate via 
 ## Quick Start
 
 ```bash
-# Install
-uv sync --extra all
+# Set up the current checkout, including test and lint dependencies
+bash scripts/install.sh --mode dev --project-dir .
 
 # List all runnable blueprints
 dimos list
@@ -44,7 +44,7 @@ dimos restart          # stop + re-run with same original args
 | `xarm-perception-agent` | xArm | real | gpt-5.6-luna | ✓ | Manipulation + perception + agent |
 | `xarm-perception-sim-agent` | xArm | sim | gpt-5.6-luna | ✓ | Manipulation + perception + agent, sim |
 | `xarm7-planner-coordinator` | xArm7 | real | — | — | Trajectory planner coordinator |
-| `teleop-quest-xarm7` | xArm7 | real | — | — | Quest VR teleop |
+| `teleop-webxr-xarm7` | xArm7 | real | — | — | WebXR teleop |
 | `dual-xarm6-planner-coordinator` | xArm6×2 | mock | — | — | Dual-arm motion planner |
 
 Run `dimos list` for the full list.
@@ -380,7 +380,7 @@ CI asserts the file is current — if it's stale, CI fails. Externally packaged 
 
 ## Git Workflow
 
-- Branch prefixes: `feat/`, `fix/`, `refactor/`, `docs/`, `test/`, `chore/`, `perf/`
+- **Branch names are `<who>/<type>/<topic>`**, e.g. `paul/feat/add-3d-map`. `who` is any identifier that makes the owner clear. `type` is one of `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `build`, `ci`, `style`, `revert`. Prefer lowercase and hyphens. A pre-commit hook enforces this, locally and in CI.
 - **PRs target `main`** — `main` is the unstable development branch. Work and PR off of `main`. Never push to `main` directly.
 - **Don't force-push** unless after a rebase with conflicts
 - **Minimize pushes** — every push triggers CI (~1 hour on self-hosted runners). Batch commits locally, push once.
@@ -395,5 +395,6 @@ CI asserts the file is current — if it's stale, CI fails. Externally packaged 
 - Configuration: `docs/usage/configuration.md`
 - Testing: `docs/development/testing.md`
 - CLI / dimos run: `docs/usage/cli.md`
+- Web (cockpit, web SDK, relay): `docs/web/index.md`
 - LFS data: `docs/development/large_file_management.md`
 - Agent system: `docs/capabilities/agents/`

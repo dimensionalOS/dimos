@@ -23,7 +23,7 @@ class VoxelRayMapper:
         *,
         voxel_size: float,
         max_range: float,
-        fine_divisor: int = 0,
+        fine_divisor: int = 3,
         ray_subsample: int = 1,
         shadow_depth: float = 0.1,
         grace_depth: float = 0.2,

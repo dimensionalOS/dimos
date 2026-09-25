@@ -10,9 +10,14 @@
     xome.inputs.nixpkgs.follows    = "nixpkgs";
     xome.inputs.flake-utils.follows = "flake-utils";
     diagon.url       = "github:petertrotman/nixpkgs/Diagon";
+    # nixpkgs' lcm does not build on darwin, and the C++ native module flakes
+    # already take it from here.
+    lcm-extended.url = "github:jeff-hykin/lcm_extended";
+    lcm-extended.inputs.nixpkgs.follows = "nixpkgs";
+    lcm-extended.inputs.flake-utils.follows = "flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils, lib, xome, diagon, ... }:
+  outputs = { self, nixpkgs, flake-utils, lib, xome, diagon, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -139,42 +144,11 @@
           { vals.pkg=diagon.legacyPackages.${system}.diagon;   flags={}; }
 
           ### LCM (Lightweight Communications and Marshalling)
-          { vals.pkg=pkgs.lcm; flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          # lcm works on darwin, but only after two fixes (1. pkg-config, 2. fsync)
+          # Only darwin took lcm's own python bindings before, and linux still
+          # gets them from the venv.
           {
-            onlyIf=pkgs.stdenv.isDarwin;
-            flags.ldLibraryGroup=true;
-            flags.manualPythonPackages=true;
-            vals.pkg=pkgs.lcm.overrideAttrs (old:
-                let
-                    # 1. fix pkg-config on darwin
-                    pkgConfPackages = aggregation.getAll { hasAllFlags=[ "packageConfGroup" ]; attrPath=[ "pkg" ]; };
-                    packageConfPackagesString = (aggregation.getAll {
-                        hasAllFlags=[ "packageConfGroup" ];
-                        attrPath=[ "pkg" ];
-                        strAppend="/lib/pkgconfig";
-                        strJoin=":";
-                    });
-                in
-                    {
-                        buildInputs = (old.buildInputs or []) ++ pkgConfPackages;
-                        nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config pkgs.python312 ];
-                        # 1. fix pkg-config on darwin
-                        env.PKG_CONFIG_PATH = packageConfPackagesString;
-                        # Remove upstream patches (the darwin-fsync patch causes "out of memory" in patch utility)
-                        patches = [];
-                        # 2. Fix fsync on darwin (use substituteInPlace to avoid patch utility issues)
-                        postPatch = (old.postPatch or "") + ''
-                          substituteInPlace lcm-logger/lcm_logger.c \
-                            --replace-fail 'fdatasync(fileno(logger->log->f));' \
-                            '#ifdef __APPLE__
-                          fsync(fileno(logger->log->f));
-                          #else
-                          fdatasync(fileno(logger->log->f));
-                          #endif'
-                        '';
-                    }
-            );
+            vals.pkg=lcm-extended.packages.${system}.lcm;
+            flags={ ldLibraryGroup=true; manualPythonPackages=pkgs.stdenv.isDarwin; };
           }
           { vals.pkg=pkgs.cyclonedds; flags.ldLibraryGroup=true; flags.packageConfGroup=true; }
         ];

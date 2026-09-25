@@ -20,6 +20,8 @@ function spec(over: Partial<ChannelSpec> = {}): ChannelSpec {
     delivery: "reliable",
     maxHz: 20,
     params: {},
+    publish: "none",
+    requiredScope: null,
     ...over,
   };
 }
@@ -36,13 +38,46 @@ const odom = spec();
 const jpeg = spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" });
 const costmap = spec({ ch: "global_costmap", encoding: "costmap.zlib.v1", delivery: "latest" });
 const future = spec({ ch: "voxels", encoding: "voxels.bin.v9", delivery: "latest" });
+const lcm = spec({
+  ch: "lcm_pose",
+  encoding: "geometry_msgs.PoseStamped.lcm.v1",
+  params: {
+    lcm: { type: "t.P", fp: "0011223344556677", structs: { "t.P": [["x", "double", null]] } },
+  },
+});
+const lcmBroken = spec({ ch: "lcm_bad", encoding: "t.Q.lcm.v1", params: {} });
+// A variable-length array: every frame costs the message's full size.
+const lcmCloud = spec({
+  ch: "lcm_cloud",
+  encoding: "sensor_msgs.PointCloud2.lcm.v1",
+  params: {
+    lcm: {
+      type: "t.C",
+      fp: "0011223344556677",
+      structs: { "t.C": [["n", "int32_t", null], ["data", "byte", ["n"]]] },
+    },
+  },
+});
 const videoPanel = panel({ id: "cam", kind: "video", channels: ["color_image"] });
 const mapPanel = panel({ id: "map", kind: "map2d", channels: ["global_costmap", "odom"] });
+const voxels = spec({ ch: "global_map", encoding: "voxels.zlib.v1", delivery: "latest" });
+const map3dPanel = panel({ id: "map3d", kind: "map3d", channels: ["global_map", "odom"] });
 
 describe("subscribableChannels", () => {
   it("keeps only channels with a decoder (undecodable ones waste bandwidth)", () => {
     expect(subscribableChannels([odom, jpeg, future], [videoPanel])).toEqual([odom, jpeg]);
     expect(subscribableChannels([future], [])).toEqual([]);
+  });
+
+  it("subscribes bounded *.lcm.v1 schemas by itself, bulk ones only through a panel", () => {
+    expect(channelSubscribable(lcm, [])).toBe(true);
+    expect(channelSubscribable(lcm, [videoPanel])).toBe(true);
+    expect(channelSubscribable(lcmCloud, [])).toBe(false);
+    const cloudPanel = panel({ id: "cloud", kind: "video", channels: ["lcm_cloud"] });
+    expect(channelSubscribable(lcmCloud, [cloudPanel])).toBe(true);
+    // No schema in params: nothing can decode it, so nothing subscribes.
+    expect(channelSubscribable(lcmBroken, [])).toBe(false);
+    expect(subscribableChannels([lcm, lcmCloud, lcmBroken], [])).toEqual([lcm]);
   });
 
   it("never subscribes tx channels", () => {
@@ -63,6 +98,12 @@ describe("subscribableChannels", () => {
     expect(channelSubscribable(costmap, [])).toBe(false);
     expect(channelSubscribable(costmap, [mapPanel])).toBe(true);
     expect(channelSubscribable(costmap, [{ ...mapPanel, kind: "hologram" }])).toBe(false);
+  });
+
+  it("gates the voxel map encoding like the costmap", () => {
+    expect(channelSubscribable(voxels, [])).toBe(false);
+    expect(channelSubscribable(voxels, [map3dPanel])).toBe(true);
+    expect(channelSubscribable(voxels, [{ ...map3dPanel, kind: "hologram" }])).toBe(false);
   });
 
   it("consults the given registry, not a global one", () => {

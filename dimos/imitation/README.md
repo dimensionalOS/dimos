@@ -1,11 +1,16 @@
-# Teleop Data Collection → Dataset
+# Imitation Learning
 
-End-to-end: teleoperate an arm, record episodes to a session DB, then convert
+Collect demonstrations, build training datasets, and run trained policies in
+DimOS. Teleoperation records episodes to a session DB, and DataPrep converts
 that DB into a LeRobot or HDF5 dataset for imitation learning.
 
 ```
-teleop (Quest) ─▶ CollectionRecorder ─▶ session_<robot>_<ts>.db ─▶ dimos dataprep ─▶ dataset
+teleop (WebXR) ─▶ CollectionRecorder ─▶ session_<robot>_<ts>.db ─▶ dimos dataprep ─▶ dataset
 ```
+
+After training, use the production
+[`LeRobotPolicyModule`](policy/lerobot/README.md) to run a checkpoint against
+live camera and joint-state observations.
 
 ---
 
@@ -16,16 +21,16 @@ hardware (a RealSense + the arm).
 
 ```bash
 # XArm7 in sim
-dimos --simulation run learning-collect-quest-xarm7
+dimos --simulation run learning-collect-webxr-xarm7
 
 # Piper on real hardware
-dimos run learning-collect-quest-piper
+dimos run learning-collect-webxr-piper
 ```
 
 This brings up teleop, a RealSense (real only), the episode monitor, and the
 recorder, all wired together.
 
-### Controls (Quest)
+### Controls (WebXR)
 
 | Button | Action |
 | --- | --- |

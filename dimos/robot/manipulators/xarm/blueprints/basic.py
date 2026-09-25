@@ -23,7 +23,9 @@ from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
     XARM7_SIM_PATH,
+    lite6_hardware,
     make_dual_xarm6_model_config,
+    make_lite6_model_config,
     make_xarm7_model_config,
     make_xarm_hardware,
     xarm6_hardware,
@@ -79,7 +81,7 @@ _coordinator_xarm7_hw = xarm7_hardware("arm")
 coordinator_xarm7 = autoconnect(
     coordinator(
         hardware=[_coordinator_xarm7_hw],
-        tasks=[trajectory_task(_coordinator_xarm7_hw), _gripper_task()],
+        tasks=[trajectory_task(_coordinator_xarm7_hw)],
     ),
     *mujoco_if_sim(XARM7_SIM_PATH, len(_coordinator_xarm7_hw.joints)),
 )
@@ -94,6 +96,29 @@ coordinator_xarm6 = autoconnect(
     *mujoco_if_sim(XARM6_SIM_PATH, len(_coordinator_xarm6_hw.joints)),
 )
 
+_coordinator_lite6_hw = lite6_hardware("arm", gripper=True)
+
+coordinator_lite6 = ControlCoordinator.blueprint(
+    hardware=[_coordinator_lite6_hw],
+    tasks=[trajectory_task(_coordinator_lite6_hw), _gripper_task()],
+)
+
+_lite6_hw = lite6_hardware("arm", gripper=True, mock_without_address=True)
+
+lite6_planner_coordinator = autoconnect(
+    planner(
+        model=make_lite6_model_config(
+            add_gripper=True,
+            gripper_hardware_id="arm",
+        ),
+        visualization={"backend": "viser"},
+    ),
+    coordinator(
+        hardware=[_lite6_hw],
+        tasks=[trajectory_task(_lite6_hw), _gripper_task()],
+    ),
+)
+
 _xarm7_left = xarm7_hardware(
     "left_arm", canonical_joint_names=[f"left_arm/joint{i}" for i in range(1, 8)]
 )
@@ -103,12 +128,5 @@ _xarm6_right = xarm6_hardware(
 
 coordinator_dual_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm7_left, _xarm6_right],
-    tasks=[
-        TaskConfig(
-            name="traj_arm",
-            type="trajectory",
-            joint_names=[*_xarm7_left.joints, *_xarm6_right.joints],
-            priority=10,
-        ),
-    ],
+    tasks=[trajectory_task(_xarm7_left, _xarm6_right)],
 )

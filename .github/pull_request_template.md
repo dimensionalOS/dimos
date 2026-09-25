@@ -1,29 +1,22 @@
-## Contribution path
-
-<!-- See CONTRIBUTING.md. Small, safe changes can skip the issue. -->
-
-- Small, safe change that does not need a tracking issue
-- Linked issue or discussion: DIM-XXX / #XXX / URL
-
-## Problem
-
-<!-- What feature are you adding or fixing? -->
-
-## Solution
+## What is this feature?
 
 <!-- What you changed and why this approach -->
 <!-- Key design decisions / tradeoffs -->
-<!-- Keep it high-signal; deep planning belongs in the issue. -->
+
+## Why do we need this?
+
+<!-- What problem does this solve? -->
 
 ## How to Test
 
 <!-- Oneliner required to run the actual feature -->
 <!-- for example `dimos run unitree-go2-myfeature` -->
+<!-- If you leave this empty, your PR will very likely be closed. -->
 
-## AI assistance
+## Which issue(s) does this PR close?
 
-<!-- Required by AI_POLICY.md. Name the tool and the model (e.g. "Claude Code with Opus 4.8") and how much they were involved. Write "None" if unassisted. -->
-<!-- You should understand every line of code in your PR -->
+<!-- Usage: "Fixes DIM-XXX / #XXX / URL" -->
+Fixes
 
 ## Checklist
 

@@ -22,6 +22,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
+from dimos.manipulation.planning.spec.joint_space import JointSpace
 from dimos.manipulation.planning.spec.models import JointPath
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -34,27 +35,32 @@ class SelectedJointSpace:
     model_joint_names: tuple[str, ...]
     selected_joint_names: tuple[str, ...]
     base_positions: NDArray[np.float64]
-    lower_limits: NDArray[np.float64]
-    upper_limits: NDArray[np.float64]
+    joint_space: JointSpace
 
     @classmethod
     def from_world(cls, world: WorldSpec, selection: PlanningGroupSelection) -> SelectedJointSpace:
-        config = world.get_model_config()
+        prepared = world.get_prepared_model()
+        config = prepared.config
         with world.scratch_context() as ctx:
             current = world.get_joint_state(ctx)
         base = _ordered_positions(current, config.joint_names, "Current state")
-        lower, upper = world.get_joint_limits()
-        indices = [config.joint_names.index(name) for name in selection.joint_names]
         return cls(
             model_joint_names=tuple(config.joint_names),
             selected_joint_names=selection.joint_names,
             base_positions=base,
-            lower_limits=np.asarray(lower, dtype=np.float64)[indices],
-            upper_limits=np.asarray(upper, dtype=np.float64)[indices],
+            joint_space=prepared.joint_space.select(selection.joint_names),
         )
 
-    def joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        return self.lower_limits.copy(), self.upper_limits.copy()
+    def lift_path(self, path: JointPath) -> JointPath:
+        """Return a path whose periodic coordinates are continuous scalars."""
+        if not path:
+            return []
+        configurations = [self.joint_space.from_joint_state(state) for state in path]
+        positions = self.joint_space.lifted_positions(configurations)
+        return [
+            JointState(name=list(self.selected_joint_names), position=list(values))
+            for values in positions
+        ]
 
     def project_config(self, selected_positions: NDArray[np.float64]) -> JointState:
         if len(selected_positions) != len(self.selected_joint_names):
@@ -77,10 +83,12 @@ class SelectedJointSpace:
         end: NDArray[np.float64],
         step_size: float,
     ) -> bool:
-        distance = float(np.linalg.norm(end - start))
+        distance = self.joint_space.distance(start, end)
         steps = max(1, int(np.ceil(distance / step_size)))
         return all(
-            self.config_collision_free(world, start + (step / steps) * (end - start))
+            self.config_collision_free(
+                world, self.joint_space.interpolate(start, end, step / steps)
+            )
             for step in range(steps + 1)
         )
 

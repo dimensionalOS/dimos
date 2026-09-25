@@ -28,7 +28,9 @@
             "encoding": "jpeg.v1",
             "delivery": "latest",
             "maxHz": 15.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           },
           {
             "ch": "odom",
@@ -36,7 +38,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [],
@@ -133,7 +137,9 @@
             "encoding": "jpeg.v1",
             "delivery": "latest",
             "maxHz": 15.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           },
           {
             "ch": "odom",
@@ -141,7 +147,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -242,7 +250,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -534,7 +544,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [],
@@ -575,6 +587,315 @@
       "error": "invalid_shape"
     },
     {
+      "name": "publish_shared_tx",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "params": {},
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          }
+        ],
+        "panels": [],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "publish_exclusive_tx",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "exclusive",
+            "requiredScope": "chat:send"
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "params": {},
+            "publish": "exclusive",
+            "requiredScope": "chat:send"
+          }
+        ],
+        "panels": [],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "publish_none_roundtrip",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "none"
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "dir": "rx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
+          }
+        ],
+        "panels": [],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "required_scope_null_roundtrip",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": null
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "params": {},
+            "publish": "shared",
+            "requiredScope": null
+          }
+        ],
+        "panels": [],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "publish_on_rx",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "shared"
+          }
+        ]
+      },
+      "error": "invalid_publish"
+    },
+    {
+      "name": "publish_bad_value",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "always"
+          }
+        ]
+      },
+      "error": "invalid_shape"
+    },
+    {
+      "name": "publish_null",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": null
+          }
+        ]
+      },
+      "error": "invalid_shape"
+    },
+    {
+      "name": "publish_shared_latest",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "latest",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          }
+        ]
+      },
+      "error": "invalid_publish"
+    },
+    {
+      "name": "publish_shared_binary_encoding",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "jpeg.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          }
+        ]
+      },
+      "error": "invalid_publish"
+    },
+    {
+      "name": "scope_without_publish",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "requiredScope": "chat:send"
+          }
+        ]
+      },
+      "error": "invalid_scope"
+    },
+    {
+      "name": "scope_empty",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": ""
+          }
+        ]
+      },
+      "error": "invalid_scope"
+    },
+    {
+      "name": "scope_too_long",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        ]
+      },
+      "error": "invalid_scope"
+    },
+    {
+      "name": "scope_not_string",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": 1.5
+          }
+        ]
+      },
+      "error": "invalid_shape"
+    },
+    {
+      "name": "publish_rx_before_scope",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "shared",
+            "requiredScope": ""
+          }
+        ]
+      },
+      "error": "invalid_publish"
+    },
+    {
       "name": "channel_params_roundtrip",
       "data": {
         "version": 1,
@@ -602,7 +923,98 @@
             "maxHz": 15.5,
             "params": {
               "quality": 75.5
+            },
+            "publish": "none",
+            "requiredScope": null
+          }
+        ],
+        "panels": [],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "lcm_channel_params_roundtrip",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "lcm_pose",
+            "encoding": "geometry_msgs.PoseStamped.lcm.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {
+              "lcm": {
+                "type": "t.P",
+                "fp": "6a82696458c279a0",
+                "structs": {
+                  "t.P": [
+                    [
+                      "x",
+                      "double",
+                      null
+                    ],
+                    [
+                      "cov",
+                      "double",
+                      [
+                        9
+                      ]
+                    ],
+                    [
+                      "names",
+                      "string",
+                      [
+                        "n"
+                      ]
+                    ]
+                  ]
+                }
+              }
             }
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "lcm_pose",
+            "dir": "rx",
+            "encoding": "geometry_msgs.PoseStamped.lcm.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {
+              "lcm": {
+                "type": "t.P",
+                "fp": "6a82696458c279a0",
+                "structs": {
+                  "t.P": [
+                    [
+                      "x",
+                      "double",
+                      null
+                    ],
+                    [
+                      "cov",
+                      "double",
+                      [
+                        9
+                      ]
+                    ],
+                    [
+                      "names",
+                      "string",
+                      [
+                        "n"
+                      ]
+                    ]
+                  ]
+                }
+              }
+            },
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [],
@@ -734,7 +1146,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -1061,7 +1475,9 @@
             "encoding": "costmap.zlib.v1",
             "delivery": "latest",
             "maxHz": 5.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           },
           {
             "ch": "odom",
@@ -1069,7 +1485,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -1119,7 +1537,9 @@
             "encoding": "costmap.zlib.v1",
             "delivery": "latest",
             "maxHz": 5.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -1334,6 +1754,315 @@
       "error": "invalid_map2d_panel"
     },
     {
+      "name": "map3d_panel_full",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            }
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": [
+              "global_map",
+              "odom"
+            ]
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "dir": "rx",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            },
+            "publish": "none",
+            "requiredScope": null
+          },
+          {
+            "ch": "odom",
+            "dir": "rx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "title": "",
+            "channels": [
+              "global_map",
+              "odom"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "map3d_panel_no_pose",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            }
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": [
+              "global_map"
+            ]
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "dir": "rx",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            },
+            "publish": "none",
+            "requiredScope": null
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "title": "",
+            "channels": [
+              "global_map"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "map3d_panel_no_channel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            }
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": []
+          }
+        ]
+      },
+      "error": "invalid_map3d_panel"
+    },
+    {
+      "name": "map3d_panel_three_channels",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            }
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": [
+              "global_map",
+              "odom",
+              "color_image"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map3d_panel"
+    },
+    {
+      "name": "map3d_panel_wrong_encoding",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": [
+              "global_costmap"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map3d_panel"
+    },
+    {
+      "name": "map3d_panel_wrong_delivery",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "reliable",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            }
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": [
+              "global_map"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map3d_panel"
+    },
+    {
+      "name": "map3d_panel_bad_pose",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            }
+          },
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": [
+              "global_map",
+              "color_image"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map3d_panel"
+    },
+    {
+      "name": "map3d_panel_tx_cloud",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_map",
+            "encoding": "voxels.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 1.5,
+            "params": {
+              "res": 0.05
+            },
+            "dir": "tx"
+          }
+        ],
+        "panels": [
+          {
+            "id": "map3d",
+            "kind": "map3d",
+            "channels": [
+              "global_map"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_map3d_panel"
+    },
+    {
       "name": "teleop_panel_valid",
       "data": {
         "version": 1,
@@ -1376,7 +2105,9 @@
               "maxAngular": 1.5,
               "boost": 2.5,
               "watchdogMs": 300.5
-            }
+            },
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -1580,7 +2311,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -1652,7 +2385,9 @@
             "encoding": "jpeg.v1",
             "delivery": "latest",
             "maxHz": 15.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           },
           {
             "ch": "odom",
@@ -1660,7 +2395,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -1760,7 +2497,9 @@
             "encoding": "jpeg.v1",
             "delivery": "latest",
             "maxHz": 15.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           },
           {
             "ch": "odom",
@@ -1768,7 +2507,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -1848,7 +2589,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -2493,7 +3236,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -2561,7 +3306,9 @@
             "encoding": "jpeg.v1",
             "delivery": "latest",
             "maxHz": 15.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           },
           {
             "ch": "odom",
@@ -2569,7 +3316,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -2729,6 +3478,523 @@
         "pages": null
       },
       "error": "invalid_shape"
+    },
+    {
+      "name": "chat_panel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          },
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "json.v1",
+            "delivery": "latest",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "audio_in",
+            "dir": "tx",
+            "encoding": "audio.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "shared"
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "channels": [
+              "human_input",
+              "agent",
+              "agent_idle",
+              "audio_in"
+            ]
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "params": {},
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          },
+          {
+            "ch": "agent",
+            "dir": "rx",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
+          },
+          {
+            "ch": "agent_idle",
+            "dir": "rx",
+            "encoding": "json.v1",
+            "delivery": "latest",
+            "maxHz": 20.5,
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
+          },
+          {
+            "ch": "audio_in",
+            "dir": "tx",
+            "encoding": "audio.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {},
+            "publish": "shared",
+            "requiredScope": null
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "title": "",
+            "channels": [
+              "human_input",
+              "agent",
+              "agent_idle",
+              "audio_in"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "chat_panel_two_channels",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          },
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "channels": [
+              "human_input",
+              "agent"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_three_channels",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          },
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "json.v1",
+            "delivery": "latest",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "channels": [
+              "human_input",
+              "agent",
+              "agent_idle"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_input_not_publishable",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          },
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "json.v1",
+            "delivery": "latest",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "audio_in",
+            "dir": "tx",
+            "encoding": "audio.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "shared"
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "channels": [
+              "human_input",
+              "agent",
+              "agent_idle",
+              "audio_in"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_messages_wrong_encoding",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "json.v1",
+            "delivery": "latest",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "audio_in",
+            "dir": "tx",
+            "encoding": "audio.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "shared"
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "channels": [
+              "human_input",
+              "odom",
+              "agent_idle",
+              "audio_in"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_idle_wrong_delivery",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          },
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "audio_in",
+            "dir": "tx",
+            "encoding": "audio.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "shared"
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "channels": [
+              "human_input",
+              "agent",
+              "agent_idle",
+              "audio_in"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_audio_not_publishable",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          },
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "json.v1",
+            "delivery": "latest",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "audio_in",
+            "dir": "tx",
+            "encoding": "audio.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "channels": [
+              "human_input",
+              "agent",
+              "agent_idle",
+              "audio_in"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "stats_panel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "resource_stats",
+            "encoding": "stats.json.v1",
+            "delivery": "latest",
+            "maxHz": 2.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "stats",
+            "kind": "stats",
+            "channels": [
+              "resource_stats"
+            ]
+          }
+        ],
+        "pages": [
+          "stats"
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "resource_stats",
+            "dir": "rx",
+            "encoding": "stats.json.v1",
+            "delivery": "latest",
+            "maxHz": 2.5,
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
+          }
+        ],
+        "panels": [
+          {
+            "id": "stats",
+            "kind": "stats",
+            "title": "",
+            "channels": [
+              "resource_stats"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": null,
+        "pages": [
+          "stats"
+        ]
+      }
+    },
+    {
+      "name": "stats_panel_two_channels",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "resource_stats",
+            "encoding": "stats.json.v1",
+            "delivery": "latest",
+            "maxHz": 2.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "stats",
+            "kind": "stats",
+            "channels": [
+              "resource_stats",
+              "odom"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_stats_panel"
+    },
+    {
+      "name": "stats_panel_wrong_encoding",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "stats",
+            "kind": "stats",
+            "channels": [
+              "odom"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_stats_panel"
+    },
+    {
+      "name": "stats_panel_wrong_delivery",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "resource_stats",
+            "encoding": "stats.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "stats",
+            "kind": "stats",
+            "channels": [
+              "resource_stats"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_stats_panel"
     }
   ]
 }

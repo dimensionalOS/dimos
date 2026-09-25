@@ -1,0 +1,14 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 943.2 100.8" data-pikchr-date="20260403102956">
+<path d="M10.8,90L226.8,90L226.8,10.8L10.8,10.8Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="118.8" y="40.32" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">headerLen</text>
+<text x="118.8" y="60.48" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">u32, 4 bytes, LE</text>
+<path d="M226.8,90L442.8,90L442.8,10.8L226.8,10.8Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="334.8" y="40.32" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">payloadLen</text>
+<text x="334.8" y="60.48" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">u32, 4 bytes, LE</text>
+<path d="M442.8,90L658.8,90L658.8,10.8L442.8,10.8Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="550.8" y="40.32" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">header JSON</text>
+<text x="550.8" y="60.48" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">headerLen bytes</text>
+<path d="M658.8,90L932.4,90L932.4,10.8L658.8,10.8Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="795.6" y="40.32" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">payload</text>
+<text x="795.6" y="60.48" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">payloadLen bytes</text>
+</svg>

@@ -11,13 +11,16 @@ import {
   DataFrameStreamReader,
   encodeControlFrame,
   encodeDatagram,
+  type JsonValue,
+  MAX_PUB_DATA_BYTES,
+  MAX_TOKEN_LEN,
   type Msg,
   PROTOCOL_VERSION,
   type RobotInfo,
 } from "@dimos/shared";
 import { type Manifest, ManifestError, parseManifest } from "@dimos/shared/manifest";
 import { createDecoderRegistry, type DecoderRegistry } from "./decoders/index.ts";
-import { WatchRejectedError } from "./errors.ts";
+import { PublishError, WatchRejectedError } from "./errors.ts";
 import { registerTeleopHooks, type TeleopHooks } from "./internal/teleopMachine.ts";
 import { type ChannelSnapshot, ChannelStore, StatusStore } from "./store.ts";
 import {
@@ -30,6 +33,19 @@ import {
 
 const DEFAULT_UI_TICK_MS = 500;
 
+// Local safety net over the relay's own 10 s publish timeout: a wedged-but-
+// alive transport must not leak pending promises forever.
+const PUBLISH_LOCAL_TIMEOUT_MS = 20_000;
+// Local pending cap; the relay enforces its own (stricter) budgets.
+const MAX_PENDING_PUBLISHES = 64;
+// Publish values nesting deeper than this are rejected locally; the bridge
+// enforces the same cap, so both ends agree on what "too deep" means.
+const MAX_PUBLISH_DEPTH = 100;
+
+// Correlated relay codes whose outcome is genuinely unknown: the bridge may
+// have published even though no ack made it back.
+const UNKNOWN_OUTCOME_CODES = new Set(["publish_timeout", "robot_disconnected"]);
+
 export interface ConnectOptions {
   /** HTTP relay base to resolve /api/info against; default: same origin. */
   url?: string;
@@ -37,8 +53,25 @@ export interface ConnectOptions {
   robot?: string;
   /** Decoder registry, captured for the session's lifetime. */
   decoders?: DecoderRegistry;
+  /** Viewer token for a relay started with --auth-file; sent in hello. A
+   * rejected token fails the transport for good (code auth_failed). */
+  token?: string;
   /** Period of the UI snapshot tick that feeds subscribe() callbacks. */
   uiTickMs?: number;
+}
+
+/** A resolved publish: the bridge decoded the value and called the DimOS
+ * output stream. Timestamps are seconds since epoch (relay receive time and
+ * bridge publish time). */
+export interface PublishReceipt {
+  ch: string;
+  relayTs: number;
+  bridgeTs: number;
+}
+
+export interface PublishOptions {
+  /** Browser send time forwarded to the bridge's PublishContext. */
+  clientTs?: number;
 }
 
 export interface Session {
@@ -59,12 +92,64 @@ export interface Session {
    * staying desired for a later manifest.
    */
   subscribe(ch: string, cb: (snapshot: ChannelSnapshot) => void): () => void;
+  /**
+   * Publish one JSON value on a tx channel declared publish="shared".
+   * Resolves once the bridge decoded the value and called the DimOS output
+   * stream; rejects with PublishError - outcome "rejected" for definite
+   * validation failures, "unknown" when the connection died (or nothing
+   * answered) after the send. Never auto-resends: an "unknown" command may
+   * well have been published.
+   */
+  publish(ch: string, value: JsonValue, options?: PublishOptions): Promise<PublishReceipt>;
   close(): void;
 }
 
 /** Local auto-select policy: watch the robot only when it is the only one. */
 export function pickAutoWatch(robots: RobotInfo[]): RobotInfo | null {
   return robots.length === 1 ? robots[0] : null;
+}
+
+/** Random per-session publish-id prefix, so ids from independent sessions
+ * (or a reloaded page) cannot collide at the relay's per-viewer dup check. */
+function randomIdPrefix(): string {
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** First reason `v` is not a publishable JSON value, or null if it is one.
+ * Stricter than JSON.stringify on purpose: anything stringify would silently
+ * rewrite (non-finite numbers, undefined members, array holes, non-plain
+ * objects) is rejected instead. The depth cap bounds recursion (cycles
+ * included); messages are short constants that never echo the value. */
+function findNonJson(v: unknown, depth: number): string | null {
+  if (depth > MAX_PUBLISH_DEPTH) {
+    return `value nests deeper than ${MAX_PUBLISH_DEPTH} levels`;
+  }
+  if (v === null || typeof v === "boolean" || typeof v === "string") return null;
+  if (typeof v === "number") {
+    return Number.isFinite(v) ? null : "value contains a non-finite number";
+  }
+  if (Array.isArray(v)) {
+    for (const item of v) {
+      const bad = findNonJson(item, depth + 1);
+      if (bad !== null) return bad;
+    }
+    return null;
+  }
+  if (typeof v === "object") {
+    const proto = Object.getPrototypeOf(v);
+    if (proto !== Object.prototype && proto !== null) {
+      return "value contains a non-plain object";
+    }
+    // Own enumerable string-keyed values: exactly what JSON.stringify emits.
+    for (const item of Object.values(v)) {
+      const bad = findNonJson(item, depth + 1);
+      if (bad !== null) return bad;
+    }
+    return null;
+  }
+  return `value contains a non-JSON ${typeof v}`;
 }
 
 /** Structural equality over plain-JSON values (params, layout trees). Key
@@ -112,7 +197,9 @@ export function manifestsEqual(a: Manifest, b: Manifest): boolean {
       c.encoding === other.encoding &&
       c.delivery === other.delivery &&
       c.maxHz === other.maxHz &&
-      jsonEqual(c.params, other.params)
+      jsonEqual(c.params, other.params) &&
+      c.publish === other.publish &&
+      c.requiredScope === other.requiredScope
     );
   });
   const panelsEqual = a.panels.every((p, i) => {
@@ -146,6 +233,7 @@ class SessionImpl implements Session {
   readonly transport: ReconnectingTransport;
 
   #registry: DecoderRegistry;
+  #token: string | undefined;
   #ticker: ReturnType<typeof setInterval>;
   #closed = false;
 
@@ -164,6 +252,19 @@ class SessionImpl implements Session {
   #watchWaiter:
     | { id: string; resolve: (m: Manifest) => void; reject: (e: Error) => void }
     | null = null;
+
+  // Pending publishes by request id; each settles exactly once - by pub_ack,
+  // a correlated error, the local safety timer, its connection's death (the
+  // run-loop sweep), or close(). Ids are session-random + counter, bounded.
+  #pending = new Map<string, {
+    runId: number;
+    ch: string;
+    resolve: (receipt: PublishReceipt) => void;
+    reject: (error: PublishError) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+  #pubPrefix = randomIdPrefix();
+  #pubN = 0;
 
   // Subscription refcounts. #desired counts live subscribe() consumers per
   // channel and survives reconnects and manifest changes. #wire mirrors the
@@ -202,6 +303,7 @@ class SessionImpl implements Session {
   constructor(options: ConnectOptions, deps: TransportDeps) {
     registerTeleopHooks(this, this.#teleop);
     this.#registry = options.decoders ?? createDecoderRegistry();
+    this.#token = options.token;
     this.#pinned = options.robot ?? null;
     const infoUrl = resolveInfoUrl(options.url);
     this.transport = new ReconnectingTransport(
@@ -224,6 +326,8 @@ class SessionImpl implements Session {
     if (this.#closed) return;
     this.#closed = true;
     this.#rejectWaiter(new WatchRejectedError("closed"));
+    // A publish already sent may have been delivered; close cannot know.
+    this.#sweepPendingPublishes(null, "closed", "the session was closed");
     clearInterval(this.#ticker);
     this.transport.stop();
   }
@@ -266,6 +370,92 @@ class SessionImpl implements Session {
     if (this.#wire.has(ch)) {
       this.#wire.delete(ch);
       this.#send?.({ t: "unsub", ch });
+    }
+  }
+
+  publish(ch: string, value: JsonValue, options?: PublishOptions): Promise<PublishReceipt> {
+    const rejectLocal = (code: string, message: string) =>
+      Promise.reject(new PublishError("rejected", code, message));
+    if (this.#closed) return rejectLocal("closed", "the session is closed");
+    // The subscription gate: a live connection whose manifest is adopted.
+    if (this.#wireRunId !== this.#runId || this.#manifest === null || this.#send === null) {
+      return rejectLocal("not_connected", "no adopted manifest on a live connection");
+    }
+    // Validate, then serialize exactly once: the bytes checked below are the
+    // bytes sent (the message carries their parse, so a getter re-reading
+    // differently cannot smuggle an unchecked value onto the wire).
+    let data: string;
+    try {
+      const bad = findNonJson(value, 0);
+      if (bad !== null) return rejectLocal("not_serializable", bad);
+      data = JSON.stringify(value);
+    } catch {
+      // A property getter threw mid-traversal or mid-stringify.
+      return rejectLocal("not_serializable", "value threw while serializing");
+    }
+    const clientTs = options?.clientTs;
+    if (clientTs !== undefined && !Number.isFinite(clientTs)) {
+      return rejectLocal("not_serializable", "clientTs must be a finite number");
+    }
+    const bytes = new TextEncoder().encode(data).byteLength;
+    if (bytes > MAX_PUB_DATA_BYTES) {
+      return rejectLocal(
+        "too_large",
+        `serialized data is ${bytes} B (limit ${MAX_PUB_DATA_BYTES})`,
+      );
+    }
+    const spec = this.#manifest.channels.find((c) => c.ch === ch);
+    if (spec === undefined) {
+      return rejectLocal("unknown_channel", `no channel ${ch} in the adopted manifest`);
+    }
+    if (spec.publish === "exclusive") {
+      return rejectLocal(
+        "exclusive_unsupported",
+        `channel ${ch} requires the exclusive publisher lease (not supported yet)`,
+      );
+    }
+    if (spec.dir !== "tx" || spec.publish !== "shared") {
+      return rejectLocal("not_publishable", `channel ${ch} does not accept generic publish`);
+    }
+    if (this.#pending.size >= MAX_PENDING_PUBLISHES) {
+      return rejectLocal("pending_limit", "too many unacknowledged publishes");
+    }
+    const id = `${this.#pubPrefix}-${++this.#pubN}`;
+    return new Promise<PublishReceipt>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        // The relay's 10 s publish_timeout normally lands first; this only
+        // fires on a wedged-but-alive transport, where nothing is provable.
+        this.#settlePub(id)?.reject(
+          new PublishError("unknown", "publish_timeout", "no acknowledgement (local timeout)"),
+        );
+      }, PUBLISH_LOCAL_TIMEOUT_MS);
+      this.#pending.set(id, { runId: this.#runId, ch, resolve, reject, timer });
+      this.#send!({
+        t: "pub",
+        id,
+        ch,
+        data: JSON.parse(data) as JsonValue,
+        ...(clientTs !== undefined ? { clientTs } : {}),
+      });
+    });
+  }
+
+  /** Remove one pending publish, its timer cleared; null if already settled. */
+  #settlePub(id: string) {
+    const pending = this.#pending.get(id);
+    if (pending === undefined) return null;
+    this.#pending.delete(id);
+    clearTimeout(pending.timer);
+    return pending;
+  }
+
+  /** Reject pending publishes with outcome "unknown" (a sent command may
+   * have been delivered): all of them (runId null, close) or one dead
+   * connection's (its run-loop exit). Never resends anything. */
+  #sweepPendingPublishes(runId: number | null, code: string, message: string): void {
+    for (const [id, pending] of [...this.#pending]) {
+      if (runId !== null && pending.runId !== runId) continue;
+      this.#settlePub(id)?.reject(new PublishError("unknown", code, message));
     }
   }
 
@@ -374,7 +564,12 @@ class SessionImpl implements Session {
     this.#teleopDatagram = (msg) => {
       if (runId === this.#runId) void datagrams.write(encodeDatagram(msg)).catch(() => {});
     };
-    await send({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" });
+    await send({
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "viewer",
+      ...(this.#token !== undefined ? { token: this.#token } : {}),
+    });
     void this.#readUniStreams(wt, runId);
 
     const reader = control.readable.getReader();
@@ -442,9 +637,30 @@ class SessionImpl implements Session {
             case "teleop_started":
               for (const cb of this.#teleopCbs) cb(msg);
               break;
+            case "pub_ack":
+              this.#settlePub(msg.id)?.resolve({
+                ch: msg.ch,
+                relayTs: msg.relayTs,
+                bridgeTs: msg.bridgeTs,
+              });
+              break;
             case "error": {
-              if (msg.code === "version_mismatch") {
-                this.transport.fail(msg.message);
+              if (msg.requestId !== undefined) {
+                // A correlated publish failure settles its promise and never
+                // reaches the session error banner; an unknown id (already
+                // settled locally) is dropped.
+                this.#settlePub(msg.requestId)?.reject(
+                  new PublishError(
+                    UNKNOWN_OUTCOME_CODES.has(msg.code) ? "unknown" : "rejected",
+                    msg.code,
+                    msg.message,
+                  ),
+                );
+                break;
+              }
+              if (msg.code === "version_mismatch" || msg.code === "auth_failed") {
+                // Terminal on purpose: a wrong token must not retry forever.
+                this.transport.fail(msg.message, msg.code);
               } else if (msg.code === "teleop_held") {
                 // A refused lease is the teleop panel's state, not a
                 // session-level error banner.
@@ -464,6 +680,11 @@ class SessionImpl implements Session {
       }
     } catch {
       // control stream died with the connection; the transport reconnects
+    } finally {
+      // This connection can never answer its publishes; the commands may
+      // have been delivered before it died, so the outcome is unknown and
+      // nothing is ever resent.
+      this.#sweepPendingPublishes(runId, "connection_lost", "the relay connection died");
     }
   }
 
@@ -547,7 +768,7 @@ class SessionImpl implements Session {
     // stale drain from a dead robot session and must not re-dirty the store.
     if (this.#manifest === null) return;
     const spec = this.#manifest.channels.find((c) => c.ch === frame.header.ch);
-    const decoder = this.#registry.get(spec?.encoding);
+    const decoder = spec === undefined ? undefined : this.#registry.resolve(spec);
     let value: unknown;
     let preview: string | undefined;
     let decodeOk = true;
@@ -564,6 +785,13 @@ class SessionImpl implements Session {
 
 export function connect(options: ConnectOptions = {}, deps: TransportDeps = {}): Session {
   const session = new SessionImpl(options, deps);
-  session.transport.start();
+  if (options.token !== undefined && options.token.length > MAX_TOKEN_LEN) {
+    session.transport.fail(
+      `viewer token exceeds the ${MAX_TOKEN_LEN}-character limit`,
+      "auth_failed",
+    );
+  } else {
+    session.transport.start();
+  }
   return session;
 }

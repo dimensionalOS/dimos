@@ -22,8 +22,11 @@ import numpy as np
 import pytest
 
 from dimos.memory.blobstore.file import FileBlobStore
+from dimos.memory.blobstore.memory import MemoryBlobStore
+from dimos.memory.observationstore.memory import ListObservationStore
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.type.observation import _UNLOADED
+from dimos.memory.vectorstore.memory import MemoryVectorStore
 from dimos.models.embedding.base import Embedding
 
 if TYPE_CHECKING:
@@ -131,6 +134,21 @@ class TestBlobStoreIntegration:
             assert len(results) == 2
             assert results[0].data == "north"
             assert results[0].similarity > 0.99
+
+    def test_search_rolling_window(self) -> None:
+        # hits evicted from the window are skipped
+        with MemoryStore(vector_store=MemoryVectorStore()) as store:
+            s = store.stream(
+                "window",
+                str,
+                observation_store=ListObservationStore(name="window", max_size=2),
+                blob_store=MemoryBlobStore(max_items=2),
+            )
+            for i, name in enumerate(["a", "b", "c", "d"]):
+                s.append(name, ts=float(i), embedding=_emb([1, 0, 0]))
+
+            results = s.search(_emb([1, 0, 0]), k=4).to_list()
+            assert sorted(r.data for r in results) == ["c", "d"]
 
     def test_blobstore_with_text_search(self, store: MemoryStore) -> None:
         s = store.stream("logs", str)

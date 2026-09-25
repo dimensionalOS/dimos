@@ -40,13 +40,16 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
-from dimos.perception.memory.types import Localization
+from dimos.perception.localize.spec import LocalizationSpec
+from dimos.perception.localize.types import Localization
 
 
 class PickAndPlaceModuleConfig(ModuleConfig):
     planning_frame: str = "base_link"
     pregrasp_offset: float = Field(default=0.10, gt=0.0)
+    # A learned provider returns a ranked spread whose best-scoring pose is not
+    # always kinematically reachable; a single-candidate provider is unaffected.
+    max_grasp_attempts: int = Field(default=5, gt=0)
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
 
@@ -55,7 +58,7 @@ class PickAndPlaceModule(Module):
     """Coordinate scene registration, grasp generation, and manipulation execution."""
 
     config: PickAndPlaceModuleConfig
-    _scene: ObjectSceneRegistrationSpec
+    _scene: LocalizationSpec
     _grasp_generator: GraspGenSpec
     _manipulation: ManipulationSpec
 
@@ -63,18 +66,33 @@ class PickAndPlaceModule(Module):
         super().__init__(**kwargs)
         self._objects: dict[int, dict[str, Any]] = {}
         self._localizations: dict[int, Localization] = {}
+        self._next_selection = 0
         self._grasp_candidates = GraspCandidateArray()
         self._selected_object: int | None = None
         self._selected_grasp: PoseStamped | None = None
         self._holding_object = False
 
     @skill
-    def scan_objects(self, prompts: list[str]) -> SkillResult[ManipulationSkillError]:
-        """Localize prompted objects from recent RGB-D history.
+    def scan_objects(
+        self,
+        prompts: list[str],
+        start: float = -10.0,
+        duration: float = 10.0,
+        policy: str = "",
+        max_age: float | None = None,
+    ) -> SkillResult[ManipulationSkillError]:
+        """Localize all matching instances from wrist-camera memory.
+
+        Move the arm to gather distinct views if objects are not verified. Each
+        scan replaces the selectable snapshot; old selections cannot be reused.
 
         Args:
             prompts: Unique object labels to localize. Use a selection from this scan
                 with pick_object.
+            start: Seconds from the oldest retained frame, or negative from the newest.
+            duration: Window of frames to examine, in seconds.
+            policy: JSON LocalizePolicy overrides, e.g. {"min_views": 1}.
+            max_age: Optional maximum last-seen age relative to the newest RGB frame.
         """
         prompts = [prompt.strip() for prompt in prompts if prompt.strip()]
         if not prompts:
@@ -86,19 +104,28 @@ class PickAndPlaceModule(Module):
         self._objects = {}
         self._localizations = {}
         try:
-            localizations = self._scene.localize_objects(prompts)
+            localizations = self._scene.localize_objects(
+                prompts, start=start, duration=duration, policy=policy, max_age=max_age
+            )
         except (RuntimeError, ValueError) as exc:
             return SkillResult.fail("PERCEPTION_FAILED", str(exc))
-        for prompt, localization in zip(prompts, localizations, strict=True):
-            if localization is None:
-                continue
-            selection = len(self._localizations)
-            self._localizations[selection] = localization
-            self._objects[selection] = {
-                "selection": selection,
-                "name": prompt,
-                "score": localization.semantic_score,
-            }
+        for prompt, hits in zip(prompts, localizations, strict=True):
+            for localization in hits:
+                selection = self._next_selection
+                self._next_selection += 1
+                self._localizations[selection] = localization
+                self._objects[selection] = {
+                    "selection": selection,
+                    "name": prompt,
+                    "score": localization.semantic_score,
+                    "position": localization.position_world_xyz,
+                    "frame_id": localization.frame_id,
+                    "last_seen_timestamp": localization.last_seen_timestamp,
+                    "n_views": localization.n_views,
+                    "coverage": localization.coverage,
+                    "ambiguity_margin": localization.ambiguity_margin,
+                    "reason": localization.reason,
+                }
         return SkillResult.ok(
             f"Localized {len(self._localizations)} object(s)",
             prompts=prompts,
@@ -136,6 +163,7 @@ class PickAndPlaceModule(Module):
         except (RuntimeError, ValueError) as exc:
             return SkillResult.fail("GRASP_GENERATION_FAILED", str(exc))
         self._grasp_candidates = candidates
+        self._manipulation.show_grasp_proposals(candidates)
         if candidates.header.frame_id != self.config.planning_frame:
             return SkillResult.fail(
                 "GRASP_FRAME_MISMATCH",
@@ -148,37 +176,46 @@ class PickAndPlaceModule(Module):
             return SkillResult.fail(
                 "ROBOT_NOT_FOUND", "Gripper-capable planning group is missing or ambiguous"
             )
-        candidate = candidates.candidates[0]
-        grasp = self._apply_yaw_policy(
-            PoseStamped(
-                ts=candidates.header.timestamp,
-                frame_id=candidates.header.frame_id,
-                position=candidate.pose.position,
-                orientation=candidate.pose.orientation,
-            ),
-            group,
-        )
-        pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
         if failure := self._open_gripper(group, "pre-grasp open"):
             return failure
-        if failure := self._move(pregrasp, group):
-            return failure
-        if failure := self._move(grasp, group):
-            return failure
-        if failure := self._close_and_verify(group):
-            return failure
 
-        self._selected_object = selection
-        self._selected_grasp = grasp
-        self._holding_object = True
-        if failure := self._move(pregrasp, group):
-            return failure
-        return SkillResult.ok(
-            "Pick complete",
-            selection=selection,
-            rank=0,
-            score=candidate.score,
-            candidates=len(candidates.candidates),
+        unreachable: SkillResult[ManipulationSkillError] | None = None
+        for rank, candidate in enumerate(candidates.candidates[: self.config.max_grasp_attempts]):
+            grasp = self._apply_yaw_policy(
+                PoseStamped(
+                    ts=candidates.header.timestamp,
+                    frame_id=candidates.header.frame_id,
+                    position=candidate.pose.position,
+                    orientation=candidate.pose.orientation,
+                ),
+                group,
+            )
+            pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
+            failure = self._move(pregrasp, group) or self._servo(pregrasp, grasp, group)
+            if failure is not None:
+                # Only an unreachable pose is worth demoting to the next candidate;
+                # a drive or execution fault would repeat for every one of them.
+                if failure.error_code != "PLANNING_FAILED":
+                    return failure
+                unreachable = failure
+                continue
+            if failure := self._close_and_verify(group):
+                return failure
+
+            self._selected_object = selection
+            self._selected_grasp = grasp
+            self._holding_object = True
+            if failure := self._servo(grasp, pregrasp, group):
+                return failure
+            return SkillResult.ok(
+                "Pick complete",
+                selection=selection,
+                rank=rank,
+                score=candidate.score,
+                candidates=len(candidates.candidates),
+            )
+        return unreachable or SkillResult.fail(
+            "PLANNING_FAILED", "No grasp candidate was reachable"
         )
 
     @rpc
@@ -216,16 +253,17 @@ class PickAndPlaceModule(Module):
         preplace = self._offset_pose(place, self.config.pregrasp_offset)
         if failure := self._move(preplace, group):
             return failure
-        if failure := self._move(place, group):
+        if failure := self._servo(preplace, place, group):
             return failure
         if failure := self._open_gripper(group, "release"):
             return failure
         self._holding_object = False
         self._clear_selection()
-        return self._move(preplace, group) or SkillResult.ok("Place complete")
+        return self._servo(place, preplace, group) or SkillResult.ok("Place complete")
 
     def _clear_selection(self) -> None:
         self._grasp_candidates = GraspCandidateArray()
+        self._manipulation.show_grasp_proposals(GraspCandidateArray())
         self._selected_object = None
         self._selected_grasp = None
 
@@ -263,6 +301,31 @@ class PickAndPlaceModule(Module):
             orientation=pose.orientation,
         )
 
+    def _servo(
+        self, start: PoseStamped, end: PoseStamped, planning_group: PlanningGroupID
+    ) -> SkillResult[ManipulationSkillError] | None:
+        """Drive the last leg as a straight line with collision checking off.
+
+        The object being grasped is itself mapped geometry once a voxel map feeds
+        the planner, so a collision-checked plan into it can only ever be
+        rejected. This leg is short, straight, and deliberately ends in contact.
+        """
+        result = self._manipulation.move_linear(
+            end.position.x - start.position.x,
+            end.position.y - start.position.y,
+            end.position.z - start.position.z,
+            planning_group,
+            check_collision=False,
+        )
+        if not result.plan.succeeded:
+            # A planning failure demotes to the next candidate; a drive fault
+            # would repeat for every one of them, so keep the two distinct.
+            return SkillResult.fail("PLANNING_FAILED", result.plan.message)
+        if result.execution is None or not result.execution.succeeded:
+            message = "" if result.execution is None else result.execution.message
+            return SkillResult.fail("EXECUTION_FAILED", message)
+        return None
+
     def _move(
         self, pose: PoseStamped, planning_group: PlanningGroupID
     ) -> SkillResult[ManipulationSkillError] | None:
@@ -275,7 +338,10 @@ class PickAndPlaceModule(Module):
         return None
 
     def _command_and_settle(
-        self, position: float, planning_group: PlanningGroupID
+        self,
+        position: float,
+        planning_group: PlanningGroupID,
+        arrival_tolerance: float | None = None,
     ) -> GripperSettle | SkillResult[ManipulationSkillError]:
         result = self._manipulation.set_gripper_position(position, planning_group)
         if not result.succeeded:
@@ -283,14 +349,22 @@ class PickAndPlaceModule(Module):
                 "GRIPPER_FAILED", result.message or "Gripper command was rejected"
             )
         return await_gripper_settle(
-            lambda: self._gripper_position(planning_group), position, self.config.grasp_verification
+            lambda: self._gripper_position(planning_group),
+            position,
+            self.config.grasp_verification,
+            arrival_tolerance=arrival_tolerance,
         )
 
     def _open_gripper(
         self, planning_group: PlanningGroupID, step: str
     ) -> SkillResult[ManipulationSkillError] | None:
+        # Jaws resting against the open stop never move and never reach the
+        # commanded extreme; open_tolerance is the band that already decides
+        # whether where they stopped counts as open.
         settle = self._command_and_settle(
-            self.config.grasp_verification.open_position, planning_group
+            self.config.grasp_verification.open_position,
+            planning_group,
+            arrival_tolerance=self.config.grasp_verification.open_tolerance,
         )
         if isinstance(settle, SkillResult):
             return settle

@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import Future
+from dataclasses import dataclass, field
 import json
 import os
 import platform
@@ -29,7 +31,7 @@ from dimos.core.global_config import TransportBackend, ZenohMode, global_config
 from dimos.protocol.service.spec import Service, SessionConfig
 from dimos.utils.logging_config import setup_logger
 
-zenoh.init_log_from_env_or("warn")
+zenoh.init_log_from_env_or("warn,zenoh_shm::watchdog::periodic_task=error")
 
 logger = setup_logger()
 
@@ -241,9 +243,45 @@ def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
     return zconfig
 
 
+def _await_connect(session: zenoh.Session, config: ZenohConfig) -> None:
+    """Block until the dialed endpoints have links.
+
+    A session opens before its endpoints are dialed, so without this the
+    first published messages have nowhere to go. Runs once per pooled
+    session: a shared session that linked, or gave up, needs no second wait.
+    """
+    pending = {ep: endpoint_addresses(ep) for ep in config.connect}
+    if not pending or config.connect_timeout <= 0:
+        return
+    # A client session holds one link. Zenoh dials the endpoints as
+    # alternatives and keeps the first that connects.
+    needed = 1 if config.mode == "client" else len(pending)
+    total = len(pending)
+    deadline = time.monotonic() + config.connect_timeout
+    while True:
+        linked = {str(link.dst).rpartition("/")[2] for link in session.info.links()}
+        for endpoint in [e for e, addrs in pending.items() if addrs & linked]:
+            del pending[endpoint]
+        if total - len(pending) >= needed:
+            return
+        if time.monotonic() >= deadline:
+            logger.warning(
+                f"Zenoh endpoints not linked after {config.connect_timeout}s: "
+                f"{sorted(pending)} - continuing, published messages may be dropped"
+            )
+            return
+        time.sleep(_CONNECT_POLL_INTERVAL)
+
+
+@dataclass
+class _PooledSession:
+    session: zenoh.Session
+    ready: Future[None] = field(default_factory=Future)
+
+
 class ZenohSessionPool:
     def __init__(self) -> None:
-        self._sessions: dict[str, zenoh.Session] = {}
+        self._sessions: dict[str, _PooledSession] = {}
         self._lock = threading.Lock()
         self._opened_in_pid: int | None = None
 
@@ -260,10 +298,17 @@ class ZenohSessionPool:
                     "process forked; zenoh's runtime does not survive fork. "
                     "Fork or daemonize before any zenoh use."
                 )
-            if key not in self._sessions:
+            entry = self._sessions.get(key)
+            created = entry is None
+            if entry is None:
                 _warn_client_single_link(config)
-                self._sessions[key] = zenoh.open(_zenoh_config(config))
+                entry = _PooledSession(zenoh.open(_zenoh_config(config)))
+                self._sessions[key] = entry
                 self._opened_in_pid = os.getpid()
+        # Only callers sharing this session wait for its initial link check.
+        # Completion must not take the pool lock: close_all may hold it while waiting.
+        if created:
+            try:
                 logger.info(
                     "Zenoh session opened",
                     mode=config.mode,
@@ -272,7 +317,15 @@ class ZenohSessionPool:
                     multicast_interface=config.multicast_interface,
                     gossip=config.gossip_enabled,
                 )
-            return self._sessions[key]
+                _await_connect(entry.session, config)
+            except BaseException as e:
+                # Release every waiter even if initialization is interrupted.
+                entry.ready.set_exception(e)
+                raise
+            else:
+                entry.ready.set_result(None)
+        entry.ready.result()
+        return entry.session
 
     def _close_at_exit(self) -> None:
         """Close pooled sessions at interpreter exit, in the opening process only."""
@@ -282,11 +335,14 @@ class ZenohSessionPool:
     def close_all(self) -> None:
         """Close every pooled session and empty the pool."""
         with self._lock:
-            for key, session in self._sessions.items():
+            for key, entry in self._sessions.items():
+                # Wait for initialization, including failures already raised to callers.
+                # Keep the session itself so a failed link check cannot leak it.
+                entry.ready.exception()
                 # A close can time out while the session still holds links to
                 # unreachable peers. The pool is torn down either way.
                 try:
-                    session.close()
+                    entry.session.close()
                 except zenoh.ZError as e:
                     logger.warning("Zenoh session close failed", session_key=key, error=str(e))
             self._sessions.clear()
@@ -342,37 +398,7 @@ class ZenohService(Service):
                     f"{self.config.connect or 'any scouted locator'}"
                 ) from e
             raise
-        self._await_connect(self._session)
         super().start()
-
-    def _await_connect(self, session: zenoh.Session) -> None:
-        """Block until the dialed endpoints have links.
-
-        A session opens before its endpoints are dialed, so without this the
-        first published messages have nowhere to go.
-        """
-        pending = {ep: endpoint_addresses(ep) for ep in self.config.connect}
-        if not pending or self.config.connect_timeout <= 0:
-            return
-        # A client session holds one link. Zenoh dials the endpoints as
-        # alternatives and keeps the first that connects.
-        needed = 1 if self.config.mode == "client" else len(pending)
-        total = len(pending)
-        deadline = time.monotonic() + self.config.connect_timeout
-        while True:
-            linked = {str(link.dst).rpartition("/")[2] for link in session.info.links()}
-            for endpoint in [e for e, addrs in pending.items() if addrs & linked]:
-                logger.debug(f"Zenoh linked {endpoint}")
-                del pending[endpoint]
-            if total - len(pending) >= needed:
-                return
-            if time.monotonic() >= deadline:
-                logger.warning(
-                    f"Zenoh endpoints not linked after {self.config.connect_timeout}s: "
-                    f"{sorted(pending)} - continuing, published messages may be dropped"
-                )
-                return
-            time.sleep(_CONNECT_POLL_INTERVAL)
 
     @property
     def session(self) -> zenoh.Session:

@@ -28,6 +28,9 @@ build/
 /web/cockpit/.dist-*
 /web/sdk/.dist-*
 
+# Hosted relay: certificate and auth file next to docker/relay/compose.yaml
+/docker/relay/config/
+
 # Nix / direnv (symlink one of the tracked .envrc.* files to .envrc)
 .direnv/
 .envrc
@@ -62,6 +65,7 @@ data/*
 # Runtime output
 /logs
 /recordings
+/downloads
 results/
 /assets/output/
 /assets/rgbd_data/
@@ -97,3 +101,6 @@ yolo11n*.pt
 *.ignore
 *.ignore.*
 site/
+
+# Optuna study store, written by the relocalization eval (see lidar/eval.md)
+optuna.db

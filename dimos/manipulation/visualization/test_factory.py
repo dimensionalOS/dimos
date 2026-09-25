@@ -27,6 +27,7 @@ from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.joint_space import JointSpace
 from dimos.manipulation.planning.spec.models import (
     Obstacle,
     PlanningSceneInfo,
@@ -34,6 +35,7 @@ from dimos.manipulation.planning.spec.models import (
     VisualizationStateFrame,
 )
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.world.drake_world import DRAKE_AVAILABLE, DrakeWorld
 from dimos.manipulation.visualization.config import (
     MeshcatVisualizationConfig,
@@ -42,9 +44,10 @@ from dimos.manipulation.visualization.config import (
 from dimos.manipulation.visualization.factory import create_manipulation_visualization
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 class FakeVisualization:
@@ -83,9 +86,12 @@ class FakeVisualization:
     def clear_vis_obstacles(self) -> None:
         return None
 
+    def show_grasp_proposals(self, candidates):
+        return None
+
 
 class FakeWorld:
-    def load_model(self, config: RobotModelConfig) -> None:
+    def load_model(self, model: PreparedRobotModel) -> None:
         return None
 
     def get_model_config(self) -> RobotModelConfig:
@@ -103,8 +109,18 @@ class FakeWorld:
             ],
         )
 
-    def get_joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        return (np.array([], dtype=np.float64), np.array([], dtype=np.float64))
+    def get_prepared_model(self) -> PreparedRobotModel:
+        config = self.get_model_config()
+        return PreparedRobotModel(
+            config=config,
+            description=LoadedRobotModel(
+                xml="<robot name='fake'><link name='base_link'/></robot>",
+                source_path=Path(config.model.source_path),
+                package_paths={},
+            ),
+            joint_space=JointSpace(()),
+            planning_groups=(),
+        )
 
     def add_obstacle(self, obstacle: Obstacle) -> str | None:
         return obstacle.name
@@ -231,6 +247,9 @@ class FakeMeshcatWorld(FakeWorld):
     def clear_vis_obstacles(self) -> None:
         self.visualization_calls.append(("clear_vis_obstacles",))
 
+    def show_grasp_proposals(self, candidates):
+        self.visualization_calls.append(("show_grasp_proposals", candidates))
+
 
 def test_config_defaults_to_no_visualization() -> None:
     config = ManipulationModuleConfig(model=FakeWorld().get_model_config())
@@ -301,7 +320,7 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
     assert visualization is fake_world  # type: ignore[comparison-overlap]
     assert isinstance(visualization, VisualizationSpec)
     session = VisualizationSession(
-        PlanningSceneInfo(model=fake_world.get_model_config()), operator=object()
+        PlanningSceneInfo(model=fake_world.get_prepared_model()), operator=object()
     )
     frame = VisualizationStateFrame(joint_state=None)
     trajectory = JointTrajectory(joint_names=["arm/j1"], points=[])
@@ -320,6 +339,8 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
     visualization.add_vis_obstacle("box", obstacle)
     visualization.remove_vis_obstacle("box")
     visualization.clear_vis_obstacles()
+    proposals = GraspCandidateArray()
+    visualization.show_grasp_proposals(proposals)
     assert fake_world.visualization_calls == [
         ("initialize", session),
         ("get_visualization_url",),
@@ -330,6 +351,7 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
         ("add_vis_obstacle", "box", obstacle),
         ("remove_vis_obstacle", "box"),
         ("clear_vis_obstacles",),
+        ("show_grasp_proposals", proposals),
     ]
     assert fake_world.native_calls == []
 
@@ -365,7 +387,7 @@ def test_drake_meshcat_visualization_lifecycle_is_noop_without_meshcat() -> None
     assert world.get_visualization_url() is None
     world.initialize(
         VisualizationSession(
-            PlanningSceneInfo(model=FakeWorld().get_model_config()), operator=object()
+            PlanningSceneInfo(model=FakeWorld().get_prepared_model()), operator=object()
         )
     )
     world.update_state(VisualizationStateFrame(joint_state=None))
@@ -378,11 +400,12 @@ def test_drake_meshcat_visualization_lifecycle_is_noop_without_meshcat() -> None
     world.add_vis_obstacle("box", obstacle)
     world.remove_vis_obstacle("box")
     world.clear_vis_obstacles()
+    world.show_grasp_proposals(GraspCandidateArray())
     world.cancel_preview_animation()
     world.close()
 
 
-def test_create_viser_visualization_has_group_preview_protocol_without_legacy_path_api() -> None:
+def test_create_viser_visualization_has_group_preview_protocol() -> None:
     pytest.importorskip("viser")
 
     visualization = create_manipulation_visualization(
@@ -394,4 +417,3 @@ def test_create_viser_visualization_has_group_preview_protocol_without_legacy_pa
 
     assert isinstance(visualization, VisualizationSpec)
     assert isinstance(FakeVisualization(), VisualizationSpec)
-    assert not hasattr(visualization, "animate_path")

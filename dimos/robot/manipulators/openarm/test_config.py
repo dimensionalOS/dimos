@@ -52,9 +52,9 @@ def test_openarm_model_uses_pinned_official_bimanual_xacro() -> None:
     )
 
 
-def test_openarm_config_exposes_one_bimanual_robot() -> None:
+def test_openarm_config_exposes_one_bimanual_model() -> None:
     config = openarm_bimanual_model_config()
-    registry = PlanningGroupRegistry([config])
+    registry = PlanningGroupRegistry(config.planning_groups)
 
     assert config.model is OPENARM_BIMANUAL_MODEL
     assert config.joint_names == OPENARM_ARM_JOINTS
@@ -119,7 +119,7 @@ def test_openarm_hardware_uses_physical_adapter_with_explicit_can_ports() -> Non
     assert hardware.adapter_type == "openarm_damiao"
     runtime_config = hardware.adapter_kwargs["runtime_config"]
     assert isinstance(runtime_config, DamiaoRuntimeConfig)
-    assert runtime_config.bus_addresses == {"left": "can1", "right": "can0"}
+    assert runtime_config.bus_devices == {"left": "can1", "right": "can0"}
 
 
 @pytest.mark.parametrize(

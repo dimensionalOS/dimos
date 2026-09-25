@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
+import json
 from pathlib import Path
+import pickle
+from typing import Any
 
-from pydantic import ValidationError
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -23,34 +26,53 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 
 
-@pytest.mark.parametrize(
-    "obsolete_field",
-    ["model_path", "urdf_path", "package_paths", "xacro_args", "urdf_processors"],
-)
-def test_robot_model_config_rejects_obsolete_description_fields(
-    obsolete_field: str,
-) -> None:
-    with pytest.raises(ValidationError):
-        RobotModelConfig.model_validate(
-            {
-                "model": RobotModel.from_file("robot.urdf"),
-                "joint_names": [],
-                obsolete_field: Path("obsolete.urdf"),
-            }
-        )
-
-
 def test_robot_model_survives_blueprint_config_round_trip(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text("<robot name='arm'><link name='base'/></robot>")
+    model = RobotModel.from_file(urdf)
+    loaded = model.load()
     config = RobotModelConfig(
-        model=RobotModel.from_file(urdf),
+        model=model,
         joint_names=[],
     )
     blueprint = ManipulationModule.blueprint(model=config)
 
     parsed = BlueprintConfigParser(blueprint).parse(environ={})
 
-    kwargs = parsed.module_kwargs(blueprint.blueprints[0].name)
-    assert kwargs["model"]["model"]["_source_path"] == urdf
+    kwargs = pickle.loads(pickle.dumps(parsed.module_kwargs(ManipulationModule.name)))
     assert "_loaded" not in kwargs["model"]["model"]
+    restored = RobotModelConfig(**kwargs["model"])
+    assert restored.model.source_path == urdf
+    assert restored.model.load() == loaded
+
+
+@pytest.mark.parametrize("source", ["programmatic", "config_file"])
+@pytest.mark.parametrize(
+    "model_override",
+    [
+        {"_default_joint_acceleration_limit": 2.0},
+        {"_source_path": "replacement.urdf"},
+    ],
+    ids=["acceleration_limit", "source_path"],
+)
+def test_partial_robot_model_overrides_preserve_pinned_settings(
+    tmp_path: Path, source: str, model_override: dict[str, Any]
+) -> None:
+    model = RobotModel.from_file(
+        tmp_path / "robot.urdf",
+        package_paths={"assets": tmp_path},
+        xacro_args={"tool": "attached"},
+    ).with_fixed_frame("tool", "base")
+    blueprint = ManipulationModule.blueprint(model=RobotModelConfig(model=model, joint_names=[]))
+    overrides = {ManipulationModule.name: {"model": {"model": model_override}}}
+    parser = BlueprintConfigParser(blueprint)
+    if source == "config_file":
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(overrides))
+        parsed = parser.parse(config_path=config_path, environ={})
+    else:
+        parsed = parser.parse(overrides=overrides, environ={})
+
+    kwargs = parsed.module_kwargs(ManipulationModule.name)
+    restored = RobotModelConfig(**kwargs["model"])
+    assert restored.model == replace(model, **model_override)

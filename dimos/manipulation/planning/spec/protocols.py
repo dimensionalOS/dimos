@@ -31,7 +31,6 @@ if TYPE_CHECKING:
 
     from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
     from dimos.manipulation.planning.planners.config import CartesianPathConfig
-    from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
         CartesianTarget,
         GeneratedPlan,
@@ -42,7 +41,9 @@ if TYPE_CHECKING:
         VisualizationSession,
         VisualizationStateFrame,
     )
+    from dimos.manipulation.planning.spec.validation import PreparedRobotModel
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
     from dimos.msgs.sensor_msgs.JointState import JointState
     from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
@@ -66,16 +67,12 @@ class WorldSpec(Protocol):
     """
 
     # Model Management
-    def load_model(self, config: RobotModelConfig) -> None:
-        """Load the logical robot model."""
+    def load_model(self, model: PreparedRobotModel) -> None:
+        """Load one prepared logical robot model."""
         ...
 
-    def get_model_config(self) -> RobotModelConfig:
-        """Get the logical robot model configuration."""
-        ...
-
-    def get_joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Get model joint limits (lower, upper)."""
+    def get_prepared_model(self) -> PreparedRobotModel:
+        """Get the immutable prepared logical robot model."""
         ...
 
     # Obstacle Management
@@ -105,7 +102,7 @@ class WorldSpec(Protocol):
 
     # Lifecycle
     def finalize(self) -> None:
-        """Finalize the world. Must be called after adding robots."""
+        """Finalize the world after loading the model."""
         ...
 
     @property
@@ -215,6 +212,14 @@ class VisualizationSpec(Protocol):
         """Clear obstacle representations from the visualization."""
         ...
 
+    def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None:
+        """Display the ranked grasp proposals a generator produced.
+
+        Display only: these are candidates, not planning geometry. An empty
+        array clears whatever is drawn.
+        """
+        ...
+
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""
         ...
@@ -226,7 +231,7 @@ class VisualizationSpec(Protocol):
     def animate_trajectory(
         self, trajectory: JointTrajectory, duration: float | None = None
     ) -> None:
-        """Animate a raw globally named trajectory."""
+        """Animate a raw canonical trajectory."""
         ...
 
     def cancel_preview_animation(self) -> None:

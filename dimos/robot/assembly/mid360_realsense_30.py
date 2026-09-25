@@ -24,10 +24,10 @@ a memory db, with the rig's mount frames published continuously onto tf. Two var
 ``mid360_realsense_record`` (db only) and ``mid360_realsense_record_with_pcap`` (also
 captures a raw .pcap of the Mid-360 UDP stream).
 
-The lidar IPs come from each module's own config (``DIMOS_MID360_LIDAR_IP`` for the
-Mid-360 / pcap capture, ``DIMOS_POINTLIO_LIDAR_IP`` for Point-LIO)::
+The lidar IPs are each module's own config, set in the blueprint or from the
+environment as ``MID360__LIDAR_IP`` / ``POINTLIO__LIDAR_IP``::
 
-    export DIMOS_MID360_LIDAR_IP=192.168.1.155 DIMOS_POINTLIO_LIDAR_IP=192.168.1.155
+    export MID360__LIDAR_IP=192.168.1.155 POINTLIO__LIDAR_IP=192.168.1.155
     dimos run mid360-realsense-record            # db only
     dimos run mid360-realsense-record-with-pcap  # db + raw pcap
 

@@ -23,6 +23,7 @@ import sys
 import tarfile
 import tempfile
 import time
+from typing import Any
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.utils.logging_config import setup_logger
@@ -336,6 +337,9 @@ class LfsPath(type(Path())):  # type: ignore[misc]
             files = list(path.iterdir())
     """
 
+    _lfs_filename: str | Path
+    _lfs_resolved_cache: Path | None
+
     def __new__(cls, filename: str | Path) -> "LfsPath":
         # Create instance with a placeholder path to satisfy Path.__new__
         # We use "." as a dummy path that always exists
@@ -362,13 +366,33 @@ class LfsPath(type(Path())):  # type: ignore[misc]
         except AttributeError:
             return object.__getattribute__(self, name)
 
-        # After construction, allow access to our internal attributes directly
-        if name in ("_lfs_filename", "_lfs_resolved_cache", "_ensure_downloaded"):
+        # Copying and serializer/type introspection must inspect the lazy wrapper,
+        # not materialize the asset (including probes for absent attributes).
+        if name in (
+            "_lfs_filename",
+            "_lfs_resolved_cache",
+            "_ensure_downloaded",
+            "__class__",
+            "__copy__",
+            "__deepcopy__",
+            "__pydantic_serializer__",
+            "__dataclass_fields__",
+        ):
             return object.__getattribute__(self, name)
 
         # For all other attributes, ensure download first then delegate to resolved path
         resolved = object.__getattribute__(self, "_ensure_downloaded")()
         return getattr(resolved, name)
+
+    def __copy__(self) -> "LfsPath":
+        copied = LfsPath(self._lfs_filename)
+        object.__setattr__(copied, "_lfs_resolved_cache", self._lfs_resolved_cache)
+        return copied
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "LfsPath":
+        copied = self.__copy__()
+        memo[id(self)] = copied
+        return copied
 
     def __str__(self) -> str:
         """String representation returns resolved path."""
@@ -377,6 +401,10 @@ class LfsPath(type(Path())):  # type: ignore[misc]
     def __fspath__(self) -> str:
         """Return filesystem path, downloading from LFS if needed."""
         return str(self._ensure_downloaded())
+
+    def __hash__(self) -> int:
+        """Hash the resolved path instead of pathlib's placeholder state."""
+        return hash(self._ensure_downloaded())
 
     def __truediv__(self, other: object) -> "LfsPath":
         """Path division operator - returns a new lazy LfsPath (no download)."""

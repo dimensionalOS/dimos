@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import is_dataclass
 import inspect
 from types import UnionType
 from typing import Annotated, Any, Union, get_args, get_origin, get_type_hints
@@ -165,6 +166,11 @@ def prepare_model_input(
             continue
         nested_models = _base_model_types(info.annotation)
         if not nested_models:
+            # A dataclass field has no per-field defaults to fall back on, so a
+            # sparse override is completed from the field's default instance.
+            default = _parse_field_default(info)
+            if is_dataclass(default) and not isinstance(default, type):
+                prepared[name] = {**plain(default), **plain_mapping(raw_value)}
             continue
 
         selected: type[BaseModel] | None = None

@@ -16,9 +16,12 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--robot-ips` | TEXT | `None` | Multiple robot IPs |
 | `--simulation` / `--no-simulation` | bool | `False` | Enable MuJoCo simulation |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
-| `--replay-db` | TEXT | `go2_bigoffice` | Replay memory SQLite database name |
-| `--record [sqlite]` | `sqlite` | off | Record every stream to `recordings/<run-id>/memory.db` ([Recording](/docs/usage/recording.md)) |
+| `--replay-db` | TEXT | `go2_short` | Replay memory SQLite database name |
+| `--replay-exit` / `--no-replay-exit` | bool | `False` | Exit once every replay stream finishes |
+| `--record [sqlite\|mcap]` | `sqlite\|mcap` | off | Record selected streams to one artifact; bare `--record` means SQLite ([Recording](/docs/usage/recording.md)) |
+| `--record-engine` | `python\|rust` | `python` | Recording implementation; Rust is experimental and never selected implicitly |
 | `--record-topics` | TEXT | `*` | Comma-separated globs on stream names to record |
+| `--record-encoding-threads` | INT | unset (Rust uses `4`) | Native encoding workers; valid only with `--record-engine rust` |
 | `--new-memory` / `--no-new-memory` | bool | `False` | Clear persistent memory on start |
 | `--viewer` | `rerun\|none` | `rerun` | Visualization backend |
 | `--rerun-open` | `native\|web\|both\|none` | `native` | How to open the Rerun viewer |
@@ -43,6 +46,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--mujoco-global-map-from-pointcloud` | TEXT | `None` | Generate map from point cloud |
 | `--mujoco-start-pos` | TEXT | `-1.0, 1.0` | MuJoCo robot start position |
 | `--mujoco-steps-per-frame` | INT | `7` | MuJoCo simulation steps per frame |
+| `--mujoco-shadows` | `auto\|on\|off` | `auto` | MuJoCo shadow mapping. `auto` benchmarks one shadowed render at startup and disables shadows when it exceeds 30% of the video frame budget; `on` and `off` skip the benchmark |
 
 ### Configuration Precedence
 
@@ -76,6 +80,8 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...] [--<
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
 | `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--voxelgridmapper.voxel-size=1` |
+| `--local-relay` | Start a relay on this machine and open the cockpit in the browser (see [Web](/docs/web/index.md)) |
+| `--relay-url` | Connect the robot to a relay started elsewhere, by its HTTP URL; `--relay-ca` adds a private CA and `RELAY_KEY` the robot's key (see [Bridge](/docs/web/bridge.md#robot-side-options)) |
 | `--help` | Display the run options and available blueprint configuration flags |
 
 Dynamic values accept both `--field=value` and `--field value`. A shorthand is
@@ -147,6 +153,20 @@ This auto-generates `dimos/robot/all_blueprints.py` for built-in blueprints. Ext
 packages do not edit that file; they expose blueprints through Python package entry
 points. See [blueprints](/docs/usage/blueprints.md) for composition and external
 publishing details.
+
+### `dimos graph`
+
+Render a Blueprint's stream flow as a Graphviz SVG without starting the Blueprint or
+opening its runtime transports. RPC relationships are hidden by default; pass `--rpc`
+to include RPC contracts and their declared Spec methods as dashed edges.
+
+```bash
+dimos graph unitree-go2-agentic
+dimos graph unitree-go2-agentic --rpc --output go2-agentic.svg
+```
+
+The default output is `<blueprint>.svg` in the current directory. Graphviz's `dot`
+executable must be installed.
 
 ### `dimos shell`
 
@@ -336,6 +356,21 @@ dimos spy --transport zenoh   # filter to one transport (repeatable flag)
 dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
 ```
 
+### `dimos login`
+
+Device-code sign-in for the hosted platform; `dimos logout` and `dimos whoami` manage the stored key.
+
+### `dimos data`
+
+Upload recordings (or any file) to hosted storage and pull them back. See [Cloud data](/docs/usage/cloud_data.md).
+
+| Subcommand | Description |
+|------------|-------------|
+| `upload [PATH\|latest] [--since 1h] [--robot ID] [--kind KIND] [--chunk MB]` | Upload; no argument means the newest recording |
+| `ls` | List uploads: id, date, kind, blueprint, topics, size, state |
+| `pull [ID-PREFIX\|latest] [--dest PATH]` | Download to `downloads/`, sha256-verified |
+| `status ID` / `quota` | Upload state and parts on server / storage quota |
+
 ## Agent & MCP Commands
 
 ### `dimos agent-send`
@@ -383,13 +418,14 @@ Returns JSON with tool names, descriptions, and parameter schemas.
 Call a skill by name.
 
 ```bash
-dimos mcp call <tool_name> [--arg key=value ...] [--json-args '{}']
+dimos mcp call <tool_name> [--arg key=value ...] [--json-args '{}'] [--timeout SECONDS]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--arg`, `-a` | Arguments as `key=value` pairs (repeatable) |
 | `--json-args`, `-j` | Arguments as a JSON string |
+| `--timeout`, `-t` | Seconds to wait for the tool. Default is `mcp_timeout` (30). The client cuts off a skill that runs longer. |
 
 ```bash
 dimos mcp call move_to --arg x=3.2 --arg y=-0.5
@@ -444,7 +480,7 @@ agentspy
 
 ### `dtop`
 
-Live resource monitor TUI: CPU, memory, and process stats. Can also be activated during a run with `--dtop`:
+Live resource monitor TUI: CPU, memory, and process stats. The cockpit shows the same data on its Stats tab (`Stats()` in `cockpit(pages=[...])`), which switches the monitor on by itself. Can also be activated during a run with `--dtop`:
 
 ```bash
 dimos --dtop run unitree-go2

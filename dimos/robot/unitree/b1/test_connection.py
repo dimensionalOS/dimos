@@ -306,8 +306,10 @@ class TestB1Connection:
         assert conn.current_mode == 2
         assert conn._current_cmd.ly == 1.0
 
-        # Wait for timeout first (0.2s timeout + 0.15s margin for reliability)
-        time.sleep(0.35)
+        # Wait for timeout, poll to reduce delay.
+        deadline = time.time() + 2.0
+        while not conn.timeout_active and time.time() < deadline:
+            time.sleep(0.01)
         assert conn.timeout_active
         assert conn._current_cmd.ly == 0.0  # Watchdog zeroed it
 

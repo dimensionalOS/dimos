@@ -44,9 +44,6 @@ XARM_GRIPPER_MAX = 850.0
 MAX_CARTESIAN_SPEED_MM = 500.0  # Max cartesian speed in mm/s
 _XARM_LIFECYCLE_SPEED_DEG = 20.0
 _XARM_LIFECYCLE_ACCEL_DEG = 500.0
-_XARM6_INITIAL_JOINTS_DEG = [0.0, -40.0, -50.0, 0.0, 90.0, 0.0]
-# TODO (CC): change this once we have 7dof arm setup
-_XARM7_INITIAL_JOINTS_DEG = [0.0, 0.0, 0.0, 0.0, 0.0, math.degrees(-0.7), 0.0]
 
 # XArm mode codes
 _XARM_MODE_POSITION = 0
@@ -63,7 +60,14 @@ class XArmAdapter(ManipulatorAdapter):
     No inheritance required - just matching method signatures.
     """
 
-    def __init__(self, address: str, dof: int = 6, arm_dof: int | None = None, **_: object) -> None:
+    def __init__(
+        self,
+        address: str,
+        dof: int = 6,
+        arm_dof: int | None = None,
+        initial_positions: list[float] | None = None,
+        **_: object,
+    ) -> None:
         if not address:
             raise ValueError("address (IP) is required for XArmAdapter")
         resolved_arm_dof = dof if arm_dof is None else arm_dof
@@ -80,6 +84,19 @@ class XArmAdapter(ManipulatorAdapter):
         self._arm: XArmAPI | None = None
         self._control_mode: ControlMode = ControlMode.POSITION
         self._gripper_enabled: bool = False
+        if initial_positions is not None and len(initial_positions) != resolved_arm_dof:
+            raise ValueError(
+                f"XArmAdapter initial_positions must contain {resolved_arm_dof} entries"
+            )
+        # Joint pose (radians) to drive to on activate and deactivate. None means
+        # do not move: bringing a blueprint up should not command the arm
+        # anywhere, and ManipulationModule already adopts wherever it is as the
+        # "init" preset from the first joint state it receives.
+        self._initial_positions = None if initial_positions is None else list(initial_positions)
+        self._lite6: bool = False
+        # Lite 6 gripper is open/close over tool GPIO with no feedback; echo the last command.
+        self._lite6_gripper: float = XARM_GRIPPER_MIN
+        self._lite6_gripper_sent: bool = False
 
     def connect(self) -> bool:
         """Connect to XArm via TCP/IP."""
@@ -90,6 +107,8 @@ class XArmAdapter(ManipulatorAdapter):
             if not self._arm.connected:
                 logger.error("XArm at %s not reachable (connected=False)", self._ip)
                 return False
+            # Mirrors the SDK's is_lite6, which the XArmAPI wrapper does not expose.
+            self._lite6 = self._arm.axis == 6 and self._arm.device_type == 9
 
             # Initialize to servo mode for high-frequency control
             self._arm.set_mode(_XARM_MODE_SERVO_CARTESIAN)  # Mode 1 = servo mode
@@ -115,7 +134,7 @@ class XArmAdapter(ManipulatorAdapter):
         """Get XArm information."""
         return ManipulatorInfo(
             vendor="UFACTORY",
-            model=f"xArm{self._arm_dof}",
+            model="Lite6" if self._lite6 else f"xArm{self._arm_dof}",
             dof=self._dof,
         )
 
@@ -254,7 +273,7 @@ class XArmAdapter(ManipulatorAdapter):
         return ok
 
     def activate(self) -> bool:
-        """Enable motion and move the arm to its initial joint pose."""
+        """Enable motion, and move to the initial pose only if one is configured."""
         if not self._arm:
             return False
 
@@ -264,7 +283,7 @@ class XArmAdapter(ManipulatorAdapter):
         return self.set_control_mode(ControlMode.SERVO_POSITION)
 
     def deactivate(self) -> bool:
-        """Move the arm to its initial joint pose and enter stopped state."""
+        """Enter stopped state, parking at the initial pose only if one is configured."""
         if not self._arm:
             return False
 
@@ -301,11 +320,9 @@ class XArmAdapter(ManipulatorAdapter):
         return code == 0
 
     def _initial_joints_degrees(self) -> list[float] | None:
-        if self._arm_dof == 6:
-            return _XARM6_INITIAL_JOINTS_DEG
-        if self._arm_dof == 7:
-            return _XARM7_INITIAL_JOINTS_DEG
-        return None
+        if self._initial_positions is None:
+            return None
+        return [math.degrees(value) for value in self._initial_positions]
 
     def _prepare_for_position_motion(self) -> None:
         if not self._arm:
@@ -408,6 +425,8 @@ class XArmAdapter(ManipulatorAdapter):
         """Read the gripper position in SDK units (0-850)."""
         if not self._arm:
             return 0.0
+        if self._lite6:
+            return self._lite6_gripper
 
         result = self._arm.get_gripper_position()
         code: int = result[0]
@@ -420,6 +439,18 @@ class XArmAdapter(ManipulatorAdapter):
         """Command the gripper in SDK units (0-850)."""
         if not self._arm:
             return False
+        if self._lite6:
+            opening = position > (XARM_GRIPPER_MIN + XARM_GRIPPER_MAX) / 2
+            target = XARM_GRIPPER_MAX if opening else XARM_GRIPPER_MIN
+            if target == self._lite6_gripper and self._lite6_gripper_sent:
+                return True  # tool GPIO write per tick spams the controller; send transitions only
+            lite_code: int = (
+                self._arm.open_lite6_gripper() if opening else self._arm.close_lite6_gripper()
+            )
+            if lite_code == 0:
+                self._lite6_gripper = target
+                self._lite6_gripper_sent = True
+            return lite_code == 0
 
         if not self._gripper_enabled:
             self._arm.set_gripper_enable(True)

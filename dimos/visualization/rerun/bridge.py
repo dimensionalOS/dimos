@@ -47,7 +47,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.protocol.service.lcmservice import autoconf
@@ -60,7 +60,7 @@ from dimos.visualization.rerun.constants import (
     RERUN_WEB_VIEWER_PORT,
     RerunOpenOption,
 )
-from dimos.visualization.rerun.init import rerun_init
+from dimos.visualization.rerun.init import rerun_init, spawn_viewer
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -125,6 +125,22 @@ def _hex_to_rgba(hex_color: str) -> int:
     if len(h) == 6:
         return int(h + "ff", 16)
     return int(h[:8], 16)
+
+
+def _graphviz_plain_lines(output: str) -> list[str]:
+    """Join physical lines that Graphviz wraps with a trailing backslash."""
+    lines: list[str] = []
+    pending = ""
+    for physical_line in output.splitlines():
+        pending += physical_line
+        if pending.endswith("\\"):
+            pending = pending[:-1]
+            continue
+        lines.append(pending)
+        pending = ""
+    if pending:
+        lines.append(pending)
+    return lines
 
 
 def _with_graph_tab(bp: Blueprint) -> Blueprint:
@@ -205,6 +221,10 @@ class Config(ModuleConfig):
     visual_override: dict[Glob | str, VisualOverride | None] = field(default_factory=dict)
     static: dict[str, Callable[[Any], Any]] = field(default_factory=dict)
     max_hz: dict[str, float] = field(default_factory=dict)
+
+    # Topic names without the `dimos/` prefix; empty means every topic.
+    # On zenoh an unlisted topic never crosses the link, unlike `visual_override: None`.
+    topics: list[str] = field(default_factory=list)
 
     entity_prefix: str = "world"
     # Length of the triads to draw
@@ -429,37 +449,7 @@ class RerunBridgeModule(Module):
 
         spawned = False
         if self.config.rerun_open in ("native", "both"):
-            try:
-                import rerun_bindings
-
-                # Use --connect so the viewer connects to the bridge's gRPC
-                # server rather than starting its own (which would conflict).
-                rerun_bindings.spawn(
-                    executable_name="dimos-viewer",
-                    memory_limit=self.config.memory_limit,
-                    extra_args=["--connect", server_uri],
-                )
-                spawned = True
-            except ImportError:
-                pass  # dimos-viewer not installed
-            except Exception:
-                logger.warning(
-                    "dimos-viewer found but failed to spawn, falling back to stock rerun",
-                    exc_info=True,
-                )
-
-            # fallback on normal (non-dimos-viewer) rerun
-            if not spawned:
-                try:
-                    rr.spawn(connect=True, memory_limit=self.config.memory_limit)
-                    spawned = True
-                except (RuntimeError, FileNotFoundError):
-                    logger.warning(
-                        "Rerun native viewer not available (headless?). "
-                        "Bridge will continue without a viewer — data is still "
-                        "accessible via --rerun-open web or by connecting a viewer to the gRPC server.",
-                        exc_info=True,
-                    )
+            spawned = spawn_viewer(server_uri, self.config.memory_limit)
 
         open_web = self.config.rerun_open == "web" or self.config.rerun_open == "both"
         if open_web or self.config.rerun_web:
@@ -490,8 +480,7 @@ class RerunBridgeModule(Module):
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")
             if hasattr(pubsub, "start"):
                 pubsub.start()
-            unsub = pubsub.subscribe_all(self._on_message)
-            self.register_disposable(Disposable(unsub))
+            self.register_disposable(Disposable(self._subscribe(pubsub)))
 
         # Add pubsub stop as disposable
         for pubsub in pubsubs:
@@ -499,6 +488,34 @@ class RerunBridgeModule(Module):
                 self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
 
         self._log_static()
+
+    def _subscribe(self, pubsub: SubscribeAllCapable[Any, Any]) -> Callable[[], None]:
+        """Subscribe to the named topics, or to everything when none are named.
+
+        A zenoh key is `dimos/<topic>/<Type>`, so one wildcard per name needs no type; LCM cannot do this.
+        """
+        if not self.config.topics:
+            return pubsub.subscribe_all(self._on_message)
+
+        if not isinstance(pubsub, Zenoh):
+            logger.warning(
+                f"{pubsub.__class__.__name__} cannot subscribe per topic; "
+                f"listening to everything and ignoring topics={self.config.topics}"
+            )
+            return pubsub.subscribe_all(self._on_message)
+
+        # a pattern over the type segment, not the concrete Topic LCMTopicProto asks for
+        unsubs = [
+            pubsub.subscribe(ZenohTopic(f"dimos/{name.strip('/')}/*"), self._on_message)  # type: ignore[arg-type]
+            for name in self.config.topics
+        ]
+        logger.info(f"bridge subscribed to {len(unsubs)} topics: {', '.join(self.config.topics)}")
+
+        def unsubscribe() -> None:
+            for unsub in unsubs:
+                unsub()
+
+        return unsubscribe
 
     def _log_connect_hints(self, grpc_port: int) -> None:
         """Log CLI commands for connecting a viewer to this bridge."""
@@ -588,7 +605,7 @@ class RerunBridgeModule(Module):
         edges: list[tuple[str, str]] = []
         module_set = set(module_names)
 
-        for line in result.stdout.splitlines():
+        for line in _graphviz_plain_lines(result.stdout):
             if line.startswith("node "):
                 parts = line.split()
                 node_id = parts[1].strip('"')

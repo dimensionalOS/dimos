@@ -2,12 +2,15 @@
 // the raw-QUIC data stream loop. Sessions own transport quirks; all routing
 // and subscription policy lives in registry.ts.
 //
-// Leg asymmetry, forced by upstream bugs (see web/README.md):
+// Leg asymmetry, forced by upstream bugs (see docs/web/protocol.md):
 // - Robot (aioquic): robot->relay hello rides an @control data frame on a
-//   one-shot bidi stream (v5); every relay->robot control (welcome, errors,
-//   pong, subs, teleop) rides datagrams, because the relay must never write
-//   on robot-opened bidi streams (their send half is aborted with RESET,
-//   never FIN). Data = one-shot bidi streams under the same rule.
+//   one-shot bidi stream (v5); relay->robot handshake and teleop control
+//   (welcome, errors, pong, teleop) rides datagrams, while subs snapshots
+//   (and future robot-bound control) ride @control frames on the reliable
+//   robot control carrier - ONE relay-opened uni stream per session. The
+//   relay still never writes on robot-OPENED bidi streams (their send half
+//   is aborted with RESET, never FIN); the carrier is relay-opened, the
+//   proven direction. Data = one-shot bidi streams under the same rule.
 // - Viewer (browser): control = viewer-opened bidi stream (replies + pushes
 //   on the same stream) or datagrams (Python test viewer); data = relay-
 //   opened uni streams.
@@ -26,7 +29,9 @@ import {
   type RobotInfo,
   type RobotManifest,
 } from "@dimos/shared";
+import type { Auth } from "./auth.ts";
 import { parseManifest } from "@dimos/shared/manifest";
+import { type CarrierStats, RobotCarrier } from "./carrier.ts";
 import {
   type ChannelPolicy,
   ControlPayloadTooLargeError,
@@ -79,16 +84,58 @@ export class RobotSession implements RobotPeer {
   readonly #conn: Deno.QuicConn;
   readonly #registry: Registry;
   readonly #dgWriter: WritableStreamDefaultWriter<Uint8Array>;
+  readonly #carrier: RobotCarrier;
+  readonly #auth: Auth | null;
 
-  constructor(wt: WebTransport, conn: Deno.QuicConn, registry: Registry) {
+  constructor(
+    wt: WebTransport,
+    conn: Deno.QuicConn,
+    registry: Registry,
+    auth: Auth | null = null,
+  ) {
     this.#wt = wt;
     this.#conn = conn;
     this.#registry = registry;
+    this.#auth = auth;
     this.#dgWriter = wt.datagrams.writable.getWriter();
+    // The stream opens lazily on the first sendControl - the registration
+    // baseline snapshot - so a rejected session never burns a stream.
+    this.#carrier = new RobotCarrier({
+      openStream: async () => {
+        const stream = await wt.createUnidirectionalStream({
+          waitUntilAvailable: true,
+          sendOrder: CONTROL_SEND_ORDER,
+        });
+        return stream.getWriter();
+      },
+      fail: (reason) => this.#failCarrier(reason),
+    });
   }
 
   sendMsg(msg: Msg): void {
     this.#dgWriter.write(encodeDatagram(msg)).catch(() => {});
+  }
+
+  sendControl(msg: Msg): void {
+    this.#carrier.sendControl(msg);
+  }
+
+  sendPub(ch: string, payload: Uint8Array, meta: Record<string, unknown>): void {
+    this.#carrier.sendFrame(ch, payload, meta);
+  }
+
+  carrierStats(): CarrierStats {
+    return this.#carrier.stats();
+  }
+
+  /** The carrier is a control dependency: on overflow or write failure the
+   * whole session fails (error datagram + close), never limps on with stale
+   * subscription state. The bridge reconnects and gets a fresh baseline. */
+  #failCarrier(reason: string): void {
+    if (this.closed !== null) return; // already tearing down: not a failure
+    this.#registry.carrierFailed();
+    console.error(`[relay] robot control carrier failed: ${reason}`);
+    this.#reject("carrier_failed", `robot control carrier failed: ${reason}`, "carrier failure");
   }
 
   #reject(code: string, message: string, reason: string): false {
@@ -104,7 +151,10 @@ export class RobotSession implements RobotPeer {
     console.log("[relay] robot connected");
     this.#wt.closed
       .catch(() => {})
-      .finally(() => this.#registry.robotClosed(this));
+      .finally(() => {
+        this.#carrier.dispose();
+        this.#registry.robotClosed(this);
+      });
     this.#controlLoop();
     this.#frameLoop();
   }
@@ -138,28 +188,35 @@ export class RobotSession implements RobotPeer {
   /** One @-channel frame (header null = the raw header named a reserved
    * channel but failed validation). Only a well-formed @control hello is
    * legal before registration; violations reject the session (error
-   * datagram + close). After registration, unknown control is dropped - a
-   * registered peer's bytes must not kill its live session. */
+   * datagram + close). After registration, publish acks route to the
+   * registry and other unknown control is dropped - a registered peer's
+   * bytes must not kill its live session. */
   #onControlFrame(header: FrameHeader | null, bytes: Uint8Array): void {
     // Control payloads reuse the datagram encoding; bytes are a complete
     // frame, so the lengths peek cannot fail.
     const lens = peekDataFrameLengths(bytes)!;
     const msg = header === null ? null : decodeDatagram(bytes.subarray(8 + lens.headerLen));
-    if (header === null || header.ch !== CONTROL_CHANNEL || msg === null || msg.t !== "hello") {
-      if (this.info === null) {
-        this.#reject(
-          "invalid_control",
-          "only a hello @control frame is accepted before registration",
-          "invalid control frame",
-        );
-      } else {
-        console.log(
-          `[relay] dropping unknown robot control frame (ch ${header?.ch ?? "invalid header"})`,
-        );
+    if (header !== null && header.ch === CONTROL_CHANNEL && msg !== null) {
+      if (msg.t === "hello") {
+        this.#onHello(msg);
+        return;
       }
-      return;
+      if (this.info !== null && (msg.t === "pub_ack" || msg.t === "pub_nack")) {
+        this.#registry.onRobotPubResult(this, msg);
+        return;
+      }
     }
-    this.#onHello(msg);
+    if (this.info === null) {
+      this.#reject(
+        "invalid_control",
+        "only a hello @control frame is accepted before registration",
+        "invalid control frame",
+      );
+    } else {
+      console.log(
+        `[relay] dropping unknown robot control frame (ch ${header?.ch ?? "invalid header"})`,
+      );
+    }
   }
 
   /** Hello validation, identical to the v4 datagram path, plus the v5
@@ -184,6 +241,13 @@ export class RobotSession implements RobotPeer {
         "robot hello must carry robot{id,name,model}",
         "missing robot id",
       );
+      return;
+    }
+    if (this.#auth !== null && !this.#auth.robotKeyOk(msg.robot.id, msg.token)) {
+      const message = msg.token === undefined ? "missing robot key" : "invalid robot key";
+      // Resends keep arriving until the close lands; log the first only.
+      if (this.closed === null) console.log(`[relay] robot ${msg.robot.id} rejected: ${message}`);
+      this.#reject("auth_failed", message, "auth failed");
       return;
     }
     // Manifest-less hellos are legal (transport tests); a declared manifest
@@ -258,16 +322,20 @@ export class ViewerSession implements ViewerPeer {
   readonly subs = new Set<string>();
   readonly policies = new Map<string, ChannelPolicy>();
   greeted = false;
+  /** Viewer name from the auth file (auth on), for the log and /api/stats. */
+  name: string | null = null;
   readonly sink: ViewerSink;
   readonly #wt: WebTransport;
   readonly #registry: Registry;
+  readonly #auth: Auth | null;
   /** Push channel for robots events, chosen by whichever leg carried hello. */
   #push: ((msg: Msg) => void) | null = null;
 
-  constructor(wt: WebTransport, id: number, registry: Registry) {
+  constructor(wt: WebTransport, id: number, registry: Registry, auth: Auth | null = null) {
     this.#wt = wt;
     this.id = id;
     this.#registry = registry;
+    this.#auth = auth;
     let latestOrder = 1;
     this.sink = {
       sendFrame(bytes: Uint8Array): FrameSend {
@@ -367,11 +435,29 @@ export class ViewerSession implements ViewerPeer {
   }
 
   #dispatch(msg: Msg, reply: (msg: Msg) => void): boolean {
-    if (!this.#registry.onViewerMsg(this, msg, reply)) {
+    const authorized = msg.t !== "hello" || this.#authorize(msg, reply);
+    if (!authorized || !this.#registry.onViewerMsg(this, msg, reply)) {
       closeAfterFlush(this.#wt, "viewer handshake rejected");
       return false;
     }
     if (msg.t === "hello" && this.greeted) this.#push = reply;
+    return true;
+  }
+
+  /** With auth on, a hello must carry a known viewer token; the name sticks
+   * to the session. Version and role mismatches are left to the registry so
+   * their codes keep precedence over auth_failed. */
+  #authorize(msg: HelloMsg, reply: (msg: Msg) => void): boolean {
+    if (this.#auth === null || msg.v !== PROTOCOL_VERSION || msg.role !== "viewer") return true;
+    const name = this.#auth.viewerName(msg.token);
+    if (name === null) {
+      const message = msg.token === undefined ? "missing viewer token" : "invalid viewer token";
+      console.log(`[relay] viewer ${this.id} rejected: ${message}`);
+      reply({ t: "error", code: "auth_failed", message });
+      return false;
+    }
+    if (this.name === null) console.log(`[relay] viewer ${this.id} authenticated as ${name}`);
+    this.name = name;
     return true;
   }
 

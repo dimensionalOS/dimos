@@ -23,6 +23,7 @@ import inspect
 import shutil
 import sys
 import threading
+import time
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
@@ -91,6 +92,7 @@ class ModuleCoordinator(Resource):
         self._modules_lock = threading.RLock()
         self._rpc_lock = threading.RLock()
         self._coordinator_rpc: CoordinatorRPC | None = None
+        self._shutdown_event = threading.Event()
 
     def start(self) -> None:
         from dimos.core.o3dpickle import register_picklers
@@ -107,12 +109,12 @@ class ModuleCoordinator(Resource):
                 self._coordinator_rpc = None
 
         for name, module in reversed(self._deployed_modules.items()):
-            logger.info("Stopping module...", module=name)
+            logger.info("Stopping module...", module=module.remote_name)
             try:
                 module.stop()
             except Exception:
                 logger.error("Error stopping module", module=name, exc_info=True)
-            logger.info("Module stopped.", module=name)
+            logger.info("Module stopped.", module=module.remote_name)
 
         def _stop_manager(m: WorkerManager) -> None:
             try:
@@ -124,6 +126,11 @@ class ModuleCoordinator(Resource):
 
     def start_rpc_service(self) -> None:
         """Expose the coordinator's API as @rpc methods over LCM."""
+        if not self._global_config.serve_coordinator_rpc:
+            # Deliberate: the name is bus-wide, and this stack shares the bus with
+            # one that owns it. Costs remote introspection of THIS stack, nothing else.
+            logger.info("serve_coordinator_rpc is off; not claiming the Coordinator name")
+            return
         with self._rpc_lock:
             if self._coordinator_rpc is not None:
                 return
@@ -139,11 +146,16 @@ class ModuleCoordinator(Resource):
             "load_blueprint": self.load_blueprint,
             "restart_module_by_class_name": self.restart_module_by_class_name,
             "restart_module_by_name": self.restart_module_by_name,
+            "shutdown": self.shutdown,
         }
 
     def ping(self) -> str:
         """Used by clients to check if the coordinator is alive and responsive."""
         return "pong"
+
+    def shutdown(self) -> None:
+        """Unblock loop(), which then stops every module and returns."""
+        self._shutdown_event.set()
 
     def list_modules(self) -> list[ModuleDescriptor]:
         with self._modules_lock:
@@ -251,14 +263,24 @@ class ModuleCoordinator(Resource):
             self.stop()
             raise
 
-    def start_all_modules(self) -> None:
-        modules = list(self._deployed_modules.values())
+    def start_all_modules(self) -> dict[str, float]:
+        """Start every deployed module in parallel and return each start() duration in seconds."""
+        modules = list(self._deployed_modules.items())
         if not modules:
             raise ValueError("No modules deployed. Call deploy() before start_all_modules().")
 
-        safe_thread_map(modules, lambda m: m.start())
+        durations: dict[str, float] = {}
+
+        def start(item: tuple[str, ModuleProxyProtocol]) -> None:
+            name, module = item
+            t0 = time.perf_counter()
+            module.start()
+            durations[name] = time.perf_counter() - t0
+
+        safe_thread_map(modules, start)
 
         self._send_on_system_modules()
+        return durations
 
     def _resolve_class(self, cls: type[ModuleBase]) -> type[ModuleBase]:
         return self._class_aliases.get(cls, cls)
@@ -370,12 +392,16 @@ class ModuleCoordinator(Resource):
         coordinator.start()
 
         try:
+            t0 = time.perf_counter()
             _deploy_all_modules(blueprint, coordinator, global_config, module_kwargs)
+            t1 = time.perf_counter()
             coordinator._connect_streams(blueprint, transports)
             _connect_module_refs(blueprint, coordinator)
-
+            t2 = time.perf_counter()
             coordinator.build_all_modules()
-            coordinator.start_all_modules()
+            t3 = time.perf_counter()
+            start_durations = coordinator.start_all_modules()
+            t4 = time.perf_counter()
         except BaseException:
             # The caller never gets a coordinator to stop, so stop it here.
             with suppress(Exception):
@@ -383,6 +409,16 @@ class ModuleCoordinator(Resource):
             raise
 
         _log_blueprint_graph(blueprint, coordinator)
+
+        slowest = sorted(start_durations.items(), key=lambda item: item[1], reverse=True)[:5]
+        logger.info(
+            "Blueprint started",
+            deploy_s=round(t1 - t0, 3),
+            wire_s=round(t2 - t1, 3),
+            build_s=round(t3 - t2, 3),
+            start_s=round(t4 - t3, 3),
+            slowest_starts={name: round(secs, 3) for name, secs in slowest},
+        )
 
         return coordinator
 
@@ -651,14 +687,16 @@ class ModuleCoordinator(Resource):
         return new_proxy
 
     def loop(self) -> None:
-        """Serve coordinator RPC and block until the process is interrupted.
+        """Serve coordinator RPC and block until interrupted or shut down.
 
         Owning service startup here gives CLI and direct Python ``build().loop()``
-        launches the same attachment behavior.
+        launches the same attachment behavior. ``shutdown()`` (also exposed over
+        RPC) unblocks the wait; either way every module is stopped on the way
+        out.
         """
         self.start_rpc_service()
         try:
-            threading.Event().wait()
+            self._shutdown_event.wait()
         except KeyboardInterrupt:
             return
         finally:

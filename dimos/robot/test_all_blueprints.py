@@ -15,6 +15,7 @@
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.global_config import global_config
 from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.get_all_blueprints import get_blueprint_by_name
 
@@ -51,22 +52,24 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "coordinator-xarm6",
         "coordinator-xarm7",
         "dual-xarm6-planner-coordinator",
-        "learning-collect-quest-xarm7",
+        "learning-collect-webxr-xarm7",
         "openarm-planner-coordinator",
         "teleop-hosted-go2-multicam",
         "teleop-hosted-go2-transport",
         "teleop-hosted-xarm6",
         "teleop-hosted-xarm7",
-        "teleop-quest-dual",
-        "teleop-quest-go2",
-        "teleop-quest-hand-xarm7",
-        "teleop-quest-piper",
-        "teleop-quest-rerun",
-        "teleop-quest-xarm6",
-        "teleop-quest-xarm7",
-        "teleop-quest-xarm7-video",
-        "xarm-perception",
-        "xarm-perception-agent",
+        "teleop-webxr-dual",
+        "teleop-webxr-go2",
+        "teleop-webxr-hand-xarm7",
+        "teleop-webxr-piper",
+        "teleop-webxr-rerun",
+        "teleop-webxr-xarm6",
+        "teleop-webxr-xarm7",
+        "teleop-webxr-xarm7-video",
+        "xarm-grasp",
+        "xarm-grasp-agent",
+        "xarm-grasp-graspgenx",
+        "xarm-grasp-graspgenx-agent",
         "xarm-perception-sim",
         "xarm-perception-sim-agent",
         "xarm7-planner-coordinator",
@@ -102,8 +105,10 @@ def test_old_self_hosted_blueprints() -> None:
 
 
 @pytest.mark.parametrize("blueprint_name", UBUNTU_BLUEPRINTS)
-def test_blueprint_is_valid(blueprint_name: str) -> None:
+def test_blueprint_is_valid(blueprint_name: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """Validate blueprints that should import on the ubuntu-latest runner."""
+    # The multi-robot blueprints read ROBOT_IPS at import time.
+    monkeypatch.setattr(global_config, "robot_ips", "192.0.2.10,192.0.2.11")
     _check_blueprint(blueprint_name)
 
 

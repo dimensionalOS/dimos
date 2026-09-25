@@ -58,7 +58,6 @@ def joint_trajectory_task(
     priority: int = 10,
     start_position_tolerance: float = 0.05,
     velocity_limits: Mapping[str, float] | None = None,
-    hold_position_when_idle: bool = False,
 ) -> TaskConfig:
     """Build the coordinator's single canonical joint-trajectory task."""
     # The coordinator imports this module to recognize the canonical JTT.
@@ -67,8 +66,6 @@ def joint_trajectory_task(
     params: dict[str, Any] = {"start_position_tolerance": start_position_tolerance}
     if velocity_limits is not None:
         params["velocity_limits"] = dict(velocity_limits)
-    if hold_position_when_idle:
-        params["hold_position_when_idle"] = True
     return TaskConfig(
         name=JOINT_TRAJECTORY_TASK_NAME,
         type="trajectory",
@@ -142,8 +139,6 @@ class JointTrajectoryTaskConfig:
             position and the first trajectory point.
         velocity_limits: Optional positive velocity limit for every configured
             joint. Defaults to 1 rad/s per joint.
-        hold_position_when_idle: Keep emitting the last commanded position,
-            latching measured positions before the first trajectory.
     """
 
     joint_names: Annotated[
@@ -157,7 +152,6 @@ class JointTrajectoryTaskConfig:
         allow_inf_nan=False,
     )
     velocity_limits: dict[str, float] | None = None
-    hold_position_when_idle: bool = False
 
 
 @dataclass
@@ -254,7 +248,7 @@ class JointTrajectoryTask(BaseControlTask):
 
     def is_active(self) -> bool:
         """Check if task should run this tick."""
-        return self._config.hold_position_when_idle or self._state == TrajectoryState.EXECUTING
+        return self._state == TrajectoryState.EXECUTING
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         """Compute trajectory output for this tick.
@@ -267,33 +261,10 @@ class JointTrajectoryTask(BaseControlTask):
         Returns:
             JointCommandOutput with positions, or None if not executing
         """
-        if self._config.hold_position_when_idle:
-            for joint_name in self._joint_names_list:
-                if joint_name in self._commanded_positions:
-                    continue
-                measured = state.joints.get_position(joint_name)
-                if measured is not None and math.isfinite(measured):
-                    self._commanded_positions[joint_name] = measured
-
         if not self._motions:
-            if not self._config.hold_position_when_idle:
-                return None
-            held_names = [
-                name for name in self._joint_names_list if name in self._commanded_positions
-            ]
-            if not held_names:
-                return None
-            return JointCommandOutput(
-                joint_names=held_names,
-                positions=[self._commanded_positions[name] for name in held_names],
-                mode=ControlMode.SERVO_POSITION,
-            )
+            return None
 
-        output_names = (
-            self._joint_names_list
-            if self._config.hold_position_when_idle
-            else [name for name in self._joint_names_list if name in self._motions]
-        )
+        output_names = [name for name in self._joint_names_list if name in self._motions]
         all_complete = bool(self._motions)
         for joint_name, (run, index) in list(self._motions.items()):
             if run.start_time is None:
@@ -332,11 +303,19 @@ class JointTrajectoryTask(BaseControlTask):
         emitted_names = [name for name in output_names if name in self._commanded_positions]
         if not emitted_names:
             return None
-        return JointCommandOutput(
+        output = JointCommandOutput(
             joint_names=emitted_names,
             positions=[self._commanded_positions[name] for name in emitted_names],
             mode=ControlMode.SERVO_POSITION,
         )
+        # Emit the final command, then forget joints we no longer control.
+        # Another task may move them before the next execution.
+        self._commanded_positions = {
+            name: position
+            for name, position in self._commanded_positions.items()
+            if name in self._motions
+        }
+        return output
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         """Handle preemption by higher-priority task.
@@ -587,7 +566,6 @@ class JointTrajectoryTaskParams(BaseConfig):
         allow_inf_nan=False,
     )
     velocity_limits: dict[str, float] | None = None
-    hold_position_when_idle: bool = False
 
 
 def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
@@ -602,6 +580,5 @@ def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
             priority=cfg.priority,
             start_position_tolerance=params.start_position_tolerance,
             velocity_limits=params.velocity_limits,
-            hold_position_when_idle=params.hold_position_when_idle,
         ),
     )

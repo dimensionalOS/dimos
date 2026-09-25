@@ -14,15 +14,17 @@
 
 """RelayBridgeModule unit tests: no network, no Deno, no LCM.
 
-A fake relay client is injected under `connect_with_backoff` and fake
-transports under the module's `In` streams, so lazy subscribe/unsubscribe,
-the maxHz gate, the encode path, and reconnect are all observable directly.
+Relay discovery and `RelayClient.connect` are replaced by fakes and fake
+transports sit under the module's `In` streams (module_test_support.py), so lazy
+subscribe/unsubscribe, the maxHz gate, the encode path, and reconnect are all
+observable directly. cockpit()-authored channels and the publish path are
+covered in test_relay_bridge_authoring.py.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from dataclasses import replace
 import json
 from pathlib import Path
@@ -38,9 +40,7 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.global_config import global_config
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -48,11 +48,26 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.simulation.mujoco.constants import VIDEO_FPS
-from dimos.web.relay_bridge import relay_bridge_module
+from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
+from dimos.web.relay_bridge.module_test_support import (
+    FakeClient,
+    FakeRelay,
+    FakeTransport,
+    costmap_transport,
+    flush_loop,
+    image_transport,
+    kill_session,
+    make_bridge,
+    odom_transport,
+    patch_relay,
+    push,
+    wait_until,
+)
 from dimos.web.relay_bridge.protocol import (
-    Msg,
+    PROTOCOL_VERSION,
+    ProtocolError,
     Stop as WireStop,
     Subs,
     TeleopStart as WireTeleopStart,
@@ -60,217 +75,12 @@ from dimos.web.relay_bridge.protocol import (
     Twist as WireTwist,
 )
 from dimos.web.relay_bridge.relay_bridge_module import (
-    CHANNELS,
     RelayBridgeConfig,
     RelayBridgeModule,
     default_manifest,
     resolve_robot_info,
-    with_relay_bridge,
 )
-from dimos.web.relay_bridge.wt_client import RelayRejectedError
-
-
-class FakeWriter:
-    def __init__(self) -> None:
-        self.offers: list[tuple[bytes, dict[str, Any] | None]] = []
-        # ts kept apart so offer-list equality asserts ignore it (a replay
-        # carries its source arrival time, a live frame None).
-        self.tss: list[float | None] = []
-
-    def offer(
-        self, payload: bytes, meta: dict[str, Any] | None = None, ts: float | None = None
-    ) -> None:
-        self.offers.append((payload, meta))
-        self.tss.append(ts)
-
-
-class FakeClient:
-    """Duck-typed RelayClient: everything the module touches, nothing else."""
-
-    def __init__(self, hello_error: Exception | None = None) -> None:
-        self.hello_args: tuple[Any, Any] | None = None
-        self.hello_error = hello_error
-        self.control_msgs: asyncio.Queue[Msg] = asyncio.Queue()
-        self.closed = asyncio.Event()
-        self.writers: dict[str, FakeWriter] = {}
-        self.frames: list[tuple[str, bytes, str, dict[str, Any] | None]] = []
-        self.close_count = 0
-
-    async def hello(self, timeout: float = 5.0, *, robot: Any = None, manifest: Any = None) -> None:
-        self.hello_args = (robot, manifest)
-        if self.hello_error is not None:
-            raise self.hello_error
-
-    def latest_writer(self, ch: str, *, stale_after: float = 0.5) -> FakeWriter:
-        writer = FakeWriter()
-        self.writers[ch] = writer
-        return writer
-
-    def send_frame(
-        self,
-        ch: str,
-        payload: bytes,
-        *,
-        delivery: str = "reliable",
-        meta: dict[str, Any] | None = None,
-        ts: float | None = None,
-    ) -> int:
-        self.frames.append((ch, bytes(payload), delivery, meta))
-        return 1
-
-    async def control_messages(self) -> AsyncIterator[Msg]:
-        while True:
-            get = asyncio.ensure_future(self.control_msgs.get())
-            closed = asyncio.ensure_future(self.closed.wait())
-            try:
-                done, _ = await asyncio.wait({get, closed}, return_when=asyncio.FIRST_COMPLETED)
-            finally:
-                closed.cancel()
-                if not get.done():
-                    get.cancel()
-            if get in done:
-                yield get.result()
-                continue
-            return
-
-    async def close(self) -> None:
-        self.close_count += 1
-        self.closed.set()
-
-
-class FakeTransport:
-    """In-stream transport stub: counts subscribers, publishes synchronously
-    (the test thread plays the LCM callback thread)."""
-
-    def __init__(self) -> None:
-        self.subscribers: list[Callable[[Any], Any]] = []
-        self.unsubscribed = 0
-        self.unsubscribe_attempts = 0
-        self.unsubscribe_error: Exception | None = None
-
-    def subscribe(self, cb: Callable[[Any], Any], stream: Any = None) -> Callable[[], None]:
-        self.subscribers.append(cb)
-
-        def unsubscribe() -> None:
-            self.unsubscribe_attempts += 1
-            if self.unsubscribe_error is not None:
-                raise self.unsubscribe_error
-            self.subscribers.remove(cb)
-            self.unsubscribed += 1
-
-        return unsubscribe
-
-    def publish(self, msg: Any) -> None:
-        for cb in list(self.subscribers):
-            cb(msg)
-
-    def stop(self) -> None:  # called by In.stop() during module close
-        self.subscribers.clear()
-
-
-class FakeRelay:
-    """RelayProcess stand-in for the respawn/teardown paths."""
-
-    def __init__(self, running: bool) -> None:
-        self.running = running
-        self.stops = 0
-
-    def is_running(self) -> bool:
-        return self.running
-
-    def poll(self) -> int | None:
-        return None  # what a FAILED start reads: no process at all
-
-    def stop(self) -> None:
-        self.stops += 1
-        self.running = False
-
-
-def wait_until(cond: Callable[[], bool], timeout: float = 5.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(0.01)
-    return cond()
-
-
-def flush_loop(module: RelayBridgeModule) -> None:
-    """Wait until all callbacks already queued on the module loop have run."""
-    loop = module._loop
-    assert loop is not None
-    flushed = threading.Event()
-    loop.call_soon_threadsafe(flushed.set)
-    assert flushed.wait(timeout=5.0)
-
-
-def _make_bridge(
-    monkeypatch,
-    *,
-    wire: tuple[str, ...] = ("color_image", "odom"),
-    available_channels: tuple[str, ...] | None = None,
-    manifest: dict[str, Any] | None = None,
-    hello_errors: tuple[Exception | None, ...] = (),
-    relay: FakeRelay | None = None,
-) -> tuple[RelayBridgeModule, list[FakeClient]]:
-    clients: list[FakeClient] = []
-
-    async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
-        error = hello_errors[len(clients)] if len(clients) < len(hello_errors) else None
-        clients.append(FakeClient(hello_error=error))
-        return clients[-1]
-
-    monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fake_connect)
-    module = RelayBridgeModule(
-        relay_url="https://127.0.0.1:1",
-        open_browser=False,
-        robot_id="unit-bot",
-        available_channels=available_channels,
-        manifest=manifest,
-    )
-    module._relay = relay
-    for ch in wire:
-        getattr(module, ch).transport = FakeTransport()
-    module.start()
-    return module, clients
-
-
-@pytest.fixture
-def bridge(monkeypatch):
-    module, clients = _make_bridge(monkeypatch)
-    try:
-        yield module, clients
-    finally:
-        stop_module(module)
-
-
-def push(module: RelayBridgeModule, client: FakeClient, msg: Msg) -> None:
-    """Deliver a relay push onto the module's own event loop (queue affinity)."""
-    assert module._loop is not None
-    module._loop.call_soon_threadsafe(client.control_msgs.put_nowait, msg)
-
-
-def kill_session(module: RelayBridgeModule, client: FakeClient) -> None:
-    assert module._loop is not None
-    module._loop.call_soon_threadsafe(client.closed.set)
-
-
-def image_transport(module: RelayBridgeModule) -> FakeTransport:
-    transport = module.color_image.transport
-    assert isinstance(transport, FakeTransport)
-    return transport
-
-
-def odom_transport(module: RelayBridgeModule) -> FakeTransport:
-    transport = module.odom.transport
-    assert isinstance(transport, FakeTransport)
-    return transport
-
-
-def costmap_transport(module: RelayBridgeModule) -> FakeTransport:
-    transport = module.global_costmap.transport
-    assert isinstance(transport, FakeTransport)
-    return transport
+from dimos.web.relay_bridge.wt_client import RelayInfo, RelayRejectedError
 
 
 def test_manifest_and_robot_info_content() -> None:
@@ -287,6 +97,8 @@ def test_manifest_and_robot_info_content() -> None:
                 "delivery": "latest",
                 "maxHz": 12.0,
                 "params": {"quality": 75},
+                "publish": "none",
+                "requiredScope": None,
             },
             {
                 "ch": "odom",
@@ -295,6 +107,8 @@ def test_manifest_and_robot_info_content() -> None:
                 "delivery": "reliable",
                 "maxHz": 20.0,
                 "params": {},
+                "publish": "none",
+                "requiredScope": None,
             },
             {
                 "ch": "global_costmap",
@@ -303,6 +117,8 @@ def test_manifest_and_robot_info_content() -> None:
                 "delivery": "latest",
                 "maxHz": 5.0,
                 "params": {},
+                "publish": "none",
+                "requiredScope": None,
             },
         ],
         "panels": [
@@ -474,7 +290,7 @@ COSTMAP_CELLS = bytes([255, 0, 50, 100, 0, 255])
 
 @pytest.fixture
 def costmap_bridge(monkeypatch):
-    module, clients = _make_bridge(monkeypatch, wire=("color_image", "odom", "global_costmap"))
+    module, clients = make_bridge(monkeypatch, wire=("color_image", "odom", "global_costmap"))
     try:
         yield module, clients
     finally:
@@ -521,7 +337,7 @@ def test_no_costmap_encode_while_unsubscribed(costmap_bridge, monkeypatch) -> No
         calls["n"] += 1
         return real(data, level)
 
-    monkeypatch.setattr(relay_bridge_module.zlib, "compress", spy)
+    monkeypatch.setattr(builtin_codecs.zlib, "compress", spy)
     costmap_transport(module).publish(COSTMAP_GRID)
     costmap_transport(module).publish(COSTMAP_GRID)
     flush_loop(module)
@@ -529,10 +345,11 @@ def test_no_costmap_encode_while_unsubscribed(costmap_bridge, monkeypatch) -> No
     assert module.encoded["global_costmap"] == 0
 
     push(module, clients[0], Subs(chs=["global_costmap"], n=1))
+    # The subscribe replays the cached grid (compressed on a worker thread)...
+    assert wait_until(lambda: calls["n"] == 1)
     assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
+    # ... then the live frame encodes on the transport thread.
     costmap_transport(module).publish(COSTMAP_GRID)
-    # Two compresses: the subscribe replayed the cached grid, then the live
-    # frame encoded.
     assert calls["n"] == 2
     assert module.encoded["global_costmap"] == 1
 
@@ -629,30 +446,36 @@ def test_costmap_empty_cached_grid_is_not_replayed(costmap_bridge) -> None:
     costmap_transport(module).publish(OccupancyGrid())
     push(module, client, Subs(chs=["global_costmap"], n=1))
     assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
+    session = module._session
+    assert session is not None
+    assert wait_until(lambda: session.replays["global_costmap"].done())
     flush_loop(module)
     assert client.writers["global_costmap"].offers == []
 
 
 def test_stop_disposes_costmap_cache_subscription(monkeypatch) -> None:
-    module, _clients = _make_bridge(monkeypatch, wire=("color_image", "odom", "global_costmap"))
+    module, _clients = make_bridge(monkeypatch, wire=("color_image", "odom", "global_costmap"))
     transport = costmap_transport(module)
     assert len(transport.subscribers) == 1  # the always-on raw cache
     stop_module(module)
     assert transport.unsubscribed == 1
 
 
-def test_bridge_import_does_not_pull_matplotlib() -> None:
+def test_bridge_import_does_not_pull_matplotlib_or_langchain() -> None:
     # OccupancyGrid's visualization imports are lazy so the bridge does not
-    # cost every relay worker matplotlib's ~0.5 s / ~28 MiB (review issue 9).
+    # cost every relay worker matplotlib's ~0.5 s / ~28 MiB (review issue 9),
+    # and langchain belongs to the [agents] extra: a web-only install must
+    # still run the bridge (the chat codec loads with the Chat panel).
     code = (
         "import sys; import dimos.web.relay_bridge.relay_bridge_module; "
-        "assert 'matplotlib' not in sys.modules"
+        "assert 'matplotlib' not in sys.modules; "
+        "assert 'langchain_core' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
 def test_manifest_omits_pose_binding_when_odom_unwired(monkeypatch) -> None:
-    module, clients = _make_bridge(monkeypatch, wire=("color_image", "global_costmap"))
+    module, clients = make_bridge(monkeypatch, wire=("color_image", "global_costmap"))
     try:
         _, manifest = clients[0].hello_args
         assert isinstance(manifest, dict)
@@ -688,23 +511,20 @@ def test_encode_started_in_old_session_is_not_sent_to_replacement(
     encode_started = threading.Event()
     release_encode = threading.Event()
 
-    def blocking_encode(
-        module: RelayBridgeModule, msg: PoseStamped
-    ) -> tuple[bytes, dict[str, Any] | None]:
+    def blocking_encode(msg: PoseStamped) -> bytes:
         encode_started.set()
         assert release_encode.wait(timeout=5.0)
-        return b"old-session-frame", None
+        return b"old-session-frame"
 
-    odom = next(channel for channel in CHANNELS if channel.ch == "odom")
-    monkeypatch.setattr(
-        relay_bridge_module,
-        "CHANNELS",
-        tuple(
-            replace(channel, encode=blocking_encode) if channel.ch == "odom" else channel
-            for channel in CHANNELS
-        ),
+    module, clients = make_bridge(monkeypatch)
+    # Swap the resolved odom spec's encoder for the blocking one before any
+    # viewer subscribes (the runtime specs are the encoder source now).
+    module._channel_specs = tuple(
+        replace(spec, encoder=blocking_encode, encoder_takes_params=False)
+        if spec.ch == "odom"
+        else spec
+        for spec in module._channel_specs
     )
-    module, clients = _make_bridge(monkeypatch)
     publisher = threading.Thread(
         target=odom_transport(module).publish,
         args=(
@@ -716,7 +536,7 @@ def test_encode_started_in_old_session_is_not_sent_to_replacement(
         ),
     )
     try:
-        push(module, clients[0], Subs(chs=[odom.ch], n=1))
+        push(module, clients[0], Subs(chs=["odom"], n=1))
         assert wait_until(lambda: len(odom_transport(module).subscribers) == 1)
 
         publisher.start()
@@ -766,7 +586,7 @@ def test_failed_respawn_retries_until_success(bridge, monkeypatch) -> None:
         if len(spawns) == 1:
             raise RuntimeError("ready-line timeout")
         module._relay = FakeRelay(running=True)
-        return "https://127.0.0.1:2"
+        return "http://127.0.0.1:2/"
 
     module._relay = FakeRelay(running=False)  # the post-failed-start poison
     monkeypatch.setattr(module, "_spawn_relay", fake_spawn)
@@ -776,7 +596,7 @@ def test_failed_respawn_retries_until_success(bridge, monkeypatch) -> None:
 
 
 def test_stop_waits_for_in_flight_respawn_and_stops_spawned_child(monkeypatch) -> None:
-    module, clients = _make_bridge(monkeypatch)
+    module, clients = make_bridge(monkeypatch)
     loop = module._loop
     assert loop is not None
     dead_relay = FakeRelay(running=False)
@@ -794,7 +614,7 @@ def test_stop_waits_for_in_flight_respawn_and_stops_spawned_child(monkeypatch) -
         assert release_spawn.wait(timeout=5.0)
         module._relay = spawned_relay
         spawn_completed.set()
-        return "https://127.0.0.1:2"
+        return "http://127.0.0.1:2/"
 
     real_stop_main = module._stop_main
 
@@ -849,7 +669,7 @@ def test_stop_survives_dead_task(monkeypatch) -> None:
 
     monkeypatch.setattr(RelayBridgeModule, "_watch_child", crash)
     relay = FakeRelay(running=True)
-    module, clients = _make_bridge(monkeypatch, relay=relay)
+    module, clients = make_bridge(monkeypatch, relay=relay)
     try:
         assert crashed.wait(timeout=5.0)
         push(module, clients[0], Subs(chs=["color_image", "odom"], n=1))
@@ -889,7 +709,7 @@ def test_unsubscribe_failure_does_not_skip_other_cleanup_or_leak_into_new_sessio
 
 
 def test_unwired_input_is_not_advertised_or_subscribed(monkeypatch) -> None:
-    module, clients = _make_bridge(monkeypatch, wire=("odom",))
+    module, clients = make_bridge(monkeypatch, wire=("odom",))
     try:
         _, manifest = clients[0].hello_args
         assert isinstance(manifest, dict)
@@ -909,7 +729,7 @@ def test_unwired_input_is_not_advertised_or_subscribed(monkeypatch) -> None:
 
 
 def test_composition_channel_allowlist_filters_bound_inputs(monkeypatch) -> None:
-    module, clients = _make_bridge(monkeypatch, available_channels=("odom",))
+    module, clients = make_bridge(monkeypatch, available_channels=("odom",))
     try:
         _, manifest = clients[0].hello_args
         assert isinstance(manifest, dict)
@@ -937,7 +757,7 @@ def test_start_with_authored_manifest_rates_and_quality(monkeypatch) -> None:
         "panels": [{"id": "p0", "kind": "video", "channels": ["color_image"]}],
         "layout": "p0",
     }
-    module, clients = _make_bridge(monkeypatch, wire=("color_image",), manifest=manifest)
+    module, clients = make_bridge(monkeypatch, wire=("color_image",), manifest=manifest)
     try:
         _, hello_manifest = clients[0].hello_args
         # The hello carries the normalized form (defaults made explicit).
@@ -946,7 +766,8 @@ def test_start_with_authored_manifest_rates_and_quality(monkeypatch) -> None:
         assert hello_manifest["layout"] == "p0"
         # Rate and quality come from the manifest, not the config fields.
         assert module._min_interval == {"color_image": 1.0 / 4.0}
-        assert module._jpeg_quality == 33
+        (image_spec,) = module._channel_specs
+        assert image_spec.params["quality"] == 33
         qualities: list[int] = []
         real = Image.to_jpeg_bytes
 
@@ -967,11 +788,11 @@ def test_start_with_invalid_manifest_fails(monkeypatch) -> None:
     async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
         raise AssertionError("must not reach the relay with an invalid manifest")
 
-    monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fake_connect)
+    patch_relay(monkeypatch, fake_connect)
 
     def start_with(manifest: dict[str, Any]) -> RelayBridgeModule:
         module = RelayBridgeModule(
-            relay_url="https://127.0.0.1:1", robot_id="unit-bot", manifest=manifest
+            relay_url="http://127.0.0.1:1", robot_id="unit-bot", manifest=manifest
         )
         module.odom.transport = FakeTransport()
         try:
@@ -1021,7 +842,7 @@ def test_start_with_invalid_manifest_fails(monkeypatch) -> None:
 
 def test_advertised_unwired_channel_is_not_probed(monkeypatch) -> None:
     manifest = default_manifest(RelayBridgeConfig(), ("color_image", "odom", "global_costmap"))
-    module, clients = _make_bridge(monkeypatch, wire=("odom",), manifest=manifest)
+    module, clients = make_bridge(monkeypatch, wire=("odom",), manifest=manifest)
     try:
         _, hello_manifest = clients[0].hello_args
         # No runtime stream probing: everything the manifest declares is
@@ -1056,14 +877,262 @@ def test_default_manifest_matches_cockpit_default_preset() -> None:
 
 
 def test_relay_hello_rejection_stops_reconnect_attempts(monkeypatch) -> None:
-    conflict = RelayRejectedError("robot_id_conflict", "already connected")
-    module, clients = _make_bridge(monkeypatch, hello_errors=(None, conflict))
+    # Every rejection but a robot id conflict is permanent (the conflict is
+    # covered by test_reconnect_retries_robot_id_conflict).
+    mismatch = RelayRejectedError("hello_mismatch", "hello may not change robot identity")
+    module, clients = make_bridge(monkeypatch, hello_errors=(None, mismatch))
     try:
         kill_session(module, clients[0])
         assert wait_until(lambda: len(clients) == 2)
         flush_loop(module)
         assert module._session is None
         assert len(clients) == 2
+    finally:
+        stop_module(module)
+
+
+def test_start_waits_out_robot_id_conflict(monkeypatch) -> None:
+    # A predecessor killed without a clean close stays registered until the
+    # relay's idle timeout: the first hello's conflict is waited out, not fatal.
+    monkeypatch.setattr(relay_bridge_module, "_RECONNECT_PAUSE_S", 0.01)
+    conflict = RelayRejectedError("robot_id_conflict", "already connected")
+    module, clients = make_bridge(monkeypatch, hello_errors=(conflict, None))
+    try:
+        assert len(clients) == 2
+        assert clients[0].close_count == 1  # the rejected session is closed
+        assert module._session is not None and module._session.client is clients[1]
+    finally:
+        stop_module(module)
+
+
+def test_start_retries_transient_connect_and_rediscovers(monkeypatch) -> None:
+    monkeypatch.setattr(relay_bridge_module, "_RECONNECT_PAUSE_S", 0.01)
+    fetches: list[str] = []
+    dials: list[str] = []
+    client = FakeClient()
+
+    async def changing_fetch(base_url: str, **kwargs: Any) -> RelayInfo:
+        fetches.append(base_url)
+        return RelayInfo(
+            wt_url=f"https://127.0.0.1:{len(fetches)}",
+            cert_hash="fake",
+            v=PROTOCOL_VERSION,
+        )
+
+    async def flaky_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
+        dials.append(url)
+        if len(dials) == 1:
+            raise TimeoutError("transient QUIC timeout")
+        return client
+
+    monkeypatch.setattr(relay_bridge_module, "fetch_relay_info", changing_fetch)
+    monkeypatch.setattr(relay_bridge_module.RelayClient, "connect", flaky_connect)
+    module = RelayBridgeModule(
+        relay_url="http://127.0.0.1:7780", open_browser=False, robot_id="unit-bot"
+    )
+    try:
+        module.start()
+        assert fetches == ["http://127.0.0.1:7780", "http://127.0.0.1:7780"]
+        assert dials == ["https://127.0.0.1:1", "https://127.0.0.1:2"]
+        assert module._session is not None and module._session.client is client
+    finally:
+        stop_module(module)
+
+
+def test_discovered_ephemeral_cert_is_refused_off_loopback(monkeypatch) -> None:
+    async def remote_info(base_url: str, **kwargs: Any) -> RelayInfo:
+        return RelayInfo(
+            wt_url="https://10.0.0.5:4433",
+            cert_hash="ephemeral",
+            v=PROTOCOL_VERSION,
+        )
+
+    monkeypatch.setattr(relay_bridge_module, "fetch_relay_info", remote_info)
+    module = RelayBridgeModule(
+        relay_url="http://10.0.0.5:7780", open_browser=False, robot_id="unit-bot"
+    )
+    try:
+        with pytest.raises(ValueError, match="loopback"):
+            module.start()
+    finally:
+        stop_module(module)
+
+
+def test_relay_ca_reaches_discovery_and_connect(monkeypatch) -> None:
+    ca = "/ca.pem"
+    seen: list[tuple[Any, ...]] = []
+    client = FakeClient()
+
+    async def fake_fetch(base_url: str, **kwargs: Any) -> RelayInfo:
+        seen.append(("fetch", kwargs.get("cafile")))
+        # A relay with a real certificate advertises no hash.
+        return RelayInfo(wt_url="https://127.0.0.1:1", cert_hash=None, v=PROTOCOL_VERSION)
+
+    async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
+        seen.append(("connect", kwargs.get("cafile"), kwargs.get("insecure")))
+        return client
+
+    monkeypatch.setattr(relay_bridge_module, "fetch_relay_info", fake_fetch)
+    monkeypatch.setattr(relay_bridge_module.RelayClient, "connect", fake_connect)
+    module = RelayBridgeModule(
+        relay_url="http://127.0.0.1:7780", relay_ca=ca, open_browser=False, robot_id="unit-bot"
+    )
+    try:
+        module.start()
+        assert seen == [("fetch", ca), ("connect", ca, False)]
+    finally:
+        stop_module(module)
+
+
+def test_local_relay_ignores_relay_ca(monkeypatch) -> None:
+    seen: list[tuple[str | None, bool | None]] = []
+    client = FakeClient()
+
+    async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
+        seen.append((kwargs.get("cafile"), kwargs.get("insecure")))
+        return client
+
+    monkeypatch.setattr(relay_bridge_module, "_probe_local_port", lambda _: None)
+    patch_relay(monkeypatch, fake_connect)
+    monkeypatch.setattr(
+        RelayBridgeModule,
+        "_spawn_relay",
+        lambda self, open_browser, serve_dir: "http://127.0.0.1:7780",
+    )
+    module = RelayBridgeModule(
+        relay_ca="/missing/ca.pem",
+        open_browser=False,
+        web_build=False,
+        robot_id="unit-bot",
+    )
+    try:
+        module.start()
+        assert seen == [(None, True)]
+    finally:
+        stop_module(module)
+
+
+def test_relay_key_reaches_hello(monkeypatch) -> None:
+    client = FakeClient()
+
+    async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
+        return client
+
+    patch_relay(monkeypatch, fake_connect)
+    module = RelayBridgeModule(
+        relay_url="http://127.0.0.1:7780",
+        relay_key="robot-key-0123456789abcdef",
+        open_browser=False,
+        robot_id="unit-bot",
+    )
+    try:
+        module.start()
+        assert client.hello_token == "robot-key-0123456789abcdef"
+    finally:
+        stop_module(module)
+
+
+def test_relay_key_falls_back_to_global_config(monkeypatch) -> None:
+    # RELAY_KEY (env or .env) lands in GlobalConfig; the module reads it when
+    # its own field is unset. The autouse fixture restores global_config.
+    client = FakeClient()
+
+    async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
+        return client
+
+    patch_relay(monkeypatch, fake_connect)
+    global_config.update(relay_key="global-key-0123456789abcdef")
+    module = RelayBridgeModule(
+        relay_url="http://127.0.0.1:7780", open_browser=False, robot_id="unit-bot"
+    )
+    try:
+        module.start()
+        assert client.hello_token == "global-key-0123456789abcdef"
+    finally:
+        stop_module(module)
+
+
+def test_local_relay_ignores_relay_key(monkeypatch) -> None:
+    # A spawned local relay has no auth file: the key is never sent to it.
+    client = FakeClient()
+
+    async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
+        return client
+
+    monkeypatch.setattr(relay_bridge_module, "_probe_local_port", lambda _: None)
+    patch_relay(monkeypatch, fake_connect)
+    monkeypatch.setattr(
+        RelayBridgeModule,
+        "_spawn_relay",
+        lambda self, open_browser, serve_dir: "http://127.0.0.1:7780",
+    )
+    module = RelayBridgeModule(
+        relay_key="robot-key-0123456789abcdef",
+        open_browser=False,
+        web_build=False,
+        robot_id="unit-bot",
+    )
+    try:
+        module.start()
+        assert client.hello_token is None
+    finally:
+        stop_module(module)
+
+
+def test_start_gives_up_on_robot_id_conflict_after_deadline(monkeypatch) -> None:
+    monkeypatch.setattr(relay_bridge_module, "_RECONNECT_PAUSE_S", 0.01)
+    monkeypatch.setattr(relay_bridge_module, "_CONFLICT_RETRY_S", 0.05)
+    clients: list[FakeClient] = []
+
+    async def always_conflict(url: str, role: str, **kwargs: Any) -> FakeClient:
+        clients.append(FakeClient(hello_error=RelayRejectedError("robot_id_conflict", "held")))
+        return clients[-1]
+
+    patch_relay(monkeypatch, always_conflict)
+    # Built by hand: make_bridge only returns from a successful start.
+    module = RelayBridgeModule(
+        relay_url="http://127.0.0.1:1", open_browser=False, robot_id="unit-bot"
+    )
+    with pytest.raises(RelayRejectedError, match="robot_id_conflict"):
+        module.start()
+    stop_module(module)
+    assert len(clients) >= 2
+
+
+def test_reconnect_retries_robot_id_conflict(monkeypatch) -> None:
+    # After a session loss the relay may still hold our previous registration
+    # (no clean close reached it): retry, unlike any other rejection.
+    monkeypatch.setattr(relay_bridge_module, "_RECONNECT_PAUSE_S", 0.01)
+    conflict = RelayRejectedError("robot_id_conflict", "already connected")
+    module, clients = make_bridge(monkeypatch, hello_errors=(None, conflict, None))
+    try:
+        kill_session(module, clients[0])
+        assert wait_until(lambda: len(clients) == 3)
+        assert wait_until(
+            lambda: module._session is not None and module._session.client is clients[2]
+        )
+    finally:
+        stop_module(module)
+
+
+def test_reconnect_gives_up_on_discovery_error(monkeypatch) -> None:
+    # /api/info answering another protocol version is permanent, like a hello
+    # rejection: supervision ends instead of retrying every pause.
+    monkeypatch.setattr(relay_bridge_module, "_RECONNECT_PAUSE_S", 0.01)
+    module, clients = make_bridge(monkeypatch)
+    fetches: list[int] = []
+
+    async def bad_fetch(base_url: str, **kwargs: Any) -> RelayInfo:
+        fetches.append(1)
+        raise ProtocolError("relay speaks protocol v99, this bridge speaks v5")
+
+    try:
+        monkeypatch.setattr(relay_bridge_module, "fetch_relay_info", bad_fetch)
+        kill_session(module, clients[0])
+        assert wait_until(lambda: len(fetches) == 1)
+        time.sleep(0.1)  # several pauses' worth: a retry loop would show here
+        flush_loop(module)
+        assert (len(fetches), len(clients), module._session) == (1, 1, None)
     finally:
         stop_module(module)
 
@@ -1127,7 +1196,7 @@ def test_build_cancellation_is_bounded(monkeypatch) -> None:
 
     monkeypatch.setattr(relay_bridge_module, "ensure_web_dist", fake_ensure)
     monkeypatch.setattr(relay_bridge_module, "find_web_dir", lambda: Path("/nonexistent"))
-    module = RelayBridgeModule(relay_url="https://127.0.0.1:1", open_browser=False)
+    module = RelayBridgeModule(relay_url="http://127.0.0.1:1", open_browser=False)
     try:
         assert module._loop is not None
         future = asyncio.run_coroutine_threadsafe(module._build_web_dist(), module._loop)
@@ -1142,7 +1211,7 @@ def test_build_cancellation_is_bounded(monkeypatch) -> None:
 def test_close_cancels_in_flight_build() -> None:
     # stop() racing a still-starting main() (start blocked in the build) must
     # cancel the build via _close_module rather than wait for its timeout.
-    module = RelayBridgeModule(relay_url="https://127.0.0.1:1", open_browser=False)
+    module = RelayBridgeModule(relay_url="http://127.0.0.1:1", open_browser=False)
     cancel = threading.Event()
     module._build_cancel = cancel
     stop_module(module)
@@ -1153,7 +1222,7 @@ def test_serve_dir_rejected_with_relay_url(tmp_path: Path) -> None:
     # serve_dir is a local-relay feature; silently ignoring it against an
     # external relay would leave the user's page unserved.
     module = RelayBridgeModule(
-        relay_url="https://127.0.0.1:1", serve_dir=str(tmp_path), open_browser=False
+        relay_url="http://127.0.0.1:1", serve_dir=str(tmp_path), open_browser=False
     )
     with pytest.raises(RuntimeError, match="serve_dir requires"):
         module.start()
@@ -1183,10 +1252,12 @@ def test_missing_serve_dir_fails_before_build_and_spawn(monkeypatch, tmp_path: P
 def test_failed_start_stops_spawned_relay(monkeypatch) -> None:
     # First-connect failure after a successful spawn happens before main yields;
     # its unified finally must still reap the fresh child.
+    monkeypatch.setattr(relay_bridge_module, "_RECONNECT_PAUSE_S", 0.01)
+
     async def fail_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
         raise OSError("connect refused")
 
-    monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fail_connect)
+    patch_relay(monkeypatch, fail_connect)
     # web_build=False: the build now runs in main() before _spawn_relay,
     # so the fake spawn below no longer shields this test from it.
     module = RelayBridgeModule(
@@ -1196,7 +1267,7 @@ def test_failed_start_stops_spawned_relay(monkeypatch) -> None:
 
     def fake_spawn(open_browser: bool, serve_dir: Path | None) -> str:
         module._relay = relay
-        return "https://127.0.0.1:2"
+        return "http://127.0.0.1:2/"
 
     monkeypatch.setattr(module, "_spawn_relay", fake_spawn)
     with pytest.raises(OSError):
@@ -1207,9 +1278,11 @@ def test_failed_start_stops_spawned_relay(monkeypatch) -> None:
 
 # Teleop (the tele_cmd_vel tx channel).
 
-# Short deadman window so silence tests stay fast; well above the 50 ms
+# Short deadman window so the one silence test stays fast; well above the 50 ms
 # watchdog poll.
 _TELEOP_TEST_WATCHDOG_MS = 120.0
+# Every other teleop test exercises gen/seq gating, not the deadman.
+_TELEOP_INERT_WATCHDOG_MS = 3_600_000.0
 
 
 def teleop_manifest(**params: Any) -> dict[str, Any]:
@@ -1244,8 +1317,11 @@ def wire_twist(vx: float, vy: float, wz: float, seq: float, gen: int | None = 1)
 
 
 @pytest.fixture
-def teleop_bridge(monkeypatch):
-    module, clients = _make_bridge(monkeypatch, manifest=teleop_manifest())
+def teleop_bridge(monkeypatch, request):
+    # Disarm the deadman by default (see _TELEOP_INERT_WATCHDOG_MS); the deadman
+    # test overrides watchdogMs through indirect parametrization.
+    watchdog_ms = getattr(request, "param", _TELEOP_INERT_WATCHDOG_MS)
+    module, clients = make_bridge(monkeypatch, manifest=teleop_manifest(watchdogMs=watchdog_ms))
     twists: list[Twist] = []
     module.tele_cmd_vel.subscribe(twists.append)
     try:
@@ -1286,6 +1362,7 @@ def test_teleop_seq_guard_drops_stale_within_live_stream(teleop_bridge) -> None:
     assert [t.linear.x for t in twists] == [0.1, 0.2]
 
 
+@pytest.mark.parametrize("teleop_bridge", [_TELEOP_TEST_WATCHDOG_MS], indirect=True)
 def test_teleop_watchdog_deadline_and_high_water_survives_silence(teleop_bridge) -> None:
     module, clients, twists = teleop_bridge
     push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=100))
@@ -1492,11 +1569,11 @@ def test_teleop_manifest_validation_fails_start(monkeypatch) -> None:
     async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
         raise AssertionError("must not reach the relay with an invalid manifest")
 
-    monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fake_connect)
+    patch_relay(monkeypatch, fake_connect)
 
     def start_with(manifest: dict[str, Any]) -> None:
         module = RelayBridgeModule(
-            relay_url="https://127.0.0.1:1", robot_id="unit-bot", manifest=manifest
+            relay_url="http://127.0.0.1:1", robot_id="unit-bot", manifest=manifest
         )
         try:
             module.start()
@@ -1537,76 +1614,208 @@ def test_default_manifest_teleop_degradations() -> None:
     assert with_video["layout"] == {"row": ["p0", "p1"], "shares": [2, 1]}
 
 
-# Composition helpers live at module level: under PEP 563 (`from __future__
-# import annotations`) a Module class defined inside a function loses its
-# streams, because its annotations cannot be resolved from module globals.
-class _EmptyConfig(ModuleConfig):
-    pass
+# Replay encodes run off the loop.
 
 
-class _ImageProducer(Module):
-    config: _EmptyConfig
-    color_image: Out[Image]
-
-
-class _CostmapProducer(Module):
-    config: _EmptyConfig
-    global_costmap: Out[OccupancyGrid]
-
-
-class _TwistConsumer(Module):
-    config: _EmptyConfig
-    tele_cmd_vel: In[Twist]
-
-
-class _BareModule(Module):
-    config: _EmptyConfig
-
-
-def test_composition_adds_relay_to_non_visual_blueprint() -> None:
-    blueprint = with_relay_bridge(_ImageProducer.blueprint())
-    relay_atoms = [atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule]
-
-    assert len(relay_atoms) == 1
-    assert relay_atoms[0].kwargs["available_channels"] == ("color_image",)
-
-
-def test_composition_includes_costmap_producer() -> None:
-    blueprint = with_relay_bridge(
-        autoconnect(_ImageProducer.blueprint(), _CostmapProducer.blueprint())
+def swap_costmap_encoder(module: RelayBridgeModule, encoder: Callable[[Any], bytes]) -> None:
+    """Swap the resolved costmap spec's encoder before any viewer subscribes
+    (the runtime specs are the encoder source)."""
+    module._channel_specs = tuple(
+        replace(spec, encoder=encoder, encoder_takes_params=False)
+        if spec.ch == "global_costmap"
+        else spec
+        for spec in module._channel_specs
     )
-    relay_atom = next(atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule)
-
-    assert relay_atom.kwargs["available_channels"] == ("color_image", "global_costmap")
 
 
-def test_composition_derives_tx_channels_from_consumers() -> None:
-    # A MovementManager-like consumer of tele_cmd_vel makes the tx channel
-    # available (Out transports exist regardless of wiring, so consumers are
-    # the availability signal).
-    blueprint = with_relay_bridge(
-        autoconnect(_ImageProducer.blueprint(), _TwistConsumer.blueprint())
+def test_teleop_watchdog_runs_during_replay_encode(monkeypatch) -> None:
+    # A cached map replays on the first subscribe; its encode (seconds for a
+    # big cloud) must not stall the loop: the deadman still zeroes a silent
+    # driver within its window and control messages keep flowing meanwhile.
+    manifest = teleop_manifest()
+    manifest["channels"].append(
+        {
+            "ch": "global_costmap",
+            "dir": "rx",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.0,
+            "params": {},
+        }
     )
-    relay_atom = next(atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule)
+    module, clients = make_bridge(monkeypatch, manifest=manifest, wire=("global_costmap",))
+    encode_started = threading.Event()
+    release_encode = threading.Event()
 
-    assert relay_atom.kwargs["available_channels"] == ("color_image", "tele_cmd_vel")
+    def blocking_encode(msg: OccupancyGrid) -> bytes:
+        encode_started.set()
+        assert release_encode.wait(timeout=5.0)
+        return b"replayed-grid"
+
+    swap_costmap_encoder(module, blocking_encode)
+    twists: list[Twist] = []
+    module.tele_cmd_vel.subscribe(twists.append)
+    offers = clients[0].writers["global_costmap"].offers
+    try:
+        t0 = time.time()
+        costmap_transport(module).publish(COSTMAP_GRID)  # cached; nobody watching
+        t1 = time.time()
+        push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=1))
+        assert wait_until(lambda: len(twists) == 1)
+        started = time.monotonic()
+        push(module, clients[0], Subs(chs=["global_costmap"], n=1))
+        assert encode_started.wait(timeout=5.0)
+        # Silence while driving, with the replay encode still blocked: the
+        # deadman zero lands within the window (same bound as the plain
+        # watchdog test) instead of after the encode.
+        assert wait_until(lambda: len(twists) == 2)
+        elapsed = time.monotonic() - started
+        assert not release_encode.is_set()
+        assert twists[1].is_zero()
+        deadline = _TELEOP_TEST_WATCHDOG_MS / 1000 + relay_bridge_module._TELEOP_POLL_S + 0.5
+        assert elapsed < deadline, f"deadman zero took {elapsed:.3f}s during a replay encode"
+        push(module, clients[0], wire_twist(0.3, 0.0, 0.0, seq=2))
+        assert wait_until(lambda: len(twists) == 3)
+        assert offers == []
+
+        release_encode.set()
+        assert wait_until(lambda: offers == [(b"replayed-grid", None)])
+        assert module.encoded["global_costmap"] == 0  # a replay is not a live encode
+        ts = clients[0].writers["global_costmap"].tss[0]
+        assert ts is not None and t0 <= ts <= t1  # arrival time, not replay time
+    finally:
+        release_encode.set()  # stop_module waits for the worker thread
+        stop_module(module)
 
 
-def test_composition_ignores_disabled_producers() -> None:
-    source = _ImageProducer.blueprint().disabled_modules(_ImageProducer)
-    blueprint = with_relay_bridge(source)
-    relay_atom = next(atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule)
+def test_live_frame_during_replay_encode_wins(costmap_bridge) -> None:
+    # The live subscribe no longer waits for the replay: a frame published
+    # during the encode reaches the viewer at once, and the older replay,
+    # finishing later, is dropped instead of overwriting it in the mailbox.
+    module, clients = costmap_bridge
+    replay_started = threading.Event()
+    release_replay = threading.Event()
+    calls = {"n": 0}
 
-    assert relay_atom.kwargs["available_channels"] == ()
+    def encode(msg: OccupancyGrid) -> bytes:
+        calls["n"] += 1
+        if calls["n"] > 1:
+            return b"live"
+        replay_started.set()
+        assert release_replay.wait(timeout=5.0)
+        return b"replay"
+
+    swap_costmap_encoder(module, encode)
+    offers = clients[0].writers["global_costmap"].offers
+    try:
+        costmap_transport(module).publish(COSTMAP_GRID)
+        push(module, clients[0], Subs(chs=["global_costmap"], n=1))
+        assert replay_started.wait(timeout=5.0)
+        assert len(costmap_transport(module).subscribers) == 2  # subscribed mid-encode
+        costmap_transport(module).publish(COSTMAP_GRID)  # live, encoded on this thread
+        assert module.encoded["global_costmap"] == 1
+        assert wait_until(lambda: offers == [(b"live", None)])
+
+        session = module._session
+        assert session is not None
+        replay = session.replays["global_costmap"]
+        release_replay.set()
+        assert wait_until(replay.done)
+        flush_loop(module)
+        assert offers == [(b"live", None)]  # the stale replay never reached the mailbox
+    finally:
+        release_replay.set()
 
 
-def test_composition_preserves_existing_relay() -> None:
-    existing = RelayBridgeModule.blueprint(local_port=8899, available_channels=("odom",))
-    blueprint = with_relay_bridge(autoconnect(_BareModule.blueprint(), existing))
-    relay_atoms = [atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule]
+def test_replay_rearmed_on_newer_cache_replays_that_message(costmap_bridge) -> None:
+    # The viewers leave and return while the replay of grid A still encodes,
+    # and grid B arrives in between (nobody watching, so no live encode): the
+    # re-armed replay must deliver B, not the A it started on.
+    module, clients = costmap_bridge
+    replay_started = threading.Event()
+    release_replay = threading.Event()
+    calls = {"n": 0}
 
-    assert len(relay_atoms) == 1
-    assert relay_atoms[0].kwargs == {
-        "local_port": 8899,
-        "available_channels": ("odom",),
-    }
+    def encode(msg: OccupancyGrid) -> bytes:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            replay_started.set()
+            assert release_replay.wait(timeout=5.0)
+        return msg.grid.tobytes()
+
+    swap_costmap_encoder(module, encode)
+    grid_b = OccupancyGrid(
+        grid=np.array([[100, 100, 100], [0, 0, 0]], dtype=np.int8),
+        resolution=0.05,
+        origin=Pose(-1.25, 2.5, 0.0),
+        ts=43.0,
+    )
+    writer = clients[0].writers["global_costmap"]
+    try:
+        costmap_transport(module).publish(COSTMAP_GRID)
+        push(module, clients[0], Subs(chs=["global_costmap"], n=1))
+        assert replay_started.wait(timeout=5.0)
+        push(module, clients[0], Subs(chs=[], n=2))
+        assert wait_until(lambda: len(costmap_transport(module).subscribers) == 1)
+        t0 = time.time()
+        costmap_transport(module).publish(grid_b)  # cached only: nobody is watching
+        t1 = time.time()
+        push(module, clients[0], Subs(chs=["global_costmap"], n=3))
+        assert wait_until(lambda: len(costmap_transport(module).subscribers) == 2)
+        session = module._session
+        assert session is not None
+        replay = session.replays["global_costmap"]
+        assert not replay.done()  # re-armed, not doubled
+
+        release_replay.set()
+        assert wait_until(replay.done)
+        flush_loop(module)
+        # B only: A's encode finished on a moved cache and never reached the
+        # mailbox, and B came from the cache, not from a live encode.
+        assert writer.offers == [(grid_b.grid.tobytes(), None)]
+        assert calls["n"] == 2
+        assert module.encoded["global_costmap"] == 0
+        ts = writer.tss[0]
+        assert ts is not None and t0 <= ts <= t1  # B's arrival time
+    finally:
+        release_replay.set()
+
+
+def test_replay_in_flight_when_session_dies_is_dropped(costmap_bridge) -> None:
+    module, clients = costmap_bridge
+    replay_started = threading.Event()
+    release_replay = threading.Event()
+    encode_finished = threading.Event()
+
+    def encode(msg: OccupancyGrid) -> bytes:
+        replay_started.set()
+        assert release_replay.wait(timeout=5.0)
+        encode_finished.set()
+        return b"replay"
+
+    swap_costmap_encoder(module, encode)
+    try:
+        costmap_transport(module).publish(COSTMAP_GRID)
+        push(module, clients[0], Subs(chs=["global_costmap"], n=1))
+        assert replay_started.wait(timeout=5.0)
+        old = module._session
+        assert old is not None
+        replay = old.replays["global_costmap"]
+        kill_session(module, clients[0])
+        # Reconnected while the worker thread is still blocked: teardown never
+        # waits out an encode, and the dead session's replay is cancelled.
+        assert wait_until(lambda: len(clients) == 2)
+        assert replay.cancelled() and old.replays == {}
+
+        release_replay.set()
+        assert encode_finished.wait(timeout=5.0)
+        flush_loop(module)
+        assert clients[0].writers["global_costmap"].offers == []
+        assert clients[1].writers["global_costmap"].offers == []
+        # The replacement replays from the raw cache on its own first subscribe.
+        push(module, clients[1], Subs(chs=["global_costmap"], n=1))
+        assert wait_until(
+            lambda: clients[1].writers["global_costmap"].offers == [(b"replay", None)]
+        )
+    finally:
+        release_replay.set()

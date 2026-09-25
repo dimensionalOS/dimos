@@ -12,51 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.perception.experimental.object_scene_registration import (
-    ObjectSceneRegistrationConfig,
-    ObjectSceneRegistrationModule,
-)
-from dimos.robot.manipulators.xarm.blueprints.perception import (
-    XARM_PERCEPTION_CAMERA_TRANSFORM,
-    xarm_perception,
-)
-from dimos.robot.manipulators.xarm.blueprints.simulation import (
-    xarm_perception_sim,
-    xarm_room_sim,
-)
+import pytest
+
+from dimos.core.coordination.blueprints import Blueprint
+from dimos.perception.localize.module import LiveLocalizeModule, LiveLocalizeModuleConfig
+from dimos.perception.localize.types import LocalizePolicy
+from dimos.robot.manipulators.xarm.blueprints import grasp
+from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
 
 
-def _osr_config(blueprint) -> ObjectSceneRegistrationConfig:  # type: ignore[no-untyped-def]
+def _localize_config(blueprint: Blueprint) -> LiveLocalizeModuleConfig:
     atom = next(
-        atom
-        for atom in blueprint.active_blueprints
-        if issubclass(atom.module, ObjectSceneRegistrationModule)
+        atom for atom in blueprint.active_blueprints if issubclass(atom.module, LiveLocalizeModule)
     )
-    parsed = BlueprintConfigParser(blueprint).parse(environ={})
-    return ObjectSceneRegistrationConfig.model_validate(parsed.module_kwargs(atom.name))
+    # Inspect only this atom: parsing the whole blueprint downloads unrelated LFS assets.
+    return LiveLocalizeModuleConfig.model_validate(atom.kwargs)
 
 
 def test_real_camera_mount_connects_link7_to_camera_link() -> None:
-    assert XARM_PERCEPTION_CAMERA_TRANSFORM.frame_id == "link7"
-    assert XARM_PERCEPTION_CAMERA_TRANSFORM.child_frame_id == "camera_link"
+    assert grasp.XARM_WRIST_CAMERA_TRANSFORM.frame_id == "link7"
+    assert grasp.XARM_WRIST_CAMERA_TRANSFORM.child_frame_id == "camera_link"
 
 
-def test_real_and_simulation_use_their_optical_frames() -> None:
-    assert _osr_config(xarm_perception).optical_frame == "camera_color_optical_frame"
-    assert _osr_config(xarm_perception_sim).optical_frame == "wrist_camera_color_optical_frame"
+@pytest.mark.parametrize(
+    ("simulated", "expected", "floor"),
+    [(False, "camera_color_optical_frame", 0.25), (True, "wrist_camera_color_optical_frame", 0.07)],
+)
+def test_grasp_uses_wrist_camera_with_multiview_memory(
+    monkeypatch: pytest.MonkeyPatch, simulated: bool, expected: str, floor: float
+) -> None:
+    monkeypatch.setattr(grasp, "SIMULATED", simulated)
+    config = _localize_config(grasp._scene_registration())
+    assert config.optical_frame == expected
+    assert config.world_frame == "world"
+    assert LocalizePolicy(**config.policy).min_views == 2
+    assert LocalizePolicy(**config.policy).candidate_floor == floor
 
 
-def test_room_sim_uses_single_view_synthetic_thresholds() -> None:
-    atom = next(
-        atom
-        for atom in xarm_room_sim.active_blueprints
-        if issubclass(atom.module, ObjectSceneRegistrationModule)
-    )
-    # Parsing the complete room blueprint resolves its LFS-backed MuJoCo path.
-    config = ObjectSceneRegistrationConfig.model_validate(atom.kwargs)
-
+def test_perception_sim_uses_wrist_camera() -> None:
+    config = _localize_config(xarm_perception_sim)
     assert config.optical_frame == "wrist_camera_color_optical_frame"
-    assert config.candidate_floor == 0.07
-    assert config.accept_score == 0.07
-    assert config.min_views == 1

@@ -30,6 +30,8 @@ from dimos.hardware.manipulators.spec import ControlMode
 
 class _FakeXArmSdk:
     instances: ClassVar[list[_FakeXArmSdk]] = []
+    axis = 6
+    device_type = 6  # 9 = Lite 6
 
     def __init__(self, ip: str) -> None:
         self.instances.append(self)
@@ -102,6 +104,14 @@ class _FakeXArmSdk:
         self.actions.append(("set_gripper_position", position, wait))
         return 0
 
+    def open_lite6_gripper(self) -> int:
+        self.actions.append(("open_lite6_gripper",))
+        return 0
+
+    def close_lite6_gripper(self) -> int:
+        self.actions.append(("close_lite6_gripper",))
+        return 0
+
 
 @pytest.fixture
 def xarm_adapter_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
@@ -127,17 +137,40 @@ def test_activate_prepares_xarm_for_safe_commanded_motion(
     arm = _FakeXArmSdk.instances[-1]
     assert arm.warn_code == 0
     assert arm.error_code == 0
-    assert arm.actions[-8:] == [
+    # Bringing a blueprint up must not command the arm anywhere.
+    assert arm.actions[-7:] == [
         ("clean_warn", None),
         ("clean_error", None),
         ("motion_enable", True),
         ("set_mode", 0),
         ("set_state", 0),
-        ("set_servo_angle", [0.0, -40.0, -50.0, 0.0, 90.0, 0.0], 20.0, 500.0, True),
         ("set_mode", 1),
         ("set_state", 0),
     ]
+    assert not any(action[0] == "set_servo_angle" for action in arm.actions)
     assert adapter.get_control_mode() == xarm_adapter_module.ControlMode.SERVO_POSITION
+
+
+def test_activate_moves_only_to_an_explicitly_configured_initial_pose(
+    xarm_adapter_module: ModuleType,
+) -> None:
+    initial = [0.0, -math.pi / 4, 0.0, 0.0, math.pi / 2, 0.0]
+    adapter = xarm_adapter_module.XArmAdapter(
+        address="192.0.2.10", dof=6, initial_positions=initial
+    )
+    assert adapter.connect()
+
+    assert adapter.activate()
+
+    arm = _FakeXArmSdk.instances[-1]
+    assert ("set_servo_angle", [0.0, -45.0, 0.0, 0.0, 90.0, 0.0], 20.0, 500.0, True) in arm.actions
+
+
+def test_initial_positions_must_match_the_arm_axis_count(
+    xarm_adapter_module: ModuleType,
+) -> None:
+    with pytest.raises(ValueError):
+        xarm_adapter_module.XArmAdapter(address="192.0.2.10", dof=6, initial_positions=[0.0])
 
 
 def test_joint_position_commands_use_degrees_for_xarm_sdk(
@@ -175,3 +208,25 @@ def test_gripper_command_reaches_sdk_once_in_native_units(
     sdk = _FakeXArmSdk.instances[-1]
     assert sdk.servo_joint_commands == [[0.0] * 7]
     assert sdk.gripper_commands == [850.0]
+
+
+def test_lite6_detected_and_uses_gpio_gripper(
+    xarm_adapter_module: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_FakeXArmSdk, "device_type", 9)
+    adapter = xarm_adapter_module.XArmAdapter(address="192.0.2.10", dof=7, arm_dof=6)
+    assert adapter.connect()
+    assert adapter.get_info().model == "Lite6"
+
+    assert adapter.activate()
+    arm = _FakeXArmSdk.instances[-1]
+
+    assert adapter.write_joint_positions([0.0] * 6 + [850.0])
+    assert adapter.write_joint_positions([0.0] * 6 + [850.0])  # repeat: no resend
+    assert adapter.write_joint_positions([0.0] * 6 + [0.0])
+    assert arm.gripper_commands == []
+    assert [a for a in arm.actions if "lite6_gripper" in a[0]] == [
+        ("open_lite6_gripper",),
+        ("close_lite6_gripper",),
+    ]
+    assert adapter.read_joint_positions()[-1] == 0.0

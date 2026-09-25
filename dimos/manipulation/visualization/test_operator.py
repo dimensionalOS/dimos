@@ -19,6 +19,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from dimos.manipulation.manipulation_spec import (
+    CommandResult,
+    CommandStatus,
     ExecutionResult,
     ExecutionStatus,
     OperationStatus,
@@ -83,13 +85,13 @@ def _operator() -> tuple[ManipulationOperator, MagicMock, MagicMock]:
     module.generate_plan_to_joint_targets.return_value = _plan()
     module.generate_plan_to_pose_targets.return_value = _plan()
     module.generate_cartesian_plan.return_value = _plan()
-    module.preview_plan.return_value = True
+    module.preview_plan.return_value = CommandResult(CommandStatus.SUCCEEDED)
     module._execute_generated_plan.return_value = True
     module.cancel.return_value = ExecutionResult(ExecutionStatus.NO_EXECUTION)
-    module.clear_planned_path.return_value = True
+    module.clear_planned_path.return_value = CommandResult(CommandStatus.SUCCEEDED)
 
     monitor = MagicMock()
-    monitor.planning_groups = PlanningGroupRegistry([config])
+    monitor.planning_groups = PlanningGroupRegistry(config.planning_groups)
     monitor.get_current_joint_state.return_value = JointState(
         name=config.joint_names, position=[0.0, 0.0, 0.0]
     )
@@ -118,9 +120,11 @@ def test_joint_evaluation_overlays_selected_target_on_complete_model_state() -> 
     assert complete.position == [0.1, 0.2, 0.0]
 
 
-def test_joint_evaluation_rejects_local_unknown_and_overlapping_selection() -> None:
+def test_joint_evaluation_rejects_noncanonical_unknown_and_overlapping_selection() -> None:
     operator, _, _ = _operator()
-    local = JointTargetRequest(("left_arm",), JointState(name=["j1", "j2"], position=[0.1, 0.2]))
+    noncanonical = JointTargetRequest(
+        ("left_arm",), JointState(name=["j1", "j2"], position=[0.1, 0.2])
+    )
     unknown = JointTargetRequest(("missing",), JointState(name=["left/j1"], position=[0.1]))
     duplicate = JointTargetRequest(
         ("left_arm", "left_arm"),
@@ -128,7 +132,7 @@ def test_joint_evaluation_rejects_local_unknown_and_overlapping_selection() -> N
     )
     assert all(
         not operator.evaluate_joint_target(request).success
-        for request in (local, unknown, duplicate)
+        for request in (noncanonical, unknown, duplicate)
     )
 
 
