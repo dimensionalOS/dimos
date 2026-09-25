@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 import json
+from pathlib import Path
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -555,6 +556,16 @@ class Hyperspace(MemoryModule):
     # Every answer `find_objects` gives, also published, so a viewer or a recorder
     # sees them without having made the call.
     found: Out[FoundObjects]
+
+    @property
+    def store(self) -> Any:
+        # An .mcap recording is opened as one, with its derived streams inside it; the
+        # base class only knows sqlite.
+        if self._store is None and str(self.config.db_path).endswith(".mcap"):
+            from dimos.mapping.hyperspace.cli import open_store
+
+            self._store = self.register_disposable(open_store(Path(self.config.db_path)))
+        return super().store
 
     @rpc
     def start(self) -> None:

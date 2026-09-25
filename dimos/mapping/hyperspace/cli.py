@@ -72,9 +72,11 @@ SCENE_ALPHA_MIN = 40
 def open_store(path: Path, *, must_exist: bool = True) -> Store:
     """Open a recording, picking the store from the file extension."""
     if path.suffix == ".mcap":
-        from dimos.memory.store.mcap import McapStore
+        # Decoded by ROS 2 schema name, the way the memory world opens one: a plain
+        # McapStore decodes only jpeg channels, and a recorded camera is CDR.
+        from dimos.teleop.memory_world.recording import open_ros2_mcap
 
-        store = McapStore(path=str(path))
+        store = open_ros2_mcap(path)
     elif path.suffix == ".db":
         from dimos.memory.store.sqlite import SqliteStore
 
@@ -145,10 +147,10 @@ def fold_the_wal(store: Store) -> None:
 def memory_db_for(recording: Path) -> Path:
     """Where a recording's keyframes and patches live: the recording itself.
 
-    One recording is one file. Only an .mcap, which cannot be written to, needs a
-    companion db beside it.
+    One recording is one file, an .mcap as much as a .db: an McapStore appends the
+    streams it is given to the file they were built from.
     """
-    return recording if recording.suffix == ".db" else recording.with_suffix(".hyperspace.db")
+    return recording
 
 
 def index_is_finished(memory: Store, slug: str = "") -> bool:
@@ -535,8 +537,7 @@ def main(
     ),
     memory_db: Path | None = typer.Option(
         None,
-        help="Where the keyframes + patches go (default: into the recording itself; "
-        "an .mcap cannot be written to, so it gets <recording>.hyperspace.db)",
+        help="Where the keyframes + patches go (default: into the recording itself)",
     ),
     reuse: bool = typer.Option(True, help="Reuse an existing memory db instead of re-embedding"),
     hz: float = typer.Option(

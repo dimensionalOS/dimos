@@ -684,13 +684,12 @@ def test_ensemble_cell_grid_follows_the_finest_member() -> None:
 
 
 # --- one recording, one file ---------------------------------------------------------
-# The keyframes and patches belong in the recording they describe. Only an .mcap, which
-# cannot be written to, gets a companion db beside it.
+# The keyframes and patches belong in the recording they describe, .db or .mcap alike.
 
 
-def test_a_db_indexes_itself_and_only_an_mcap_gets_a_companion() -> None:
+def test_a_recording_indexes_itself_with_no_companion() -> None:
     assert cli.memory_db_for(Path("/data/grocery.db")) == Path("/data/grocery.db")
-    assert cli.memory_db_for(Path("/data/grocery.mcap")) == Path("/data/grocery.hyperspace.db")
+    assert cli.memory_db_for(Path("/data/grocery.mcap")) == Path("/data/grocery.mcap")
 
 
 def test_keyframes_alone_are_reusable_and_a_legacy_marker_is_dropped_with_them(

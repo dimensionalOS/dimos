@@ -27,7 +27,7 @@ as a recording is ingested, which is the trade this module exists to make.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 import time
 from typing import TYPE_CHECKING, Any
@@ -350,6 +350,12 @@ def since(store: Any, tag: str, stream: str, last_id: int) -> ResidentPatches | 
     path would be the slow one here.
     """
     backend = store.stream(stream, dict)._source
+    if _in_mcap(backend):
+        # The count comes off the summary; only a stream that grew is read at all.
+        if store.stream(stream, dict).count() <= last_id + 1:
+            return None
+        block = _from_mcap(tag, stream, backend, after=last_id)
+        return block if block.rows else None
     blobs, codec = backend.blob_store, backend.codec
     conn = store._registry_conn
 
@@ -390,35 +396,78 @@ def since(store: Any, tag: str, stream: str, last_id: int) -> ResidentPatches | 
     )
 
 
+def _in_mcap(backend: Any) -> bool:
+    return hasattr(getattr(backend, "metadata_store", None), "iter_raw")
+
+
+def _from_mcap(
+    tag: str, stream: str, backend: Any, stride: int = 1, after: int = -1
+) -> ResidentPatches:
+    """One model's patches out of an mcap recording, where each message carries its own
+    vector: one pass over the channel, rows after `after` and every `stride`-th kept."""
+    from dimos.memory.store.mcap_derived import decode_envelope
+
+    started = time.monotonic()
+    codec = backend.metadata_store._codec
+    vectors: list[NDArray[Any]] = []
+    last_id = after
+
+    def payloads() -> Iterator[dict[str, Any]]:
+        nonlocal last_id
+        for row_id, data in enumerate(backend.metadata_store.iter_raw()):
+            if row_id <= after:
+                continue
+            last_id = row_id
+            if (row_id - after - 1) % stride:
+                continue
+            _header, payload, vector = decode_envelope(data)
+            if vector is not None:
+                vectors.append(vector)
+                yield codec.decode(payload)
+
+    placements = _placements_of(payloads())
+    width = len(vectors[0]) if vectors else 0
+    matrix = (
+        np.stack(vectors).astype(HELD_AS, copy=False) if vectors else np.empty((0, width), HELD_AS)
+    )
+    logger.info(
+        f"hyperspace: {tag} resident from the mcap -- {len(matrix)} x {width} "
+        f"({matrix.nbytes / 1e6:.0f} MB) in {time.monotonic() - started:.1f}s"
+    )
+    return ResidentPatches(tag=tag, stream=stream, vectors=matrix, last_id=last_id, **placements)
+
+
 def _placements(stream: str, blobs: Any, codec: Any, ids: Sequence[int]) -> dict[str, Any]:
     """The little that placing a patch needs, read off the rows' payloads."""
-    rows = len(ids)
+    return _placements_of(codec.decode(blobs.get(stream, row_id)) for row_id in ids)
+
+
+def _placements_of(payloads: Any) -> dict[str, Any]:
+    """One pass over the payloads, keeping only their fields -- a million patch dicts
+    held at once would cost more than the vectors."""
     names: dict[str, int] = {}
-    frame_of = np.empty(rows, dtype=np.int32)
-    stamps = np.empty(rows, dtype=np.float64)
-    cells = np.empty(rows, dtype=np.int32)
-    grids = np.empty((rows, 2), dtype=np.int16)
-    rays = np.empty((rows, 2), dtype=np.float32)
-    depths = np.empty(rows, dtype=np.float32)
-    for at, row_id in enumerate(ids):
-        payload = codec.decode(blobs.get(stream, row_id))
+    frame_of: list[int] = []
+    stamps: list[float] = []
+    cells: list[int] = []
+    grids: list[Any] = []
+    rays: list[Any] = []
+    depths: list[float] = []
+    for payload in payloads:
         name = str(payload["camera_frame"])
-        if name not in names:
-            names[name] = len(names)
-        frame_of[at] = names[name]
-        stamps[at] = float(payload["ts"])
-        cells[at] = int(payload["cell"])
-        grids[at] = payload["grid"]
-        rays[at] = payload["ray"]
-        depths[at] = float(payload["depth"])
+        frame_of.append(names.setdefault(name, len(names)))
+        stamps.append(float(payload["ts"]))
+        cells.append(int(payload["cell"]))
+        grids.append(payload["grid"])
+        rays.append(payload["ray"])
+        depths.append(float(payload["depth"]))
     return {
-        "camera_frames": [name for name, _ in sorted(names.items(), key=lambda kv: kv[1])],
-        "frame_of": frame_of,
-        "ts": stamps,
-        "cell": cells,
-        "grid": grids,
-        "ray": rays,
-        "depth": depths,
+        "camera_frames": list(names),
+        "frame_of": np.asarray(frame_of, dtype=np.int32),
+        "ts": np.asarray(stamps, dtype=np.float64),
+        "cell": np.asarray(cells, dtype=np.int32),
+        "grid": np.asarray(grids, dtype=np.int16).reshape(-1, 2),
+        "ray": np.asarray(rays, dtype=np.float32).reshape(-1, 2),
+        "depth": np.asarray(depths, dtype=np.float32),
     }
 
 
@@ -443,6 +492,11 @@ def load(store: Any, tag: str, stream: str, stride: int = 1) -> ResidentPatches:
     # `stored_vectors` in frames.py already does the same. Worth a public accessor if
     # anything else comes to want one.
     backend = store.stream(stream, dict)._source
+    if _in_mcap(backend):
+        held = _from_mcap(tag, stream, backend, stride=max(1, int(stride)))
+        if not held.rows:
+            raise ValueError(f"{stream!r} holds no patches")
+        return held
     blobs, codec = backend.blob_store, backend.codec
     conn = store._registry_conn
 
@@ -488,6 +542,39 @@ def load(store: Any, tag: str, stream: str, stride: int = 1) -> ResidentPatches:
         f"({vectors.nbytes / 1e6:.0f} MB) in {read:.1f}s, payloads in {meta:.1f}s"
     )
     return ResidentPatches(tag=tag, stream=stream, vectors=vectors, last_id=last_id, **placements)
+
+
+def stored_vectors(store: Any, stream: str) -> tuple[NDArray[np.int64], NDArray[Any]]:
+    """Every vector a stream holds, as (row ids, matrix), read in one pass.
+
+    For a search to run in RAM rather than through the store's vector lookup: the
+    whole stream multiplied at once, no top-k cap, no round trip per query.
+    """
+    backend = store.stream(stream)._source
+    if _in_mcap(backend):
+        from dimos.memory.store.mcap_derived import iter_vectors
+
+        pairs = list(iter_vectors(backend.metadata_store.iter_raw()))
+        if not pairs:
+            return np.empty(0, np.int64), np.empty((0, 0), HELD_AS)
+        return (
+            np.asarray([row for row, _ in pairs], np.int64),
+            np.stack([vector for _, vector in pairs]).astype(HELD_AS, copy=False),
+        )
+    conn = store._registry_conn
+    ids = np.asarray(
+        [row[0] for row in conn.execute(f'SELECT id FROM "{stream}" ORDER BY id')], np.int64
+    )
+    probe = conn.execute(f'SELECT embedding FROM "{stream}_vec" LIMIT 1').fetchone()
+    if probe is None:
+        return np.empty(0, np.int64), np.empty((0, 0), HELD_AS)
+    width = len(np.frombuffer(probe[0], dtype=np.float32))
+    vectors = _from_chunks(conn, stream, width, len(ids))
+    if vectors is None:
+        vectors = _vectors_of(conn, stream, width, len(ids))
+    if len(vectors) != len(ids):
+        raise ValueError(f"{stream!r} has {len(ids)} rows but {len(vectors)} vectors")
+    return ids, vectors
 
 
 class ResidentIndex:

@@ -115,8 +115,7 @@ def main(
     ),
     memory_db: Path | None = typer.Option(
         None,
-        help="Where the segment records go (default: into the recording itself; "
-        "an .mcap cannot be written to, so it gets <recording>.hyperspace.db)",
+        help="Where the segment records go (default: into the recording itself)",
     ),
     hz: float = typer.Option(2.0, help="Frames per second to segment"),
     max_seconds: float = typer.Option(1e9, help="Stop after this much of the recording"),
