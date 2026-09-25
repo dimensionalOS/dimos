@@ -21,6 +21,8 @@ export interface SceneEditorGlobals {
   assets: any[];      // Scene assets array
   assetsGroup: any;   // THREE.Group containing loaded asset meshes
   gltfLoader: any;    // THREE GLTFLoader instance
+  /** One-shot object label + world-AABB export (Three.js Y-up); see objectAnnotations.js. */
+  getObjectAnnotationSnapshot?: () => any;
 }
 
 export interface SceneEditorOptions {
@@ -357,16 +359,28 @@ export class SceneEditor {
         return scaleFactor;
       };
 
+      // getObjectAnnotations: snapshot of identified asset labels and world-axis-
+      // aligned bounds (Three.js Y-up), matching the viewer's "Object labels +
+      // boxes" overlay. Read-only: it never enables the overlay itself.
+      const getObjectAnnotations = (): any => {
+        if (!g.getObjectAnnotationSnapshot) {
+          throw new Error("object annotations are not available in this engine");
+        }
+        return g.getObjectAnnotationSnapshot();
+      };
+
       const fn = new AsyncFunction(
         "scene", "THREE", "RAPIER", "rapierWorld", "renderer", "camera",
         "agent", "playerBody", "assets", "assetsGroup",
         "loadGLTF", "addCollider", "removeCollider", "addNPC", "removeNPC", "autoScale",
+        "getObjectAnnotations",
         code,
       );
       const result = await fn(
         g.scene, g.THREE, g.RAPIER, g.rapierWorld, g.renderer, g.camera,
         g.agent, g.agent, g.assets, g.assetsGroup,
         loadGLTF, addCollider, removeCollider, addNPC, removeNPC, autoScale,
+        getObjectAnnotations,
       );
       this._send({ type: "execResult", id, success: true, result: _serialize(result) });
     } catch (err: any) {
