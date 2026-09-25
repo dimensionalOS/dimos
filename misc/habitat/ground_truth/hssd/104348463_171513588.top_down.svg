@@ -1,0 +1,290 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1487" viewBox="0.048 -14.068 14.909 13.859" font-family="sans-serif">
+<rect x="0.048" y="-14.068" width="14.909" height="13.859" fill="#fcfcfb"/>
+<line x1="-1" y1="-14.068" x2="-1" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="0" y1="-14.068" x2="0" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="0" y="-0.276" font-size="0.166" fill="#52514e" text-anchor="middle">0</text>
+<line x1="1" y1="-14.068" x2="1" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="2" y1="-14.068" x2="2" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="2" y="-0.276" font-size="0.166" fill="#52514e" text-anchor="middle">2</text>
+<line x1="3" y1="-14.068" x2="3" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="4" y1="-14.068" x2="4" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="4" y="-0.276" font-size="0.166" fill="#52514e" text-anchor="middle">4</text>
+<line x1="5" y1="-14.068" x2="5" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="6" y1="-14.068" x2="6" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="6" y="-0.276" font-size="0.166" fill="#52514e" text-anchor="middle">6</text>
+<line x1="7" y1="-14.068" x2="7" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="8" y1="-14.068" x2="8" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="8" y="-0.276" font-size="0.166" fill="#52514e" text-anchor="middle">8</text>
+<line x1="9" y1="-14.068" x2="9" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="10" y1="-14.068" x2="10" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="10" y="-0.276" font-size="0.166" fill="#52514e" text-anchor="middle">10</text>
+<line x1="11" y1="-14.068" x2="11" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="12" y1="-14.068" x2="12" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="12" y="-0.276" font-size="0.166" fill="#52514e" text-anchor="middle">12</text>
+<line x1="13" y1="-14.068" x2="13" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="14" y1="-14.068" x2="14" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="14" y="-0.276" font-size="0.166" fill="#52514e" text-anchor="middle">14</text>
+<line x1="15" y1="-14.068" x2="15" y2="-0.209" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="0.048" y1="1" x2="14.957" y2="1" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="0.048" y1="0" x2="14.957" y2="0" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="0.115" y="0.058" font-size="0.166" fill="#52514e">0</text>
+<line x1="0.048" y1="-1" x2="14.957" y2="-1" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="0.048" y1="-2" x2="14.957" y2="-2" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="0.115" y="-1.942" font-size="0.166" fill="#52514e">2</text>
+<line x1="0.048" y1="-3" x2="14.957" y2="-3" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="0.048" y1="-4" x2="14.957" y2="-4" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="0.115" y="-3.942" font-size="0.166" fill="#52514e">4</text>
+<line x1="0.048" y1="-5" x2="14.957" y2="-5" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="0.048" y1="-6" x2="14.957" y2="-6" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="0.115" y="-5.942" font-size="0.166" fill="#52514e">6</text>
+<line x1="0.048" y1="-7" x2="14.957" y2="-7" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="0.048" y1="-8" x2="14.957" y2="-8" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="0.115" y="-7.942" font-size="0.166" fill="#52514e">8</text>
+<line x1="0.048" y1="-9" x2="14.957" y2="-9" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="0.048" y1="-10" x2="14.957" y2="-10" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="0.115" y="-9.942" font-size="0.166" fill="#52514e">10</text>
+<line x1="0.048" y1="-11" x2="14.957" y2="-11" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="0.048" y1="-12" x2="14.957" y2="-12" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="0.115" y="-11.942" font-size="0.166" fill="#52514e">12</text>
+<line x1="0.048" y1="-13" x2="14.957" y2="-13" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<line x1="0.048" y1="-14" x2="14.957" y2="-14" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<text x="0.115" y="-13.942" font-size="0.166" fill="#52514e">14</text>
+<line x1="0.048" y1="-15" x2="14.957" y2="-15" stroke="#e6e5e0" stroke-width="1" vector-effect="non-scaling-stroke"/>
+<rect x="1.048" y="-11.300" width="0.242" height="8.411" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_000</title></rect>
+<rect x="1.048" y="-12.512" width="0.889" height="1.290" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_001</title></rect>
+<rect x="1.142" y="-2.889" width="2.929" height="1.560" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_002</title></rect>
+<rect x="1.199" y="-11.674" width="0.343" height="8.112" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_003</title></rect>
+<rect x="1.542" y="-12.918" width="0.858" height="1.245" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_004</title></rect>
+<rect x="1.937" y="-12.937" width="0.292" height="0.424" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_005</title></rect>
+<rect x="2.230" y="-13.068" width="4.951" height="0.306" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_006</title></rect>
+<rect x="3.824" y="-1.359" width="4.172" height="0.150" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_007</title></rect>
+<rect x="6.397" y="-4.434" width="6.186" height="0.389" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_008</title></rect>
+<rect x="6.397" y="-7.887" width="0.271" height="3.637" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_009</title></rect>
+<rect x="6.775" y="-12.918" width="0.793" height="0.695" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_010</title></rect>
+<rect x="7.181" y="-12.762" width="0.803" height="0.703" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_011</title></rect>
+<rect x="7.567" y="-12.224" width="0.247" height="0.216" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_012</title></rect>
+<rect x="7.648" y="-7.963" width="1.037" height="0.225" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_013</title></rect>
+<rect x="7.788" y="-1.637" width="0.289" height="0.428" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_014</title></rect>
+<rect x="7.814" y="-12.059" width="0.284" height="0.643" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_015</title></rect>
+<rect x="7.815" y="-12.053" width="4.769" height="0.333" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_016</title></rect>
+<rect x="7.927" y="-4.256" width="0.150" height="1.466" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_017</title></rect>
+<rect x="7.927" y="-8.942" width="0.193" height="1.129" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_018</title></rect>
+<rect x="8.535" y="-7.887" width="0.150" height="3.637" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_019</title></rect>
+<rect x="12.433" y="-8.458" width="0.237" height="4.173" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_020</title></rect>
+<rect x="12.433" y="-11.437" width="1.524" height="0.394" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_021</title></rect>
+<rect x="12.433" y="-11.901" width="0.150" height="0.574" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_022</title></rect>
+<rect x="12.583" y="-8.338" width="1.374" height="0.236" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_023</title></rect>
+<rect x="13.807" y="-11.409" width="0.150" height="3.307" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_024</title></rect>
+<rect x="4.384" y="-1.873" width="0.350" height="0.361" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>trashcan</title></rect>
+<rect x="12.150" y="-7.758" width="0.077" height="0.094" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>alarm_clock</title></rect>
+<rect x="1.496" y="-4.022" width="0.111" height="0.249" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Set of Tins - Black/White</title></rect>
+<rect x="3.260" y="-4.299" width="0.121" height="0.097" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>SERVE oil and vinegar set</title></rect>
+<rect x="3.397" y="-4.201" width="0.217" height="0.145" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Sabatier V 5 Piece Knife Block Set</title></rect>
+<rect x="8.686" y="-6.748" width="0.076" height="1.258" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>tv</title></rect>
+<rect x="9.373" y="-11.591" width="0.193" height="0.074" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>mantel_clock</title></rect>
+<rect x="6.622" y="-4.161" width="0.304" height="0.277" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>6 PIECE SET NATURAL DECO BALLS</title></rect>
+<rect x="6.547" y="-5.457" width="1.501" height="1.041" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shower</title></rect>
+<rect x="12.407" y="-6.993" width="0.027" height="0.597" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>picture</title></rect>
+<rect x="7.012" y="-12.170" width="0.237" height="0.280" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Food Buffet Breakfast Coffee</title></rect>
+<rect x="3.817" y="-3.589" width="0.390" height="0.497" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Take Away Party Food Sushi</title></rect>
+<rect x="2.364" y="-12.154" width="1.523" height="1.523" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>table</title></rect>
+<rect x="7.336" y="-4.218" width="0.412" height="0.245" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>CAST RIBBED METAL FRAME, Antique Brass</title></rect>
+<rect x="8.734" y="-5.889" width="0.245" height="0.412" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>CAST RIBBED METAL FRAME, Antique Brass</title></rect>
+<rect x="6.622" y="-4.251" width="1.146" height="0.367" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>table</title></rect>
+<rect x="2.947" y="-11.603" width="0.406" height="0.403" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>potted_plant</title></rect>
+<rect x="11.084" y="-6.660" width="0.221" height="0.509" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cushion</title></rect>
+<rect x="1.494" y="-3.313" width="0.274" height="0.312" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>toaster</title></rect>
+<rect x="1.481" y="-4.951" width="0.226" height="0.257" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>pot</title></rect>
+<rect x="1.631" y="-3.217" width="0.295" height="0.336" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>KITCHEN AID ARTISAN MIXER RED</title></rect>
+<rect x="4.651" y="-7.258" width="0.447" height="0.540" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cushion</title></rect>
+<rect x="6.876" y="-2.957" width="0.850" height="1.460" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>carpet</title></rect>
+<rect x="1.898" y="-2.516" width="0.476" height="0.319" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Brabantia S- Line Kitchen Tool set</title></rect>
+<rect x="3.253" y="-7.967" width="0.192" height="0.198" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>7 Inch Metal Wire Star Decor</title></rect>
+<rect x="9.054" y="-6.752" width="0.199" height="0.190" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>7 Inch Metal Wire Star Decor</title></rect>
+<rect x="8.974" y="-11.751" width="2.680" height="0.730" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>chest_of_drawers</title></rect>
+<rect x="1.266" y="-5.701" width="0.017" height="0.351" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>wall_clock</title></rect>
+<rect x="5.125" y="-12.918" width="1.660" height="0.567" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>bench</title></rect>
+<rect x="8.691" y="-6.842" width="0.609" height="1.423" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>chest_of_drawers</title></rect>
+<rect x="11.884" y="-5.240" width="0.504" height="0.781" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>chest_of_drawers</title></rect>
+<rect x="11.927" y="-7.903" width="0.508" height="0.784" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>chest_of_drawers</title></rect>
+<rect x="3.103" y="-7.775" width="0.609" height="0.609" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>MATARO MARBLE AND BRASS TROUGH, White Carrara</title></rect>
+<rect x="2.159" y="-9.928" width="2.779" height="4.020" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>carpet</title></rect>
+<rect x="9.962" y="-11.293" width="0.700" height="0.600" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>chair</title></rect>
+<rect x="11.965" y="-7.738" width="0.155" height="0.138" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>mobile_phone</title></rect>
+<rect x="8.022" y="-7.735" width="0.489" height="2.132" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Waschplatz/zone lavabo Bodenschatz Creativa</title></rect>
+<rect x="10.222" y="-6.978" width="0.738" height="0.630" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Blanket</title></rect>
+<rect x="11.345" y="-6.487" width="0.223" height="0.406" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cushion</title></rect>
+<rect x="1.454" y="-3.697" width="0.105" height="0.445" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>DRESSED - MW21 set of four</title></rect>
+<rect x="3.190" y="-2.587" width="0.163" height="0.125" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Kitchen Roll Holder Made From Polished Stainless Steel With A Natural Sheesham Wood Base</title></rect>
+<rect x="5.899" y="-1.828" width="0.570" height="0.570" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Curzon Coat Stand</title></rect>
+<rect x="1.287" y="-5.072" width="0.698" height="2.056" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cabinet</title></rect>
+<rect x="9.724" y="-11.646" width="0.149" height="0.146" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Frosted pen pot</title></rect>
+<rect x="11.180" y="-11.649" width="0.250" height="0.340" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>The Lodge - Rexel Letter Tray Bamboo</title></rect>
+<rect x="10.992" y="-6.126" width="0.305" height="0.305" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cushion</title></rect>
+<rect x="2.948" y="-8.490" width="0.914" height="1.287" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>table</title></rect>
+<rect x="10.243" y="-7.121" width="2.190" height="1.915" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>bed</title></rect>
+<rect x="8.947" y="-9.876" width="2.773" height="1.829" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>carpet</title></rect>
+<rect x="9.066" y="-11.645" width="0.189" height="0.188" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>potted_plant</title></rect>
+<rect x="3.268" y="-7.672" width="0.083" height="0.083" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>candle</title></rect>
+<rect x="3.391" y="-8.169" width="0.415" height="0.393" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>book</title></rect>
+<rect x="3.253" y="-7.454" width="0.219" height="0.245" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>potted_plant</title></rect>
+<rect x="4.644" y="-8.831" width="0.418" height="0.475" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cushion</title></rect>
+<rect x="6.774" y="-12.362" width="0.607" height="0.607" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>table</title></rect>
+<rect x="4.704" y="-9.114" width="0.439" height="0.497" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cushion</title></rect>
+<rect x="1.302" y="-3.550" width="2.098" height="1.627" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cabinet</title></rect>
+<rect x="3.084" y="-4.074" width="0.310" height="0.252" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Olive Wood Salad Servers</title></rect>
+<rect x="11.277" y="-6.118" width="0.336" height="0.531" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cushion</title></rect>
+<rect x="8.377" y="-5.452" width="0.158" height="0.197" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Handtuchhaken Bodenschatz Creativa 70 cm</title></rect>
+<rect x="2.464" y="-12.346" width="0.723" height="0.725" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>chair</title></rect>
+<rect x="3.277" y="-12.202" width="0.737" height="0.739" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>chair</title></rect>
+<rect x="3.415" y="-11.399" width="0.731" height="0.731" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>chair</title></rect>
+<rect x="2.646" y="-11.028" width="0.679" height="0.692" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>chair</title></rect>
+<rect x="2.095" y="-11.539" width="0.692" height="0.678" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>chair</title></rect>
+<rect x="12.407" y="-6.031" width="0.027" height="0.597" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>picture</title></rect>
+<rect x="1.264" y="-8.148" width="0.045" height="1.291" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.427" y="-6.729" width="0.304" height="0.234" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.449" y="-6.836" width="0.344" height="0.323" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.397" y="-6.728" width="0.338" height="0.295" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.278" y="-6.738" width="0.428" height="0.324" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.294" y="-6.748" width="0.434" height="0.350" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.285" y="-6.749" width="0.432" height="0.339" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.254" y="-9.055" width="0.236" height="0.462" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.406" y="-9.720" width="0.364" height="0.464" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.269" y="-7.277" width="0.236" height="0.462" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.274" y="-6.749" width="0.236" height="0.462" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.372" y="-9.019" width="0.137" height="0.354" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.341" y="-9.399" width="0.132" height="0.130" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.344" y="-9.613" width="0.123" height="0.138" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.261" y="-8.949" width="0.298" height="0.298" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.280" y="-8.983" width="0.144" height="0.027" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.281" y="-8.956" width="0.144" height="0.027" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.281" y="-8.930" width="0.144" height="0.027" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.244" y="-7.478" width="0.260" height="0.063" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.243" y="-7.538" width="0.260" height="0.063" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.243" y="-7.599" width="0.260" height="0.063" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.242" y="-7.659" width="0.260" height="0.063" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.242" y="-7.720" width="0.260" height="0.063" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.241" y="-7.780" width="0.260" height="0.063" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.241" y="-7.841" width="0.260" height="0.063" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.240" y="-7.901" width="0.260" height="0.063" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.239" y="-7.962" width="0.260" height="0.063" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.239" y="-8.022" width="0.260" height="0.063" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.238" y="-8.083" width="0.260" height="0.063" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.274" y="-7.471" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.274" y="-7.523" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.273" y="-7.575" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.273" y="-7.627" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.272" y="-7.679" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.272" y="-7.731" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.272" y="-7.784" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.271" y="-7.836" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.271" y="-7.888" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.270" y="-7.940" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.270" y="-7.992" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.251" y="-6.777" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.251" y="-6.725" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.252" y="-6.672" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.252" y="-6.620" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.253" y="-6.568" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.253" y="-6.516" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.254" y="-6.464" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.254" y="-6.412" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.255" y="-6.360" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.255" y="-6.308" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.255" y="-6.255" width="0.221" height="0.054" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.249" y="-6.952" width="0.222" height="0.177" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.269" y="-9.301" width="0.229" height="0.112" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.284" y="-8.847" width="0.181" height="0.023" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.251" y="-9.570" width="0.243" height="0.300" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.251" y="-9.343" width="0.199" height="0.078" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.282" y="-8.868" width="0.151" height="0.021" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.285" y="-8.808" width="0.194" height="0.024" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.285" y="-8.785" width="0.194" height="0.024" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.243" y="-9.558" width="0.249" height="0.256" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.244" y="-9.550" width="0.247" height="0.254" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.283" y="-8.903" width="0.148" height="0.037" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.279" y="-9.545" width="0.196" height="0.254" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.275" y="-9.547" width="0.198" height="0.223" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.282" y="-9.000" width="0.161" height="0.017" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.283" y="-8.827" width="0.202" height="0.021" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.246" y="-9.553" width="0.249" height="0.269" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.271" y="-9.321" width="0.197" height="0.077" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.245" y="-8.761" width="0.257" height="0.194" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="1.226" y="-9.838" width="0.606" height="3.707" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>shelves</title></rect>
+<rect x="2.804" y="-4.434" width="1.750" height="1.524" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>counter</title></rect>
+<rect x="3.056" y="-2.422" width="1.164" height="0.994" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>fridge</title></rect>
+<rect x="9.962" y="-11.673" width="0.645" height="0.467" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>APPLE iMac 5K 27"</title></rect>
+<rect x="6.547" y="-6.179" width="0.611" height="0.707" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Toilette/toilette puristisch</title></rect>
+<rect x="8.737" y="-6.806" width="0.193" height="0.466" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>Swoop Black Marble Bookends Set Of 2</title></rect>
+<rect x="6.384" y="-5.120" width="0.013" height="0.521" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>picture</title></rect>
+<rect x="6.384" y="-6.061" width="0.013" height="0.521" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>picture</title></rect>
+<rect x="4.601" y="-7.597" width="0.469" height="0.596" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cushion</title></rect>
+<rect x="2.978" y="-5.926" width="0.664" height="0.234" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cushion</title></rect>
+<rect x="1.314" y="-3.144" width="1.884" height="1.329" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cabinet</title></rect>
+<rect x="10.743" y="-11.385" width="0.220" height="0.292" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>book</title></rect>
+<rect x="4.348" y="-9.197" width="0.869" height="2.506" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>couch</title></rect>
+<rect x="2.816" y="-6.279" width="0.920" height="0.830" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>chair</title></rect>
+<rect x="4.257" y="-4.196" width="0.467" height="0.467" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>stool</title></rect>
+<rect x="3.835" y="-4.442" width="0.467" height="0.467" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>stool</title></rect>
+<rect x="3.386" y="-4.685" width="0.467" height="0.467" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>stool</title></rect>
+<rect x="11.565" y="-6.763" width="0.290" height="0.509" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cushion</title></rect>
+<rect x="11.643" y="-6.261" width="0.292" height="0.518" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cushion</title></rect>
+<rect x="11.252" y="-6.948" width="0.313" height="0.543" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>cushion</title></rect>
+<rect x="1.053" y="-13.008" width="1.334" height="1.886" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>window</title></rect>
+<rect x="3.867" y="-13.033" width="1.494" height="0.080" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>window</title></rect>
+<rect x="2.371" y="-13.033" width="1.494" height="0.080" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>window</title></rect>
+<rect x="5.432" y="-13.033" width="1.494" height="0.080" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>window</title></rect>
+<rect x="6.784" y="-13.017" width="1.176" height="1.045" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>window</title></rect>
+<rect x="7.887" y="-2.790" width="0.230" height="1.153" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>door</title></rect>
+<rect x="10.906" y="-11.866" width="1.494" height="0.080" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>window</title></rect>
+<rect x="9.435" y="-11.866" width="1.494" height="0.080" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>window</title></rect>
+<rect x="8.098" y="-11.866" width="1.494" height="0.080" fill="#2a78d6" fill-opacity="0.08" stroke="#2a78d6" stroke-width="1.5" vector-effect="non-scaling-stroke"><title>window</title></rect>
+<text x="7.298" y="-4.937" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">shower</text>
+<text x="4.012" y="-3.340" font-size="0.027" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.007">Take Away Party Food Sushi</text>
+<text x="3.126" y="-11.393" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">table</text>
+<text x="7.195" y="-4.067" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">table</text>
+<text x="3.150" y="-11.402" font-size="0.061" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.015">potted_plant</text>
+<text x="4.875" y="-6.988" font-size="0.115" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.029">cushion</text>
+<text x="7.301" y="-2.227" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">carpet</text>
+<text x="10.314" y="-11.386" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">chest_of_drawers</text>
+<text x="5.955" y="-12.635" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">bench</text>
+<text x="8.995" y="-6.131" font-size="0.068" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.017">chest_of_drawers</text>
+<text x="12.136" y="-4.849" font-size="0.057" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.014">chest_of_drawers</text>
+<text x="12.181" y="-7.511" font-size="0.057" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.014">chest_of_drawers</text>
+<text x="3.407" y="-7.470" font-size="0.024" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.006">MATARO MARBLE AND BRASS TROUGH, White Carrara</text>
+<text x="3.549" y="-7.918" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">carpet</text>
+<text x="10.312" y="-10.993" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">chair</text>
+<text x="8.266" y="-6.669" font-size="0.020" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.005">Waschplatz/zone lavabo Bodenschatz Creativa</text>
+<text x="10.591" y="-6.663" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">Blanket</text>
+<text x="6.184" y="-1.543" font-size="0.060" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.015">Curzon Coat Stand</text>
+<text x="1.636" y="-4.044" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">cabinet</text>
+<text x="3.405" y="-7.847" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">table</text>
+<text x="11.338" y="-6.163" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">bed</text>
+<text x="10.334" y="-8.961" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">carpet</text>
+<text x="3.599" y="-7.973" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">book</text>
+<text x="4.853" y="-8.594" font-size="0.107" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.027">cushion</text>
+<text x="7.078" y="-12.059" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">table</text>
+<text x="4.924" y="-8.865" font-size="0.113" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.028">cushion</text>
+<text x="2.351" y="-2.736" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">cabinet</text>
+<text x="2.826" y="-11.983" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">chair</text>
+<text x="3.646" y="-11.832" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">chair</text>
+<text x="3.780" y="-11.034" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">chair</text>
+<text x="2.986" y="-10.682" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">chair</text>
+<text x="2.441" y="-11.199" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">chair</text>
+<text x="1.588" y="-9.488" font-size="0.094" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.023">shelves</text>
+<text x="1.529" y="-7.984" font-size="0.156" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.039">shelves</text>
+<text x="3.679" y="-3.672" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">counter</text>
+<text x="3.638" y="-1.925" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">fridge</text>
+<text x="10.284" y="-11.440" font-size="0.068" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.017">APPLE iMac 5K 27"</text>
+<text x="6.853" y="-5.826" font-size="0.039" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.010">Toilette/toilette puristisch</text>
+<text x="4.836" y="-7.299" font-size="0.121" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.030">cushion</text>
+<text x="2.256" y="-2.479" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">cabinet</text>
+<text x="4.782" y="-7.944" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">couch</text>
+<text x="3.276" y="-5.864" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">chair</text>
+<text x="4.491" y="-3.962" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">stool</text>
+<text x="4.068" y="-4.208" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">stool</text>
+<text x="3.619" y="-4.451" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">stool</text>
+<text x="1.721" y="-12.065" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">window</text>
+<text x="7.372" y="-12.495" font-size="0.166" fill="#0b0b0b" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="#fcfcfb" stroke-width="0.041">window</text>
+<text x="0.214" y="-13.803" font-size="0.215" fill="#0b0b0b">hssd-hab 104348463_171513588  164 objects, 25 walls  (meters, ROS world frame: x right, y up)</text>
+</svg>
