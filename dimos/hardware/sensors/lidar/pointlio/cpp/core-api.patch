@@ -1,0 +1,11 @@
+--- a/src/pointlio.hpp
++++ b/src/pointlio.hpp
+@@ -21,6 +21,8 @@
+     void feed_imu(const ImuConstPtr &imu_data)   { laser_mapping->imu_cbk(imu_data); }
+     void feed_lidar(const CstMsgConstPtr &lidar) { laser_mapping->livox_pcl_cbk(lidar); }
+     void process()                               { laser_mapping->run(odom_result); }
++    // Compatible opt-in API: true only when this step produced new odometry.
++    bool process_updated() { return laser_mapping->run_updated(odom_result); }
+ 
+     std::vector<double> get_pose() {
+         const auto &p = odom_result->pose.pose;

@@ -81,10 +81,19 @@
         fast-lio-patched = pkgs.applyPatches {
           name = "fast-lio-pointlio-patched";
           src = fast-lio;
-          patches = [ ./fastlio-resize-darwin.patch ];
+          patches = [ ./fastlio-resize-darwin.patch ./core-api.patch ./core-laser.patch ];
         };
 
         pointlio_native = pkgs.stdenv.mkDerivation {
+          doCheck = true;
+          checkPhase = ''
+            runHook preCheck
+            $CXX -std=c++17 -O2 -DNDEBUG -I$src $src/test_publication_gate.cpp -o test_publication_gate
+            ./test_publication_gate
+            $CXX -std=c++17 -O2 -DNDEBUG -I$src/tests/fixtures -I$src $src/tests/test_publication_snapshot.cpp -o test_publication_snapshot
+            ./test_publication_snapshot
+            runHook postCheck
+          '';
           pname = "pointlio_native";
           version = "0.2.0";
 
