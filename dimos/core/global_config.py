@@ -42,7 +42,9 @@ ZenohProcessMode: TypeAlias = Literal["peer", "client"]
 ENV_FILE = None if "PYTEST_VERSION" in os.environ else ".env"
 
 # Never expose these in config dumps or persist their CLI values in run metadata.
-SECRET_CONFIG_FIELDS = frozenset({"dimos_api_key", "relay_key", "unitree_aes_128_key"})
+SECRET_CONFIG_FIELDS = frozenset(
+    {"dimos_api_key", "relay_key", "unitree_aes_128_key", "typesafe_api_key"}
+)
 
 
 def _get_all_numbers(s: str) -> list[float]:
@@ -156,6 +158,9 @@ class GlobalConfig(BaseSettings):
     .env over the --relay-key flag, which shows in the process list."""
     dimos_cloud_url: str = "https://api.dimensional.org"
     dimos_api_key: str | None = None
+    typesafe_api_key: str | None = Field(
+        default=None, validation_alias=AliasChoices("TYPESAFE_API_KEY", "typesafe_api_key")
+    )
     dimos_upload_codec: str = "lz4"
     dimos_upload_retries: int = 2
     dimos_upload_chunk_mb: int | None = None
