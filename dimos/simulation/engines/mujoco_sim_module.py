@@ -18,6 +18,8 @@ Owns a single ``MujocoEngine`` and publishes:
 - camera streams (Out ports), replacing ``MujocoCamera``
 - joint state via shared memory, consumed by ``ShmMujocoAdapter`` inside
   ``ControlCoordinator``
+- optionally, ground-truth world poses of free-joint scene bodies
+  (``publish_ground_truth``), for eval scoring only
 
 This avoids the prior pattern of sharing engines via a global in-process
 registry, which was fragile when ``WorkerManager`` places the adapter and
@@ -83,6 +85,29 @@ def _find_sensor_slice(model: mujoco.MjModel, *names: str, dim: int = 3) -> slic
 
 
 _RX180 = R.from_euler("x", 180, degrees=True)
+
+_MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
+
+
+def _resolve_gt_bodies(model: mujoco.MjModel, root_qpos_adr: int | None) -> list[tuple[str, int]]:
+    """(body name, qpos adr) for every free-joint body except the robot root.
+
+    The robot root pose already flows on ``odom``; ground truth covers the
+    remaining scene bodies so eval scorers can check physical outcomes.
+    """
+    bodies: list[tuple[str, int]] = []
+    for joint_id in range(model.njnt):
+        if int(model.jnt_type[joint_id]) != _MJJNT_FREE:
+            continue
+        qpos_adr = int(model.jnt_qposadr[joint_id])
+        if root_qpos_adr is not None and qpos_adr == root_qpos_adr:
+            continue
+        body_id = int(model.jnt_bodyid[joint_id])
+        raw_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id) or f"body_{body_id}"
+        # Attached submodels get a leading "/" namespace separator on newer
+        # MuJoCo; strip it so frame_id stays a stable plain body name.
+        bodies.append((raw_name.lstrip("/"), qpos_adr))
+    return bodies
 
 
 def _pose_matrix(
@@ -251,6 +276,11 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     spawn_z: float | None = None
     spawn_yaw: float | None = None
     reset_joint_positions: list[float] | None = None
+    # Opt-in privileged ground truth for eval scoring: world poses of all
+    # free-joint scene bodies (robot root excluded, odom covers it). Never
+    # consumed by the agent. Off = zero overhead, zero behavior change.
+    publish_ground_truth: bool = False
+    ground_truth_hz: float = 20.0
     headless: bool = False
     dof: int = 7
 
@@ -332,6 +362,10 @@ class MujocoSimModule(
     # root. Published every step; consumers like the viser viewer use
     # this to translate the robot in world space.
     odom: Out[PoseStamped]
+    # Ground-truth world poses of free-joint scene bodies, throttled to
+    # config.ground_truth_hz. Only publishes when config.publish_ground_truth
+    # is set; frame_id carries the MuJoCo body name. Eval scoring only.
+    gt_object_poses: Out[PoseStamped]
     tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -359,6 +393,11 @@ class MujocoSimModule(
         self._imu_base_qpos_slice: slice | None = None
         self._root_base_qpos_adr: int | None = None
         self._root_spawn_clearance_z: float | None = None
+
+        # (body name, qpos adr) pairs for ground-truth publishing, resolved
+        # once at start. Stays empty unless config.publish_ground_truth.
+        self._gt_bodies: list[tuple[str, int]] = []
+        self._gt_last_publish_monotonic = 0.0
 
     @property
     def _camera_link(self) -> str:
@@ -550,6 +589,14 @@ class MujocoSimModule(
         else:
             self._imu_base_qpos_slice = None
         self._root_spawn_clearance_z = self._compute_root_spawn_clearance_z()
+
+        if self.config.publish_ground_truth:
+            self._gt_bodies = _resolve_gt_bodies(self._engine.model, self._root_base_qpos_adr)
+            logger.info(
+                "MujocoSimModule: ground-truth publishing enabled",
+                bodies=[name for name, _ in self._gt_bodies],
+                hz=self.config.ground_truth_hz,
+            )
 
         # Wire SHM bridge hooks.
         self._sim_hooks = _WholeBodySimHooks(
@@ -805,6 +852,32 @@ class MujocoSimModule(
                     ),  # PoseStamped uses x,y,z,w
                 )
             )
+
+        # Ground truth - throttled; ``_gt_bodies`` is empty unless
+        # config.publish_ground_truth, so the disabled path costs one check.
+        if self._gt_bodies:
+            now = time.monotonic()
+            if now - self._gt_last_publish_monotonic >= 1.0 / self.config.ground_truth_hz:
+                self._gt_last_publish_monotonic = now
+                ts = time.time()
+                for name, qpos_adr in self._gt_bodies:
+                    body_pos = data.qpos[qpos_adr : qpos_adr + 3]
+                    body_quat = data.qpos[qpos_adr + 3 : qpos_adr + 7]  # (w, x, y, z)
+                    self.gt_object_poses.publish(
+                        PoseStamped(
+                            ts=ts,
+                            frame_id=name,
+                            position=Vector3(
+                                float(body_pos[0]), float(body_pos[1]), float(body_pos[2])
+                            ),
+                            orientation=Quaternion(
+                                float(body_quat[1]),
+                                float(body_quat[2]),
+                                float(body_quat[3]),
+                                float(body_quat[0]),
+                            ),  # PoseStamped uses x,y,z,w
+                        )
+                    )
 
         # IMU - only if MJCF declared the sensors.
         if (
