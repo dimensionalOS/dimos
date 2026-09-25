@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790373694274,
+  "lastUpdate": 1790373974984,
   "repoUrl": "https://github.com/dimensionalOS/dimos",
   "entries": {
     "go2 replay realtime": [
@@ -473,6 +473,75 @@ window.BENCHMARK_DATA = {
           {
             "name": "disk write",
             "value": 727.031,
+            "unit": "MB"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "paul@nechifor.net",
+            "name": "Paul Nechifor",
+            "username": "paul-nechifor"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a98a019cb5ba64f8edd7df10ed9f38eb33c2a670",
+          "message": "perf(core): log per-phase startup timings when a blueprint is built (#4279)",
+          "timestamp": "2026-09-26T01:02:57+03:00",
+          "tree_id": "ed5a2b23c10b17492db72a2958dd9dc09756632c",
+          "url": "https://github.com/dimensionalOS/dimos/commit/a98a019cb5ba64f8edd7df10ed9f38eb33c2a670"
+        },
+        "date": 1790373974089,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "first frame wall",
+            "value": 8.03,
+            "unit": "s"
+          },
+          {
+            "name": "first frame cpu",
+            "value": 16.498,
+            "unit": "s"
+          },
+          {
+            "name": "run cpu",
+            "value": 23.841,
+            "unit": "s"
+          },
+          {
+            "name": "run cpu (user)",
+            "value": 17.591,
+            "unit": "s"
+          },
+          {
+            "name": "run cpu (system)",
+            "value": 6.25,
+            "unit": "s"
+          },
+          {
+            "name": "peak memory",
+            "value": 2694.555,
+            "unit": "MB"
+          },
+          {
+            "name": "peak threads",
+            "value": 391,
+            "unit": "threads"
+          },
+          {
+            "name": "disk read",
+            "value": 29.539,
+            "unit": "MB"
+          },
+          {
+            "name": "disk write",
+            "value": 850.031,
             "unit": "MB"
           }
         ]
