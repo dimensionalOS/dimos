@@ -76,11 +76,11 @@ from dimos.control.contract.keys import (
     WY,
     WZ,
     YAW,
+    Key,
     Unit,
     X,
     Y,
     Z,
-    make_key,
 )
 from dimos.control.contract.validate import validate_description
 
@@ -392,7 +392,7 @@ def manipulator_description(
                 exclusive=False,
             )
         )
-        all_limits[make_key(source, gripper.name, POSITION)] = Limits(
+        all_limits[Key.of(source, gripper.name, POSITION)] = Limits(
             gripper.lo, gripper.hi, gripper.policy
         )
 
@@ -506,11 +506,14 @@ def pd_joint_description(
         )
         all_meta["imu_frame_id"] = imu.frame_id
 
-    damping = {make_key(source, joint, KD): damp_table[joint] for joint in joints}
+    damping: dict[str, float] = {Key.of(source, joint, KD): damp_table[joint] for joint in joints}
     if safe_stop is None:
         safe_stop = SafeStop(kind=SafeStopKind.DAMP, kd=damping)
     elif safe_stop.kind is SafeStopKind.DAMP and not safe_stop.kd:
         safe_stop = replace(safe_stop, kd=damping)
+
+    gains: dict[str, float] = {Key.of(source, joint, KP): kp_table[joint] for joint in joints}
+    gains |= {Key.of(source, joint, KD): kd_table[joint] for joint in joints}
 
     description = ControlDescription(
         source=source,
@@ -525,8 +528,7 @@ def pd_joint_description(
             ),
         ),
         omission=dict(omission or {}),
-        initial_values={make_key(source, joint, KP): kp_table[joint] for joint in joints}
-        | {make_key(source, joint, KD): kd_table[joint] for joint in joints},
+        initial_values=gains,
         safe_stop=safe_stop,
         estop=estop,
         activation_policy=activation,
