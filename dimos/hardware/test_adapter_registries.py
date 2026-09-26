@@ -74,6 +74,7 @@ EXPECTED_NAMES = {
         "sim_mujoco_g1",
         "transport_lcm",
         "transport_ros",
+        "transport_zenoh",
     },
 }
 

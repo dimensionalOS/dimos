@@ -175,7 +175,7 @@ def shell() -> None:
     try:
         _print_shell_banner()
         start_ipython(  # type: ignore[no-untyped-call]
-            argv=["--no-banner", "--no-tip"],
+            argv=["--no-banner"],
             user_ns=_shell_namespace(app),
         )
     finally:

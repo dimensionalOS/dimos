@@ -21,6 +21,7 @@ import threading
 from typing import Any, Literal
 
 import zenoh
+from zenoh.handlers import RingChannel
 
 from dimos.msgs.helpers import resolve_msg_type
 from dimos.protocol.pubsub.encoders import LCMEncoderMixin, PickleEncoderMixin
@@ -82,6 +83,9 @@ class Topic(LCMTopic):
     """
 
     qos: ZenohQoS | None = None
+    # Control streams can opt into bounded delivery; other subscribers retain
+    # their direct callback behavior.
+    queue_capacity: int | None = None
 
     @property
     def key_expr(self) -> str:
@@ -197,6 +201,8 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         self, topic: Topic, callback: Callable[[bytes, Topic], None]
     ) -> Callable[[], None]:
         """Subscribe to a Zenoh key expression."""
+        if isinstance(topic, Topic) and topic.queue_capacity is not None:
+            return self._subscribe_buffered(topic, callback)
         key_expr = _topic_to_key_expr(topic)
 
         def on_sample(sample: zenoh.Sample) -> None:
@@ -228,6 +234,65 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
                 self._subscribers.remove(sub)
             sub.undeclare()
 
+        return unsubscribe
+
+    def _subscribe_buffered(
+        self, topic: Topic, callback: Callable[[bytes, Topic], None]
+    ) -> Callable[[], None]:
+        capacity = topic.queue_capacity
+        if capacity is None or capacity < 1:
+            raise ValueError("Zenoh queue_capacity must be positive")
+        key_expr = _topic_to_key_expr(topic)
+        channel: RingChannel[zenoh.Sample] = RingChannel(capacity)
+        sub = self.session.declare_subscriber(key_expr, channel)
+        # Receive through the handler so a blocking recv does not borrow the
+        # Subscriber while another thread needs to undeclare it.
+        receiver = sub.handler
+        stopped = threading.Event()
+        close_lock = threading.Lock()
+
+        def drain() -> None:
+            while not stopped.is_set():
+                try:
+                    sample = receiver.recv()
+                except Exception:
+                    if not stopped.is_set():
+                        logger.exception("Zenoh control subscription failed", topic=key_expr)
+                    return
+                if stopped.is_set():
+                    return
+                recv_topic = (
+                    topic
+                    if str(sample.key_expr) == key_expr
+                    else _key_expr_to_topic(str(sample.key_expr), topic.lcm_type)
+                )
+                try:
+                    callback(sample.payload.to_bytes(), recv_topic)
+                except Exception:
+                    logger.exception("Zenoh control callback failed", topic=key_expr)
+
+        thread = threading.Thread(target=drain, name="zenoh-buffered-subscription", daemon=True)
+
+        def unsubscribe() -> None:
+            with close_lock:
+                if stopped.is_set():
+                    return
+                stopped.set()
+                sub.undeclare()
+
+        def finish() -> None:
+            unsubscribe()
+            if thread is not threading.current_thread():
+                thread.join(timeout=2.0)
+
+        with self._subscriber_lock:
+            if self._stopped:
+                unsubscribe()
+                return lambda: None
+            # Keep ownership until pubsub shutdown, including after unsubscribe,
+            # which must not wait for an in-flight callback.
+            self._drain_stops.append(finish)
+            thread.start()
         return unsubscribe
 
     def subscribe_all(self, callback: Callable[[bytes, Topic], Any]) -> Callable[[], None]:

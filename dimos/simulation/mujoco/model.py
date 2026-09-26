@@ -46,6 +46,9 @@ def get_assets() -> dict[str, bytes]:
     mjx_env.update_assets(assets, data_dir / "scene_office1/office_split", "*.obj")
     mjx_env.update_assets(assets, mjx_env.MENAGERIE_PATH / "unitree_go1" / "assets")
     mjx_env.update_assets(assets, mjx_env.MENAGERIE_PATH / "unitree_g1" / "assets")
+    # The 29-DOF G1 WBC MJCF includes hand meshes absent from Menagerie's G1.
+    g1_meshes = epath.Path(str(get_data("g1_urdf/meshes")))
+    mjx_env.update_assets(assets, g1_meshes, "*.STL")
 
     # From: https://sketchfab.com/3d-models/jeong-seun-34-42956ca979404a038b8e0d3e496160fd
     person_dir = epath.Path(str(get_data("person")))
