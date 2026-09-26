@@ -31,9 +31,12 @@ g1_deploy_onnx_ref binary owns rt/lowcmd.
 
 from __future__ import annotations
 
+from functools import cache
 import os
 from pathlib import Path
 from typing import Any, cast
+
+from yourdfpy import URDF
 
 from dimos.control.components import HardwareComponent, HardwareType, make_humanoid_joints
 from dimos.control.coordinator import TaskConfig
@@ -57,6 +60,7 @@ from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.config import G1
+from dimos.robot.unitree.g1.g1_rerun import g1_costmap
 from dimos.utils.data import LfsPath
 from dimos.visualization.vis_module import vis_module
 
@@ -191,7 +195,9 @@ else:
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 
     _nav_stack = autoconnect(
-        PointLio.blueprint(),
+        PointLio.blueprint(
+            lidar_ip=os.environ.get("DIMOS_POINTLIO_LIDAR_IP", "192.168.123.120"),
+        ),
         RayTracingVoxelMap.blueprint(
             voxel_size=_G1_REAL_NAV_VOXEL_RESOLUTION,
             emit_every=0,
@@ -271,6 +277,20 @@ def _require_zenoh() -> str | None:
     return "G1 SONIC requires --transport zenoh"
 
 
+@cache
+def _g1_real_ground_z() -> float:
+    """Use GR00T's rest-pose lidar offset and 0.74 m standing pelvis height."""
+    urdf = URDF.load(str(G1.model_path), load_meshes=False)
+    urdf.update_cfg([0.0] * len(urdf.actuated_joint_names))
+    mount_z = float(urdf.get_transform("mid360_link", "pelvis")[2, 3])
+    return -(mount_z + 0.74)
+
+
+def _render_real_costmap(grid: Any) -> Any:
+    return g1_costmap(grid, z_offset=_g1_real_ground_z() + 0.02)
+
+
+_costmap_renderer = g1_costmap if global_config.simulation == "mujoco" else _render_real_costmap
 _remappings = [*_nav_remap, (SonicCoordinator, "twist_command", "cmd_vel")]
 
 unitree_g1_sonic_wbc = (
@@ -278,7 +298,20 @@ unitree_g1_sonic_wbc = (
         _backend,
         _coordinator,
         _nav_stack,
-        vis_module(viewer_backend=global_config.viewer),
+        vis_module(
+            viewer_backend=global_config.viewer,
+            rerun_config={
+                "tf_axes": 0.5,
+                "visual_override": {
+                    "world/global_costmap": _costmap_renderer,
+                    "world/navigation_costmap": _costmap_renderer,
+                    "world/lidar": None,
+                    "world/pointcloud": None,
+                    "world/local_map": None,
+                    "world/local_map_fine": None,
+                },
+            },
+        ),
     )
     .remappings(cast("Any", _remappings))
     .requirements(_require_zenoh)
