@@ -25,16 +25,11 @@ import asyncio
 from pathlib import Path as FilePath
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import webbrowser
 
 from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
-import socketio  # type: ignore[import-untyped]
-from starlette.applications import Starlette
-from starlette.responses import FileResponse, RedirectResponse, Response
-from starlette.routing import Route
-import uvicorn
 
 from dimos.utils.data import get_data
 
@@ -62,6 +57,10 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.utils.logging_config import setup_logger
 
 from .optimized_costmap import OptimizedCostmapEncoder
+
+if TYPE_CHECKING:
+    import socketio  # type: ignore[import-untyped]
+    import uvicorn
 
 logger = setup_logger()
 
@@ -230,6 +229,12 @@ class WebsocketVisModule(Module):
         self._emit("gps_travel_goal_points", json_points)
 
     def _create_server(self) -> None:
+        # socketio and starlette: a 0.35 s import, only needed once the server is built.
+        import socketio  # type: ignore[import-untyped]
+        from starlette.applications import Starlette
+        from starlette.responses import FileResponse, RedirectResponse, Response
+        from starlette.routing import Route
+
         # Create SocketIO server
         self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
@@ -353,6 +358,8 @@ class WebsocketVisModule(Module):
                 self.movecmd_stamped.publish(twist_stamped)
 
     def _run_uvicorn_server(self) -> None:
+        import uvicorn  # deferred together with socketio and starlette, see _create_server
+
         config = uvicorn.Config(
             self.app,  # type: ignore[arg-type]
             host=global_config.listen_host,

@@ -28,17 +28,7 @@ import numpy as np
 
 from dimos.core.stream import In, Stream, Transport
 from dimos.msgs.protocol import DimosMsg
-from dimos.utils import colors
-
-try:
-    import cyclonedds as _cyclonedds  # noqa: F401
-
-    DDS_AVAILABLE = True
-except ImportError:
-    DDS_AVAILABLE = False
-
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
-from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import AudioProvider, ProviderConfig
@@ -49,6 +39,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import (
     Zenoh,
 )
 from dimos.stream.audio.base import AudioEvent
+from dimos.utils import colors
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -57,6 +48,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from dimos.core.coordination.blueprints import TransportSpec
+    from dimos.protocol.pubsub.impl.rospubsub import DimosROS
 
 T = TypeVar("T")
 
@@ -298,6 +290,9 @@ class ROSTransport(PubSubTransport[DimosMsg]):
     _ros: DimosROS | None = None
 
     def __init__(self, topic: str, msg_type: type[DimosMsg], **kwargs: Any) -> None:
+        # rclpy (about 0.1 s with rospubsub): only loaded when a ROSTransport exists.
+        from dimos.protocol.pubsub.impl.rospubsub import ROSTopic
+
         super().__init__(ROSTopic(topic, msg_type))
         self._kwargs = kwargs
 
@@ -320,6 +315,8 @@ class ROSTransport(PubSubTransport[DimosMsg]):
 
     def start(self) -> None:
         if self._ros is None:
+            from dimos.protocol.pubsub.impl.rospubsub import DimosROS  # rclpy: see __init__
+
             self._ros = DimosROS(**self._kwargs)
             self._ros.start()
 
@@ -329,39 +326,39 @@ class ROSTransport(PubSubTransport[DimosMsg]):
             self._ros = None
 
 
-if DDS_AVAILABLE:
-    from dimos.protocol.pubsub.impl.ddspubsub import DDS, Topic as DDSTopic
+class DDSTransport(PubSubTransport[T]):
+    def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        # cyclonedds (the optional dds extra): only loaded when a DDSTransport exists.
+        from dimos.protocol.pubsub.impl.ddspubsub import DDS, Topic as DDSTopic
 
-    class DDSTransport(PubSubTransport[T]):
-        def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
-            super().__init__(DDSTopic(topic, type))
-            self.dds = DDS(**kwargs)
-            self._started: bool = False
-            self._start_lock = threading.RLock()
+        super().__init__(DDSTopic(topic, type))
+        self.dds = DDS(**kwargs)
+        self._started: bool = False
+        self._start_lock = threading.RLock()
 
-        def start(self) -> None:
-            with self._start_lock:
-                if not self._started:
-                    self.dds.start()
-                    self._started = True
-
-        def stop(self) -> None:
-            with self._start_lock:
-                if self._started:
-                    self.dds.stop()
-                    self._started = False
-
-        def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+    def start(self) -> None:
+        with self._start_lock:
             if not self._started:
-                self.start()
-            self.dds.publish(self.topic, msg)
+                self.dds.start()
+                self._started = True
 
-        def subscribe(
-            self, callback: Callable[[T], None], selfstream: Stream[T] | None = None
-        ) -> Callable[[], None]:
-            if not self._started:
-                self.start()
-            return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))
+    def stop(self) -> None:
+        with self._start_lock:
+            if self._started:
+                self.dds.stop()
+                self._started = False
+
+    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+        if not self._started:
+            self.start()
+        self.dds.publish(self.topic, msg)
+
+    def subscribe(
+        self, callback: Callable[[T], None], selfstream: Stream[T] | None = None
+    ) -> Callable[[], None]:
+        if not self._started:
+            self.start()
+        return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
 M = TypeVar("M", bound=DimosMsg)

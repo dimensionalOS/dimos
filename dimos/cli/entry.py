@@ -12,13 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Console-script entry point (``[project.scripts] dimos``).
 
-# Recorded lidar pickles under data/ reference this function by module path
-# (they were written through a copyreg reducer for open3d point clouds), so it
-# has to stay importable from here.
-def reconstruct_pointcloud(points_array):  # type: ignore[no-untyped-def]
-    import open3d as o3d  # type: ignore[import-untyped]
+Deliberately tiny: module workers use the multiprocessing ``forkserver`` start
+method, and every worker re-runs the console script as ``__mp_main__`` before
+it can deploy a module. The script only imports this module, so the 0.6 s
+import of ``dimos.cli.dimos`` (typer plus every command) is paid once, in the
+parent, inside ``main()``.
+"""
 
-    pc = o3d.geometry.PointCloud()
-    pc.points = o3d.utility.Vector3dVector(points_array)
-    return pc
+
+def main() -> None:
+    # dimos.cli.dimos (0.6 s): imported here so the __mp_main__ re-run stays free.
+    from dimos.cli.dimos import cli_main
+
+    cli_main()
