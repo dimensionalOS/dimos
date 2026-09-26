@@ -1105,6 +1105,9 @@ jobs:
         run: uv sync --group tests-self-hosted --frozen
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
+      - name: Build DimSim and install its headless Chromium
+        # Without this, it gets built in the test, creating race conditions.
+        run: ./bin/dimsim-prepare
       - name: Run tests
         # The runner must have an Xorg server with NVIDIA GPU access running
         # on DISPLAY=:0 — dimsim's headless Chromium needs real WebGL for the

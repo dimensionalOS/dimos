@@ -14,8 +14,10 @@
 
 import os
 from pathlib import Path
+import re
 import subprocess
 import threading
+import time
 from typing import IO
 
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -29,12 +31,17 @@ logger = setup_logger()
 _VIDEO_RATE = 50
 _LIDAR_RATE = 100
 _DIMSIM_DIR = DIMOS_PROJECT_ROOT / "misc" / "DimSim"
+# Printed by the bridge (cli/bridge/server.ts) once the browser has delivered
+# the scene snapshot and server-side physics and lidar are running. Odom only
+# flows, and scene commands only reach a browser, from this point on.
+_READY_LINE = re.compile(r"^\[bridge:[^\]]*\] ready$")
 
 
 class DimSimProcess:
     def __init__(self, global_config: GlobalConfig) -> None:
         self.global_config = global_config
         self.process: subprocess.Popen[bytes] | None = None
+        self._ready = threading.Event()
 
     def start(self) -> None:
         scene = self.global_config.dimsim_scene
@@ -75,14 +82,46 @@ class DimSimProcess:
                 f"Open http://localhost:{port} in your browser; sensors won't publish until that tab is loaded."
             )
 
+        self._ready.clear()
         self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         self._start_log_reader()
 
+        # A headed sim only becomes ready once a person opens the tab, so the
+        # gate is headless-only.
+        if headless:
+            try:
+                self.wait_until_ready(self.global_config.dimsim_ready_timeout)
+            except BaseException:
+                self.stop()
+                raise
+
+    def wait_until_ready(self, timeout: float) -> None:
+        """Block until the bridge reports server physics live, or fail fast.
+
+        Anything started after this can reach the sim: teleports land, scene
+        commands have a browser to run in, and odom is on the bus. Without the
+        gate the blueprint reports ready while DimSim may still be building
+        its frontend or launching Chromium.
+        """
+        assert self.process is not None
+        deadline = time.monotonic() + timeout
+        while not self._ready.wait(0.5):
+            code = self.process.poll()
+            if code is not None:
+                raise RuntimeError(
+                    f"DimSim exited with code {code} before reporting ready; "
+                    "see the '[dimsim err]' log lines above."
+                )
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"DimSim did not report ready within {timeout:.0f} s. A cold start builds "
+                    "the frontend and launches Chromium inside this window; run "
+                    "bin/dimsim-prepare first or raise --dimsim-ready-timeout."
+                )
+
     def stop(self) -> None:
         if self.process:
-            if self.process.stderr:
-                self.process.stderr.close()
             try:
                 self.process.terminate()
                 self.process.wait(timeout=5)
@@ -92,6 +131,11 @@ class DimSimProcess:
                 self.process.wait(timeout=2)
             except Exception as e:
                 logger.error(f"Error stopping DimSim process: {e}")
+            # Close only once the child is gone: closing a pipe the log reader
+            # is blocked on waits for that read to return, i.e. for the child
+            # to write or exit.
+            if self.process.stderr:
+                self.process.stderr.close()
             self.process = None
 
     def _start_log_reader(self) -> None:
@@ -100,10 +144,16 @@ class DimSimProcess:
         def _reader(stream: IO[bytes] | None, label: str) -> None:
             if stream is None:
                 return
-            for raw in stream:
-                line = raw.decode("utf-8", errors="replace").rstrip()
-                if line:
-                    logger.info(f"[dimsim {label}] {line}")
+            try:
+                for raw in stream:
+                    line = raw.decode("utf-8", errors="replace").rstrip()
+                    if line:
+                        logger.info(f"[dimsim {label}] {line}")
+                        if _READY_LINE.match(line):
+                            self._ready.set()
+            except ValueError:
+                # stop() closes the pipe from another thread.
+                pass
 
         for stream, label in [
             (self.process.stdout, "out"),
@@ -111,6 +161,18 @@ class DimSimProcess:
         ]:
             t = threading.Thread(target=_reader, args=(stream, label), daemon=True)
             t.start()
+
+
+def prepare() -> None:
+    """Build DimSim's frontend and install its headless Chromium ahead of a run.
+
+    ``start()`` does both lazily, inside the blueprint's startup window; CI
+    runs this first (bin/dimsim-prepare) because ``git clean -ffdx`` leaves
+    every job with a cold checkout.
+    """
+    deno_path = ensure_deno()
+    subprocess.run([*_deno_cmd(deno_path, _DIMSIM_DIR), "build"], check=True)
+    ensure_playwright_chromium(deno_path)
 
 
 def _deno_cmd(deno_path: str, repo_dir: Path) -> list[str]:
