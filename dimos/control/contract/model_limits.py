@@ -31,7 +31,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from dimos.control.contract.description import LimitPolicy, Limits
-from dimos.control.contract.keys import EFFORT, POSITION, VELOCITY, is_valid_segment, make_key
+from dimos.control.contract.keys import EFFORT, POSITION, VELOCITY, Key, is_valid_segment
 
 
 def _parse(urdf: str | Path) -> ET.Element:
@@ -144,7 +144,7 @@ def limits_from_urdf(
         if position:
             lower, upper = _attr(limit, "lower"), _attr(limit, "upper")
             if lower is not None and upper is not None:
-                out[make_key(source, resource, POSITION)] = Limits(lower, upper, policy)
+                out[Key.of(source, resource, POSITION)] = Limits(lower, upper, policy)
             elif lower is None and upper is None:
                 # Only a continuous joint legitimately has no position range.
                 # A revolute one that lost its bounds is a broken model, not a
@@ -162,7 +162,7 @@ def limits_from_urdf(
                         f"joint {urdf_name!r} (for {canonical!r}) has no position bounds "
                         f"to clamp to; it is continuous, so use LimitPolicy.REJECT"
                     )
-                out[make_key(source, resource, POSITION)] = Limits(None, None, policy)
+                out[Key.of(source, resource, POSITION)] = Limits(None, None, policy)
             else:
                 # Half a range is worse than none: dropping the side the model
                 # does declare would leave the joint unlimited under REJECT,
@@ -185,6 +185,6 @@ def limits_from_urdf(
                 raise ValueError(
                     f"joint {urdf_name!r} (for {canonical!r}) declares no {name} limit"
                 )
-            out[make_key(source, resource, interface)] = Limits(-bound, bound, policy)
+            out[Key.of(source, resource, interface)] = Limits(-bound, bound, policy)
 
     return out

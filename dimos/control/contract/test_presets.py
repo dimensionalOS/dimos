@@ -44,7 +44,6 @@ from dimos.control.contract.description import (
     ResourceKind,
     SafeStop,
     SafeStopKind,
-    Timing,
 )
 from dimos.control.contract.keys import (
     AX,
@@ -65,11 +64,11 @@ from dimos.control.contract.keys import (
     WY,
     WZ,
     YAW,
+    Key,
     Unit,
     X,
     Y,
     Z,
-    make_key,
 )
 from dimos.control.contract.presets import (
     GripperSpec,
@@ -80,14 +79,14 @@ from dimos.control.contract.presets import (
 )
 from dimos.control.contract.validate import DescriptionError, validate_description
 
-ARM_LIMITS = {make_key("arm", j, POSITION): Limits(-3.14, 3.14) for j in ARM_JOINTS} | {
-    make_key("arm", j, VELOCITY): Limits(-1.0, 1.0) for j in ARM_JOINTS
+ARM_LIMITS = {Key.of("arm", j, POSITION): Limits(-3.14, 3.14) for j in ARM_JOINTS} | {
+    Key.of("arm", j, VELOCITY): Limits(-1.0, 1.0) for j in ARM_JOINTS
 }
-G1_LIMITS = {make_key("g1", j, POSITION): Limits(-2.0, 2.0, LimitPolicy.CLAMP) for j in G1_JOINTS}
+G1_LIMITS = {Key.of("g1", j, POSITION): Limits(-2.0, 2.0, LimitPolicy.CLAMP) for j in G1_JOINTS}
 CHASSIS_LIMITS = {
-    make_key("chassis", "base", VX): Limits(-1.5, 1.5),
-    make_key("chassis", "base", VY): Limits(-1.0, 1.0),
-    make_key("chassis", "base", WZ): Limits(-2.0, 2.0),
+    Key.of("chassis", "base", VX): Limits(-1.5, 1.5),
+    Key.of("chassis", "base", VY): Limits(-1.0, 1.0),
+    Key.of("chassis", "base", WZ): Limits(-2.0, 2.0),
 }
 
 
@@ -116,7 +115,7 @@ def preset_g1() -> ControlDescription:
         kp=60.0,
         kd=1.5,
         damp_kd=5.0,
-        omission={make_key("g1", j, VELOCITY): Omission.UNSET for j in G1_JOINTS},
+        omission={Key.of("g1", j, VELOCITY): Omission.UNSET for j in G1_JOINTS},
         safe_stop=SafeStop(kind=SafeStopKind.DAMP, stable_state="sinks to the floor"),
         estop=Estop(
             kind=EstopKind.DISABLE,
@@ -133,12 +132,6 @@ def preset_chassis() -> ControlDescription:
         limits=CHASSIS_LIMITS,
         safe_stop=SafeStop(kind=SafeStopKind.ZERO_RAMP, ramp_s=0.3, stable_state="rolls to a stop"),
         estop=Estop(kind=EstopKind.ZERO, recovery=EstopRecovery.CLEAR, stable_state="stops dead"),
-        timing=Timing(
-            state_rate_hz=50.0,
-            stale_timeout_s=0.2,
-            watchdog_timeout_s=0.2,
-            write_rate_hz=50.0,
-        ),
         process_loss=ProcessLoss.EXTERNAL_SUPERVISOR,
         meta={"command_frame": "body", "yaw_convention": "unwrapped"},
     )
@@ -233,7 +226,7 @@ def test_caller_limits_are_passed_through_untouched() -> None:
 
 def test_omission_overrides_reach_the_description() -> None:
     # How an xArm or R1Pro opts a key into UNSET (D11).
-    override = {make_key("arm", j, VELOCITY): Omission.UNSET for j in ARM_JOINTS}
+    override = {Key.of("arm", j, VELOCITY): Omission.UNSET for j in ARM_JOINTS}
     described = manipulator_description(
         "arm",
         ARM_JOINTS,
@@ -279,14 +272,14 @@ def test_a_float_gain_broadcasts_to_every_joint() -> None:
     described = pd_joint_description(
         "g1", G1_JOINTS, limits=G1_LIMITS, kp=60.0, kd=1.5, damp_kd=5.0
     )
-    assert all(described.initial_values[make_key("g1", j, KP)] == 60.0 for j in G1_JOINTS)
-    assert all(described.initial_values[make_key("g1", j, KD)] == 1.5 for j in G1_JOINTS)
+    assert all(described.initial_values[Key.of("g1", j, KP)] == 60.0 for j in G1_JOINTS)
+    assert all(described.initial_values[Key.of("g1", j, KD)] == 1.5 for j in G1_JOINTS)
 
 
 def test_a_gain_table_is_read_per_joint() -> None:
     kp = {joint: float(i) for i, joint in enumerate(G1_JOINTS)}
     described = pd_joint_description("g1", G1_JOINTS, limits=G1_LIMITS, kp=kp, kd=1.5, damp_kd=5.0)
-    assert described.initial_values[make_key("g1", G1_JOINTS[3], KP)] == 3.0
+    assert described.initial_values[Key.of("g1", G1_JOINTS[3], KP)] == 3.0
 
 
 def test_a_partial_gain_table_raises() -> None:
@@ -314,11 +307,11 @@ def test_the_damping_safe_stop_is_built_from_damp_kd() -> None:
         "g1", G1_JOINTS, limits=G1_LIMITS, kp=60.0, kd=1.5, damp_kd=5.0
     )
     assert described.safe_stop.kind is SafeStopKind.DAMP
-    assert described.safe_stop.kd == {make_key("g1", j, KD): 5.0 for j in G1_JOINTS}
+    assert described.safe_stop.kd == {Key.of("g1", j, KD): 5.0 for j in G1_JOINTS}
 
 
 def test_an_explicit_damp_stop_keeps_its_own_gains() -> None:
-    mine = {make_key("g1", j, KD): 9.0 for j in G1_JOINTS}
+    mine = {Key.of("g1", j, KD): 9.0 for j in G1_JOINTS}
     described = pd_joint_description(
         "g1",
         G1_JOINTS,
@@ -393,7 +386,7 @@ def test_a_six_dof_base_declares_the_full_pose() -> None:
     described = twist_base_description(
         "drone",
         axes=axes,
-        limits={make_key("drone", "base", axis): Limits(-1.0, 1.0) for axis in axes},
+        limits={Key.of("drone", "base", axis): Limits(-1.0, 1.0) for axis in axes},
     )
     base = described.resource("base")
     assert base is not None
@@ -414,7 +407,7 @@ def test_a_differential_base_reaches_the_whole_plane() -> None:
     described = twist_base_description(
         "diff",
         axes=(VX, WZ),
-        limits={make_key("diff", "base", VX): Limits(-1.0, 1.0)},
+        limits={Key.of("diff", "base", VX): Limits(-1.0, 1.0)},
     )
     base = described.resource("base")
     assert base is not None
@@ -432,7 +425,7 @@ def test_a_base_that_cannot_turn_keeps_its_heading() -> None:
     described = twist_base_description(
         "gantry",
         axes=(VX, VY),
-        limits={make_key("gantry", "base", VX): Limits(-1.0, 1.0)},
+        limits={Key.of("gantry", "base", VX): Limits(-1.0, 1.0)},
     )
     base = described.resource("base")
     assert base is not None
@@ -443,7 +436,7 @@ def test_a_single_linear_axis_is_a_rail() -> None:
     described = twist_base_description(
         "rail",
         axes=(VX,),
-        limits={make_key("rail", "base", VX): Limits(-1.0, 1.0)},
+        limits={Key.of("rail", "base", VX): Limits(-1.0, 1.0)},
     )
     base = described.resource("base")
     assert base is not None
@@ -455,7 +448,7 @@ def test_a_base_that_only_turns_reports_only_its_heading() -> None:
     described = twist_base_description(
         "turret",
         axes=(WZ,),
-        limits={make_key("turret", "base", WZ): Limits(-1.0, 1.0)},
+        limits={Key.of("turret", "base", WZ): Limits(-1.0, 1.0)},
     )
     base = described.resource("base")
     assert base is not None
@@ -468,7 +461,7 @@ def test_two_rotations_compose_to_reach_every_orientation() -> None:
     described = twist_base_description(
         "gimbal",
         axes=(VX, WX, WY),
-        limits={make_key("gimbal", "base", VX): Limits(-1.0, 1.0)},
+        limits={Key.of("gimbal", "base", VX): Limits(-1.0, 1.0)},
     )
     base = described.resource("base")
     assert base is not None
@@ -479,7 +472,7 @@ def test_a_base_without_odometry_reports_only_its_twist() -> None:
     described = twist_base_description(
         "diff",
         axes=(VX, WZ),
-        limits={make_key("diff", "base", VX): Limits(-1.0, 1.0)},
+        limits={Key.of("diff", "base", VX): Limits(-1.0, 1.0)},
         odometry=False,
     )
     base = described.resource("base")
@@ -493,7 +486,7 @@ def test_a_base_that_cannot_measure_reports_only_its_pose() -> None:
     described = twist_base_description(
         "flow",
         axes=(VX, WZ),
-        limits={make_key("flow", "base", VX): Limits(-1.0, 1.0)},
+        limits={Key.of("flow", "base", VX): Limits(-1.0, 1.0)},
         measured_velocity=False,
     )
     base = described.resource("base")
