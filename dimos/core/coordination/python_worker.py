@@ -94,7 +94,7 @@ class Actor:
     def __init__(
         self,
         conn: Connection | None,
-        module_class: type[ModuleBase],
+        module_class: type[ModuleBase] | None,
         worker_id: int,
         module_id: int = 0,
         lock: threading.Lock | None = None,
@@ -105,9 +105,14 @@ class Actor:
         self._module_id = module_id
         self._lock = lock
 
-    def __reduce__(self) -> tuple[type, tuple[None, type, int, int, None]]:
-        """Exclude the connection and lock when pickling."""
-        return (Actor, (None, self._cls, self._worker_id, self._module_id, None))
+    def __reduce__(self) -> tuple[type, tuple[None, None, int, int, None]]:
+        """Exclude the connection, the lock and the module class when pickling.
+
+        The class would make every receiving process import the module and
+        its dependencies; nothing reads it off an actor that crossed a
+        process boundary.
+        """
+        return (Actor, (None, None, self._worker_id, self._module_id, None))
 
     def _send_request_to_worker(self, request: WorkerRequest) -> Any:
         if self._conn is None:
@@ -195,7 +200,12 @@ class PythonWorker:
 
     @property
     def module_names(self) -> list[str]:
-        return [actor._cls.__name__ for actor in self._modules.values()]
+        names = []
+        for actor in self._modules.values():
+            # Parent-side actors always carry their class; only pickled copies drop it.
+            assert actor._cls is not None
+            names.append(actor._cls.__name__)
+        return names
 
     def reserve_slot(self) -> None:
         """Reserve a slot so _select_worker() sees the pending load."""

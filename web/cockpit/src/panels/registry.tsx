@@ -13,6 +13,7 @@ import type { PanelSpec } from "@dimos/shared";
 import { PanelFrame } from "../layout/PanelFrame.tsx";
 import type { ChannelStore, Session } from "@dimos/sdk";
 import { ChatPanel } from "./ChatPanel.tsx";
+import { Map3DPanel } from "./Map3DPanel.tsx";
 import { MapPanel } from "./MapPanel.tsx";
 import styles from "./registry.module.css";
 import type { TeleopHooks } from "@dimos/sdk/internal/teleop";
@@ -53,6 +54,7 @@ export function UnknownPanel({ spec }: PanelProps) {
 
 registerPanel("video", VideoPanel);
 registerPanel("map2d", MapPanel);
+registerPanel("map3d", Map3DPanel);
 registerPanel("teleop", TeleopPanel);
 registerPanel("chat", ChatPanel);
 registerPanel("stats", StatsPanel);

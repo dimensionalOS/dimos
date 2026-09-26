@@ -111,6 +111,7 @@ _openarm_webxr_pink = PinkKinematicsConfig(
 _openarm_webxr_task = TaskConfig(
     name=OPENARM_WEBXR_TASK_NAME,
     type="teleop_ik",
+    priority=20,
     joint_names=OPENARM_ARM_JOINTS,
     params={
         "bindings": [
@@ -155,7 +156,7 @@ teleop_webxr_openarm = autoconnect(
                 priority=20,
                 stream_bind={"gripper_command": "right_gripper_command"},
             ),
-            _trajectory_task(priority=20),
+            _trajectory_task(priority=10),
         ],
     ),
     _OpenArmManipulationModule.blueprint(

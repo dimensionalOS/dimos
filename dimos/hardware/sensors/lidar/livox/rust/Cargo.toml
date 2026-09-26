@@ -34,4 +34,5 @@ tracing = "0.1"
 validator = { version = "0.21", features = ["derive"] }
 
 [dev-dependencies]
+serial_test = { version = "4", features = ["file_locks"] }
 tempfile = "3"

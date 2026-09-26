@@ -31,10 +31,10 @@ from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.memory.module import pose_setter_for
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.basic_path_follower.module import BasicPathFollower
+from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
+from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
+from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.constants import (
@@ -65,7 +65,7 @@ class Go2Mid360Recorder(PointlioRecorder):
 _RECORD = os.getenv("DIMOS_NAV_RECORD", "").lower() in ("1", "true", "yes", "on")
 
 # Opt-in raw-Livox capture: set RECORD_PCAP=1 to also tcpdump the Mid-360 UDP
-# stream into recordings/ (needs DIMOS_MID360_LIDAR_IP).
+# stream into recordings/ (needs the Mid-360's lidar_ip).
 _RECORD_PCAP = os.getenv("RECORD_PCAP", "").lower() in ("1", "true", "yes", "on")
 
 

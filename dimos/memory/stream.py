@@ -568,8 +568,15 @@ class Stream(CompositeResource, Generic[T, O]):
         return n
 
     def drain_thread(self) -> DisposableBase:
-        """Drain this stream on the dimos thread pool; returns a disposable."""
-        return self.subscribe(lambda _: None)
+        """Drain this stream on the dimos thread pool; returns a disposable.
+
+        A drain has no consumer to surface an iteration error, so it logs -
+        a dead pipeline must not die silently.
+        """
+        return self.subscribe(
+            lambda _: None,
+            on_error=lambda e: logger.error("drain_thread() pipeline died: %s", e, exc_info=e),
+        )
 
     def observable(self) -> reactivex.Observable[O]:
         """Convert this stream to an RxPY Observable.

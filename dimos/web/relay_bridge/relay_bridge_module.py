@@ -29,8 +29,14 @@ viewer, even when the producer went quiet before that.
 Threading: input callbacks fire on the transport (LCM) thread, which gates on
 maxHz and encodes there (RerunBridge precedent, ~3 ms per JPEG), then hands
 the payload to the module event loop; all relay/session state lives on the
-loop. The supervisor task consumes relay subs snapshots and survives relay
-restarts (respawning the local child when it died).
+loop. A resend_on_subscribe replay encodes on a worker thread
+(asyncio.to_thread): a voxel map takes up to seconds, and the loop must keep
+serving control messages and the teleop deadman meanwhile. The live encode
+counter fences a late replay behind any newer live frame. A channel's encoder
+can therefore run on both threads at once (a replay and a live frame), so
+encoders must be pure functions of their message (docs/web/bridge.md). The
+supervisor task consumes relay subs snapshots and survives relay restarts
+(respawning the local child when it died).
 """
 
 from __future__ import annotations
@@ -60,6 +66,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.utils.generic import finite_number
 from dimos.utils.logging_config import setup_logger
 
 # No import cycle: cockpit.py only imports this module lazily inside
@@ -384,6 +391,14 @@ class _Session:
     last_n: int | float = 0
     unsubs: dict[str, Callable[[], None]] = field(default_factory=dict)
     retired: threading.Event = field(default_factory=threading.Event)
+    # In-flight cached-message replays, at most one per channel: the encode
+    # runs in a worker thread (asyncio.to_thread) and the task offers on the
+    # loop when it returns. Strong refs: the loop only weakly holds tasks.
+    replays: dict[str, asyncio.Task[None]] = field(default_factory=dict)
+    # module.encoded[ch] as of the channel's latest 0->1 transition: a replay
+    # that finishes after the counter moved lost to a live frame and is
+    # dropped.
+    replay_fence: dict[str, int] = field(default_factory=dict)
 
 
 # A producer sustaining more than maxHz for this many frames is pathological
@@ -1173,17 +1188,13 @@ class RelayBridgeModule(Module):
         values: dict[str, float] = {}
         for key, default in _TELEOP_PARAM_DEFAULTS.items():
             candidate = spec.params.get(key, default)
-            if (
-                isinstance(candidate, bool)
-                or not isinstance(candidate, (int, float))
-                or not math.isfinite(candidate)
-                or candidate <= 0
-            ):
+            value = finite_number(candidate, f"manifest channel {spec.ch!r} {key}")
+            if value <= 0:
                 raise RuntimeError(
                     f"manifest channel {spec.ch!r} {key} must be a positive number, "
                     f"got {candidate!r}"
                 )
-            values[key] = float(candidate)
+            values[key] = value
         return _TeleopParams(
             max_linear=values["maxLinear"],
             max_angular=values["maxAngular"],
@@ -1341,21 +1352,26 @@ class RelayBridgeModule(Module):
                     # Advertised but unwired (manifest-authored): nothing to
                     # subscribe; the panel shows "waiting for data".
                     continue
-                cached = self._last_msg.get(spec.ch)
-                if cached is not None:
-                    # Replay precedes the subscribe: this offer runs
-                    # synchronously on the loop, so a live frame - possible
-                    # only once subscribed - always queues behind it and wins
-                    # the 1-slot mailbox. Fires on 0->1 transitions only: the
-                    # relay reports sub-set changes and stays cache-free, so
-                    # an extra viewer on an already-active channel waits for
-                    # the next publish (review issue 2, deferred).
-                    msg, recv_ts = cached
-                    encoded = self._run_encoder(spec, msg)
-                    if encoded is not None:
-                        # self.encoded counts live-path encodes only; the
-                        # arrival ts keeps a stale replay honest about its age.
-                        self._offer(session, session.senders[spec.ch], *encoded, recv_ts)
+                if spec.ch in self._last_msg:
+                    # Replay off the loop (a voxel encode takes up to seconds;
+                    # control messages and the teleop deadman must keep
+                    # running). The live subscribe below does not wait for
+                    # it: the fence, read before subscribing, lets a late
+                    # replay see that a live frame already won the 1-slot
+                    # mailbox. Re-arming an in-flight replay (1->0->1 during
+                    # its encode) instead of starting another bounds the work
+                    # to one encode per channel at a time. The task reads the
+                    # raw cache itself, so a re-arm on a newer message replays
+                    # that one. Fires on 0->1 transitions only: the relay
+                    # reports sub-set changes and stays cache-free, so an
+                    # extra viewer on an already-active channel waits for the
+                    # next publish (review issue 2, deferred).
+                    session.replay_fence[spec.ch] = self.encoded[spec.ch]
+                    replay = session.replays.get(spec.ch)
+                    if replay is None or replay.done():
+                        session.replays[spec.ch] = asyncio.create_task(
+                            self._replay_cached(session, spec)
+                        )
                 session.unsubs[spec.ch] = self.inputs[spec.ch].subscribe(
                     functools.partial(self._on_input, session, spec, session.senders[spec.ch])
                 )
@@ -1368,6 +1384,32 @@ class RelayBridgeModule(Module):
         unknown = want - {spec.ch for spec in self._channel_specs}
         if unknown:
             logger.debug(f"relay bridge: ignoring unknown channels {sorted(unknown)}")
+
+    async def _replay_cached(self, session: _Session, spec: RuntimeChannelSpec) -> None:
+        """Encode the channel's cached message off the loop and offer it unless
+        a live frame beat it. The checks and the offer below run in one loop
+        step: a live frame's _offer is queued (call_soon_threadsafe) only after
+        its self.encoded increment on the transport thread, so that increment
+        is either already visible (fence moved: drop the older replay) or the
+        live offer is still queued and lands after this one, winning the
+        mailbox. A cache that moved during the encode with no live encode
+        behind it (published while nobody watched, then re-armed) is encoded
+        again: the viewers never keep a message older than the cache."""
+        while True:
+            # _reconcile armed on a cached entry, and entries are never removed.
+            msg, recv_ts = cached = self._last_msg[spec.ch]
+            encoded = await asyncio.to_thread(self._run_encoder, spec, msg)
+            if spec.ch not in session.unsubs:
+                return  # the viewers left during the encode
+            if self.encoded[spec.ch] != session.replay_fence.get(spec.ch):
+                return  # a live frame encoded since the arm is newer and wins
+            if self._last_msg[spec.ch] is not cached:
+                continue  # a newer message is cached and nothing live sent it
+            if encoded is not None:  # None: skip or failure, logged by _run_encoder
+                # self.encoded counts live-path encodes only; the arrival ts
+                # keeps a stale replay honest about its age.
+                self._offer(session, session.senders[spec.ch], *encoded, recv_ts)
+            return
 
     def _on_input(
         self, session: _Session, spec: RuntimeChannelSpec, sender: _Sender, msg: Any
@@ -1434,6 +1476,14 @@ class RelayBridgeModule(Module):
                 logger.exception(f"relay bridge: unsubscribing {ch} failed")
             finally:
                 target.unsubs.pop(ch, None)
+        # In-flight replays die with the session: cancel() detaches the task
+        # at its to_thread await on the next tick (the worker thread finishes
+        # its encode and its result lands on a cancelled future), so this
+        # never waits out an encode and no replay task outlives its session.
+        replays = dict(target.replays)
+        target.replays.clear()
+        for ch, task in replays.items():
+            await _cancel_task(task, f"{ch} replay")
         try:
             await target.client.close()
         except Exception:

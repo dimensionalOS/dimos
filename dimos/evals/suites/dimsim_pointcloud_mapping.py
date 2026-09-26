@@ -23,7 +23,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import math
 
-from dimos.evals.environments.sim import Sim
+from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.scorers import exact, first_number
 from dimos.evals.types import EvalCase, Outcome, Suite, recording
 
@@ -76,11 +76,10 @@ def grade_rooms(visit_radius_m: float = 1.5) -> Callable[[Outcome], float]:
 count_rooms = EvalCase(
     id="dimsim_count_rooms",
     inputs=INSTRUCTION,
-    environment=Sim(
+    environment=DimSimEnvironment(
         blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
         # Keep the configured stack, but require deliberate move_to navigation.
         disable=("wavefront-frontier-explorer", "patrolling-module"),
-        simulator="dimsim",
         scene="apartment",
     ),
     grade=grade_rooms(),

@@ -16,4 +16,4 @@ bin/build-test-natives
 # proves they really ran.
 uv run pytest --error-for-skips -m 'not (mujoco or self_hosted_large)' \
   dimos/mapping/ray_tracing \
-  dimos/navigation/nav_3d/mls_planner
+  dimos/navigation/global_planner/mls_planner

@@ -1,15 +1,25 @@
 import { describe, expect, it } from "vitest";
 import type { FrameHeader } from "@dimos/shared";
 import costmapFrames from "../../../shared/fixtures/costmap_frames.json";
+import lcmFrames from "../../../shared/fixtures/lcm_frames.json";
+import voxelFrames from "../../../shared/fixtures/voxel_frames.json";
+import { spec } from "../testing/fakeRelay.ts";
 import {
   type CostmapValue,
   inflateCostmap,
   MAX_COSTMAP_DIM,
   MAX_COSTMAP_PAYLOAD_BYTES,
 } from "./costmap.ts";
-import { createDecoderRegistry } from "./index.ts";
+import { createDecoderRegistry, type Decoder } from "./index.ts";
 import { MAX_JPEG_DIM, MAX_JPEG_PAYLOAD_BYTES } from "./jpeg.ts";
 import { JSON_PREVIEW_MAX_CHARS, MAX_JSON_PAYLOAD_BYTES } from "./json.ts";
+import {
+  inflateVoxels,
+  MAX_VOXEL_CHUNKS,
+  MAX_VOXEL_PAYLOAD_BYTES,
+  MAX_VOXELS,
+  type VoxelsValue,
+} from "./voxels.ts";
 
 const HEADER: FrameHeader = { ch: "x", seq: 1, ts: 0, delivery: "latest" };
 
@@ -20,6 +30,22 @@ const registry = createDecoderRegistry();
 function b64ToBytes(b64: string): Uint8Array {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
+
+async function deflate(bytes: Uint8Array): Promise<Uint8Array> {
+  const stream = new Blob([bytes as BlobPart]).stream()
+    .pipeThrough(new CompressionStream("deflate"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+// The pose_stamped golden vector (Python-generated, see lcm.test.ts).
+const POSE = (lcmFrames as { vectors: { name: string; schema: unknown; payload_b64: string }[] })
+  .vectors[0];
+const poseSpec = () =>
+  spec({
+    ch: "lcm_pose",
+    encoding: "geometry_msgs.PoseStamped.lcm.v1",
+    params: { lcm: POSE.schema },
+  });
 
 /** Minimal scannable JPEG: SOI + SOF0 declaring w x h (no scan data). */
 function jpegBytes(w: number, h: number): Uint8Array {
@@ -45,6 +71,52 @@ describe("decoder registry", () => {
   it("returns undefined for unknown encodings (unsupported, not an error)", () => {
     expect(registry.get("h264.v1")).toBeUndefined();
     expect(registry.get(undefined)).toBeUndefined();
+  });
+
+  it("resolve() compiles *.lcm.v1 from params.lcm and caches per manifest record", () => {
+    expect(POSE.name).toBe("pose_stamped");
+    const s = poseSpec();
+    const decode = registry.resolve(s);
+    expect(decode).toBeDefined();
+    expect(registry.resolve(s)).toBe(decode);
+    expect(registry.resolve({ ...s })).not.toBe(decode); // a re-adopted manifest compiles anew
+    const decoded = decode!(b64ToBytes(POSE.payload_b64), HEADER);
+    const value = decoded.value as {
+      pose: { position: { x: number } };
+      header: { frame_id: string };
+    };
+    expect(value.pose.position.x).toBe(1.5);
+    expect(value.header.frame_id).toBe("map");
+    expect(decoded.preview).toContain("position: {x: 1.5, y: -2.5, z: 0.25}");
+    // get() alone knows nothing about the schema.
+    expect(registry.get(s.encoding)).toBeUndefined();
+  });
+
+  it("resolve() lets an exact registration beat the lcm family rule", () => {
+    const own = createDecoderRegistry();
+    const mine: Decoder = () => ({ value: "mine" });
+    own.register("geometry_msgs.PoseStamped.lcm.v1", mine);
+    expect(own.resolve(poseSpec())).toBe(mine);
+  });
+
+  it("resolve() is undefined, repeatably, for a missing or unusable schema", () => {
+    for (
+      const params of [
+        {},
+        { lcm: null },
+        { lcm: { type: "t.P", fp: "zz", structs: {} } },
+        { lcm: { type: "t.P", fp: "0011223344556677", structs: {} } },
+      ]
+    ) {
+      const s = spec({ ch: "x", encoding: "t.P.lcm.v1", params });
+      expect(registry.resolve(s)).toBeUndefined();
+      expect(registry.resolve(s)).toBeUndefined();
+    }
+  });
+
+  it("resolve() keeps get() semantics for json and unknown encodings", () => {
+    expect(registry.resolve(spec())).toBe(registry.get("pose.json.v1"));
+    expect(registry.resolve(spec({ encoding: "h264.v1" }))).toBeUndefined();
   });
 
   it("passes jpeg payloads through with dimensions scanned from the bytes", () => {
@@ -157,12 +229,6 @@ describe("costmap decoder", () => {
   const header = (meta: Record<string, unknown>): FrameHeader => ({ ...HEADER, meta });
   const META = { w: 3, h: 2, res: 0.05, origin: [-1.25, 2.5, 0.25] };
 
-  async function deflate(bytes: Uint8Array): Promise<Uint8Array> {
-    const stream = new Blob([bytes as BlobPart]).stream()
-      .pipeThrough(new CompressionStream("deflate"));
-    return new Uint8Array(await new Response(stream).arrayBuffer());
-  }
-
   it("decodes and inflates every golden vector byte-exactly", async () => {
     // The pytest mirror (test_costmap_encoding.py) re-encodes these same
     // vectors; together they pin the Python-zlib -> DecompressionStream pair.
@@ -220,5 +286,92 @@ describe("costmap decoder", () => {
     const payload = b64ToBytes(vec.payload_b64).slice(0, 6);
     const value = decode(payload, header(vec.meta)).value as CostmapValue;
     await expect(inflateCostmap(value)).rejects.toThrow();
+  });
+});
+
+describe("voxels decoder", () => {
+  const decode = registry.get("voxels.zlib.v1")!;
+  const header = (meta: Record<string, unknown>): FrameHeader => ({ ...HEADER, meta });
+  const META = { res: 0.05, n: 3, chunks: 2 };
+  const RECORD_BYTES = 12 + 512;
+
+  /** Voxel indices from decoded centres, sorted like the fixture's `voxels`. */
+  function indicesOf(positions: Float32Array, res: number): number[][] {
+    const out: number[][] = [];
+    for (let i = 0; i < positions.length; i += 3) {
+      out.push([0, 1, 2].map((axis) => Math.round(positions[i + axis] / res - 0.5)));
+    }
+    return out.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+  }
+
+  it("decodes and inflates every golden vector to the pinned voxels", async () => {
+    // The pytest mirror (test_voxel_encoding.py) re-encodes these same
+    // vectors; together they pin the Python-zlib -> DecompressionStream pair
+    // and the chunk record layout.
+    for (const vec of voxelFrames.vectors) {
+      const payload = b64ToBytes(vec.payload_b64);
+      const decoded = decode(payload, header(vec.meta));
+      const value = decoded.value as VoxelsValue;
+      expect(decoded.preview).toBe(
+        `(voxels ${vec.meta.n}, ${vec.meta.chunks} chunks, ${payload.byteLength} B)`,
+      );
+      expect(value.bytes).toBe(payload); // the bytes stay deflated, no copy
+      expect({ res: value.res, n: value.n, chunks: value.chunks }).toEqual(vec.meta);
+      const positions = await inflateVoxels(value);
+      expect(positions.length).toBe(vec.meta.n * 3);
+      expect(indicesOf(positions, vec.meta.res)).toEqual(vec.voxels);
+    }
+  });
+
+  it("rejects missing or malformed meta", () => {
+    const payload = new Uint8Array([1, 2, 3]);
+    expect(() => decode(payload, HEADER)).toThrow(/no meta/);
+    expect(() => decode(payload, header({ ...META, res: 0 }))).toThrow(/positive/);
+    expect(() => decode(payload, header({ ...META, res: "0.05" }))).toThrow(/finite/);
+    expect(() => decode(payload, header({ ...META, n: 2.5 }))).toThrow(/whole number/);
+    expect(() => decode(payload, header({ ...META, n: -1 }))).toThrow(/whole number/);
+    expect(() => decode(payload, header({ ...META, chunks: 0 }))).toThrow(/chunks/);
+    expect(() => decode(payload, header({ ...META, n: 1, chunks: 2 }))).toThrow(/chunks/);
+    expect(() => decode(payload, header({ ...META, n: 0, chunks: 1 }))).toThrow(/chunks/);
+    expect(() => decode(payload, header({ ...META, n: MAX_VOXELS + 1 }))).toThrow(/exceeds/);
+    expect(() => decode(payload, header({ ...META, n: MAX_VOXELS, chunks: MAX_VOXEL_CHUNKS + 1 })))
+      .toThrow(/exceeds/);
+  });
+
+  it("rejects oversized payloads", () => {
+    expect(() => decode(new Uint8Array(MAX_VOXEL_PAYLOAD_BYTES + 1), header(META))).toThrow(
+      /oversized/,
+    );
+  });
+
+  it("accepts the empty frame that clears a map", async () => {
+    const deflated = await deflate(new Uint8Array(0));
+    const empty = decode(deflated, header({ res: 0.05, n: 0, chunks: 0 })).value as VoxelsValue;
+    expect(await inflateVoxels(empty)).toEqual(new Float32Array(0));
+  });
+
+  it("rejects a payload whose bits disagree with n", async () => {
+    // One record with two bits set: chunk (0, 0, 0), voxels 0 and 1.
+    const record = new Uint8Array(RECORD_BYTES);
+    record[12] = 0b11;
+    const deflated = await deflate(record);
+    const over = decode(deflated, header({ res: 0.05, n: 1, chunks: 1 })).value as VoxelsValue;
+    await expect(inflateVoxels(over)).rejects.toThrow(/more than/);
+    const under = decode(deflated, header({ res: 0.05, n: 3, chunks: 1 })).value as VoxelsValue;
+    await expect(inflateVoxels(under)).rejects.toThrow(/expected/);
+    const exact = decode(deflated, header({ res: 0.05, n: 2, chunks: 1 })).value as VoxelsValue;
+    expect(await inflateVoxels(exact)).toEqual(
+      Float32Array.from([0.025, 0.025, 0.025, 0.075, 0.025, 0.025]),
+    );
+  });
+
+  it("rejects an inflate length mismatch in either direction", async () => {
+    // Declared one chunk but the stream inflates to two: the bomb guard fires
+    // mid-stream instead of allocating past the declaration.
+    const deflated = await deflate(new Uint8Array(RECORD_BYTES * 2));
+    const bomb = decode(deflated, header({ res: 0.05, n: 1, chunks: 1 })).value as VoxelsValue;
+    await expect(inflateVoxels(bomb)).rejects.toThrow(/beyond/);
+    const short = decode(deflated, header({ res: 0.05, n: 3, chunks: 3 })).value as VoxelsValue;
+    await expect(inflateVoxels(short)).rejects.toThrow(/expected/);
   });
 });

@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import hashlib
 import os
 from pathlib import Path
 import subprocess
+from typing import Any
 from unittest.mock import call
 
+from pydantic import TypeAdapter
 import pytest
 from pytest_mock import MockerFixture
 
@@ -288,6 +291,56 @@ def test_lfs_path_lazy_creation() -> None:
     # Check that filename is stored
     filename = object.__getattribute__(lfs_path, "_lfs_filename")
     assert filename == "test_data_file"
+
+
+@pytest.mark.parametrize("copy_path", [copy.copy, copy.deepcopy])
+@pytest.mark.parametrize("resolved", [False, True])
+def test_lfs_path_copy_preserves_lazy_resolution(copy_path, resolved, mocker, tmp_path):
+    target = tmp_path / "model.urdf"
+    target.write_text("<robot/>")
+    download = mocker.patch.object(data, "get_data", return_value=target)
+    original = LfsPath("robot/model.urdf")
+    if resolved:
+        assert os.fspath(original) == str(target)
+    download.reset_mock()
+
+    copied = copy_path(original)
+
+    assert type(copied) is LfsPath
+    assert copied is not original
+    download.assert_not_called()
+    assert copied.read_text() == "<robot/>"
+    assert download.call_count == (0 if resolved else 1)
+
+
+def test_lfs_path_deepcopy_preserves_shared_references(mocker, tmp_path):
+    download = mocker.patch.object(data, "get_data", return_value=tmp_path)
+    path = LfsPath("robot/model.urdf")
+
+    first, second = copy.deepcopy([path, path])
+
+    assert first is second
+    assert first is not path
+    download.assert_not_called()
+
+
+def test_lfs_path_serialization_introspection_does_not_download(mocker):
+    download = mocker.patch.object(data, "get_data", side_effect=AssertionError("Not lazy"))
+    path = LfsPath("robot/model.urdf")
+
+    assert not isinstance(path, dict)
+    assert TypeAdapter(Any).dump_python(path) is path
+    download.assert_not_called()
+
+
+def test_lfs_path_hash_matches_resolved_path(
+    mocker: MockerFixture,
+    tmp_path: Path,
+) -> None:
+    resolved = tmp_path / "model.urdf"
+    mocker.patch.object(LfsPath, "_ensure_downloaded", return_value=resolved)
+
+    assert hash(LfsPath("robot_description/model.urdf")) == hash(resolved)
 
 
 def test_lfs_path_safe_attributes() -> None:

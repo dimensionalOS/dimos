@@ -14,7 +14,7 @@
 
 """aioquic session internals for the relay bridge.
 
-The quirks this module works around are documented in web/README.md: the v5
+The quirks this module works around are documented in docs/web/protocol.md: the v5
 robot hello rides an @control data frame on a one-shot bidi stream, the
 relay's handshake and teleop replies ride datagrams (the relay may never
 write on our bidi streams), subs snapshots arrive as @control frames on the
@@ -74,11 +74,13 @@ _FRAME_QUEUE_MAX_BYTES = 128 * 1024 * 1024
 # watched robot's manifest (frames themselves carry no encoding);
 # MAX_DATA_FRAME_BYTES stays the outer bound for everything else. Generous:
 # a 4K quality-90 JPEG is ~4 MiB, a pose JSON object ~100 B, a compressed
-# long-run costmap ~10-30 KB (the cap leaves room for pathological grids).
+# long-run costmap ~10-30 KB and a compressed office-sized voxel map ~100 KB
+# (the caps leave room for pathological grids and clouds).
 _MAX_PAYLOAD_BYTES = {
     "jpeg.v1": 8 * 1024 * 1024,
     "pose.json.v1": 64 * 1024,
     "costmap.zlib.v1": 8 * 1024 * 1024,
+    "voxels.zlib.v1": 8 * 1024 * 1024,
 }
 
 # Relay-pushed control messages (subs snapshots, robots, manifest) waiting for
@@ -440,7 +442,7 @@ class SessionProtocol(QuicConnectionProtocol):
     def reset_if_in_flight(self, stream_id: int) -> bool:
         """Reset a stale stream. Membership check and reset happen in the same
         event-loop turn: aioquic's reset_stream() on a discarded id re-creates
-        the stream and rewinds the stream-id allocator (see web/README.md)."""
+        the stream and rewinds the stream-id allocator (see docs/web/protocol.md)."""
         if stream_id not in self._quic._streams:
             return False
         self._quic.reset_stream(stream_id, STALE_STREAM_ERROR_CODE)

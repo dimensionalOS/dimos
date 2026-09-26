@@ -87,6 +87,7 @@ Config(
         unitree_aes_128_key=None,
         xarm7_ip=None,
         xarm6_ip=None,
+        lite6_ip=None,
         can_port=None,
         device_path=None,
         simulation='',

@@ -1,0 +1,166 @@
+{
+  "vectors": [
+    {
+      "name": "one_chunk",
+      "params": {
+        "res": 0.05
+      },
+      "meta": {
+        "res": 0.05,
+        "n": 3,
+        "chunks": 1
+      },
+      "points": [
+        [
+          0.025,
+          0.025,
+          0.025
+        ],
+        [
+          0.026,
+          0.024,
+          0.026
+        ],
+        [
+          0.075,
+          0.025,
+          0.025
+        ],
+        [
+          0.425,
+          0.725,
+          0.375
+        ]
+      ],
+      "voxels": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          8,
+          14,
+          7
+        ]
+      ],
+      "payload_b64": "eJxjYEAAZoYRDBgH2gEDDwAJDwAF"
+    },
+    {
+      "name": "across_chunks",
+      "params": {
+        "res": 0.05
+      },
+      "meta": {
+        "res": 0.05,
+        "n": 4,
+        "chunks": 4
+      },
+      "points": [
+        [
+          -0.025,
+          -0.025,
+          -0.025
+        ],
+        [
+          0.025,
+          0.025,
+          0.025
+        ],
+        [
+          0.825,
+          -0.825,
+          0.125
+        ],
+        [
+          -1.625,
+          1.575,
+          -0.925
+        ]
+      ],
+      "voxels": [
+        [
+          -33,
+          31,
+          -19
+        ],
+        [
+          -1,
+          -1,
+          -1
+        ],
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          16,
+          -17,
+          2
+        ]
+      ],
+      "payload_b64": "eJz7+///f0YGBoZ/QJphFAxl0ECpAf+RABXcMwqGLmhA5jAOkCNGweAA9KsfRlPaYAcAjoMY6Q=="
+    },
+    {
+      "name": "coarse_res",
+      "params": {
+        "res": 0.1
+      },
+      "meta": {
+        "res": 0.1,
+        "n": 2,
+        "chunks": 2
+      },
+      "points": [
+        [
+          0.15,
+          0.25,
+          0.05
+        ],
+        [
+          0.16,
+          0.24,
+          0.06
+        ],
+        [
+          1.75,
+          1.95,
+          0.55
+        ]
+      ],
+      "voxels": [
+        [
+          1,
+          2,
+          0
+        ],
+        [
+          17,
+          19,
+          5
+        ]
+      ],
+      "payload_b64": "eJxjYEAFTAyjYKQCRigeOmA0tdIKAAAS8AAH"
+    },
+    {
+      "name": "empty",
+      "params": {
+        "res": 0.05
+      },
+      "meta": {
+        "res": 0.05,
+        "n": 0,
+        "chunks": 0
+      },
+      "points": [],
+      "voxels": [],
+      "payload_b64": "eJwDAAAAAAE="
+    }
+  ]
+}

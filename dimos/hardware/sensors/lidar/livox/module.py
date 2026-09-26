@@ -27,7 +27,6 @@ Usage::
 
 from __future__ import annotations
 
-import os
 import sys
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -61,10 +60,10 @@ class Mid360Config(NativeModuleConfig):
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
-    host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_HOST_IP"))
-    lidar_ip: str = Field(
-        default_factory=lambda: os.environ.get("DIMOS_MID360_LIDAR_IP", "192.168.1.155")
-    )
+    # None derives host_ip from a NIC on the lidar's subnet; a box with two links
+    # into that subnet sets it explicitly.
+    host_ip: str | None = None
+    lidar_ip: str = "192.168.1.155"
     frequency: float = 10.0
     enable_imu: bool = True
     # Replay this capture instead of a live sensor. host_ip/lidar_ip are unused.

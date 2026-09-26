@@ -668,6 +668,7 @@ dependencies = [
  "pcap-parser",
  "serde",
  "serde_json",
+ "serial_test",
  "socket2 0.6.5",
  "tempfile",
  "tokio",
@@ -760,6 +761,21 @@ dependencies = [
  "dimos-module",
  "lcm-msgs",
  "serde",
+ "tokio",
+ "tracing",
+ "validator",
+]
+
+[[package]]
+name = "dimos-pointlio"
+version = "0.1.0"
+dependencies = [
+ "dimos-livox",
+ "dimos-module",
+ "lcm-msgs",
+ "pointlio-core",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "validator",
@@ -1000,6 +1016,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fslock"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04412b8935272e3a9bae6f48c7bfff74c2911f60525404edfdd28e49884c3bfb"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -2279,6 +2305,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pointlio-core"
+version = "0.1.0"
+source = "git+https://github.com/dimensionalOS/dimos-module-pointlio.git?rev=3c1dcf8b9dfe6402aaf141e116f4caef6c5c8088#3c1dcf8b9dfe6402aaf141e116f4caef6c5c8088"
+dependencies = [
+ "nalgebra",
+ "serde",
+]
+
+[[package]]
 name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3118,6 +3153,32 @@ dependencies = [
  "ryu",
  "serde",
  "unsafe-libyaml",
+]
+
+[[package]]
+name = "serial_test"
+version = "4.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6df5ed973ad8d834e09f824f9e9f449af6b9a3745f78dec7cc752770bd3bf11"
+dependencies = [
+ "fslock",
+ "futures-executor",
+ "futures-util",
+ "log",
+ "once_cell",
+ "parking_lot",
+ "serial_test_derive",
+]
+
+[[package]]
+name = "serial_test_derive"
+version = "4.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a22144e767da4ddd8416dbf383700542ffd8a5dc493dfecedfe1fe3ad03c98ae"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.4",
 ]
 
 [[package]]

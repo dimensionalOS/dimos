@@ -275,7 +275,14 @@ class HabitatHost:
     def reset_pose(self) -> None:
         self._sim.pathfinder.seed(int(self.cfg.get("seed", 0)))
         state = self._agent.get_state()
-        state.position = self._sim.pathfinder.get_random_navigable_point()
+        position = self.cfg.get("start_position_ros")
+        if position is None:
+            state.position = self._sim.pathfinder.get_random_navigable_point()
+        else:
+            point = frames.position_to_habitat(position).astype(np.float32)
+            if not np.isfinite(point).all() or not self._sim.pathfinder.is_navigable(point):
+                raise ValueError(f"Spawn is not navigable: {position}")
+            state.position = point
         self.yaw = math.radians(float(self.cfg.get("start_yaw_deg", 0.0)))
         state.rotation = self.hs.utils.common.quat_from_angle_axis(
             self.yaw, np.array([0.0, 1.0, 0.0])

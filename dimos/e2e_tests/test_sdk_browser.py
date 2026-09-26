@@ -45,8 +45,6 @@ import pytest
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall, wait_for_http
 from dimos.web.relay_bridge.locate import find_web_dir
 
-# Playwright lives in the `browser-tests` dependency group, which only the CI
-# web job installs; collection elsewhere must skip, not fail.
 pytest.importorskip("playwright")
 
 from playwright.sync_api import Page, expect, sync_playwright

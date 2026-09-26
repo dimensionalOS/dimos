@@ -36,7 +36,7 @@ import os
 from pathlib import Path
 from typing import Any, cast
 
-from yourdfpy import URDF
+from yourdfpy import URDF  # type: ignore[import-untyped]
 
 from dimos.control.components import HardwareComponent, HardwareType, make_humanoid_joints
 from dimos.control.coordinator import TaskConfig
@@ -57,8 +57,8 @@ from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.g1_rerun import g1_costmap
 from dimos.utils.data import LfsPath
