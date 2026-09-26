@@ -23,7 +23,9 @@ checks and stops -- but its "hardware" just does what it is told. Pick a shape:
 
 Each reading step moves it by one period of the state rate: a joint told a
 position is there at once, a joint told a speed moves at that speed, and a
-base moves as its speeds say.
+base moves as its speeds say. A joint given no stiffness is not pulled to its
+target position at all; it only moves at its target speed, so a damping stop
+leaves it wherever it is.
 """
 
 from __future__ import annotations
@@ -45,6 +47,7 @@ from dimos.control.contract.description import (
 )
 from dimos.control.contract.keys import (
     EFFORT,
+    KP,
     POSITION,
     QW,
     VELOCITY,
@@ -198,7 +201,9 @@ class MockConnection(Module, ConnectionRpcMixin):
     def _step_joint(self, name: str, commanded: dict[str, float], dt: float) -> None:
         prefix = f"{self._desc.source}/{name}/"
         position = self._plant.get(prefix + POSITION, 0.0)
-        if prefix + POSITION in commanded:
+        # With no stiffness a position target pulls on nothing.
+        stiff = commanded.get(prefix + KP) != 0.0
+        if prefix + POSITION in commanded and stiff:
             target = commanded[prefix + POSITION]
             speed = (target - position) / dt
             position = target

@@ -131,6 +131,33 @@ def test_start_refuses_polling_with_no_way_to_read():
         hw.start(background=False)
 
 
+def test_a_start_that_fails_after_connecting_disconnects_again():
+    hooks = FakeHooks(arm_description())
+
+    def broken():
+        raise RuntimeError("no such robot")
+
+    hooks.describe = broken
+    hw = ConnectedHardware(FakeModule(), hooks, state_mode="push")
+    with pytest.raises(RuntimeError, match="no such robot"):
+        hw.start(background=False)
+    assert hooks.shut_down
+    hooks.shut_down = False
+    hw.stop()
+    assert not hooks.shut_down, "shut down a second time"
+
+
+def test_a_start_refused_for_its_description_disconnects_again():
+    bad = arm_description(
+        timing=Timing(state_rate_hz=100, stale_timeout_s=0.001, watchdog_timeout_s=0.1)
+    )
+    hooks = FakeHooks(bad)
+    hw = ConnectedHardware(FakeModule(), hooks, state_mode="push")
+    with pytest.raises(DescriptionError):
+        hw.start(background=False)
+    assert hooks.shut_down
+
+
 # Arming
 
 
@@ -778,6 +805,98 @@ def test_redescribing_is_allowed_only_in_standby_and_bumps_the_number(rig_for):
     rig.arm()
     with pytest.raises(RuntimeError, match="standby"):
         rig.hw.redescribe()
+
+
+# A write that hangs
+
+
+def blocking_first_write(rig):
+    """Make the first write hang until released. Returns (release, written)."""
+    release, written = threading.Event(), []
+
+    def write(frame):
+        written.append(frame)
+        if len(written) == 1:
+            release.wait(5)
+
+    rig.hooks.write = write
+    return release, written
+
+
+def send_in_background(rig, frame):
+    thread = threading.Thread(target=rig.send, args=(frame,))
+    thread.start()
+    return thread
+
+
+def wait_for(predicate, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "timed out waiting"
+        time.sleep(0.002)
+
+
+def test_a_stop_held_up_by_a_hung_write_is_not_reported_as_done(rig_for):
+    rig = rig_for(fast_hooks(arm_description()))
+    rig.arm()
+    release, written = blocking_first_write(rig)
+    sender = send_in_background(rig, arm_velocity_command(epoch=1, sequence=1))
+    wait_for(lambda: len(written) == 1)
+    try:
+        ack = rig.hw.safe_stop(10)
+        assert not ack.ok and "did not finish" in ack.reason
+        assert ack.state is LifecycleState.SAFE_STOPPED
+    finally:
+        release.set()
+        sender.join(2)
+    # When the hung command finally went through, the stop was sent after it.
+    assert written[-1].values == {
+        "arm/j1/velocity": 0.0,
+        "arm/j2/velocity": 0.0,
+        "arm/gripper/position": 0.04,
+    }
+
+
+def test_a_stop_held_up_by_a_hung_write_uses_the_drivers_emergency_stop(rig_for):
+    calls = []
+    rig = rig_for(fast_hooks(arm_description()), on_estop=lambda: calls.append("estop"))
+    rig.arm()
+    release, written = blocking_first_write(rig)
+    sender = send_in_background(rig, arm_velocity_command(epoch=1, sequence=1))
+    wait_for(lambda: len(written) == 1)
+    try:
+        ack = rig.hw.safe_stop(10)
+        assert ack.ok and ack.state is LifecycleState.ESTOPPED
+        assert calls == ["estop"]
+    finally:
+        release.set()
+        sender.join(2)
+    # Asserted again once the hung command had gone through.
+    assert calls == ["estop", "estop"]
+
+
+# Driver calls that run out of time
+
+
+def test_an_arming_call_that_finishes_late_cannot_leave_the_robot_live(rig_for):
+    release, stops = threading.Event(), []
+    rig = rig_for(
+        fast_hooks(arm_description()),
+        on_commit_arm=lambda: release.wait(5),
+        on_safe_stop=lambda: stops.append("stop"),
+    )
+    rig.feed()
+    assert rig.hw.prepare_arm(1).ok
+    ack = rig.hw.commit_arm(2, epoch=1)
+    assert not ack.ok and ack.reason == "hook_timeout"
+    assert rig.hw.state is LifecycleState.SAFE_STOPPED and stops == ["stop"]
+    # It may yet enable the motors, so the stop cannot be cleared while it runs.
+    refused = rig.hw.clear_safe_stop(3)
+    assert not refused.ok and "still running" in refused.reason
+    release.set()
+    # Once it finishes the stop is sent again, and only then can it be cleared.
+    wait_for(lambda: rig.hw.clear_safe_stop(rig.next_op()).ok)
+    assert stops == ["stop", "stop"]
 
 
 # The background loops, on real time

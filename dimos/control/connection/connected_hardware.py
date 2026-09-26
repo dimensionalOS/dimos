@@ -149,8 +149,9 @@ class Hooks(Protocol):
     """What a driver writes for its hardware. Usually the module itself.
 
     Required:
-        connect: Open the connection to the hardware. Raise if it fails. Must
-            not make anything move.
+        connect: Open the connection to the hardware. Must not make anything
+            move. If it raises, close whatever it opened first: ``shutdown``
+            is only called once ``connect`` has succeeded.
         describe: Say what the hardware is, usually with one preset call. The
             ``epoch`` on what it returns is ignored.
         write: Send one ``Frame`` to the hardware. Raise ``WriteRejectedError`` if
@@ -176,8 +177,10 @@ class Hooks(Protocol):
         on_safe_stop() -> None: the driver's own part of stopping. Called
             after any stop command has been sent, and may be called while a
             ``write`` is still in progress.
-        on_estop() -> None: carry out an emergency stop. Required when the
-            description's estop kind is DISABLE or VENDOR.
+        on_estop() -> None: carry out an emergency stop, without going
+            through ``write``. Required when the description's estop kind is
+            DISABLE or VENDOR. Also used when a safe stop cannot be sent
+            because a ``write`` has hung.
         fault() -> str | None: why the hardware is not working, or ``None``
             if it is fine. Checked continually, so it must return at once.
         clear_fault(latch: str) -> None: recover after a stop. ``latch`` is
@@ -309,6 +312,11 @@ class ConnectedHardware:
         self._epoch: int | None = None
         self._last_sequence: int | None = None
         self._last_accepted: Frame | None = None
+        # The command being written right now, if any. A stop is based on it,
+        # since the hardware may be about to have it.
+        self._in_flight: Frame | None = None
+        # Driver calls that overran their time limit and are still running.
+        self._overrunning = 0
         self._confirmed: frozenset[str] = frozenset()
         self._fault: str | None = None
         self._write_failures = 0
@@ -342,6 +350,9 @@ class ConnectedHardware:
                 ``poll_state`` and ``supervise`` yourself, e.g. to step a
                 simulator in lockstep.
 
+        If anything fails after ``connect`` has succeeded, the driver's
+        ``shutdown`` is called before the error is raised.
+
         Raises:
             DescriptionError: If the description breaks any rule.
             ValueError: If the description asks for something the hooks cannot
@@ -352,19 +363,32 @@ class ConnectedHardware:
             raise RuntimeError("ConnectedHardware.start() called twice")
         self._started = True
         self._hooks.connect()
-        desc = replace(self._hooks.describe(), epoch=self._description_epoch)
-        validate_description(desc)
-        self._check_hooks(desc)
-        self._log_unenforced(desc)
-        with self._lock:
-            self._desc = desc
-            self._prefix = f"{desc.source}/"
-            self._state = LifecycleState.STANDBY
-        self._unsubscribe = self._module.control_command.subscribe(self.on_command)
-        if background:
-            self._spawn(self._supervise_loop, "supervise")
-            if self._state_mode == "poll":
-                self._spawn(self._poll_loop, "poll")
+        try:
+            desc = replace(self._hooks.describe(), epoch=self._description_epoch)
+            validate_description(desc)
+            self._check_hooks(desc)
+            self._log_unenforced(desc)
+            with self._lock:
+                self._desc = desc
+                self._prefix = f"{desc.source}/"
+                self._state = LifecycleState.STANDBY
+            self._unsubscribe = self._module.control_command.subscribe(self.on_command)
+            if background:
+                self._spawn(self._supervise_loop, "supervise")
+                if self._state_mode == "poll":
+                    self._spawn(self._poll_loop, "poll")
+        except BaseException:
+            # Connected but unusable: close the connection before giving up.
+            with self._lock:
+                self._stopped = True
+            self._stopping.set()
+            if self._unsubscribe is not None:
+                self._unsubscribe()
+            try:
+                self._hooks.shutdown()
+            except Exception:
+                logger.exception("driver shutdown after a failed start also failed")
+            raise
 
     def stop(self) -> None:
         """Stop the robot if it is moving, then disconnect. Safe to call twice."""
@@ -654,6 +678,11 @@ class ConnectedHardware:
         Works from any state and never waits for another request to finish.
         Asking again while already stopped changes nothing and succeeds.
 
+        If the stop cannot be sent -- a write to the hardware has hung -- the
+        driver's own emergency stop is used instead, and the answer shows
+        ESTOPPED. With no such hook the robot is still marked stopped, but the
+        answer is not ``ok``: nothing is known to have reached the hardware.
+
         Args:
             operation_id: A number for this request.
             reason: Why, for the status report.
@@ -664,27 +693,29 @@ class ConnectedHardware:
             return self._ack(operation_id, True, "already emergency-stopped")
         if state is LifecycleState.SAFE_STOPPED:
             return self._ack(operation_id, True, "already stopped")
-        self._run_safe_stop(reason)
-        return self._ack(operation_id, True)
+        problem = self._run_safe_stop(reason)
+        return self._ack(operation_id, problem is None, problem or "")
 
     def estop(self, operation_id: int, reason: str = "requested") -> LifecycleAck:
         """Stop the robot in an emergency, and stay stopped.
 
         Always acts, even if already stopped, and takes over from any other
-        stop. Never waits for another request to finish.
+        stop. Never waits for another request to finish. The answer is not
+        ``ok`` if the stop could not be carried out.
 
         Args:
             operation_id: A number for this request.
             reason: Why, for the status report.
         """
-        self._run_estop(reason)
-        return self._ack(operation_id, True)
+        problem = self._run_estop(reason)
+        return self._ack(operation_id, problem is None, problem or "")
 
     def clear_safe_stop(self, operation_id: int) -> LifecycleAck:
         """Release a stop, back to STANDBY. The robot does not move until it is
         prepared and committed again.
 
-        Refused while the hardware still reports a fault.
+        Refused while the hardware still reports a fault, or while a driver
+        call that ran out of time is still running and could yet act.
         """
         return self._clear(operation_id, LifecycleState.SAFE_STOPPED, "safe_stop")
 
@@ -692,7 +723,8 @@ class ConnectedHardware:
         """Release an emergency stop, back to STANDBY. The robot does not move
         until it is prepared and committed again.
 
-        Refused while the hardware still reports a fault.
+        Refused while the hardware still reports a fault, or while a driver
+        call that ran out of time is still running and could yet act.
         """
         return self._clear(operation_id, LifecycleState.ESTOPPED, "estop")
 
@@ -730,10 +762,22 @@ class ConnectedHardware:
             with self._lock:
                 if self._state is not LifecycleState.ARMED or self._epoch != epoch:
                     return
+                self._in_flight = out
             try:
                 self._hooks.write(out)
             except Exception as failure:
                 error = f"{type(failure).__name__}: {failure}"
+        with self._lock:
+            self._in_flight = None
+            if error is None:
+                # Whatever happened meanwhile, this is what the hardware has.
+                self._last_accepted = out
+            still_armed = self._state is LifecycleState.ARMED and self._epoch == epoch
+        if not still_armed:
+            # Stopped while this command was on its way. Send the stop again,
+            # so that it, not this command, is the last thing sent.
+            self._reassert_stop()
+            return
         if error is not None:
             with self._lock:
                 self._write_failures += 1
@@ -744,7 +788,6 @@ class ConnectedHardware:
             return
         with self._lock:
             self._write_failures = 0
-            self._last_accepted = out
             self._command_freshness.mark(self._clock())
 
     def _switch_groups(
@@ -764,7 +807,12 @@ class ConnectedHardware:
         set_native = getattr(self._hooks, "set_native", None)
         if set_native is not None:
             for group in entering:
-                ok, why = self._run_bounded(partial(set_native, group), desc.timing.hook_timeout_s)
+                ok, why = self._run_bounded(
+                    partial(set_native, group),
+                    desc.timing.hook_timeout_s,
+                    label=f"set_native({group})",
+                    activates=True,
+                )
                 if self.state is LifecycleState.ESTOPPED:
                     self._assert_estop()
                     return False
@@ -777,10 +825,15 @@ class ConnectedHardware:
             self._confirmed = active
         return True
 
-    def _run_safe_stop(self, reason: str) -> None:
+    def _run_safe_stop(self, reason: str) -> str | None:
+        """Latch SAFE_STOPPED and stop the hardware.
+
+        Returns why the stop may not have reached the hardware, or ``None`` if
+        it did, or if there was nothing moving to stop.
+        """
         with self._lock:
             if self._state in (LifecycleState.SAFE_STOPPED, LifecycleState.ESTOPPED):
-                return
+                return None
             # Latch first, so no command can slip in behind the stop.
             self._state = LifecycleState.SAFE_STOPPED
             self._epoch = None
@@ -788,10 +841,36 @@ class ConnectedHardware:
             self._stop_started_at = self._clock()
             self._last_stop_emit = None
         logger.warning(f"{self._prefix} safe stop: {reason}")
-        self._emit_stop_frame()
-        self._run_hook("on_safe_stop", self._description().timing.hook_timeout_s)
+        problem = self._stop_hardware()
+        if problem is None:
+            return None
+        if getattr(self._hooks, "on_estop", None) is not None:
+            return self._run_estop(f"{reason}; {problem}")
+        with self._lock:
+            self._fault = f"{reason}; {problem}"
+        logger.error(f"{self._prefix} safe stop may not have reached the hardware: {problem}")
+        return problem
 
-    def _run_estop(self, reason: str) -> None:
+    def _stop_hardware(self) -> str | None:
+        """Send the safe-stop command and run the driver's own stop.
+
+        Returns why the stop may not have reached the hardware, or ``None``.
+        """
+        sent = self._emit_stop_frame()
+        ok, why = self._run_hook("on_safe_stop", self._description().timing.hook_timeout_s)
+        if not ok:
+            self._reject("on_safe_stop_failed", why)
+        if self._description().safe_stop.kind is SafeStopKind.VENDOR:
+            return None if ok else f"on_safe_stop: {why}"
+        if sent is False:
+            return "stop not sent: a write to the hardware did not finish"
+        return None
+
+    def _run_estop(self, reason: str) -> str | None:
+        """Latch ESTOPPED and stop the hardware.
+
+        Returns why the stop may not have reached the hardware, or ``None``.
+        """
         with self._lock:
             if self._state is not LifecycleState.ESTOPPED:
                 self._fault = reason
@@ -800,13 +879,30 @@ class ConnectedHardware:
             self._state = LifecycleState.ESTOPPED
             self._epoch = None
         logger.warning(f"{self._prefix} emergency stop: {reason}")
-        self._assert_estop()
+        problem = self._assert_estop()
+        if problem is not None:
+            logger.error(
+                f"{self._prefix} emergency stop may not have reached the hardware: {problem}"
+            )
+        return problem
 
-    def _assert_estop(self) -> None:
+    def _assert_estop(self) -> str | None:
         if getattr(self._hooks, "on_estop", None) is not None:
-            self._run_hook("on_estop", self._description().timing.hook_timeout_s)
-        else:
-            self._emit_stop_frame()
+            ok, why = self._run_hook("on_estop", self._description().timing.hook_timeout_s)
+            return None if ok else f"on_estop: {why}"
+        if self._emit_stop_frame() is False:
+            return "stop not sent: a write to the hardware did not finish"
+        return None
+
+    def _reassert_stop(self) -> None:
+        """Stop the hardware again, the way the current latch says. For when
+        something may have undone the stop: a write or driver call that was
+        still running when the robot was stopped, and finished afterwards."""
+        state = self.state
+        if state is LifecycleState.ESTOPPED:
+            self._assert_estop()
+        elif state is LifecycleState.SAFE_STOPPED:
+            self._stop_hardware()
 
     def _stop_kind(self, state: LifecycleState) -> SafeStopKind | None:
         """How a robot in this state is being held stopped by this object, or
@@ -820,20 +916,26 @@ class ConnectedHardware:
             return None
         return None if kind is SafeStopKind.VENDOR else kind
 
-    def _emit_stop_frame(self) -> None:
+    def _emit_stop_frame(self) -> bool | None:
+        """Send the command that holds the robot stopped.
+
+        Returns True if it was sent, False if it could not be, and ``None``
+        if there is nothing to send: the driver handles the stop itself, or
+        nothing was ever commanded.
+        """
         desc = self._description()
         now = self._clock()
         with self._lock:
             kind = self._stop_kind(self._state)
-            last = self._last_accepted
+            last = self._in_flight or self._last_accepted
             measured = dict(self._measured)
             elapsed = now - (self._stop_started_at if self._stop_started_at is not None else now)
             self._last_stop_emit = now
         if kind is None:
-            return
+            return None
         values = stop_values(desc, kind, last.values if last else None, measured, elapsed_s=elapsed)
         if values is None:
-            return
+            return None
         frame = Frame(
             source=desc.source,
             values=values,
@@ -841,17 +943,20 @@ class ConnectedHardware:
             epoch=last.epoch if last else 0,
             sequence=last.sequence if last else 0,
         )
-        # A write that has hung must not hold up a stop for ever. If the lock
-        # cannot be had in time, the driver's own stop hook is the fallback.
+        # A write that has hung must not hold up a stop for ever. The caller
+        # falls back on the driver's emergency stop, and the stop is sent
+        # again when the hung write returns.
         if not self._write_lock.acquire(timeout=desc.timing.hook_timeout_s):
             self._reject("stop_write_blocked", "a write is still in progress")
-            return
+            return False
         try:
             self._hooks.write(frame)
         except Exception as error:
             self._reject("stop_write_failed", f"{type(error).__name__}: {error}")
+            return False
         finally:
             self._write_lock.release()
+        return True
 
     def _clear(self, operation_id: int, latched: LifecycleState, latch: str) -> LifecycleAck:
         name = f"clear_{latch}"
@@ -864,13 +969,20 @@ class ConnectedHardware:
                     return self._ack(
                         operation_id, False, f"not {latched.value}, but {self._state.value}"
                     )
+                if self._overrunning:
+                    return self._ack(
+                        operation_id, False, "a driver call that timed out is still running"
+                    )
             fault = self._poll_fault()
             if fault is not None:
                 return self._ack(operation_id, False, f"hardware fault: {fault}")
             clear_fault = getattr(self._hooks, "clear_fault", None)
             if clear_fault is not None:
                 ok, why = self._run_bounded(
-                    partial(clear_fault, latch), self._description().timing.hook_timeout_s
+                    partial(clear_fault, latch),
+                    self._description().timing.hook_timeout_s,
+                    label="clear_fault",
+                    activates=True,
                 )
                 if not ok:
                     return self._ack(operation_id, False, f"clear_fault: {why}")
@@ -911,28 +1023,65 @@ class ConnectedHardware:
         hook = getattr(self._hooks, name, None)
         if hook is None:
             return True, ""
-        return self._run_bounded(hook, timeout_s)
+        activates = name in ("on_prepare_arm", "on_commit_arm")
+        return self._run_bounded(hook, timeout_s, label=name, activates=activates)
 
-    def _run_bounded(self, call: Callable[[], Any], timeout_s: float) -> tuple[bool, str]:
-        """Call a hook on a thread of its own and give up after ``timeout_s``
-        seconds. The hook keeps running if it overruns; its result is lost."""
-        box: dict[str, BaseException] = {}
+    def _run_bounded(
+        self,
+        call: Callable[[], Any],
+        timeout_s: float,
+        *,
+        label: str,
+        activates: bool = False,
+    ) -> tuple[bool, str]:
+        """Call a driver hook on a thread of its own and give up waiting after
+        ``timeout_s`` seconds.
+
+        Giving up does not stop the hook: Python cannot cancel a thread. So
+        while it keeps running, no stop can be cleared, and if it was one that
+        can make the hardware move (``activates``) and it finishes after all,
+        the stop is sent again in case the hook undid it.
+        """
+        guard = threading.Lock()
+        outcome: dict[str, Any] = {"done": False, "abandoned": False, "error": None}
 
         def target() -> None:
             try:
                 call()
             except BaseException as error:
-                box["error"] = error
+                outcome["error"] = error
+            with guard:
+                outcome["done"] = True
+                abandoned = outcome["abandoned"]
+            if abandoned:
+                self._after_overrun(label, activates)
 
-        thread = threading.Thread(target=target, daemon=True, name=f"{self._prefix}hook")
+        thread = threading.Thread(target=target, daemon=True, name=f"{self._prefix}{label}")
         thread.start()
         thread.join(timeout_s)
-        if thread.is_alive():
-            return False, "hook_timeout"
-        error = box.get("error")
+        with guard:
+            if not outcome["done"]:
+                outcome["abandoned"] = True
+                with self._lock:
+                    self._overrunning += 1
+                return False, "hook_timeout"
+        error = outcome["error"]
         if error is not None:
             return False, f"{type(error).__name__}: {error}"
         return True, ""
+
+    def _after_overrun(self, label: str, activates: bool) -> None:
+        """A hook that had been given up on has finished."""
+        try:
+            logger.warning(f"{self._prefix} {label} finished after timing out")
+            if activates:
+                if self.state in (LifecycleState.SAFE_STOPPED, LifecycleState.ESTOPPED):
+                    self._reassert_stop()
+                else:
+                    self._run_safe_stop(f"{label} finished after timing out")
+        finally:
+            with self._lock:
+                self._overrunning -= 1
 
     def _check_hooks(self, desc: ControlDescription) -> None:
         problems: list[str] = []

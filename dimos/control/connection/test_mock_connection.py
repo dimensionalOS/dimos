@@ -152,6 +152,20 @@ def test_a_humanoid_accepts_a_full_command_and_damps_when_stopped(mock_for):
     assert module.commands_received() == 2
 
 
+def test_a_damped_joint_stays_where_it_is_pushed(mock_for):
+    module, state, bus = mock_for("pd", source="g1")
+    [desc] = module.describe_control()
+    arm_it(module)
+    values = dict.fromkeys(desc.command_keys(), 0.0)
+    values |= {key: 60.0 for key in values if key.endswith("/kp")}
+    bus.publish(command(1, 1, values))
+    module.safe_stop(3)
+    module.set_measured({"g1/joint1/position": 0.5})
+    module.hw.poll_state()
+    # No stiffness while damping, so nothing pulls it back to its old target.
+    assert state.sent[-1].as_dict()["g1/joint1/position"] == 0.5
+
+
 def test_a_reported_fault_stops_it(mock_for):
     module, _, _ = mock_for("arm")
     arm_it(module)
