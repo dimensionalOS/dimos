@@ -420,3 +420,13 @@ class Recorder(MemoryModule):
                 pass
 
         self.register_disposable(Disposable(self.tf.subscribe(on_tf)))
+
+
+def __getattr__(name: str) -> object:
+    # SemanticSearch moved to semantic_search.py, which loads torch. Resolve the
+    # old import path lazily so importing this module stays cheap.
+    if name in ("SemanticSearch", "SemanticSearchConfig"):
+        from dimos.memory import semantic_search
+
+        return getattr(semantic_search, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
