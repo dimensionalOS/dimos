@@ -319,7 +319,7 @@ class RerunBridgeModule(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        # 0.3 s; paid here, on this module's own worker during the deploy
+        # import here, on this module's own worker during the deploy
         # phase, rather than inside start() on the blueprint's critical path.
         import rerun  # noqa: F401
 
