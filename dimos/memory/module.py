@@ -43,6 +43,10 @@ if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
 
     from dimos.core.stream import Out
+    from dimos.memory.semantic_search import (
+        SemanticSearch as SemanticSearch,
+        SemanticSearchConfig as SemanticSearchConfig,
+    )
     from dimos.msgs.geometry_msgs.Pose import Pose
 
 logger = setup_logger()
@@ -425,3 +429,13 @@ class Recorder(MemoryModule):
                 pass
 
         self.register_disposable(Disposable(self.tf.subscribe(on_tf)))
+
+
+def __getattr__(name: str) -> object:
+    # SemanticSearch moved to semantic_search.py, which loads torch. Resolve the
+    # old import path lazily so importing this module stays cheap.
+    if name in ("SemanticSearch", "SemanticSearchConfig"):
+        from dimos.memory import semantic_search
+
+        return getattr(semantic_search, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

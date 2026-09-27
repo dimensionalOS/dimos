@@ -12,13 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copyreg
+import sys
 
-# Recorded lidar pickles under data/ reference this function by module path
-# (they were written through a copyreg reducer for open3d point clouds), so it
-# has to stay importable from here.
+import numpy as np
+
+
+def reduce_external(obj):  # type: ignore[no-untyped-def]
+    return (reconstruct_pointcloud, (np.asarray(obj.points),))
+
+
+# Recorded lidar pickles under data/ reference this function by module path.
 def reconstruct_pointcloud(points_array):  # type: ignore[no-untyped-def]
     import open3d as o3d  # type: ignore[import-untyped]
 
     pc = o3d.geometry.PointCloud()
     pc.points = o3d.utility.Vector3dVector(points_array)
     return pc
+
+
+def register_picklers() -> None:
+    """Teach pickle about open3d point clouds if open3d is loaded.
+
+    Only a process that imported open3d can hold a point cloud, so skipping the
+    2 s import when it is absent loses nothing.
+    """
+    o3d = sys.modules.get("open3d")
+    if o3d is not None:
+        copyreg.pickle(o3d.geometry.PointCloud, reduce_external)

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import functools
+import importlib.util
 import threading
 import time
 from typing import (
@@ -326,9 +327,14 @@ class ROSTransport(PubSubTransport[DimosMsg]):
             self._ros = None
 
 
+# find_spec instead of importing: cyclonedds (the optional dds extra) is only
+# imported when a DDSTransport is built.
+DDS_AVAILABLE = importlib.util.find_spec("cyclonedds") is not None
+
+
 class DDSTransport(PubSubTransport[T]):
     def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        # cyclonedds (the optional dds extra): only loaded when a DDSTransport exists.
+        # cyclonedds: see DDS_AVAILABLE.
         from dimos.protocol.pubsub.impl.ddspubsub import DDS, Topic as DDSTopic
 
         super().__init__(DDSTopic(topic, type))

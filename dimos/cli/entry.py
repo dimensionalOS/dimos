@@ -23,7 +23,6 @@ parent, inside ``main()``.
 
 
 def main() -> None:
-    # dimos.cli.dimos (0.6 s): imported here so the __mp_main__ re-run stays free.
     from dimos.cli.dimos import cli_main
 
     cli_main()
