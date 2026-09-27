@@ -86,4 +86,3 @@ def test_blueprint_ports(module_cls: type[StreamModule]) -> None:
     stream_names = {s.name for s in atom.streams}
     assert "numbers" in stream_names
     assert "doubled" in stream_names
-
