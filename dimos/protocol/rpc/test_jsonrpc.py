@@ -109,6 +109,24 @@ def test_a_client_sends_json_rpc_requests() -> None:
     ]
 
 
+def test_a_client_sends_positional_only_params_as_an_array() -> None:
+    class PositionalModule(Module):
+        @rpc
+        def only(self, value: int, /, scale: int = 1) -> int:
+            return value * scale
+
+    def only(value: int, /, scale: int = 1) -> int:
+        return value * scale
+
+    with rpc_pair() as (server, client):
+        server.serve_rpc(only, "PositionalModule/only")
+        proxy = RPCClient(None, PositionalModule, rpc=client)
+        try:
+            assert proxy.only(7, scale=2) == 14
+        finally:
+            proxy.stop_rpc_client()
+
+
 @pytest.mark.parametrize(
     ("body", "code"),
     [
@@ -205,6 +223,24 @@ def test_a_deep_peer_reply_still_answers_the_call() -> None:
     with rpc_pair() as (server, client), raw_server(server, "peer/deep", lambda _: deep):
         with pytest.raises(ValueError, match="Invalid JSON-RPC response"):
             client.call_sync("peer/deep", ([], {}), rpc_timeout=1)
+
+
+def test_a_result_that_cannot_be_encoded_still_answers_the_call() -> None:
+    runs: list[None] = []
+
+    def deep() -> Any:
+        runs.append(None)
+        value: Any = 0
+        for _ in range(20_000):
+            value = [value]
+        return value
+
+    with rpc_pair() as (server, client):
+        server.serve_rpc(deep, "svc/deep")
+        # Encoding this result raises RecursionError, not the TypeError a non-JSON value raises.
+        with pytest.raises(JsonRPCError, match="Cannot encode reply"):
+            client.call_sync("svc/deep", ([], {}), rpc_timeout=2)
+    assert len(runs) == 1
 
 
 def test_a_notification_runs_without_a_reply() -> None:
