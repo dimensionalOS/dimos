@@ -314,7 +314,6 @@ all_modules = {
     "phone-teleop-module": "dimos.teleop.phone.phone_teleop_module.PhoneTeleopModule",
     "pick-and-place-module": "dimos.manipulation.pick_and_place_module.PickAndPlaceModule",
     "point-cloud-self-filter": "dimos.manipulation.planning.utils.point_cloud_self_filter.PointCloudSelfFilter",
-    "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
     "point-lio-rust": "dimos.hardware.sensors.lidar.pointlio.module.PointLioRust",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
