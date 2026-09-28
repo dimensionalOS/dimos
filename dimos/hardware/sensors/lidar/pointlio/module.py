@@ -137,7 +137,7 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
     config: PointLioConfig
 
     lidar_raw: In[PointCloud2]
-    imu: In[Imu]
+    imu_raw: In[Imu]
 
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]

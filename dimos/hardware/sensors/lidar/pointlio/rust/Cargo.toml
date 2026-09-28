@@ -22,7 +22,7 @@ python = "dimos.hardware.sensors.lidar.pointlio.module:PointLio"
 
 [package.metadata.dimos.module.pointlio.inputs]
 lidar_raw = "sensor_msgs.PointCloud2"
-imu = "sensor_msgs.Imu"
+imu_raw = "sensor_msgs.Imu"
 tf = "tf2_msgs.TFMessage"
 
 [package.metadata.dimos.module.pointlio.outputs]

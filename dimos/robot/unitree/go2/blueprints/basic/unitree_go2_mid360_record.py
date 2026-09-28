@@ -70,7 +70,7 @@ unitree_go2_mid360_record = autoconnect(
     PointLio.blueprint(frame_id="world").remappings(
         [
             (PointLio, "lidar_raw", "livox_lidar"),
-            (PointLio, "imu", "livox_imu"),
+            (PointLio, "imu_raw", "livox_imu"),
             (PointLio, "lidar", "pointlio_lidar"),
             (PointLio, "odometry", "pointlio_odometry"),
         ]

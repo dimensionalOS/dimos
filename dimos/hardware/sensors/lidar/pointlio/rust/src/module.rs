@@ -121,7 +121,7 @@ pub struct PointLioModule {
     lidar_raw: Input<PointCloud2>,
 
     #[input(decode = Imu::decode)]
-    imu: Input<Imu>,
+    imu_raw: Input<Imu>,
 
     #[output(encode = PointCloud2::encode)]
     lidar: Output<PointCloud2>,
@@ -155,7 +155,7 @@ impl PointLioModule {
         );
     }
 
-    async fn handle_imu(&mut self, msg: Imu) {
+    async fn handle_imu_raw(&mut self, msg: Imu) {
         let ts = stamp_secs(&msg.header.stamp);
         let g = &msg.angular_velocity;
         let a = &msg.linear_acceleration;

@@ -26,9 +26,9 @@ voxel_size = 0.05
 
 
 def mid360_for_pointlio(**kwargs: Any) -> Blueprint:
-    """Mid360 driver wired into PointLio: raw cloud renamed, stamped in the LIO's sensor frame."""
+    """Mid360 driver wired into PointLio: raw streams renamed, stamped in the LIO's sensor frame."""
     return Mid360.blueprint(frame_id="mid360_link", **kwargs).remappings(
-        [(Mid360, "lidar", "lidar_raw")]
+        [(Mid360, "lidar", "lidar_raw"), (Mid360, "imu", "imu_raw")]
     )
 
 
