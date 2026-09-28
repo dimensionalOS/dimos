@@ -110,6 +110,8 @@ class RPCServer(Protocol):
 
     def serve_module_rpc(self, module: RPCInspectable, name: str | None = None) -> None:
         for fname in module.rpcs.keys():
+            if getattr(module.rpcs[fname], "__native_rpc__", False):
+                continue  # served by the native process
             if not name:
                 name = module.__class__.__name__
 

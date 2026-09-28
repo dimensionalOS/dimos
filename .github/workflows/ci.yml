@@ -352,7 +352,7 @@ jobs:
       - name: Native module e2e tests
         run: |
           cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
-          uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
+          uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py dimos/core/test_native_rpc.py --no-cov
 
   native:
     name: Native builds (C++ and Rust)

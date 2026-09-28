@@ -68,3 +68,26 @@ def rpc(fn: Callable[P, R]) -> Callable[P, R]:
     wrapper.__rpc__ = True  # type: ignore[attr-defined]
     wrapper.aio = fn  # type: ignore[attr-defined]
     return cast("Callable[P, R]", wrapper)
+
+
+def native_rpc(fn: Callable[P, R]) -> Callable[P, R]:
+    """Declare an RPC whose body runs in a NativeModule's native process, over JSON-RPC.
+
+    Parameters travel by name and the native side owns the implementation, so each
+    parameter must be named and required.
+    """
+    params = list(inspect.signature(fn).parameters.values())[1:]
+    if (
+        fn.__name__.startswith("_")
+        or fn.__name__ in {"build", "start", "stop"}
+        or any(
+            p.kind not in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY) or p.default is not p.empty
+            for p in params
+        )
+    ):
+        raise TypeError(
+            f"native_rpc {fn.__name__}: needs a public, non-lifecycle method "
+            "with required named parameters"
+        )
+    fn.__native_rpc__ = True  # type: ignore[attr-defined]
+    return rpc(fn)
