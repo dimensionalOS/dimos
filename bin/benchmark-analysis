@@ -22,9 +22,10 @@ import argparse
 from collections import Counter, defaultdict
 import csv
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from itertools import pairwise
+from datetime import datetime, timedelta, timezone
+from itertools import count, pairwise
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -148,20 +149,35 @@ def aligned(points: list[Point], metric: str) -> list[tuple[Point, float]]:
     return [(p, p.values[metric] / scales[p.cpu]) for p in rows]
 
 
-def confirmed(length: int, pvalues: dict[int, float], min_segment: int) -> list[int]:
+def confirmed(values: list[float], splits: list[int], min_segment: int) -> list[int]:
     """The splits that leave at least min_segment points on both sides.
 
     A shift needs that many runs behind it before it counts: on a noisy
     series E-divisive readily carves off a two-point edge segment, or brackets
     an outlier next to a real step with a second, opposite split. Where two
-    splits crowd each other the stronger one wins, and the latest shift waits
-    for min_segment further runs before it is reported.
+    splits crowd each other the one with the stronger local evidence wins,
+    and the latest shift waits for min_segment further runs before it is
+    reported.
     """
+    if min_segment < 1:
+        return sorted(splits)
+
+    def strength(split: int) -> float:
+        # Welch's t over the min_segment points either side, from the values
+        # at full precision: Otava rounds the p-values it reports to six
+        # places, so every clear shift ties at 0.000000.
+        before = values[split - min_segment : split]
+        after = values[split : split + min_segment]
+        error = math.sqrt(
+            sum(statistics.variance(side) / len(side) for side in (before, after) if len(side) > 1)
+        )
+        shift = abs(statistics.fmean(after) - statistics.fmean(before))
+        return shift / error if error else math.inf
+
+    eligible = [s for s in splits if min_segment <= s <= len(values) - min_segment]
     kept: list[int] = []
-    for split in sorted(pvalues, key=lambda s: (pvalues[s], s)):
-        if min_segment <= split <= length - min_segment and all(
-            abs(split - k) >= min_segment for k in kept
-        ):
+    for split in sorted(eligible, key=lambda s: (-strength(s), s)):
+        if all(abs(split - k) >= min_segment for k in kept):
             kept.append(split)
     return sorted(kept)
 
@@ -212,26 +228,52 @@ def detect(
     # Third-party code: keep the repository token out of its environment.
     env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_TOKEN", "GH_TOKEN")}
     env["OTAVA_CONFIG"] = str(config)
-    cmd = [otava, "analyze", "all", "--output", "json", "-P", str(p_value), "-M", str(magnitude)]
-    stdout = subprocess.run(cmd, capture_output=True, text=True, check=True, env=env).stdout
+    # Otava only looks at the last year unless told otherwise; the series is
+    # the whole history, so hand it all over.
+    since = min(p.time for p in points) - timedelta(days=1)
+    cmd = [
+        otava,
+        "analyze",
+        "all",
+        "--output",
+        "json",
+        "-P",
+        str(p_value),
+        "-M",
+        str(magnitude),
+        "--since",
+        since.strftime("%Y-%m-%d %H:%M:%S %z"),
+    ]
+    # Otava's progress and errors go to stderr; leave that on the job log.
+    stdout = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=True, env=env).stdout
     # One JSON document per test, one per line.
     report: dict[str, list[Any]] = {}
     for line in stdout.splitlines():
         if line.strip():
             report.update(json.loads(line))
+    # Otava logs a test whose data it could not read and exits 0 regardless,
+    # so its absence from the output is the only sign.
+    if missing := tests.keys() - report.keys():
+        raise RuntimeError(f"Otava produced no report for {sorted(missing)}")
 
     changes = []
     for metric, change_points in report.items():
         series = rows[metric]
         values = [value for _, value in series]
+        # Otava numbers points within its own time window, so find the
+        # change point by its commit rather than trusting the index; the
+        # time tells apart re-runs of one commit.
+        position = {
+            (point.sha, int(point.time.timestamp())): i for i, (point, _) in enumerate(series)
+        }
         pvalues = {}
         for cp in change_points:
+            index = position[cp["attributes"]["commit"], cp["time"]]
             for c in cp["changes"]:
-                assert series[int(c["index"])][0].sha == cp["attributes"]["commit"]
-                pvalues[int(c["index"])] = float(c["pvalue"])
+                pvalues[index] = float(c["pvalue"])
         # Levels are recomputed over the merged segments: Otava's own means
         # stop at the splits dropped here.
-        bounds = [0, *confirmed(len(series), pvalues, min_segment), len(series)]
+        bounds = [0, *confirmed(values, list(pvalues), min_segment), len(series)]
         for start, split, end in zip(bounds, bounds[1:], bounds[2:], strict=False):
             before = statistics.fmean(values[start:split])
             after = statistics.fmean(values[split:end])
@@ -276,6 +318,8 @@ class GitHub:
         except urllib.error.HTTPError as err:
             if err.code == 404:
                 return 404, None
+            # GitHub's body says why (permissions, validation); the status alone does not.
+            err.add_note(f"{method} {path}: {err.read().decode()}")
             raise
 
 
@@ -321,13 +365,14 @@ def file_issues(
     magnitude: float,
 ) -> list[str]:
     """One issue per change-point commit; skipped when one already covers it."""
-    _, issues = gh.request("GET", f"/issues?labels={LABEL}&state=all&per_page=100")
-    filed = {
-        m.group(1)
-        for issue in issues or []
-        for m in [re.search(r"benchmark-analysis: ([0-9a-f]{40})", issue.get("body") or "")]
-        if m
-    }
+    filed = set()
+    for page in count(1):
+        _, issues = gh.request("GET", f"/issues?labels={LABEL}&state=all&per_page=100&page={page}")
+        for issue in issues or []:
+            if m := re.search(r"benchmark-analysis: ([0-9a-f]{40})", issue.get("body") or ""):
+                filed.add(m.group(1))
+        if len(issues or []) < 100:
+            break
     if gh.request("GET", f"/labels/{LABEL}")[0] == 404:
         gh.request(
             "POST",
@@ -411,7 +456,8 @@ def main() -> None:
     text = report(changes, actions)
     print(text)
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
-        Path(summary).open("a").write(text + "\n")
+        with Path(summary).open("a") as f:
+            f.write(text + "\n")
 
 
 if __name__ == "__main__":
