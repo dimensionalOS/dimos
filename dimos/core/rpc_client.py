@@ -25,7 +25,7 @@ from dimos.core.coordination.python_worker import Actor, MethodCallProxy
 from dimos.core.stream import RemoteStream
 from dimos.core.transport_factory import rpc_backend
 from dimos.protocol.rpc.jsonrpc import JsonRPC
-from dimos.protocol.rpc.spec import RPCSpec
+from dimos.protocol.rpc.spec import Args, RPCSpec
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -46,6 +46,26 @@ def _rpc_signature(method: Callable[..., Any], *, for_pickle: bool = False) -> i
             return_annotation=inspect.Signature.empty,
         )
     return signature.replace(parameters=parameters)
+
+
+def _by_name(signature: inspect.Signature, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Args:
+    """Use named arguments when possible and keep positional-only calls positional."""
+    bound = signature.bind(*args, **kwargs)
+    named: dict[str, Any] = {}
+    for name, value in bound.arguments.items():
+        kind = signature.parameters[name].kind
+        if kind is inspect.Parameter.POSITIONAL_ONLY:
+            positional = list(bound.args)
+            if bound.kwargs:
+                raise TypeError("JSON-RPC calls cannot mix positional and named arguments")
+            return (positional, {})
+        if kind is inspect.Parameter.VAR_KEYWORD:
+            named.update(value)
+        elif kind is inspect.Parameter.VAR_POSITIONAL:
+            return (list(args), kwargs)  # no names to send; a mix is rejected on encoding
+        else:
+            named[name] = value
+    return ([], named)
 
 
 class RpcCall:
@@ -110,9 +130,7 @@ class RpcCall:
 
         arguments = (list(args), kwargs)
         if rpc.named_params is True and self.__signature__ is not None:
-            # Send every argument by name, as the signature binds it.
-            bound = self.__signature__.bind(*args, **kwargs)
-            arguments = ([], dict(bound.arguments))
+            arguments = _by_name(self.__signature__, args, kwargs)
 
         # For stop, use call_nowait to avoid deadlock
         # (the remote side stops its RPC service before responding)

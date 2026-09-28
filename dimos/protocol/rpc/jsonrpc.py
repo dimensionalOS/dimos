@@ -47,6 +47,9 @@ class JsonRPC(ZenohRPC):
     times out, as on ZenohRPC. Calls send named params. A failed call raises
     the builtin exception a Python handler raised, a RemoteError for any other
     Python exception, or JsonRPCError.
+
+    Params and results are JSON values. Module RPCs that carry Python objects,
+    such as get_skills and set_transport, need the pickle transport.
     """
 
     named_params = True
@@ -143,7 +146,8 @@ def _reply(query: zenoh.Query, reply: dict[str, Any]) -> None:
     # Every request gets a reply: a caller that hears nothing sends the request again.
     try:
         payload = _dumps(reply)
-    except (TypeError, ValueError) as error:
+    except Exception as error:  # a deep result raises RecursionError, not TypeError
+        logger.warning(f"Cannot encode JSON-RPC reply for {query.key_expr}: {error}")
         failure = {"code": -32603, "message": f"Cannot encode reply: {error}"}
         payload = _dumps({"jsonrpc": "2.0", "id": reply["id"], "error": failure})
     query.reply(query.key_expr, payload, encoding=zenoh.Encoding.APPLICATION_JSON)

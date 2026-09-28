@@ -43,7 +43,7 @@ from dimos.protocol.rpc.jsonrpc import JsonRPC, JsonRPCError
 from dimos.protocol.rpc.spec import RPCInspectable, RPCServer
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service import zenohservice
-from dimos.protocol.service.zenohservice import ZenohSessionPool
+from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 from dimos.utils.testing.waiting import wait_until
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -193,6 +193,17 @@ def test_native_rpc_readiness_accepts_a_slow_reply(
         NativeModule._wait_native_rpc(module, mocker.Mock(poll=mocker.Mock(return_value=None)))
     finally:
         server.stop()
+
+
+def test_native_rpc_needs_the_default_zenoh_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(global_config, "transport", "zenoh")
+    for config in ({"stdin_config": True, "session": ZenohConfig()}, {"stdin_config": False}):
+        module = ToyPlanner(executable="planner", **config)
+        try:
+            with pytest.raises(ValueError, match="native_rpc needs"):
+                module.start()
+        finally:
+            module.stop()
 
 
 def test_failed_stdin_write_stops_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

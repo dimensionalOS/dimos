@@ -339,9 +339,12 @@ class NativeModule(Module):
     @rpc
     def start(self) -> None:
         if self._native_rpc_methods and (
-            not self.config.stdin_config or global_config.transport != "zenoh"
+            not self.config.stdin_config
+            or self.config.session is not None
+            or global_config.transport != "zenoh"
         ):
-            raise ValueError("native_rpc needs stdin_config=True and the zenoh transport")
+            # Readiness and calls open JsonRPC on the default session, not a pinned one.
+            raise ValueError("native_rpc needs stdin_config=True and the default zenoh session")
         super().start()
         if self._process is not None and self._process.poll() is None:
             logger.warning(
