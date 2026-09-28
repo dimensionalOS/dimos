@@ -293,6 +293,50 @@ impl FrameAssembler {
     }
 }
 
+/// Packets in, host-stamped frames and IMU records out.
+pub struct Pipeline {
+    assembler: FrameAssembler,
+    clock: HostClock,
+}
+
+impl Pipeline {
+    pub fn new(frequency_hz: f64) -> Self {
+        Pipeline {
+            assembler: FrameAssembler::new(frequency_hz),
+            clock: HostClock::default(),
+        }
+    }
+
+    /// Feed one packet. A frame this packet completes is stamped with the
+    /// clock as it stood before the packet, so a packet that resets the
+    /// clock never re-dates the frame it closes.
+    pub fn push(&mut self, packet: &DataPacket<'_>, arrival_secs: f64) -> Option<Frame> {
+        let completed = self.assembler.push(packet).map(|f| self.stamp(f));
+        self.clock.observe(packet.timestamp_ns, arrival_secs);
+        completed
+    }
+
+    /// An IMU packet's samples on the host clock. Call after `push`.
+    pub fn imu_records(&self, packet: &DataPacket<'_>) -> Vec<ImuRecord> {
+        imu_records(packet)
+            .map(|mut record| {
+                record.ts_ns = self.clock.host_ns(record.ts_ns);
+                record
+            })
+            .collect()
+    }
+
+    /// Emit whatever is accumulated, e.g. at end of stream.
+    pub fn flush(&mut self) -> Option<Frame> {
+        self.assembler.flush().map(|f| self.stamp(f))
+    }
+
+    fn stamp(&self, mut frame: Frame) -> Frame {
+        frame.start_ns = self.clock.host_ns(frame.start_ns);
+        frame
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,6 +435,48 @@ mod tests {
             clock.observe(stepped_device, stepped_arrival);
             assert_near(clock.host_ns(stepped_device), secs_to_ns(stepped_arrival));
         }
+    }
+
+    #[test]
+    fn pipeline_stamps_a_frame_with_the_clock_that_captured_it() {
+        let mut pipeline = Pipeline::new(10.0); // 100 ms frames
+        let device = 1_000_000_000_000u64;
+        let host = 1_700_000_000.0;
+        for i in 0..2u64 {
+            let bytes = point_packet(device + i * 50_000_000, 0, &[simple_point(1)]);
+            let arrival = host + i as f64 * 0.05;
+            assert!(pipeline
+                .push(&DataPacket::parse(&bytes).unwrap(), arrival)
+                .is_none());
+        }
+        // The sensor reboots: device time drops to 2 s, 100 s of host time on.
+        let reset = point_packet(2_000_000_000, 0, &[simple_point(2)]);
+        let frame = pipeline
+            .push(&DataPacket::parse(&reset).unwrap(), host + 100.0)
+            .expect("the reset packet closes the open frame");
+        // The closed frame keeps the offset it was captured under.
+        assert_near(frame.start_ns, 1_700_000_000_000_000_000);
+        // Everything after the reset is on the new offset.
+        let imu = build_imu_samples(&[ImuSample {
+            gyro: [0.0; 3],
+            acc_g: [0.0, 0.0, 1.0],
+        }]);
+        let imu_bytes = DataPacket {
+            time_interval: 0,
+            dot_num: 1,
+            data_type: DataType::Imu,
+            timestamp_ns: 2_005_000_000,
+            payload: &imu,
+        }
+        .build();
+        let imu_packet = DataPacket::parse(&imu_bytes).unwrap();
+        assert!(pipeline.push(&imu_packet, host + 100.005).is_none());
+        let records = pipeline.imu_records(&imu_packet);
+        assert_near(records[0].ts_ns, 1_700_000_100_005_000_000);
+        assert_near(
+            pipeline.flush().unwrap().start_ns,
+            1_700_000_100_000_000_000,
+        );
     }
 
     #[test]
