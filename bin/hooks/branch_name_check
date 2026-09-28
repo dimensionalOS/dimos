@@ -69,10 +69,12 @@ def main() -> int:
     in_actions = bool(os.environ.get("GITHUB_ACTIONS"))
     if error:
         print(("::error::" if in_actions else "") + error)
+        print(f"Rename with: git branch -m {EXAMPLE}")
         if in_actions:
-            print("Rename the branch on GitHub, the pull request follows the rename.")
-        else:
-            print(f"Rename with: git branch -m {EXAMPLE}")
+            print(
+                "Then push it and open a new pull request. A pull request cannot move to"
+                " another branch, and renaming the branch on GitHub closes the pull request."
+            )
         return 1
     if hint:
         print(("::warning::" if in_actions else "") + hint)

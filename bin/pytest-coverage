@@ -8,6 +8,7 @@ bin/build-test-natives
 bin/fetch-test-data
 
 export _DIMOS_COV=1
+export PATH="${XDG_CACHE_HOME:-$HOME/.cache}/dimos-test-clis/node_modules/.bin:$PATH"
 
 uv run coverage run -m pytest "$@" -m ''
 uv run coverage combine

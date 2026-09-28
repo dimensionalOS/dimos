@@ -271,7 +271,7 @@ def test_build_does_not_mutate_parsed_config(mocker) -> None:
     mocker.patch.object(ModuleCoordinator, "_connect_streams")
     mocker.patch("dimos.core.coordination.module_coordinator._connect_module_refs")
     mocker.patch.object(ModuleCoordinator, "build_all_modules")
-    mocker.patch.object(ModuleCoordinator, "start_all_modules")
+    mocker.patch.object(ModuleCoordinator, "start_all_modules", return_value={})
     mocker.patch("dimos.core.coordination.module_coordinator._log_blueprint_graph")
 
     coordinator = ModuleCoordinator.build(blueprint, parsed)
