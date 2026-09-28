@@ -20,7 +20,7 @@ against virtual_mid360 over loopback.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 import json
 import math
 import os
@@ -55,8 +55,9 @@ POINT_SIZE = 14
 IMU_SAMPLE_SIZE = 24
 DATA_HEADER_SIZE = 36
 UDP_PROTOCOL = 17
+PCAP_GLOBAL_HEADER_SIZE = 24
 
-Spawn = Callable[[Path, dict[str, object]], "subprocess.Popen[bytes]"]
+Spawn = Callable[[Path, Mapping[str, object]], "subprocess.Popen[bytes]"]
 
 
 def _data_packet(data_type: int, time_interval: int, ts_ns: int, payload: bytes) -> bytes:
@@ -134,7 +135,7 @@ def spawn() -> Generator[Spawn]:
     """Spawn a native module binary. Everything spawned is torn down."""
     processes: list[subprocess.Popen[bytes]] = []
 
-    def factory(binary: Path, blob: dict[str, object]) -> subprocess.Popen[bytes]:
+    def factory(binary: Path, blob: Mapping[str, object]) -> subprocess.Popen[bytes]:
         process = subprocess.Popen(
             [str(binary)],
             stdin=subprocess.PIPE,
@@ -162,8 +163,8 @@ def spawn() -> Generator[Spawn]:
 
 def _collect(
     topics: dict[str, type[PointCloud2 | Imu]], seconds: float, enough: dict[str, int]
-) -> dict[str, list[PointCloud2 | Imu]]:
-    """Decode each topic until every count in enough is met or time runs out."""
+) -> dict[str, list[bytes]]:
+    """Buffer each topic's raw messages until every count in enough is met or time runs out."""
     raw: dict[str, list[bytes]] = {topic: [] for topic in topics}
     lc = lcm_module.LCM()
     for topic in topics:
@@ -178,7 +179,7 @@ def _collect(
         if all(len(raw[topic]) >= count for topic, count in enough.items()):
             break
         lc.handle_timeout(200)
-    return {topic: [topics[topic].lcm_decode(data) for data in raw[topic]] for topic in topics}
+    return raw
 
 
 def _magnitude(sample: Imu) -> float:
@@ -189,7 +190,7 @@ def _magnitude(sample: Imu) -> float:
 def _first_capture_ts(pcap: Path) -> float:
     """Capture time of the first record in a classic pcap."""
     with open(pcap, "rb") as handle:
-        handle.seek(24)
+        handle.seek(PCAP_GLOBAL_HEADER_SIZE)
         ts_sec, ts_usec = struct.unpack("<II", handle.read(8))
     return float(ts_sec + ts_usec / 1e6)
 
@@ -230,8 +231,8 @@ def test_real_capture_replay_publishes_streams(spawn: Spawn) -> None:
         enough={"/e2e_real_lidar": 20, "/e2e_real_imu": 800},
     )
 
-    clouds = received["/e2e_real_lidar"]
-    imus = received["/e2e_real_imu"]
+    clouds = [PointCloud2.lcm_decode(data) for data in received["/e2e_real_lidar"]]
+    imus = [Imu.lcm_decode(data) for data in received["/e2e_real_imu"]]
     # Thresholds leave headroom for receive-buffer drops on the big clouds.
     assert len(clouds) >= 20, f"expected >=20 clouds, got {len(clouds)}"
     assert len(imus) >= 800, f"expected >=800 imu samples, got {len(imus)}"
@@ -293,8 +294,8 @@ def test_live_loopback_handshake_and_stream(spawn: Spawn, synth_pcap: Path) -> N
         enough={"/e2e_live_lidar": 3, "/e2e_live_imu": 120},
     )
 
-    clouds = received["/e2e_live_lidar"]
-    imus = received["/e2e_live_imu"]
+    clouds = [PointCloud2.lcm_decode(data) for data in received["/e2e_live_lidar"]]
+    imus = [Imu.lcm_decode(data) for data in received["/e2e_live_imu"]]
     # Large clouds drop under the default receive buffer, so the IMU packets
     # carry the rate assertion.
     assert len(clouds) >= 3, f"expected >=3 clouds, got {len(clouds)}"

@@ -93,44 +93,44 @@ pub fn imu_records<'a>(packet: &'a DataPacket<'a>) -> impl Iterator<Item = ImuRe
     })
 }
 
+const NANOS_PER_SEC: i64 = 1_000_000_000;
 /// How long the host-clock estimate remembers arrivals. Long enough to ride
 /// out a burst of late deliveries, short enough to follow device drift.
 const HOST_CLOCK_WINDOW_SECS: i64 = 30;
-/// A device stamp this far behind the previous one is a clock reset, not
-/// jitter, so the offset history no longer applies.
-const HOST_CLOCK_RESET_NS: u64 = 1_000_000_000;
+/// An offset this far from the estimate is a clock step on one side or the
+/// other, not jitter, so the offset history no longer applies.
+const HOST_CLOCK_RESET_NS: i64 = NANOS_PER_SEC;
 
 /// Maps the device clock onto the host clock.
 ///
 /// Delivery latency only ever makes a packet arrive later, so the smallest
 /// `arrival - device` offset seen recently is the closest estimate of the true
-/// one. One minimum per second of arrival time keeps the window cheap.
+/// one. One minimum per second of arrival time keeps the window cheap. A step
+/// in either clock restarts the estimate, so stamps follow the host through a
+/// time adjustment instead of lagging it for a window.
 #[derive(Debug, Default)]
 pub struct HostClock {
     minima: VecDeque<(i64, i64)>,
     offset_ns: Option<i64>,
-    last_device_ns: Option<u64>,
 }
 
 impl HostClock {
     /// Fold in one packet's device stamp and host arrival time.
     pub fn observe(&mut self, device_ns: u64, arrival_secs: f64) {
+        let arrival_ns = secs_to_ns(arrival_secs);
+        let offset = arrival_ns - device_ns as i64;
         if self
-            .last_device_ns
-            .is_some_and(|last| last.saturating_sub(device_ns) >= HOST_CLOCK_RESET_NS)
+            .offset_ns
+            .is_some_and(|estimate| (offset - estimate).abs() >= HOST_CLOCK_RESET_NS)
         {
             tracing::warn!(
-                previous_ns = self.last_device_ns,
-                packet_ns = device_ns,
-                "device clock jumped backwards, restarting host clock estimate"
+                estimate_ns = self.offset_ns,
+                offset_ns = offset,
+                "clock offset jumped, restarting host clock estimate"
             );
             self.minima.clear();
         }
-        self.last_device_ns = Some(device_ns);
-
-        let arrival_ns = secs_to_ns(arrival_secs);
-        let offset = arrival_ns - device_ns as i64;
-        let second = arrival_ns.div_euclid(1_000_000_000);
+        let second = arrival_ns.div_euclid(NANOS_PER_SEC);
         match self.minima.back_mut() {
             Some(last) if last.0 == second => last.1 = last.1.min(offset),
             _ => {
@@ -159,7 +159,7 @@ impl HostClock {
 /// Whole and fractional seconds converted separately, so an epoch-sized value
 /// keeps sub-microsecond resolution.
 fn secs_to_ns(secs: f64) -> i64 {
-    secs.trunc() as i64 * 1_000_000_000 + (secs.fract() * 1e9).round() as i64
+    secs.trunc() as i64 * NANOS_PER_SEC + (secs.fract() * NANOS_PER_SEC as f64).round() as i64
 }
 
 /// Limit number of points, in case time stamps get stalled for example
@@ -334,18 +334,37 @@ mod tests {
         assert_eq!(clock.host_ns(device + 7), 1_700_000_000_000_000_007);
     }
 
+    fn assert_near(actual: u64, expected: i64) {
+        assert!(
+            (actual as i64 - expected).abs() < 1_000,
+            "{actual} vs {expected}"
+        );
+    }
+
     #[test]
     fn host_clock_forgets_offsets_outside_the_window() {
         let mut clock = HostClock::default();
         let device = 1_000_000_000_000u64;
         clock.observe(device, 1_700_000_000.0);
-        // The device drifts 2 ms ahead over a minute, so arrivals now sit
-        // 2 ms earlier relative to device time. Once the old minimum ages out,
-        // the estimate follows.
-        let later_device = device + 60_000_000_000;
-        clock.observe(later_device, 1_700_000_059.998);
-        let expected = 1_700_000_059_998_000_000i64;
-        assert!((clock.host_ns(later_device) as i64 - expected).abs() < 1_000);
+        // The device drifts 2 ms behind, so every later arrival carries a
+        // larger offset. Inside the window the old minimum still wins.
+        let mid_device = device + 10_000_000_000;
+        clock.observe(mid_device, 1_700_000_010.002);
+        assert_near(clock.host_ns(mid_device), 1_700_000_010_000_000_000);
+        // Past the window the old minimum is gone and the estimate follows.
+        let late_device = device + 60_000_000_000;
+        clock.observe(late_device, 1_700_000_060.002);
+        assert_near(clock.host_ns(late_device), 1_700_000_060_002_000_000);
+    }
+
+    #[test]
+    fn host_clock_ignores_small_backwards_steps() {
+        let mut clock = HostClock::default();
+        let device = 1_000_000_000_000u64;
+        clock.observe(device, 1_700_000_000.0);
+        // Half a second back is reordering, not a reset, so the minimum holds.
+        clock.observe(device - 500_000_000, 1_700_000_000.01);
+        assert_eq!(clock.host_ns(device), 1_700_000_000_000_000_000);
     }
 
     #[test]
@@ -355,6 +374,23 @@ mod tests {
         // The sensor reboots: device time drops to 2 s while the host moves on.
         clock.observe(2_000_000_000, 1_700_000_100.0);
         assert_eq!(clock.host_ns(2_000_000_000), 1_700_000_100_000_000_000);
+    }
+
+    #[test]
+    fn host_clock_follows_a_host_clock_step() {
+        // Either direction: the stamps step with the host at the next packet
+        // instead of holding the stale minimum for the rest of the window.
+        for step in [5.0, -2.0] {
+            let mut clock = HostClock::default();
+            let device = 1_000_000_000_000u64;
+            for i in 0..10u64 {
+                clock.observe(device + i * 5_000_000, 1_700_000_000.0 + i as f64 * 0.005);
+            }
+            let stepped_device = device + 50_000_000;
+            let stepped_arrival = 1_700_000_000.05 + step;
+            clock.observe(stepped_device, stepped_arrival);
+            assert_near(clock.host_ns(stepped_device), secs_to_ns(stepped_arrival));
+        }
     }
 
     #[test]

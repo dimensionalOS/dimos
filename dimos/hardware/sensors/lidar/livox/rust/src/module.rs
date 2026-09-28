@@ -63,6 +63,9 @@ pub struct Config {
     /// Replay speed relative to capture time. Null runs flat-out.
     #[validate(custom(function = positive_replay_rate))]
     replay_rate: Nullable<f64>,
+    /// Seconds a replay holds its first packet, so consumers can subscribe first.
+    #[validate(range(min = 0.0))]
+    replay_delay: f64,
     /// Multicast group the device streams data to. Null receives unicast
     /// only, the loopback/virtual arrangement.
     multicast_ip: Nullable<String>,
@@ -180,6 +183,7 @@ impl Mid360 {
                 config.point_data_port,
                 config.imu_data_port,
                 config.replay_rate.0,
+                config.replay_delay,
                 self.stop.clone(),
             )
             .unwrap_or_else(|err| panic!("failed to open pcap '{path}': {err}"));
@@ -490,6 +494,7 @@ mod tests {
             "imu_frame_id": "imu_link",
             "pcap": "x.pcap",
             "replay_rate": null,
+            "replay_delay": 0.0,
             "multicast_ip": null,
             "cmd_data_port": 56100,
             "push_msg_port": 56200,

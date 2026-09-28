@@ -64,6 +64,7 @@ fn main() {
         wire::LIDAR_POINT_PORT,
         wire::LIDAR_IMU_PORT,
         None,
+        0.0,
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     )
     .expect("parse pcap");

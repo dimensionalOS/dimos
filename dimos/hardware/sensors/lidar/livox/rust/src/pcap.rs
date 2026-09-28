@@ -170,6 +170,8 @@ pub struct PcapSource {
     imu_port: u16,
     /// Replay speed relative to capture time. `None` runs flat-out.
     rate: Option<f64>,
+    /// Seconds to hold the first packet, so consumers can subscribe first.
+    delay: f64,
     started: Option<(Instant, f64)>,
     stop: Arc<AtomicBool>,
 }
@@ -183,6 +185,7 @@ impl PcapSource {
         point_port: u16,
         imu_port: u16,
         rate: Option<f64>,
+        delay: f64,
         stop: Arc<AtomicBool>,
     ) -> io::Result<Self> {
         let mut scan = PcapReader::open(path)?;
@@ -207,24 +210,31 @@ impl PcapSource {
             point_port,
             imu_port,
             rate,
+            delay,
             started: None,
             stop,
         })
     }
 
     /// Sleeps in bounded slices so a stop request never waits out a long
-    /// capture gap.
+    /// capture gap or the start delay.
     fn pace(&mut self, capture_ts: f64) {
+        if self.started.is_none() {
+            self.sleep_until(Instant::now(), self.delay);
+        }
         let Some(rate) = self.rate else {
             return;
         };
         let (wall_start, capture_start) = *self.started.get_or_insert((Instant::now(), capture_ts));
-        let target = (capture_ts - capture_start) / rate;
+        self.sleep_until(wall_start, (capture_ts - capture_start) / rate);
+    }
+
+    fn sleep_until(&self, from: Instant, target_secs: f64) {
         loop {
             if self.stop.load(Ordering::Relaxed) {
                 return;
             }
-            let remaining = target - wall_start.elapsed().as_secs_f64();
+            let remaining = target_secs - from.elapsed().as_secs_f64();
             if remaining <= 0.0 {
                 return;
             }
@@ -359,6 +369,7 @@ mod tests {
             wire::LIDAR_POINT_PORT,
             wire::LIDAR_IMU_PORT,
             None,
+            0.0,
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
@@ -387,6 +398,7 @@ mod tests {
                 wire::LIDAR_POINT_PORT,
                 wire::LIDAR_IMU_PORT,
                 None,
+                0.0,
                 Arc::new(AtomicBool::new(false)),
             )
             .err()
@@ -418,11 +430,31 @@ mod tests {
             wire::LIDAR_POINT_PORT,
             wire::LIDAR_IMU_PORT,
             Some(0.5),
+            0.0,
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
         let start = Instant::now();
         while paced.recv(&mut buf).is_some() {}
+        assert!(start.elapsed() >= Duration::from_millis(90));
+    }
+
+    #[test]
+    fn delay_holds_the_first_packet() {
+        let pcap = synth_pcap(&[(1.0, wire::LIDAR_POINT_PORT, point_packet(1_000, 100))]);
+        let file = write_temp_pcap(&pcap);
+        let mut buf = [0u8; 4096];
+        let mut delayed = PcapSource::from_file(
+            path_of(&file),
+            wire::LIDAR_POINT_PORT,
+            wire::LIDAR_IMU_PORT,
+            None,
+            0.1,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        let start = Instant::now();
+        assert!(delayed.recv(&mut buf).is_some());
         assert!(start.elapsed() >= Duration::from_millis(90));
     }
 }

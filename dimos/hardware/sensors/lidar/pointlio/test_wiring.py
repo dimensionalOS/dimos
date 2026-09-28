@@ -12,13 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Point-LIO's inputs must each come from exactly one Mid360, stamped in its sensor frame.
+"""Point-LIO's inputs must each come from one Mid360, stamped in its sensor frame.
 
-autoconnect joins every stream of one name and type onto one topic, so a second
-IMU or cloud publisher in the same blueprint would feed the estimator interleaved
-samples from two sensors and it would silently stop publishing. The driver's
-frame must match the frame Point-LIO publishes its odometry edge to, or the raw
-cloud hangs off a tf node nothing owns.
+autoconnect merges same-named streams, so a second IMU on the topic would feed the
+estimator two sensors and it would silently stop publishing.
 """
 
 from pydantic import BaseModel
@@ -29,23 +26,9 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.livox.module import Mid360, Mid360Config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio, PointLioConfig
 from dimos.robot.all_blueprints import all_blueprints
-from dimos.robot.get_all_blueprints import get_blueprint_by_name
-from dimos.robot.test_all_blueprints import OPTIONAL_DEPENDENCIES, OPTIONAL_ERROR_SUBSTRINGS
+from dimos.robot.get_all_blueprints import OptionalDependencyError, load_blueprint
 
 POINTLIO_INPUTS = ("lidar_raw", "imu_raw")
-
-
-def _load(name: str) -> Blueprint | None:
-    try:
-        return get_blueprint_by_name(name)
-    except ModuleNotFoundError as e:
-        if e.name in OPTIONAL_DEPENDENCIES:
-            return None
-        raise
-    except Exception as e:
-        if any(substring in str(e) for substring in OPTIONAL_ERROR_SUBSTRINGS):
-            return None
-        raise
 
 
 def _producers(blueprint: Blueprint, consumer: str, port: str) -> list[BlueprintAtom]:
@@ -67,9 +50,12 @@ def _frame(atom: BlueprintAtom, field: str, config: type[BaseModel]) -> str:
 def test_every_pointlio_input_has_one_producer(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(global_config, "robot_ips", "192.0.2.10,192.0.2.11")
     checked = []
+    skipped = []
     for name in sorted(all_blueprints):
-        blueprint = _load(name)
-        if blueprint is None:
+        try:
+            blueprint = load_blueprint(name)
+        except OptionalDependencyError as e:
+            skipped.append(f"{name} ({e})")
             continue
         lio = [atom for atom in blueprint.active_blueprints if atom.module is PointLio]
         for atom in lio:
@@ -82,5 +68,8 @@ def test_every_pointlio_input_has_one_producer(monkeypatch: pytest.MonkeyPatch) 
             driver_frame = _frame(driver, "frame_id", Mid360Config)
             sensor_frame = _frame(atom, "sensor_frame_id", PointLioConfig)
             assert driver_frame == sensor_frame, f"{name}: {driver_frame} != {sensor_frame}"
+            assert _frame(driver, "point_format", Mid360Config) == "full", name
             checked.append(name)
     assert checked, "no registered blueprint runs PointLio"
+    if skipped:
+        pytest.skip(f"checked {len(checked)} blueprints, could not import: {skipped}")

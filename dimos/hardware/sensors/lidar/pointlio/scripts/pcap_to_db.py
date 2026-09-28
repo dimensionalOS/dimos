@@ -33,8 +33,7 @@ Usage:
 One coordinator runs three autoconnected modules: the ``Mid360`` driver replays
 the pcap through its own decode path, ``PointLio`` consumes the driver's cloud
 and IMU streams, and a ``PointlioRecorder`` appends Point-LIO's odometry/lidar into
-the db. No network setup is involved. This script just wires them and stops once
-the pcap has drained. Replay runs at capture speed (Point-LIO is not
+the db. This script just wires them and stops once the pcap has drained. Replay runs at capture speed (Point-LIO is not
 deterministic), so runs differ.
 """
 
@@ -66,6 +65,8 @@ _LIDAR_STREAM = "pointlio_lidar"
 # Extra seconds past the pcap's own duration before auto-stopping, when no
 # explicit --max-sensor-sec is given.
 _DRAIN_MARGIN_SEC = 4.0
+# The recorder subscribes about a second after the driver starts streaming.
+_REPLAY_DELAY_SEC = 4.0
 
 # Per-field PointLioConfig tuning, exposed as --flags. Each entry is
 # (field, kind, help); kind is "float"/"int"/"bool"/"vec" or a tuple of choices.
@@ -309,6 +310,7 @@ def _build_blueprint(
     The driver's raw cloud is renamed to ``lidar_raw`` so Point-LIO's ``lidar``
     output stays the only cloud the recorder sees.
     """
+    # Imported here so --help stays fast and free of the module stack.
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
@@ -319,7 +321,9 @@ def _build_blueprint(
 
     return (
         autoconnect(
-            mid360_for_pointlio(pcap=str(args.pcap_path), replay_rate=args.rate),
+            mid360_for_pointlio(
+                pcap=str(args.pcap_path), replay_rate=args.rate, replay_delay=_REPLAY_DELAY_SEC
+            ),
             PointLio.blueprint(**pointlio_kwargs),
             PointlioRecorder.blueprint(db_path=str(db_path)),
         )
