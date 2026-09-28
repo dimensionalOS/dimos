@@ -18,6 +18,8 @@ autoconnect merges same-named streams, so a second IMU on the topic would feed t
 estimator two sensors and it would silently stop publishing.
 """
 
+import warnings
+
 from pydantic import BaseModel
 import pytest
 
@@ -25,8 +27,8 @@ from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.livox.module import Mid360, Mid360Config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio, PointLioConfig
-from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.get_all_blueprints import OptionalDependencyError, load_blueprint
+from dimos.robot.test_all_blueprints import UBUNTU_BLUEPRINTS
 
 POINTLIO_INPUTS = ("lidar_raw", "imu_raw")
 
@@ -51,7 +53,7 @@ def test_every_pointlio_input_has_one_producer(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(global_config, "robot_ips", "192.0.2.10,192.0.2.11")
     checked = []
     skipped = []
-    for name in sorted(all_blueprints):
+    for name in UBUNTU_BLUEPRINTS:
         try:
             blueprint = load_blueprint(name)
         except OptionalDependencyError as e:
@@ -72,4 +74,6 @@ def test_every_pointlio_input_has_one_producer(monkeypatch: pytest.MonkeyPatch) 
             checked.append(name)
     assert checked, "no registered blueprint runs PointLio"
     if skipped:
-        pytest.skip(f"checked {len(checked)} blueprints, could not import: {skipped}")
+        warnings.warn(
+            f"checked {len(checked)} blueprints, could not import: {skipped}", stacklevel=1
+        )

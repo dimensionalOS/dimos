@@ -68,7 +68,6 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
 )
 
 UBUNTU_BLUEPRINTS = sorted(set(all_blueprints) - SELF_HOSTED_BLUEPRINTS)
-SELF_HOSTED_BLUEPRINTS = sorted(SELF_HOSTED_BLUEPRINTS)
 
 
 def _check_blueprint(blueprint_name: str) -> None:
@@ -96,7 +95,7 @@ def test_blueprint_is_valid(blueprint_name: str, monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.self_hosted
-@pytest.mark.parametrize("blueprint_name", SELF_HOSTED_BLUEPRINTS)
+@pytest.mark.parametrize("blueprint_name", sorted(SELF_HOSTED_BLUEPRINTS))
 def test_self_hosted_blueprint_is_valid(blueprint_name: str) -> None:
     """Validate blueprints that need heavy deps or LFS — self-hosted runner only."""
     _check_blueprint(blueprint_name)
