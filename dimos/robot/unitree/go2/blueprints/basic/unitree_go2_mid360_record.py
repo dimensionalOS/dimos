@@ -33,8 +33,8 @@ import os
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
-from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.memory.module import default_recording_dir
 from dimos.navigation.movement_manager.movement_manager import MovementManager
@@ -61,16 +61,9 @@ unitree_go2_mid360_record = autoconnect(
             (GO2Connection, "odom", "go2_odom"),
         ]
     ),
-    Mid360.blueprint().remappings(
-        [
-            (Mid360, "lidar", "livox_lidar"),
-            (Mid360, "imu", "livox_imu"),
-        ]
-    ),
+    mid360_for_pointlio(),
     PointLio.blueprint(frame_id="world").remappings(
         [
-            (PointLio, "lidar_raw", "livox_lidar"),
-            (PointLio, "imu_raw", "livox_imu"),
             (PointLio, "lidar", "pointlio_lidar"),
             (PointLio, "odometry", "pointlio_odometry"),
         ]

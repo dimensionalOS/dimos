@@ -49,8 +49,8 @@ import math
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import In
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -122,16 +122,9 @@ mid360_realsense_record = autoconnect(
             (RealSenseCamera, "depth_camera_info", "realsense_depth_camera_info"),
         ]
     ),
-    Mid360.blueprint().remappings(
-        [
-            (Mid360, "lidar", "livox_lidar"),
-            (Mid360, "imu", "livox_imu"),
-        ]
-    ),
+    mid360_for_pointlio(),
     PointLio.blueprint(frame_id="world").remappings(
         [
-            (PointLio, "lidar_raw", "livox_lidar"),
-            (PointLio, "imu_raw", "livox_imu"),
             (PointLio, "lidar", "pointlio_lidar"),
             (PointLio, "odometry", "pointlio_odometry"),
         ]

@@ -12,18 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Point-LIO's inputs must each come from exactly one module.
+"""Point-LIO's inputs must each come from exactly one Mid360, stamped in its sensor frame.
 
 autoconnect joins every stream of one name and type onto one topic, so a second
 IMU or cloud publisher in the same blueprint would feed the estimator interleaved
-samples from two sensors and it would silently stop publishing.
+samples from two sensors and it would silently stop publishing. The driver's
+frame must match the frame Point-LIO publishes its odometry edge to, or the raw
+cloud hangs off a tf node nothing owns.
 """
 
+from pydantic import BaseModel
 import pytest
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 from dimos.core.global_config import global_config
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.livox.module import Mid360, Mid360Config
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio, PointLioConfig
 from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.get_all_blueprints import get_blueprint_by_name
 from dimos.robot.test_all_blueprints import OPTIONAL_DEPENDENCIES, OPTIONAL_ERROR_SUBSTRINGS
@@ -44,7 +48,7 @@ def _load(name: str) -> Blueprint | None:
         raise
 
 
-def _producers(blueprint: Blueprint, consumer: str, port: str) -> list[str]:
+def _producers(blueprint: Blueprint, consumer: str, port: str) -> list[BlueprintAtom]:
     topic = blueprint.remapping_map.get((consumer, port), port)
     found = []
     for atom in blueprint.active_blueprints:
@@ -52,8 +56,12 @@ def _producers(blueprint: Blueprint, consumer: str, port: str) -> list[str]:
             if stream.direction != "out":
                 continue
             if blueprint.remapping_map.get((atom.name, stream.name), stream.name) == topic:
-                found.append(f"{atom.name}.{stream.name}")
+                found.append(atom)
     return found
+
+
+def _frame(atom: BlueprintAtom, field: str, config: type[BaseModel]) -> str:
+    return str(atom.kwargs.get(field, config.model_fields[field].default))
 
 
 def test_every_pointlio_input_has_one_producer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -67,6 +75,12 @@ def test_every_pointlio_input_has_one_producer(monkeypatch: pytest.MonkeyPatch) 
         for atom in lio:
             for port in POINTLIO_INPUTS:
                 producers = _producers(blueprint, atom.name, port)
-                assert len(producers) == 1, f"{name}: {atom.name}.{port} fed by {producers}"
+                names = [f"{p.name}.{port}" for p in producers]
+                assert len(producers) == 1, f"{name}: {atom.name}.{port} fed by {names}"
+                assert producers[0].module is Mid360, f"{name}: {atom.name}.{port} fed by {names}"
+            driver = _producers(blueprint, atom.name, "lidar_raw")[0]
+            driver_frame = _frame(driver, "frame_id", Mid360Config)
+            sensor_frame = _frame(atom, "sensor_frame_id", PointLioConfig)
+            assert driver_frame == sensor_frame, f"{name}: {driver_frame} != {sensor_frame}"
             checked.append(name)
     assert checked, "no registered blueprint runs PointLio"
