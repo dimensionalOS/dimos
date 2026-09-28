@@ -39,7 +39,7 @@ WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image)
 # near-lossless; lidar and color_image are large frames whose delivery relies
 # on the 64MB rmem tuning, so leave headroom for designed shedding.
 FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.9, "color_image": 0.5}
-# When set, write the tracked series (wall/CPU/memory/threads/disk) to this path.
+# When set, write the tracked series (wall/CPU/memory/threads/disk/network) to this path.
 METRICS_PATH = os.environ.get("DIMOS_BENCH_METRICS")
 
 
@@ -193,11 +193,13 @@ def test_go2_replay_realtime_load() -> None:
     lock = threading.Lock()
     cpu_marks: dict[str, tuple[float, float, float]] = {}
     io_marks: dict[str, tuple[int, int]] = {}
+    net_marks: dict[str, tuple[int, int, int]] = {}
 
     def mark(name: str) -> None:
         if METRICS_PATH:
             cpu_marks[name] = _cpu_mark()
             io_marks[name] = _cgroup_io_bytes()
+            net_marks[name] = _net_bytes()
 
     def record(name: str) -> None:
         with lock:
