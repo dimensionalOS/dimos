@@ -25,7 +25,7 @@ mid360_link so it never writes the frame PointLio owns.
 import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_mid360_record import (
     unitree_go2_mid360_record,
@@ -51,7 +51,7 @@ def _tf_children_by_publisher(blueprint: Blueprint) -> dict[str, set[str]]:
             children["GO2Connection"] = {t.child_frame_id for t in GO2Connection._odom_to_tf(odom)}
         if atom.module is Go2Mid360StaticTf:
             children["Go2Mid360StaticTf"] = {t.child_frame_id for t in mount_transforms()}
-        if atom.module is PointLio:
+        if atom.module is PointLioRust:
             sensor_frame = atom.kwargs.get("sensor_frame_id", "mid360_link")
             children["PointLio"] = {sensor_frame}
     return children

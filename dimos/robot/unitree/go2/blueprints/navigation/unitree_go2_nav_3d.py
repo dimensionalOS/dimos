@@ -13,7 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""3d navigation on Go2 with ray tracing and MLS planning"""
+"""3d navigation on Go2 with ray tracing and MLS planning.
+
+The Mid-360 driver defaults to the factory lidar IP. Set ``MID360__LIDAR_IP`` when
+the sensor lives elsewhere.
+"""
 
 from datetime import datetime
 import os
@@ -24,7 +28,8 @@ from dimos.constants import RECORDINGS_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
@@ -125,6 +130,7 @@ _nav_rerun_config = {
         "world/camera_info": None,
         "world/color_image": None,
         "world/lidar": None,
+        "world/lidar_raw": None,
         **planner_visual_override(planner_viz_hz),
     },
 }
@@ -144,7 +150,8 @@ unitree_go2_nav_3d = autoconnect(
             (GO2Connection, "odom", "odom_go2"),
         ]
     ),
-    PointLio.blueprint(),
+    mid360_for_pointlio(),
+    PointLioRust.blueprint(),
     Go2Mid360StaticTf.blueprint(),
     RayTracingVoxelMap.blueprint(
         voxel_size=voxel_size,
@@ -171,9 +178,9 @@ unitree_go2_nav_3d = autoconnect(
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=1.5, max_angular=1.5),
     MovementManager.blueprint(),
-).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
+).global_config(n_workers=11, robot_model="unitree_go2", obstacle_avoidance=False)
 
-# PointLio keeps its default topics here, so point the recorder's ports at them.
+# Point-LIO keeps its default topics here, so point the recorder's ports at them.
 # Streams are recorded under the port names regardless of the topic.
 if _RECORD:
     unitree_go2_nav_3d = autoconnect(

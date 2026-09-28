@@ -23,20 +23,20 @@ the base through MovementManager's teleop/nav mux.
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.diy.alfred.blueprints.alfred_hardware import _alfred_hardware
 from dimos.robot.diy.alfred.config import ALFRED
 
 alfred_keyboard_teleop = autoconnect(
     _alfred_hardware,
-    # No raw Mid360 module: the lidar streams to a single host endpoint, and the
-    # Point-LIO native owns it, so a second Livox SDK connection gets no data.
-    PointLio.blueprint(lidar_ip=ALFRED.mid360_ip).remappings(
+    mid360_for_pointlio(lidar_ip=ALFRED.mid360_ip),
+    PointLioRust.blueprint().remappings(
         [
-            (PointLio, "lidar", "pointlio_lidar"),
-            (PointLio, "odometry", "pointlio_odometry"),
+            (PointLioRust, "lidar", "pointlio_lidar"),
+            (PointLioRust, "odometry", "pointlio_odometry"),
         ]
     ),
     MovementManager.blueprint(),
-).global_config(n_workers=7, robot_model="alfred")
+).global_config(n_workers=8, robot_model="alfred")

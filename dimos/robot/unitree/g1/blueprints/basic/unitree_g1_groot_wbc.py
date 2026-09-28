@@ -302,7 +302,8 @@ if global_config.simulation == "mujoco":
     )
     _nav_remappings = [(VoxelGridMapper, "lidar", "pointcloud")]
 else:
-    from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+    from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
+    from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
@@ -320,11 +321,12 @@ else:
     _default_ramp_seconds = 10.0
     _decimation = 2  # 100 Hz tick / 2 = 50 Hz policy (training + sim rate).
     # One process per heavy module; fewer workers starve the Rerun bridge.
-    _n_workers = 10
+    _n_workers = 11
     # Same nav middle as unitree-g1-nav-simple, fed by Point-LIO from the
     # MID-360, executed through the coordinator's twist_command.
     _nav_stack = autoconnect(
-        PointLio.blueprint(),
+        mid360_for_pointlio(),
+        PointLioRust.blueprint(),
         RayTracingVoxelMap.blueprint(
             voxel_size=_G1_REAL_NAV_VOXEL_RESOLUTION,
             emit_every=0,  # no local_map consumer here
@@ -487,6 +489,7 @@ if global_config.simulation != "mujoco":
     _rerun_config["visual_override"]["world/navigation_costmap"] = _g1_real_costmap
     # Raw scan is sensor-frame (LIO contract); the voxel map is the live view.
     _rerun_config["visual_override"]["world/lidar"] = None
+    _rerun_config["visual_override"]["world/lidar_raw"] = None
 
 
 def _viewer() -> Any:

@@ -20,11 +20,11 @@ and the front camera are recorded into a memory db. The Go2/Mid-360 mount frames
 published continuously onto tf so they're captured in the recording. Raw Livox capture
 is opt-in: set ``RECORD_PCAP=1`` to also record a .pcap of the Mid-360 UDP stream.
 
-The lidar IPs are each module's own config, set in the blueprint or from the
-environment as ``MID360__LIDAR_IP`` / ``POINTLIO__LIDAR_IP``. Run it for a
-timestamped ``recordings/`` folder::
+The lidar IP is the driver's config, set in the blueprint or from the environment
+as ``MID360__LIDAR_IP``. Point-LIO reads the driver's cloud and IMU streams. Run it
+for a timestamped ``recordings/`` folder::
 
-    export MID360__LIDAR_IP=192.168.1.171 POINTLIO__LIDAR_IP=192.168.1.171
+    export MID360__LIDAR_IP=192.168.1.171
     uv run python dimos/robot/unitree/go2/blueprints/basic/unitree_go2_mid360_record.py
 """
 
@@ -34,7 +34,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.livox.module import Mid360
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.memory.module import default_recording_dir
 from dimos.navigation.movement_manager.movement_manager import MovementManager
@@ -67,10 +67,12 @@ unitree_go2_mid360_record = autoconnect(
             (Mid360, "imu", "livox_imu"),
         ]
     ),
-    PointLio.blueprint(frame_id="world").remappings(
+    PointLioRust.blueprint(frame_id="world").remappings(
         [
-            (PointLio, "lidar", "pointlio_lidar"),
-            (PointLio, "odometry", "pointlio_odometry"),
+            (PointLioRust, "lidar_raw", "livox_lidar"),
+            (PointLioRust, "imu", "livox_imu"),
+            (PointLioRust, "lidar", "pointlio_lidar"),
+            (PointLioRust, "odometry", "pointlio_odometry"),
         ]
     ),
     Go2Mid360Recorder.blueprint(db_path=str(_RECORDING_DIR / "mem2.db")),

@@ -24,10 +24,10 @@ a memory db, with the rig's mount frames published continuously onto tf. Two var
 ``mid360_realsense_record`` (db only) and ``mid360_realsense_record_with_pcap`` (also
 captures a raw .pcap of the Mid-360 UDP stream).
 
-The lidar IPs are each module's own config, set in the blueprint or from the
-environment as ``MID360__LIDAR_IP`` / ``POINTLIO__LIDAR_IP``::
+The lidar IP is the driver's config, set in the blueprint or from the environment
+as ``MID360__LIDAR_IP``. Point-LIO reads the driver's cloud and IMU streams::
 
-    export MID360__LIDAR_IP=192.168.1.155 POINTLIO__LIDAR_IP=192.168.1.155
+    export MID360__LIDAR_IP=192.168.1.155
     dimos run mid360-realsense-record            # db only
     dimos run mid360-realsense-record-with-pcap  # db + raw pcap
 
@@ -50,7 +50,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import In
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.livox.module import Mid360
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -128,10 +128,12 @@ mid360_realsense_record = autoconnect(
             (Mid360, "imu", "livox_imu"),
         ]
     ),
-    PointLio.blueprint(frame_id="world").remappings(
+    PointLioRust.blueprint(frame_id="world").remappings(
         [
-            (PointLio, "lidar", "pointlio_lidar"),
-            (PointLio, "odometry", "pointlio_odometry"),
+            (PointLioRust, "lidar_raw", "livox_lidar"),
+            (PointLioRust, "imu", "livox_imu"),
+            (PointLioRust, "lidar", "pointlio_lidar"),
+            (PointLioRust, "odometry", "pointlio_odometry"),
         ]
     ),
     Mid360RealsenseRecorder.blueprint(),
