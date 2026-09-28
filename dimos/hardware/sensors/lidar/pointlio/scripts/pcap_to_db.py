@@ -31,7 +31,7 @@ Usage:
     rerun "${DB%.db}.rrd"
 
 One coordinator runs three autoconnected modules: the ``Mid360`` driver replays
-the pcap through its own decode path, ``PointLioRust`` consumes the driver's cloud
+the pcap through its own decode path, ``PointLio`` consumes the driver's cloud
 and IMU streams, and a ``PointlioRecorder`` appends Point-LIO's odometry/lidar into
 the db. No network setup is involved. This script just wires them and stops once
 the pcap has drained. Replay runs at capture speed (Point-LIO is not
@@ -67,7 +67,7 @@ _LIDAR_STREAM = "pointlio_lidar"
 # explicit --max-sensor-sec is given.
 _DRAIN_MARGIN_SEC = 4.0
 
-# Per-field PointLioRustConfig tuning, exposed as --flags. Each entry is
+# Per-field PointLioConfig tuning, exposed as --flags. Each entry is
 # (field, kind, help); kind is "float"/"int"/"bool"/"vec" or a tuple of choices.
 # A flag's value defaults to None (= leave the config default) so only the ones
 # passed end up in the override dict. dashes in the flag map to the field name.
@@ -131,10 +131,10 @@ _TUNING_FIELDS: tuple[tuple[str, Any, str], ...] = (
 
 
 def _add_tuning_args(parser: argparse.ArgumentParser) -> None:
-    """Add a --flag per PointLioRustConfig tuning field (see _TUNING_FIELDS)."""
+    """Add a --flag per PointLioConfig tuning field (see _TUNING_FIELDS)."""
     group = parser.add_argument_group(
         "Point-LIO tuning",
-        "Per-field PointLioRustConfig overrides; omit to keep the config default. "
+        "Per-field PointLioConfig overrides; omit to keep the config default. "
         "These win over --config.",
     )
     for field, kind, help_text in _TUNING_FIELDS:
@@ -160,7 +160,7 @@ def _add_tuning_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
-    """Collect the explicitly-passed --tuning flags into a PointLioRustConfig override dict."""
+    """Collect the explicitly-passed --tuning flags into a PointLioConfig override dict."""
     return {
         field: getattr(args, field)
         for field, _kind, _help in _TUNING_FIELDS
@@ -304,13 +304,13 @@ def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float)
 def _build_blueprint(
     args: argparse.Namespace, db_path: Path, overrides: dict[str, Any]
 ) -> Blueprint:
-    """autoconnect(Mid360 pcap replay + PointLioRust + PointlioRecorder).
+    """autoconnect(Mid360 pcap replay + PointLio + PointlioRecorder).
 
     The driver's raw cloud is renamed to ``lidar_raw`` so Point-LIO's ``lidar``
     output stays the only cloud the recorder sees.
     """
     from dimos.core.coordination.blueprints import autoconnect
-    from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
+    from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
     from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 
@@ -320,7 +320,7 @@ def _build_blueprint(
     return (
         autoconnect(
             mid360_for_pointlio(pcap=str(args.pcap_path), replay_rate=args.rate),
-            PointLioRust.blueprint(**pointlio_kwargs),
+            PointLio.blueprint(**pointlio_kwargs),
             PointlioRecorder.blueprint(db_path=str(db_path)),
         )
         .remappings(
@@ -378,7 +378,7 @@ def _poll_until_drained(
 
 
 def _load_overrides(config: str) -> dict[str, Any]:
-    """Load a YAML/JSON doc of PointLioRustConfig field overrides, e.g. {acc_cov_input: 0.3}."""
+    """Load a YAML/JSON doc of PointLioConfig field overrides, e.g. {acc_cov_input: 0.3}."""
     if not config:
         return {}
     import yaml
@@ -388,9 +388,7 @@ def _load_overrides(config: str) -> dict[str, Any]:
         raise FileNotFoundError(f"--config not found: {path}")
     data = yaml.safe_load(path.read_text()) or {}
     if not isinstance(data, dict):
-        raise ValueError(
-            f"--config must be a mapping of PointLioRustConfig fields, got {type(data)}"
-        )
+        raise ValueError(f"--config must be a mapping of PointLioConfig fields, got {type(data)}")
     return data
 
 
@@ -510,7 +508,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--voxel", type=float, default=0.2, help="voxel size (m) for the .rrd aggregated map"
     )
-    # Hidden: a YAML/JSON doc of PointLioRustConfig overrides. The per-field
+    # Hidden: a YAML/JSON doc of PointLioConfig overrides. The per-field
     # --tuning flags win over it.
     parser.add_argument("--config", default="", help=argparse.SUPPRESS)
 

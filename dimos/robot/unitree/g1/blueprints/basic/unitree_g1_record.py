@@ -26,7 +26,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.memory.module import default_recording_dir
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -105,10 +105,10 @@ unitree_g1_record = autoconnect(
     MovementManager.blueprint(),
     G1HighLevelDdsSdk.blueprint(),
     mid360_for_pointlio(host_ip="192.168.123.164", lidar_ip="192.168.123.120"),
-    PointLioRust.blueprint(frame_id="world").remappings(
+    PointLio.blueprint(frame_id="world").remappings(
         [
-            (PointLioRust, "lidar", "pointlio_lidar"),
-            (PointLioRust, "odometry", "pointlio_odometry"),
+            (PointLio, "lidar", "pointlio_lidar"),
+            (PointLio, "odometry", "pointlio_odometry"),
         ]
     ),
     RealSenseCamera.blueprint(frame_id="d435_link").remappings(

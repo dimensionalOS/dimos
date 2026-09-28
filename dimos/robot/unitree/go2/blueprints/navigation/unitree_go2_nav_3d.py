@@ -28,7 +28,7 @@ from dimos.constants import RECORDINGS_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
-from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
@@ -151,7 +151,7 @@ unitree_go2_nav_3d = autoconnect(
         ]
     ),
     mid360_for_pointlio(),
-    PointLioRust.blueprint(),
+    PointLio.blueprint(),
     Go2Mid360StaticTf.blueprint(),
     RayTracingVoxelMap.blueprint(
         voxel_size=voxel_size,

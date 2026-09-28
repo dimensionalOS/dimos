@@ -19,13 +19,13 @@ its registered cloud, odometry and the odom -> sensor tf edge. Wire the driver
 in with ``mid360_for_pointlio`` from ``pointlio_blueprints``::
 
     from dimos.core.coordination.blueprints import autoconnect
-    from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
+    from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     ModuleCoordinator.build(autoconnect(
         mid360_for_pointlio(lidar_ip="192.168.1.155"),
-        PointLioRust.blueprint(),
+        PointLio.blueprint(),
         SomeConsumer.blueprint(),
     )).loop()
 
@@ -53,7 +53,7 @@ from dimos.spec import perception
 IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 
 
-class PointLioRustConfig(NativeModuleConfig):
+class PointLioConfig(NativeModuleConfig):
     stdin_config: bool = True
     frame_id: str = "odom"
     # frame_id_prefix too: the module composes the namespaced frame itself,
@@ -131,10 +131,10 @@ class PointLioRustConfig(NativeModuleConfig):
     odom_only: bool = False
 
 
-class PointLioRust(NativeModule, perception.Lidar, perception.Odometry):
-    """Rust Point-LIO fed by the Mid360 driver's messages; publishes tf itself."""
+class PointLio(NativeModule, perception.Lidar, perception.Odometry):
+    """Point-LIO fed by the Mid360 driver's messages; publishes tf itself."""
 
-    config: PointLioRustConfig
+    config: PointLioConfig
 
     lidar_raw: In[PointCloud2]
     imu: In[Imu]
@@ -154,4 +154,4 @@ class PointLioRust(NativeModule, perception.Lidar, perception.Odometry):
 
 # Verify protocol port compliance (mypy will flag missing ports)
 if TYPE_CHECKING:
-    PointLioRust()
+    PointLio()

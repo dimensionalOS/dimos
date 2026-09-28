@@ -302,7 +302,7 @@ if global_config.simulation == "mujoco":
     )
     _nav_remappings = [(VoxelGridMapper, "lidar", "pointcloud")]
 else:
-    from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
+    from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
@@ -326,7 +326,7 @@ else:
     # MID-360, executed through the coordinator's twist_command.
     _nav_stack = autoconnect(
         mid360_for_pointlio(),
-        PointLioRust.blueprint(),
+        PointLio.blueprint(),
         RayTracingVoxelMap.blueprint(
             voxel_size=_G1_REAL_NAV_VOXEL_RESOLUTION,
             emit_every=0,  # no local_map consumer here

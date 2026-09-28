@@ -26,7 +26,7 @@ failure can be bisected by dropping down a level:
   a baked host on the robot publishes their outputs.
 - ``go2-zenoh-motion``: ``local_planner`` + ``trajectory_follower`` replanning over the
   raycaster's local map, the follower reading the required precision off the path stamps.
-- ``go2-zenoh-motion-pointlio``: ``go2-zenoh-motion`` running its own ``PointLioRust``,
+- ``go2-zenoh-motion-pointlio``: ``go2-zenoh-motion`` running its own ``PointLio``,
   for when the MID-360 hangs off this box rather than the robot.
 - ``go2-viewer``: the rerun half alone, as a zenoh client of the robot's router.
 """
@@ -36,7 +36,7 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap, RayTracingVoxelMapConfig
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
@@ -256,8 +256,8 @@ go2_zenoh_motion = autoconnect(
 
 
 # `go2-zenoh-motion` with Point-LIO here: the MID-360 hangs off the Jetson, so the robot's
-# onboard LIO is blind. The mount tree stays the bridge's (rooted at mid360_link); rust
-# Point-LIO because the C++ SDK is LCM-only. host_ip is explicit: the Jetson has two NICs.
+# onboard LIO is blind. The mount tree stays the bridge's (rooted at mid360_link).
+# host_ip is explicit: the Jetson has two NICs.
 go2_zenoh_motion_pointlio = autoconnect(
     _go2_zenoh_motion_base,
     TrajectoryFollowerNative.blueprint(),
@@ -270,7 +270,7 @@ go2_zenoh_motion_pointlio = autoconnect(
         ]
     ),
     mid360_for_pointlio(lidar_ip="192.168.123.157", host_ip="192.168.123.5"),
-    PointLioRust.blueprint(),
+    PointLio.blueprint(),
     # the clouds are already drawn as the raytraced map; only this stack has lidar_raw
     vis_module(
         viewer_backend=global_config.viewer,

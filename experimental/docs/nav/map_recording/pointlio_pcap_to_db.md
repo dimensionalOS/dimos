@@ -7,7 +7,7 @@
 
 - **`Mid360`** — the Rust driver replaying the pcap through its own decode path.
   No network setup and no sudo.
-- **`PointLioRust`** — consumes the driver's cloud and IMU streams.
+- **`PointLio`** — consumes the driver's cloud and IMU streams.
 - **`PointlioRecorder`** — appends the `pointlio_odometry` / `pointlio_lidar`
   streams into the db.
 
@@ -109,13 +109,13 @@ Or in Python:
 ```python
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.visualization.vis_module import vis_module
 
 replay = autoconnect(
     mid360_for_pointlio(pcap="recordings/run1.pcap"),
-    PointLioRust.blueprint(),
+    PointLio.blueprint(),
     vis_module("rerun"),
 ).global_config(n_workers=3)
 ModuleCoordinator.build(replay).loop()

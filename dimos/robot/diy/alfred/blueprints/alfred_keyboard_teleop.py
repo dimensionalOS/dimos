@@ -23,7 +23,7 @@ the base through MovementManager's teleop/nav mux.
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.diy.alfred.blueprints.alfred_hardware import _alfred_hardware
@@ -32,10 +32,10 @@ from dimos.robot.diy.alfred.config import ALFRED
 alfred_keyboard_teleop = autoconnect(
     _alfred_hardware,
     mid360_for_pointlio(lidar_ip=ALFRED.mid360_ip),
-    PointLioRust.blueprint().remappings(
+    PointLio.blueprint().remappings(
         [
-            (PointLioRust, "lidar", "pointlio_lidar"),
-            (PointLioRust, "odometry", "pointlio_odometry"),
+            (PointLio, "lidar", "pointlio_lidar"),
+            (PointLio, "odometry", "pointlio_odometry"),
         ]
     ),
     MovementManager.blueprint(),

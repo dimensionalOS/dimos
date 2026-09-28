@@ -18,7 +18,7 @@ path = "src/bin/native.rs"
 # Bake registry entry, cross-checked at compile time by the module macro.
 [package.metadata.dimos.module.pointlio]
 path = "dimos_pointlio::module::PointLioModule"
-python = "dimos.hardware.sensors.lidar.pointlio.module:PointLioRust"
+python = "dimos.hardware.sensors.lidar.pointlio.module:PointLio"
 
 [package.metadata.dimos.module.pointlio.inputs]
 lidar_raw = "sensor_msgs.PointCloud2"

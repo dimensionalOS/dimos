@@ -35,7 +35,7 @@ use validator::ValidationError;
 #[serde(transparent)]
 struct Nullable<T>(Option<T>);
 
-/// The Python `PointLioRustConfig` tuning fields, 1:1. The tuning block is handed to
+/// The Python `PointLioConfig` tuning fields, 1:1. The tuning block is handed to
 /// `pointlio_core::Config` by a JSON round trip, so it stays name-compatible
 /// with the C++ config without a hand-written conversion.
 #[native_config]
