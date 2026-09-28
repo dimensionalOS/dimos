@@ -112,8 +112,8 @@ fn main() -> io::Result<()> {
         }
     };
 
-    while let Some(len) = source.recv(&mut buf) {
-        let Ok(packet) = DataPacket::parse(&buf[..len]) else {
+    while let Some(received) = source.recv(&mut buf) {
+        let Ok(packet) = DataPacket::parse(&buf[..received.len]) else {
             continue;
         };
         match packet.data_type {

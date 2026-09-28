@@ -18,7 +18,7 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.lidar.livox.module import Mid360
-from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio, PointLioConfig
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.visualization.vis_module import vis_module
 
@@ -26,8 +26,13 @@ voxel_size = 0.05
 
 
 def mid360_for_pointlio(**kwargs: Any) -> Blueprint:
-    """Mid360 driver wired into PointLio: raw streams renamed, stamped in the LIO's sensor frame."""
-    return Mid360.blueprint(frame_id="mid360_link", **kwargs).remappings(
+    """Mid360 driver wired into PointLio: raw streams renamed, stamped in the LIO's sensor frame.
+
+    The full point format carries the tag byte Point-LIO's Livox noise gate reads.
+    """
+    kwargs.setdefault("frame_id", PointLioConfig.model_fields["sensor_frame_id"].default)
+    kwargs.setdefault("point_format", "full")
+    return Mid360.blueprint(**kwargs).remappings(
         [(Mid360, "lidar", "lidar_raw"), (Mid360, "imu", "imu_raw")]
     )
 

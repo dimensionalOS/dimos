@@ -37,7 +37,7 @@ struct Nullable<T>(Option<T>);
 
 /// The Python `PointLioConfig` tuning fields, 1:1. The tuning block is handed to
 /// `pointlio_core::Config` by a JSON round trip, so it stays name-compatible
-/// with the C++ config without a hand-written conversion.
+/// with upstream Point-LIO's parameters without a hand-written conversion.
 #[native_config]
 #[derive(Clone)]
 #[validate(schema(function = core_config_parses))]
@@ -389,7 +389,7 @@ fn odometry_message(cfg: &Config, o: &pointlio_core::Odom) -> Odometry {
     }
 }
 
-/// Body cloud as xyzi, the layout the C++ module publishes.
+/// Body cloud as xyzi.
 fn cloud_message(frame_id: &str, ts: f64, cloud: &[PointXYZI]) -> PointCloud2 {
     const STEP: usize = 16;
     let mut data = Vec::with_capacity(cloud.len() * STEP);

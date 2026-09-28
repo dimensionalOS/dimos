@@ -15,7 +15,7 @@
 """Demos: a SLAM consumer fed by a VirtualMid360 replaying a pcap (live SDK path).
 
 Each module has its own lidar/host IP config (VIRTUALMID360__LIDAR_IP=... in the
-environment for the fake sensor, FASTLIO2__ or MID360__ for the receiving end); set
+environment for the fake sensor, FASTLIO2__ or MID360__ for the receiving end). Set
 them so the two ends agree.
 """
 

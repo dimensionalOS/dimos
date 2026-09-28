@@ -48,7 +48,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
 
-# iVox local-map neighbour stencil. rust/src/module.rs maps the strings to
+# iVox local-map neighbor stencil. rust/src/module.rs maps the strings to
 # Point-LIO's int codes.
 IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 
@@ -132,7 +132,7 @@ class PointLioConfig(NativeModuleConfig):
 
 
 class PointLio(NativeModule, perception.Lidar, perception.Odometry):
-    """Point-LIO fed by the Mid360 driver's messages; publishes tf itself."""
+    """Point-LIO fed by the Mid360 driver's messages. Publishes tf itself."""
 
     config: PointLioConfig
 
