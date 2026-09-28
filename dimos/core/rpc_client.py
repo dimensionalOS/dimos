@@ -38,6 +38,7 @@ class RpcCall:
     _remote_name: str
     _unsub_fns: list  # type: ignore[type-arg]
     _stop_rpc_client: Callable[[], None] | None = None
+    __signature__: inspect.Signature | None = None
 
     def __init__(
         self,
@@ -82,17 +83,23 @@ class RpcCall:
             logger.warning("RPC client not initialized")
             return None
 
+        arguments = (list(args), kwargs)
+        if self._rpc.named_params is True and self.__signature__ is not None:
+            # Send every argument by name, as the signature binds it.
+            bound = self.__signature__.bind(*args, **kwargs)
+            arguments = ([], dict(bound.arguments))
+
         # For stop, use call_nowait to avoid deadlock
         # (the remote side stops its RPC service before responding)
         if self._name == "stop":
-            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", (args, kwargs))  # type: ignore[arg-type]
+            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", arguments)
             if self._stop_rpc_client:
                 self._stop_rpc_client()
             return None
 
         result, unsub_fn = self._rpc.call_sync(
             f"{self._remote_name}/{self._name}",
-            (args, kwargs),  # type: ignore[arg-type]
+            arguments,
         )
         self._unsub_fns.append(unsub_fn)
         return result
