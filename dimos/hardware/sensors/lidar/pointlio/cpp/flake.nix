@@ -90,6 +90,18 @@
 
           src = ./.;
 
+          doCheck = true;
+          checkPhase = ''
+            runHook preCheck
+            $CXX -std=c++17 -O2 -DNDEBUG -Wall -Wextra -Werror \
+              ../test_input_continuity_gate.cpp -o test_input_continuity_gate
+            ./test_input_continuity_gate
+            $CXX -std=c++17 -O2 -DNDEBUG -pthread -Wall -Wextra -Werror \
+              ../test_input_continuity_publication.cpp -o test_input_continuity_publication
+            ./test_input_continuity_publication
+            runHook postCheck
+          '';
+
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
           buildInputs = [
             livox-sdk2

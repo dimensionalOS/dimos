@@ -6,6 +6,7 @@
 // with velocity on odometry. No inputs, so it overrides handle().
 
 #include <boost/make_shared.hpp>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -29,6 +30,7 @@
 // Point-LIO (header-only core, compiled sources linked via CMake)
 #include "pointlio.hpp"
 #include "pointlio_debug.hpp"
+#include "input_continuity_gate.hpp"
 
 using dimos::native::Builder;
 using dimos::native::Config;
@@ -49,6 +51,7 @@ struct PointLioConfig {
     double main_freq;
     double pointcloud_freq;
     double odom_freq;
+    double maximum_input_gap_s = 0.0;
     bool debug;
     bool con_frame;
     int con_frame_num;
@@ -114,6 +117,7 @@ struct PointLioConfig {
         dimos::native::require_positive(main_freq, "main_freq");
         dimos::native::require_positive(pointcloud_freq, "pointcloud_freq");
         dimos::native::require_positive(odom_freq, "odom_freq");
+        InputContinuityGate validate_gap(maximum_input_gap_s);
     }
 };
 
@@ -147,6 +151,7 @@ class PointLioModule : public Module {
 public:
     void build(Builder& builder, Config& config) override {
         cfg_ = config.parse<PointLioConfig>();
+        continuity_ = std::make_unique<InputContinuityGate>(cfg_.maximum_input_gap_s);
         lidar_ = builder.output<sensor_msgs::PointCloud2>("lidar");
         odometry_ = builder.output<nav_msgs::Odometry>("odometry");
 
@@ -288,6 +293,7 @@ private:
         if (shutdown_requested() || data == nullptr) return;
 
         uint64_t ts_ns = packet_timestamp_ns(data);
+        if (!accept_source_time(InputContinuityGate::Stream::lidar, ts_ns)) return;
         uint16_t dot_num = data->dot_num;
 
         // Per-point intra-packet offset, needed for deskew. time_interval is
@@ -296,6 +302,7 @@ private:
             dot_num > 0 ? static_cast<uint64_t>(data->time_interval) * 100 / dot_num : 0;
 
         std::lock_guard<std::mutex> lock(pc_mutex_);
+        if (continuity_failed_.load()) return;
         if (!frame_has_ts_) {
             frame_start_ns_ = ts_ns;
             frame_has_ts_ = true;
@@ -338,13 +345,16 @@ private:
     void on_imu(LivoxLidarEthernetPacket* data) {
         if (shutdown_requested() || data == nullptr || !point_lio_) return;
 
-        double ts = static_cast<double>(packet_timestamp_ns(data)) / 1e9;
+        const auto ts_ns = packet_timestamp_ns(data);
+        if (!accept_source_time(InputContinuityGate::Stream::imu, ts_ns)) return;
+        double ts = static_cast<double>(ts_ns) / 1e9;
         auto* imu_pts = reinterpret_cast<const LivoxLidarImuRawPoint*>(data->data);
         uint16_t dot_num = data->dot_num;
 
         // Serialize EKF access against the main loop (step). Held across the
         // whole packet so its samples feed atomically.
         std::lock_guard<std::mutex> lio_lock(lio_mutex_);
+        if (continuity_failed_.load()) return;
         for (uint16_t i = 0; i < dot_num; ++i) {
             auto imu_msg = boost::make_shared<custom_messages::Imu>();
             imu_msg->header.stamp = custom_messages::Time().fromSec(ts);
@@ -391,6 +401,7 @@ private:
 
     // One iteration of the main loop, rate-limited by the last_*_ bookmarks.
     void step(std::chrono::steady_clock::time_point now) {
+        fail_if_discontinuous();
         // At frame rate, drain accumulated raw points into a CustomMsg and feed
         // Point-LIO. Hold pc_mutex_ across the rate-limit check + swap so a
         // callback can't slip a packet in between the decision and the swap.
@@ -410,6 +421,7 @@ private:
 
         // Held for the rest of the iteration: every call below touches the EKF.
         std::lock_guard<std::mutex> lio_lock(lio_mutex_);
+        fail_if_discontinuous();
         if (!points.empty()) {
             const size_t num_points = points.size();
             auto lidar_msg = boost::make_shared<custom_messages::CustomMsg>();
@@ -432,6 +444,11 @@ private:
 
         // One Point-LIO IESKF step (cheap when queues empty).
         point_lio_->process();
+        // Serialize the final validity check and publications with fault
+        // detection. Callback threads never hold this lock while waiting for
+        // pc_mutex_ or lio_mutex_. No exception crosses the SDK callback ABI.
+        std::lock_guard<std::mutex> continuity_lock(continuity_mutex_);
+        fail_if_discontinuous();
 
         auto pose = point_lio_->get_pose();
         if (has_estimate(pose)) {
@@ -519,7 +536,22 @@ private:
         odometry_.publish(msg);
     }
 
+    bool accept_source_time(InputContinuityGate::Stream stream, uint64_t ts) {
+        std::lock_guard<std::mutex> lock(continuity_mutex_);
+        if (continuity_->observe(stream, ts)) return true;
+        continuity_failed_.store(true);
+        return false;
+    }
+
+    void fail_if_discontinuous() const {
+        if (continuity_failed_.load())
+            throw std::runtime_error("PointLIO input continuity lost; localization invalid; restart and re-localize explicitly");
+    }
+
     PointLioConfig cfg_;
+    std::unique_ptr<InputContinuityGate> continuity_;
+    std::mutex continuity_mutex_;
+    std::atomic<bool> continuity_failed_{false};
     Output<sensor_msgs::PointCloud2> lidar_;
     Output<nav_msgs::Odometry> odometry_;
     std::unique_ptr<PointLio> point_lio_;

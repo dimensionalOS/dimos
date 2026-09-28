@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from reactivex.disposable import Disposable
 
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -140,6 +140,17 @@ class PointLioTuning(BaseModel):
 
 
 class PointLioConfig(NativeModuleConfig, PointLioTuning):
+    # C++-only opt-in continuity guard. Zero preserves legacy behavior.
+    # Positive threshold is site-selected; a trip requires explicit restart.
+    maximum_input_gap_s: float = Field(default=0.0, ge=0.0, le=86400.0, allow_inf_nan=False)
+
+    @field_validator("maximum_input_gap_s")
+    @classmethod
+    def validate_input_gap(cls, value: float) -> float:
+        if 0.0 < value < 1e-9:
+            raise ValueError("maximum_input_gap_s must be zero or at least 1ns")
+        return value
+
     stdin_config: bool = True
     frame_id: str = "odom"
     base_fields: frozenset[str] = frozenset({"frame_id"})
