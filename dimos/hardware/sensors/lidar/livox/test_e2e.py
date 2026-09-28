@@ -186,6 +186,14 @@ def _magnitude(sample: Imu) -> float:
     return math.sqrt(acc.x**2 + acc.y**2 + acc.z**2)
 
 
+def _first_capture_ts(pcap: Path) -> float:
+    """Capture time of the first record in a classic pcap."""
+    with open(pcap, "rb") as handle:
+        handle.seek(24)
+        ts_sec, ts_usec = struct.unpack("<II", handle.read(8))
+    return float(ts_sec + ts_usec / 1e6)
+
+
 def _assert_cloud_shape(cloud: PointCloud2, min_points: int) -> None:
     assert cloud.frame_id == "lidar_link"
     points, _ = cloud.as_numpy()
@@ -235,6 +243,12 @@ def test_real_capture_replay_publishes_streams(spawn: Spawn) -> None:
     assert 5.0 < median < 15.0, f"median accel magnitude {median}"
     assert imus[0].orientation_covariance[0] == -1.0
     assert imus[0].frame_id == "imu_link"
+
+    # Replayed stamps sit on the recording's clock, not the sensor's power-on
+    # clock: within the collected window of the first capture record.
+    capture_start = _first_capture_ts(pcap)
+    for msg in (clouds[0], clouds[-1], imus[0], imus[-1]):
+        assert 0.0 <= msg.ts - capture_start < 30.0, f"stamp {msg.ts} vs capture {capture_start}"
 
 
 @pytest.mark.native_e2e
@@ -300,3 +314,8 @@ def test_live_loopback_handshake_and_stream(spawn: Spawn, synth_pcap: Path) -> N
     assert abs(_magnitude(sample) - GRAVITY_MS2) < 1e-3
     assert sample.orientation_covariance[0] == -1.0
     assert sample.frame_id == "imu_link"
+
+    # Live stamps are anchored to the host clock, whatever the device reports.
+    now = time.time()
+    for msg in (clouds[-1], imus[-1]):
+        assert abs(msg.ts - now) < 15.0, f"stamp {msg.ts} vs host {now}"

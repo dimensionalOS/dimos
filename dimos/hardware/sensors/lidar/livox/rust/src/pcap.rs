@@ -18,7 +18,7 @@
 //! Sensor timestamps are replayed unmodified, so downstream output is
 //! deterministic and identical at any replay rate.
 
-use crate::pipeline::PacketSource;
+use crate::pipeline::{PacketSource, Received};
 use etherparse::{SlicedPacket, TransportSlice};
 use pcap_parser::traits::PcapReaderIterator;
 use pcap_parser::{LegacyPcapReader, Linktype, PcapBlockOwned, PcapError};
@@ -234,7 +234,7 @@ impl PcapSource {
 }
 
 impl PacketSource for PcapSource {
-    fn recv(&mut self, buf: &mut [u8]) -> Option<usize> {
+    fn recv(&mut self, buf: &mut [u8]) -> Option<Received> {
         loop {
             if self.stop.load(Ordering::Relaxed) {
                 return None;
@@ -246,7 +246,10 @@ impl PacketSource for PcapSource {
             self.pace(packet.ts);
             let len = packet.payload.len().min(buf.len());
             buf[..len].copy_from_slice(&packet.payload[..len]);
-            return Some(len);
+            return Some(Received {
+                len,
+                arrival_secs: packet.ts,
+            });
         }
     }
 
@@ -361,10 +364,17 @@ mod tests {
         .unwrap();
         let mut buf = [0u8; 4096];
         let mut seen = Vec::new();
-        while let Some(len) = source.recv(&mut buf) {
-            seen.push(DataPacket::parse(&buf[..len]).unwrap().timestamp_ns);
+        while let Some(received) = source.recv(&mut buf) {
+            let packet = DataPacket::parse(&buf[..received.len]).unwrap();
+            seen.push((packet.timestamp_ns, received.arrival_secs));
         }
-        assert_eq!(seen, vec![1_000, 2_000]);
+        // Replay reports the capture time as the arrival, so host anchoring
+        // lands replayed stamps on the recording's own clock.
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].0, 1_000);
+        assert!((seen[0].1 - 1.0).abs() < 1e-5);
+        assert_eq!(seen[1].0, 2_000);
+        assert!((seen[1].1 - 1.2).abs() < 1e-5);
         assert_eq!(source.failure(), None);
     }
 

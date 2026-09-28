@@ -16,17 +16,39 @@
 //!
 //! Sources produce raw data-plane packets. The assembler cuts them into frames
 //! on packet time, never wall clock, so replay is deterministic at any speed.
+//! Published stamps are the device clock re-based onto the host clock through
+//! each packet's arrival time, so a sensor with no time sync still lands on
+//! the same axis as everything else in the graph.
 
 use crate::wire::{DataPacket, DataType};
+use std::collections::VecDeque;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Accel conversion from g on the wire to m/s^2 on the output.
 pub const GRAVITY_MS2: f64 = 9.80665;
 
+/// Seconds since the Unix epoch, the host clock every stamp is anchored to.
+pub fn unix_now_secs() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+/// One received packet: its length in the caller's buffer and when the host
+/// side saw it. Live sources stamp at socket receipt, replay uses the
+/// capture record's timestamp.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Received {
+    pub len: usize,
+    pub arrival_secs: f64,
+}
+
 /// Produces raw data-plane packets (point and IMU ports only).
 pub trait PacketSource {
-    /// Receive the next packet into `buf`, returning its length.
+    /// Receive the next packet into `buf`.
     /// `None` means end of stream or shutdown.
-    fn recv(&mut self, buf: &mut [u8]) -> Option<usize>;
+    fn recv(&mut self, buf: &mut [u8]) -> Option<Received>;
 
     /// Why the stream ended, if it died rather than completing or stopping.
     fn failure(&self) -> Option<String> {
@@ -69,6 +91,75 @@ pub fn imu_records<'a>(packet: &'a DataPacket<'a>) -> impl Iterator<Item = ImuRe
         gyro_rads: sample.gyro.map(f64::from),
         acc_ms2: sample.acc_g.map(|a| f64::from(a) * GRAVITY_MS2),
     })
+}
+
+/// How long the host-clock estimate remembers arrivals. Long enough to ride
+/// out a burst of late deliveries, short enough to follow device drift.
+const HOST_CLOCK_WINDOW_SECS: i64 = 30;
+/// A device stamp this far behind the previous one is a clock reset, not
+/// jitter, so the offset history no longer applies.
+const HOST_CLOCK_RESET_NS: u64 = 1_000_000_000;
+
+/// Maps the device clock onto the host clock.
+///
+/// Delivery latency only ever makes a packet arrive later, so the smallest
+/// `arrival - device` offset seen recently is the closest estimate of the true
+/// one. One minimum per second of arrival time keeps the window cheap.
+#[derive(Debug, Default)]
+pub struct HostClock {
+    minima: VecDeque<(i64, i64)>,
+    offset_ns: Option<i64>,
+    last_device_ns: Option<u64>,
+}
+
+impl HostClock {
+    /// Fold in one packet's device stamp and host arrival time.
+    pub fn observe(&mut self, device_ns: u64, arrival_secs: f64) {
+        if self
+            .last_device_ns
+            .is_some_and(|last| last.saturating_sub(device_ns) >= HOST_CLOCK_RESET_NS)
+        {
+            tracing::warn!(
+                previous_ns = self.last_device_ns,
+                packet_ns = device_ns,
+                "device clock jumped backwards, restarting host clock estimate"
+            );
+            self.minima.clear();
+        }
+        self.last_device_ns = Some(device_ns);
+
+        let arrival_ns = secs_to_ns(arrival_secs);
+        let offset = arrival_ns - device_ns as i64;
+        let second = arrival_ns.div_euclid(1_000_000_000);
+        match self.minima.back_mut() {
+            Some(last) if last.0 == second => last.1 = last.1.min(offset),
+            _ => {
+                self.minima.push_back((second, offset));
+                while self
+                    .minima
+                    .front()
+                    .is_some_and(|f| f.0 < second - HOST_CLOCK_WINDOW_SECS)
+                {
+                    self.minima.pop_front();
+                }
+            }
+        }
+        self.offset_ns = self.minima.iter().map(|m| m.1).min();
+    }
+
+    /// The device stamp on the host clock. Unchanged until the first observation.
+    pub fn host_ns(&self, device_ns: u64) -> u64 {
+        match self.offset_ns {
+            Some(offset) => (device_ns as i64).saturating_add(offset).max(0) as u64,
+            None => device_ns,
+        }
+    }
+}
+
+/// Whole and fractional seconds converted separately, so an epoch-sized value
+/// keeps sub-microsecond resolution.
+fn secs_to_ns(secs: f64) -> i64 {
+    secs.trunc() as i64 * 1_000_000_000 + (secs.fract() * 1e9).round() as i64
 }
 
 /// Limit number of points, in case time stamps get stalled for example
@@ -227,6 +318,43 @@ mod tests {
             reflectivity: 255,
             tag: 0,
         }
+    }
+
+    #[test]
+    fn host_clock_keeps_the_smallest_offset_in_the_window() {
+        let mut clock = HostClock::default();
+        assert_eq!(clock.host_ns(5), 5);
+        // Device at 1000 s, host at 1.7e9 s: the true offset is the first,
+        // undelayed arrival. Later packets arrive late and must not move it.
+        let device = 1_000_000_000_000u64;
+        clock.observe(device, 1_700_000_000.0);
+        clock.observe(device + 5_000_000, 1_700_000_000.009);
+        clock.observe(device + 10_000_000, 1_700_000_000.030);
+        assert_eq!(clock.host_ns(device), 1_700_000_000_000_000_000);
+        assert_eq!(clock.host_ns(device + 7), 1_700_000_000_000_000_007);
+    }
+
+    #[test]
+    fn host_clock_forgets_offsets_outside_the_window() {
+        let mut clock = HostClock::default();
+        let device = 1_000_000_000_000u64;
+        clock.observe(device, 1_700_000_000.0);
+        // The device drifts 2 ms ahead over a minute, so arrivals now sit
+        // 2 ms earlier relative to device time. Once the old minimum ages out,
+        // the estimate follows.
+        let later_device = device + 60_000_000_000;
+        clock.observe(later_device, 1_700_000_059.998);
+        let expected = 1_700_000_059_998_000_000i64;
+        assert!((clock.host_ns(later_device) as i64 - expected).abs() < 1_000);
+    }
+
+    #[test]
+    fn host_clock_restarts_after_a_device_reset() {
+        let mut clock = HostClock::default();
+        clock.observe(1_000_000_000_000, 1_700_000_000.0);
+        // The sensor reboots: device time drops to 2 s while the host moves on.
+        clock.observe(2_000_000_000, 1_700_000_100.0);
+        assert_eq!(clock.host_ns(2_000_000_000), 1_700_000_100_000_000_000);
     }
 
     #[test]

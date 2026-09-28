@@ -16,7 +16,7 @@
 
 use crate::live::{LiveConfig, LiveSource, Ports};
 use crate::pcap::PcapSource;
-use crate::pipeline::{imu_records, Frame, ImuRecord, PacketSource};
+use crate::pipeline::{imu_records, Frame, HostClock, ImuRecord, PacketSource};
 use crate::wire::{DataPacket, DataType};
 use dimos_module::{native_config, Module, Output};
 use lcm_msgs::geometry_msgs::{Quaternion, Vector3};
@@ -226,12 +226,13 @@ fn run_pipeline(
 ) {
     let format = config.point_format;
     let mut assembler = crate::pipeline::FrameAssembler::new(config.frequency);
+    let mut clock = HostClock::default();
     let mut buf = [0u8; 4096];
     while !stop.load(Ordering::Relaxed) {
-        let Some(len) = source.recv(&mut buf) else {
+        let Some(received) = source.recv(&mut buf) else {
             break;
         };
-        let packet = match DataPacket::parse(&buf[..len]) {
+        let packet = match DataPacket::parse(&buf[..received.len]) {
             Ok(packet) => packet,
             Err(err) => {
                 dimos_module::warn_throttled!(
@@ -242,17 +243,20 @@ fn run_pipeline(
                 continue;
             }
         };
+        clock.observe(packet.timestamp_ns, received.arrival_secs);
         match packet.data_type {
             DataType::Imu => {
                 if config.enable_imu {
-                    for record in imu_records(&packet) {
+                    for mut record in imu_records(&packet) {
+                        record.ts_ns = clock.host_ns(record.ts_ns);
                         let msg = imu_message(&config.imu_frame_id, &record);
                         let _ = handle.block_on(imu.publish(&msg));
                     }
                 }
             }
             _ => {
-                if let Some(frame) = assembler.push(&packet) {
+                if let Some(mut frame) = assembler.push(&packet) {
+                    frame.start_ns = clock.host_ns(frame.start_ns);
                     let msg = cloud_message(format, &config.frame_id, &frame);
                     let _ = handle.block_on(lidar.publish(&msg));
                 }
@@ -264,7 +268,8 @@ fn run_pipeline(
         failed.notify_one();
         return;
     }
-    if let Some(frame) = assembler.flush() {
+    if let Some(mut frame) = assembler.flush() {
+        frame.start_ns = clock.host_ns(frame.start_ns);
         let msg = cloud_message(format, &config.frame_id, &frame);
         let _ = handle.block_on(lidar.publish(&msg));
     }
