@@ -22,6 +22,9 @@ use std::sync::Arc;
 /// happen inside it.
 pub type Dispatch = Arc<dyn Fn(&[u8]) + Send + Sync>;
 
+/// Dispatch closure for a subscription that receives every DimOS channel.
+pub type TopicDispatch = Arc<dyn Fn(&[u8], &str) + Send + Sync>;
+
 /// Abstraction over the message transport used by a native module.
 ///
 /// New transport protocols should implement this trait.
@@ -35,6 +38,17 @@ pub trait Transport: Send + Sync + 'static {
         channel: &str,
         on_msg: Dispatch,
     ) -> impl Future<Output = io::Result<()>> + Send;
+
+    /// Deliver every DimOS message to `on_msg`, including messages on channels
+    /// that appear after the subscription starts.
+    fn subscribe_all(&self, _on_msg: TopicDispatch) -> impl Future<Output = io::Result<()>> + Send {
+        async {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "transport does not support subscribe_all",
+            ))
+        }
+    }
 
     /// Apply the per-channel publisher QoS the coordinator sends. The value is
     /// the `qos` object from the stdin config, or null when absent. Transports
@@ -54,6 +68,7 @@ pub(crate) trait DynTransport: Send + Sync + 'static {
         channel: &'a str,
         on_msg: Dispatch,
     ) -> BoxFuture<'a, io::Result<()>>;
+    fn subscribe_all_dyn(&self, on_msg: TopicDispatch) -> BoxFuture<'_, io::Result<()>>;
     fn set_publisher_qos_dyn(&self, qos: &serde_json::Value);
 }
 
@@ -68,6 +83,10 @@ impl<T: Transport> DynTransport for T {
         on_msg: Dispatch,
     ) -> BoxFuture<'a, io::Result<()>> {
         Box::pin(self.subscribe(channel, on_msg))
+    }
+
+    fn subscribe_all_dyn(&self, on_msg: TopicDispatch) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(self.subscribe_all(on_msg))
     }
 
     fn set_publisher_qos_dyn(&self, qos: &serde_json::Value) {
@@ -94,6 +113,10 @@ impl Transport for SharedTransport {
 
     async fn subscribe(&self, channel: &str, on_msg: Dispatch) -> io::Result<()> {
         self.0.subscribe_dyn(channel, on_msg).await
+    }
+
+    async fn subscribe_all(&self, on_msg: TopicDispatch) -> io::Result<()> {
+        self.0.subscribe_all_dyn(on_msg).await
     }
 
     fn set_publisher_qos(&self, qos: &serde_json::Value) {

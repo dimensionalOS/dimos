@@ -27,7 +27,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
-use crate::transport::{Dispatch, Transport};
+use crate::transport::{Dispatch, TopicDispatch, Transport};
 
 /// Marker trait for a config checked by `#[native_config]`: every field required,
 /// no Rust-side defaults, no unknown fields. Implemented only by the macro.
@@ -309,6 +309,7 @@ pub struct Builder {
     // Every port the module asked for a topic, matched against topics after build.
     requested: BTreeSet<String>,
     routes: HashMap<String, Vec<Box<dyn Route>>>,
+    all_routes: Vec<TopicDispatch>,
     // One publish queue per output channel, drained by its own worker.
     outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
     tf: Option<crate::tf::Tf>,
@@ -320,6 +321,7 @@ impl Builder {
             topics,
             requested: BTreeSet::new(),
             routes: HashMap::new(),
+            all_routes: Vec::new(),
             outputs: Vec::new(),
             tf: None,
         }
@@ -384,6 +386,14 @@ impl Builder {
         let topic = self.topic_for(port);
         let receiver = self.add_route(&topic, decode);
         Input { topic, receiver }
+    }
+
+    /// Register a raw callback for every DimOS topic. The callback runs on the
+    /// transport delivery path, so it should hand expensive work to another task.
+    /// It receives the transport-native channel name and remains registered for
+    /// the transport's lifetime.
+    pub fn subscribe_all(&mut self, on_msg: impl Fn(&[u8], &str) + Send + Sync + 'static) {
+        self.all_routes.push(Arc::new(on_msg));
     }
 
     pub fn output<T>(&mut self, port: &str, encode: fn(&T) -> Vec<u8>) -> Output<T> {
@@ -454,6 +464,25 @@ pub(crate) async fn subscribe_routes<T: Transport>(
         transport.subscribe(&channel, dispatch).await?;
     }
     Ok(())
+}
+
+pub(crate) async fn subscribe_all_routes<T: Transport>(
+    transport: &T,
+    routes: Vec<TopicDispatch>,
+) -> io::Result<()> {
+    if routes.is_empty() {
+        return Ok(());
+    }
+    let dispatch: TopicDispatch = Arc::new(move |bytes, topic| {
+        for route in &routes {
+            let dispatched =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| route(bytes, topic)));
+            if dispatched.is_err() {
+                error!(topic, "dispatch handler panicked; message dropped");
+            }
+        }
+    });
+    transport.subscribe_all(dispatch).await
 }
 
 /// Spawn one worker per output channel so they don't block each other
@@ -527,6 +556,7 @@ where
     builder.enforce_topics_match_ports()?;
 
     subscribe_routes(transport.as_ref(), builder.routes).await?;
+    subscribe_all_routes(transport.as_ref(), builder.all_routes).await?;
     // Kept alive until teardown so the subscriptions stay live.
     let mut pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
 
@@ -639,6 +669,7 @@ mod tests {
         inbound: Arc<InboundQueue>,
         inbound_notify: Arc<Notify>,
         subscriptions: Arc<Mutex<HashMap<String, Vec<Dispatch>>>>,
+        all_subscriptions: Arc<Mutex<Vec<TopicDispatch>>>,
         listening: Arc<AtomicBool>,
         publish_delay_ms: Arc<AtomicU64>,
         publish_entered: Arc<Notify>,
@@ -653,6 +684,7 @@ mod tests {
                 inbound: Arc::new(InboundQueue::new(VecDeque::new())),
                 inbound_notify: Arc::new(Notify::new()),
                 subscriptions: Arc::new(Mutex::new(HashMap::new())),
+                all_subscriptions: Arc::new(Mutex::new(Vec::new())),
                 listening: Arc::new(AtomicBool::new(false)),
                 publish_delay_ms: Arc::new(AtomicU64::new(0)),
                 publish_entered: Arc::new(Notify::new()),
@@ -666,6 +698,7 @@ mod tests {
             let inbound = Arc::clone(&self.inbound);
             let inbound_notify = Arc::clone(&self.inbound_notify);
             let subscriptions = Arc::clone(&self.subscriptions);
+            let all_subscriptions = Arc::clone(&self.all_subscriptions);
             let dispatch_entered = Arc::clone(&self.dispatch_entered);
             let dispatch_log = Arc::clone(&self.dispatch_log);
             tokio::spawn(async move {
@@ -678,6 +711,10 @@ mod tests {
                             for cb in &callbacks {
                                 cb(&data);
                             }
+                        }
+                        let callbacks = all_subscriptions.lock().unwrap().clone();
+                        for callback in &callbacks {
+                            callback(&data, &channel);
                         }
                         dispatch_log.lock().unwrap().push(Instant::now());
                     } else {
@@ -706,6 +743,14 @@ mod tests {
                 .entry(channel.to_string())
                 .or_default()
                 .push(on_msg);
+            if !self.listening.swap(true, Ordering::SeqCst) {
+                self.spawn_delivery_loop();
+            }
+            Ok(())
+        }
+
+        async fn subscribe_all(&self, on_msg: TopicDispatch) -> io::Result<()> {
+            self.all_subscriptions.lock().unwrap().push(on_msg);
             if !self.listening.swap(true, Ordering::SeqCst) {
                 self.spawn_delivery_loop();
             }
@@ -937,6 +982,38 @@ mod tests {
         let mut builder = builder_with_topics(&[]);
         let input = builder.input("data", |b| Ok(b.to_vec()));
         assert_eq!(input.topic, "/data");
+    }
+
+    #[tokio::test]
+    async fn subscribe_all_routes_delivers_new_topics() {
+        let transport = ControllableMockTransport::new();
+        let inbound = Arc::clone(&transport.inbound);
+        let inbound_notify = Arc::clone(&transport.inbound_notify);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        let mut builder = builder_with_topics(&[]);
+        builder.subscribe_all(move |data, topic| {
+            sink.lock()
+                .unwrap()
+                .push((topic.to_string(), data.to_vec()));
+        });
+        builder
+            .enforce_topics_match_ports()
+            .expect("subscribe-all is not a fixed port");
+        subscribe_all_routes(&transport, builder.all_routes)
+            .await
+            .expect("subscribe to all topics");
+
+        inject_inbound(&inbound, &inbound_notify, "/late", b"message".to_vec());
+        wait_for("subscribe-all callback", || {
+            !seen.lock().unwrap().is_empty()
+        })
+        .await;
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [("/late".to_string(), b"message".to_vec())]
+        );
     }
 
     #[test]
