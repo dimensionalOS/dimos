@@ -142,7 +142,6 @@ class GlobalConfig(BaseSettings):
     dimsim_scene: str = "apartment"
     dimsim_port: int = 8090
     dimsim_headless: bool = True
-    # MJCF, robot included, that a MuJoCo sim blueprint loads instead of its default scene.
     mujoco_scene: str | None = None
     local_relay: bool = False
     relay_url: str | None = None

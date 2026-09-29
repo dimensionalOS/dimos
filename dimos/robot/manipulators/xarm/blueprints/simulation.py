@@ -35,7 +35,6 @@ from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 _xarm7_sim_model = make_xarm7_sim_robot_config()
-# One path for both: the sim and the coordinator key their shared-memory link on it.
 _xarm7_sim_scene = global_config.mujoco_scene or XARM7_SIM_PATH
 _xarm7_sim_hw = make_xarm7_sim_hardware(_xarm7_sim_scene)
 
