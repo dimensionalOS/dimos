@@ -1,0 +1,41 @@
+--- a/src/laserMapping.hpp
++++ b/src/laserMapping.hpp
+@@ -34,6 +34,7 @@
+     void imu_cbk(const ImuConstPtr& msg_in);
+     void livox_pcl_cbk(const CstMsgConstPtr& msg);
+     void run(OdomMsgPtr& msg_in);
++    bool run_updated(OdomMsgPtr& msg_in);
+     PointCloudXYZI::Ptr get_world_cloud() const;
+     PointCloudXYZI::Ptr get_body_cloud() const;
+     std::vector<double> get_world_quat() const;
+@@ -455,6 +456,8 @@
+     }
+ }
+ 
++static unsigned long long odometry_generation = 0;
++
+ void publish_odometry() {
+     odomAftMapped.header.frame_id = odom_header_frame_id;
+     odomAftMapped.child_frame_id = odom_child_frame_id;
+@@ -465,6 +468,7 @@
+     }
+     set_posestamp(odomAftMapped.pose.pose);
+     set_twist(odomAftMapped.twist.twist);
++    ++odometry_generation;
+ }
+ 
+ 
+@@ -1019,6 +1023,13 @@
+     custom_messages::Odometry o;
+     if (run_once(o)) { *msg_in = o; }
+ }
++bool LaserMapping::run_updated(OdomMsgPtr& msg_in) {
++    const auto before = odometry_generation;
++    custom_messages::Odometry o;
++    if (!run_once(o) || odometry_generation == before) return false;
++    *msg_in = o;
++    return true;
++}
+ PointCloudXYZI::Ptr LaserMapping::get_world_cloud() const {
+     if (!feats_undistort || feats_undistort->empty()) return nullptr;
+     int n = feats_undistort->points.size();

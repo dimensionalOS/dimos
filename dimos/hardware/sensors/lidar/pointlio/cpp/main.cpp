@@ -29,6 +29,7 @@
 // Point-LIO (header-only core, compiled sources linked via CMake)
 #include "pointlio.hpp"
 #include "pointlio_debug.hpp"
+#include "publication_snapshot.hpp"
 
 using dimos::native::Builder;
 using dimos::native::Config;
@@ -215,6 +216,7 @@ public:
         params.odom_only = cfg_.odom_only;
 
         point_lio_ = std::make_unique<PointLio>(params, cfg_.msr_freq, cfg_.main_freq);
+        publication_snapshot_ = PublicationSnapshot{};
 
         livox_common::SdkPorts ports;
         ports.cmd_data = cfg_.cmd_data_port;
@@ -431,20 +433,20 @@ private:
         }
 
         // One Point-LIO IESKF step (cheap when queues empty).
-        point_lio_->process();
+        publication_snapshot_.update(*point_lio_, true);
 
-        auto pose = point_lio_->get_pose();
+        const auto& pose = publication_snapshot_.pose();
         if (has_estimate(pose)) {
             double ts = std::chrono::duration<double>(
                             std::chrono::system_clock::now().time_since_epoch())
                             .count();
 
-            // get_body_cloud is the loop's costliest step, so build it only when
-            // a publish is due.
-            if (now - last_pc_publish_ >= pc_interval_) {
-                auto body_cloud = point_lio_->get_body_cloud();
+            // Retain the successful estimate across rate-limited/failed steps.
+            if (publication_snapshot_.lidar_pending() && now - last_pc_publish_ >= pc_interval_) {
+                auto body_cloud = publication_snapshot_.cloud();
                 if (body_cloud && !body_cloud->empty()) {
                     publish_pointcloud(body_cloud, ts);
+                    publication_snapshot_.lidar_published();
                     last_pc_publish_ = now;
                     if (cfg_.debug) {
                         logging::info(
@@ -458,8 +460,9 @@ private:
             }
 
             // Pose + covariance at odom_freq.
-            if (now - last_odom_publish_ >= odom_interval_) {
-                publish_odometry(point_lio_->get_odometry(), ts);
+            if (publication_snapshot_.odom_pending() && now - last_odom_publish_ >= odom_interval_) {
+                publish_odometry(publication_snapshot_.odometry(), ts);
+                publication_snapshot_.odom_published();
                 last_odom_publish_ = now;
                 if (cfg_.debug) {
                     logging::info("pointlio publish odom",
@@ -473,7 +476,7 @@ private:
 
     // Publish the undistorted scan in the sensor's own frame (get_body_cloud),
     // so points go out as-is with no world registration.
-    void publish_pointcloud(const PointCloudXYZI::Ptr& cloud, double ts) {
+    void publish_pointcloud(const PointCloudXYZI::ConstPtr& cloud, double ts) {
         int num_points = static_cast<int>(cloud->size());
 
         sensor_msgs::PointCloud2 pc = make_xyzi_cloud(cfg_.sensor_frame_id, ts, num_points);
@@ -523,6 +526,7 @@ private:
     Output<sensor_msgs::PointCloud2> lidar_;
     Output<nav_msgs::Odometry> odometry_;
     std::unique_ptr<PointLio> point_lio_;
+    PublicationSnapshot publication_snapshot_;
 
     // All four come from config, set in build().
     std::chrono::microseconds frame_interval_{};
