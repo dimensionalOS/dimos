@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import time
 from typing import TYPE_CHECKING, cast
 
@@ -27,8 +28,6 @@ from dimos.evals.environments.lib.recorded_poses import last_body_transform
 from dimos.evals.environments.sim import Sim, SimConfig
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
     from dimos.memory.store.base import Store
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -42,6 +41,7 @@ class MujocoEnvironmentConfig(SimConfig):
     tracked_bodies: tuple[str, ...] = ()
     at_rest_rad_s: float = 0.02
     module_env: dict[str, str] = Field(default_factory=dict)
+    scene: Path | None = None
 
 
 class MujocoEnvironment(Sim):
@@ -60,6 +60,8 @@ class MujocoEnvironment(Sim):
             proc.extra_env["MUJOCOSIMMODULE__TRACKED_BODIES"] = json.dumps(
                 list(self.config.tracked_bodies)
             )
+        if self.config.scene is not None:
+            proc.extra_env["MUJOCOSIMMODULE__SCENE_XML"] = str(self.config.scene.resolve())
 
     def prepare_recording(self, recording: Store, path: Path, deadline: float) -> dict[str, Path]:
         self.wait_ready(recording, deadline=deadline)

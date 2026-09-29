@@ -62,6 +62,8 @@ XARM_DUAL_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "dual_xarm_dev
 XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
+XARM7_ROBOT_MJCF = LfsPath("xarm7/xarm7.xml")
+XARM7_TABLETOP_SCENE = LfsPath("xarm7/tabletop.xml")
 XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 # The sim scene stands the arm on a pedestal: xarm7.xml mounts link_base at
 # z=0.12. Place the planning model to match, or the planner solves poses 12cm
@@ -173,9 +175,17 @@ def make_xarm7_sim_hardware(
     )
 
 
-def make_xarm7_sim_module_kwargs(address: str | Path) -> dict[str, Any]:
+def make_xarm7_sim_module_kwargs(
+    address: str | Path, *, scene_xml: str | Path | None = None
+) -> dict[str, Any]:
+    """With ``scene_xml``, ``address`` is the robot's own MJCF, attached into that scene."""
+    location = (
+        {"address": address}
+        if scene_xml is None
+        else {"robot_mjcf": address, "scene_xml": scene_xml}
+    )
     return {
-        "address": address,
+        **location,
         "headless": False,
         "dof": 7,
         "camera_name": "wrist_camera",

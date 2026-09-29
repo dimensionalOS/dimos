@@ -47,7 +47,6 @@ logger = setup_logger()
 # Step hook signature: called with the engine instance inside the sim thread.
 StepHook = Callable[["MujocoEngine"], None]
 
-_MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
 _RESET_WAIT_TIMEOUT_S = 5.0
 
 
@@ -211,8 +210,6 @@ class MujocoEngine(SimulationEngine):
         self._num_joints = len(self._joint_names)
         self._root_qpos_adr = self._robot_binding.root_qpos_adr if self._robot_binding else None
         self._root_qvel_adr = self._robot_binding.root_qvel_adr if self._robot_binding else None
-        if self._root_qpos_adr is None:
-            self._root_qpos_adr, self._root_qvel_adr = self._find_first_freejoint_adrs()
         timestep = float(self._model.opt.timestep)
         self._control_frequency = 1.0 / timestep if timestep > 0.0 else 100.0
 
@@ -267,11 +264,6 @@ class MujocoEngine(SimulationEngine):
         if not model_path.exists():
             raise FileNotFoundError(f"MuJoCo model not found: {model_path}")
         return model_path
-
-    def _find_first_freejoint_adrs(self) -> tuple[int | None, int | None]:
-        if self._model.njnt > 0 and int(self._model.jnt_type[0]) == _MJJNT_FREE:
-            return int(self._model.jnt_qposadr[0]), int(self._model.jnt_dofadr[0])
-        return None, None
 
     def _current_position(self, mapping: JointMapping) -> float:
         if mapping.joint_id is not None and mapping.qpos_adr is not None:

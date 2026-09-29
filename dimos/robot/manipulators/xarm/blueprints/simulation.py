@@ -25,7 +25,8 @@ from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
-    XARM7_SIM_PATH,
+    XARM7_ROBOT_MJCF,
+    XARM7_TABLETOP_SCENE,
     make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
@@ -34,7 +35,7 @@ from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 _xarm7_sim_model = make_xarm7_sim_robot_config()
-_xarm7_sim_hw = make_xarm7_sim_hardware(XARM7_SIM_PATH)
+_xarm7_sim_hw = make_xarm7_sim_hardware(XARM7_ROBOT_MJCF)
 
 xarm_perception_sim = autoconnect(
     ManipulationModule.blueprint(
@@ -45,7 +46,9 @@ xarm_perception_sim = autoconnect(
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
     HeuristicGraspModule.blueprint(),
-    MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)),
+    MujocoSimModule.blueprint(
+        **make_xarm7_sim_module_kwargs(XARM7_ROBOT_MJCF, scene_xml=XARM7_TABLETOP_SCENE)
+    ),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
         detector_backend="moondream",

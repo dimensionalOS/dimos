@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
 import time
 
 import numpy as np
@@ -64,27 +65,29 @@ def test_launch_flags(monkeypatch):
     assert proc.extra_env["MUJOCOSIMMODULE__HEADLESS"] == "false"
     assert proc.extra_env["OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND"] == "yoloe"
 
+    proc = DimosCliCall()
+    environment(scene=Path("scenes/table.xml")).configure_launch(proc)
+    assert proc.extra_env["MUJOCOSIMMODULE__SCENE_XML"] == str(Path("scenes/table.xml").resolve())
 
-def test_module_env_reaches_blueprint_parser(monkeypatch):
+
+def test_overrides_reach_the_xarm_blueprint(monkeypatch, tmp_path):
     monkeypatch.delenv("MUJOCOSIMMODULE__HEADLESS", raising=False)
     from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
     from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
 
+    scene = tmp_path / "scene.xml"
     proc = DimosCliCall()
     environment(
-        tracked_bodies=("apple", "cup"),
-        module_env={
-            "OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND": "owlv2",
-            "OBJECTSCENEREGISTRATIONMODULE__SEGMENTATION_BACKEND": "yolo",
-        },
+        tracked_bodies=("ball",),
+        scene=scene,
+        module_env={"MANIPULATIONMODULE__PLANNING_TIMEOUT": "5"},
     ).configure_launch(proc)
     parsed = BlueprintConfigParser(xarm_perception_sim).parse(environ=proc.extra_env)
-    perception = parsed.module_kwargs("objectsceneregistrationmodule")
-    assert perception["detector_backend"] == "owlv2"
-    assert perception["segmentation_backend"] == "yolo"
+    assert parsed.module_kwargs("manipulationmodule")["planning_timeout"] == 5.0
     sim = parsed.module_kwargs("mujocosimmodule")
     assert sim["headless"] is True
-    assert sim["tracked_bodies"] == ["apple", "cup"]
+    assert sim["tracked_bodies"] == ["ball"]
+    assert str(sim["scene_xml"]) == str(scene.resolve())
 
 
 def test_latest_pose_needs_odom():
