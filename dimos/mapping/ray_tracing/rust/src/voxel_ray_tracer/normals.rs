@@ -16,8 +16,7 @@
 
 use ahash::{AHashMap, AHashSet};
 use arrayvec::ArrayVec;
-use nalgebra::linalg::SymmetricEigen;
-use nalgebra::{Matrix3, Vector3, U3};
+use nalgebra::{Matrix3, Vector3};
 use rayon::prelude::*;
 
 use super::{ChunkMap, VoxelKey, VoxelMap};
@@ -41,21 +40,101 @@ pub(super) enum NormalFit {
 /// The surface normal of a covariance, or None unless it is clearly planar.
 #[cfg(test)]
 pub(super) fn fit_normal(cov: Matrix3<f32>) -> Option<(Vector3<f32>, f32)> {
-    classify(&cov.symmetric_eigen())
+    classify(&sym3_eigen(&cov))
+}
+
+/// Eigenvalues of a symmetric 3x3, ascending, and the eigenvector of the smallest.
+pub(super) struct Sym3Eigen {
+    pub(super) values: [f32; 3],
+    pub(super) smallest: Vector3<f32>,
+}
+
+/// Closed-form eigendecomposition of a symmetric 3x3 (trigonometric roots, f64 inside).
+///
+/// The normal fit runs this ~100k times a frame; nalgebra's iterative solver made it most of the ray tracer's cost.
+pub(super) fn sym3_eigen(m: &Matrix3<f32>) -> Sym3Eigen {
+    let at = |r: usize, c: usize| 0.5 * (m[(r, c)] as f64 + m[(c, r)] as f64);
+    let (a, b, c) = (at(0, 0), at(1, 1), at(2, 2));
+    let (d, e, f) = (at(0, 1), at(1, 2), at(0, 2));
+    let q = (a + b + c) / 3.0;
+    let off = d * d + e * e + f * f;
+    let spread = (a - q).powi(2) + (b - q).powi(2) + (c - q).powi(2) + 2.0 * off;
+    let scale = a.abs().max(b.abs()).max(c.abs()).max(off.sqrt());
+    if spread <= (1e-12 * scale).powi(2) {
+        // Isotropic (or zero): every direction is an eigenvector.
+        return Sym3Eigen {
+            values: [q as f32; 3],
+            smallest: Vector3::z(),
+        };
+    }
+    let p = (spread / 6.0).sqrt();
+    let (ba, bb, bc) = ((a - q) / p, (b - q) / p, (c - q) / p);
+    let (bd, be, bf) = (d / p, e / p, f / p);
+    let det = ba * (bb * bc - be * be) - bd * (bd * bc - be * bf) + bf * (bd * be - bb * bf);
+    let phi = (det / 2.0).clamp(-1.0, 1.0).acos() / 3.0;
+    let largest = q + 2.0 * p * phi.cos();
+    let smallest = q + 2.0 * p * (phi + 2.0 * std::f64::consts::PI / 3.0).cos();
+    let middle = 3.0 * q - largest - smallest;
+    let rows = |lambda: f64| [[a - lambda, d, f], [d, b - lambda, e], [f, e, c - lambda]];
+    Sym3Eigen {
+        values: [smallest as f32, middle as f32, largest as f32],
+        smallest: null_vector(rows(smallest))
+            .or_else(|| null_vector(rows(largest)).map(any_perpendicular))
+            .unwrap_or_else(Vector3::z),
+    }
+}
+
+/// Unit vector spanning the null space of a rank-2 symmetric matrix, from its rows' largest cross product.
+fn null_vector(rows: [[f64; 3]; 3]) -> Option<Vector3<f32>> {
+    let cross = |u: [f64; 3], v: [f64; 3]| {
+        [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ]
+    };
+    let norm2 = |v: [f64; 3]| v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+    let best = [
+        cross(rows[0], rows[1]),
+        cross(rows[0], rows[2]),
+        cross(rows[1], rows[2]),
+    ]
+    .into_iter()
+    .max_by(|x, y| norm2(*x).total_cmp(&norm2(*y)))?;
+    let row_scale = rows.iter().map(|r| norm2(*r)).fold(0.0, f64::max);
+    let n2 = norm2(best);
+    // A near-zero cross product means a repeated eigenvalue: no unique null direction.
+    if n2 <= 1e-18 * row_scale * row_scale {
+        return None;
+    }
+    let n = n2.sqrt();
+    Some(Vector3::new(
+        (best[0] / n) as f32,
+        (best[1] / n) as f32,
+        (best[2] / n) as f32,
+    ))
+}
+
+/// Some unit vector perpendicular to `v`, for the repeated-smallest-eigenvalue case.
+fn any_perpendicular(v: Vector3<f32>) -> Vector3<f32> {
+    let axis = if v.x.abs() < 0.9 {
+        Vector3::x()
+    } else {
+        Vector3::y()
+    };
+    v.cross(&axis).normalize()
 }
 
 /// fit_normal on an already-computed eigendecomposition. Pairs the normal
 /// with the smallest eigenvalue, the fit's out-of-plane variance.
-fn classify(eig: &SymmetricEigen<f32, U3>) -> Option<(Vector3<f32>, f32)> {
-    let mut idx = [0usize, 1, 2];
-    idx.sort_by(|&a, &b| eig.eigenvalues[a].total_cmp(&eig.eigenvalues[b]));
-    let e2 = eig.eigenvalues[idx[2]].max(0.0);
+fn classify(eig: &Sym3Eigen) -> Option<(Vector3<f32>, f32)> {
+    let e2 = eig.values[2].max(0.0);
     if e2 < 1e-12 {
         return None;
     }
-    let e0 = eig.eigenvalues[idx[0]].max(0.0);
+    let e0 = eig.values[0].max(0.0);
     let l0 = e0.sqrt();
-    let l1 = eig.eigenvalues[idx[1]].max(0.0).sqrt();
+    let l1 = eig.values[1].max(0.0).sqrt();
     let l2 = e2.sqrt();
     let linearity = (l2 - l1) / l2;
     let planarity = (l1 - l0) / l2;
@@ -63,7 +142,7 @@ fn classify(eig: &SymmetricEigen<f32, U3>) -> Option<(Vector3<f32>, f32)> {
     if planarity < linearity || planarity < scattering {
         return None;
     }
-    Some((eig.eigenvectors.column(idx[0]).into_owned(), e0))
+    Some((eig.smallest, e0))
 }
 
 /// Moments of one neighbor voxel: count, sum, sum of outer products, centroid.
@@ -117,7 +196,7 @@ pub(super) fn pooled_normal(
     let two_sig2 = 2.0 * sigma * sigma;
     let mut weights = [1.0_f32; NEIGHBORHOOD_CAP];
     // The last iteration's decomposition doubles as the final fit input.
-    let mut last_eig: Option<SymmetricEigen<f32, U3>> = None;
+    let mut last_eig: Option<Sym3Eigen> = None;
     for _ in 0..NORMAL_REWEIGHT_ITERS {
         let (mut wn, mut s, mut t) = (0.0_f32, Vector3::zeros(), Matrix3::zeros());
         for (nb, &w) in nbs.iter().zip(&weights) {
@@ -130,15 +209,8 @@ pub(super) fn pooled_normal(
         }
         let mean = s / wn;
         let cov = t / wn - mean * mean.transpose();
-        let eig = cov.symmetric_eigen();
-        let smallest = eig
-            .eigenvalues
-            .iter()
-            .enumerate()
-            .min_by(|a, b| a.1.total_cmp(b.1))
-            .map(|(i, _)| i)
-            .unwrap();
-        let normal = eig.eigenvectors.column(smallest).into_owned();
+        let eig = sym3_eigen(&cov);
+        let normal = eig.smallest;
         for (nb, w) in nbs.iter().zip(&mut weights) {
             let dist = normal.dot(&(nb.centroid - mean)).abs();
             *w = (-(dist * dist) / two_sig2).exp();
@@ -205,4 +277,74 @@ pub(super) fn should_spare(
     graze_cos: f32,
 ) -> bool {
     normal.is_some_and(|n| ray_unit.dot(&n).abs() < graze_cos)
+}
+
+#[cfg(test)]
+mod sym3_tests {
+    use super::*;
+
+    /// Deterministic pseudo-random floats, so the comparison is reproducible.
+    fn lcg(state: &mut u64) -> f32 {
+        *state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((*state >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+    }
+
+    #[test]
+    fn closed_form_matches_nalgebra_on_planar_and_random_covariances() {
+        let mut state = 7u64;
+        for case in 0..20_000 {
+            // Half flat, voxel-sized planes with thin noise; half arbitrary SPD matrices.
+            let spread = if case % 2 == 0 {
+                Vector3::new(2.5e-3, 1.5e-3, 1e-6)
+            } else {
+                Vector3::new(1e-3, 1e-3, 1e-3)
+            };
+            let axes = Matrix3::from_fn(|_, _| lcg(&mut state)).qr().q();
+            let jitter = Vector3::new(
+                lcg(&mut state).abs(),
+                lcg(&mut state).abs(),
+                lcg(&mut state).abs(),
+            );
+            let cov = axes
+                * Matrix3::from_diagonal(&spread.component_mul(&(jitter + Vector3::repeat(0.1))))
+                * axes.transpose();
+
+            let ours = sym3_eigen(&cov);
+            let reference = cov.symmetric_eigen();
+            let mut expected: Vec<f32> = reference.eigenvalues.iter().copied().collect();
+            expected.sort_by(f32::total_cmp);
+            let scale = expected[2].abs().max(1e-12);
+            for (got, want) in ours.values.iter().zip(&expected) {
+                assert!(
+                    (got - want).abs() <= 1e-4 * scale,
+                    "case {case}: {got} vs {want}"
+                );
+            }
+            // The smallest eigenvector is only unique when the smallest eigenvalue is separated.
+            if expected[1] - expected[0] > 1e-2 * scale {
+                let smallest = reference
+                    .eigenvalues
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| a.1.total_cmp(b.1))
+                    .unwrap()
+                    .0;
+                let want = reference.eigenvectors.column(smallest);
+                assert!(
+                    ours.smallest.dot(&want).abs() > 0.9999,
+                    "case {case}: normal disagrees"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn isotropic_and_zero_covariances_do_not_panic() {
+        assert_eq!(sym3_eigen(&Matrix3::zeros()).values, [0.0; 3]);
+        let iso = sym3_eigen(&(Matrix3::identity() * 2.0));
+        assert!(iso.values.iter().all(|v| (v - 2.0).abs() < 1e-6));
+        assert!((iso.smallest.norm() - 1.0).abs() < 1e-6);
+    }
 }
