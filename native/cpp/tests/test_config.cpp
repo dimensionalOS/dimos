@@ -79,7 +79,7 @@ TEST_CASE("enforce_all_consumed rejects fields the module never read") {
         FAIL("expected unconsumed fields to throw");
     } catch (const std::runtime_error& e) {
         const std::string msg = e.what();
-        CHECK(msg.find("unexpected field") != std::string::npos);
+        CHECK(msg.find("config keys do not match struct fields") != std::string::npos);
         CHECK(msg.find("typo") != std::string::npos);
     }
 }
@@ -108,7 +108,7 @@ TEST_CASE("parse rejects a missing field and names it") {
         FAIL("expected a missing field to throw");
     } catch (const std::runtime_error& e) {
         const std::string msg = e.what();
-        CHECK(msg.find("missing required field") != std::string::npos);
+        CHECK(msg.find("missing field") != std::string::npos);
         CHECK(msg.find("name") != std::string::npos);
     }
 }

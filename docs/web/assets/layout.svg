@@ -1,0 +1,16 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 749.936 308.087">
+<path d="M83.8488,179.28L385.649,179.28A7.5 7.5 0 0 0 393.149 171.78L393.149,71.58A7.5 7.5 0 0 0 385.649 64.08L83.8488,64.08A7.5 7.5 0 0 0 76.3488 71.58L76.3488,171.78A7.5 7.5 0 0 0 83.8488 179.28Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="234.749" y="121.68" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Video</text>
+<path d="M83.8488,297.287L385.649,297.287A7.5 7.5 0 0 0 393.149 289.787L393.149,189.587A7.5 7.5 0 0 0 385.649 182.087L83.8488,182.087A7.5 7.5 0 0 0 76.3488 189.587L76.3488,289.787A7.5 7.5 0 0 0 83.8488 297.287Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="234.749" y="239.687" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Map3D</text>
+<path d="M403.455,236.88L546.855,236.88A7.5 7.5 0 0 0 554.355 229.38L554.355,71.58A7.5 7.5 0 0 0 546.855 64.08L403.455,64.08A7.5 7.5 0 0 0 395.955 71.58L395.955,229.38A7.5 7.5 0 0 0 403.455 236.88Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="475.155" y="150.48" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Map2D</text>
+<path d="M403.455,297.287L546.855,297.287A7.5 7.5 0 0 0 554.355 289.787L554.355,247.187A7.5 7.5 0 0 0 546.855 239.687L403.455,239.687A7.5 7.5 0 0 0 395.955 247.187L395.955,289.787A7.5 7.5 0 0 0 403.455 297.287Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="475.155" y="268.487" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Teleop</text>
+<path d="M76.3488,46.8L554.355,46.8"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="315.352" y="25.92" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Row shares=[2, 1]</text>
+<path d="M59.0688,64.08L59.0688,297.287"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="30.6144" y="180.683" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Col</text>
+<path d="M571.635,64.08L571.635,297.287"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="659.706" y="180.683" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Col shares=[3, 1]</text>
+</svg>

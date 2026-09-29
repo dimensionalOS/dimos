@@ -31,6 +31,7 @@ from dimos.web.relay_bridge import wt_client
 from dimos.web.relay_bridge.protocol import (
     CONTROL_CHANNEL,
     MAX_CONTROL_PAYLOAD_BYTES,
+    MAX_TOKEN_LEN,
     PROTOCOL_VERSION,
     DataFrame,
     Error,
@@ -403,6 +404,28 @@ async def test_viewer_hello_rides_datagrams() -> None:
     await client.hello()
     assert session.sent_msgs == [Hello(v=PROTOCOL_VERSION, role="viewer")]
     assert session.sent_frames == []
+
+
+async def test_viewer_hello_carries_the_token() -> None:
+    session = StubSession()
+    session.welcomed.set()
+    client = RelayClient("https://127.0.0.1:1", "viewer", session, ctx=None)
+    await client.hello(token="viewer-token-0123456789abcdef")
+    assert session.sent_msgs == [
+        Hello(v=PROTOCOL_VERSION, role="viewer", token="viewer-token-0123456789abcdef")
+    ]
+
+
+async def test_overlong_token_is_refused_without_echoing_it() -> None:
+    # Refused before the model validates: pydantic's message would quote the
+    # secret, and that message ends up in logs.
+    session = StubSession()
+    client = RelayClient("https://127.0.0.1:1", "viewer", session, ctx=None)
+    token = "s" * (MAX_TOKEN_LEN + 1)
+    with pytest.raises(ProtocolError, match=f"{MAX_TOKEN_LEN + 1} characters") as exc_info:
+        await client.hello(token=token)
+    assert token not in str(exc_info.value)
+    assert session.sent_msgs == []
 
 
 async def test_viewer_hello_oversized_datagram_refused() -> None:

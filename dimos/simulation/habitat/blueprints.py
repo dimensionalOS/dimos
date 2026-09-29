@@ -27,12 +27,12 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap, RayTracingVoxelMapConfig
 from dimos.mapping.voxels.module import VoxelGridMapper
-from dimos.navigation.basic_path_follower.module import BasicPathFollower
-from dimos.navigation.nav_3d.mls_planner.mls_planner_native import (
+from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
     MLSPlannerNative,
     MLSPlannerNativeConfig,
 )
-from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
+from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
+from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
 from dimos.simulation.habitat.connection import HabitatConnection
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module

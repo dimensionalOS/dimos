@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from dimos.memory.blobstore.file import FileBlobStore
+from dimos.memory.blobstore.memory import MemoryBlobStore
 from dimos.memory.blobstore.sqlite import SqliteBlobStore
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
@@ -97,6 +98,12 @@ def sqlite_blob_store() -> Iterator[SqliteBlobStore]:
         yield store
 
 
-@pytest.fixture(params=["file_blob_store", "sqlite_blob_store"])
+@pytest.fixture
+def memory_blob_store() -> Iterator[MemoryBlobStore]:
+    with MemoryBlobStore() as store:
+        yield store
+
+
+@pytest.fixture(params=["file_blob_store", "sqlite_blob_store", "memory_blob_store"])
 def blob_store(request: pytest.FixtureRequest) -> BlobStore:
     return cast("BlobStore", request.getfixturevalue(request.param))

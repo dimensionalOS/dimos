@@ -29,12 +29,9 @@ Usage::
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from typing import TYPE_CHECKING, Any
-
-from pydantic import Field
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
@@ -64,20 +61,17 @@ class VirtualMid360Config(NativeModuleConfig):
     # Keep the Python-only NIC knobs out of the CLI args mirrored to the binary.
     cli_exclude: frozenset[str] = frozenset({"setup_network", "alias_iface"})
 
-    # pcap/lidar_ip/host_ip default from DIMOS_MID360_* env vars so blueprints
-    # needn't restate them. pcap is required — empty makes the binary error.
-    pcap: str = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_PCAP", ""))
+    # Required: empty makes the binary error.
+    pcap: str = ""
     # Replay speed; 1.0 = original timing.
     rate: float = 1.0
     # Seconds to wait before streaming begins.
     delay: float = 0.0
     # IP the fake lidar sends from (on the dummy alias interface).
-    lidar_ip: str = Field(
-        default_factory=lambda: os.environ.get("DIMOS_MID360_LIDAR_IP", "192.168.1.155")
-    )
+    lidar_ip: str = "192.168.1.155"
     # Host IP the data is delivered to (where the SDK listens).
-    host_ip: str = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_HOST_IP", ""))
-    lidar_netns: str = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_NETNS", ""))
+    host_ip: str = ""
+    lidar_netns: str = ""
     # Multicast group for point/IMU. 224.1.1.5 is the Livox default the SDK joins.
     mcast_data: str = "224.1.1.5"
 

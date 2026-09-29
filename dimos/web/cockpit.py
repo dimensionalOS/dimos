@@ -46,6 +46,13 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
+from dimos_lcm.std_msgs import Bool
+
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.web.codecs import is_generic_lcm_encoding
+from dimos.web.lcm_codec import default_encoding, export_schema, schema_class_for
 from dimos.web.relay_bridge.manifest import (
     MANIFEST_VERSION,
     MAX_MANIFEST_ID_LEN,
@@ -145,10 +152,6 @@ class ChannelRequest:
     delivery: Delivery = field(default="reliable", kw_only=True)
     publish: Publish = field(default="none", kw_only=True)
     required_scope: str | None = field(default=None, kw_only=True)
-    # Event streams (chat): the bridge meets max_hz by spacing sends, never by
-    # dropping, so a burst of messages crosses complete and in order. Panels
-    # only; a plain Channel is sampled at max_hz.
-    paced: bool = field(default=False, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -161,9 +164,12 @@ class Channel:
     delivery, and params must agree exactly, max_hz takes the max.
 
     `encoding` names a codec: a registered @web_encoder (dimos.web.codecs)
-    whose message type must match `message_type`, or the generic "json.v1"
-    for JSON-shaped types and dataclasses (rx) / JSON scalars, lists and
-    dicts (tx decode).
+    whose message type must match `message_type`, the generic "json.v1" for
+    JSON-shaped types and dataclasses (rx) / JSON scalars, lists and dicts
+    (tx decode), or `<msg_name>.lcm.v1` for rx DimOS messages with a
+    dimos_lcm schema (the frame is `lcm_encode()`, the schema rides
+    params["lcm"]). None picks the default: `<msg_name>.lcm.v1` for rx
+    DimOS messages, "json.v1" otherwise.
 
     A dir="tx" channel is a generic browser publish input: it must declare
     publish="shared" (any authorized viewer may publish; the bridge decodes
@@ -172,17 +178,23 @@ class Channel:
     (the teleop panel); publish="exclusive" arrives with the lease ticket
     (W8). `required_scope` names the operator scope a remote relay demands
     (the local relay never checks scopes).
+
+    rx channels are sampled at max_hz. `paced` spaces sends instead (event
+    streams: a burst crosses complete and in order); `resend_on_subscribe`
+    replays the last message when the first viewer subscribes (state streams).
     """
 
     stream: str
     message_type: type[Any]
     dir: Dir = field(default="rx", kw_only=True)
-    encoding: str = field(default="json.v1", kw_only=True)
+    encoding: str | None = field(default=None, kw_only=True)
     delivery: Delivery = field(default="reliable", kw_only=True)
     max_hz: float = field(default=10.0, kw_only=True)
     params: Mapping[str, Any] | None = field(default=None, kw_only=True)
     publish: Literal["none", "shared", "exclusive"] = field(default="none", kw_only=True)
     required_scope: str | None = field(default=None, kw_only=True)
+    paced: bool = field(default=False, kw_only=True)
+    resend_on_subscribe: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
         _check_stream("stream", self.stream)
@@ -199,6 +211,8 @@ class Channel:
             raise TypeError(f"message_type must be a class, got {self.message_type!r}")
         if self.dir not in ("rx", "tx"):
             raise ValueError(f"dir must be 'rx' or 'tx', got {self.dir!r}")
+        if self.encoding is None:
+            object.__setattr__(self, "encoding", default_encoding(self.message_type, self.dir))
         if not isinstance(self.encoding, str) or not 1 <= len(self.encoding) <= MAX_MANIFEST_ID_LEN:
             raise ValueError(
                 f"encoding must be 1..{MAX_MANIFEST_ID_LEN} chars, got {self.encoding!r}"
@@ -237,6 +251,12 @@ class Channel:
                     f"required_scope must be 1..{MAX_MANIFEST_ID_LEN} chars, "
                     f"got {self.required_scope!r}"
                 )
+        for name in ("paced", "resend_on_subscribe"):
+            flag = getattr(self, name)
+            if not isinstance(flag, bool):
+                raise ValueError(f"{name} must be a bool, got {flag!r}")
+            if flag and self.dir != "rx":
+                raise ValueError(f"{name} applies to rx channels only")
         if self.params is not None and not isinstance(self.params, Mapping):
             raise ValueError(f"params must be a mapping or None, got {self.params!r}")
         params = {} if self.params is None else dict(self.params)
@@ -254,14 +274,20 @@ class Channel:
 
 def _request_of(channel: Channel) -> ChannelRequest:
     """The manifest request a declaration compiles to."""
+    assert channel.encoding is not None  # resolved in __post_init__
+    # Deep plain copy: the manifest and specs must not alias the (frozen)
+    # authoring record's nested values.
+    params = _thaw_params(channel.params or {})
+    if is_generic_lcm_encoding(channel.encoding):
+        if "lcm" in params:
+            raise ValueError("params key 'lcm' is reserved for the LCM schema")
+        params["lcm"] = export_schema(schema_class_for(channel.message_type))
     return ChannelRequest(
         channel.stream,
         channel.dir,
         channel.encoding,
         channel.max_hz,
-        # Deep plain copy: the manifest and specs must not alias the (frozen)
-        # authoring record's nested values.
-        _thaw_params(channel.params or {}),
+        params,
         delivery=channel.delivery,
         publish=channel.publish,
         required_scope=channel.required_scope,
@@ -324,26 +350,127 @@ class Video(Panel):
 
 @dataclass(frozen=True)
 class Map2D(Panel):
-    """2D costmap with an optional pose overlay (pose=None drops it)."""
+    """2D costmap with optional pose and path overlays.
+
+    `click` publishes PointStamped goals; `stop` publishes Bool cancellation
+    requests while a path is active, regardless of who set the goal.
+    """
 
     kind: ClassVar[str] = "map2d"
     costmap: str = "global_costmap"
     pose: str | None = "odom"
+    path: str | None = field(default=None, kw_only=True)
+    click: str | None = field(default=None, kw_only=True)
+    stop: str | None = field(default=None, kw_only=True)
     costmap_hz: float = field(default=5.0, kw_only=True)
     pose_hz: float = field(default=20.0, kw_only=True)
     title: str = field(default="", kw_only=True)
 
     def __post_init__(self) -> None:
         _check_stream("costmap", self.costmap)
-        if self.pose is not None:
-            _check_stream("pose", self.pose)
+        for name in ("pose", "path", "click", "stop"):
+            stream = getattr(self, name)
+            if stream is not None:
+                _check_stream(name, stream)
         _check_rate("costmap_hz", self.costmap_hz)
         _check_rate("pose_hz", self.pose_hz)
+
+    def _channels(self) -> tuple[Channel, ...]:
+        channels = []
+        if self.path is not None:
+            # Sampling can drop the final path or clear in a planner burst.
+            channels.append(
+                Channel(
+                    self.path,
+                    Path,
+                    encoding="path.json.v1",
+                    delivery="latest",
+                    max_hz=10.0,
+                    paced=True,
+                    resend_on_subscribe=True,
+                )
+            )
+        if self.click is not None:
+            channels.append(
+                Channel(
+                    self.click,
+                    PointStamped,
+                    dir="tx",
+                    encoding="point.json.v1",
+                    publish="shared",
+                    max_hz=5.0,
+                )
+            )
+        if self.stop is not None:
+            channels.append(
+                Channel(
+                    self.stop, Bool, dir="tx", encoding="bool.json.v1", publish="shared", max_hz=5.0
+                )
+            )
+        return tuple(channels)
+
+    def _panel_params(self) -> dict[str, Any]:
+        # Keep the existing costmap/pose slots compatible with older viewers.
+        bound = {"path": self.path, "click": self.click, "stop": self.stop}
+        return {key: stream for key, stream in bound.items() if stream is not None}
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
         requests = [
             ChannelRequest(
                 self.costmap, "rx", "costmap.zlib.v1", self.costmap_hz, delivery="latest"
+            )
+        ]
+        if self.pose is not None:
+            requests.append(ChannelRequest(self.pose, "rx", "pose.json.v1", self.pose_hz))
+        return tuple(requests)
+
+
+@dataclass(frozen=True)
+class Map3D(Panel):
+    """3D voxel map: a PointCloud2 stream (the mapper's global map by
+    default) voxelized at `res` and drawn as points, with the pose marker."""
+
+    kind: ClassVar[str] = "map3d"
+    cloud: str = "global_map"
+    pose: str | None = "odom"
+    res: float = field(default=0.05, kw_only=True)
+    max_hz: float = field(default=1.0, kw_only=True)
+    pose_hz: float = field(default=20.0, kw_only=True)
+    title: str = field(default="", kw_only=True)
+
+    def __post_init__(self) -> None:
+        _check_stream("cloud", self.cloud)
+        if self.pose is not None:
+            _check_stream("pose", self.pose)
+        _check_rate("res", self.res)
+        _check_rate("max_hz", self.max_hz)
+        _check_rate("pose_hz", self.pose_hz)
+
+    def _channels(self) -> tuple[Channel, ...]:
+        # Not a built-in bridge port, so the panel declares it (like Map2D's
+        # path) and cockpit() generates the typed port. A late viewer gets the
+        # last full map through the resend.
+        return (
+            Channel(
+                self.cloud,
+                PointCloud2,
+                encoding="voxels.zlib.v1",
+                delivery="latest",
+                max_hz=self.max_hz,
+                params={"res": self.res},
+                resend_on_subscribe=True,
+            ),
+        )
+
+    def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        requests = [
+            ChannelRequest(
+                self.cloud,
+                "rx",
+                "voxels.zlib.v1",
+                self.max_hz,
+                {"res": self.res},
+                delivery="latest",
             )
         ]
         if self.pose is not None:
@@ -435,8 +562,10 @@ class Chat(Panel):
             Channel(
                 self.input, str, dir="tx", encoding="text.json.v1", publish="shared", max_hz=5.0
             ),
-            Channel(self.messages, BaseMessage, encoding="chat.json.v1", max_hz=20.0),
-            Channel(self.idle, bool, delivery="latest", max_hz=20.0),
+            # Every agent message and idle flip must reach the viewer: paced,
+            # not sampled.
+            Channel(self.messages, BaseMessage, encoding="chat.json.v1", max_hz=20.0, paced=True),
+            Channel(self.idle, bool, delivery="latest", max_hz=20.0, paced=True),
             Channel(
                 self.audio,
                 AudioChunk,
@@ -448,9 +577,7 @@ class Chat(Panel):
         )
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
-        # Every agent message and idle flip must reach the viewer: paced,
-        # not sampled.
-        return tuple(replace(_request_of(channel), paced=True) for channel in self._channels())
+        return tuple(_request_of(channel) for channel in self._channels())
 
 
 @dataclass(frozen=True)
@@ -604,6 +731,8 @@ def build_manifest_data(
 
     def add_panel(panel: Panel) -> str:
         panel_id = f"p{len(panels_out)}"
+        for channel in panel._channels():
+            merge(_request_of(channel))
         requests = panel._channel_requests()
         for request in requests:
             merge(request)
@@ -775,19 +904,29 @@ def cockpit(
     from dimos.web.codecs import resolve_decoder, resolve_encoder
 
     layout = _default_preset() if layout is None and not declared else layout
-    # Panels binding non-built-in streams (Chat) declare them like explicit
-    # channels. An explicit declaration for the same stream stands, provided
-    # it agrees (the rest of the agreement check is build_manifest_data's).
-    paced: set[str] = set()
-    for panel in (*_panels(layout), *_panels(tuple(pages))):
-        paced.update(r.stream for r in panel._channel_requests() if r.paced)
-        for channel in panel._channels():
-            previous = declared.setdefault(channel.stream, channel)
-            if previous.message_type is not channel.message_type:
-                raise ValueError(
-                    f"conflicting declarations for stream {channel.stream!r}: "
-                    f"{previous!r} vs {channel!r}"
-                )
+    # Explicit declarations must agree with the panel; build_manifest_data
+    # checks the wire requirements. Bridge flags are combined below.
+    panel_channels = [
+        channel
+        for panel in (*_panels(layout), *_panels(tuple(pages)))
+        for channel in panel._channels()
+    ]
+    for channel in panel_channels:
+        previous = declared.setdefault(channel.stream, channel)
+        if previous.message_type is not channel.message_type:
+            raise ValueError(
+                f"conflicting declarations for stream {channel.stream!r}: "
+                f"{previous!r} vs {channel!r}"
+            )
+    paced = {c.stream for c in (*channels, *panel_channels) if c.paced}
+    resend = {c.stream for c in (*channels, *panel_channels) if c.resend_on_subscribe}
+
+    requests: list[ChannelRequest] = []
+    for channel in declared.values():
+        try:
+            requests.append(_request_of(channel))
+        except ValueError as e:
+            raise ValueError(f"channel {channel.stream!r}: {e}") from e
 
     atom = RelayBridgeModule.blueprint().blueprints[0]
     port_types = {s.name: s.type for s in atom.streams}
@@ -798,7 +937,7 @@ def cockpit(
         registry={b.ch: (b.encoding, b.delivery) for b in BUILTIN_CHANNELS},
         tx_streams={s.name for s in atom.streams if s.direction == "out"},
         tx_registry={ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS},
-        channels=tuple(_request_of(c) for c in declared.values()),
+        channels=tuple(requests),
     )
     # The domain parser is the authority; authoring bugs must fail at
     # blueprint definition time, not at robot start.
@@ -863,7 +1002,9 @@ def cockpit(
                 params=dict(wire["params"]),
                 encoder=codec.encode,
                 encoder_takes_params=codec.takes_params,
-                resend_on_subscribe=builtin.resend_on_subscribe if builtin is not None else False,
+                resend_on_subscribe=(
+                    ch in resend or (builtin is not None and builtin.resend_on_subscribe)
+                ),
                 paced=ch in paced,
             )
         )

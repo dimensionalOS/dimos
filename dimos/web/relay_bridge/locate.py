@@ -89,6 +89,7 @@ def relay_run_cmd(
     serve_dir: Path | None = None,
     cert: Path | None = None,
     key: Path | None = None,
+    auth_file: Path | None = None,
 ) -> list[str]:
     """Build the argv that runs the relay with the pinned config and least permissions."""
     # Canonical paths: the relay realpath-checks served files against its
@@ -103,6 +104,7 @@ def relay_run_cmd(
             ("--serve-dir", serve_dir),
             ("--cert", cert),
             ("--key", key),
+            ("--auth-file", auth_file),
         )
         if path is not None
     ]
@@ -110,9 +112,13 @@ def relay_run_cmd(
     # the cockpit build tooling), which would make this run materialize
     # node_modules next to the config -- inside site-packages under a wheel.
     allow_read = ",".join([str(web_dir), *(str(path) for _, path in paths)])
+    # --v8-flags=--expose-gc: the relay forces a GC on every reap tick because
+    # Deno 2.6.10 ends a WebTransport send stream only when GC finalizes it
+    # without it viewers run out of stream credit and video freezes for seconds.
     cmd = [
         deno,
         "run",
+        "--v8-flags=--expose-gc",
         "--frozen",
         "--node-modules-dir=none",
         f"--allow-read={allow_read}",

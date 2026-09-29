@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ChannelStore, type Session, StatusStore } from "@dimos/sdk";
@@ -34,6 +34,18 @@ const IMAGE: ChannelSpec = {
   publish: "none",
   requiredScope: null,
 };
+
+// A *.lcm.v1 channel decodes from the schema in its params; one without a
+// usable schema has no decoder at all.
+const LCM_POSE: ChannelSpec = {
+  ...ODOM,
+  ch: "lcm_pose",
+  encoding: "geometry_msgs.PoseStamped.lcm.v1",
+  params: {
+    lcm: { type: "t.P", fp: "0011223344556677", structs: { "t.P": [["x", "double", null]] } },
+  },
+};
+const LCM_BROKEN: ChannelSpec = { ...ODOM, ch: "lcm_bad", encoding: "t.Q.lcm.v1" };
 
 function mf(channels: ChannelSpec[], panels: PanelSpec[] = []): Manifest {
   return { version: 1, channels, panels, layout: null, pages: [] };
@@ -94,6 +106,29 @@ describe("App session states", () => {
   };
   const switchButton = () => container.querySelector<HTMLElement>('[data-testid="switch-robot"]');
   const panel = () => container.querySelector('[data-testid="panel-cam"]');
+
+  it("shows *.lcm.v1 rows from their manifest schema, not a registered decoder", () => {
+    act(() => {
+      status.update({ watchedRobot: ROBOT, robots: [ROBOT] });
+      status.update({ manifest: mf([LCM_POSE, LCM_BROKEN]) });
+      channels.ingest(
+        "lcm_pose",
+        { ch: "lcm_pose", seq: 3, ts: 0.3, delivery: "reliable" },
+        { x: 1.5 },
+        true,
+        "{x: 1.5}",
+      );
+      channels.publishUi();
+    });
+    view("channels");
+    expect(container.querySelector('[data-testid="ch-lcm_pose-seq"]')!.textContent).toBe("3");
+    expect(container.querySelector('[data-testid="ch-lcm_pose-value"]')!.textContent).toContain(
+      "{x: 1.5}",
+    );
+    expect(container.querySelector('[data-testid="ch-lcm_bad-value"]')!.textContent).toContain(
+      "no decoder for t.Q.lcm.v1",
+    );
+  });
 
   it("waits for a robot, shows its channels, and clears them when it leaves", () => {
     expect(container.textContent).toContain("Waiting for a robot");
@@ -440,5 +475,59 @@ describe("App session states", () => {
   it("shows the terminal failure reason", () => {
     act(() => status.update({ transport: { phase: "failed", reason: "protocol mismatch" } }));
     expect(container.textContent).toContain("Connection failed: protocol mismatch");
+  });
+
+  describe("relay auth", () => {
+    let reload: MockInstance<() => void>;
+
+    beforeEach(() => {
+      // happy-dom's reload navigates for real; the App only needs the call.
+      reload = vi.spyOn(location, "reload").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      reload.mockRestore();
+      localStorage.clear();
+    });
+
+    const authFailed = (reason: string) => {
+      act(() => status.update({ transport: { phase: "failed", reason, code: "auth_failed" } }));
+    };
+    const logOut = () => container.querySelector<HTMLElement>('[data-testid="log-out"]');
+
+    it("shows the token form for auth_failed with the relay's message", () => {
+      authFailed("missing viewer token");
+      expect(container.querySelector('[data-testid="token-message"]')?.textContent).toBe(
+        "missing viewer token",
+      );
+      expect(container.textContent).not.toContain("Connection failed");
+      expect(logOut()).toBeNull();
+    });
+
+    it("submitting the form stores the token and reloads", () => {
+      authFailed("invalid viewer token");
+      const input = container.querySelector<HTMLInputElement>('[data-testid="token-input"]')!;
+      act(() => {
+        // React tracks controlled inputs through the value setter; go around it.
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+          input,
+          "tok-en",
+        );
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      act(() => {
+        input.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      });
+      expect(localStorage.getItem("dimos.cockpit.token")).toBe("tok-en");
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it("offers 'log out' only with a stored token; it forgets the token and reloads", () => {
+      localStorage.setItem("dimos.cockpit.token", "tok-en");
+      act(() => root.render(<App session={session} />));
+      act(() => logOut()!.click());
+      expect(localStorage.getItem("dimos.cockpit.token")).toBeNull();
+      expect(reload).toHaveBeenCalledTimes(1);
+    });
   });
 });

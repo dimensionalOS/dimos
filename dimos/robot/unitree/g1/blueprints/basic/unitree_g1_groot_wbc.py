@@ -74,8 +74,8 @@ from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.g1_rerun import (
     G1_RERUN_ROOT,
@@ -552,7 +552,7 @@ _coordinator = _G1GrootCoordinator.blueprint(
         ("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
         # Real-hw only: the transport_lcm adapter speaks to
         # G1WholeBodyConnection over these topics. autoconnect already
-        # matches by (name, type) so sim doesn't need them -- they're
+        # matches by (name, type) so sim doesn't need them; they're
         # harmless when the sim engine doesn't expose those ports.
         ("motor_states", JointState): LCMTransport("/g1/motor_states", JointState),
         ("imu", Imu): LCMTransport("/g1/imu", Imu),

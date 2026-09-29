@@ -22,8 +22,16 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+import platform
+import sys
 
 import pytest
+
+# The tests extra excludes yourdfpy on Linux ARM because embreex has no wheel.
+if sys.platform == "linux" and platform.machine() == "aarch64":
+    pytest.importorskip(
+        "yourdfpy", reason="yourdfpy is unavailable in the Linux ARM test environment"
+    )
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition

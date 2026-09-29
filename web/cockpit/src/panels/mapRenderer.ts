@@ -132,6 +132,27 @@ export function gridBlit(
   };
 }
 
+export type PathPoint = [number, number];
+export const PATH_COLOR = "#3fb950";
+const PATH_PX = 2;
+
+export function drawPath(
+  ctx: CanvasRenderingContext2D,
+  t: MapTransform,
+  points: PathPoint[],
+  dpr = 1,
+): void {
+  ctx.beginPath();
+  points.forEach(([wx, wy], i) => {
+    const [cx, cy] = worldToCanvas(t, wx, wy);
+    if (i === 0) ctx.moveTo(cx, cy);
+    else ctx.lineTo(cx, cy);
+  });
+  ctx.strokeStyle = PATH_COLOR;
+  ctx.lineWidth = PATH_PX * dpr;
+  ctx.stroke();
+}
+
 export const POSE_COLOR = "#ff5c5c";
 // Triangle length in CSS pixels: screen-constant so the marker stays legible
 // however far the fit zooms out. The canvas backing store is DPR-scaled, so

@@ -96,6 +96,20 @@ def test_global_config_flag_applies_before_subcommand():
         global_config.update(transport=original)
 
 
+def test_show_config_masks_secrets():
+    # A config dump gets pasted into chats and bug reports: keys print as ***.
+    original = global_config.relay_key
+    try:
+        result = CliRunner().invoke(
+            main, ["--relay-key", "robot-key-0123456789abcdef", "show-config"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "relay_key: ***" in result.output
+        assert "robot-key-0123456789abcdef" not in result.output
+    finally:
+        global_config.update(relay_key=original)
+
+
 def test_run_composition_leaves_blueprint_alone_when_relay_disabled() -> None:
     class Config(ModuleConfig):
         pass

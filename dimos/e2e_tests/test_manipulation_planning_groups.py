@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Large E2E tests for manipulation planning groups with a coordinator.
+"""E2E tests for manipulation planning groups with a coordinator.
 
 These tests launch a real ManipulationModule + ControlCoordinator blueprint and
-exercise the public planning RPCs, matching the self-hosted large-test
-style used by the navigation stack.
+exercise the public planning RPCs.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ from dimos.manipulation.manipulation_spec import (
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
 
-pytestmark = [pytest.mark.self_hosted_large]
+pytestmark = [pytest.mark.self_hosted]
 
 JOINT_STATE_TOPIC = "/coordinator_joint_state#sensor_msgs.JointState"
 BLUEPRINT = "openarm-planner-coordinator"

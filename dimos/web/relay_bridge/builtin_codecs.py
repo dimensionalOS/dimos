@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Built-in web codecs (jpeg.v1, pose.json.v1, costmap.zlib.v1, text.json.v1,
-stats.json.v1).
+"""Built-in web codecs (jpeg.v1, pose.json.v1, costmap.zlib.v1, voxels.zlib.v1,
+text.json.v1, stats.json.v1, path.json.v1, point.json.v1, bool.json.v1).
 
 Registered into dimos.web.codecs at import time; relay_bridge_module imports
 this module so every bridge process (parent and worker) has the built-ins.
-Wire bytes are pinned by web/shared/fixtures/costmap_frames.json and the
-relay e2e tests; the matching JS decoders live in web/sdk/src/decoders/.
+Wire bytes are pinned by web/shared/fixtures/costmap_frames.json,
+voxel_frames.json and the relay e2e tests; the matching JS decoders live in
+web/sdk/src/decoders/.
 """
 
 from collections.abc import Mapping
@@ -26,11 +27,17 @@ import json
 from typing import Any
 import zlib
 
+from dimos_lcm.std_msgs import Bool
 import numpy as np
 
+from dimos.mapping.voxels.keys import KEY_OFFSET, pack_indices, unpack_keys
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.utils.generic import finite_number
 from dimos.web.codecs import EncodedPayload, web_decoder, web_encoder
 
 # Custom jpeg channels authored without a quality param; the built-in
@@ -77,6 +84,29 @@ def encode_pose(msg: PoseStamped) -> bytes:
     return json.dumps(pose, separators=(",", ":")).encode()
 
 
+@web_encoder("path.json.v1")
+def encode_path(msg: Path) -> bytes:
+    # Empty paths must reach the viewer to clear the overlay.
+    points = [[round(p.x, 3), round(p.y, 3)] for p in msg.poses]
+    return json.dumps(points, separators=(",", ":"), allow_nan=False).encode()
+
+
+@web_decoder("point.json.v1")
+def decode_point(msg: dict[str, Any]) -> PointStamped:
+    if not isinstance(msg, dict):
+        raise ValueError(f"point.json.v1 wants an object, got {type(msg).__name__}")
+    return PointStamped(
+        finite_number(msg.get("x"), "x"), finite_number(msg.get("y"), "y"), frame_id="world"
+    )
+
+
+@web_decoder("bool.json.v1")
+def decode_bool(msg: bool) -> Bool:
+    if not isinstance(msg, bool):
+        raise ValueError(f"bool.json.v1 wants a boolean, got {type(msg).__name__}")
+    return Bool(data=msg)
+
+
 # The historical costmap encoder's choice (websocket_vis/optimized_costmap.py);
 # full grids compress to ~10-30 KB at <= 5 Hz, so speed over ratio is fine.
 _COSTMAP_ZLIB_LEVEL = 6
@@ -112,6 +142,77 @@ def encode_costmap(msg: OccupancyGrid) -> EncodedPayload | None:
         "origin": [origin.position.x, origin.position.y, origin.yaw],
     }
     return EncodedPayload(zlib.compress(cells, _COSTMAP_ZLIB_LEVEL), meta)
+
+
+# voxels.zlib.v1: a PointCloud2 as voxel occupancy bits. Points are quantized
+# to `res` (the mapper's own voxel size by default, so voxel centres land back
+# in their cell), grouped into 16^3 chunks, and every non-empty chunk is one
+# 524-byte record: int32 LE chunk coords, then 512 bytes of bits indexed
+# (lz * 16 + ly) * 16 + lx in little-endian bit order. zlib over the records
+# costs ~0.3 bytes per voxel on a real map (103 KB for the 408k-voxel
+# big_office cloud) against 16 bytes per point for the LCM encoding. The
+# cockpit decoder (voxels.ts) mirrors the caps; a cloud over budget is
+# coarsened (res doubled) until it fits, the costmap's block-max idea in 3D.
+# An empty cloud is data, not a warm-up gap: it encodes to zero records so a
+# filtered-out or cleared map clears the panel (the costmap's None is for a
+# grid that does not exist yet).
+_VOXEL_CHUNK_SHIFT = 4
+_VOXEL_CHUNK = 1 << _VOXEL_CHUNK_SHIFT
+_VOXEL_CHUNK_BITS = _VOXEL_CHUNK**3
+_VOXEL_RECORD = np.dtype(
+    [("cx", "<i4"), ("cy", "<i4"), ("cz", "<i4"), ("bits", "u1", (_VOXEL_CHUNK_BITS // 8,))]
+)
+_VOXEL_MAX_VOXELS = 1_000_000
+_VOXEL_MAX_CHUNKS = 32_768
+_VOXEL_ZLIB_LEVEL = 6
+_DEFAULT_VOXEL_RES = 0.05
+
+
+def _check_voxel_params(params: Mapping[str, Any]) -> None:
+    res = params.get("res")
+    if res is not None and finite_number(res, "res") <= 0:
+        raise ValueError(f"res must be positive, got {res!r}")
+
+
+def _voxel_keys(idx: np.ndarray) -> np.ndarray:
+    """Sorted unique int64 keys of (N, 3) voxel indices (the mapping voxel
+    key layout, which wants biased indices)."""
+    return np.unique(pack_indices(idx + KEY_OFFSET))
+
+
+@web_encoder("voxels.zlib.v1", check_params=_check_voxel_params)
+def encode_voxels(msg: PointCloud2, params: Mapping[str, Any]) -> EncodedPayload:
+    res = float(params.get("res", _DEFAULT_VOXEL_RES))
+    pts = msg.points_f32()
+    pts = pts[np.isfinite(pts).all(axis=1)]
+    idx = np.floor(pts / res).astype(np.int64)
+    # Indices live in the key's 21-bit fields (+-52 km at 5 cm); beyond that
+    # a point is dropped.
+    idx = idx[(np.abs(idx) < KEY_OFFSET).all(axis=1)]
+    keys = _voxel_keys(idx)
+    while True:
+        idx = unpack_keys(keys)
+        chunk_keys, chunk_of = np.unique(
+            pack_indices((idx >> _VOXEL_CHUNK_SHIFT) + KEY_OFFSET), return_inverse=True
+        )
+        if len(keys) <= _VOXEL_MAX_VOXELS and len(chunk_keys) <= _VOXEL_MAX_CHUNKS:
+            break
+        keys = _voxel_keys(idx >> 1)
+        res *= 2
+    local = idx & (_VOXEL_CHUNK - 1)
+    bit = (local[:, 2] * _VOXEL_CHUNK + local[:, 1]) * _VOXEL_CHUNK + local[:, 0]
+    # Bytes of the bit masks: sort the (chunk, bit) positions, then OR each
+    # byte's bits in one reduceat instead of a dense (chunks, 4096) array.
+    pos = np.sort(chunk_of.astype(np.int64) * _VOXEL_CHUNK_BITS + bit)
+    byte_index, first = np.unique(pos >> 3, return_index=True)
+    masks = np.zeros(len(chunk_keys) * (_VOXEL_CHUNK_BITS // 8), dtype=np.uint8)
+    masks[byte_index] = np.bitwise_or.reduceat((1 << (pos & 7)).astype(np.uint8), first)
+    chunks = unpack_keys(chunk_keys)
+    records = np.empty(len(chunk_keys), dtype=_VOXEL_RECORD)
+    records["cx"], records["cy"], records["cz"] = chunks[:, 0], chunks[:, 1], chunks[:, 2]
+    records["bits"] = masks.reshape(-1, _VOXEL_CHUNK_BITS // 8)
+    meta = {"res": res, "n": len(keys), "chunks": len(chunk_keys)}
+    return EncodedPayload(zlib.compress(records.tobytes(), _VOXEL_ZLIB_LEVEL), meta)
 
 
 # stats.json.v1: the resource monitor's /resource_stats dict (asdict of

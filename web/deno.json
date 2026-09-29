@@ -11,7 +11,8 @@
   "nodeModulesDir": "auto",
   "imports": {
     "@std/assert": "jsr:@std/assert@^1",
-    "@std/cli": "jsr:@std/cli@^1"
+    "@std/cli": "jsr:@std/cli@^1",
+    "@std/crypto": "jsr:@std/crypto@^1"
   },
   "tasks": {
     "dev": "deno run --allow-net --allow-read relay/main.ts",

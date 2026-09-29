@@ -16,10 +16,18 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from pathlib import Path
+import platform
+import sys
 from typing import Any, cast
 
 import numpy as np
 import pytest
+
+# The tests extra excludes yourdfpy on Linux ARM because embreex has no wheel.
+if sys.platform == "linux" and platform.machine() == "aarch64":
+    pytest.importorskip(
+        "yourdfpy", reason="yourdfpy is unavailable in the Linux ARM test environment"
+    )
 
 from dimos.manipulation.planning.utils.point_cloud_self_filter import PointCloudSelfFilter
 from dimos.msgs.geometry_msgs.Transform import Transform

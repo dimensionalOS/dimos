@@ -16,7 +16,8 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--robot-ips` | TEXT | `None` | Multiple robot IPs |
 | `--simulation` / `--no-simulation` | bool | `False` | Enable MuJoCo simulation |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
-| `--replay-db` | TEXT | `go2_bigoffice` | Replay memory SQLite database name |
+| `--replay-db` | TEXT | `go2_short` | Replay memory SQLite database name |
+| `--replay-exit` / `--no-replay-exit` | bool | `False` | Exit once every replay stream finishes |
 | `--record [sqlite\|mcap]` | `sqlite\|mcap` | off | Record selected streams to one artifact; bare `--record` means SQLite ([Recording](/docs/usage/recording.md)) |
 | `--record-engine` | `python\|rust` | `python` | Recording implementation; Rust is experimental and never selected implicitly |
 | `--record-topics` | TEXT | `*` | Comma-separated globs on stream names to record |
@@ -45,6 +46,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--mujoco-global-map-from-pointcloud` | TEXT | `None` | Generate map from point cloud |
 | `--mujoco-start-pos` | TEXT | `-1.0, 1.0` | MuJoCo robot start position |
 | `--mujoco-steps-per-frame` | INT | `7` | MuJoCo simulation steps per frame |
+| `--mujoco-shadows` | `auto\|on\|off` | `auto` | MuJoCo shadow mapping. `auto` benchmarks one shadowed render at startup and disables shadows when it exceeds 30% of the video frame budget; `on` and `off` skip the benchmark |
 
 ### Configuration Precedence
 
@@ -78,6 +80,8 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...] [--<
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
 | `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--voxelgridmapper.voxel-size=1` |
+| `--local-relay` | Start a relay on this machine and open the cockpit in the browser (see [Web](/docs/web/index.md)) |
+| `--relay-url` | Connect the robot to a relay started elsewhere, by its HTTP URL; `--relay-ca` adds a private CA and `RELAY_KEY` the robot's key (see [Bridge](/docs/web/bridge.md#robot-side-options)) |
 | `--help` | Display the run options and available blueprint configuration flags |
 
 Dynamic values accept both `--field=value` and `--field value`. A shorthand is

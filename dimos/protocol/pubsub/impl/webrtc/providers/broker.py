@@ -125,7 +125,7 @@ class BrokerProvider(AsyncProviderBase):
                 "BrokerConfig.api_key required "
                 "(set --transports.broker.api-key=dimos_sk_... or "
                 "TRANSPORTS__BROKER__API_KEY=dimos_sk_...; "
-                "create one in the teleop dashboard: New Key)"
+                "create one in the Dimensional console: API keys -> Create key)"
             )
         self._broker_url = config.broker_url.rstrip("/")
         self._api_key = config.api_key

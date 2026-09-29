@@ -15,6 +15,7 @@
 from collections.abc import Callable
 import hashlib
 import json
+import math
 import os
 import socket
 import string
@@ -71,6 +72,13 @@ def extract_json_from_llm_response(response: str) -> Any:
             pass
 
     return None
+
+
+def finite_number(value: Any, name: str) -> float:
+    """Validate an untrusted JSON number: not a bool, not a string, finite."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number, got {value!r}")
+    return float(value)
 
 
 def short_id(from_string: str | None = None) -> str:

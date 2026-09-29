@@ -171,6 +171,13 @@ def pytest_sessionstart(session):
     _arm_crash_dumps()
 
 
+def pytest_ignore_collect(collection_path: pathlib.Path) -> bool | None:
+    # Nested Python projects own their dependencies and test invocation.
+    if collection_path.is_dir() and (collection_path / "pyproject.toml").is_file():
+        return True
+    return None
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
@@ -182,7 +189,8 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "web_browser: cockpit browser e2e (playwright chromium); runs in the CI web job",
+        "web_browser: cockpit browser e2e (playwright chromium + firefox); "
+        "runs in the CI web job and the macOS self-hosted-tests job",
     )
     config.addinivalue_line(
         "markers",

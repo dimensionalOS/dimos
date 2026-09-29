@@ -40,6 +40,11 @@ class Environment(Configurable, ABC):
         """Whether this environment supplies an MCP server without agent modules."""
         return False
 
+    @property
+    def provides_raw_robot(self) -> bool:
+        """Whether the robot is also exposed as plain topics for agents without dimOS."""
+        return False
+
     def preflight(self, agent: Agent) -> None:
         """Check compatibility before any environment starts."""
         return None

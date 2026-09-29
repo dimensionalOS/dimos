@@ -25,6 +25,10 @@ import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
+)
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
@@ -344,11 +348,14 @@ def test_gui_completion_enables_next_plan_without_cancel(executable_gui, module_
     gui, submissions, _execute = executable_gui
     module = module_factory()
     mocker.patch.object(gui, "operator", ManipulationOperator(module, mocker.Mock()))
-    status = mocker.patch.object(
-        module._control_coordinator,
-        "task_invoke",
-        return_value=TrajectoryStatus(state=TrajectoryState.EXECUTING),
-    )
+    reported = {"state": TrajectoryState.EXECUTING}
+
+    def invoke(task, method, args=None):
+        if method == "execute":
+            return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+        return TrajectoryStatus(state=reported["state"])
+
+    mocker.patch.object(module._control_coordinator, "task_invoke", side_effect=invoke)
     cancel = mocker.spy(module, "cancel")
 
     gui._submit_execute()
@@ -359,7 +366,7 @@ def test_gui_completion_enables_next_plan_without_cancel(executable_gui, module_
     assert gui.state.can_cancel() is True
     assert gui.state.plan_state == PanelPlanState()
 
-    status.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    reported["state"] = TrajectoryState.COMPLETED
     gui._refresh_model_state()
 
     assert gui.state.manipulation_state == "COMPLETED"
@@ -771,3 +778,32 @@ def test_gui_ignores_stale_timed_out_operation_finish() -> None:
 
     assert gui.state.action_status == ActionStatus.FAILED
     assert gui.state.error == "Operation timed out after 5.0s"
+
+
+def test_execute_rejection_reports_coordinator_reason(executable_gui, module_factory, mocker):
+    gui, submissions, _execute = executable_gui
+    module = module_factory()
+    mocker.patch.object(gui, "operator", ManipulationOperator(module, mocker.Mock()))
+    reason = "Trajectory start for joint arm/j0 differs from current position by 0.1"
+    mocker.patch.object(
+        module._control_coordinator,
+        "task_invoke",
+        return_value=TrajectoryExecutionResult(
+            TrajectoryExecutionStatus.START_STATE_MISMATCH, reason
+        ),
+    )
+    warning = mocker.patch("dimos.manipulation.manipulation_module.logger.warning")
+    plan = gui.state.plan_state.plan
+
+    gui._submit_execute()
+    submissions[0]()
+    gui._refresh_model_state()
+
+    assert gui.state.last_result == "execute=False"
+    assert gui.state.error == reason
+    warning.assert_called_once_with(
+        "Viser plan execution rejected",
+        plan_id=plan.plan_id,
+        status="REJECTED",
+        reason=reason,
+    )

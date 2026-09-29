@@ -14,8 +14,8 @@
 
 """Demos: a SLAM consumer fed by a VirtualMid360 replaying a pcap (live SDK path).
 
-Each module reads its own config from env vars (DIMOS_MID360_* for the sensor,
-DIMOS_FASTLIO_* / DIMOS_POINTLIO_* for the consumer); set the lidar/host IPs so
+Each module has its own lidar/host IP config (MID360__LIDAR_IP=... in the
+environment for the sensor, FASTLIO2__ / POINTLIO__ for the consumer); set them so
 the two ends agree.
 """
 

@@ -53,6 +53,7 @@ G1_TELEOP_ARM_MODEL = (
         {_urdf_joint_name(joint_name): joint_name for joint_name in _G1_TELEOP_MODEL_JOINTS}
     )
     .with_fixed_joints(*(_urdf_joint_name(name) for name in G1_WAIST_JOINTS))
+    .with_default_joint_acceleration_limit(2.0)
 )
 
 
