@@ -425,20 +425,17 @@ sensor streams and navigation streams supplied by the composed blueprint.
 The metadata's `point_cloud_source` describes how Habitat scans are generated
 (depth unprojection), not whether scan publication is enabled.
 
-For MuJoCo, a case names a robot blueprint and, optionally, a `scene`: one MJCF with
-the world and its objects, into which the sim attaches the robot's own MJCF at load.
-Any robot blueprint pairs with any scene. The environment launches
-`dimos --simulation mujoco --record run <blueprint> <modules>` headless;
-`MUJOCOSIMMODULE__HEADLESS=false` in the shell opens the viewer on Linux.
-Manipulation graders need ground-truth object poses: `tracked_bodies` names bodies in
-the composed model, and the simulator publishes `world -> <body>` on `tf` next to its
-camera frames. `first_body_transform` and `last_body_transform` read them back from
-the recording:
+For MuJoCo, the blueprint brings its own `MujocoSimModule` and scene, so the
+environment only launches `dimos --simulation mujoco --record run <blueprint>
+<modules>` headless; `MUJOCOSIMMODULE__HEADLESS=false` in the shell opens the viewer on
+Linux. Manipulation graders need ground-truth object poses:
+`tracked_bodies` names free bodies in the MJCF, and the simulator publishes
+`world -> <body>` on `tf` next to its camera frames. `first_body_transform` and
+`last_body_transform` read them back from the recording:
 
 ```python session=evals ansi=false no-result
 from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
-from dimos.robot.manipulators.xarm.config import XARM7_TABLETOP_SCENE
 
 
 def lifted_apple(o):
@@ -452,9 +449,9 @@ lift_apple = EvalCase(
     id="lift_apple",
     inputs="Pick up the apple and hold it in the air above the table.",
     environment=MujocoEnvironment(
-        blueprint=["xarm-perception-sim", "mcp-server", "observe-skill"],
-        scene=XARM7_TABLETOP_SCENE,
-        tracked_bodies=("apple",),
+        blueprint=["xarm-perception-sim", "mcp-server"],
+        disable=("rerun-bridge-module",),
+        tracked_bodies=("apple", "orange", "cup"),
     ),
     grade=lifted_apple,
     timeout_s=600.0,
@@ -465,12 +462,13 @@ A fixed-base arm has no odometry, so readiness waits for fresh `color_image`
 and `coordinator_joint_state` plus a pose for every tracked body, and settling
 waits until every joint is slower than `at_rest_rad_s`. Floating-base robots
 still settle on `odom`. The recording keeps color, camera info, joint state,
-`tf` and `odom`; depth frames are float32, which the JPEG recorder rejects.
-`module_env` passes extra `MODULE__FIELD` overrides to the launched dimos, which
-beat blueprint-pinned values, so a case can retune a module without a new blueprint.
-`dimos.evals.suites.mujoco_xarm` runs `xarm-perception-sim` on the tabletop scene
-with its perception modules disabled: pick up the cylinder, then put the red ball
-on top of it.
+`tf` and `odom`; depth frames are float32, which the JPEG recorder rejects. `module_env` passes extra
+`MODULE__FIELD` overrides to the launched dimos, which beat blueprint-pinned
+values, so a case can retune a module without a new blueprint. `scene` passes
+`--mujoco-scene`: a full MJCF, robot included, that `xarm-perception-sim` loads
+instead of its default `scene.xml`.
+`dimos.evals.suites.mujoco_xarm` is the xArm7 table scene with the perception
+modules disabled: pick up the cylinder, then put the red ball on top of it.
 
 ## Running
 

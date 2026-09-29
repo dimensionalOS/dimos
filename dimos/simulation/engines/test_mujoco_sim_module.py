@@ -21,14 +21,12 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
-import mujoco
 import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
-from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
 
 
 class _FakeData:
@@ -310,43 +308,6 @@ def test_reset_waiters_are_released_when_reset_requests_are_coalesced(tmp_path: 
         engine.disconnect()
 
 
-@pytest.mark.mujoco
-def test_fixed_robot_composes_into_a_scene_with_objects(tmp_path: Path) -> None:
-    scene_xml = tmp_path / "scene.xml"
-    robot_xml = tmp_path / "robot.xml"
-    scene_xml.write_text(
-        """
-<mujoco model="scene">
-  <worldbody>
-    <body name="ball" pos="1 0 0.1"><freejoint/><geom type="sphere" size="0.05" mass="0.1"/></body>
-  </worldbody>
-</mujoco>
-""".strip()
-    )
-    robot_xml.write_text(
-        """
-<mujoco model="arm">
-  <worldbody>
-    <body name="link" pos="0 0 0.1">
-      <joint name="hinge" type="hinge" axis="0 0 1"/>
-      <geom type="sphere" size="0.04" mass="1.0"/>
-    </body>
-  </worldbody>
-  <keyframe><key name="home" qpos="0.5"/></keyframe>
-</mujoco>
-""".strip()
-    )
-    module = MujocoSimModule(scene_xml=scene_xml, robot_mjcf=robot_xml)
-    try:
-        model = module._compose_model()
-        assert model.nkey == 0
-        assert int(model.jnt_type[0]) == int(mujoco.mjtJoint.mjJNT_FREE)
-        engine = MujocoEngine(config_path=robot_xml, headless=True, model=model)
-        assert not engine.has_root_freejoint
-    finally:
-        module.stop()
-
-
 def _write_scene_xml(path: Path) -> None:
     path.write_text(
         """
@@ -483,17 +444,7 @@ def test_compose_model_attaches_robot_before_scene_entities(tmp_path: Path) -> N
         assert robot_free[1] == 0
         assert entity_free[1] > robot_free[1]
 
-        engine = MujocoEngine(
-            config_path=robot_xml,
-            headless=True,
-            model=model,
-            robot_sim_spec=RobotSimSpec(
-                robot_id="",
-                hardware_joints=("hinge",),
-                model_joint_names=("hinge",),
-                root_joint_names=("floating_base_joint",),
-            ),
-        )
+        engine = MujocoEngine(config_path=robot_xml, headless=True, model=model)
         assert engine.model is model
         assert engine.root_qpos_adr == 0
         assert any(name.endswith("hinge") for name in engine.joint_names)
@@ -535,13 +486,7 @@ def test_compose_model_reuses_entity_mesh_assets(tmp_path: Path) -> None:
 def freejoint_engine(tmp_path: Path) -> Iterator[MujocoEngine]:
     robot_xml = tmp_path / "freejoint.xml"
     _write_freejoint_xml(robot_xml)
-    engine = MujocoEngine(
-        config_path=robot_xml,
-        headless=True,
-        robot_sim_spec=RobotSimSpec(
-            robot_id="", hardware_joints=(), root_joint_names=("floating_base_joint",)
-        ),
-    )
+    engine = MujocoEngine(config_path=robot_xml, headless=True)
     assert engine.connect() is True
     try:
         yield engine

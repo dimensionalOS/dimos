@@ -57,6 +57,10 @@ def test_launch_flags(monkeypatch):
     environment().configure_launch(proc)
     assert "MUJOCOSIMMODULE__TRACKED_BODIES" not in proc.extra_env
 
+    proc = DimosCliCall()
+    environment(scene=Path("scenes/table.xml")).configure_launch(proc)
+    assert proc.global_args[-2:] == ["--mujoco-scene", str(Path("scenes/table.xml").resolve())]
+
     monkeypatch.setenv("MUJOCOSIMMODULE__HEADLESS", "false")
     proc = DimosCliCall()
     environment(
@@ -65,29 +69,27 @@ def test_launch_flags(monkeypatch):
     assert proc.extra_env["MUJOCOSIMMODULE__HEADLESS"] == "false"
     assert proc.extra_env["OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND"] == "yoloe"
 
-    proc = DimosCliCall()
-    environment(scene=Path("scenes/table.xml")).configure_launch(proc)
-    assert proc.extra_env["MUJOCOSIMMODULE__SCENE_XML"] == str(Path("scenes/table.xml").resolve())
 
-
-def test_overrides_reach_the_xarm_blueprint(monkeypatch, tmp_path):
+def test_module_env_reaches_blueprint_parser(monkeypatch):
     monkeypatch.delenv("MUJOCOSIMMODULE__HEADLESS", raising=False)
     from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
     from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
 
-    scene = tmp_path / "scene.xml"
     proc = DimosCliCall()
     environment(
-        tracked_bodies=("ball",),
-        scene=scene,
-        module_env={"MANIPULATIONMODULE__PLANNING_TIMEOUT": "5"},
+        tracked_bodies=("apple", "cup"),
+        module_env={
+            "OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND": "owlv2",
+            "OBJECTSCENEREGISTRATIONMODULE__SEGMENTATION_BACKEND": "yolo",
+        },
     ).configure_launch(proc)
     parsed = BlueprintConfigParser(xarm_perception_sim).parse(environ=proc.extra_env)
-    assert parsed.module_kwargs("manipulationmodule")["planning_timeout"] == 5.0
+    perception = parsed.module_kwargs("objectsceneregistrationmodule")
+    assert perception["detector_backend"] == "owlv2"
+    assert perception["segmentation_backend"] == "yolo"
     sim = parsed.module_kwargs("mujocosimmodule")
     assert sim["headless"] is True
-    assert sim["tracked_bodies"] == ["ball"]
-    assert str(sim["scene_xml"]) == str(scene.resolve())
+    assert sim["tracked_bodies"] == ["apple", "cup"]
 
 
 def test_latest_pose_needs_odom():

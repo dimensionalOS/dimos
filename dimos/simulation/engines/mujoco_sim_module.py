@@ -629,9 +629,6 @@ class MujocoSimModule(
                 spec_scene = mujoco.MjSpec()
 
             spec_robot = mujoco.MjSpec.from_file(str(self.config.robot_mjcf))
-            # A robot keyframe spans only the robot's qpos; the scene's own joints make it the wrong size.
-            for key in list(spec_robot.keys):
-                spec_robot.delete(key)
             if self.config.robot_meshdir is not None:
                 spec_robot.meshdir = str(self.config.robot_meshdir)
 

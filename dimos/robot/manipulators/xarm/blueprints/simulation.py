@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
@@ -25,8 +26,7 @@ from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
-    XARM7_ROBOT_MJCF,
-    XARM7_TABLETOP_SCENE,
+    XARM7_SIM_PATH,
     make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
@@ -35,7 +35,9 @@ from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 _xarm7_sim_model = make_xarm7_sim_robot_config()
-_xarm7_sim_hw = make_xarm7_sim_hardware(XARM7_ROBOT_MJCF)
+# One path for both: the sim and the coordinator key their shared-memory link on it.
+_xarm7_sim_scene = global_config.mujoco_scene or XARM7_SIM_PATH
+_xarm7_sim_hw = make_xarm7_sim_hardware(_xarm7_sim_scene)
 
 xarm_perception_sim = autoconnect(
     ManipulationModule.blueprint(
@@ -46,9 +48,7 @@ xarm_perception_sim = autoconnect(
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
     HeuristicGraspModule.blueprint(),
-    MujocoSimModule.blueprint(
-        **make_xarm7_sim_module_kwargs(XARM7_ROBOT_MJCF, scene_xml=XARM7_TABLETOP_SCENE)
-    ),
+    MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(_xarm7_sim_scene)),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
         detector_backend="moondream",

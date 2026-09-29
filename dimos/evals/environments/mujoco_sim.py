@@ -52,6 +52,8 @@ class MujocoEnvironment(Sim):
     def configure_launch(self, proc: DimosCliCall) -> None:
         proc.simulator = "mujoco"
         proc.global_args = ["--record-topics", ",".join(_RECORDED_TOPICS)]
+        if self.config.scene is not None:
+            proc.global_args += ["--mujoco-scene", str(self.config.scene.resolve())]
         proc.extra_env.update(self.config.module_env)
         proc.extra_env.setdefault(
             "MUJOCOSIMMODULE__HEADLESS", os.environ.get("MUJOCOSIMMODULE__HEADLESS", "true")
@@ -60,8 +62,6 @@ class MujocoEnvironment(Sim):
             proc.extra_env["MUJOCOSIMMODULE__TRACKED_BODIES"] = json.dumps(
                 list(self.config.tracked_bodies)
             )
-        if self.config.scene is not None:
-            proc.extra_env["MUJOCOSIMMODULE__SCENE_XML"] = str(self.config.scene.resolve())
 
     def prepare_recording(self, recording: Store, path: Path, deadline: float) -> dict[str, Path]:
         self.wait_ready(recording, deadline=deadline)

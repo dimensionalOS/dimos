@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""xArm7 at the tabletop scene with a red ball and a cylinder: two picks, planner skills
-and the wrist camera only, graded on the objects' recorded poses.
+"""xArm7 at a table with a red ball (``apple``) and a cylinder (``cup``): two picks,
+planner skills and the wrist camera only, graded on the bodies' recorded poses.
 
     dimos evals run dimos.evals.suites.mujoco_xarm --agent dimos.evals.agents.pi
 """
@@ -27,7 +27,7 @@ from dimos.evals.environments.lib.recorded_poses import first_body_transform, la
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.scorers import ramp
 from dimos.evals.types import EvalCase, Outcome, Suite, recording
-from dimos.robot.manipulators.xarm.config import XARM7_TABLETOP_SCENE
+from dimos.robot.manipulators.xarm.config import XARM7_SIM_PATH
 
 TRACKED = ("apple", "cup")
 
@@ -51,7 +51,7 @@ def environment() -> MujocoEnvironment:
     return MujocoEnvironment(
         blueprint=["xarm-perception-sim", "mcp-server", "observe-skill"],
         disable=PERCEPTION_MODULES,
-        scene=XARM7_TABLETOP_SCENE,
+        scene=XARM7_SIM_PATH,
         tracked_bodies=TRACKED,
     )
 
