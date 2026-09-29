@@ -18,12 +18,14 @@ import asyncio
 from collections.abc import Callable, Iterable
 import functools
 import inspect
+import threading
 from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.coordination.python_worker import Actor, MethodCallProxy
 from dimos.core.stream import RemoteStream
 from dimos.core.transport_factory import rpc_backend
-from dimos.protocol.rpc.spec import RPCSpec
+from dimos.protocol.rpc.jsonrpc import JsonRPC
+from dimos.protocol.rpc.spec import Args, RPCSpec
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -32,23 +34,63 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+def _rpc_signature(method: Callable[..., Any], *, for_pickle: bool = False) -> inspect.Signature:
+    signature = inspect.signature(method)
+    parameters = list(signature.parameters.values())
+    if parameters and parameters[0].name in {"self", "cls"}:
+        parameters = parameters[1:]
+    if for_pickle:
+        parameters = [p.replace(annotation=inspect.Parameter.empty) for p in parameters]
+        return signature.replace(
+            parameters=parameters,
+            return_annotation=inspect.Signature.empty,
+        )
+    return signature.replace(parameters=parameters)
+
+
+def _by_name(signature: inspect.Signature, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Args:
+    """Use named arguments when possible and keep positional-only calls positional."""
+    bound = signature.bind(*args, **kwargs)
+    named: dict[str, Any] = {}
+    for name, value in bound.arguments.items():
+        kind = signature.parameters[name].kind
+        if kind is inspect.Parameter.POSITIONAL_ONLY:
+            positional = list(bound.args)
+            if bound.kwargs:
+                raise TypeError("JSON-RPC calls cannot mix positional and named arguments")
+            return (positional, {})
+        if kind is inspect.Parameter.VAR_KEYWORD:
+            named.update(value)
+        elif kind is inspect.Parameter.VAR_POSITIONAL:
+            return (list(args), kwargs)  # no names to send; a mix is rejected on encoding
+        else:
+            named[name] = value
+    return ([], named)
+
+
 class RpcCall:
     _rpc: RPCSpec | None
+    _rpc_factory: Callable[[], RPCSpec] | None
     _name: str
     _remote_name: str
     _unsub_fns: list  # type: ignore[type-arg]
     _stop_rpc_client: Callable[[], None] | None = None
+    __signature__: inspect.Signature | None = None
 
     def __init__(
         self,
         original_method: Callable[..., Any] | None,
-        rpc: RPCSpec,
+        rpc: RPCSpec | None,
         name: str,
         remote_name: str,
         unsub_fns: list,  # type: ignore[type-arg]
         stop_client: Callable[[], None] | None = None,
+        *,
+        rpc_factory: Callable[[], RPCSpec] | None = None,
+        signature: inspect.Signature | None = None,
     ) -> None:
         self._rpc = rpc
+        self._rpc_factory = rpc_factory
         self._name = name
         self._remote_name = remote_name
         self._unsub_fns = unsub_fns
@@ -58,11 +100,10 @@ class RpcCall:
         self.__qualname__ = f"{self.__class__.__name__}.{name}"
         if original_method is not None:
             functools.update_wrapper(self, original_method)
-            signature = inspect.signature(original_method)
-            parameters = list(signature.parameters.values())
-            if parameters and parameters[0].name in {"self", "cls"}:
-                parameters = parameters[1:]
-            self.__signature__ = signature.replace(parameters=parameters)
+        if signature is not None:
+            self.__signature__ = signature
+        elif original_method is not None:
+            self.__signature__ = _rpc_signature(original_method)
 
     @property
     def rpc_name(self) -> str:
@@ -76,23 +117,32 @@ class RpcCall:
 
     def set_rpc(self, rpc: RPCSpec) -> None:
         self._rpc = rpc
+        self._rpc_factory = None
 
     def __call__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        if not self._rpc:
+        rpc = self._rpc
+        if rpc is None and self._rpc_factory is not None:
+            rpc = self._rpc_factory()
+            self._rpc = rpc
+        if rpc is None:
             logger.warning("RPC client not initialized")
             return None
+
+        arguments = (list(args), kwargs)
+        if rpc.named_params is True and self.__signature__ is not None:
+            arguments = _by_name(self.__signature__, args, kwargs)
 
         # For stop, use call_nowait to avoid deadlock
         # (the remote side stops its RPC service before responding)
         if self._name == "stop":
-            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", (args, kwargs))  # type: ignore[arg-type]
+            rpc.call_nowait(f"{self._remote_name}/{self._name}", arguments)
             if self._stop_rpc_client:
                 self._stop_rpc_client()
             return None
 
-        result, unsub_fn = self._rpc.call_sync(
+        result, unsub_fn = rpc.call_sync(
             f"{self._remote_name}/{self._name}",
-            (args, kwargs),  # type: ignore[arg-type]
+            arguments,
         )
         self._unsub_fns.append(unsub_fn)
         return result
@@ -104,6 +154,7 @@ class RpcCall:
         self._name, self._remote_name = state
         self._unsub_fns = []
         self._rpc = None
+        self._rpc_factory = None
         self._stop_rpc_client = None
 
 
@@ -126,6 +177,7 @@ class RPCClient:
         actor_class: type[ModuleBase] | None,
         remote_name: str | None = None,
         rpcs: Iterable[str] | None = None,
+        native_rpc_signatures: dict[str, inspect.Signature] | None = None,
         *,
         rpc: RPCSpec | None = None,
     ) -> None:
@@ -146,7 +198,17 @@ class RPCClient:
         self.remote_name = remote_name
         self.actor_instance = actor_instance
         self.rpcs = frozenset(rpcs)
+        if native_rpc_signatures is None and actor_class is not None:
+            native_rpc_signatures = {
+                name: _rpc_signature(method, for_pickle=True)
+                for name in self.rpcs
+                if (method := getattr(actor_class, name, None)) is not None
+                and getattr(method, "__native_rpc__", False)
+            }
+        self._native_rpc_signatures = native_rpc_signatures or {}
         self._unsub_fns: list = []  # type: ignore[type-arg]
+        self._native_rpc: RPCSpec | None = None
+        self._native_rpc_lock = threading.Lock()
 
     @classmethod
     def remote(
@@ -168,18 +230,44 @@ class RPCClient:
 
         self._unsub_fns = []
 
+        with self._native_rpc_lock:
+            native, self._native_rpc = self._native_rpc, None
+        if native is not None:
+            native.stop()
+
         if self.rpc and self._owns_rpc:
             self.rpc.stop()
             self.rpc = None  # type: ignore[assignment]
+
+    def _native(self) -> RPCSpec:
+        """JSON-RPC client for @native_rpc methods; every other call stays on self.rpc."""
+        with self._native_rpc_lock:
+            if self._native_rpc is None:
+                native = JsonRPC(
+                    rpc_timeouts=self.rpc.rpc_timeouts,
+                    default_rpc_timeout=self.rpc.default_rpc_timeout,
+                )
+                native.start()  # kept only once started, so the next call retries a failed start
+                self._native_rpc = native
+            return self._native_rpc
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
         # The module class stays out of the pickle: unpickling it in another
         # worker would import the module and everything under it (a
         # SpatialMemory proxy alone pulls in transformers and torch). A proxy
-        # only needs the rpc names; the class merely gives RpcCall a local
-        # signature. remote_name must be included or proxies pickled into
-        # workers would fall back to class-name RPC topics.
-        return (self.__class__, (self.actor_instance, None, self.remote_name, self.rpcs))
+        # only needs the rpc names and stripped signatures for native methods.
+        # remote_name must be included or proxies pickled into workers would
+        # fall back to class-name RPC topics.
+        return (
+            self.__class__,
+            (
+                self.actor_instance,
+                None,
+                self.remote_name,
+                self.rpcs,
+                self._native_rpc_signatures,
+            ),
+        )
 
     def __dir__(self) -> list[str]:
         return sorted(set(super().__dir__()) | set(self.rpcs))
@@ -201,13 +289,16 @@ class RPCClient:
 
         if name in self.rpcs:
             original_method = getattr(self.actor_class, name, None)
+            native = name in self._native_rpc_signatures
             return RpcCall(
                 original_method,
-                self.rpc,
+                None if native else self.rpc,
                 name,
                 self.remote_name,
                 self._unsub_fns,
                 self.stop_rpc_client,
+                rpc_factory=self._native if native else None,
+                signature=self._native_rpc_signatures.get(name),
             )
 
         if self.actor_instance is None:

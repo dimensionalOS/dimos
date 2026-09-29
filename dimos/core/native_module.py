@@ -41,6 +41,7 @@ Example usage::
 
 from __future__ import annotations
 
+from contextlib import suppress
 import enum
 import functools
 import inspect
@@ -53,6 +54,7 @@ import sys
 import threading
 import time
 from typing import IO, Any
+from uuid import uuid4
 
 from pydantic import Field, model_validator
 
@@ -61,6 +63,7 @@ from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.transport_factory import session_config
+from dimos.protocol.rpc.jsonrpc import JsonRPC
 from dimos.protocol.service.spec import SessionConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -126,6 +129,7 @@ class NativeModuleConfig(ModuleConfig):
     # the rest of the graph connects to. None follows the global config.
     session: SessionConfig | None = None
     shutdown_timeout: float = DEFAULT_THREAD_JOIN_TIMEOUT
+    native_rpc_start_timeout: float = Field(default=10.0, gt=0)
     log_format: LogFormat = LogFormat.JSON
     auto_build: bool = False
 
@@ -278,10 +282,69 @@ class NativeModule(Module):
         qos = self._collect_output_qos()
         if qos:
             blob["qos"] = qos
+        if self._native_rpc_methods:
+            self._native_rpc_token = uuid4().hex
+            blob["rpc"] = {
+                "name": self._rpc_name,
+                "token": self._native_rpc_token,
+            }
         return json.dumps(blob).encode() + b"\n"
+
+    @functools.cached_property
+    def _rpc_name(self) -> str:
+        return self.config.instance_name or type(self).__name__
+
+    @functools.cached_property
+    def _native_rpc_methods(self) -> list[str]:
+        return sorted(n for n, m in self.rpcs.items() if getattr(m, "__native_rpc__", False))
+
+    def _wait_native_rpc(self, proc: subprocess.Popen[bytes]) -> None:
+        """Wait until the child serves exactly the declared methods, launched by this start()."""
+        timeout = self.config.native_rpc_start_timeout
+        deadline = time.monotonic() + timeout
+        rpc = JsonRPC(default_rpc_timeout=timeout)
+        rpc.start()
+
+        result: list[Any] = []
+        ready_event = threading.Event()
+
+        def receive_ready(value: Any) -> None:
+            result.append(value)
+            ready_event.set()
+
+        unsubscribe = None
+        try:
+            unsubscribe = rpc.call(f"{self._rpc_name}/_ready", ([], {}), receive_ready)
+            while not ready_event.is_set():
+                if (returncode := proc.poll()) is not None:
+                    raise RuntimeError(
+                        f"Native process exited with code {returncode} before serving RPC"
+                    )
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"Native RPC for {self._rpc_name} did not become ready within {timeout} seconds"
+                    )
+                ready_event.wait(min(0.1, remaining))
+        finally:
+            if unsubscribe is not None:
+                unsubscribe()
+            rpc.stop()
+        ready = result[0]
+        if isinstance(ready, BaseException):
+            raise ready
+        if ready != {"methods": self._native_rpc_methods, "token": self._native_rpc_token}:
+            raise RuntimeError(f"Native RPC for {self._rpc_name} does not match: {ready!r}")
 
     @rpc
     def start(self) -> None:
+        if self._native_rpc_methods and (
+            not self.config.stdin_config
+            or self.config.session is not None
+            or global_config.transport != "zenoh"
+        ):
+            # Readiness and calls open JsonRPC on the default session, not a pinned one.
+            raise ValueError("native_rpc needs stdin_config=True and the default zenoh session")
         super().start()
         if self._process is not None and self._process.poll() is None:
             logger.warning(
@@ -308,7 +371,7 @@ class NativeModule(Module):
             cwd=cwd,
         )
 
-        self._process = subprocess.Popen(
+        proc = subprocess.Popen(
             cmd,
             env=env,
             cwd=cwd,
@@ -318,15 +381,7 @@ class NativeModule(Module):
             start_new_session=True,
             preexec_fn=_set_process_to_die_when_parent_dies,
         )
-        assert self._process.stdin is not None
-        if stdin_blob is not None:
-            self._process.stdin.write(stdin_blob)
-        self._process.stdin.close()
-        logger.info(
-            "Native process started",
-            module=self._module_label,
-            pid=self._process.pid,
-        )
+        self._process = proc
 
         watchdog = threading.Thread(
             target=self._watch_process,
@@ -337,6 +392,27 @@ class NativeModule(Module):
             self._stopping = False
             self._watchdog = watchdog
         watchdog.start()
+        assert proc.stdin is not None
+        try:
+            if stdin_blob is not None:
+                proc.stdin.write(stdin_blob)
+            proc.stdin.close()
+        except BaseException:
+            with suppress(OSError):
+                proc.stdin.close()
+            self.stop()
+            raise
+        logger.info(
+            "Native process started",
+            module=self._module_label,
+            pid=proc.pid,
+        )
+        if self._native_rpc_methods:
+            try:
+                self._wait_native_rpc(proc)
+            except BaseException:
+                self.stop()
+                raise
 
     @rpc
     def stop(self) -> None:
@@ -398,6 +474,12 @@ class NativeModule(Module):
         stdout_t = self._start_reader(proc.stdout, "info", pid)
         stderr_t = self._start_reader(proc.stderr, "warning", pid)
         rc = proc.wait()
+        # A descendant the child left behind holds its pipes open, so the readers
+        # below would wait out the join. End the whole group now that the leader is gone.
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
         stdout_t.join(timeout=self.config.shutdown_timeout)
         stderr_t.join(timeout=self.config.shutdown_timeout)
 

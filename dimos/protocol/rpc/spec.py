@@ -14,6 +14,7 @@
 
 import asyncio
 from collections.abc import Callable
+from functools import wraps
 import threading
 from types import MappingProxyType
 from typing import Any, Protocol, overload
@@ -109,17 +110,31 @@ class RPCServer(Protocol):
 
     def serve_module_rpc(self, module: RPCInspectable, name: str | None = None) -> None:
         for fname in module.rpcs.keys():
+            if getattr(module.rpcs[fname], "__native_rpc__", False):
+                continue  # served by the native process
             if not name:
                 name = module.__class__.__name__
 
-            def override_f(*args, fname=fname, **kwargs):  # type: ignore[no-untyped-def]
-                return getattr(module, fname)(*args, **kwargs)
-
             topic = name + "/" + fname
-            self.serve_rpc(override_f, topic)
+            self.serve_rpc(_call_later(module, fname), topic)
+
+
+def _call_later(module: RPCInspectable, fname: str) -> Callable[..., Any]:
+    try:
+        declaration = object.__getattribute__(module, fname)
+    except AttributeError:
+        declaration = module.rpcs[fname]
+
+    @wraps(declaration)
+    def call(*args: Any, **kwargs: Any) -> Any:
+        return getattr(module, fname)(*args, **kwargs)
+
+    return call
 
 
 class RPCSpec(RPCServer, RPCClient):
+    named_params = False
+
     def start(self) -> None:
         if hasattr(super(), "start"):
             super().start()  # type: ignore[misc]
