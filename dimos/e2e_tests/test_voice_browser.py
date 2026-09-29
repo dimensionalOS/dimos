@@ -79,6 +79,8 @@ def fake_mic_page(request: pytest.FixtureRequest, playwright_browsers: None) -> 
                 firefox_user_prefs={
                     "media.navigator.streams.fake": True,
                     "media.navigator.permission.disabled": True,
+                    # Needed avoid CoreAudio startup exceeding timeout on some runners.
+                    "media.cubeb.force_null_context": True,
                 }
             )
             context = browser.new_context()
