@@ -30,8 +30,11 @@ from pathlib import Path
 
 import pytest
 
-from dimos.control.contract.description import LimitPolicy, Limits
+from dimos.control.contract.description import Limits
 from dimos.control.contract.model_limits import limits_from_urdf
+from dimos.control.contract.presets import manipulator_description, pd_joint_description
+from dimos.control.contract.validate import Rejected, validate_command
+from dimos.msgs.control_msgs.ControlValues import ControlValues
 
 #: The G1 shipped in this repo. Not the planner's xacro: that one is fetched
 #: from a vendor git remote at first use, so a test could not count on it.
@@ -64,11 +67,11 @@ TOY_URDF = """<?xml version="1.0"?>
 def test_a_bounded_joint_gives_all_three_interfaces() -> None:
     limits = limits_from_urdf(TOY_URDF, {"arm/j1": "bounded_joint"})
     assert limits == {
-        "arm/j1/position": Limits(-1.5, 2.5, LimitPolicy.REJECT),
+        "arm/j1/position": Limits(-1.5, 2.5),
         # URDF states one magnitude for velocity and effort; the range is
         # symmetric around zero.
-        "arm/j1/velocity": Limits(-3.0, 3.0, LimitPolicy.REJECT),
-        "arm/j1/effort": Limits(-40.0, 40.0, LimitPolicy.REJECT),
+        "arm/j1/velocity": Limits(-3.0, 3.0),
+        "arm/j1/effort": Limits(-40.0, 40.0),
     }
 
 
@@ -85,38 +88,22 @@ def test_the_mapping_reconciles_the_two_naming_schemes() -> None:
     limits = limits_from_urdf(
         TOY_URDF, {"left_arm/shoulder": "bounded_joint"}, velocity=False, effort=False
     )
-    assert limits == {"left_arm/shoulder/position": Limits(-1.5, 2.5, LimitPolicy.REJECT)}
+    assert limits == {"left_arm/shoulder/position": Limits(-1.5, 2.5)}
 
 
-def test_a_continuous_joint_is_unbounded_in_position() -> None:
+def test_a_joint_that_spins_freely_gets_no_position_limit() -> None:
     limits = limits_from_urdf(TOY_URDF, {"arm/spin": "spinner_joint"})
-    assert limits["arm/spin/position"] == Limits(None, None, LimitPolicy.REJECT)
-    # It still has a velocity and an effort, and those are real.
-    assert limits["arm/spin/velocity"] == Limits(-10.0, 10.0, LimitPolicy.REJECT)
-    assert limits["arm/spin/effort"] == Limits(-5.0, 5.0, LimitPolicy.REJECT)
-
-
-def test_a_continuous_joint_under_clamp_raises() -> None:
-    # There is nothing to clamp to, and the validator forbids a CLAMP limit
-    # without both bounds, so failing here beats failing at startup.
-    with pytest.raises(ValueError, match="spinner_joint.*no position bounds"):
-        limits_from_urdf(TOY_URDF, {"arm/spin": "spinner_joint"}, policy=LimitPolicy.CLAMP)
-
-
-def test_a_continuous_joint_under_clamp_is_fine_if_position_is_not_wanted() -> None:
-    limits = limits_from_urdf(
-        TOY_URDF, {"arm/spin": "spinner_joint"}, policy=LimitPolicy.CLAMP, position=False
-    )
+    # It still has a velocity and an effort limit, and those are real.
     assert limits == {
-        "arm/spin/velocity": Limits(-10.0, 10.0, LimitPolicy.CLAMP),
-        "arm/spin/effort": Limits(-5.0, 5.0, LimitPolicy.CLAMP),
+        "arm/spin/velocity": Limits(-10.0, 10.0),
+        "arm/spin/effort": Limits(-5.0, 5.0),
     }
 
 
 def test_a_half_written_position_range_raises() -> None:
     # The dangerous one: dropping the side the model does declare would leave
-    # the joint unlimited under REJECT, the description would validate, and
-    # command validation would then accept any position at all.
+    # the joint unlimited, the description would still pass its checks, and
+    # any position at all would then be accepted.
     only_lower = TOY_URDF.replace(
         '<limit lower="-1.5" upper="2.5" velocity="3.0" effort="40.0"/>',
         '<limit lower="-1.5" velocity="3.0" effort="40.0"/>',
@@ -132,7 +119,7 @@ def test_a_half_written_position_range_raises() -> None:
         limits_from_urdf(only_upper, {"arm/j1": "bounded_joint"})
 
 
-def test_only_a_continuous_joint_may_come_back_unbounded() -> None:
+def test_only_a_joint_that_spins_freely_may_go_without_a_position_limit() -> None:
     # Same empty <limit> as the spinner, but typed revolute: that is a broken
     # model, not a free spinner, and guessing "unbounded" would take a real
     # arm's limits away.
@@ -154,8 +141,8 @@ def test_a_half_written_range_is_still_caught_when_position_is_wanted_alone() ->
     # Asking for no position at all is the one way past it, and then the
     # velocity and effort bounds are still real.
     assert limits_from_urdf(only_lower, {"arm/j1": "bounded_joint"}, position=False) == {
-        "arm/j1/velocity": Limits(-3.0, 3.0, LimitPolicy.REJECT),
-        "arm/j1/effort": Limits(-40.0, 40.0, LimitPolicy.REJECT),
+        "arm/j1/velocity": Limits(-3.0, 3.0),
+        "arm/j1/effort": Limits(-40.0, 40.0),
     }
 
 
@@ -200,9 +187,9 @@ def test_asking_for_nothing_still_checks_the_table() -> None:
         limits_from_urdf(TOY_URDF, {"arm/j1": "nope"}, position=False, velocity=False, effort=False)
 
 
-def test_the_policy_reaches_every_limit() -> None:
-    limits = limits_from_urdf(TOY_URDF, {"arm/j1": "bounded_joint"}, policy=LimitPolicy.CLAMP)
-    assert all(limit.policy is LimitPolicy.CLAMP for limit in limits.values())
+def test_limits_read_from_a_model_refuse_rather_than_clamp() -> None:
+    limits = limits_from_urdf(TOY_URDF, {"arm/j1": "bounded_joint"})
+    assert not any(limit.clamp for limit in limits.values())
 
 
 def test_the_urdf_can_be_a_path_as_well_as_text(tmp_path: Path) -> None:
@@ -236,12 +223,12 @@ def test_known_g1_joint_bounds_come_back_verbatim() -> None:
             "g1/waist_yaw": "waist_yaw_joint",
         },
     )
-    assert limits["g1/left_hip_pitch/position"] == Limits(-2.5307, 2.8798, LimitPolicy.REJECT)
-    assert limits["g1/left_hip_pitch/velocity"] == Limits(-32.0, 32.0, LimitPolicy.REJECT)
-    assert limits["g1/left_hip_pitch/effort"] == Limits(-88.0, 88.0, LimitPolicy.REJECT)
+    assert limits["g1/left_hip_pitch/position"] == Limits(-2.5307, 2.8798)
+    assert limits["g1/left_hip_pitch/velocity"] == Limits(-32.0, 32.0)
+    assert limits["g1/left_hip_pitch/effort"] == Limits(-88.0, 88.0)
     # An asymmetric range, so nothing here is quietly symmetrizing position.
-    assert limits["g1/left_knee/position"] == Limits(-0.087267, 2.8798, LimitPolicy.REJECT)
-    assert limits["g1/waist_yaw/position"] == Limits(-2.618, 2.618, LimitPolicy.REJECT)
+    assert limits["g1/left_knee/position"] == Limits(-0.087267, 2.8798)
+    assert limits["g1/waist_yaw/position"] == Limits(-2.618, 2.618)
 
 
 def test_the_whole_g1_maps_in_one_call() -> None:
@@ -263,15 +250,42 @@ def test_the_whole_g1_maps_in_one_call() -> None:
     )
 
 
-def test_the_g1_table_drops_straight_into_the_pd_preset() -> None:
-    # The point of the whole file: this table is what a preset is handed.
-    from dimos.control.contract.presets import pd_joint_description
+G1_LEG = ("left_hip_pitch", "left_hip_roll", "left_knee")
 
-    joints = ("left_hip_pitch", "left_hip_roll", "left_knee")
-    limits = limits_from_urdf(
-        G1_URDF,
-        {f"g1/{j}": f"{j}_joint" for j in joints},
-        policy=LimitPolicy.CLAMP,
+
+def test_an_arm_is_described_from_its_model_in_one_call() -> None:
+    # The point of the whole file: this table is what a preset is handed.
+    arm = manipulator_description(
+        "g1", G1_LEG, limits=limits_from_urdf(G1_URDF, {f"g1/{j}": f"{j}_joint" for j in G1_LEG})
     )
-    described = pd_joint_description("g1", joints, limits=limits, kp=60.0, kd=1.5, damp_kd=5.0)
-    assert described.limits["g1/left_knee/position"] == Limits(-0.087267, 2.8798, LimitPolicy.CLAMP)
+    assert arm.limits["g1/left_knee/position"] == Limits(-0.087267, 2.8798)
+    assert arm.limits["g1/left_knee/velocity"] == Limits(-20.0, 20.0)
+    # The arm is not told an effort, so the model's effort limit has no place.
+    assert "g1/left_knee/effort" not in arm.limits
+
+
+def test_an_arm_described_from_its_model_refuses_a_command_past_a_limit() -> None:
+    arm = manipulator_description(
+        "g1", G1_LEG, limits=limits_from_urdf(G1_URDF, {f"g1/{j}": f"{j}_joint" for j in G1_LEG})
+    )
+
+    def command(knee: float) -> ControlValues:
+        return ControlValues(
+            source="coordinator",
+            epoch=0,
+            sequence=1,
+            interface_names=["g1/left_knee/position"],
+            values=[knee],
+        )
+
+    assert not isinstance(validate_command(arm, command(1.0), last_sequence=None), Rejected)
+    refused = validate_command(arm, command(3.0), last_sequence=None)
+    assert isinstance(refused, Rejected) and refused.reason == "limit"
+
+
+def test_a_body_is_described_from_its_model_in_one_call() -> None:
+    body = pd_joint_description(
+        "g1", G1_LEG, limits=limits_from_urdf(G1_URDF, {f"g1/{j}": f"{j}_joint" for j in G1_LEG})
+    )
+    # A body held by stiffness and damping is told an effort, so that limit stays.
+    assert body.limits["g1/left_knee/effort"] == Limits(-139.0, 139.0)

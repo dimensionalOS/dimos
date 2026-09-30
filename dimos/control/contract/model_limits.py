@@ -30,7 +30,7 @@ from collections.abc import Mapping
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from dimos.control.contract.description import LimitPolicy, Limits
+from dimos.control.contract.description import Limits
 from dimos.control.contract.keys import EFFORT, POSITION, VELOCITY, Key, is_valid_segment
 
 
@@ -66,7 +66,6 @@ def limits_from_urdf(
     urdf: str | Path,
     joints: Mapping[str, str],
     *,
-    policy: LimitPolicy = LimitPolicy.REJECT,
     position: bool = True,
     velocity: bool = True,
     effort: bool = True,
@@ -89,7 +88,7 @@ def limits_from_urdf(
     both directions.
 
     A joint that spins freely, with no end stops, has no position range and
-    comes back with both bounds unset. It is the only joint allowed to do so.
+    gets no position limit. It is the only joint allowed to go without one.
     Any other joint missing a bound means the model is broken and raises,
     because treating it as unlimited would let it be driven anywhere.
 
@@ -97,10 +96,6 @@ def limits_from_urdf(
         urdf: Path to a URDF file, or the XML text itself.
         joints: The name you want to use -> the name used in the URDF. Your
             names look like ``"<source>/<resource>"``, e.g. ``"g1/left_knee"``.
-        policy: What should happen to a command that falls outside these
-            limits. REJECT turns it away; CLAMP pulls it back to the nearest
-            bound. CLAMP needs both bounds, so it cannot be used on a joint
-            that spins freely.
         position: Include the position limits.
         velocity: Include the velocity limits.
         effort: Include the effort limits.
@@ -110,9 +105,8 @@ def limits_from_urdf(
 
     Raises:
         ValueError: If a joint is not in the URDF, has no limits at all, is
-            missing one you asked for, is missing a position bound without
-            being a freely spinning joint, or spins freely while you asked
-            for CLAMP.
+            missing one you asked for, or is missing a position bound without
+            being a freely spinning joint.
     """
     root = _parse(urdf)
     by_name: dict[str, ET.Element] = {}
@@ -144,7 +138,7 @@ def limits_from_urdf(
         if position:
             lower, upper = _attr(limit, "lower"), _attr(limit, "upper")
             if lower is not None and upper is not None:
-                out[Key.of(source, resource, POSITION)] = Limits(lower, upper, policy)
+                out[Key.of(source, resource, POSITION)] = Limits(lower, upper)
             elif lower is None and upper is None:
                 # Only a continuous joint legitimately has no position range.
                 # A revolute one that lost its bounds is a broken model, not a
@@ -157,16 +151,10 @@ def limits_from_urdf(
                         f"but declares no position bounds; only a continuous joint may "
                         f"leave them out"
                     )
-                if policy is LimitPolicy.CLAMP:
-                    raise ValueError(
-                        f"joint {urdf_name!r} (for {canonical!r}) has no position bounds "
-                        f"to clamp to; it is continuous, so use LimitPolicy.REJECT"
-                    )
-                out[Key.of(source, resource, POSITION)] = Limits(None, None, policy)
             else:
                 # Half a range is worse than none: dropping the side the model
-                # does declare would leave the joint unlimited under REJECT,
-                # and nothing downstream would ever say so.
+                # does declare would leave the joint unlimited, and nothing
+                # downstream would ever say so.
                 missing, given = ("upper", "lower") if upper is None else ("lower", "upper")
                 raise ValueError(
                     f"joint {urdf_name!r} (for {canonical!r}) declares a {given} position "
@@ -185,6 +173,6 @@ def limits_from_urdf(
                 raise ValueError(
                     f"joint {urdf_name!r} (for {canonical!r}) declares no {name} limit"
                 )
-            out[Key.of(source, resource, interface)] = Limits(-bound, bound, policy)
+            out[Key.of(source, resource, interface)] = Limits(-bound, bound)
 
     return out
