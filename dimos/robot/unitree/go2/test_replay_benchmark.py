@@ -174,21 +174,27 @@ def _net_bytes() -> int:
     return loopback + int(ipext["InMcastOctets"])
 
 
-def _perf_counts(path: Path, events: list[str], split_at: float) -> dict[str, tuple[float, float]]:
-    """Per event, the count up to `split_at` seconds into the run, and the rest.
+def _perf_counts(
+    path: Path, events: list[str], split_at: float
+) -> tuple[dict[str, tuple[float, float]], float]:
+    """Per event, the count up to `split_at` seconds into the run and the rest,
+    plus the lowest share of time any count was actually on the hardware.
 
     perf's -I mode writes one CSV row per event per interval (time, count,
-    unit, event, ...), so the split is as fine as the interval. An interval in
-    which nothing ran reads "<not counted>", which is zero; anything else that
-    isn't a number means the runner couldn't count the event, and must not
-    pass as zero either.
+    unit, event, run time, counted %, ...), so the split is as fine as the
+    interval. An interval in which nothing ran reads "<not counted>", which is
+    zero; anything else that isn't a number means the runner couldn't count
+    the event, and must not pass as zero either. A counted share below 100%
+    means the events were multiplexed onto too few counters, and the counts
+    are scaled estimates.
     """
     before: dict[str, float] = {}
     after: dict[str, float] = {}
+    counted = 100.0
     for line in path.read_text().splitlines():
         if not line or line.startswith("#"):
             continue
-        time_s, count, _unit, event, *_ = line.split(",")
+        time_s, count, _unit, event, _run, share, *_ = line.split(",")
         if count == "<not counted>":
             continue
         try:
@@ -197,10 +203,11 @@ def _perf_counts(path: Path, events: list[str], split_at: float) -> dict[str, tu
             raise RuntimeError(f"perf could not count {event}: {count!r}") from None
         bucket = before if float(time_s) <= split_at else after
         bucket[event] = bucket.get(event, 0.0) + value
+        counted = min(counted, float(share))
     missing = [event for event in events if event not in after]
     if missing:
         raise RuntimeError(f"perf reported nothing for {missing} in {path}")
-    return {event: (before.get(event, 0.0), after[event]) for event in events}
+    return {event: (before.get(event, 0.0), after[event]) for event in events}, counted
 
 
 @pytest.mark.self_hosted_large  # Needs 8+ GB memory
@@ -333,16 +340,22 @@ def test_go2_replay_realtime_load() -> None:
             # for LCM.
             ("network (transport)", (net_marks["end"] - net_marks["start"]) / 2**20, "MB"),
         ]
+        # Context for reading a point, not series: what was delivered (work
+        # that got shed under load shows here first) and whether perf had a
+        # counter for every event the whole time. `cpu:` stays first; the
+        # analysis reads it up to the next ";".
+        delivered = ", ".join(f"{name} {counts[name]}/{expected[name]}" for name in FLOOR_FRACTION)
+        extra = f"cpu: {_cpu_model()}; delivered: {delivered}"
         if PERF_EVENTS:
             # Split at the first frame like the CPU time. "instructions:u" -> "instructions".
-            counted = _perf_counts(perf_csv, PERF_EVENTS.split(","), first[0] - start[0])
+            counted, share = _perf_counts(perf_csv, PERF_EVENTS.split(","), first[0] - start[0])
             for event, (startup, run) in counted.items():
                 name = event.partition(":")[0]
                 entries += [
                     (f"first frame {name}", startup / 1e9, "G"),
                     (f"run {name}", run / 1e9, "G"),
                 ]
-        extra = f"cpu: {_cpu_model()}"
+            extra += f"; perf counted {share:.1f}%"
         Path(METRICS_PATH).write_text(
             json.dumps(
                 [

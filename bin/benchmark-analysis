@@ -102,7 +102,7 @@ def load_series(path: Path) -> tuple[list[Point], dict[str, str]]:
     for entry in data["entries"].get(SERIES, []):
         commit = entry["commit"]
         benches = entry["benches"]
-        cpu = re.match(r"cpu: (.+)", benches[0].get("extra", "") if benches else "")
+        cpu = re.match(r"cpu: ([^;]+)", benches[0].get("extra", "") if benches else "")
         units.update({b["name"]: b["unit"] for b in benches})
         points.append(
             Point(

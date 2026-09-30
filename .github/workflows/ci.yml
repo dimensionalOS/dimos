@@ -1246,7 +1246,11 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-metrics
-          path: benchmark.json
+          # The perf intervals too: they show whether counts were multiplexed
+          # and where in the run the instructions went.
+          path: |
+            benchmark.json
+            benchmark.perf.csv
 
   benchmark-track:
     needs: benchmark
