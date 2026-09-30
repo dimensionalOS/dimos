@@ -1204,6 +1204,9 @@ jobs:
         env:
           # Compile bytecode at install rather than at first import.
           UV_COMPILE_BYTECODE: "1"
+      # The above skips dimos itself, as it's an editable install.
+      - name: Compile the dimos bytecode
+        run: uv run python -m compileall -q dimos
       - name: Pre-extract the replay database
         run: uv run python -c "from dimos.utils.data import get_data; print(get_data('go2_short.db'))"
       - name: Precompile the numba kernels
