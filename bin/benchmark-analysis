@@ -37,15 +37,19 @@ from typing import Any
 import urllib.error
 import urllib.request
 
-SERIES = "go2 replay realtime"
+SERIES = "go2 replay realtime (arm64)"
 # Every series the benchmark emits; listed so a new one is a deliberate
 # addition here rather than an automatic source of issues.
 METRICS = (
     "first frame wall",
     "first frame cpu",
+    "first frame instructions",
+    "first frame cycles",
     "run cpu",
     "run cpu (user)",
     "run cpu (system)",
+    "run instructions",
+    "run cycles",
     "peak memory",
     "peak threads",
     "disk write",

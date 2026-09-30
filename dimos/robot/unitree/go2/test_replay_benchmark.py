@@ -41,6 +41,10 @@ WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image)
 FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.9, "color_image": 0.5}
 # When set, write the tracked series (wall/CPU/memory/threads/disk/network) to this path.
 METRICS_PATH = os.environ.get("DIMOS_BENCH_METRICS")
+# With DIMOS_BENCH_METRICS: perf events (e.g. "instructions:u,cycles:u") counted over
+# the CLI's whole process tree and added to the series. A core's clock and idle
+# state don't move them, unlike CPU time. Needs a PMU and perf_event_paranoid <= 2.
+PERF_EVENTS = os.environ.get("DIMOS_BENCH_PERF_EVENTS") if METRICS_PATH else None
 
 
 def _expected_counts(db_path: str) -> dict[str, int]:
@@ -170,6 +174,35 @@ def _net_bytes() -> int:
     return loopback + int(ipext["InMcastOctets"])
 
 
+def _perf_counts(path: Path, events: list[str], split_at: float) -> dict[str, tuple[float, float]]:
+    """Per event, the count up to `split_at` seconds into the run, and the rest.
+
+    perf's -I mode writes one CSV row per event per interval (time, count,
+    unit, event, ...), so the split is as fine as the interval. An interval in
+    which nothing ran reads "<not counted>", which is zero; anything else that
+    isn't a number means the runner couldn't count the event, and must not
+    pass as zero either.
+    """
+    before: dict[str, float] = {}
+    after: dict[str, float] = {}
+    for line in path.read_text().splitlines():
+        if not line or line.startswith("#"):
+            continue
+        time_s, count, _unit, event, *_ = line.split(",")
+        if count == "<not counted>":
+            continue
+        try:
+            value = float(count)
+        except ValueError:
+            raise RuntimeError(f"perf could not count {event}: {count!r}") from None
+        bucket = before if float(time_s) <= split_at else after
+        bucket[event] = bucket.get(event, 0.0) + value
+    missing = [event for event in events if event not in after]
+    if missing:
+        raise RuntimeError(f"perf reported nothing for {missing} in {path}")
+    return {event: (before.get(event, 0.0), after[event]) for event in events}
+
+
 @pytest.mark.self_hosted_large  # Needs 8+ GB memory
 # macOS: coordinator->worker zenoh RPC times out (set_transport), and the
 # in-test LCM subscriptions would need lo0 route + maxdgram host tuning.
@@ -235,10 +268,22 @@ def test_go2_replay_realtime_load() -> None:
         "run",
         "unitree-go2",
     ]
+    if PERF_EVENTS:
+        # Children inherit the counters, so this covers the workers too. perf's
+        # interval mode doesn't pass on the workload's exit status; a shell
+        # around the CLI writes it to a file instead.
+        perf_csv = Path(METRICS_PATH).with_suffix(".perf.csv")
+        rc_path = Path(METRICS_PATH).with_suffix(".rc")
+        cmd = [
+            *("perf", "stat", "-e", PERF_EVENTS, "-x", ",", "-I", "100", "-o", str(perf_csv)),
+            *("--", "sh", "-c", '"$@"; echo $? >"$0"', str(rc_path)),
+            *cmd,
+        ]
     mark("start")
     if METRICS_PATH:
         sampler.start()
-    proc = subprocess.Popen(cmd)
+    # Its own process group, so a timeout can signal the CLI through perf.
+    proc = subprocess.Popen(cmd, start_new_session=True)
     try:
         try:
             returncode = proc.wait(timeout=RUN_TIMEOUT)
@@ -248,17 +293,19 @@ def test_go2_replay_realtime_load() -> None:
                 f"expected~{expected}"
             )
         mark("end")
+        if PERF_EVENTS and rc_path.exists():
+            returncode = int(rc_path.read_text())
     finally:
         stop_sampling.set()
         if sampler.is_alive():
             sampler.join(timeout=5)
         if proc.poll() is None:
             # SIGINT first: the CLI's ctrl-c path stops the modules cleanly.
-            proc.send_signal(signal.SIGINT)
+            os.killpg(proc.pid, signal.SIGINT)
             try:
                 proc.wait(timeout=60)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                os.killpg(proc.pid, signal.SIGKILL)
                 proc.wait(timeout=30)
         for transport in transports:
             transport.stop()
@@ -269,7 +316,7 @@ def test_go2_replay_realtime_load() -> None:
 
     if METRICS_PATH:
         start, first, end = cpu_marks["start"], cpu_marks["first frame"], cpu_marks["end"]
-        entries = (
+        entries = [
             # Startup: process spawn until the first frame reaches the bus.
             ("first frame wall", first[0] - start[0], "s"),
             ("first frame cpu", (first[1] + first[2]) - (start[1] + start[2]), "s"),
@@ -285,7 +332,16 @@ def test_go2_replay_realtime_load() -> None:
             # Bytes between the workers: loopback for zenoh, looped multicast
             # for LCM.
             ("network (transport)", (net_marks["end"] - net_marks["start"]) / 2**20, "MB"),
-        )
+        ]
+        if PERF_EVENTS:
+            # Split at the first frame like the CPU time. "instructions:u" -> "instructions".
+            counted = _perf_counts(perf_csv, PERF_EVENTS.split(","), first[0] - start[0])
+            for event, (startup, run) in counted.items():
+                name = event.partition(":")[0]
+                entries += [
+                    (f"first frame {name}", startup / 1e9, "G"),
+                    (f"run {name}", run / 1e9, "G"),
+                ]
         extra = f"cpu: {_cpu_model()}"
         Path(METRICS_PATH).write_text(
             json.dumps(

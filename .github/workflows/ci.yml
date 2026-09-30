@@ -1168,7 +1168,8 @@ jobs:
 
   benchmark:
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    # The hosted runner that exposes a PMU, for the instruction counts.
+    runs-on: ubuntu-24.04-arm
     permissions:  # Restricted to run untested code. Reporting in next job.
       contents: read  # For checkout
     steps:
@@ -1195,6 +1196,17 @@ jobs:
       # in-process configurator (64MB) skips under pytest, so do it here.
       - name: Raise UDP receive buffers for LCM
         run: sudo sysctl -w net.core.rmem_max=67108864 net.core.rmem_default=67108864
+      # Hardware counters don't move with the core's clock or idle state, unlike
+      # CPU time.
+      - name: Install perf
+        run: |
+          sudo apt-get install -y linux-tools-common "linux-tools-$(uname -r)" ||
+            sudo apt-get install -y linux-tools-generic
+          # The wrapper wants a build for the running kernel; any build can count.
+          sudo ln -sfn "$(ls /usr/lib/linux-tools/*/perf | head -1)" /usr/local/bin/perf
+          # Ubuntu's default forbids unprivileged perf; 2 allows counting one's
+          # own processes in user space.
+          sudo sysctl -w kernel.perf_event_paranoid=2
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -1226,6 +1238,7 @@ jobs:
         run: uv run pytest -m '' --no-cov dimos/robot/unitree/go2/test_replay_benchmark.py
         env:
           DIMOS_BENCH_METRICS: benchmark.json
+          DIMOS_BENCH_PERF_EVENTS: instructions:u,cycles:u
           # Hash randomization is per-process; pin it so the processes don't
           # each bring their own dict-ordering jitter.
           PYTHONHASHSEED: "0"
@@ -1264,7 +1277,8 @@ jobs:
         id: track
         uses: benchmark-action/github-action-benchmark@v1
         with:
-          name: go2 replay realtime
+          # A new series: the arm runner's numbers don't continue the x86 ones.
+          name: go2 replay realtime (arm64)
           tool: customSmallerIsBetter
           output-file-path: benchmark.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
