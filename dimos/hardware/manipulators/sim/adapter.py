@@ -76,8 +76,7 @@ class ShmMujocoAdapter:
         deadline = time.monotonic() + _ATTACH_RETRY_TIMEOUT_S
         while True:
             try:
-                self._shm = ManipShmReader(self._shm_key)
-                break
+                candidate = ManipShmReader(self._shm_key)
             except FileNotFoundError:
                 if time.monotonic() > deadline:
                     logger.error(
@@ -88,10 +87,30 @@ class ShmMujocoAdapter:
                     )
                     return False
                 time.sleep(_ATTACH_RETRY_POLL_S)
+                continue
+
+            if candidate.owner_alive() and not candidate.should_stop():
+                self._shm = candidate
+                break
+            candidate.cleanup()
+            if time.monotonic() > deadline:
+                logger.error(
+                    "No live sim owns SHM buffers",
+                    address=self._address,
+                    shm_key=self._shm_key,
+                    timeout_s=_ATTACH_RETRY_TIMEOUT_S,
+                )
+                return False
+            time.sleep(_ATTACH_RETRY_POLL_S)
 
         # Wait for sim module to signal ready.
         deadline = time.monotonic() + _READY_WAIT_TIMEOUT_S
         while not self._shm.is_ready():
+            if not self._shm.owner_alive() or self._shm.should_stop():
+                self._shm.cleanup()
+                self._shm = None
+                logger.error("Sim stopped before SHM became ready", shm_key=self._shm_key)
+                return False
             if time.monotonic() > deadline:
                 logger.error("sim module not ready", timeout_s=_READY_WAIT_TIMEOUT_S)
                 self._shm.cleanup()

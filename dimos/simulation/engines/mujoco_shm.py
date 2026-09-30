@@ -30,6 +30,7 @@ from dataclasses import dataclass
 import hashlib
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
+import os
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +56,7 @@ _joint_array_size = MAX_JOINTS * _FLOAT_BYTES  # float64 array
 
 # Gripper segment slots: position, target, range_lo, range_hi.
 _GRP_SLOTS = 4
+_OWNER_FIELDS = 1
 
 # Element counts for control and sequence arrays.
 _NUM_CTRL_FIELDS = 5  # [ready, stop, command_mode, num_joints, arm_joints]
@@ -79,6 +81,7 @@ _shm_sizes = {
     "kd_t": _joint_array_size,  # per-joint velocity-gain target
     "tau_t": _joint_array_size,  # per-joint feedforward torque
     # Bookkeeping
+    "owner": _OWNER_FIELDS * _INT32_BYTES,  # creator process PID
     "seq": _NUM_SEQ_COUNTERS * _FLOAT_BYTES,  # int64 counters
     "ctl": _NUM_CTRL_FIELDS * _INT32_BYTES,  # [ready, stop, command_mode, num_joints]
 }
@@ -165,6 +168,7 @@ class ManipShmSet:
     kd_t: SharedMemory
     tau_t: SharedMemory
     # Bookkeeping
+    owner: SharedMemory
     seq: SharedMemory
     ctl: SharedMemory
 
@@ -219,6 +223,7 @@ class ManipShmWriter:
         # Zero everything.
         for buf in self.shm.as_list():
             np.ndarray((buf.size,), dtype=np.uint8, buffer=buf.buf)[:] = 0
+        self._owner()[0] = os.getpid()
 
     def write_joint_state(
         self,
@@ -352,6 +357,9 @@ class ManipShmWriter:
 
     def _control(self) -> NDArray[np.int32]:
         return np.ndarray((_NUM_CTRL_FIELDS,), dtype=np.int32, buffer=self.shm.ctl.buf)
+
+    def _owner(self) -> NDArray[np.int32]:
+        return np.ndarray((_OWNER_FIELDS,), dtype=np.int32, buffer=self.shm.owner.buf)
 
     def _increment_seq(self, index: int) -> None:
         seq_arr = np.ndarray((_NUM_SEQ_COUNTERS,), dtype=np.int64, buffer=self.shm.seq.buf)
@@ -498,6 +506,21 @@ class ManipShmReader:
 
     def is_ready(self) -> bool:
         return bool(self._control()[CTRL_READY] == 1)
+
+    def owner_alive(self) -> bool:
+        pid = int(np.ndarray((_OWNER_FIELDS,), dtype=np.int32, buffer=self.shm.owner.buf)[0])
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    def should_stop(self) -> bool:
+        return bool(self._control()[CTRL_STOP] == 1)
 
     def num_joints(self) -> int:
         return int(self._control()[CTRL_NUM_JOINTS])

@@ -265,6 +265,20 @@ class TestGripperRoundTrip:
 
 
 class TestConnect:
+    def test_connect_rejects_orphaned_shm(self, shm_key, monkeypatch):
+        monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
+        monkeypatch.setattr(adapter_mod, "_ATTACH_RETRY_TIMEOUT_S", 0.1)
+        monkeypatch.setattr(adapter_mod, "_ATTACH_RETRY_POLL_S", 0.01)
+
+        writer = ManipShmWriter(shm_key)
+        writer.signal_ready(num_joints=ARM_DOF)
+        writer._owner()[0] = 2_000_000_000
+        try:
+            adapter = ShmMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml")
+            assert adapter.connect() is False
+        finally:
+            writer.cleanup()
+
     def test_connect_before_sim_ready_times_out(self, shm_key, monkeypatch):
         """If sim module never signals ready, connect() returns False after timeout."""
         monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
