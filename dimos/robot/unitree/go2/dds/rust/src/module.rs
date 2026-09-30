@@ -139,6 +139,10 @@ mod camera_info_dict {
         K: [f64; 9],
         R: [f64; 9],
         P: [f64; 12],
+        #[serde(default)]
+        binning_x: i32,
+        #[serde(default)]
+        binning_y: i32,
     }
 
     pub fn deserialize<'de, De: Deserializer<'de>>(d: De) -> Result<CameraInfo, De::Error> {
@@ -155,6 +159,8 @@ mod camera_info_dict {
             K: c.K,
             R: c.R,
             P: c.P,
+            binning_x: c.binning_x,
+            binning_y: c.binning_y,
             ..Default::default()
         })
     }
@@ -169,6 +175,8 @@ mod camera_info_dict {
             K: c.K,
             R: c.R,
             P: c.P,
+            binning_x: c.binning_x,
+            binning_y: c.binning_y,
         }
         .serialize(s)
     }

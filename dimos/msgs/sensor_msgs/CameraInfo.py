@@ -113,6 +113,8 @@ class CameraInfo(Timestamped):
             "K": list(self.K),
             "R": list(self.R),
             "P": list(self.P),
+            "binning_x": self.binning_x,
+            "binning_y": self.binning_y,
         }
 
     @classmethod

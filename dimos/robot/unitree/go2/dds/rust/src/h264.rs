@@ -18,6 +18,8 @@
 use crate::rtp::Packet;
 
 const START_CODE: [u8; 4] = [0, 0, 0, 1];
+/// A frame in progress past this is a markerless stream, not video: dropped, resync.
+const MAX_AU_BYTES: usize = 4 << 20;
 
 /// One reassembled frame, Annex-B encoded.
 pub struct AccessUnit {
@@ -69,14 +71,15 @@ pub struct Depacketizer {
 impl Depacketizer {
     pub fn push(&mut self, pkt: &Packet<'_>) -> Option<AccessUnit> {
         // A sequence gap corrupts the frame in progress: drop it, resync on a keyframe.
-        if let Some(last) = self.last_seq {
-            if pkt.sequence_number != last.wrapping_add(1) {
-                self.au.clear();
-                self.fu.clear();
-                self.keyframe = false;
-                self.has_params = false;
-                self.synced = false;
-            }
+        let gap = self
+            .last_seq
+            .is_some_and(|last| pkt.sequence_number != last.wrapping_add(1));
+        if gap || self.au.len() + self.fu.len() > MAX_AU_BYTES {
+            self.au.clear();
+            self.fu.clear();
+            self.keyframe = false;
+            self.has_params = false;
+            self.synced = false;
         }
         self.last_seq = Some(pkt.sequence_number);
 
@@ -256,6 +259,16 @@ mod tests {
         assert!(d.push(&pkt(3, 300, true, P_SLICE)).is_none());
         assert!(d.push(&pkt(4, 400, true, IDR)).is_some());
         assert!(d.push(&pkt(5, 500, true, P_SLICE)).is_some());
+    }
+
+    #[test]
+    fn markerless_stream_stays_bounded() {
+        let mut d = Depacketizer::default();
+        let slice = [0x41; 1200];
+        for seq in 0..8192u16 {
+            assert!(d.push(&pkt(seq, seq as u32, false, &slice)).is_none());
+        }
+        assert!(d.au.len() <= MAX_AU_BYTES + 1300);
     }
 
     #[test]

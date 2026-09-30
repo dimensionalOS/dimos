@@ -61,7 +61,9 @@
       0.0,
       1.0,
       0.0
-    ]
+    ],
+    "binning_x": 0,
+    "binning_y": 0
   },
   "camera_info_hz": 1.0,
   "tf_root": "base_link",
