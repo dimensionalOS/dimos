@@ -145,14 +145,14 @@ def test_close_all_empties_the_pool_even_when_a_session_will_not_close(
     assert len(opens) == 2
 
 
-def test_shared_memory_stays_on() -> None:
-    """Local peers get zenoh's shared-memory path, which nothing here turns off.
+def test_shared_memory_is_off() -> None:
+    """Zenoh's shared-memory path is disabled: it silently lost payloads over 3 kB.
 
-    Zenoh enables it by default; a wheel built without the feature drops the key.
+    A planned path reached a light subscriber but not the rerun bridge.
     """
 
     config = json.loads(str(zenohservice._zenoh_config(ZenohConfig())))
-    assert config["transport"]["shared_memory"]["enabled"] is True
+    assert config["transport"]["shared_memory"]["enabled"] is False
 
 
 def test_different_modes_produce_different_keys() -> None:
