@@ -1,0 +1,58 @@
+name: perf-counters
+
+# Does the runner expose hardware performance counters? Decides whether the
+# replay benchmark can count instructions instead of CPU time, which a core's
+# clock and idle state don't move. Green means `perf stat -e instructions:u`
+# counts on that runner; red means the PMU isn't there. Runs no repository
+# code.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/perf-counters.yml'
+
+permissions: {}
+
+jobs:
+  probe:
+    # Skipped on fork PRs, which would put an untrusted workflow file on the
+    # self-hosted runners.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - '"ubuntu-latest"'
+          - '"ubuntu-24.04-arm"'
+          - '["self-hosted", "Linux", "base"]'
+          - '["self-hosted", "Linux", "large"]'
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    env:
+      RUNNER_LABELS: ${{ join(fromJSON(matrix.runner), ', ') }}
+    steps:
+      - name: Count instructions with perf
+        run: |
+          # The linux-tools-common wrapper insists on a perf built for the
+          # running kernel; any build can count, so call a binary directly.
+          if ! ls /usr/lib/linux-tools/*/perf >/dev/null 2>&1; then
+            sudo -n apt-get update
+            sudo -n apt-get install -y linux-tools-common "linux-tools-$(uname -r)" ||
+              sudo -n apt-get install -y linux-tools-generic
+          fi
+          perf=$(ls /usr/lib/linux-tools/*/perf | head -1)
+
+          lscpu | grep -E 'Model name|Hypervisor'
+          echo "kernel $(uname -r), perf_event_paranoid $(cat /proc/sys/kernel/perf_event_paranoid)"
+          echo "event sources: $(ls /sys/bus/event_source/devices | tr '\n' ' ')"
+
+          # As root, so the answer is about the hardware, not the paranoid setting.
+          sudo -n "$perf" stat -e instructions:u,cycles:u -x, -o counts.csv -- \
+            sh -c 'i=0; while [ $i -lt 1000000 ]; do i=$((i+1)); done'
+          cat counts.csv
+
+          instructions=$(awk -F, '$3 == "instructions:u" { print $1 }' counts.csv)
+          model=$(lscpu | awk -F: '/Model name/ { sub(/^ +/, "", $2); print $2 }')
+          echo "**$RUNNER_LABELS** — $model — instructions:u: ${instructions:-?}" >> "$GITHUB_STEP_SUMMARY"
+          [[ $instructions =~ ^[0-9]+$ ]]
