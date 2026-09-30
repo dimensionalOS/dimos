@@ -43,7 +43,7 @@ jobs:
         run: |
           : "${PRE_COMMIT_FROM_REF:?Missing base SHA}"
           : "${PRE_COMMIT_TO_REF:?Missing head SHA}"
-          python3 bin/hooks/filter_commit_message.py --check
+          python3 -m dimos.utils.commit_message --check
 
   compute-ros-pin:
     # Extracts the ros-dev image digest pinned in docker/ros-dev-pin/Dockerfile
@@ -203,8 +203,6 @@ jobs:
           prune-cache: true
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
-      - name: Test commit message check
-        run: uv run pytest -c /dev/null --rootdir . --noconftest bin/hooks/test_filter_commit_message.py
       - name: Mypy
         run: uv run mypy
 

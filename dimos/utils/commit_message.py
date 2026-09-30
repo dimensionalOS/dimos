@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,17 +18,18 @@ import re
 import subprocess
 import sys
 
-# Patterns that trigger truncation (everything from this line onwards is removed)
-TRUNCATE_PATTERNS = [
-    "Generated with",
-    "Co-Authored-By",
-]
-
+# Match known bot identities, not human names such as Claude Smith or Gemini Patel.
 AI_COAUTHOR = re.compile(
-    r"^[ \t]*Co-authored-by[ \t]*:[^\r\n]*"
-    r"(?:\bClaude\b|\bCodex\b|<[^<>\r\n]*@(?:anthropic\.com|openai\.com)>)",
+    r"^[ \t]*Co-authored-by[ \t]*:[ \t]*"
+    r"(?:"
+    r"(?:Claude(?:[ \t]+(?:Code|Opus|Sonnet|Haiku)\b[^<>\r\n]*)?"
+    r"|(?:OpenAI[ \t]+)?Codex|(?:GitHub[ \t]+)?Copilot"
+    r"|Cursor(?:[ \t]+Agent)?|(?:Google[ \t]+)?Gemini|Windsurf|Devin|Aider)"
+    r"[ \t]*(?:<[^<>\r\n]+>|$)"
+    r"|[^<>\r\n]*<[^<>\r\n]*@(?:anthropic\.com|openai\.com|cursor\.com)>)",
     re.IGNORECASE | re.MULTILINE,
 )
+GENERATED_SIGNATURE = re.compile(r"Generated with", re.IGNORECASE)
 
 
 def filter_text(text: str) -> tuple[str, str | None]:
@@ -38,9 +38,9 @@ def filter_text(text: str) -> tuple[str, str | None]:
     filtered_lines: list[str] = []
     matched: str | None = None
     for line in lines:
-        hit = next((p for p in TRUNCATE_PATTERNS if p in line), None)
+        hit = AI_COAUTHOR.search(line) or GENERATED_SIGNATURE.search(line)
         if hit is not None:
-            matched = hit
+            matched = hit.group().strip()
             break
         filtered_lines.append(line)
     return "".join(filtered_lines), matched
@@ -55,17 +55,9 @@ def rewrite_file(path: Path) -> int:
 
 
 def check_commits() -> int:
-    """Check every commit in the range pre-commit was invoked over.
-
-    Locally on `git commit` no range is supplied, so we no-op rather than
-    blocking commits on the state of HEAD — the commit-msg hook is in
-    charge there. CI supplies PRE_COMMIT_FROM_REF / PRE_COMMIT_TO_REF
-    explicitly to check the incoming commits for AI co-authors.
-    """
+    """Check incoming commits using the base/head range supplied by CI."""
     from_ref = os.environ.get("PRE_COMMIT_FROM_REF")
     to_ref = os.environ.get("PRE_COMMIT_TO_REF")
-    if not from_ref and not to_ref:
-        return 0
     if not (from_ref and to_ref):
         print("Both PRE_COMMIT_FROM_REF and PRE_COMMIT_TO_REF are required.", file=sys.stderr)
         return 1
@@ -121,7 +113,7 @@ def check_commits() -> int:
 def main() -> int:
     if len(sys.argv) < 2:
         print(
-            "Usage: filter_commit_message.py <commit-msg-file> | --check",
+            "Usage: python -m dimos.utils.commit_message <commit-msg-file> | --check",
             file=sys.stderr,
         )
         return 1
