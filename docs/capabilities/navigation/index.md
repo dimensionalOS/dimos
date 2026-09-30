@@ -10,7 +10,7 @@ The Go2 navigation stack uses a simple **column-carving voxel map** strategy: ea
 |-----------------------------|------------------------------------------------------------------------|------------------------------|--------------------------------------------------------------------|
 | **Live mapping**            | Explore a new space where the map updates every frame                  | `unitree-go2`                | [Navigation deep dive](/docs/capabilities/navigation/deep_dive.md) |
 | **Premap + relocalization** | Return to a known space and plan on a loop-closed map                  | `unitree-go2-relocalization` | [Relocalization](/docs/capabilities/navigation/relocalization.md)  |
-| **Live loop closure**       | Map a space with revisits and correct drift while driving              | `unitree-go2-pgo`            | [Live loop closure](/docs/capabilities/navigation/live_loop_closure.md) |
+| **Live loop closure**       | Map a space with revisits and correct drift while driving              | `unitree-go2-pgo`            |                                                                    |
 
 Live column-carving maps are fast and reactive, but odometry drifts over long distances. `unitree-go2-pgo` closes loops live with pose-graph optimization (PGO). For spaces you return to across sessions, record once, run PGO offline, then relocalize against the exported premap at runtime.
 
