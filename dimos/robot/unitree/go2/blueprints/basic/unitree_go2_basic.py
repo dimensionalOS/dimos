@@ -14,27 +14,47 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from functools import partial
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.vis_module import vis_module
 
+if TYPE_CHECKING:
+    from types import ModuleType
 
-def _convert_camera_info(camera_info: Any) -> Any:
+    from rerun._baseclasses import Archetype
+    from rerun.blueprint import Blueprint
+
+    from dimos.msgs.geometry_msgs.PoseArray import PoseArray
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.geometry_msgs.Twist import Twist
+    from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
+    from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.msgs.std_msgs.Float32 import Float32
+    from dimos.visualization.rerun.bridge import RerunData, RerunMulti
+
+
+def _convert_camera_info(camera_info: CameraInfo) -> RerunData:
     return camera_info.to_rerun(
         image_topic="/world/color_image",
         optical_frame="camera_optical",
     )
 
 
-def _convert_global_map(grid: Any) -> Any:
+def _convert_global_map(grid: PointCloud2) -> Archetype:
     return grid.to_rerun(bottom_cutoff=0)
 
 
-def _convert_navigation_costmap(grid: Any) -> Any:
+def _convert_navigation_costmap(grid: OccupancyGrid) -> Archetype:
     return grid.to_rerun(
         colormap="Accent",
         z_offset=0.015,
@@ -43,7 +63,7 @@ def _convert_navigation_costmap(grid: Any) -> Any:
     )
 
 
-def _convert_pgo_keyframes(keyframes: Any) -> Any:
+def _convert_pgo_keyframes(keyframes: PoseArray) -> RerunMulti:
     import rerun as rr
 
     positions = keyframes.positions()
@@ -53,20 +73,21 @@ def _convert_pgo_keyframes(keyframes: Any) -> Any:
     ]
 
 
-def _convert_pgo_loops(edges: Any) -> Any:
+def _convert_pgo_loops(edges: LineSegments3D) -> RerunMulti:
     import rerun as rr
 
-    strips = rr.LineStrips3D(edges.segments, colors=[[231, 76, 60]], radii=[0.008])
+    segments = edges.segments.astype(np.float32)
+    strips = rr.LineStrips3D(segments, colors=[[231, 76, 60]], radii=[0.008])
     return [("world/pgo/loops", strips)]
 
 
-def _plot_telemetry(name: str, msg: Any) -> Any:
+def _plot_telemetry(name: str, msg: Float32) -> RerunMulti:
     import rerun as rr
 
     return [(f"plots/telemetry/{name}", rr.Scalars(msg.data))]
 
 
-def _plot_odom(odom: Any) -> Any:
+def _plot_odom(odom: PoseStamped) -> RerunMulti:
     import rerun as rr
 
     return [
@@ -76,7 +97,7 @@ def _plot_odom(odom: Any) -> Any:
     ]
 
 
-def _plot_cmd_vel(t: Any) -> Any:
+def _plot_cmd_vel(t: Twist) -> RerunMulti:
     import rerun as rr
 
     return [
@@ -85,7 +106,7 @@ def _plot_cmd_vel(t: Any) -> Any:
     ]
 
 
-def _static_robot_body(rr: Any) -> list[Any]:
+def _static_robot_body(rr: ModuleType) -> list[Archetype]:
     return [
         rr.Boxes3D(
             half_sizes=[0.35, 0.155, 0.2],
@@ -95,7 +116,7 @@ def _static_robot_body(rr: Any) -> list[Any]:
     ]
 
 
-def _go2_rerun_blueprint() -> Any:
+def _go2_rerun_blueprint() -> Blueprint:
     """Split layout: camera feed + 3D world view side by side."""
     import rerun as rr
     import rerun.blueprint as rrb
