@@ -49,4 +49,36 @@ dimos run r1pro-teleop          # + chassis teleop from the viewer
 dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
+dimos run r1pro-pointlio --g.transport lcm   # coordinator + Point-LIO on the chassis lidar
+dimos run r1pro-head-depth --g.transport lcm # + head depth anchored on the lidar
 ```
+
+## Point-LIO and head depth
+
+`r1pro-pointlio` places `base_link` by Point-LIO on the chassis Mid-360 instead
+of wheel odometry; `chassis_odom` keeps its name. `r1pro-head-depth` adds a
+dense cloud from the left head camera: Depth Anything, calibrated per pixel to
+the last two seconds of Point-LIO scans (`Depth2DepthCloud`).
+The Mid-360 driver, Point-LIO and the head depth are native binaries built on
+first run, so `cargo` (and on an Orin, `nvcc` for CUDA) must be on the path.
+
+**Transport.** Run with `--g.transport lcm`. The vendor's `realsense2_camera`
+holds LCM's default port, so set
+`LCM_DEFAULT_URL=udpm://239.255.76.67:7767?ttl=0`.
+
+**The lidar.** Our Mid-360 driver takes the sensor from the vendor's
+`livox_ros_driver2` (a Livox streams to whoever asked last), and
+`/hdas/lidar_chassis_left` goes silent until the vendor driver is restarted. To
+give it back, restart it in its tmux session `hdas` (kill by PID; `pkill -f`
+over ssh matches your own ssh command):
+
+```bash
+pgrep -a livox_ros_driver2      # note the pid
+kill <pid>
+cd ~/galaxea-dimos/install/startup_config/share/startup_config/script/boot/modules/hdas
+tmux send-keys -t hdas './start_livox_lidar.sh' Enter
+```
+
+The lidar and host addresses are `R1PRO_CHASSIS_LIDAR_IP` /
+`R1PRO_CHASSIS_LIDAR_HOST_IP` in `config.py` (`--mid360.lidar_ip` /
+`--mid360.host_ip` override them).

@@ -37,6 +37,7 @@ from dimos.core.transport import ZenohTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -161,11 +162,14 @@ def _zenoh_transport(
 def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
+    publish_odom: bool | None = None,
+    enable_wrist_color: bool | None = None,
 ) -> Blueprint:
     """R1ProConnection and ControlCoordinator.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
     velocity); transports and remappings stay identical either way.
+    The other keyword args override the matching ``R1ProConnectionConfig`` fields.
     """
     resolved_tasks = (
         list(tasks)
@@ -183,7 +187,12 @@ def r1pro_control(
 
     return (
         autoconnect(
-            R1ProConnection.blueprint(),
+            R1ProConnection.blueprint(
+                **({} if publish_odom is None else {"publish_odom": publish_odom}),
+                **(
+                    {} if enable_wrist_color is None else {"enable_wrist_color": enable_wrist_color}
+                ),
+            ),
             ControlCoordinator.blueprint(
                 tick_rate=100,
                 hardware=[
@@ -239,6 +248,12 @@ def r1pro_control(
                     "/head_right_color", CompressedImage, latest_wins=True
                 ),
                 ("head_depth", Image): _zenoh_transport("/head_depth", Image, latest_wins=True),
+                ("head_left_info", CameraInfo): _zenoh_transport(
+                    "/head_left_info", CameraInfo, latest_wins=True
+                ),
+                ("head_right_info", CameraInfo): _zenoh_transport(
+                    "/head_right_info", CameraInfo, latest_wins=True
+                ),
                 ("lidar", PointCloud2): _zenoh_transport("/lidar", PointCloud2, latest_wins=True),
                 ("wrist_left_color", CompressedImage): _zenoh_transport(
                     "/wrist_left_color", CompressedImage, latest_wins=True
