@@ -238,6 +238,40 @@ class TestPoseGraphCorrection:
             graph.keyframes = (Keyframe(ts=0, local=Transform(), optimized=Transform()),)  # type: ignore[misc]
 
 
+class TestPlace:
+    def _graph(self) -> PoseGraph:
+        turn = Quaternion.from_rotation_matrix(Rotation.from_euler("z", np.pi / 2).as_matrix())
+        return _graph_with_drift_at(
+            [
+                Transform(translation=Vector3(0.0, 0.0, 0.0), ts=1.0),
+                Transform(translation=Vector3(10.0, 0.0, 0.0), rotation=turn, ts=11.0),
+            ]
+        )
+
+    def test_latest_data_stays_put(self) -> None:
+        cloud = PointCloud2.from_numpy(np.array([[1.0, 2.0, 3.0]]), timestamp=11.0)
+        np.testing.assert_allclose(
+            self._graph().place(cloud).points_f32(), [[1.0, 2.0, 3.0]], atol=1e-5
+        )
+
+    def test_old_data_moves_relative_to_the_latest_keyframe(self) -> None:
+        # C(now)^-1 . C(1): undo the latest correction (turn 90 deg, +10 x).
+        cloud = PointCloud2.from_numpy(np.array([[10.0, 1.0, 0.0]]), timestamp=1.0)
+        np.testing.assert_allclose(
+            self._graph().place(cloud).points_f32(), [[1.0, 0.0, 0.0]], atol=1e-5
+        )
+
+    def test_per_point_stamps_override_the_cloud_ts(self) -> None:
+        cloud = PointCloud2.from_numpy(
+            np.array([[10.0, 1.0, 0.0], [1.0, 2.0, 3.0]]),
+            timestamp=1.0,
+            stamps=np.array([1.0, 11.0]),
+        )
+        np.testing.assert_allclose(
+            self._graph().place(cloud).points_f32(), [[1.0, 0.0, 0.0], [1.0, 2.0, 3.0]], atol=1e-5
+        )
+
+
 class TestApplyAsTransformer:
     def test_pure_translation_shifts_poses(self) -> None:
         # Build a stream of 3 frames at the origin (identity pose) with a known

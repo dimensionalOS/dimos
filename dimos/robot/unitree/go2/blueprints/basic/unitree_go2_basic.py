@@ -42,6 +42,22 @@ def _convert_navigation_costmap(grid: Any) -> Any:
     )
 
 
+def _convert_pgo_keyframes(keyframes: Any) -> Any:
+    import rerun as rr
+
+    positions = keyframes.positions()
+    return [
+        ("world/pgo_keyframes", rr.Points3D(positions, colors=[[255, 0, 0]], radii=[0.025])),
+        ("world/pgo_path", rr.LineStrips3D([positions], colors=[[255, 255, 255]], radii=[0.01])),
+    ]
+
+
+def _convert_pgo_loops(edges: Any) -> Any:
+    import rerun as rr
+
+    return rr.LineStrips3D(edges.segments, colors=[[231, 76, 60]], radii=[0.008])
+
+
 def _plot_odom(odom: Any) -> Any:
     import rerun as rr
 
@@ -115,6 +131,8 @@ rerun_config: dict[str, Any] = {
         "world/global_map": _convert_global_map,
         "world/merged_map": _convert_global_map,
         "world/navigation_costmap": _convert_navigation_costmap,
+        "world/pgo_keyframes": _convert_pgo_keyframes,
+        "world/pgo_loops": _convert_pgo_loops,
     },
     "max_hz": {
         "world/global_map": 0,  # publishes at ~7.8 Hz

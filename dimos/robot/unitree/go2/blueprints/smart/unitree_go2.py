@@ -32,6 +32,7 @@ from dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_
     WavefrontFrontierExplorer,
 )
 from dimos.navigation.experimental.patrolling.module import PatrollingModule
+from dimos.navigation.go2.loop_closure.module import PGOVoxelMapper
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
@@ -105,3 +106,13 @@ unitree_go2_memory = autoconnect(
     unitree_go2,
     Go2Memory.blueprint(),
 ).global_config(n_workers=12)
+
+# Live loop closure: PGOVoxelMapper replaces the plain voxel mapper.
+unitree_go2_pgo = (
+    autoconnect(
+        unitree_go2,
+        PGOVoxelMapper.blueprint(emit_every=5),
+    )
+    .disabled_modules(VoxelGridMapper)
+    .global_config(n_workers=11)
+)
