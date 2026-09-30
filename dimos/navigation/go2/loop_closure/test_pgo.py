@@ -18,7 +18,13 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from dimos.mapping.loop_closure.pgo import (
+from dimos.memory.store.memory import MemoryStore
+from dimos.memory.stream import Stream
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.go2.loop_closure.pgo import (
     PGO,
     Keyframe,
     PGOConfig,
@@ -26,12 +32,6 @@ from dimos.mapping.loop_closure.pgo import (
     _obs_to_pose3,
     _pose3_to_transform,
 )
-from dimos.memory.store.memory import MemoryStore
-from dimos.memory.stream import Stream
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 # TODO(PY311): drop — the mapping extra excludes gtsam-extended where it has no
 # wheels (py3.10 Linux), see pyproject.
@@ -65,7 +65,7 @@ class TestPGOConfig:
 
     def test_kwargs_typed_dict_matches_config(self) -> None:
         """`PGOKwargs` must mirror every `PGOConfig` field 1:1."""
-        from dimos.mapping.loop_closure.pgo import PGOKwargs
+        from dimos.navigation.go2.loop_closure.pgo import PGOKwargs
 
         assert set(PGOConfig.model_fields.keys()) == set(PGOKwargs.__annotations__.keys())
 

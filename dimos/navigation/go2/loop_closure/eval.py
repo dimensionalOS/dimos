@@ -22,8 +22,8 @@ hk_village recordings and reports two totals to minimize:
   loop closures.
 
 Usage:
-    uv run python -m dimos.mapping.loop_closure.eval
-    uv run python -m dimos.mapping.loop_closure.eval hk_village1
+    uv run python -m dimos.navigation.go2.loop_closure.eval
+    uv run python -m dimos.navigation.go2.loop_closure.eval hk_village1
 """
 
 from __future__ import annotations
@@ -33,13 +33,13 @@ from typing import Any
 
 import typer
 
-from dimos.mapping.loop_closure.pgo import PGO
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow, SpeedLimit
 from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.navigation.go2.loop_closure.pgo import PGO
 from dimos.perception.fiducial.marker_transformer import DetectMarkers
 from dimos.robot.unitree.go2.connection import _camera_info_static
 from dimos.utils.data import get_data
