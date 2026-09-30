@@ -33,7 +33,6 @@ from dimos_lcm import (
 import pytest
 
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseArray import PoseArray
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -56,6 +55,10 @@ with open(find_web_dir() / "shared" / "fixtures" / "lcm_frames.json") as f:
 MESSAGES = dict(build_messages())
 
 
+class _NoLcm:
+    msg_name = "geometry_msgs.NoLcm"
+
+
 class _Bare:
     msg_name = "Bare"
 
@@ -68,7 +71,7 @@ def test_default_encoding() -> None:
     assert default_encoding(Transform, "rx") == "tf2_msgs.TFMessage.lcm.v1"
     assert default_encoding(PoseStamped, "tx") == "json.v1"
     assert default_encoding(dict, "rx") == "json.v1"
-    assert default_encoding(PoseArray, "rx") == "json.v1"  # no lcm_encode at all
+    assert default_encoding(_NoLcm, "rx") == "json.v1"  # no lcm_encode at all
     # A generated class is named by its module path: its msg_name may be bare.
     assert lcm_visualization_msgs.MarkerArray.msg_name == "MarkerArray"
     assert (
