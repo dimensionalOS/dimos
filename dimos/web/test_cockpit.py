@@ -302,12 +302,6 @@ def test_go2_hello_fits_the_control_payload_cap() -> None:
     assert size <= MAX_CONTROL_PAYLOAD_BYTES, f"go2 hello grew to {size} B"
 
 
-class _NoLcm:
-    """A message-shaped type with no lcm_encode."""
-
-    msg_name = "geometry_msgs.NoLcm"
-
-
 @dataclass(frozen=True)
 class _OpsNote:
     text: str
@@ -953,7 +947,7 @@ def test_lcm_schema_joins_user_params_in_the_request_only() -> None:
         ),
         (Channel("traj", JointTrajectory), r"'traj': .*declares its own LCM fingerprint"),
         (Channel("motors", MotorCommandArray), r"'motors': .*dimos_lcm.*@web_encoder"),
-        (Channel("poses", _NoLcm), r"'poses': .*not supported by json\.v1"),
+        (Channel("poses", bytes), r"'poses': .*not supported by json\.v1"),
     ],
     ids=["id_type_mismatch", "lcm_id_on_dict", "foreign_fingerprint", "no_schema", "no_lcm"],
 )
