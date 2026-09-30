@@ -28,6 +28,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.simulation.habitat.server import HabitatProp
 
 
 class HabitatConnectionConfig(NativeModuleConfig):
@@ -75,6 +76,8 @@ class HabitatConnectionConfig(NativeModuleConfig):
     # Visible annotated instances as world-frame boxes (semantic ids + depth).
     publish_objects: bool = False
     objects_hz: float = Field(default=1.0, gt=0.0)
+    # Static models placed in the scene.
+    props: tuple[HabitatProp, ...] = ()
     # Unprojection is the frame's main cost; off for teleop-only stacks.
     publish_scan: bool = True
     # "world" pre-registers the scan for VoxelGridMapper; "camera_optical" lets
