@@ -174,40 +174,40 @@ def _net_bytes() -> int:
     return loopback + int(ipext["InMcastOctets"])
 
 
-def _perf_counts(
-    path: Path, events: list[str], split_at: float
-) -> tuple[dict[str, tuple[float, float]], float]:
-    """Per event, the count up to `split_at` seconds into the run and the rest,
-    plus the lowest share of time any count was actually on the hardware.
+def _perf_counts(path: Path, events: list[str]) -> tuple[dict[str, float], float]:
+    """Per event, the count over the whole run, plus the lowest share of time
+    any count was actually on the hardware.
 
     perf's -I mode writes one CSV row per event per interval (time, count,
-    unit, event, run time, counted %, ...), so the split is as fine as the
-    interval. An interval in which nothing ran reads "<not counted>", which is
-    zero; anything else that isn't a number means the runner couldn't count
-    the event, and must not pass as zero either. A counted share below 100%
-    means the events were multiplexed onto too few counters, and the counts
-    are scaled estimates.
+    unit, event, run time, counted %, ...). An interval in which nothing ran
+    reads "<not counted>", which is zero; anything else that isn't a number
+    means the runner couldn't count the event, and must not pass as zero
+    either. A counted share below 100% means the events were multiplexed onto
+    too few counters, and the counts are scaled estimates.
+
+    Deliberately not split at the first frame like the CPU time: the first
+    frame lands somewhere inside the parallel module starts, so a split there
+    moves startup work between the halves without changing the total (on the
+    arm runner the halves ranged 17-24% between identical runs, the total 0.1%).
     """
-    before: dict[str, float] = {}
-    after: dict[str, float] = {}
+    totals: dict[str, float] = {}
     counted = 100.0
     for line in path.read_text().splitlines():
         if not line or line.startswith("#"):
             continue
-        time_s, count, _unit, event, _run, share, *_ = line.split(",")
+        _time, count, _unit, event, _run, share, *_ = line.split(",")
         if count == "<not counted>":
             continue
         try:
             value = float(count)
         except ValueError:
             raise RuntimeError(f"perf could not count {event}: {count!r}") from None
-        bucket = before if float(time_s) <= split_at else after
-        bucket[event] = bucket.get(event, 0.0) + value
+        totals[event] = totals.get(event, 0.0) + value
         counted = min(counted, float(share))
-    missing = [event for event in events if event not in after]
+    missing = [event for event in events if event not in totals]
     if missing:
         raise RuntimeError(f"perf reported nothing for {missing} in {path}")
-    return {event: (before.get(event, 0.0), after[event]) for event in events}, counted
+    return {event: totals[event] for event in events}, counted
 
 
 @pytest.mark.self_hosted_large  # Needs 8+ GB memory
@@ -347,14 +347,11 @@ def test_go2_replay_realtime_load() -> None:
         delivered = ", ".join(f"{name} {counts[name]}/{expected[name]}" for name in FLOOR_FRACTION)
         extra = f"cpu: {_cpu_model()}; delivered: {delivered}"
         if PERF_EVENTS:
-            # Split at the first frame like the CPU time. "instructions:u" -> "instructions".
-            counted, share = _perf_counts(perf_csv, PERF_EVENTS.split(","), first[0] - start[0])
-            for event, (startup, run) in counted.items():
-                name = event.partition(":")[0]
-                entries += [
-                    (f"first frame {name}", startup / 1e9, "G"),
-                    (f"run {name}", run / 1e9, "G"),
-                ]
+            # Whole run, spawn to exit. "instructions:u" -> "instructions".
+            counted, share = _perf_counts(perf_csv, PERF_EVENTS.split(","))
+            entries += [
+                (event.partition(":")[0], total / 1e9, "G") for event, total in counted.items()
+            ]
             extra += f"; perf counted {share:.1f}%"
         Path(METRICS_PATH).write_text(
             json.dumps(

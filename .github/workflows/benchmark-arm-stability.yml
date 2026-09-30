@@ -106,9 +106,26 @@ jobs:
           python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
           import json, statistics as st
           from pathlib import Path
-          runs = {p.stem: {b["name"]: b["value"] for b in json.loads(p.read_text())} for p in sorted(Path().glob("metrics-*.json"))}
-          print(f"{len(runs)} runs: {', '.join(runs)}\n")
-          print("| series | min | median | max | CV | range/median | within-runner |")
+          runs, extras = {}, {}
+          for p in sorted(Path().glob("metrics-*.json")):
+              benches = json.loads(p.read_text())
+              runs[p.stem] = {b["name"]: b["value"] for b in benches}
+              extras[p.stem] = benches[0].get("extra", "") if benches else ""
+          for r in runs.values():
+              # Startup + run: module starts run in parallel, so where the first
+              # frame lands among them moves work across the split.
+              if "first frame cpu" in r and "run cpu" in r:
+                  r["total cpu"] = r["first frame cpu"] + r["run cpu"]
+              if r.get("cycles"):
+                  r["IPC"] = r["instructions"] / r["cycles"]
+          print(f"{len(runs)} runs\n")
+          keys = ("first frame wall", "instructions", "cycles", "IPC", "run cpu", "total cpu")
+          print("| run | " + " | ".join(keys) + " | extra |")
+          print("|---" * (len(keys) + 2) + "|")
+          for name, r in runs.items():
+              cells = ("-" if r.get(k) is None else f"{r[k]:.3f}" for k in keys)
+              print(f"| {name} | " + " | ".join(cells) + f" | {extras[name]} |")
+          print("\n| series | min | median | max | CV | range/median | within-runner |")
           print("|---|---|---|---|---|---|---|")
           for name in runs[next(iter(runs))]:
               v = [r[name] for r in runs.values() if name in r]
