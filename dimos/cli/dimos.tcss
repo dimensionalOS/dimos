@@ -41,6 +41,26 @@ $tool: $cyan;
 $tool-result: $yellow;
 $human: $bright-white;
 
+/* Portal gradient — sampled down the centre of the brand doorway asset.
+ * Used by the sign-in art; pale yellow at the lintel through mint to salmon
+ * at the threshold. Keep the stops in order: theme.py reads them as a ramp. */
+$portal-0: #f4f19f;
+$portal-1: #fceeb0;
+$portal-2: #fbe5c5;
+$portal-3: #ebe6d6;
+$portal-4: #cfebcd;
+$portal-5: #bcf6c1;
+$portal-6: #b9f5bb;
+$portal-7: #dae8bc;
+$portal-8: #fae1bd;
+$portal-9: #f3b097;
+$portal-10: #f3aa7b;
+
+/* Art accents */
+$mint: #b9f5bb;
+$salmon: #f3aa7b;
+$muted: #5a6a6a;
+
 /* Status Colors */
 $success: $green;
 $error: $red;
