@@ -246,10 +246,11 @@ def test_real_capture_replay_publishes_streams(spawn: Spawn) -> None:
     assert imus[0].frame_id == "imu_link"
 
     # Replayed stamps sit on the recording's clock, not the sensor's power-on
-    # clock: within the collected window of the first capture record.
+    # clock: within the collected window of the first capture record. The offset
+    # filter strips delivery latency, so a stamp can sit a few ms before its record.
     capture_start = _first_capture_ts(pcap)
     for msg in (clouds[0], clouds[-1], imus[0], imus[-1]):
-        assert 0.0 <= msg.ts - capture_start < 30.0, f"stamp {msg.ts} vs capture {capture_start}"
+        assert -0.1 <= msg.ts - capture_start < 30.0, f"stamp {msg.ts} vs capture {capture_start}"
 
 
 @pytest.mark.native_e2e
