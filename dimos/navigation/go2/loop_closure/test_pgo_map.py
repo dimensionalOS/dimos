@@ -71,10 +71,6 @@ def test_rebuilds_on_loop_closure_and_respects_cooldown():
     )
     assert world_map.add(_wall(1.525, 102.0), pose)
     assert _xs(world_map) == {30}
-    positions, quats = world_map.placed.keyframe_poses()
-    np.testing.assert_allclose(positions, [[0.5, 0.0, 0.0], [0.0, 0.0, 0.0]], atol=1e-9)
-    assert quats.shape == (2, 4)
-    assert world_map.placed.loop_segments().shape == (0, 2, 3)
 
     # a second loop inside the cooldown waits for it
     pgo.n_loops = 2

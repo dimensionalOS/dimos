@@ -24,6 +24,7 @@ The map is anchored at the robot. The area the robot is in right now stays where
 | `voxel_size` | `0.05` | Voxel size in meters |
 | `emit_every` | `1` | Publish `global_map` every n lidar frames. The blueprint uses `5`. A rebuild always publishes. |
 | `rebuild_cooldown_s` | `10.0` | Shortest gap between map rebuilds, in seconds of lidar time |
+| `telemetry` | `True` | Publish timings in ms: `mapper_frame_ms` per lidar frame, `pgo_loop_ms` per loop closure, `pgo_rebuild_ms` per map rebuild |
 | `pgo` | `LIVE_PGO` | Keyframe spacing, loop search radius, ICP thresholds. A keyframe is taken every 0.5 m or 45° of rotation (offline PGO uses 10°). |
 
 ## Outputs
@@ -34,14 +35,15 @@ The map is anchored at the robot. The area the robot is in right now stays where
 | `pgo_keyframes` | `PoseArray` | Pose graph nodes: optimized keyframe poses in the map frame, in order |
 | `pgo_loops` | `LineSegments3D` | Loop edges in the map frame, weighted by ICP score |
 
-The graph outputs draw in Rerun like `dimos map global` does (red keyframe points, white path, red loop edges). They are published on every rebuild, and otherwise at most once per `rebuild_cooldown_s` while new keyframes arrive.
+The graph outputs draw in Rerun like `dimos map global` does (red keyframe points, white path, red loop edges). They are published on every new keyframe.
 
 ## Cost
 
 Measured on `go2_hongkong_office` (558 s, 405 keyframes, 37 loop closures, 465k voxels):
 
-- A lidar frame costs 11 to 15 ms on average (voxel insert plus PGO). A frame that triggers an ICP can take up to about 0.5 s.
-- A map rebuild takes 50 to 250 ms and runs at most once per `rebuild_cooldown_s`.
+- A lidar frame costs about 8 ms on average (voxel insert plus PGO), 20 ms when it becomes a keyframe.
+- The PGO step that closes a loop takes 64 ms median, 136 ms at worst.
+- A map rebuild takes 69 ms median, about 200 ms at worst, and runs at most once per `rebuild_cooldown_s`.
 - The mapper runs on the CPU voxel store. Lidar frames that arrive while it is busy are dropped.
 
 Compared with the offline rebuild (`dimos map global --pgo`) under the same pose graph, the live map is missing under 1% of voxels and has no extra ones. To reproduce:

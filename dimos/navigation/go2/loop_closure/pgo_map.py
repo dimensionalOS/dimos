@@ -62,9 +62,11 @@ class PGOMap:
             voxel_size=voxel_size, frame_id=frame_id, stamped=True, show_startup_log=False
         )
         self._cooldown = rebuild_cooldown_s
-        self.placed: PoseGraph | None = None  # the graph the map was last placed with
         self._placed_loops = 0
         self._last_rebuild_ts = -math.inf
+        # How long the latest loop-closing PGO step and the latest rebuild took.
+        self.loop_ms = 0.0
+        self.rebuild_ms = 0.0
 
     @property
     def n_keyframes(self) -> int:
@@ -78,25 +80,37 @@ class PGOMap:
         """Insert a world-frame lidar frame taken at odom `pose`. True if the map was rebuilt."""
         self._grid.add_frame(cloud)
         if pose is not None and not (pose.position.is_zero() or pose.orientation.is_zero()):
+            t0, loops = time.perf_counter(), self.n_loops
             self._pgo.process(_pose_to_pose3(pose), cloud.ts, cloud)
+            if self.n_loops != loops:
+                self.loop_ms = (time.perf_counter() - t0) * 1e3
 
         # frame time, not wall time, so replay and tests pace the same as the robot
         if self.n_loops == self._placed_loops or cloud.ts - self._last_rebuild_ts < self._cooldown:
             return False
         t0 = time.perf_counter()
-        self.placed = self.graph()
-        self._grid.reproject(self.placed.place)
+        self._grid.reproject(self.graph().place)
         self._placed_loops, self._last_rebuild_ts = self.n_loops, cloud.ts
+        self.rebuild_ms = (time.perf_counter() - t0) * 1e3
         logger.info(
             "PGO map rebuilt",
             loops=self.n_loops,
             voxels=len(self._grid),
-            ms=round((time.perf_counter() - t0) * 1e3),
+            loop_ms=round(self.loop_ms),
+            rebuild_ms=round(self.rebuild_ms),
         )
         return True
 
     def graph(self) -> PoseGraph:
         return self._pgo.snapshot()
+
+    def keyframe_poses(self) -> tuple[np.ndarray, np.ndarray]:
+        """Keyframe poses in the map frame: positions (K, 3), xyzw quats (K, 4)."""
+        return self._pgo.keyframe_poses()
+
+    def loop_segments(self) -> tuple[np.ndarray, np.ndarray]:
+        """Loop edges in the map frame: endpoints (L, 2, 3) and ICP scores (L,)."""
+        return self._pgo.loop_segments()
 
     def global_map(self) -> PointCloud2:
         return self._grid.get_global_pointcloud2()

@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -47,15 +48,22 @@ def _convert_pgo_keyframes(keyframes: Any) -> Any:
 
     positions = keyframes.positions()
     return [
-        ("world/pgo_keyframes", rr.Points3D(positions, colors=[[255, 0, 0]], radii=[0.025])),
-        ("world/pgo_path", rr.LineStrips3D([positions], colors=[[255, 255, 255]], radii=[0.01])),
+        ("world/pgo/keyframes", rr.Points3D(positions, colors=[[255, 0, 0]], radii=[0.025])),
+        ("world/pgo/path", rr.LineStrips3D([positions], colors=[[255, 255, 255]], radii=[0.01])),
     ]
 
 
 def _convert_pgo_loops(edges: Any) -> Any:
     import rerun as rr
 
-    return rr.LineStrips3D(edges.segments, colors=[[231, 76, 60]], radii=[0.008])
+    strips = rr.LineStrips3D(edges.segments, colors=[[231, 76, 60]], radii=[0.008])
+    return [("world/pgo/loops", strips)]
+
+
+def _plot_telemetry(name: str, msg: Any) -> Any:
+    import rerun as rr
+
+    return [(f"plots/telemetry/{name}", rr.Scalars(msg.data))]
 
 
 def _plot_odom(odom: Any) -> Any:
@@ -96,8 +104,12 @@ def _go2_rerun_blueprint() -> Any:
         rrb.Horizontal(
             rrb.Vertical(
                 rrb.Spatial2DView(origin="world/color_image", name="Camera"),
-                rrb.TimeSeriesView(origin="plots/odom", name="odom"),
-                rrb.TimeSeriesView(origin="plots/cmd_vel", name="cmd_vel"),
+                rrb.TimeSeriesView(
+                    origin="plots",
+                    contents=["plots/odom/**", "plots/cmd_vel/**"],
+                    name="odom + cmd_vel",
+                ),
+                rrb.TimeSeriesView(origin="plots/telemetry", name="telemetry"),
             ),
             rrb.Spatial3DView(
                 origin="world",
@@ -133,6 +145,10 @@ rerun_config: dict[str, Any] = {
         "world/navigation_costmap": _convert_navigation_costmap,
         "world/pgo_keyframes": _convert_pgo_keyframes,
         "world/pgo_loops": _convert_pgo_loops,
+        # partial, not a closure: this config is pickled to the viewer's worker
+        "world/mapper_frame_ms": partial(_plot_telemetry, "mapper_frame_ms"),
+        "world/pgo_loop_ms": partial(_plot_telemetry, "pgo_loop_ms"),
+        "world/pgo_rebuild_ms": partial(_plot_telemetry, "pgo_rebuild_ms"),
     },
     "max_hz": {
         "world/global_map": 0,  # publishes at ~7.8 Hz

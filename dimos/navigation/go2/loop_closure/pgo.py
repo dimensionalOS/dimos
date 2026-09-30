@@ -222,23 +222,6 @@ class PoseGraph(Transformer[Any, Any]):
             raw_tf = Transform.from_pose(FRAME_BODY, ps)
             yield obs.derive(data=obs.data, pose=self.correct(raw_tf))
 
-    def keyframe_poses(self) -> tuple[np.ndarray, np.ndarray]:
-        """Keyframe poses in the map frame `place` produces: positions (K, 3), xyzw quats (K, 4)."""
-        if not self.keyframes:
-            return np.empty((0, 3)), np.empty((0, 4))
-        now_R, now_t = self._corrections(np.array([np.inf]))
-        anchor = now_R[0].inv()
-        positions = np.array([kf.optimized.translation.to_numpy() for kf in self.keyframes])
-        quats = np.array([kf.optimized.rotation.to_numpy() for kf in self.keyframes])
-        return anchor.apply(positions - now_t[0]), (anchor * Rotation.from_quat(quats)).as_quat()
-
-    def loop_segments(self) -> np.ndarray:
-        """Loop edges as endpoint pairs in the map frame `place` produces, (L, 2, 3)."""
-        at = dict(zip((kf.ts for kf in self.keyframes), self.keyframe_poses()[0], strict=True))
-        return np.array([(at[loop.source.ts], at[loop.target.ts]) for loop in self.loops]).reshape(
-            -1, 2, 3
-        )
-
     def _corrections(self, ts: np.ndarray) -> tuple[Rotation, np.ndarray]:
         """Vectorized drift correction: slerp rotation, lerp translation, clipped to the keyframes."""
         ts_arr, slerp, t_stack = self._drifts()
@@ -397,6 +380,23 @@ class _PGOState:
     @property
     def n_loops(self) -> int:
         return len(self._accepted_loops)
+
+    def keyframe_poses(self) -> tuple[np.ndarray, np.ndarray]:
+        """Optimized keyframe poses, anchored at the latest: positions (K, 3), xyzw quats (K, 4)."""
+        if not self._key_poses:
+            return np.empty((0, 3)), np.empty((0, 4))
+        anchor = self._world_correction.inverse()
+        poses = [anchor.compose(kp.optimized) for kp in self._key_poses]
+        positions = np.array([p.translation() for p in poses])
+        quats = Rotation.from_matrix(np.array([p.rotation().matrix() for p in poses])).as_quat()
+        return positions, quats
+
+    def loop_segments(self) -> tuple[np.ndarray, np.ndarray]:
+        """Accepted loop edges in the same frame: endpoints (L, 2, 3) and ICP scores (L,)."""
+        positions, _ = self.keyframe_poses()
+        pairs = np.array([(lp.source, lp.target) for lp in self._accepted_loops], dtype=int)
+        scores = np.array([lp.score for lp in self._accepted_loops])
+        return positions[pairs.reshape(-1, 2)], scores
 
     def process(
         self,

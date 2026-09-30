@@ -30,6 +30,7 @@ from dimos.navigation.go2.loop_closure.pgo import (
     PGOConfig,
     PoseGraph,
     _obs_to_pose3,
+    _PGOState,
     _pose3_to_transform,
 )
 
@@ -157,6 +158,23 @@ def _make_lidar_stream(n_frames: int = 12, points_per_frame: int = 500) -> Strea
             pose=(float(i), 0.0, 0.0, qx, qy, qz, qw),
         )
     return lidar
+
+
+def test_state_reports_keyframes_anchored_at_the_latest() -> None:
+    state = _PGOState(PGOConfig())
+    for obs in _make_lidar_stream(n_frames=12):
+        state.process(_obs_to_pose3(obs), obs.ts, obs.data)
+
+    positions, quats = state.keyframe_poses()
+    assert positions.shape == (state.n_keyframes, 3)
+    assert quats.shape == (state.n_keyframes, 4)
+    # no loop closed, so nothing moved: keyframes sit on the odometry line
+    np.testing.assert_allclose(positions[-1], [12.0, 0.0, 0.0], atol=1e-6)
+    np.testing.assert_allclose(positions[:, 1:], 0.0, atol=1e-6)
+
+    segments, scores = state.loop_segments()
+    assert segments.shape == (0, 2, 3)
+    assert scores.shape == (0,)
 
 
 class TestPipelineEndToEnd:
