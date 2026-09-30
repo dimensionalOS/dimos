@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import functools
 import struct
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 # Import LCM types
 from dimos_lcm.sensor_msgs.PointCloud2 import (
@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     import open3d as o3d  # type: ignore[import-untyped]
     from rerun._baseclasses import Archetype
 
+    from dimos.msgs.geometry_msgs.Pose import Pose
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
 
@@ -74,6 +75,11 @@ def register_colormap_annotation(name: str = "turbo") -> None:
 
 
 # TODO: encode/decode need to be updated to work with full spectrum of pointcloud2 fields
+class SectorJson(TypedDict):
+    clear_m: float
+    state: str
+
+
 class PointCloud2(Timestamped):
     msg_name = "sensor_msgs.PointCloud2"
 
@@ -997,6 +1003,41 @@ class PointCloud2(Timestamped):
             frame_id=self.frame_id,
             timestamp=self.ts,
         )
+
+    def to_json(
+        self,
+        origin: Pose | None = None,
+        *,
+        sectors: tuple[str, ...],
+        z_min: float = -0.2,
+        z_max: float = 0.8,
+        max_range: float = 5.0,
+    ) -> dict[str, SectorJson]:
+        """Nearest obstacle per angular sector around ``origin`` (None: cloud already in the robot frame).
+
+        ``sectors`` names equal angular bins counter-clockwise from ahead. The z band is
+        relative to the origin. ``state`` is blocked (< 0.5 m), tight (< 1 m) or clear.
+        """
+        pts = self.points_f32().astype(np.float64)
+        if origin is not None:
+            pts = pts - np.array([origin.x, origin.y, origin.z])
+            c, s = np.cos(-origin.yaw), np.sin(-origin.yaw)
+            pts = np.column_stack(
+                (c * pts[:, 0] - s * pts[:, 1], s * pts[:, 0] + c * pts[:, 1], pts[:, 2])
+            )
+        r = np.hypot(pts[:, 0], pts[:, 1])
+        keep = (pts[:, 2] > z_min) & (pts[:, 2] < z_max) & (r > 0.05) & (r < max_range)
+        pts, r = pts[keep], r[keep]
+        n = len(sectors)
+        sector = np.round(np.arctan2(pts[:, 1], pts[:, 0]) / (2 * np.pi / n)).astype(int) % n
+        out: dict[str, SectorJson] = {}
+        for i, name in enumerate(sectors):
+            clear_m = float(r[sector == i].min()) if (sector == i).any() else max_range
+            out[name] = {
+                "clear_m": round(clear_m, 2),
+                "state": "blocked" if clear_m < 0.5 else "tight" if clear_m < 1.0 else "clear",
+            }
+        return out
 
     def __repr__(self) -> str:
         """String representation."""
