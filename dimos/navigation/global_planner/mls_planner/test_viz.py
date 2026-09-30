@@ -14,6 +14,8 @@
 
 import numpy as np
 
+from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.global_planner.mls_planner import viz
 
 
@@ -42,6 +44,32 @@ def test_graph_edges_take_the_binding_layout() -> None:
         viz.graph_edges(np.zeros((0, 7), dtype=np.float32)).strips.as_arrow_array().to_pylist()
         == []
     )
+
+
+def test_region_cells_unpack_from_the_seq_the_planner_packs() -> None:
+    assert (
+        viz.region_path("world/surface_map", (-3 << 16) | (5 & 0xFFFF)) == "world/surface_map/-3_5"
+    )
+    assert viz.region_path("world/node_edges", (7 << 16) | (-2 & 0xFFFF)) == "world/node_edges/7_-2"
+
+
+def test_region_renders_are_static_and_an_empty_cell_still_lands() -> None:
+    cell = PointCloud2.from_numpy(np.array([[1.0, 1.0, 0.0]], dtype=np.float32))
+    cell.seq = 1 << 16
+    (path, arch, static) = viz.render_surface_region(cell, 0.1, 0.1, 1.0)[0]
+    assert path == "world/surface_map/1_0" and static
+    assert len(arch.positions.as_arrow_array()) == 1
+
+    emptied = PointCloud2.from_numpy(np.zeros((0, 3), dtype=np.float32))
+    emptied.seq = 1 << 16
+    (path, arch, static) = viz.render_surface_region(emptied, 0.1, 0.1, 1.0)[0]
+    assert path == "world/surface_map/1_0" and static
+    assert len(arch.positions.as_arrow_array()) == 0
+
+    edges = LineSegments3D(segments=np.zeros((0, 2, 3)), seq=(2 << 16) | 3)
+    (path, arch, static) = viz.render_edge_region(edges)[0]
+    assert path == "world/node_edges/2_3" and static
+    assert arch.strips.as_arrow_array().to_pylist() == []
 
 
 def test_overrides_follow_the_planner_publish_rate() -> None:

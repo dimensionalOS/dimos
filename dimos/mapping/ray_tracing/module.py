@@ -77,8 +77,12 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Worker threads for parallel map work.
     worker_threads: int = 4
     # Edge of the square regions a seeded map is handed on in, sized so the
-    # planner can apply one between live updates.
-    seed_region_m: float = 4.0
+    # planner can apply one between live updates, and the map viz publishes by.
+    region_m: float = 4.0
+    # Publish the regions whose chunks changed every Nth frame, plus this many
+    # unchanged ones round robin. Zero frames disables the viz.
+    viz_emit_every: int = 5
+    viz_sweep_regions: int = 2
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -103,6 +107,9 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     # with its bounds encoded like region_bounds and stamped alike.
     seed_map: Out[PointCloud2]
     seed_bounds: Out[PoseStamped]
+    # The map for viewers, one region grid cell per message keyed by the cell
+    # in the header seq: the cells whose chunks changed plus a sweep slice.
+    map_regions: Out[PointCloud2]
 
 
 if TYPE_CHECKING:

@@ -22,16 +22,17 @@ mod normals;
 #[cfg(test)]
 mod tests;
 
+use crate::region_viz::region_of;
 #[cfg(test)]
 use normals::fit_normal;
 use normals::{pooled_normal, refresh_voxels, should_spare, NORMAL_MIN_POINTS};
 
 pub type VoxelKey = (i32, i32, i32);
 pub type VoxelHealth = i32;
-type ChunkKey = (i32, i32, i32);
+pub type ChunkKey = (i32, i32, i32);
 
 /// Voxels per chunk edge for the healthy-voxel spatial index `emit_points` scans.
-const CHUNK_SIZE: i32 = 16;
+pub(crate) const CHUNK_SIZE: i32 = 16;
 
 #[inline]
 fn chunk_of(key: VoxelKey) -> ChunkKey {
@@ -101,9 +102,15 @@ pub struct Config {
     /// Worker threads for parallel map work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
-    /// Edge of the square regions a seed load is published in.
+    /// Edge of the square regions a seed load is handed on in and the map
+    /// viz publishes by.
     #[validate(range(exclusive_min = 0.0))]
-    pub seed_region_m: f32,
+    pub region_m: f32,
+    /// Publish the regions whose chunks changed every Nth frame. Zero disables it.
+    pub viz_emit_every: u32,
+    /// Unchanged regions republished per viz tick, round robin, so a viewer
+    /// that joined late or lost a message fills in. Zero turns the sweep off.
+    pub viz_sweep_regions: u32,
 }
 
 fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
@@ -168,6 +175,8 @@ pub struct VoxelMap {
     /// Healthy (health > 0) voxel keys grouped by chunk, kept in sync with `voxels`
     /// on every health transition. `emit_points` scans this instead of the whole map.
     healthy_chunks: AHashMap<ChunkKey, AHashSet<VoxelKey>>,
+    /// Chunks whose emitted points changed since the viz last took them.
+    changed_chunks: AHashSet<ChunkKey>,
 }
 
 impl VoxelMap {
@@ -212,6 +221,7 @@ impl VoxelMap {
         if now_healthy == was_healthy {
             return;
         }
+        self.mark_changed(key);
         let chunk = chunk_of(key);
         if now_healthy {
             self.healthy_chunks.entry(chunk).or_default().insert(key);
@@ -221,6 +231,29 @@ impl VoxelMap {
                 self.healthy_chunks.remove(&chunk);
             }
         }
+    }
+
+    /// Note that what the chunks around `key` emit changed: its own health,
+    /// and its neighbors' support across a chunk border. The corners cover
+    /// every chunk the 27 neighborhood touches.
+    fn mark_changed(&mut self, key: VoxelKey) {
+        for dx in [-1, 1] {
+            for dy in [-1, 1] {
+                for dz in [-1, 1] {
+                    self.changed_chunks
+                        .insert(chunk_of((key.0 + dx, key.1 + dy, key.2 + dz)));
+                }
+            }
+        }
+    }
+
+    /// The chunks whose emitted points changed since the last take.
+    pub fn take_changed_chunks(&mut self) -> AHashSet<ChunkKey> {
+        std::mem::take(&mut self.changed_chunks)
+    }
+
+    pub fn healthy_chunk_keys(&self) -> impl Iterator<Item = ChunkKey> + '_ {
+        self.healthy_chunks.keys().copied()
     }
 
     /// Count of a key's 26 neighbors that currently exist and are healthy.
@@ -807,6 +840,31 @@ where
     flatten_with_capacity(parts, 3 * extra_points)
 }
 
+/// Points of the given chunks, flat (x, y, z) triples: their healthy voxels
+/// with at least `support_min` occupied neighbors.
+pub fn chunk_points(
+    map: &VoxelMap,
+    voxel_size: f32,
+    chunks: &[ChunkKey],
+    support_min: i32,
+) -> Vec<f32> {
+    let parts: Vec<Vec<f32>> = chunks
+        .par_iter()
+        .filter_map(|chunk| map.healthy_chunks.get(chunk))
+        .map(|keys| {
+            let mut part = Vec::with_capacity(3 * keys.len());
+            for &key in keys {
+                if is_supported(map, key, support_min) {
+                    let (x, y, z) = voxel_center(key, voxel_size);
+                    part.extend_from_slice(&[x, y, z]);
+                }
+            }
+            part
+        })
+        .collect();
+    flatten_with_capacity(parts, 0)
+}
+
 /// Points for an emitted cloud, flat (x, y, z) triples: healthy surface voxels
 /// within `bounds` (all when `None`) with at least `support_min` occupied
 /// neighbors, plus this frame's not-yet-healthy `live` voxels within `bounds`.
@@ -1094,10 +1152,8 @@ pub fn partition_seed(
         .collect();
     ordered.sort_by(|a, b| a.0.total_cmp(&b.0));
 
-    // Group chunks by the region grid cell their center falls in, then size
-    // each region's cylinder to the chunk boxes it holds, so a chunk larger
-    // than the grid still lies inside its region.
-    let cell_m = region_m.max(edge);
+    // Group chunks by region grid cell, then size each region's cylinder to
+    // the chunk boxes it holds.
     let mut regions: AHashMap<(i32, i32), (Aabb, Vec<SeedTile>)> = AHashMap::new();
     let mut order: Vec<(i32, i32)> = Vec::new();
     for (_, chunk, tile) in ordered {
@@ -1107,10 +1163,7 @@ pub fn partition_seed(
             chunk.2 as f32 * edge,
         );
         let hi = (lo.0 + edge, lo.1 + edge, lo.2 + edge);
-        let cell = (
-            ((lo.0 + edge * 0.5) / cell_m).floor() as i32,
-            ((lo.1 + edge * 0.5) / cell_m).floor() as i32,
-        );
+        let cell = region_of(chunk, voxel_size, region_m);
         let (aabb, tiles) = regions.entry(cell).or_insert_with(|| {
             order.push(cell);
             (Aabb { lo, hi }, Vec::new())

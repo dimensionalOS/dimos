@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from dimos.mapping.ray_tracing.viz import voxel_map_points
-from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
+from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override, region_path
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.PointStamped import PointStamped
     from dimos.msgs.nav_msgs.Path import Path
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-    from dimos.visualization.rerun.bridge import VisualOverride
+    from dimos.visualization.rerun.bridge import RerunMulti, VisualOverride
 
 PATH_Z_LIFT = 0.05
 
@@ -49,13 +49,10 @@ def render_voxel_map(msg: PointCloud2, voxel_size: float) -> Archetype:
     return voxel_map_points(msg.points_f32(), voxel_size)
 
 
-def render_seed_region(msg: PointCloud2, voxel_size: float) -> list[tuple[str, Archetype]] | None:
-    """Each seeded region on its own child entity, keyed by its center, so they accumulate."""
-    points = msg.points_f32()
-    if len(points) == 0:
-        return None
-    cx, cy = points[:, :2].mean(axis=0)
-    return [(f"world/seed_map/{cx:.1f}_{cy:.1f}", voxel_map_points(points, voxel_size))]
+def render_map_region(msg: PointCloud2, voxel_size: float) -> RerunMulti:
+    """One region of the voxel map on its own static entity, empty when the region emptied."""
+    cell = voxel_map_points(msg.points_f32(), voxel_size)
+    return [(region_path("world/map_regions", msg.seq), cell, True)]
 
 
 def path_strip(
@@ -146,7 +143,9 @@ def nav_visual_override(
     voxels = partial(render_voxel_map, voxel_size=voxel_size)
     return {
         "world/global_map": voxels,
-        "world/seed_map": partial(render_seed_region, voxel_size=voxel_size),
+        "world/map_regions": partial(render_map_region, voxel_size=voxel_size),
+        # the seeded regions feed the planner, the map viz already shows them
+        "world/seed_map": None,
         "world/seed_bounds": None,
         "world/local_map": voxels,
         "world/path": render_path,

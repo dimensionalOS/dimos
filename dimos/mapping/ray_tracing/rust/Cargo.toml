@@ -33,6 +33,7 @@ local_map_fine = "sensor_msgs.PointCloud2"
 seed_map = "sensor_msgs.PointCloud2"
 seed_bounds = "geometry_msgs.PoseStamped"
 region_bounds = "geometry_msgs.PoseStamped"
+map_regions = "sensor_msgs.PointCloud2"
 
 [dependencies]
 dimos-module = { path = "../../../../native/rust/dimos-module" }

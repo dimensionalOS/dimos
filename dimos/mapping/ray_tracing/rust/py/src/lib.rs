@@ -144,7 +144,9 @@ impl VoxelRayMapper {
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
             worker_threads,
-            seed_region_m: 4.0,
+            region_m: 4.0,
+            viz_emit_every: 0,
+            viz_sweep_regions: 0,
         };
         config
             .validate()

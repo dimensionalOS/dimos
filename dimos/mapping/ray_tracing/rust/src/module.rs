@@ -12,10 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use crate::mapper::{register, Mapper, Pose};
-use crate::voxel_ray_tracer::{partition_seed, Config, Cylinder, SeedPartition, SeedRegion};
+use crate::region_viz::{pack_cell, region_of, Cell, RegionSweep};
+use crate::voxel_ray_tracer::{
+    partition_seed, ChunkKey, Config, Cylinder, SeedPartition, SeedRegion,
+};
 use dimos_module::pointcloud::extract_xyz;
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf, Transform};
 use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
@@ -24,7 +28,7 @@ use lcm_msgs::std_msgs::{Header, Time};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Messages queued to the worker in arrival order.
 enum Job {
@@ -79,6 +83,11 @@ pub struct RayTracingVoxelMap {
     #[output(encode = PoseStamped::encode)]
     region_bounds: Output<PoseStamped>,
 
+    // The map for viewers, one region grid cell per message keyed by the cell
+    // in the header seq: the cells whose chunks changed plus a sweep slice.
+    #[output(encode = PointCloud2::encode)]
+    map_regions: Output<PointCloud2>,
+
     // One region of a seeded map as it lands, support-gated like local_map,
     // with its bounds encoded like region_bounds and stamped alike.
     #[output(encode = PointCloud2::encode)]
@@ -106,6 +115,7 @@ impl RayTracingVoxelMap {
             local_map: self.local_map.clone(),
             local_map_fine: self.local_map_fine.clone(),
             region_bounds: self.region_bounds.clone(),
+            map_regions: self.map_regions.clone(),
             seed_map: self.seed_map.clone(),
             seed_bounds: self.seed_bounds.clone(),
         };
@@ -207,6 +217,7 @@ struct State {
     // snapshot is current as of.
     last_frame_stamp: Time,
     seed: SeedState,
+    viz: RegionSweep,
 }
 
 /// Owns the mapper and does every map mutation and publish off the handle
@@ -223,6 +234,7 @@ struct Worker {
     local_map: Output<PointCloud2>,
     local_map_fine: Output<PointCloud2>,
     region_bounds: Output<PoseStamped>,
+    map_regions: Output<PointCloud2>,
     seed_map: Output<PointCloud2>,
     seed_bounds: Output<PoseStamped>,
 }
@@ -234,6 +246,7 @@ impl Worker {
             last_clear_mask_stamp: 0.0,
             last_frame_stamp: Time::default(),
             seed: SeedState::Idle,
+            viz: RegionSweep::default(),
         };
         loop {
             let loading = matches!(state.seed, SeedState::Loading(_));
@@ -360,9 +373,51 @@ impl Worker {
             publish_cloud(&self.local_map, &local).await;
         }
         if let Some(points) = fine_points {
-            let fine = points_to_cloud(&points, out_frame_id, stamp);
+            let fine = points_to_cloud(&points, out_frame_id, stamp.clone());
             publish_cloud(&self.local_map_fine, &fine).await;
         }
+
+        if state.mapper.viz_due() {
+            let regions = tokio::task::block_in_place(|| self.map_regions_due(state));
+            debug!(regions = regions.len(), "map regions published");
+            for (cell, points) in regions {
+                let mut cloud = points_to_cloud(&points, out_frame_id, stamp.clone());
+                cloud.header.seq = pack_cell(cell);
+                publish_cloud(&self.map_regions, &cloud).await;
+            }
+        }
+    }
+
+    /// The regions due this viz tick with their points: those whose chunks
+    /// changed, those that emptied, and the sweep slice.
+    fn map_regions_due(&self, state: &mut State) -> Vec<(Cell, Vec<f32>)> {
+        let voxel_size = self.config.voxel_size;
+        let region_m = self.config.region_m;
+        let changed: Vec<Cell> = state
+            .mapper
+            .take_changed_chunks()
+            .into_iter()
+            .map(|chunk| region_of(chunk, voxel_size, region_m))
+            .collect();
+        let mapper = &state.mapper;
+        let mut present: BTreeMap<Cell, Vec<ChunkKey>> = BTreeMap::new();
+        for chunk in mapper.healthy_chunk_keys() {
+            present
+                .entry(region_of(chunk, voxel_size, region_m))
+                .or_default()
+                .push(chunk);
+        }
+        state
+            .viz
+            .tick(changed, &present, self.config.viz_sweep_regions as usize)
+            .into_iter()
+            .map(|cell| {
+                let points = present
+                    .get(&cell)
+                    .map_or_else(Vec::new, |chunks| mapper.chunk_points(chunks));
+                (cell, points)
+            })
+            .collect()
     }
 
     /// Delete the voxels covering a cloud of world-frame points a sensor knows
@@ -427,7 +482,7 @@ impl Worker {
         let sender = self.job_sender.clone();
         let world_frame = self.config.world_frame.clone();
         let voxel_size = self.config.voxel_size;
-        let region_m = self.config.seed_region_m;
+        let region_m = self.config.region_m;
         let origin = state.mapper.last_origin();
         tokio::spawn(async move {
             let placed = tf
@@ -696,7 +751,9 @@ mod tests {
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
             worker_threads: 4,
-            seed_region_m: 4.0,
+            region_m: 4.0,
+            viz_emit_every: 0,
+            viz_sweep_regions: 0,
         }
     }
 

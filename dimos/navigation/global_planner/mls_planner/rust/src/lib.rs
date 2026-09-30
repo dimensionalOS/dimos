@@ -19,6 +19,7 @@ pub mod mls_planner;
 pub mod module;
 mod nodes;
 mod planner;
+pub mod region_viz;
 mod smoother;
 mod surfaces;
 pub mod voxel;

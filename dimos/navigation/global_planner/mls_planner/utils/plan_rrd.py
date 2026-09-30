@@ -521,7 +521,7 @@ def main(
         help="Stream holding a map cloud to seed at its timestamp, placed by tf, when present",
     ),
     region_m: float = typer.Option(
-        RayTracingVoxelMapConfig.model_fields["seed_region_m"].default,
+        RayTracingVoxelMapConfig.model_fields["region_m"].default,
         "--region-m",
         help="Region size (m) the seeded map is handed to the planner in",
     ),

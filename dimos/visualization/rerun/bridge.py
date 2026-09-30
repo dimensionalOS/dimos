@@ -86,7 +86,9 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-RerunMulti: TypeAlias = "list[tuple[str, Archetype]]"
+# (entity_path, archetype), or (entity_path, archetype, True) for a static log,
+# which is never evicted by the viewer's memory limit.
+RerunMulti: TypeAlias = "list[tuple[str, Archetype] | tuple[str, Archetype, bool]]"
 RerunData: TypeAlias = "Archetype | RerunMulti"
 
 if TYPE_CHECKING:
@@ -108,7 +110,7 @@ def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
         isinstance(data, list)
         and bool(data)
         and isinstance(data[0], tuple)
-        and len(data[0]) == 2
+        and len(data[0]) in (2, 3)
         and isinstance(data[0][0], str)
         and isinstance(data[0][1], Archetype)
     )
@@ -377,8 +379,8 @@ class RerunBridgeModule(Module):
 
         # TFMessage for example returns list of (entity_path, archetype) tuples
         if is_rerun_multi(rerun_data):
-            for path, archetype in rerun_data:
-                rr.log(path, archetype)
+            for entry in rerun_data:
+                rr.log(entry[0], entry[1], static=len(entry) == 3 and entry[2])
         else:
             rr.log(entity_path, cast("Archetype", rerun_data))
             if isinstance(msg, Image):
@@ -555,10 +557,10 @@ class RerunBridgeModule(Module):
                 logger.info(
                     "Rerun static entity",
                     entity_path=entity_path,
-                    archetypes=[type(archetype).__name__ for _, archetype in data],
+                    archetypes=[type(entry[1]).__name__ for entry in data],
                 )
-                for path, archetype in data:
-                    rr.log(path, archetype, static=True)
+                for entry in data:
+                    rr.log(entry[0], entry[1], static=True)
                 continue
 
             if isinstance(data, list):

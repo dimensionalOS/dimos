@@ -46,6 +46,8 @@ class LineSegments3D(Timestamped):
     msg_name = "nav_msgs.LineSegments3D"
     ts: float
     frame_id: str
+    # The header seq, as sent on the wire.
+    seq: int
     segments: NDArray[np.float64]
     weights: NDArray[np.float64]
 
@@ -55,9 +57,11 @@ class LineSegments3D(Timestamped):
         frame_id: str = "map",
         segments: ArrayLike | None = None,
         weights: ArrayLike | None = None,
+        seq: int = 0,
     ) -> None:
         self.frame_id = frame_id
         self.ts = time.time() if ts is None else ts
+        self.seq = seq
         self.segments = np.asarray(
             segments if segments is not None else np.empty((0, 2, 3)), dtype=np.float64
         ).reshape(-1, 2, 3)
@@ -77,13 +81,13 @@ class LineSegments3D(Timestamped):
         Every pose header must carry the same frame_id length, which is what the planner emits.
         """
         raw = data if isinstance(data, bytes) else data.read()
-        count, _, sec, nsec, frame_len = _PREFIX.unpack_from(raw, 8)
+        count, seq, sec, nsec, frame_len = _PREFIX.unpack_from(raw, 8)
         offset = 8 + _PREFIX.size
         frame_id = raw[offset : offset + frame_len][:-1].decode("utf-8", "replace")
         offset += frame_len
         ts = sec + nsec / 1e9
         if count == 0:
-            return cls(ts=ts, frame_id=frame_id)
+            return cls(ts=ts, frame_id=frame_id, seq=seq)
         if count % 2:
             raise ValueError(f"LineSegments3D needs pose pairs, got {count} poses")
         (pose_frame_len,) = struct.unpack_from(">I", raw, offset + _POSE_HEAD - 4)
@@ -105,6 +109,7 @@ class LineSegments3D(Timestamped):
             frame_id=frame_id,
             segments=poses[:, :3].astype(np.float64).reshape(-1, 2, 3),
             weights=poses[0::2, 6].astype(np.float64),
+            seq=seq,
         )
 
     def to_rerun(self, z_offset: float = 0.0, radii: float = 0.04) -> Archetype:

@@ -37,9 +37,8 @@ from dimos.robot.unitree.go2.nav_3d_config import (
 )
 from dimos.visualization.vis_module import vis_module
 
-# What the planner searched over (surface, nodes, weighted edges). Seeded from a
-# premap it is the whole building, several MB a tick, so keep this low.
-planner_viz_hz = 0.2
+# What the planner searched over (surface, nodes, weighted edges), by changed cell.
+planner_viz_hz = 2.0
 
 
 _nav_rerun_config = {

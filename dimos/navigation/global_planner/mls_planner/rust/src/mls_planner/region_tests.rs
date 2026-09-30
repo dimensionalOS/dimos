@@ -76,6 +76,8 @@ fn test_config() -> Config {
         step_penalty_weight: 0.0,
         goal_tolerance: 0.3,
         viz_publish_hz: 2.0,
+        viz_region_m: 4.0,
+        viz_sweep_regions: 0,
         worker_threads: 4,
     }
 }

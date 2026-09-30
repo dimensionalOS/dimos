@@ -41,17 +41,18 @@ def test_empty_path_keeps_the_last_one_drawn() -> None:
     )
 
 
-def test_seed_regions_land_on_their_own_entities() -> None:
-    near = PointCloud2.from_numpy(np.array([[1.0, 1.0, 0.0], [1.2, 1.0, 0.0]], dtype=np.float32))
-    far = PointCloud2.from_numpy(np.array([[5.0, 5.0, 0.0]], dtype=np.float32))
-    empty = PointCloud2.from_numpy(np.zeros((0, 3), dtype=np.float32))
-    (near_path, _), (far_path, _) = (
-        viz.render_seed_region(near, 0.1)[0],
-        viz.render_seed_region(far, 0.1)[0],
-    )
-    assert near_path.startswith("world/seed_map/") and far_path.startswith("world/seed_map/")
-    assert near_path != far_path
-    assert viz.render_seed_region(empty, 0.1) is None
+def test_map_regions_land_static_on_their_own_cell_entities() -> None:
+    region = PointCloud2.from_numpy(np.array([[1.0, 1.0, 0.0], [1.2, 1.0, 0.0]], dtype=np.float32))
+    region.seq = (1 << 16) | (-2 & 0xFFFF)
+    (path, arch, static) = viz.render_map_region(region, 0.1)[0]
+    assert path == "world/map_regions/1_-2" and static
+    assert len(arch.positions.as_arrow_array()) == 2
+
+    emptied = PointCloud2.from_numpy(np.zeros((0, 3), dtype=np.float32))
+    emptied.seq = region.seq
+    (path, arch, static) = viz.render_map_region(emptied, 0.1)[0]
+    assert path == "world/map_regions/1_-2" and static
+    assert len(arch.positions.as_arrow_array()) == 0
 
 
 def test_bridge_config_pickles_for_the_workers() -> None:

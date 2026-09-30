@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::mls_planner::{Config, Planner, RegionBounds};
+use crate::region_viz::{pack_cell, Cell, RegionContent, RegionViz};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 use dimos_module::time::now;
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
@@ -260,6 +261,10 @@ impl Worker {
         let mut planner = Planner::new(self.config.worker_threads);
         let mut last_path_at: Option<Instant> = None;
         let mut last_viz_at: Option<Instant> = None;
+        let mut viz = RegionViz::new(
+            (self.config.viz_region_m / self.config.voxel_size).round() as i32,
+            self.config.viz_sweep_regions as usize,
+        );
         loop {
             self.wake.notified().await;
             loop {
@@ -267,7 +272,7 @@ impl Worker {
                 let update = self.pending.lock().expect("pending mutex").take();
                 let live_update = match update {
                     Some(update) => {
-                        self.apply_update(&mut planner, update, &mut last_viz_at)
+                        self.apply_update(&mut planner, update, &mut viz, &mut last_viz_at)
                             .await
                     }
                     None => false,
@@ -283,7 +288,8 @@ impl Worker {
                     break;
                 };
                 if tokio::task::block_in_place(|| self.ingest_seed(&mut planner, seed)) {
-                    self.publish_viz_if_due(&planner, &mut last_viz_at).await;
+                    self.publish_viz_if_due(&planner, &mut viz, &mut last_viz_at)
+                        .await;
                 }
                 tokio::task::yield_now().await;
             }
@@ -295,19 +301,25 @@ impl Worker {
         &self,
         planner: &mut Planner,
         update: MapUpdate,
+        viz: &mut RegionViz,
         last_viz_at: &mut Option<Instant>,
     ) -> bool {
         let applied = tokio::task::block_in_place(|| self.ingest(planner, update));
         if applied {
-            self.publish_viz_if_due(planner, last_viz_at).await;
+            self.publish_viz_if_due(planner, viz, last_viz_at).await;
         }
         applied
     }
 
-    /// Publish the surface, node, and edge viz artifacts, rate-capped to
-    /// viz_publish_hz since building those clouds is costly and unread by
+    /// Publish the nodes and the surface and edge cells due this tick, rate
+    /// capped to viz_publish_hz since building them is costly and unread by
     /// planning.
-    async fn publish_viz_if_due(&self, planner: &Planner, last_viz_at: &mut Option<Instant>) {
+    async fn publish_viz_if_due(
+        &self,
+        planner: &Planner,
+        viz: &mut RegionViz,
+        last_viz_at: &mut Option<Instant>,
+    ) {
         let now = Instant::now();
         let due = self.config.viz_publish_hz > 0.0 && {
             let viz_interval = Duration::from_secs_f32(1.0 / self.config.viz_publish_hz);
@@ -316,11 +328,14 @@ impl Worker {
         if !due {
             return;
         }
-        let (surface, node_cloud, edges) =
-            tokio::task::block_in_place(|| self.build_graph_messages(planner));
-        publish_cloud(&self.surface_map, &surface).await;
+        let (regions, node_cloud) =
+            tokio::task::block_in_place(|| self.build_graph_messages(planner, viz));
+        for (surface, edges) in &regions {
+            publish_cloud(&self.surface_map, surface).await;
+            publish_path(&self.node_edges, edges).await;
+        }
         publish_cloud(&self.nodes, &node_cloud).await;
-        publish_path(&self.node_edges, &edges).await;
+        debug!(regions = regions.len(), "viz published");
         *last_viz_at = Some(now);
     }
 
@@ -421,26 +436,47 @@ impl Worker {
         true
     }
 
-    fn build_graph_messages(&self, planner: &Planner) -> (PointCloud2, PointCloud2, Path) {
+    /// The surface and edge messages of every cell due this tick, each with
+    /// its cell in the header seq, plus the whole node cloud.
+    fn build_graph_messages(
+        &self,
+        planner: &Planner,
+        viz: &mut RegionViz,
+    ) -> (Vec<(PointCloud2, Path)>, PointCloud2) {
+        let frame = &self.config.world_frame;
+        let stamp = now();
+        let due = viz.tick(planner.surface_clearance(), planner.edge_segments());
+        let regions = due
+            .into_iter()
+            .map(|(cell, content)| self.build_region_messages(cell, content, stamp.clone()))
+            .collect();
+
+        let node_points: Vec<Xyz> = planner.graph().nodes.iter().map(|n| n.pos).collect();
+        let node_cloud = build_pc2_xyz(&node_points, frame, stamp);
+        (regions, node_cloud)
+    }
+
+    fn build_region_messages(
+        &self,
+        cell: Cell,
+        content: RegionContent,
+        stamp: Time,
+    ) -> (PointCloud2, Path) {
         let voxel_size = self.config.voxel_size;
         let frame = &self.config.world_frame;
-        let graph = planner.graph();
-
-        let surface_points: Vec<Xyzi> = planner
-            .surface_clearance()
+        let surface_points: Vec<Xyzi> = content
+            .surface
             .into_iter()
             .map(|((ix, iy, iz), clearance)| {
                 let (x, y, z) = surface_point_xyz(ix, iy, iz, voxel_size);
                 (x, y, z, clearance)
             })
             .collect();
-        let surface = build_pc2_xyzi(&surface_points, frame, now());
-
-        let node_points: Vec<Xyz> = graph.nodes.iter().map(|n| n.pos).collect();
-        let node_cloud = build_pc2_xyz(&node_points, frame, now());
-
-        let edges = build_segments_path(planner.edge_segments(), voxel_size, frame, now());
-        (surface, node_cloud, edges)
+        let mut surface = build_pc2_xyzi(&surface_points, frame, stamp.clone());
+        surface.header.seq = pack_cell(cell);
+        let mut edges = build_segments_path(content.segments, voxel_size, frame, stamp);
+        edges.header.seq = pack_cell(cell);
+        (surface, edges)
     }
 
     /// The base frame position in the world frame, from the latest tf.

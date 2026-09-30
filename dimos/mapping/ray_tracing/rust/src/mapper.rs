@@ -19,9 +19,9 @@ use dimos_module::worker_pool;
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
-    batch_local_bounds, coarse_of_fine, emit_points, emit_points_fine, global_normal_fits,
-    metric_voxel_keys, seed_points, seed_tile, update_map, Config, Cylinder, FrameHits,
-    LocalBounds, VoxelMap,
+    batch_local_bounds, chunk_points, coarse_of_fine, emit_points, emit_points_fine,
+    global_normal_fits, metric_voxel_keys, seed_points, seed_tile, update_map, ChunkKey, Config,
+    Cylinder, FrameHits, LocalBounds, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -138,6 +138,33 @@ impl Mapper {
     /// Whether the global map is due this frame.
     pub fn global_due(&self) -> bool {
         emit_due(self.frame_count, self.config.global_emit_every)
+    }
+
+    /// Whether the map regions viz is due this frame.
+    pub fn viz_due(&self) -> bool {
+        emit_due(self.frame_count, self.config.viz_emit_every)
+    }
+
+    /// The chunks whose emitted points changed since the last take.
+    pub fn take_changed_chunks(&mut self) -> AHashSet<ChunkKey> {
+        self.map.take_changed_chunks()
+    }
+
+    pub fn healthy_chunk_keys(&self) -> impl Iterator<Item = ChunkKey> + '_ {
+        self.map.healthy_chunk_keys()
+    }
+
+    /// Support-gated centers of the given chunks' healthy voxels, flat triples.
+    pub fn chunk_points(&self, chunks: &[ChunkKey]) -> Vec<f32> {
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| {
+            chunk_points(
+                &self.map,
+                self.config.voxel_size,
+                chunks,
+                self.config.support_min,
+            )
+        })
     }
 
     /// Cylinder over the batched frames, consuming the batch. An empty batch
@@ -290,7 +317,9 @@ mod tests {
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
             worker_threads: 4,
-            seed_region_m: 4.0,
+            region_m: 4.0,
+            viz_emit_every: 0,
+            viz_sweep_regions: 0,
         }
     }
 

@@ -102,6 +102,8 @@ impl MLSPlanner {
             goal_tolerance: 1.0,
             // Unused here. Only the binary's worker publishes viz artifacts.
             viz_publish_hz: 1.0,
+            viz_region_m: 4.0,
+            viz_sweep_regions: 0,
             worker_threads,
         };
         config

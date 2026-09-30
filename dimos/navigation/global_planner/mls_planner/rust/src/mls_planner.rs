@@ -76,10 +76,17 @@ pub struct Config {
     /// Ground-plane distance from goal at which the planner stops replanning.
     #[validate(range(exclusive_min = 0.0))]
     pub goal_tolerance: f32,
-    /// Rate cap for republishing the surface_map / nodes / node_edges viz
-    /// artifacts. 0 disables them entirely. The path output is unthrottled.
+    /// Rate cap for the surface_map / nodes / node_edges viz artifacts. 0
+    /// disables them entirely. The path output is unthrottled.
     #[validate(range(min = 0.0))]
     pub viz_publish_hz: f32,
+    /// Edge of the square cells the surface and edge viz publish by. A tick
+    /// sends the cells that changed, so a viewer never takes the whole map.
+    #[validate(range(exclusive_min = 0.0))]
+    pub viz_region_m: f32,
+    /// Unchanged cells republished per tick, round robin, so a viewer that
+    /// joined late or lost a message fills in. 0 turns the sweep off.
+    pub viz_sweep_regions: u32,
     /// Worker threads for parallel planner work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
