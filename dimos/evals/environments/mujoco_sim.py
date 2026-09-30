@@ -33,14 +33,18 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
-_READY_STREAMS = ("color_image", "coordinator_joint_state")
-_RECORDED_TOPICS = ("color_image", "camera_info", "coordinator_joint_state", "tf", "odom")
-
-
 class MujocoEnvironmentConfig(SimConfig):
     tracked_bodies: tuple[str, ...] = ()
     at_rest_rad_s: float = 0.02
     module_env: dict[str, str] = Field(default_factory=dict)
+    ready_streams: tuple[str, ...] = ("color_image", "coordinator_joint_state")
+    recorded_topics: tuple[str, ...] = (
+        "color_image",
+        "camera_info",
+        "coordinator_joint_state",
+        "tf",
+        "odom",
+    )
     scene: Path | None = None
 
 
@@ -51,7 +55,7 @@ class MujocoEnvironment(Sim):
 
     def configure_launch(self, proc: DimosCliCall) -> None:
         proc.simulator = "mujoco"
-        proc.global_args = ["--record-topics", ",".join(_RECORDED_TOPICS)]
+        proc.global_args = ["--record-topics", ",".join(self.config.recorded_topics)]
         if self.config.scene is not None:
             proc.global_args += ["--mujoco-scene", str(self.config.scene.resolve())]
         proc.extra_env.update(self.config.module_env)
@@ -73,18 +77,18 @@ class MujocoEnvironment(Sim):
             try:
                 ages = [
                     time.time() - getattr(recording.streams, name).last().data.ts
-                    for name in _READY_STREAMS
+                    for name in self.config.ready_streams
                     if name in recording.streams
                 ]
                 for body in self.config.tracked_bodies:
                     last_body_transform(recording, body)
             except (LookupError, AttributeError):
                 ages = []
-            if len(ages) == len(_READY_STREAMS) and all(age < 10.0 for age in ages):
+            if len(ages) == len(self.config.ready_streams) and all(age < 10.0 for age in ages):
                 return
             time.sleep(0.1)
         raise TimeoutError(
-            f"MuJoCo did not publish fresh {', '.join(_READY_STREAMS)}"
+            f"MuJoCo did not publish fresh {', '.join(self.config.ready_streams)}"
             + (
                 f" and poses for {', '.join(self.config.tracked_bodies)}"
                 if self.config.tracked_bodies
