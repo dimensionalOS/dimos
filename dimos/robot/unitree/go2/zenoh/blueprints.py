@@ -64,7 +64,10 @@ from dimos.robot.unitree.go2.nav_3d_config import (
     wall_clearance_m,
 )
 from dimos.robot.unitree.go2.zenoh.zenohconnection import GO2Zenoh
+from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 # Raise above 0 (2.0 works) to draw what the planner searched over: surface, nodes and
 # cost-colored edges. Drives both its publishing and the rerun overrides.
@@ -329,20 +332,19 @@ go2_dds_motion_pointlio = autoconnect(
 # The relocalizer matches the raycaster's local map against the premap, publishes the
 # odom -> map fix on tf and the placed premap on loaded_map, which the raycaster seeds
 # from and hands on to the planner region by region as seed_map. The republish covers a
-# raycaster that missed the one-shot loaded_map publish. The raw premap is millions of
-# points, so the view keeps the seeded voxels on seed_map instead.
+# raycaster that missed the one-shot loaded_map publish. This stack runs on the
+# robot's headless computer, so it carries no viewer modules. The screen is
+# `go2-viewer` on another machine, dialing the GO2DDS router.
 go2_dds_motion_pointlio_relocalization = autoconnect(
-    go2_dds_motion_pointlio,
-    vis_module(
-        viewer_backend=global_config.viewer,
-        rerun_config=_rerun_config({**_dds_pointlio_hidden, "world/loaded_map": None}),
+    go2_dds_motion_pointlio.disabled_modules(
+        RerunBridgeModule, WebsocketVisModule, RerunWebSocketServer
     ),
     LocalMapRelocalization.blueprint(
         world_frame="odom",
         republish_loaded_map=30.0,
         relocalize=GO2_NAV,
     ),
-).global_config(n_workers=12)
+).global_config(n_workers=9)
 
 
 # The viewer half alone, for the machine with the screen. Zenoh keeps the newest sample
