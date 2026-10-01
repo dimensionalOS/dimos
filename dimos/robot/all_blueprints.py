@@ -321,6 +321,7 @@ all_modules = {
     "pick-and-place-module": "dimos.manipulation.pick_and_place_module.PickAndPlaceModule",
     "point-cloud-self-filter": "dimos.manipulation.planning.utils.point_cloud_self_filter.PointCloudSelfFilter",
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
+    "point-nav-skill-container": "dimos.agents.skills.point_nav.PointNavSkillContainer",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
     "raw-robot-bridge": "dimos.robot.raw_robot_bridge.RawRobotBridge",
