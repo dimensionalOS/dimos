@@ -180,3 +180,31 @@ These references informed exploration; pinned versions and executable conformanc
 - [MCAP schema and encoding registry](https://mcap.dev/spec/registry)
 - [Foxglove custom schema encodings](https://docs.foxglove.dev/docs/getting-started/custom/custom-schema-encodings)
 - [Rerun 0.32 MCAP message formats](https://github.com/rerun-io/rerun/blob/0.32.0/docs/content/concepts/logging-and-ingestion/mcap/message-formats.md)
+
+### Stage 2 packaging evidence
+
+`--package` emits a standard setuptools project with native bindings, schema
+closure, notices, and a `dimos.messages` provider. Its sdist contains the pinned
+generator and inputs; the wheel contains compiled code and schema resources.
+CMake exports a relocatable target and headers/schema installation; Cargo packages
+the native source crate and schemas. Per-definition C++ guards allow two packages
+to include the same standard types without duplicate definitions; conflicting
+layouts still fail rather than silently overriding one another.
+
+The external application adds `application_note` in its own copied definition,
+builds a wheel from the sdist, installs it into an isolated environment, installs
+CMake packages, and builds a Rust consumer from the `.crate` archive. The field
+returns as `added-locally/cpp/rust`. A second clean environment installed the full
+DimOS wheel and external wheel together: 141 types were discovered, the external
+schema resolved through installed providers, and a standard Point from the built-in
+package was accepted by the external native Telemetry type. The full DimOS wheel
+includes its existing web assets; the sdist content check passed at 10.7 MB.
+
+The official setuptools build invokes the same generator and native build helper.
+Release CI retains its existing platform/Python matrix, builds the pinned Fast
+CDR dependency before native extensions, and adds CMake/Cargo source artifacts to
+GitHub releases. PyPI jobs download only Python distribution artifacts. Ordinary
+wheel users do not run setup downloads, message generation, or a ROS build.
+Source developers install Fast CDR during explicit environment setup, including
+the existing developer installer. Release publishing itself remains tied to the
+normal release workflow; this implementation has not published a release.

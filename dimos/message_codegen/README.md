@@ -47,3 +47,19 @@ Applications and builds never run the maintenance downloader.
 This work is being delivered through the `replace-lcm-message-encoding` OpenSpec
 change. The generated pipeline is under development; the old runtime message APIs
 have not yet been replaced.
+
+## Distribution
+
+Pass `--package` to emit a setuptools source project in `python/`, alongside the
+CMake project and Cargo crate. `--python-module` gives independent message
+packages distinct extension names; `--version` sets the package version.
+The Python sdist contains the generator, its pinned parser, and all definition
+inputs. Building the sdist regenerates source without ROS. The wheel contains
+native code plus definitions, licenses, and the `dimos.messages` provider.
+
+DimOS's own wheel uses the same `MessageBuildExt` and generator from `setup.py`.
+The release workflow preserves the existing Linux x86_64/aarch64 and macOS arm64
+wheel matrix and adds CMake/schema and Cargo source packages to GitHub releases.
+Source developers run `bash scripts/setup_message_codegen.sh` before building;
+`scripts/install.sh --mode dev` does this during dependency setup. Ordinary wheel
+users need no compiler, generator run, or ROS installation.

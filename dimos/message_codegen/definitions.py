@@ -28,6 +28,7 @@ from dimos.message_codegen._vendor.rosidl_parser import (
     InvalidValue,
     parse_message_string,
 )
+from dimos.message_codegen.providers import schema_roots
 
 BUNDLED_SCHEMAS = Path(__file__).with_name("schemas")
 
@@ -142,9 +143,15 @@ def parse_message(path: Path) -> Message:
 class Definitions:
     """A closed set of local definitions with dependency-first resolution."""
 
-    def __init__(self, roots: Iterable[Path], *, bundled: bool = True) -> None:
+    def __init__(
+        self, roots: Iterable[Path], *, bundled: bool = True, installed: bool = False
+    ) -> None:
         self._messages: dict[str, Message] = {}
-        for root in ([BUNDLED_SCHEMAS] if bundled else []) + list(roots):
+        for root in (
+            ([BUNDLED_SCHEMAS] if bundled else [])
+            + list(roots)
+            + (list(schema_roots()) if installed else [])
+        ):
             if not root.is_dir():
                 raise ValueError(f"Schema root does not exist: {root}")
             for path in sorted(root.rglob("*.msg")):

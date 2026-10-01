@@ -117,3 +117,58 @@ are reproducible measurements, not platform-independent performance guarantees.
 
 This stage provides standalone generation and codecs. DimOS runtime consumers
 still use the old types; their coordinated replacement follows in the stack.
+
+## Stage 2: an installed external application
+
+After the stage-1 setup, run:
+
+```bash
+uv pip install --python .venv/bin/python setuptools wheel
+bash scripts/test_message_packages.sh
+```
+
+This copies the demo definitions into an ignored external project, adds
+`string application_note "added-locally"` to its own Telemetry definition,
+and invokes the same generator with `--package`. It builds a wheel **from the
+sdist**, installs the wheel in a fresh virtual environment, installs the CMake
+package, and builds a separate Rust consumer from the packaged `.crate` archive.
+The terminal prints:
+
+```text
+Installed Python package sends new field: added-locally
+Installed C++ package received: added-locally
+Packaged Rust crate received: added-locally/cpp
+Installed Python package receives: added-locally/cpp/rust
+```
+
+The application runs with Python's isolated flag and no `PYTHONPATH`. Its wheel
+contains its own extension, schema dependency closure, upstream licenses, and
+`dimos.messages` provider. It needs neither DimOS nor ROS to encode/decode.
+No background services are started. Outputs and the captured terminal demo live
+under `build/message-codegen/external-app/`; remove that directory to clean up.
+
+For your own package, use:
+
+```bash
+python -m dimos.message_codegen.generate \
+  --package-root path/to/interfaces --type my_msgs/msg/Reading \
+  --python-module my_robot_messages --version 0.1.0 --package --output build/messages
+CMAKE_PREFIX_PATH=/path/to/fastcdr uv build build/messages/python
+cmake -S build/messages/cpp -B build/messages/cmake \
+  -DDIMOS_BUILD_PYTHON=OFF -DCMAKE_PREFIX_PATH=/path/to/fastcdr \
+  -DCMAKE_INSTALL_PREFIX=/path/to/message-prefix
+cmake --install build/messages/cmake
+cargo package --manifest-path build/messages/rust/Cargo.toml
+```
+
+The source package includes the pinned generator and definition inputs; source
+builds regenerate locally. Fast CDR must be installed at build time, using the
+setup script or an equivalent pinned installation. Wheels statically link it.
+Consumers use `find_package(my_robot_messages CONFIG REQUIRED)` and link
+`my_robot_messages::messages`, or add the generated Rust crate through Cargo.
+Python schema providers are discovered through the standard `dimos.messages`
+entry-point group. Definition discovery does not import the native extension;
+type discovery validates conflicting qualified definitions before loading types.
+Generation, installation from built artifacts, and runtime require no schema
+service or runtime download. Dependency setup can use the network; cached Cargo
+builds and local wheel installation are exercised offline by the demo.
