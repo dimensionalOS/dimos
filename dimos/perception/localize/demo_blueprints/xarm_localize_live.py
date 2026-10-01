@@ -35,7 +35,7 @@ from typing import Any
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.perception.localize.demo_blueprints.live_localize import LiveLocalizeModule
+from dimos.perception.localize.module import LiveLocalizeModule
 from dimos.visualization.vis_module import vis_module
 
 OPTICAL_FRAME = "camera_color_optical_frame"

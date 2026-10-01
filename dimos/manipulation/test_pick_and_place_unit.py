@@ -29,6 +29,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.std_msgs.Header import Header
+from dimos.perception.localize.types import Localization
 
 
 @pytest.fixture
@@ -59,8 +60,9 @@ def module() -> Iterator[PickAndPlaceModule]:
     instance._manipulation.set_gripper_position.return_value = SimpleNamespace(
         succeeded=True, message=""
     )
-    instance._objects = {"cup-1": {"object_id": "cup-1", "name": "cup"}}
-    instance._scene.get_object_pointcloud_by_object_id.return_value = MagicMock()
+    localization = _localization()
+    instance._objects = {0: {"selection": 0, "name": "cup", "score": 0.9}}
+    instance._localizations = {0: localization}
     instance._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
         Header(1.0, "world"), [_candidate(0.1)]
     )
@@ -84,22 +86,94 @@ def _candidate(x: float, score: float = 1.0) -> GraspCandidate:
     )
 
 
-def test_scan_objects_uses_latest_scan_ids(module: PickAndPlaceModule) -> None:
-    scene: Any = module._scene
-    scene.scan_scene.return_value = SimpleNamespace(
-        detections_length=1,
-        detections=[
-            SimpleNamespace(
-                id="cup-1", results=[SimpleNamespace(hypothesis=SimpleNamespace(class_id="cup"))]
-            )
-        ],
+def _localization() -> Localization:
+    return Localization(
+        instance_id="query-0",
+        semantic_score=0.9,
+        identity_score=0.5,
+        ambiguity_margin=1.0,
+        position_world_xyz=(0.1, 0.0, 0.2),
+        orientation_world_xyzw=(0.0, 0.0, 0.0, 1.0),
+        frame_id="world",
+        support=None,
+        pose_timestamp=1.0,
+        geometry_timestamp=1.0,
+        last_seen_timestamp=1.0,
+        point_cloud=MagicMock(),
+        coverage=0.5,
+        n_views=2,
     )
+
+
+def test_scan_objects_caches_latest_localizations_by_selection(
+    module: PickAndPlaceModule,
+) -> None:
+    scene: Any = module._scene
+    localization = _localization()
+    scene.localize_objects.return_value = [[localization]]
 
     result = module.scan_objects([" cup "])
 
     assert result.is_success()
-    assert module.get_object("cup-1") == {"object_id": "cup-1", "name": "cup"}
-    scene.scan_scene.assert_called_once_with(text=["cup"])
+    obj = module.get_object(0)
+    assert obj is not None
+    assert obj["name"] == "cup"
+    assert obj["position"] == localization.position_world_xyz
+    assert obj["last_seen_timestamp"] == localization.last_seen_timestamp
+    assert module._localizations == {0: localization}
+    scene.localize_objects.assert_called_once_with(
+        ["cup"], start=-10.0, duration=10.0, policy="", max_age=None
+    )
+
+
+def test_scan_objects_omits_misses_and_assigns_dense_selections(
+    module: PickAndPlaceModule,
+) -> None:
+    localization = _localization()
+    module._scene.localize_objects.return_value = [[], [localization]]
+
+    result = module.scan_objects(["cup", "bowl"])
+
+    assert result.is_success()
+    assert module.get_object(0)["name"] == "bowl"
+    assert module.get_object(1) is None
+
+
+def test_scan_objects_rejects_duplicate_prompts(module: PickAndPlaceModule) -> None:
+    result = module.scan_objects(["cup", " cup "])
+
+    assert result.error_code == "INVALID_INPUT"
+    module._scene.localize_objects.assert_not_called()
+
+
+def test_scan_returns_all_instances_even_with_duplicate_detector_ids(
+    module: PickAndPlaceModule,
+) -> None:
+    first, second, third = _localization(), _localization(), _localization()
+    module._scene.localize_objects.return_value = [[first, second], [third]]
+
+    result = module.scan_objects(["cup", "bowl"], start=-30.0, duration=30.0, max_age=20.0)
+
+    assert result.success
+    assert [obj["name"] for obj in result.metadata["objects"]] == ["cup", "cup", "bowl"]
+    assert module._localizations == {0: first, 1: second, 2: third}
+    module._scene.localize_objects.assert_called_once_with(
+        ["cup", "bowl"], start=-30.0, duration=30.0, policy="", max_age=20.0
+    )
+
+
+def test_rescan_does_not_reuse_old_selection(module: PickAndPlaceModule) -> None:
+    module._scene.localize_objects.return_value = [[_localization()]]
+    first = module.scan_objects(["cup"])
+    old = first.metadata["objects"][0]["selection"]
+    second = module.scan_objects(["cup"])
+    new = second.metadata["objects"][0]["selection"]
+
+    assert old != new
+    assert module.get_object(old) is None
+    assert module.pick_object(old).error_code == "OBJECT_NOT_DETECTED"
+    module._grasp_generator.propose_grasps.assert_not_called()
+    assert module.pick_object(new).success
 
 
 def test_pick_object_uses_first_provider_candidate(
@@ -111,7 +185,7 @@ def test_pick_object_uses_first_provider_candidate(
         Header(1.0, "world"), [first, second]
     )
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object(0)
 
     assert result.is_success()
     assert module.get_grasp_candidates().candidates == [first, second]
@@ -120,13 +194,25 @@ def test_pick_object_uses_first_provider_candidate(
     assert result.metadata["rank"] == 0
 
 
+def test_pick_object_uses_cached_scan_cloud_without_perception_lookup(
+    module: PickAndPlaceModule,
+) -> None:
+    localization = module._localizations[0]
+
+    result = module.pick_object(0)
+
+    assert result.is_success()
+    module._grasp_generator.propose_grasps.assert_called_once_with(localization.point_cloud)
+    module._scene.assert_not_called()
+
+
 def test_pick_object_rejects_non_planning_frame(module: PickAndPlaceModule) -> None:
     grasp_generator: Any = module._grasp_generator
     grasp_generator.propose_grasps.return_value = GraspCandidateArray(
         Header(1.0, "camera"), [_candidate(0.1)]
     )
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object(0)
 
     assert not result.is_success()
     assert result.error_code == "GRASP_FRAME_MISMATCH"
@@ -147,7 +233,7 @@ def test_pick_falls_through_to_the_next_reachable_candidate(
         SimpleNamespace(succeeded=True, message=""),
     ]
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object(0)
 
     assert result.success
     assert result.metadata["rank"] == 1
@@ -162,7 +248,7 @@ def test_pick_stops_walking_candidates_on_a_drive_fault(module: PickAndPlaceModu
     )
     manipulation.execute.return_value = SimpleNamespace(succeeded=False, message="drive fault")
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object(0)
 
     assert not result.success
     assert result.error_code == "EXECUTION_FAILED"
@@ -180,7 +266,7 @@ def test_pick_reports_no_reachable_candidate_when_every_attempt_fails(
         succeeded=False, message="unreachable"
     )
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object(0)
 
     assert not result.success
     assert result.error_code == "PLANNING_FAILED"
@@ -193,7 +279,7 @@ def test_proposals_reach_the_viewer_as_they_are_generated(module: PickAndPlaceMo
     shown: list[GraspCandidateArray] = []
     manipulation.show_grasp_proposals.side_effect = lambda array: shown.append(array)
 
-    assert module.pick_object("cup-1").success
+    assert module.pick_object(0).success
 
     # The stale overlay is cleared first, then the fresh proposals go out.
     assert [[c.score for c in array.candidates] for array in shown] == [[], [1.0]]
@@ -204,7 +290,7 @@ def test_pick_object_rejects_empty_candidates(module: PickAndPlaceModule) -> Non
         Header(1.0, "world"), []
     )
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object(0)
 
     assert result.error_code == "GRASP_GENERATION_FAILED"
     module._manipulation.set_gripper_position.assert_not_called()
@@ -225,7 +311,7 @@ def test_pick_preserves_current_yaw_when_configured(module: PickAndPlaceModule) 
         ],
     )
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object(0)
 
     assert result.is_success()
     assert module._selected_grasp is not None
@@ -253,14 +339,14 @@ def test_place_uses_local_axis_and_clears_held_state(module: PickAndPlaceModule)
 def test_scan_failure_clears_stale_selection(module: PickAndPlaceModule) -> None:
     scene: Any = module._scene
     module._selected_grasp = PoseStamped(frame_id="world")
-    scene.scan_scene.side_effect = RuntimeError("No aligned RGB-D frame")
+    scene.localize_objects.side_effect = RuntimeError("No embedded RGB-D frame")
 
     result = module.scan_objects(["cup"])
 
     assert not result.is_success()
     assert result.error_code == "PERCEPTION_FAILED"
     assert module._selected_grasp is None
-    assert module.get_object("cup-1") is None
+    assert module.get_object(0) is None
 
 
 def test_pick_rejects_when_already_holding(module: PickAndPlaceModule) -> None:
@@ -268,7 +354,7 @@ def test_pick_rejects_when_already_holding(module: PickAndPlaceModule) -> None:
     module._holding_object = True
     module._selected_grasp = PoseStamped(frame_id="world")
 
-    pick = module.pick_object("cup-1")
+    pick = module.pick_object(0)
 
     assert pick.error_code == "INVALID_STATE"
     manipulation.set_gripper_position.assert_not_called()
@@ -277,7 +363,7 @@ def test_pick_rejects_when_already_holding(module: PickAndPlaceModule) -> None:
 def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> None:
     module._selected_grasp = PoseStamped(frame_id="world")
 
-    result = module.pick_object("missing")
+    result = module.pick_object(9)
 
     assert result.error_code == "OBJECT_NOT_DETECTED"
     assert module._selected_grasp is None
@@ -297,7 +383,7 @@ def test_pick_retains_held_state_when_retract_fails(module: PickAndPlaceModule) 
         ),
     ]
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object(0)
 
     assert result.error_code == "EXECUTION_FAILED"
     assert module._holding_object
@@ -307,7 +393,7 @@ def test_final_grasp_leg_skips_collision_checking(module: PickAndPlaceModule) ->
     """The target is mapped geometry, so a checked plan into it always collides."""
     manipulation: Any = module._manipulation
 
-    assert module.pick_object("cup-1").success
+    assert module.pick_object(0).success
     assert manipulation.move_linear.call_args_list
     for call in manipulation.move_linear.call_args_list:
         assert call.kwargs["check_collision"] is False
@@ -324,7 +410,7 @@ def test_empty_grasp_reopens_before_failing(
 
     monkeypatch.setattr("dimos.manipulation.pick_and_place_module.await_gripper_settle", settle)
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object(0)
 
     assert result.error_code == "GRASP_VERIFICATION_FAILED"
     assert not module._holding_object
@@ -340,7 +426,7 @@ def test_pick_rejects_jaws_that_never_closed(
 
     monkeypatch.setattr("dimos.manipulation.pick_and_place_module.await_gripper_settle", settle)
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object(0)
 
     assert result.error_code == "GRASP_VERIFICATION_FAILED"
     assert not module._holding_object
@@ -362,7 +448,7 @@ def test_empty_grasp_reports_failed_recovery(
 
     monkeypatch.setattr("dimos.manipulation.pick_and_place_module.await_gripper_settle", settle)
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object(0)
 
     assert result.error_code == "GRIPPER_FAILED"
     assert "recovery open failed" in result.message
@@ -374,7 +460,7 @@ def test_pick_fails_when_gripper_command_is_rejected(module: PickAndPlaceModule)
         succeeded=False, message="controller unavailable"
     )
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object(0)
 
     assert result.error_code == "GRIPPER_FAILED"
 
@@ -389,7 +475,7 @@ def test_pick_fails_when_gripper_feedback_is_unavailable(
 
     monkeypatch.setattr("dimos.manipulation.pick_and_place_module.await_gripper_settle", settle)
 
-    result = module.pick_object("cup-1")
+    result = module.pick_object(0)
 
     assert result.error_code == "GRASP_VERIFICATION_FAILED"
     assert not module._holding_object

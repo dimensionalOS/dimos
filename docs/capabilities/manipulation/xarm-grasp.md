@@ -1,7 +1,7 @@
 # xArm Grasping
 
 Two blueprints, differing only in which grasp provider they compose. Both carry
-the control coordinator, the wrist camera, scene registration and
+the control coordinator, the wrist camera, Dan's live localization memory and
 pick-and-place; both run on the real arm by default and switch to the MuJoCo
 room scene with `--simulation`:
 
@@ -38,7 +38,39 @@ for test and type-check commands.
 
 What differs between the arm and the sim is decided at import time: the hardware
 adapter, the base pose, the camera (RealSense plus its mount edge, versus the
-MuJoCo wrist camera), the detector backends, and the home pose.
+MuJoCo wrist camera), the localization thresholds, and the home pose.
+
+## Wrist-camera memory
+
+`LiveLocalizeModule` uses SigLIP frame retrieval, OWLv2 detection, EdgeTAM
+segmentation, and `Rig` to lift registered depth into the world frame. It keeps
+bounded RGB-D frame memory using `dimos.memory`; verified object groups accumulate
+across queries. EdgeTAM requires CUDA or MPS. Only the eye-in-hand camera feeds
+localization: the environment camera is not fused into this memory.
+
+The default verification policy needs two camera positions. Move the arm to
+another reachable viewpoint while keeping the target visible, and let it settle
+at each pose. Capture-time TF accounts for the changing wrist pose. Waiting at
+one position, or rotating without translating the camera, is not a second view.
+An explicit `policy='{"min_views": 1}'` query permits a single-view result.
+
+| API | Result |
+|---|---|
+| `LiveLocalizeModule.state()` | Readiness or initialization stage (skill/RPC). |
+| `LiveLocalizeModule.localize(objects, start, duration, policy, max_age)` | Text summary of remembered instances (skill/RPC). |
+| `LiveLocalizeModule.localize_objects(prompts, start, duration, policy, max_age)` | Lists of typed `Localization` results, one list per label (RPC). |
+| `PickAndPlaceModule.scan_objects(prompts, start, duration, policy, max_age)` | Selectable snapshot with positions, scores, view counts, ambiguity, and last-seen timestamps (skill/RPC). |
+
+The default window is the last ten seconds. Negative `start` is relative to the
+newest embedded frame; non-negative `start` is relative to the oldest retained
+frame. The window selects evidence to examine, not the lifetime of known objects.
+Previously verified objects remain answerable. Optional `max_age` filters their
+last-seen age against the latest RGB timestamp, using the sensor/replay clock.
+`policy` is a JSON object overriding `LocalizePolicy` for that call.
+
+Memory is in RAM and lasts for the module's lifetime. A cloud fuses past sightings;
+it is not proof an object is still at that location. Objects moved by manipulation
+may leave old groups behind. Last-seen filtering does not rebuild fused geometry.
 
 The manipulation viewer is on viser at `http://127.0.0.1:8095`. To watch the
 MuJoCo scene itself, add `--headless false` with `MUJOCO_GL=glfw`. On a host
@@ -122,35 +154,32 @@ In a second terminal, connect to the running blueprint:
 dimos shell
 ```
 
-Then run this complete scan and obstacle-inspection sequence:
+Check readiness, gather viewpoints, then query the memory:
 
 ```python skip
 from dimos.robot.manipulators.xarm.blueprints.grasp import XARM_GRASP_PROMPTS
 
 app.ManipulationSkills.go_init()
+print(app.LiveLocalizeModule.state())
+# Use ManipulationSkills.move_to_pose / move_to_joints to gather another
+# reachable wrist-camera position with the target visible before scanning.
 scan = app.PickAndPlaceModule.scan_objects(XARM_GRASP_PROMPTS)
 print(scan)
 
-print(app.ObjectSceneRegistrationModule.get_detected_objects())
-print(app.ManipulationModule.refresh_obstacles())
 print(app.ManipulationModule.get_obstacles())
 ```
 
-CPU OWL-ViT inference takes about 11 seconds per prompt/frame on the validation
-host, so let a scan finish rather than issuing another concurrently.
-
-To pick, hand `pick_object` an `object_id` from that scan. Choose the target by
-where its point cloud actually is rather than by name:
+To pick, pass a `selection` from that scan. Each matching instance gets a separate
+selection, including multiple objects with the same label. Choose by position
+and evidence as well as name:
 
 ```python skip
-scene = app.ObjectSceneRegistrationModule
-
 for obj in scan.metadata["objects"]:
-    cloud = scene.get_object_pointcloud_by_object_id(obj["object_id"])
-    print(obj, cloud.points_f32().mean(axis=0) if cloud else None)
+    print(obj["selection"], obj["name"], obj["position"], obj["last_seen_timestamp"])
 
-# the bottle sits at roughly (0.58, 0.19); pick whichever id landed there
-pick = app.PickAndPlaceModule.pick_object("<object_id>")
+# Select the intended target from the printed results.
+selection = scan.metadata["objects"][0]["selection"]
+pick = app.PickAndPlaceModule.pick_object(selection)
 print(pick)
 
 app.PickAndPlaceModule.place_at(0.45, -0.25, 0.25)
@@ -164,13 +193,19 @@ candidate count. To inspect grasps without moving the arm, call `propose_grasps`
 on the provider directly:
 
 ```python skip
-cloud = scene.get_object_pointcloud_by_object_id("<object_id>")
+hits = app.LiveLocalizeModule.localize_objects(["gray can"])
+cloud = hits[0][0].point_cloud   # inspect results and choose the intended instance first
 candidates = app.GraspGenXModule.propose_grasps(cloud)   # HeuristicGraspModule in the base blueprint
 print(len(candidates.candidates), [c.score for c in candidates.candidates[:5]])
 ```
 
 The prompt set includes a `green ring` fallback because the tape loses
 its category silhouette in the wrist camera's top-down view.
+
+Picking uses the exact cloud cached by `scan_objects`; it does not perform a
+second perception lookup. Every new scan invalidates the previous selections.
+Selections are not persistent object IDs and are not reused during a
+`PickAndPlaceModule` session.
 
 A failed grasp knocks free-body targets out of place, and `MujocoSimModule.reset()`
 does not respawn them. Restart the blueprint between pick attempts that need a

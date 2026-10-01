@@ -31,13 +31,15 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import replace
 import json
+import math
 import threading
-import time
-from typing import Any
+from typing import Any, cast
 
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
 import numpy as np
+from pydantic import Field
+from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -55,11 +57,13 @@ from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.localize.dandetect import DanDetector
-from dimos.perception.localize.localize import Groups, LocalizeTrace
+from dimos.perception.localize.localize import Groups
 from dimos.perception.localize.rig import DEPTH_TOLERANCE, EMBED_HZ, WALK_EMBED_HZ, Rig
+from dimos.perception.localize.spec import LocalizationSpec
+from dimos.perception.localize.types import Localization
 from dimos.protocol.tf.tf import TF
+from dimos.types.timestamped import align_timestamped
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -72,13 +76,17 @@ DEPTH_CODEC = "lz4+lcm"
 
 class LiveLocalizeModuleConfig(ModuleConfig):
     world_frame: str = "world"
+    # Empty selects the first calibration. Robot blueprints select their camera explicitly.
+    optical_frame: str = ""
     mobile: bool = False
-    horizon_s: float = 600.0
+    horizon_s: float = Field(default=600.0, gt=0.0)
     # raw frames kept for the embed tail and the depth pairing
-    feed_frames: int = 300
+    feed_frames: int = Field(default=300, ge=1)
+    tf_tolerance: float = Field(default=0.12, ge=0.0)
+    policy: dict[str, Any] = Field(default_factory=dict)
 
 
-class LiveLocalizeModule(Module):
+class LiveLocalizeModule(Module, LocalizationSpec):
     """Embed the colour feed, pair depth to it, answer ``localize`` from memory.
 
     ``camera_info`` must be stamped in the colour frame, and ``tf`` must reach
@@ -96,19 +104,32 @@ class LiveLocalizeModule(Module):
     detections: Out[Detection3DArray]
     hit_points: Out[PointCloud2]
 
-    @rpc
-    def start(self) -> None:
-        super().start()
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._camera_seen = threading.Event()
         self._camera: CameraInfo | None = None
-        self._stage = "waiting for camera_info"
+        self._stage = "not started"
         self._groups: dict[str, Groups] = {}
+        self._inference_lock = threading.RLock()
+        self._thread: threading.Thread | None = None
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self._stop.clear()
+        self._ready.clear()
+        self._camera_seen.clear()
+        self._camera = None
+        self._stage = "waiting for camera_info"
+        self._groups.clear()
 
         embed_hz = WALK_EMBED_HZ if self.config.mobile else EMBED_HZ
-        memory_frames = int(self.config.horizon_s * embed_hz)
+        memory_frames = max(1, math.ceil(self.config.horizon_s * embed_hz))
         feed_frames = self.config.feed_frames
+        # Stop model/pairing workers before closing the streams they consume.
+        self._workers = self.register_disposable(CompositeDisposable())
         self._memory = self.register_disposable(MemoryStore())
         self._color_feed = self._memory.stream(
             "color_feed",
@@ -135,17 +156,16 @@ class LiveLocalizeModule(Module):
             observation_store=ListObservationStore(name=DEPTH_STREAM, max_size=memory_frames),
         )
         self._tf_buffer = TF(self.tf, buffer_size=self.config.horizon_s)
-
-        def on_camera_info(info: CameraInfo) -> None:
-            if self._camera is None:
-                self._camera = info
-                self._camera_seen.set()
-
-        self._unsubs = [
-            self.color_image.subscribe(lambda img: self._color_feed.append(img, ts=img.ts)),
-            self.depth_image.subscribe(lambda img: self._depth_feed.append(img, ts=img.ts)),
-            self.camera_info.subscribe(on_camera_info),
-        ]
+        self.register_disposable(Disposable(self._tf_buffer.dispose))
+        self.register_disposable(Disposable(self.camera_info.subscribe(self._on_camera_info)))
+        self.register_disposable(
+            align_timestamped(
+                self.color_image.observable(),
+                self.depth_image.observable(),
+                buffer_size=2.0,
+                match_tolerance=DEPTH_TOLERANCE,
+            ).subscribe(self._on_frames)
+        )
         self._thread = threading.Thread(target=self._warm, name="localize-warmup", daemon=True)
         self._thread.start()
 
@@ -153,28 +173,57 @@ class LiveLocalizeModule(Module):
     def stop(self) -> None:
         self._stop.set()
         self._ready.clear()
-        self._thread.join(timeout=5.0)
-        for unsubscribe in self._unsubs:
-            unsubscribe()
-        self._tf_buffer.dispose()
-        super().stop()
+        if self._thread is not None:
+            self._thread.join()
+            self._thread = None
+        with self._inference_lock:
+            self._groups.clear()
+            self._stage = "stopped"
+            super().stop()
+
+    def _on_camera_info(self, info: CameraInfo) -> None:
+        if self.config.optical_frame and info.frame_id != self.config.optical_frame:
+            return
+        if self._camera is None:
+            self._camera = info
+            self._camera_seen.set()
+
+    def _on_frames(self, frames: tuple[Image, ...]) -> None:
+        color, depth = frames
+        camera = self._camera
+        if self._stop.is_set() or camera is None or color.frame_id != camera.frame_id:
+            return
+        # Inputs must be depth registered to the selected colour camera. Save
+        # the pair before embedding can consume colour, keyed by colour time.
+        self._depth_feed.append(depth, ts=color.ts)
+        self._color_feed.append(color, ts=color.ts)
 
     def _pair_depth(self, upstream: Iterator[Any]) -> Iterator[Any]:
         """Move the depth frame of each embedded frame from the feed into memory."""
         for obs in upstream:
             try:
-                depth = self._depth_feed.at(obs.ts, DEPTH_TOLERANCE).first()
+                depth = self._depth_feed.at(obs.ts, 0.0).first()
             except LookupError:
                 yield obs
                 continue
-            self._depth_memory.append(depth.data, ts=depth.ts)
+            self._depth_memory.append(depth.data, ts=obs.ts)
             yield obs
 
     def _warm(self) -> None:
+        try:
+            self._initialize()
+        except Exception as exc:
+            self._stage = f"initialization failed: {exc}"
+            logger.exception("localize initialization failed")
+
+    def _initialize(self) -> None:
         self._stage = "loading SigLIP, OWLv2 and EdgeTAM weights"
         logger.info(f"localize: {self._stage}")
-        self.detector = self.register_disposable(DanDetector())
+        self.detector = DanDetector()
+        self._workers.add(self.detector)
         self.detector.start()
+        if self._stop.is_set():
+            return
 
         self._stage = "waiting for camera_info"
         logger.info(f"localize: {self._stage}")
@@ -191,16 +240,17 @@ class LiveLocalizeModule(Module):
             depth=self._depth_memory,
             embed_hz=WALK_EMBED_HZ if self.config.mobile else EMBED_HZ,
             mobile=self.config.mobile,
+            tf_tolerance=self.config.tf_tolerance,
         )
+        # Subscribe first: the first embedded frame must retain its paired depth.
+        self._workers.add(self.index.live().transform(self._pair_depth).drain_thread())
         self.detector.embed_live(self._memory, rig=self.rig, source=self._color_feed)
-        self.register_disposable(self.index.live().transform(self._pair_depth).drain_thread())
 
         self._stage = "waiting for the first posed frame of the feed"
         logger.info(f"localize: {self._stage}")
-        while self.index.count() == 0:
-            if self._stop.is_set():
+        while self._depth_memory.count() == 0:
+            if self._stop.wait(0.1):
                 return
-            time.sleep(0.5)
 
         self._stage = "ready"
         self._ready.set()
@@ -213,9 +263,85 @@ class LiveLocalizeModule(Module):
             return f"ready: {self.index.count()} frames embedded, localize will answer"
         return f"not ready: {self._stage}"
 
+    @rpc
+    def localize_objects(
+        self,
+        prompts: list[str],
+        start: float = -10.0,
+        duration: float = 10.0,
+        policy: str = "",
+        max_age: float | None = None,
+    ) -> list[list[Localization]]:
+        """All verified instances per prompt, with cumulative evidence and exact clouds.
+
+        The window selects new evidence; previously verified objects remain
+        answerable. max_age optionally filters last-seen time against the newest
+        RGB observation (the sensor clock, also valid for replay).
+        """
+        if not prompts or any(not p or p.strip() != p for p in prompts):
+            raise ValueError("Provide non-empty, trimmed object prompts")
+        if len(set(prompts)) != len(prompts):
+            raise ValueError("Object prompts must be unique")
+        if not math.isfinite(start) or not math.isfinite(duration) or duration <= 0:
+            raise ValueError("Window start must be finite and duration must be positive")
+        if max_age is not None and (not math.isfinite(max_age) or max_age < 0):
+            raise ValueError("max_age must be finite and non-negative")
+        with self._inference_lock:
+            if not self._ready.is_set():
+                raise RuntimeError(f"localize cannot answer yet: {self._stage}. Poll state().")
+            overrides = json.loads(policy) if policy else {}
+            if not isinstance(overrides, dict):
+                raise ValueError("policy must be a JSON object")
+            try:
+                tuning = replace(
+                    self.rig.default_localize_policy(), **(self.config.policy | overrides)
+                )
+            except TypeError as exc:
+                raise ValueError(f"Invalid localization policy: {exc}") from exc
+            first, head = self.index.get_time_range()
+            lo = max(first, head + start if start < 0 else first + start)
+            index = self.index.time_range(lo, lo + duration).materialize()
+            results = cast(
+                "list[list[Localization]]",
+                self.detector.localize(
+                    self._memory,
+                    prompts,
+                    index=index,
+                    rig=self.rig,
+                    policy=tuning,
+                    groups=self._groups,
+                    require_pose=True,
+                ),
+            )
+            if len(results) != len(prompts):
+                raise RuntimeError("Detector returned an invalid batch result")
+            newest = self._color_feed.last().ts
+            filtered: list[list[Localization]] = []
+            for hits in results:
+                accepted = []
+                for hit in hits:
+                    if hit.point_cloud is None or hit.position_world_xyz is None:
+                        raise RuntimeError("Localization is missing its geometry")
+                    if (
+                        hit.frame_id != self.config.world_frame
+                        or hit.point_cloud.frame_id != self.config.world_frame
+                    ):
+                        raise RuntimeError("Localization frame mismatch")
+                    if max_age is None or newest - hit.last_seen_timestamp <= max_age:
+                        accepted.append(hit)
+                filtered.append(accepted)
+            self.detections.publish(as_detection_array(prompts, filtered, self.rig.world_frame))
+            self.hit_points.publish(as_cloud(filtered, self.rig.world_frame))
+            return filtered
+
     @skill
     def localize(
-        self, objects: str, start: float = -10.0, duration: float = 10.0, policy: str = ""
+        self,
+        objects: str,
+        start: float = -10.0,
+        duration: float = 10.0,
+        policy: str = "",
+        max_age: float | None = None,
     ) -> str:
         """Locate objects in a window of the robot's memory.
 
@@ -228,88 +354,51 @@ class LiveLocalizeModule(Module):
 
         ``policy`` is a JSON object of LocalizePolicy field overrides,
         e.g. '{"accept_score": 0.4, "verify_radius_m": 2.0}'.
+        ``max_age`` optionally limits last-seen age in seconds on the sensor clock.
+        For an eye-in-hand camera, move the arm and let it settle at different
+        viewpoints to build evidence; the default requires two camera positions.
         """
         if not self._ready.is_set():
             return f"localize cannot answer yet: {self._stage}. Poll state() until it reads ready."
 
         queries = [q.strip() for q in objects.split(",") if q.strip()]
-        first, head = self.index.get_time_range()
-        lo = max(first, head + start if start < 0 else first + start)
-        index = self.index.time_range(lo, lo + duration)
-        tuning = self.rig.default_localize_policy()
-        if policy:
-            tuning = replace(tuning, **json.loads(policy))
-        traces = [LocalizeTrace() for _ in queries]
-        results: Any = self.detector.localize(
-            self._memory,
-            queries,
-            index=index,
-            rig=self.rig,
-            policy=tuning,
-            groups=self._groups,
-            trace=traces,
-        )
-        self.detections.publish(as_detection_array(queries, results, self.rig.world_frame))
-        camera = self.rig.cameras[self.rig.optical_frame]
-        self.hit_points.publish(as_textured_cloud(traces, camera, self.rig.world_frame))
-
-        lines: list[str] = [
-            f"window {lo - first:.1f}s to {lo + duration - first:.1f}s of "
-            f"{head - first:.1f}s of feed, {index.count()} frames"
-        ]
+        try:
+            results = self.localize_objects(queries, start, duration, policy, max_age)
+        except (ValueError, RuntimeError) as exc:
+            return str(exc)
+        lines: list[str] = []
         for query, hits in zip(queries, results, strict=True):
             if not hits:
                 lines.append(f"no verified detection of {query!r}")
             for hit in hits:
+                assert hit.position_world_xyz is not None
                 x, y, z = hit.position_world_xyz
                 lines.append(
                     f"{query!r} at ({x:.2f}, {y:.2f}, {z:.2f}) in {hit.frame_id} "
-                    f"score={hit.semantic_score:.2f} views={hit.n_views}"
+                    f"score={hit.semantic_score:.2f} views={hit.n_views} "
+                    f"last_seen={hit.last_seen_timestamp:.3f} "
+                    f"ambiguity_margin={hit.ambiguity_margin:.2f} reason={hit.reason}"
                 )
         return "\n".join(lines)
 
 
-def _image_colors(det: Detection3DPC, camera: CameraInfo) -> np.ndarray:
-    """Each cloud point's colour sampled from the sighting's own image at its reprojection."""
-    points = det.pointcloud.points_f32()
-    matrix = det.transform.to_matrix()
-    in_camera = points @ matrix[:3, :3].T + matrix[:3, 3]
-    pixels = Detection3DPC.project_pixels(in_camera, camera)
-    cols = np.round(pixels[:, 0]).astype(int)
-    rows = np.round(pixels[:, 1]).astype(int)
-    rgb = det.image.to_rgb().data
-    height, width = rgb.shape[:2]
-    sampled: np.ndarray = rgb[np.clip(rows, 0, height - 1), np.clip(cols, 0, width - 1)]
-    return sampled.astype(np.float32) / 255.0
+def as_cloud(results: list[list[Localization]], frame_id: str) -> PointCloud2:
+    """Visualize fused geometry without retaining per-sighting images in traces."""
+    clouds = [hit.point_cloud for hits in results for hit in hits if hit.point_cloud is not None]
+    points = np.vstack([cloud.points_f32() for cloud in clouds]) if clouds else np.empty((0, 3))
+    return PointCloud2.from_numpy(
+        points, frame_id=frame_id, timestamp=max((cloud.ts for cloud in clouds), default=0.0)
+    )
 
 
-def as_textured_cloud(
-    traces: list[LocalizeTrace], camera: CameraInfo, frame_id: str
-) -> PointCloud2:
-    """Every verified instance's sightings as one cloud, each point wearing its own image's pixel."""
-    import open3d as o3d
-    import open3d.core as o3c
-
-    members = [det for trace in traces for answer in trace.answers for det in answer]
-    pcd = o3d.t.geometry.PointCloud()
-    if members:
-        positions = np.vstack([det.pointcloud.points_f32() for det in members])
-        colors = np.vstack([_image_colors(det, camera) for det in members])
-        pcd.point["positions"] = o3c.Tensor(positions, dtype=o3c.float32)
-        pcd.point["colors"] = o3c.Tensor(colors, dtype=o3c.float32)
-        latest = max(det.ts for det in members)
-    else:
-        pcd.point["positions"] = o3c.Tensor(np.zeros((0, 3), dtype=np.float32), dtype=o3c.float32)
-        latest = 0.0
-    return PointCloud2(pointcloud=pcd, frame_id=frame_id, ts=latest)
-
-
-def as_detection_array(queries: list[str], results: list[Any], frame_id: str) -> Detection3DArray:
+def as_detection_array(
+    queries: list[str], results: list[list[Localization]], frame_id: str
+) -> Detection3DArray:
     """One labelled box per verified instance, for the rerun bridge."""
     boxes = []
     latest = 0.0
     for query, hits in zip(queries, results, strict=True):
-        for hit in hits:
+        for instance, hit in enumerate(hits):
             if hit.point_cloud is None:
                 continue
             points = hit.point_cloud.as_numpy()[0]
@@ -321,7 +410,7 @@ def as_detection_array(queries: list[str], results: list[Any], frame_id: str) ->
             boxes.append(
                 Detection3D(
                     header=Header(hit.last_seen_timestamp, frame_id),
-                    id=hit.instance_id,
+                    id=f"{query}:{instance}",
                     results=[
                         ObjectHypothesisWithPose(
                             hypothesis=ObjectHypothesis(class_id=query, score=hit.semantic_score)

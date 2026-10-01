@@ -108,7 +108,6 @@ def module(xarm7_config):
     mod._control_coordinator = coordinator
     mod.coordinator_joint_state = None
     mod.voxel_map = None
-    mod.objects = None
     try:
         mod.start()
         yield mod
