@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from dimos.memory.blobstore.memory import MemoryBlobStore
+
 if TYPE_CHECKING:
     from dimos.memory.blobstore.base import BlobStore
 
@@ -69,3 +71,17 @@ class TestBlobStore:
         blob_store.delete("s", 1)
         assert blob_store.size_bytes("s") == 10
         assert blob_store.size_bytes("other") == 0
+
+
+class TestMemoryBlobStore:
+    def test_max_items(self) -> None:
+        # rolling window of the newest blobs, per stream
+        with MemoryBlobStore(max_items=2) as store:
+            for key in (1, 2, 3):
+                store.put("a", key, b"a%d" % key)
+            store.put("b", 1, b"b1")
+
+            with pytest.raises(KeyError):
+                store.get("a", 1)
+            assert [store.get("a", key) for key in (2, 3)] == [b"a2", b"a3"]
+            assert store.get("b", 1) == b"b1"

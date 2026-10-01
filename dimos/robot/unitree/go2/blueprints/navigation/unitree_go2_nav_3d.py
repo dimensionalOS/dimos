@@ -13,28 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""3d navigation on Go2 with ray tracing and MLS planning"""
+"""3d navigation on Go2 with ray tracing and MLS planning.
 
-from datetime import datetime
-import os
-from pathlib import Path
+The Mid-360 driver defaults to the factory lidar IP. Set ``MID360__LIDAR_IP`` when
+the sensor lives elsewhere.
+"""
+
 from typing import Any
 
-from dimos.constants import RECORDINGS_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.stream import In
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
-from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
-from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.memory.module import pose_setter_for
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.basic_path_follower.module import BasicPathFollower
+from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
+from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
+from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.constants import (
@@ -49,35 +44,6 @@ from dimos.visualization.vis_module import vis_module
 voxel_size = 0.08
 # Raise above 0 to draw what the planner searched over (surface, nodes, weighted edges).
 planner_viz_hz = 0.0
-
-
-class Go2Mid360Recorder(PointlioRecorder):
-    lidar_l1: In[PointCloud2]
-    odom_go2: In[PoseStamped]
-
-    @pose_setter_for("odom_go2")
-    async def _odom_go2_pose(self, msg: PoseStamped) -> PoseStamped:
-        return msg
-
-
-# Opt-in recording: set DIMOS_NAV_RECORD=1 to capture pointlio_lidar +
-# pointlio_odometry into a timestamped db that plan_rrd replays from.
-_RECORD = os.getenv("DIMOS_NAV_RECORD", "").lower() in ("1", "true", "yes", "on")
-
-# Opt-in raw-Livox capture: set RECORD_PCAP=1 to also tcpdump the Mid-360 UDP
-# stream into recordings/ (needs DIMOS_MID360_LIDAR_IP).
-_RECORD_PCAP = os.getenv("RECORD_PCAP", "").lower() in ("1", "true", "yes", "on")
-
-
-def _recording_dir() -> Path:
-    now = datetime.now().astimezone()
-    stamp = (
-        now.strftime("%Y-%m-%d") + "_" + now.strftime("%I-%M%p").lower() + "-" + now.strftime("%Z")
-    )
-    return RECORDINGS_DIR / stamp
-
-
-_RECORDING_DIR = _recording_dir()
 
 
 def _render_global_map(msg: Any) -> Any:
@@ -125,6 +91,7 @@ _nav_rerun_config = {
         "world/camera_info": None,
         "world/color_image": None,
         "world/lidar": None,
+        "world/lidar_raw": None,
         **planner_visual_override(planner_viz_hz),
     },
 }
@@ -144,6 +111,7 @@ unitree_go2_nav_3d = autoconnect(
             (GO2Connection, "odom", "odom_go2"),
         ]
     ),
+    mid360_for_pointlio(),
     PointLio.blueprint(),
     Go2Mid360StaticTf.blueprint(),
     RayTracingVoxelMap.blueprint(
@@ -171,23 +139,4 @@ unitree_go2_nav_3d = autoconnect(
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     BasicPathFollower.blueprint(speed=0.5, heading_gain=1.5, max_angular=1.5),
     MovementManager.blueprint(),
-).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
-
-# PointLio keeps its default topics here, so point the recorder's ports at them.
-# Streams are recorded under the port names regardless of the topic.
-if _RECORD:
-    unitree_go2_nav_3d = autoconnect(
-        unitree_go2_nav_3d,
-        Go2Mid360Recorder.blueprint(db_path=str(_RECORDING_DIR / "mem2.db")).remappings(
-            [
-                (Go2Mid360Recorder, "pointlio_lidar", "lidar"),
-                (Go2Mid360Recorder, "pointlio_odometry", "odometry"),
-            ]
-        ),
-    )
-
-if _RECORD_PCAP:
-    unitree_go2_nav_3d = autoconnect(
-        unitree_go2_nav_3d,
-        Mid360PcapRecorder.blueprint(pcap_path=_RECORDING_DIR / "mid360.pcap"),
-    )
+).global_config(n_workers=11, robot_model="unitree_go2", obstacle_avoidance=False)

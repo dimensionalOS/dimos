@@ -1,19 +1,20 @@
-// Live 2D costmap: canvas drawing driven by the store's direct-subscribe path
-// (React is not involved at grid or pose rate; the badge rides the 500 ms UI
-// tick). channels[0] is the costmap, channels[1] (optional) the pose overlay
-// - both bindings come from the manifest, never hardcoded stream names.
+// Canvas updates bypass React; badges and cancellation use the slower UI tick.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { JsonValue, PanelSpec } from "@dimos/shared";
 import { Badge, type DrawHealth, PanelFrame } from "../layout/PanelFrame.tsx";
-import { type ChannelStore, type CostmapValue, inflateCostmap } from "@dimos/sdk";
+import { type ChannelStore, type CostmapValue, inflateCostmap, type Session } from "@dimos/sdk";
 import { useStoreChannel } from "@dimos/sdk/react";
 import styles from "./MapPanel.module.css";
 import {
+  canvasToWorld,
+  drawPath,
   drawPose,
   fitTransform,
   gridBlit,
   type GridPlacement,
   gridToImageData,
+  type PathPoint,
   type Pose2d,
 } from "./mapRenderer.ts";
 import type { PanelProps } from "./registry.tsx";
@@ -31,6 +32,13 @@ export interface MapSinkDeps {
   observeResize?: (el: Element, cb: () => void) => () => void;
 }
 
+export interface MapSinkOptions {
+  costmap: string;
+  pose?: string;
+  path?: string;
+  onClick?: (x: number, y: number) => void;
+}
+
 function isCostmapValue(v: unknown): v is CostmapValue {
   return typeof v === "object" && v !== null &&
     (v as CostmapValue).bytes instanceof Uint8Array &&
@@ -44,21 +52,22 @@ function readPose(v: unknown): Pose2d | null {
   return { x, y, yaw };
 }
 
+function readPath(v: unknown): PathPoint[] | null {
+  if (!Array.isArray(v)) return null;
+  const ok = v.every((p) =>
+    Array.isArray(p) && p.length === 2 && Number.isFinite(p[0]) && Number.isFinite(p[1])
+  );
+  return ok ? v as PathPoint[] : null;
+}
+
 /**
- * Drive `canvas` from the costmap channel's slot: at most one inflate in
- * flight, and on completion the pump re-checks the slot, so a burst of grids
- * costs one inflate of the newest (latest-wins, same shedding rule as
- * everywhere else in the pipeline). The inflated grid lands on an offscreen
- * bitmap at cell resolution; the display canvas redraws (scaled blit + pose
- * triangle) on new grids, pose ingests, resizes, and visibility changes,
- * which is how two consumers share the odom channel without extra
- * subscriptions upstream. While the document is hidden nothing inflates or
- * draws. Returns the cleanup function.
+ * Inflate one grid at a time, skipping to the newest after each completion.
+ * Cache the bitmap so overlays and resizes don't repeat decompression.
+ * Hidden documents pause both inflation and drawing.
  */
 export function startMapSink(
   store: ChannelStore,
-  costmapCh: string,
-  poseCh: string | undefined,
+  { costmap: costmapCh, pose: poseCh, path: pathCh, onClick }: MapSinkOptions,
   canvas: HTMLCanvasElement,
   health: DrawHealth,
   deps: MapSinkDeps = {},
@@ -105,6 +114,8 @@ export function startMapSink(
     ctx.rotate(rot);
     ctx.drawImage(grid, 0, -dh, dw, dh);
     ctx.restore();
+    const path = pathCh === undefined ? null : readPath(store.get(pathCh)?.value);
+    if (path !== null && path.length > 1) drawPath(ctx, t, path, dpr);
     const pose = poseCh === undefined ? null : readPose(store.get(poseCh)?.value);
     if (pose !== null) drawPose(ctx, t, pose, dpr);
   };
@@ -145,9 +156,20 @@ export function startMapSink(
       });
   };
 
+  // Mouse coordinates are CSS pixels; the fitted map uses backing-store pixels.
+  const onCanvasClick = (e: MouseEvent): void => {
+    const rect = canvas.getBoundingClientRect();
+    if (place === null || rect.width === 0 || rect.height === 0) return;
+    const t = fitTransform(place, canvas.width, canvas.height);
+    const px = (e.clientX - rect.left) * canvas.width / rect.width;
+    const py = (e.clientY - rect.top) * canvas.height / rect.height;
+    onClick?.(...canvasToWorld(t, px, py));
+  };
+  if (onClick !== undefined) canvas.addEventListener("click", onCanvasClick);
+
   const unsubscribeGrid = store.subscribe(costmapCh, pump);
-  // Pose redraws reuse the cached grid bitmap: no inflate at odom rate.
   const unsubscribePose = poseCh === undefined ? null : store.subscribe(poseCh, draw);
+  const unsubscribePath = pathCh === undefined ? null : store.subscribe(pathCh, draw);
   const disposeResize = observeResize(canvas, draw);
   const onVisibility = (): void => {
     pump();
@@ -157,14 +179,33 @@ export function startMapSink(
   pump(); // a slot may predate the mount
   return () => {
     stopped = true;
+    canvas.removeEventListener("click", onCanvasClick);
     unsubscribeGrid();
     unsubscribePose?.();
+    unsubscribePath?.();
     disposeResize();
     document.removeEventListener("visibilitychange", onVisibility);
   };
 }
 
-export function MapPanel({ spec, store }: PanelProps) {
+function param(spec: PanelSpec, key: string): string | undefined {
+  const value = spec.params[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function send(
+  session: Session,
+  ch: string,
+  value: JsonValue,
+  onError: (message: string | null) => void,
+): void {
+  session.publish(ch, value).then(
+    () => onError(null),
+    (err: unknown) => onError(`send failed: ${err instanceof Error ? err.message : String(err)}`),
+  );
+}
+
+export function MapPanel({ spec, store, session }: PanelProps) {
   const costmapCh = spec.channels[0] as string | undefined;
   if (costmapCh === undefined) {
     // A map panel without a costmap channel is a bridge authoring mistake;
@@ -179,27 +220,40 @@ export function MapPanel({ spec, store }: PanelProps) {
     <MapCanvas
       spec={spec}
       store={store}
+      session={session}
       costmapCh={costmapCh}
       poseCh={spec.channels[1] as string | undefined}
+      pathCh={param(spec, "path")}
+      clickCh={param(spec, "click")}
+      stopCh={param(spec, "stop")}
     />
   );
 }
 
 function MapCanvas(
-  { spec, store, costmapCh, poseCh }: PanelProps & {
+  { spec, store, session, costmapCh, poseCh, pathCh, clickCh, stopCh }: PanelProps & {
     costmapCh: string;
     poseCh: string | undefined;
+    pathCh: string | undefined;
+    clickCh: string | undefined;
+    stopCh: string | undefined;
   },
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const health = useRef<DrawHealth>({ lastDrawOkAtMs: Date.now(), failures: 0 }).current;
   const { slot } = useStoreChannel(store, costmapCh);
+  const [error, setError] = useState<string | null>(null);
+  const clickable = session !== undefined && clickCh !== undefined;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas === null) return;
-    return startMapSink(store, costmapCh, poseCh, canvas, health);
-  }, [store, costmapCh, poseCh, health]);
+    const onClick = session !== undefined && clickCh !== undefined
+      ? (x: number, y: number) => send(session, clickCh, { x, y }, setError)
+      : undefined;
+    const opts = { costmap: costmapCh, pose: poseCh, path: pathCh, onClick };
+    return startMapSink(store, opts, canvas, health);
+  }, [store, session, costmapCh, poseCh, pathCh, clickCh, health]);
 
   return (
     <PanelFrame
@@ -217,12 +271,49 @@ function MapCanvas(
     >
       <canvas
         ref={canvasRef}
-        className={styles.canvas}
+        className={clickable ? `${styles.canvas} ${styles.clickable}` : styles.canvas}
         data-testid={`map2d-${costmapCh}-canvas`}
         role="img"
         aria-label={spec.id}
       />
       {slot === null && <span className={styles.waiting}>waiting for data...</span>}
+      {error !== null && (
+        <span className={styles.error} role="alert">
+          {error}
+        </span>
+      )}
+      {session !== undefined && pathCh !== undefined && stopCh !== undefined && (
+        <CancelButton
+          store={store}
+          session={session}
+          pathCh={pathCh}
+          stopCh={stopCh}
+          testId={`map2d-${costmapCh}-cancel`}
+          onError={setError}
+        />
+      )}
     </PanelFrame>
+  );
+}
+
+function CancelButton({ store, session, pathCh, stopCh, testId, onError }: {
+  store: ChannelStore;
+  session: Session;
+  pathCh: string;
+  stopCh: string;
+  testId: string;
+  onError: (message: string | null) => void;
+}) {
+  const path = readPath(useStoreChannel(store, pathCh).slot?.value);
+  if (path === null || path.length === 0) return null;
+  return (
+    <button
+      type="button"
+      className={styles.cancel}
+      data-testid={testId}
+      onClick={() => send(session, stopCh, true, onError)}
+    >
+      cancel
+    </button>
   );
 }

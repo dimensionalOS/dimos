@@ -9,11 +9,11 @@
   flex: 1;
   flex-direction: column;
   overflow: auto;
-  padding: 1rem;
+  padding: 8px;
 }
 
 .notice {
-  color: #8b949e;
+  color: var(--fg-muted);
   margin: 2rem auto;
   text-align: center;
 }

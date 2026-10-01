@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from dataclasses import replace
+from dataclasses import asdict, replace
 import json
 import pickle
 import struct
@@ -30,16 +30,20 @@ from typing import Any
 from langchain_core.messages import AIMessage
 import numpy as np
 import pytest
+from reactivex.disposable import Disposable
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.resource_monitor.stats import ProcessStats, WorkerStats
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.web.cockpit import Channel, Chat, Video, cockpit
+from dimos.web.cockpit import Channel, Chat, Map2D, Stats, Video, cockpit
 from dimos.web.codecs import EncodedPayload, PublishContext, web_decoder, web_encoder
 from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
 from dimos.web.relay_bridge.audio_codec import AudioChunk
@@ -48,6 +52,7 @@ from dimos.web.relay_bridge.module_test_support import (
     FakeClient,
     FakeTransport,
     flush_loop,
+    patch_relay,
     push,
     start_authored,
     transport_of,
@@ -273,6 +278,35 @@ def test_resend_flag_replays_cache_on_generated_port(monkeypatch) -> None:
         stop_module(module)
 
 
+def test_lcm_channel_ships_lcm_encode_bytes(monkeypatch) -> None:
+    blueprint = cockpit(channels=[Channel("pose", PoseStamped, max_hz=1000.0)])
+    module, clients = start_authored(monkeypatch, blueprint, wire=("pose",))
+    try:
+        exceptions: list[str] = []
+        monkeypatch.setattr(
+            relay_bridge_module.logger,
+            "exception",
+            lambda msg, *args, **kwargs: exceptions.append(msg),
+        )
+        push(module, clients[0], Subs(chs=["pose"], n=1))
+        pose = transport_of(module, "pose")
+        assert wait_until(lambda: pose.subscribers)
+        module._min_interval = {"pose": 0.0}
+        msg = PoseStamped(ts=2.0, position=[1.0, 2.0, 0.0], orientation=[0, 0, 0, 1])
+        pose.publish(msg)
+        assert wait_until(lambda: clients[0].frames)
+        assert clients[0].frames[0] == ("pose", msg.lcm_encode(), "reliable", None)
+        # A sample of another type carries another fingerprint: dropped and
+        # logged, never sent to a browser that compiled the PoseStamped schema.
+        pose.publish(Pose(1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 1.0))
+        assert wait_until(lambda: bool(exceptions))
+        assert "pose" in exceptions[0]
+        flush_loop(module)
+        assert len(clients[0].frames) == 1 and module.encoded == {"pose": 1}
+    finally:
+        stop_module(module)
+
+
 def test_encoder_failure_is_isolated_and_rate_limited(monkeypatch) -> None:
     blueprint = cockpit(
         channels=[
@@ -311,7 +345,7 @@ def test_channels_without_manifest_fails(monkeypatch) -> None:
     async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
         raise AssertionError("must not reach the relay without a manifest")
 
-    monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fake_connect)
+    patch_relay(monkeypatch, fake_connect)
     spec = RuntimeChannelSpec(
         ch="odom",
         message_type=PoseStamped,
@@ -323,7 +357,7 @@ def test_channels_without_manifest_fails(monkeypatch) -> None:
         encoder=builtin_codecs.encode_pose,
     )
     module = RelayBridgeModule(
-        relay_url="https://127.0.0.1:1", robot_id="unit-bot", channels=(spec,)
+        relay_url="http://127.0.0.1:1", robot_id="unit-bot", channels=(spec,)
     )
     with pytest.raises(RuntimeError, match="require a manifest"):
         try:
@@ -336,7 +370,7 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
     async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
         raise AssertionError("must not reach the relay with mismatched specs")
 
-    monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fake_connect)
+    patch_relay(monkeypatch, fake_connect)
     manifest = {
         "version": 1,
         "channels": [
@@ -346,7 +380,7 @@ def test_spec_manifest_mismatch_fails(monkeypatch) -> None:
 
     def start_with(spec: RuntimeChannelSpec, match: str) -> None:
         module = RelayBridgeModule(
-            relay_url="https://127.0.0.1:1",
+            relay_url="http://127.0.0.1:1",
             robot_id="unit-bot",
             manifest=manifest,
             channels=(spec,),
@@ -528,6 +562,30 @@ def test_chat_panel_forwards_every_message(monkeypatch) -> None:
         stop_module(module)
 
 
+def test_stats_panel_forwards_snapshots(monkeypatch) -> None:
+    # The resource monitor's pickled dict crosses as stats.json.v1 on a latest
+    # channel (the newest snapshot wins), whitelisted keys only.
+    message = {
+        "coordinator": {**asdict(ProcessStats(pid=1234, alive=True, cpu_percent=12.5)), "rss": 1},
+        "workers": [asdict(WorkerStats(pid=1235, alive=True, worker_id=0, modules=["Nav"]))],
+    }
+    module, clients = start_authored(monkeypatch, cockpit(layout=Stats()), wire=("resource_stats",))
+    try:
+        stats = transport_of(module, "resource_stats")
+        push(module, clients[0], Subs(chs=["resource_stats"], n=1))
+        assert wait_until(lambda: stats.subscribers)
+        stats.publish(message)
+        writer = lambda: clients[0].writers.get("resource_stats")  # noqa: E731
+        assert wait_until(lambda: writer() is not None and writer().offers)
+        ((payload, meta),) = writer().offers
+        assert meta is None
+        frame = json.loads(payload)
+        assert frame["coordinator"]["cpu_percent"] == 12.5 and "rss" not in frame["coordinator"]
+        assert [(w["worker_id"], w["modules"]) for w in frame["workers"]] == [(0, ["Nav"])]
+    finally:
+        stop_module(module)
+
+
 def test_voice_chunk_frame_decodes_publishes_then_acks(monkeypatch) -> None:
     # The chat panel's mic leg: audio frames land on the generated audio_in
     # Out port (VoiceInput's feed), independent of the text input.
@@ -690,3 +748,91 @@ def test_publish_frame_with_unusable_meta_is_dropped(monkeypatch) -> None:
         assert module._pub_invalid == 8
     finally:
         stop_module(module)
+
+
+def _nav_path(*xy: tuple[float, float]) -> NavPath:
+    poses = [
+        PoseStamped(ts=1.0, position=[x, y, 0.0], orientation=[0.0, 0.0, 0.0, 1.0]) for x, y in xy
+    ]
+    return NavPath(ts=1.0, frame_id="world", poses=poses)
+
+
+@pytest.fixture
+def map_bridge(monkeypatch):
+    blueprint = cockpit(layout=Map2D(path="path", click="clicked_point", stop="stop_movement"))
+    module, clients = start_authored(
+        monkeypatch, blueprint, wire=("global_costmap", "odom", "path")
+    )
+    try:
+        yield module, clients
+    finally:
+        stop_module(module)
+
+
+def test_map2d_rejects_an_incompatible_path_encoder() -> None:
+    with pytest.raises(ValueError, match="conflicting requirements for stream 'path'"):
+        cockpit(
+            layout=Map2D(path="path"),
+            channels=[Channel("path", NavPath, encoding="path.rbm.v1", delivery="latest")],
+        )
+
+
+def test_builtin_channel_replays_when_explicitly_requested(monkeypatch) -> None:
+    blueprint = cockpit(
+        channels=[Channel("odom", PoseStamped, encoding="pose.json.v1", resend_on_subscribe=True)]
+    )
+    module, clients = start_authored(monkeypatch, blueprint, wire=("odom",))
+    try:
+        transport_of(module, "odom").publish(_NAV_PATH.poses[0])
+        push(module, clients[0], Subs(chs=["odom"], n=1))
+        assert wait_until(lambda: clients[0].frames)
+        ch, payload, delivery, meta = clients[0].frames[0]
+        assert (ch, delivery, meta) == ("odom", "reliable", None)
+        assert json.loads(payload) == {"x": 1.5, "y": -2.5, "z": 0.0, "yaw": 0.0, "ts": 1.0}
+    finally:
+        stop_module(module)
+
+
+def test_map2d_path_replays_and_paces(map_bridge) -> None:
+    module, clients = map_bridge
+    path = transport_of(module, "path")
+    offers = clients[0].writers["path"].offers
+    path.publish(_NAV_PATH)  # nobody watching; the cache keeps it
+    push(module, clients[0], Subs(chs=["path"], n=1))
+    assert wait_until(lambda: len(offers) == 1)
+    assert json.loads(offers[0][0]) == [[1.5, -2.5]]
+
+    # A planner burst must not leave the viewer stuck on the empty path.
+    path.publish(NavPath())
+    path.publish(_nav_path((0.25, 0.5), (1.0, 1.0), (1.75, 0.5)))
+    assert wait_until(lambda: len(offers) == 3)
+    assert [json.loads(payload) for payload, _ in offers[1:]] == [
+        [],
+        [[0.25, 0.5], [1.0, 1.0], [1.75, 0.5]],
+    ]
+
+
+def test_map2d_click_and_stop_publish(map_bridge) -> None:
+    module, clients = map_bridge
+    points: list[PointStamped] = []
+    stops: list[bool] = []
+    module.register_disposable(Disposable(module.clicked_point.subscribe(points.append)))
+    module.register_disposable(
+        Disposable(module.stop_movement.subscribe(lambda msg: stops.append(msg.data)))
+    )
+
+    click = json.dumps({"x": 1.5, "y": -2.25}).encode()
+    push(module, clients[0], _pub_frame(click, ch="clicked_point"))
+    assert wait_until(lambda: clients[0].control_frames)
+    assert isinstance(clients[0].control_frames[0], PubAck)
+    (point,) = points
+    assert (point.x, point.y, point.z, point.frame_id) == (1.5, -2.25, 0.0, "world")
+
+    push(module, clients[0], _pub_frame(b"true", ch="stop_movement", seq=2))
+    assert wait_until(lambda: stops == [True])
+
+    push(module, clients[0], _pub_frame(b'{"x": "1", "y": 2}', ch="clicked_point", seq=3))
+    assert wait_until(lambda: len(clients[0].control_frames) == 3)
+    nack = clients[0].control_frames[2]
+    assert isinstance(nack, PubNack) and nack.code == "decode_failed"
+    assert len(points) == 1

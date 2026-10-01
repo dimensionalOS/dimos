@@ -1,0 +1,25 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 1116 136.8" data-pikchr-date="20260403102956">
+<path d="M18.3,126L176.1,126A7.5 7.5 0 0 0 183.6 118.5L183.6,18.3A7.5 7.5 0 0 0 176.1 10.8L18.3,10.8A7.5 7.5 0 0 0 10.8 18.3L10.8,118.5A7.5 7.5 0 0 0 18.3 126Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="97.2" y="48.24" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">1. Cockpit</text>
+<text x="97.2" y="68.4" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">zero on every</text>
+<text x="97.2" y="88.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">disarm</text>
+<polygon points="284.4,68.4 272.88,72.72 272.88,64.08" style="fill:rgb(255,255,255)"/>
+<path d="M183.6,68.4L278.64,68.4"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="234" y="56.7" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">commands</text>
+<path d="M291.9,126L492.9,126A7.5 7.5 0 0 0 500.4 118.5L500.4,18.3A7.5 7.5 0 0 0 492.9 10.8L291.9,10.8A7.5 7.5 0 0 0 284.4 18.3L284.4,118.5A7.5 7.5 0 0 0 291.9 126Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="392.4" y="48.24" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">2. Relay</text>
+<text x="392.4" y="68.4" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">releases the lease,</text>
+<text x="392.4" y="88.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">sends teleop_stop</text>
+<polygon points="601.2,68.4 589.68,72.72 589.68,64.08" style="fill:rgb(255,255,255)"/>
+<path d="M500.4,68.4L595.44,68.4"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="550.8" y="56.7" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">commands</text>
+<path d="M608.7,126L881.7,126A7.5 7.5 0 0 0 889.2 118.5L889.2,18.3A7.5 7.5 0 0 0 881.7 10.8L608.7,10.8A7.5 7.5 0 0 0 601.2 18.3L601.2,118.5A7.5 7.5 0 0 0 608.7 126Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="745.2" y="48.24" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">3. Bridge</text>
+<text x="745.2" y="68.4" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">zero after watchdog_ms</text>
+<text x="745.2" y="88.56" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">of silence (300 ms default)</text>
+<polygon points="990,68.4 978.48,72.72 978.48,64.08" style="fill:rgb(255,255,255)"/>
+<path d="M889.2,68.4L984.24,68.4"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="939.6" y="56.7" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Twist</text>
+<path d="M997.5,126L1097.7,126A7.5 7.5 0 0 0 1105.2 118.5L1105.2,18.3A7.5 7.5 0 0 0 1097.7 10.8L997.5,10.8A7.5 7.5 0 0 0 990 18.3L990,118.5A7.5 7.5 0 0 0 997.5 126Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="1047.6" y="68.4" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">robot</text>
+</svg>

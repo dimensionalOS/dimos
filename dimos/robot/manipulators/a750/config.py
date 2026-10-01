@@ -117,6 +117,7 @@ def make_a750_model_config() -> RobotModelConfig:
             RobotModel.from_file(A750_MODEL_PATH, package_paths=A750_PACKAGE_PATHS)
             .with_joint_position_limits("finger", lower=0.0, upper=0.06)
             .with_joint_position_limits("finger_mimic", lower=0.0, upper=0.06)
+            .with_default_joint_acceleration_limit(2.0)
         ),
         joint_names=model_joint_names,
         base_link="base_link",

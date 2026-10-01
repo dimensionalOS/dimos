@@ -16,10 +16,44 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+
 import pytest
 
 from dimos.utils import logging_config
 from dimos.utils.logging_config import _compact_console_processor
+
+
+@pytest.mark.parametrize("level,debug_enabled", [("INFO", False), ("DEBUG", True)])
+def test_setup_logger_level_check_matches_output(monkeypatch, tmp_path, level, debug_enabled):
+    monkeypatch.setenv("DIMOS_LOG_LEVEL", level)
+    monkeypatch.setenv("DIMOS_RUN_LOG_DIR", str(tmp_path))
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import logging
+from dimos.utils.logging_config import setup_logger
+logger = setup_logger()
+print(logger.isEnabledFor(logging.DEBUG))
+logger.debug("body details", joints=2)
+logger.info("body acquired")
+""",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=True,
+    )
+    assert result.stdout.splitlines()[0] == str(debug_enabled)
+    assert ("body details" in result.stdout) == debug_enabled
+    records = [json.loads(line) for line in (tmp_path / "main.jsonl").read_text().splitlines()]
+    assert [record["event"] for record in records] == (
+        ["body details", "body acquired"] if debug_enabled else ["body acquired"]
+    )
 
 
 def test_module_key_leads_the_kv_tail(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ultralytics import YOLO  # type: ignore[attr-defined]
-
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -31,6 +29,9 @@ class YoloPersonDetector(Detector):
         model_name: str = "yolo11n-pose.pt",
         device: str | None = None,
     ) -> None:
+        # ~0.5s: deferred to keep module import (test collection) light.
+        from ultralytics import YOLO  # type: ignore[attr-defined]
+
         self.model = YOLO(get_data(model_path) / model_name, task="track")
 
         self.tracker = get_data(model_path) / "botsort.yaml"

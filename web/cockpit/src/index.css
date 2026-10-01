@@ -1,5 +1,36 @@
+/* Design tokens and page-wide defaults. Every module stylesheet reads these;
+   nothing else in the cockpit hardcodes a color. */
+
+:root {
+  --bg-0: #0b0d10;
+  --bg-1: #121519;
+  --bg-2: #191d23;
+  --bg-3: #22272f;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --fg: #e6ebf0;
+  --fg-muted: #9aa4b0;
+  --fg-faint: #5f6873;
+  --accent: #22d3ee;
+  --accent-soft: rgba(34, 211, 238, 0.14);
+  --accent-ring: rgba(34, 211, 238, 0.45);
+  --on-accent: #06181c;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --danger: #ff5c5c;
+  --radius-s: 4px;
+  --radius: 6px;
+  --radius-l: 8px;
+  --dur: 120ms;
+  --font-ui: "Inter Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
+  scrollbar-color: var(--bg-3) transparent;
+  scrollbar-width: thin;
 }
 
 html,
@@ -10,8 +41,34 @@ body,
 }
 
 body {
-  background: #14171a;
-  color: #d7dde3;
-  font-family: system-ui, sans-serif;
-  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  background: var(--bg-0);
+  color: var(--fg);
+  font: 13px/1.4 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+
+button,
+input {
+  color: inherit;
+  font: inherit;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

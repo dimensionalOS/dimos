@@ -13,17 +13,17 @@ using dimos::native::Module;
 using dimos::native::Output;
 using geometry_msgs::Twist;
 
-constexpr std::int64_t kSampleConfigMin = 0;
-constexpr std::int64_t kSampleConfigMax = 1000;
+constexpr std::int64_t SAMPLE_CONFIG_MIN = 0;
+constexpr std::int64_t SAMPLE_CONFIG_MAX = 1000;
 
 struct PongConfig {
     std::int64_t sample_config;
 
     void validate() const {
-        if (sample_config < kSampleConfigMin || sample_config > kSampleConfigMax) {
+        if (sample_config < SAMPLE_CONFIG_MIN || sample_config > SAMPLE_CONFIG_MAX) {
             throw std::runtime_error("sample_config must be in [" +
-                                     std::to_string(kSampleConfigMin) + ", " +
-                                     std::to_string(kSampleConfigMax) + "]");
+                                     std::to_string(SAMPLE_CONFIG_MIN) + ", " +
+                                     std::to_string(SAMPLE_CONFIG_MAX) + "]");
         }
     }
 };

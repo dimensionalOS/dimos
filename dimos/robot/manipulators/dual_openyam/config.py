@@ -20,27 +20,19 @@ from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.manipulators.dual_openyam.joints import (
+    DUAL_OPENYAM_ARM_JOINTS,
+    DUAL_OPENYAM_JOINTS,
+)
 from dimos.robot.manipulators.dual_openyam.model import (
     DUAL_OPENYAM_MODEL,
 )
+from dimos.robot.manipulators.openyam.config import OPENYAM_HOME_JOINTS
 
-DUAL_OPENYAM_DOF_PER_ARM = 6
 DUAL_OPENYAM_HARDWARE_ID = "dual_openyam"
 DUAL_OPENYAM_ADAPTER_TYPE = "dual_openyam_damiao"
 DUAL_OPENYAM_SIDES = ("left", "right")
-DUAL_OPENYAM_LEFT_ARM_JOINTS = [
-    f"left_joint{index}" for index in range(1, DUAL_OPENYAM_DOF_PER_ARM + 1)
-]
-DUAL_OPENYAM_RIGHT_ARM_JOINTS = [
-    f"right_joint{index}" for index in range(1, DUAL_OPENYAM_DOF_PER_ARM + 1)
-]
-DUAL_OPENYAM_ARM_JOINTS = [
-    *DUAL_OPENYAM_LEFT_ARM_JOINTS,
-    *DUAL_OPENYAM_RIGHT_ARM_JOINTS,
-]
-DUAL_OPENYAM_GRIPPER_JOINTS = ["left_arm/gripper", "right_arm/gripper"]
-DUAL_OPENYAM_JOINTS = [*DUAL_OPENYAM_ARM_JOINTS, *DUAL_OPENYAM_GRIPPER_JOINTS]
-DUAL_OPENYAM_HOME_PER_ARM = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0]
+DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
 _ARM_KP = (80.0, 80.0, 80.0, 10.0, 10.0, 10.0)
 _ARM_KD = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5)
@@ -109,7 +101,7 @@ def _hardware_component(
 def dual_openyam_model_config() -> RobotModelConfig:
     """Build the combined arm-only planning model."""
     return RobotModelConfig(
-        model=DUAL_OPENYAM_MODEL,
+        model=DUAL_OPENYAM_MODEL.with_default_joint_acceleration_limit(1.0),
         joint_names=list(DUAL_OPENYAM_ARM_JOINTS),
         base_link="dual_openyam_base",
         planning_groups=[
@@ -128,7 +120,5 @@ def dual_openyam_model_config() -> RobotModelConfig:
         ],
         auto_convert_meshes=True,
         home_joints=list(DUAL_OPENYAM_HOME_JOINTS),
-        max_velocity=2.0,
-        max_acceleration=1.0,
         tf_extra_links=[],
     )

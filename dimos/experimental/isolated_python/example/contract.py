@@ -38,6 +38,7 @@ class Config(IsolatedPythonModuleConfig):
 class ExampleExternal(IsolatedPythonModule):
     """Multiply incoming integers in an isolated Python environment."""
 
+    project_dir = "native/python/example"
     implementation = "example_external.runtime:ExampleExternalRuntime"
     config: Config
 

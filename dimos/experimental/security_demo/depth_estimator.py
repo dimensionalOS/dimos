@@ -20,7 +20,6 @@ import threading
 import numpy as np
 from PIL import Image as PILImage
 import torch
-from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -37,6 +36,10 @@ class DepthEstimator:
     """
 
     def __init__(self, publish: Callable[[Image], None], device: str | None = None) -> None:
+        # ~2.5s: transformers' image utils also pull torchvision; deferred to keep
+        # module import (test collection) light.
+        from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+
         self._publish = publish
         if device is None:
             if torch.cuda.is_available():

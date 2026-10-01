@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The smart go2 with an authored cockpit: video left (2/3), costmap+pose
-over keyboard teleop right. Edit the layout (swap Row for Col, change
-shares, drop a panel) and rerun - the browser rearranges and dropped
-channels leave the wire entirely.
+"""The smart go2 with an authored cockpit: video over the 3D voxel map left
+(2/3), costmap+pose over keyboard teleop right. Edit the layout (swap Row
+for Col, change shares, drop a panel) and rerun - the browser rearranges and
+dropped channels leave the wire entirely.
 
 Separate file on purpose: cockpit() needs the [web] extra at import time,
 and `unitree-go2` itself must stay importable without it.
@@ -23,14 +23,18 @@ and `unitree-go2` itself must stay importable without it.
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
-from dimos.web.cockpit import Col, Map2D, Row, Teleop, Video, cockpit
+from dimos.web.cockpit import Col, Map2D, Map3D, Row, Teleop, Video, cockpit
 
 unitree_go2_cockpit = autoconnect(
     unitree_go2,
     cockpit(
         layout=Row(
-            Video("color_image"),
-            Col(Map2D(costmap="global_costmap", pose="odom"), Teleop(), shares=[3, 1]),
+            Col(Video("color_image"), Map3D()),
+            Col(
+                Map2D(path="path", click="clicked_point", stop="stop_movement"),
+                Teleop(),
+                shares=[3, 1],
+            ),
             shares=[2, 1],
         ),
     ),

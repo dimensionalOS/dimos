@@ -1,30 +1,15 @@
 {
-  description = "Livox SDK2 and Mid-360 native module";
+  description = "Livox SDK2 packaging, consumed by the C++ LIO module flakes";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    dimos-lcm = {
-      url = "github:dimensionalOS/dimos-lcm/main";
-      flake = false;
-    };
-    # Standalone Boost.PFR, consumed by the SDK via a FetchContent source override.
-    pfr = {
-      url = "github:apolukhin/pfr_non_boost/2.3.2";
-      flake = false;
-    };
-    lcm-extended = {
-      url = "github:jeff-hykin/lcm_extended";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-utils.follows = "flake-utils";
-    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, dimos-lcm, pfr, lcm-extended, ... }:
+  outputs = { self, nixpkgs, flake-utils, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        lcm = lcm-extended.packages.${system}.lcm;
 
         livox-sdk2 = pkgs.stdenv.mkDerivation rec {
           pname = "livox-sdk2";
@@ -61,36 +46,10 @@
             find . -name CMakeLists.txt -exec sed -i 's/-Werror//g' {} +
           '';
         };
-
-        livox-common = ../../common;
-
-        mid360_native = pkgs.stdenv.mkDerivation {
-          pname = "mid360_native";
-          version = "0.1.0";
-
-          src = ./.;
-
-          nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
-          buildInputs = [ livox-sdk2 lcm pkgs.glib pkgs.nlohmann_json ];
-
-          cmakeFlags = [
-            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-            "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
-            "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
-            "-DLIVOX_COMMON_DIR=${livox-common}"
-            # The header-only SDK lives outside this dir. A git-tree flake can
-            # reach it as a path literal within the repo tree.
-            "-DDIMOS_NATIVE_CPP_DIR=${../../../../../../native/cpp}"
-          ];
-        };
       in {
         packages = {
-          default = mid360_native;
-          inherit livox-sdk2 mid360_native;
-        };
-
-        devShells.default = pkgs.mkShell {
-          buildInputs = [ livox-sdk2 ];
+          default = livox-sdk2;
+          inherit livox-sdk2;
         };
       });
 }

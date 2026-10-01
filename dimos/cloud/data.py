@@ -31,6 +31,7 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+import sys
 import tempfile
 import time
 from typing import Any
@@ -411,4 +412,10 @@ def _blueprint(path: Path) -> str | None:
 
 def _sha256(path: Path) -> str:
     with path.open("rb") as f:
-        return hashlib.file_digest(f, "sha256").hexdigest()
+        if sys.version_info >= (3, 11):
+            return hashlib.file_digest(f, "sha256").hexdigest()
+        # TODO(PY311): drop this fallback for hashlib.file_digest.
+        digest = hashlib.sha256()
+        while chunk := f.read(2**20):
+            digest.update(chunk)
+        return digest.hexdigest()

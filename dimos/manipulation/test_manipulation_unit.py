@@ -18,7 +18,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import pickle
-from unittest.mock import ANY, MagicMock, call
+import time
+from unittest.mock import ANY, DEFAULT, MagicMock, call
 
 import numpy as np
 import pytest
@@ -37,19 +38,29 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModuleConfig,
     ManipulationState,
 )
-from dimos.manipulation.manipulation_spec import ExecutionStatus, PlanStatus
+from dimos.manipulation.manipulation_spec import (
+    ExecutionResult,
+    ExecutionStatus,
+    PlanStatus,
+)
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType, PlanningStatus
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
 from dimos.manipulation.planning.spec.models import (
     GeneratedPlan,
     IKResult,
     Obstacle,
     PlanningResult,
 )
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.trajectory_generator.config import (
     SimpleTrapezoidParametrizationConfig,
 )
@@ -59,13 +70,14 @@ from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 def _control_coordinator(
@@ -74,8 +86,16 @@ def _control_coordinator(
     cancel_status: TrajectoryCancellationStatus = (TrajectoryCancellationStatus.ALREADY_STOPPED),
 ) -> MagicMock:
     coordinator = MagicMock(spec=ControlCoordinator)
-    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(execute_status)
-    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(cancel_status)
+    coordinator.get_joint_positions.return_value = {}
+
+    def invoke(task: str, method: str, args: dict | None = None):
+        if method == "execute":
+            return TrajectoryExecutionResult(execute_status)
+        if method == "cancel":
+            return TrajectoryCancellationResult(cancel_status)
+        return DEFAULT
+
+    coordinator.task_invoke.side_effect = invoke
     coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.IDLE)
     return coordinator
 
@@ -96,8 +116,6 @@ def robot_config():
                 tip_link="link_tcp",
             )
         ],
-        max_velocity=1.0,
-        max_acceleration=2.0,
     )
 
 
@@ -195,6 +213,28 @@ def _make_trajectory(*points: tuple[float, list[float]]) -> JointTrajectory:
 def _enable_simple_parametrization(module: ManipulationModule) -> None:
     module._trajectory_parametrizer = SimpleTrapezoidParametrizer(
         SimpleTrapezoidParametrizationConfig()
+    )
+
+
+def _prepared_model(config: RobotModelConfig) -> PreparedRobotModel:
+    return PreparedRobotModel(
+        config=config,
+        description=LoadedRobotModel("<robot/>", Path("/robot.urdf"), {}),
+        joint_space=JointSpace(
+            tuple(
+                JointCoordinate(
+                    name=name,
+                    mechanism_type="revolute",
+                    topology=CoordinateTopology.INTERVAL,
+                    lower=-1.0,
+                    upper=1.0,
+                    max_velocity=1.0,
+                    max_acceleration=2.0,
+                )
+                for name in config.joint_names
+            )
+        ),
+        planning_groups=(),
     )
 
 
@@ -422,7 +462,7 @@ class TestStateMachine:
         assert module._state == ManipulationState.EXECUTING
 
         assert module.cancel().status is ExecutionStatus.ABORTED
-        module._control_coordinator.cancel_trajectory.assert_called_once_with()
+        assert _cancelled(module._control_coordinator) == ["joint_trajectory"]
         assert module._state == ManipulationState.IDLE
 
     def test_safe_cancel_clears_fault(self, module_factory):
@@ -434,6 +474,57 @@ class TestStateMachine:
         assert result.status is ExecutionStatus.NO_EXECUTION
         assert module._state == ManipulationState.IDLE
         assert module._error_message == ""
+
+    def test_reset_recovers_from_fault(self, module_factory):
+        """Planning only runs from IDLE or COMPLETED, so FAULT must be escapable."""
+        module = module_factory()
+        module._state = ManipulationState.FAULT
+        module._error_message = "Execution failed"
+
+        result = module.reset()
+
+        assert result.succeeded
+        assert module._state == ManipulationState.IDLE
+        assert module._error_message == ""
+
+    def test_reset_leaves_fault_standing_when_the_stop_is_unconfirmed(
+        self, module_factory, mocker: MockerFixture
+    ) -> None:
+        """Clearing this FAULT hands back a module that accepts motion into a moving arm."""
+        module = module_factory()
+        module._state = ManipulationState.FAULT
+        module._error_message = "cancel outcome uncertain"
+        mocker.patch.object(
+            module,
+            "cancel",
+            return_value=ExecutionResult(ExecutionStatus.UNCERTAIN, "cancel outcome uncertain"),
+        )
+
+        result = module.reset()
+
+        assert not result.succeeded
+        assert module._state == ManipulationState.FAULT
+        assert module._error_message == "cancel outcome uncertain"
+
+    def test_reset_cancels_an_active_trajectory(self, module_factory):
+        """Refusing and asking the caller to cancel first is a dead end."""
+        module = module_factory()
+        config = _one_joint_config()
+        _install_generated_plan(module, config, [0.0], [0.1])
+        module._control_coordinator = _control_coordinator(
+            cancel_status=TrajectoryCancellationStatus.CANCELLED
+        )
+        module._control_coordinator.task_invoke.return_value = TrajectoryStatus(
+            state=TrajectoryState.ABORTED
+        )
+        module._initialize_execution()
+        module.execute(blocking=False)
+
+        result = module.reset()
+
+        assert _cancelled(module._control_coordinator) == ["joint_trajectory"]
+        assert "Cancelled" in result.message
+        assert module._state == ManipulationState.IDLE
 
     def test_fail_sets_fault_state(self, module_factory):
         """_fail helper sets FAULT state and message."""
@@ -583,7 +674,7 @@ class TestPlanningInitialization:
         module.config.model = robot_config
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.world.get_model_config.return_value = robot_config
+        module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
         module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         current = JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])
         current_model_state = JointState(
@@ -653,7 +744,7 @@ class TestPlanningInitialization:
         module.config.model = robot_config
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.world.get_model_config.return_value = robot_config
+        module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
         module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = None
         explicit_seed = JointState(name=robot_config.joint_names, position=[0.2, 0.1, 0.0])
@@ -707,7 +798,7 @@ class TestPlanningGroupApis:
         _enable_simple_parametrization(module)
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.world.get_model_config.return_value = robot_config
+        module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
         module._world_monitor.planning_groups = registry
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=["joint1", "joint2", "joint3"],
@@ -775,7 +866,7 @@ class TestPlanningGroupApis:
         _enable_simple_parametrization(module)
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.world.get_model_config.return_value = robot_config
+        module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
         module._world_monitor.planning_groups = registry
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=["joint1", "joint2", "joint3"],
@@ -917,6 +1008,38 @@ class TestPlanningGroupApis:
         ]
         publish.assert_called_once()
 
+    def test_tf_loop_publishes_mount_edges_alongside_the_robot(
+        self, module_factory, mocker: MockerFixture
+    ) -> None:
+        """One publisher for the chain, so the mount is never stamped a period stale."""
+        model = _bimanual_config()
+        module = module_factory()
+        module.config.model = model
+        module.config.static_transforms = [
+            Transform(frame_id="left/tool", child_frame_id="camera_link")
+        ]
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
+        module._world_monitor.get_group_ee_pose.return_value = PoseStamped(
+            position=Vector3(0.4, 0.2, 0.3)
+        )
+        publish = mocker.patch.object(module.tf, "publish")
+
+        def stop_after_first_iteration(_period: float) -> bool:
+            module._tf_stop_event.set()
+            return True
+
+        mocker.patch.object(module._tf_stop_event, "wait", side_effect=stop_after_first_iteration)
+        module._tf_stop_event.clear()
+        before = time.time()
+
+        module._tf_publish_loop()
+
+        published = list(publish.call_args.args[0])
+        mount = next(t for t in published if t.child_frame_id == "camera_link")
+        assert mount.frame_id == "left/tool"
+        assert mount.ts >= before
+
     def test_get_ee_pose_fails_safely_without_pose_group(self, robot_config, module_factory):
         no_pose_config = RobotModelConfig(
             model=robot_config.model,
@@ -1040,7 +1163,7 @@ class TestExecute:
         result = module.execute(plan_id=original.plan_id, blocking=False)
 
         assert result.status is ExecutionStatus.REJECTED
-        coordinator.execute_trajectory.assert_not_called()
+        assert _executed(coordinator) is None
         assert module._last_plan is replacement
         assert (
             module.execute(
@@ -1048,7 +1171,7 @@ class TestExecute:
             ).status
             is ExecutionStatus.ACCEPTED
         )
-        coordinator.execute_trajectory.assert_called_once()
+        assert _executed(coordinator) is not None
 
     def test_execute_requires_trajectory(self, robot_config, module_factory):
         """Execute fails without planned trajectory."""
@@ -1056,3 +1179,16 @@ class TestExecute:
 
         assert module.execute().status is ExecutionStatus.NO_PLAN
         assert module._state == ManipulationState.IDLE
+
+
+def _executed(coordinator, task: str = "joint_trajectory"):
+    """The trajectory a task was asked to execute, or None."""
+    for invocation in coordinator.task_invoke.call_args_list:
+        if invocation.args[0] == task and invocation.args[1] == "execute":
+            return invocation.args[2]["trajectory"]
+    return None
+
+
+def _cancelled(coordinator) -> list[str]:
+    """Tasks that were asked to cancel."""
+    return [c.args[0] for c in coordinator.task_invoke.call_args_list if c.args[1] == "cancel"]

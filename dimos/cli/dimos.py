@@ -67,6 +67,7 @@ from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
 from dimos.cli.vqa import app as vqa_app
+from dimos.core.global_config import ENV_FILE
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 
 main = typer.Typer(
@@ -74,7 +75,8 @@ main = typer.Typer(
     no_args_is_help=True,
 )
 
-load_dotenv()
+if ENV_FILE is not None:
+    load_dotenv()
 
 SIMULATORS = ("mujoco", "dimsim")
 RECORDERS = ("sqlite", "mcap")
@@ -138,7 +140,7 @@ main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options
 main.add_typer(topic_app, name="topic")
 main.add_typer(map_app, name="map")
 
-from dimos.navigation.nav_3d.evaluator.cli import app as nav_eval_app
+from dimos.navigation.global_planner.evaluator.cli import app as nav_eval_app
 
 main.add_typer(nav_eval_app, name="nav-eval")
 main.add_typer(dataprep_app, name="dataprep")

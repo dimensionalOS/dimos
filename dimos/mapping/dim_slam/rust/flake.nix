@@ -7,10 +7,10 @@
     cu-vslam-rs.url = "github:jeff-hykin/cu_vslam_rs";
     cu-vslam-rs.inputs.nixpkgs.follows = "nixpkgs";
     cu-vslam-rs.inputs.flake-utils.follows = "flake-utils";
-    # Relative git+file: will be deprecated (nix#12281) but there's no
-    # viable alternative for reaching local path deps outside the flake dir currently
-    # presumably an alternative will be added before this is removed.
-    dimos-repo = { url = "git+file:../../../.."; flake = false; };
+    # Relative path: resolves against the flake, not the cwd (unlike git+file, nix#12281), and
+    # locks as-is. Only reachable when entered as git+file:<dimos>?dir=...; the devShell never
+    # touches it, so `nix develop path:<this dir>` works from any cwd.
+    dimos-repo = { url = "path:../../../.."; flake = false; };
     crate2nix.url = "github:nix-community/crate2nix";
     crate2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
@@ -26,12 +26,7 @@
           config = { allowUnfree = true; cudaSupport = !isDarwin; };
         };
 
-        # cuVSLAM SDKs come from the cu_vslam_rs flake: one sdk-<variant> package per build
-        # that exists for this system. metal on aarch64-darwin; orin and thor on
-        # aarch64-linux; x86_64-cuda12 and x86_64-cuda13 on x86_64-linux. Taken from that
-        # flake rather than listed here so the two cannot drift apart.
-        sdkPackages = nixpkgs.lib.filterAttrs (name: _: nixpkgs.lib.hasPrefix "sdk-" name)
-          cu-vslam-rs.packages.${system};
+        sdkPackages = nixpkgs.lib.filterAttrs (name: _: nixpkgs.lib.hasPrefix "sdk-" name) cu-vslam-rs.packages.${system};
         variants = map (nixpkgs.lib.removePrefix "sdk-") (builtins.attrNames sdkPackages);
 
         src = pkgs.runCommand "dim-slam-module-src" {} ''
@@ -46,11 +41,6 @@
           cp -r ${dimos-repo}/native/rust/dimos-module-macros $out/native/rust/dimos-module-macros
         '';
 
-        # One derivation per crate rather than one vendored blob, so a dependency bump
-        # only rebuilds what changed and the SDK variants share everything below
-        # cu_vslam_rs.
-        # src, not the crate dir: the whole tree has to be visible or the crate's
-        # ../../../../native path dependency escapes it.
         generatedCargoNix = crate2nix.tools.${system}.generatedCargoNix {
           name = "dim-slam-module";
           inherit src;
@@ -72,10 +62,39 @@
             };
           }).rootCrate.build;
       in {
-        # No `default`: nix sees neither /proc/device-tree nor the installed driver, so orin
-        # vs thor and cuda12 vs cuda13 are not decidable here, and guessing one builds a
-        # module that dies at the first CUDA call. dim_slam.py's sdk_variant() detects the
-        # hardware and names the variant on the build command.
         packages = nixpkgs.lib.genAttrs variants packageFor;
+
+        # script needs to detect cuda/non-cuda to pick the right things to load
+        devShells.default = pkgs.mkShellNoCC {
+          shellHook = ''
+            if [ -z "''${CUVSLAM_SDK_DIR:-}" ]; then
+              case "$(uname -s)-$(uname -m)" in
+                Darwin-arm64) cuvslam_variant=metal ;;
+                Linux-aarch64)
+                  case "$(tr -d '\0' < /proc/device-tree/compatible 2>/dev/null)" in
+                    *tegra264*) cuvslam_variant=thor ;;
+                    *tegra234*) cuvslam_variant=orin ;;
+                    *) cuvslam_variant=aarch64 ;;
+                  esac ;;
+                *)
+                  cuda_major=$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9]*\).*/\1/p')
+                  cuvslam_variant="x86_64''${cuda_major:+-cuda$cuda_major}" ;;
+              esac
+              case "$cuvslam_variant" in
+${nixpkgs.lib.concatMapStringsSep "\n" (variant:
+  "                ${variant}) cuvslam_sdk_drv=${builtins.unsafeDiscardStringContext sdkPackages."sdk-${variant}".drvPath} ;;"
+) variants}
+                *) cuvslam_sdk_drv= ;;
+              esac
+              if [ -n "$cuvslam_sdk_drv" ] \
+                && CUVSLAM_SDK_DIR=$(nix build --no-link --print-out-paths "$cuvslam_sdk_drv^out"); then
+                export CUVSLAM_SDK_DIR
+              else
+                echo "no cuVSLAM SDK for variant '$cuvslam_variant'; building the stub" >&2
+              fi
+              unset cuvslam_variant cuvslam_sdk_drv cuda_major
+            fi
+          '';
+        };
       });
 }

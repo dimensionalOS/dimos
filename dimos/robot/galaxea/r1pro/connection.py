@@ -111,7 +111,7 @@ def _make_qos() -> Any:
     """BEST_EFFORT + VOLATILE QoS — the profile the R1 Pro topics expect."""
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
-    return QoSProfile(
+    return QoSProfile(  # type: ignore[no-untyped-call]
         depth=10,
         reliability=ReliabilityPolicy.BEST_EFFORT,
         durability=DurabilityPolicy.VOLATILE,

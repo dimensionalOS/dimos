@@ -482,10 +482,8 @@ vendored, locally modified, or has no suitable upstream source.
 
 If the planning blueprint selects the RoboPlan TOPP-RA trajectory
 parametrizer, dimOS requires RoboPlan `0.6.x`. Every movable joint in
-each selected planning group must provide finite, positive velocity limits.
-Authored extended acceleration limits take precedence; when absent, dimOS
-temporarily inserts a default `2.0 rad/s²` acceleration limit during RoboPlan
-model preparation:
+each selected planning group must provide finite, positive velocity and
+acceleration limits. An authored extended acceleration limit is accepted:
 
 ```xml
 <joint name="joint1" type="revolute">
@@ -500,11 +498,17 @@ model preparation:
 </joint>
 ```
 
-RoboPlan loads both limits from its scene model. If either is absent, zero,
-negative, or non-finite, plan materialization fails before preview or execution
-and identifies the affected joint. dimOS does not substitute
-`RobotModelConfig.max_velocity`, `velocity_limits`, or `max_acceleration` for
-this backend. Formal per-joint dimOS overrides will be added separately.
+Standard URDF has no acceleration attribute. When the source omits it, apply
+an explicit robot-level default before building `RobotModelConfig`:
+
+```python skip
+model = RobotModel.from_file(urdf_path).with_default_joint_acceleration_limit(2.0)
+```
+
+The model is materialized and validated once. All planning backends then use
+the same compiled position, velocity, and acceleration semantics. Missing,
+zero, negative, or non-finite limits fail startup and identify the affected
+joint.
 
 ```python skip
 from dimos.manipulation.manipulation_module import manipulation_module
@@ -548,7 +552,7 @@ def _make_yourarm_config(y_offset: float = 0.0) -> RobotModelConfig:
         model=RobotModel.from_file(
             _YOURARM_URDF_PATH,
             package_paths=_YOURARM_PACKAGE_PATHS,
-        ),
+        ).with_default_joint_acceleration_limit(2.0),
         joint_names=joint_names,
         planning_groups=[
             PlanningGroupDefinition(
@@ -562,8 +566,6 @@ def _make_yourarm_config(y_offset: float = 0.0) -> RobotModelConfig:
         base_link="base_link",                 # Robot-scoped placement/weld/strip link
         collision_exclusion_pairs=[],   # Pairs of links that can touch (e.g., gripper fingers)
         auto_convert_meshes=True,       # Convert DAE/STL meshes for Drake
-        max_velocity=1.0,               # Max velocity scaling factor
-        max_acceleration=2.0,           # Max acceleration scaling factor
     )
 ```
 

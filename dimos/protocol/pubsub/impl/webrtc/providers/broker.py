@@ -52,7 +52,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 # Default hosted-teleop broker endpoint.
-DEFAULT_BROKER_URL = "https://teleop.dimensionalos.com"
+DEFAULT_BROKER_URL = "https://api.dimensional.org"
 
 # Mirrors cloudflare.py — CF silently drops DataChannel messages above ~64 KB.
 MAX_MSG_SIZE = 32 * 1024
@@ -123,9 +123,9 @@ class BrokerProvider(AsyncProviderBase):
         if not config.api_key:
             raise RuntimeError(
                 "BrokerConfig.api_key required "
-                "(set --transports.broker.api-key=dtk_live_... or "
-                "TRANSPORTS__BROKER__API_KEY=dtk_live_...; "
-                "create one in the teleop dashboard: New Key)"
+                "(set --transports.broker.api-key=dimos_sk_... or "
+                "TRANSPORTS__BROKER__API_KEY=dimos_sk_...; "
+                "create one in the Dimensional console: API keys -> Create key)"
             )
         self._broker_url = config.broker_url.rstrip("/")
         self._api_key = config.api_key

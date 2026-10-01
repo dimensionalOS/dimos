@@ -203,6 +203,9 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
         st = self._ensure_topic(topic)
         st.subs.append(callback)
         if st.thread is None:
+            if isinstance(st.channel, CpuShmChannel):
+                # Frames already in the segment predate this subscriber.
+                st.last_seq = st.channel.current_seq()
             st.thread = threading.Thread(target=self._fanout_loop, args=(topic, st), daemon=True)
             st.thread.start()
 

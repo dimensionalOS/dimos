@@ -330,7 +330,7 @@ def test_make_can_bus_linux_uses_ordered_defaults(
     dual_robot: FakeRobot,
     mocker: MockerFixture,
 ) -> None:
-    socketcan = mocker.patch.object(can_motor_control, "SocketCanBus")
+    socketcan = mocker.patch.object(can_motor_control, "SocketCanBus", create=True)
     mocker.patch.object(adapter_module.sys, "platform", "linux")
     adapter = DualAdapter(dual_robot)
 
@@ -343,7 +343,7 @@ def test_make_can_bus_linux_uses_configured_interface(
     dual_robot: FakeRobot,
     mocker: MockerFixture,
 ) -> None:
-    socketcan = mocker.patch.object(can_motor_control, "SocketCanBus")
+    socketcan = mocker.patch.object(can_motor_control, "SocketCanBus", create=True)
     mocker.patch.object(adapter_module.sys, "platform", "linux")
     adapter = DualAdapter(
         dual_robot,

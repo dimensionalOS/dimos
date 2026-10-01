@@ -19,10 +19,11 @@ Topics derived from hardware_id: /{hardware_id}/cmd_vel, /{hardware_id}/odom.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import threading
 from typing import Any
 
-from dimos.core.transport import LCMTransport
+from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -43,7 +44,7 @@ class TransportTwistAdapter:
         self,
         dof: int = 3,
         hardware_id: str = "base",
-        transport_cls: type = LCMTransport,
+        transport_cls: Callable[[str, type], Any] = make_transport,
         **_: object,
     ) -> None:
         self._dof = dof
@@ -145,7 +146,7 @@ class TransportTwistAdapter:
 
 def transport_lcm_factory(**kwargs: Any) -> TransportTwistAdapter:
     """Factory for the ``transport_lcm`` adapter (see ``_registry.py``)."""
-    kwargs.setdefault("transport_cls", LCMTransport)
+    kwargs.setdefault("transport_cls", make_transport)
     return TransportTwistAdapter(**kwargs)
 
 

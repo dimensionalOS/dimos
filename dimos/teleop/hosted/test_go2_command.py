@@ -381,6 +381,18 @@ def test_nav_goal_publishes_and_acks(
     assert acks == [(11, True)]
 
 
+def test_nav_goal_rejects_non_numbers(
+    module: Go2CommandModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    acks: list[tuple[Any, bool]] = []
+    monkeypatch.setattr(module, "_send_ack", lambda nonce, ok: acks.append((nonce, ok)))
+
+    module._handle_nav_goal({"x": "2.5", "y": 1.0, "nonce": 17})
+
+    module.goal_request.publish.assert_not_called()
+    assert acks == [(17, False)]
+
+
 def test_nav_goal_rejected_when_estopped(
     module: Go2CommandModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:

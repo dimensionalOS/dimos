@@ -19,7 +19,7 @@ from both pytest and deno test). The transport (protocol.py) carries the
 manifest as one opaque dict; this module is the single owner of its
 structure and domain rules: version gate, bounded unique ids, positive
 rates, panel/layout/pages references that resolve, and kind-specific panel
-rules (video, map2d, teleop, chat).
+rules (video, map2d, teleop, chat, stats).
 
 Manifest v1 is frozen. Additive changes (new panel kinds, new params) ride
 the existing shape: unknown keys and kinds pass through validation.
@@ -180,6 +180,29 @@ def _validate_layout_node(node: Any, panel_ids: set[str], seen: set[str]) -> Any
     return out
 
 
+# The map panels: channels[0] is the map (latest rx in the kind's encoding),
+# channels[1] (optional) the pose.json.v1 rx pose marker.
+_MAP_ENCODINGS = {"map2d": "costmap.zlib.v1", "map3d": "voxels.zlib.v1"}
+
+
+def _check_map_panel(panel: PanelSpec, ch_ids: dict[str, ChannelSpec], encoding: str) -> None:
+    code = f"invalid_{panel.kind}_panel"
+    if len(panel.channels) not in (1, 2):
+        raise ManifestError(code, f"{panel.kind} panel {panel.id} must bind one or two channels")
+    map_ch = ch_ids[panel.channels[0]]
+    if map_ch.encoding != encoding or map_ch.delivery != "latest" or map_ch.dir != "rx":
+        raise ManifestError(
+            code, f"{panel.kind} panel {panel.id} needs a {encoding} latest rx channel first"
+        )
+    if len(panel.channels) == 2:
+        pose = ch_ids[panel.channels[1]]
+        if pose.encoding != "pose.json.v1" or pose.dir != "rx":
+            raise ManifestError(
+                code,
+                f"{panel.kind} panel {panel.id} pose channel must be a pose.json.v1 rx channel",
+            )
+
+
 def parse_manifest(data: Any) -> Manifest:
     """Validated manifest from parsed JSON (or any untrusted value); raises
     ManifestError. Absent dir/params/title/layout/pages normalize to
@@ -284,30 +307,9 @@ def parse_manifest(data: Any) -> Manifest:
                     "invalid_video_panel",
                     f"video panel {panel.id} needs a jpeg.v1 latest rx channel",
                 )
-        if panel.kind == "map2d":
-            # channels[0] is the costmap; channels[1] (optional) the pose overlay.
-            if len(panel.channels) not in (1, 2):
-                raise ManifestError(
-                    "invalid_map2d_panel",
-                    f"map2d panel {panel.id} must bind one or two channels",
-                )
-            costmap = ch_ids[panel.channels[0]]
-            if (
-                costmap.encoding != "costmap.zlib.v1"
-                or costmap.delivery != "latest"
-                or costmap.dir != "rx"
-            ):
-                raise ManifestError(
-                    "invalid_map2d_panel",
-                    f"map2d panel {panel.id} needs a costmap.zlib.v1 latest rx channel first",
-                )
-            if len(panel.channels) == 2:
-                pose = ch_ids[panel.channels[1]]
-                if pose.encoding != "pose.json.v1" or pose.dir != "rx":
-                    raise ManifestError(
-                        "invalid_map2d_panel",
-                        f"map2d panel {panel.id} pose channel must be a pose.json.v1 rx channel",
-                    )
+        map_encoding = _MAP_ENCODINGS.get(panel.kind)
+        if map_encoding is not None:
+            _check_map_panel(panel, ch_ids, map_encoding)
         if panel.kind == "teleop":
             if len(panel.channels) != 1:
                 raise ManifestError(
@@ -362,6 +364,17 @@ def parse_manifest(data: Any) -> Manifest:
                     "invalid_chat_panel",
                     f"chat panel {panel.id} needs an audio.json.v1 reliable shared tx "
                     "channel fourth",
+                )
+        if panel.kind == "stats":
+            if len(panel.channels) != 1:
+                raise ManifestError(
+                    "invalid_stats_panel", f"stats panel {panel.id} must bind exactly one channel"
+                )
+            stats = ch_ids[panel.channels[0]]
+            if stats.encoding != "stats.json.v1" or stats.delivery != "latest" or stats.dir != "rx":
+                raise ManifestError(
+                    "invalid_stats_panel",
+                    f"stats panel {panel.id} needs a stats.json.v1 latest rx channel",
                 )
 
     seen: set[str] = set()

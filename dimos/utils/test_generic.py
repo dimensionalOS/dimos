@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from uuid import UUID
 
-from dimos.utils.generic import short_id
+import pytest
+
+from dimos.utils.generic import finite_number, short_id
 
 
 def test_short_id_hello_world() -> None:
@@ -29,3 +32,14 @@ def test_short_id_uuid_one(mocker) -> None:
 def test_short_id_uuid_zero(mocker) -> None:
     mocker.patch("uuid.uuid4", return_value=UUID("00000000-0000-0000-0000-000000000000"))
     assert short_id() == "000000000000000000"
+
+
+def test_finite_number_coerces_to_float() -> None:
+    assert finite_number(2, "x") == 2.0
+    assert isinstance(finite_number(2, "x"), float)
+
+
+@pytest.mark.parametrize("value", [None, "1.5", True, math.nan, math.inf, [1.0]])
+def test_finite_number_rejects_non_numbers(value: object) -> None:
+    with pytest.raises(ValueError, match="x must be a finite number"):
+        finite_number(value, "x")
