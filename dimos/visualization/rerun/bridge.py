@@ -140,8 +140,7 @@ RendererT = TypeVar("RendererT", bound=Callable[..., object])
 
 
 def keyed_by_seq(renderer: RendererT) -> RendererT:
-    """Mark a renderer whose topic carries one message per key, so the bridge
-    takes that topic unconflated instead of newest-wins."""
+    """Mark a renderer whose topic carries one message per key, taken unconflated."""
     renderer.keyed_by_seq = True  # type: ignore[attr-defined]
     return renderer
 

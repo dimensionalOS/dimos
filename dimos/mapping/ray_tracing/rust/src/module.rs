@@ -47,8 +47,7 @@ const JOB_QUEUE_CAPACITY: usize = 256;
 const SEED_PROGRESS_TILES: usize = 100;
 
 /// How long one worker pass may spend on seed tiles before it returns to the
-/// job queue. A lidar frame that takes the whole frame period would otherwise
-/// hold the seed to one tile per frame.
+/// job queue.
 const SEED_PASS_BUDGET: Duration = Duration::from_millis(20);
 
 #[derive(Module)]
@@ -83,13 +82,13 @@ pub struct RayTracingVoxelMap {
     #[output(encode = PoseStamped::encode)]
     region_bounds: Output<PoseStamped>,
 
-    // The map for viewers, one region grid cell per message keyed by the cell
-    // in the header seq: the cells whose chunks changed plus a sweep slice.
+    // The map for viewers, one region cell per message with the cell packed in
+    // the header seq.
     #[output(encode = PointCloud2::encode)]
     map_regions: Output<PointCloud2>,
 
-    // One region of a seeded map as it lands, support-gated like local_map,
-    // with its bounds encoded like region_bounds and stamped alike.
+    // One region of a seeded map as it lands, gated like local_map. seed_bounds
+    // carries its cylinder like region_bounds.
     #[output(encode = PointCloud2::encode)]
     seed_map: Output<PointCloud2>,
 
@@ -165,12 +164,25 @@ struct SeedLoad {
     done: usize,
     created: usize,
     started: Instant,
-    // The longest tile is the most a queued lidar frame ever waited.
     max_tile_ms: f64,
     sum_tile_ms: f64,
 }
 
 impl SeedLoad {
+    fn new(part: SeedPartition) -> Self {
+        Self {
+            tiles: part.tile_count(),
+            regions: part.regions,
+            next_region: 0,
+            next_tile: 0,
+            done: 0,
+            created: 0,
+            started: Instant::now(),
+            max_tile_ms: 0.0,
+            sum_tile_ms: 0.0,
+        }
+    }
+
     fn mean_tile_ms(&self) -> f64 {
         self.sum_tile_ms / self.done.max(1) as f64
     }
@@ -199,12 +211,19 @@ impl SeedLoad {
     }
 }
 
-/// Stage of the one loaded map. Only Idle accepts a cloud.
+/// Stage of the one loaded map.
 enum SeedState {
     Idle,
     Placing,
     Loading(SeedLoad),
     Done,
+}
+
+impl SeedState {
+    /// Only Idle takes a cloud: reseeding would resurrect voxels live rays carved.
+    fn accepts_cloud(&self) -> bool {
+        matches!(self, SeedState::Idle)
+    }
 }
 
 /// Everything the worker mutates across jobs.
@@ -221,8 +240,7 @@ struct State {
 }
 
 /// Owns the mapper and does every map mutation and publish off the handle
-/// loop. Queued jobs go first, and a seed load then gets one pass budget of
-/// tiles, so sustained traffic slows the load but cannot stall it.
+/// loop. Queued jobs go first, then one pass budget of seed tiles.
 struct Worker {
     jobs: mpsc::Receiver<Job>,
     // Handed to the seed placement task so its result re-enters the queue.
@@ -283,26 +301,15 @@ impl Worker {
             Job::LoadedMap(msg) => self.place_loaded_map(state, msg).await,
             Job::SeedPrepared(None) => state.seed = SeedState::Idle,
             Job::SeedPrepared(Some(part)) => {
-                let tiles = part.tile_count();
                 info!(
                     regions = part.regions.len(),
-                    tiles,
+                    tiles = part.tile_count(),
                     voxels = part.voxels,
                     "Seed load started."
                 );
                 let mapper = &mut state.mapper;
                 tokio::task::block_in_place(|| mapper.reserve_voxels(part.voxels));
-                state.seed = SeedState::Loading(SeedLoad {
-                    regions: part.regions,
-                    next_region: 0,
-                    next_tile: 0,
-                    tiles,
-                    done: 0,
-                    created: 0,
-                    started: Instant::now(),
-                    max_tile_ms: 0.0,
-                    sum_tile_ms: 0.0,
-                });
+                state.seed = SeedState::Loading(SeedLoad::new(part));
             }
         }
     }
@@ -383,7 +390,15 @@ impl Worker {
 
         if state.mapper.viz_due() {
             let tick_start = Instant::now();
-            let regions = tokio::task::block_in_place(|| self.map_regions_due(state));
+            let regions = tokio::task::block_in_place(|| {
+                map_regions_due(
+                    &mut state.mapper,
+                    &mut state.viz,
+                    self.config.voxel_size,
+                    self.config.region_m,
+                    self.config.viz_sweep_regions as usize,
+                )
+            });
             debug!(
                 regions = regions.len(),
                 tick_ms = tick_start.elapsed().as_secs_f64() * 1e3,
@@ -398,38 +413,6 @@ impl Worker {
             }
             debug!(bytes, "map region bytes published");
         }
-    }
-
-    /// The regions due this viz tick with their points: those whose chunks
-    /// changed, those that emptied, and the sweep slice.
-    fn map_regions_due(&self, state: &mut State) -> Vec<(Cell, Vec<f32>)> {
-        let voxel_size = self.config.voxel_size;
-        let region_m = self.config.region_m;
-        let changed: Vec<Cell> = state
-            .mapper
-            .take_changed_chunks()
-            .into_iter()
-            .map(|chunk| region_of(chunk, voxel_size, region_m))
-            .collect();
-        let mapper = &state.mapper;
-        let mut present: BTreeMap<Cell, Vec<ChunkKey>> = BTreeMap::new();
-        for chunk in mapper.healthy_chunk_keys() {
-            present
-                .entry(region_of(chunk, voxel_size, region_m))
-                .or_default()
-                .push(chunk);
-        }
-        state
-            .viz
-            .tick(changed, &present, self.config.viz_sweep_regions as usize)
-            .into_iter()
-            .map(|cell| {
-                let points = present
-                    .get(&cell)
-                    .map_or_else(Vec::new, |chunks| mapper.chunk_points(chunks));
-                (cell, points)
-            })
-            .collect()
     }
 
     /// Delete the voxels covering a cloud of world-frame points a sensor knows
@@ -483,10 +466,8 @@ impl Worker {
     }
 
     /// Place the first loaded map on its own task and tile it off the worker.
-    /// A later map is ignored, since reseeding would resurrect voxels live
-    /// rays have carved.
     async fn place_loaded_map(&self, state: &mut State, msg: PointCloud2) {
-        if !matches!(state.seed, SeedState::Idle) {
+        if !state.seed.accepts_cloud() {
             return;
         }
         state.seed = SeedState::Placing;
@@ -501,7 +482,7 @@ impl Worker {
                 .lookup(&world_frame, &msg.header.frame_id)
                 .within(LOADED_MAP_TF_WAIT_TIMEOUT)
                 .await;
-            let tiles = match placed {
+            let partition = match placed {
                 Some(t) => {
                     let pose = tf_to_pose(&t);
                     tokio::task::spawn_blocking(move || {
@@ -520,7 +501,7 @@ impl Worker {
                 }
             };
             if let Some(sender) = sender.upgrade() {
-                let _ = sender.send(Job::SeedPrepared(tiles)).await;
+                let _ = sender.send(Job::SeedPrepared(partition)).await;
             }
         });
     }
@@ -573,8 +554,7 @@ impl Worker {
     }
 
     /// Publish one seeded region as the map now holds it. Cloud and bounds
-    /// carry the region's number as their header seq, which is what a consumer
-    /// pairs them on, since every region of a seed shares one stamp.
+    /// carry the region number in their header seq, which consumers pair on.
     async fn publish_seed_region(
         &self,
         mapper: &Mapper,
@@ -591,6 +571,39 @@ impl Worker {
         cloud.header.seq = seq;
         publish_cloud(&self.seed_map, &cloud).await;
     }
+}
+
+/// The regions due this viz tick with their points: those whose chunks
+/// changed, those that emptied, and `sweep` more from the sweep cursor.
+fn map_regions_due(
+    mapper: &mut Mapper,
+    viz: &mut RegionSweep,
+    voxel_size: f32,
+    region_m: f32,
+    sweep: usize,
+) -> Vec<(Cell, Vec<f32>)> {
+    let changed: Vec<Cell> = mapper
+        .take_changed_chunks()
+        .into_iter()
+        .map(|chunk| region_of(chunk, voxel_size, region_m))
+        .collect();
+    let mut present: BTreeMap<Cell, Vec<ChunkKey>> = BTreeMap::new();
+    for chunk in mapper.healthy_chunk_keys() {
+        present
+            .entry(region_of(chunk, voxel_size, region_m))
+            .or_default()
+            .push(chunk);
+    }
+    let mapper = &*mapper;
+    viz.tick(changed, &present, sweep)
+        .into_iter()
+        .map(|cell| {
+            let points = present
+                .get(&cell)
+                .map_or_else(Vec::new, |chunks| mapper.chunk_points(chunks));
+            (cell, points)
+        })
+        .collect()
 }
 
 /// Register a loaded cloud into the world by `pose` and split it into seed
@@ -824,6 +837,75 @@ mod tests {
         let region = mapper.local_points(&part.regions[0].cylinder.bounds());
         let seeded = points_to_cloud(&region, "odom", Time::default());
         assert!(cloud_points(&seeded).contains(&voxel_center(10, 3, 0)));
+    }
+
+    /// Two chunks stacked in z share a region cell, a third far off has its own.
+    fn two_region_seed() -> SeedPartition {
+        let points = [(1.5, 1.5, 0.5), (1.5, 1.5, 17.5), (40.5, 40.5, 0.5)];
+        let part = partition_seed(&points, 1.0, (0.0, 0.0, 0.0), 4.0);
+        let tiles: Vec<usize> = part.regions.iter().map(|r| r.tiles.len()).collect();
+        assert_eq!(tiles, vec![2, 1]);
+        part
+    }
+
+    /// A seed load hands a region on only after its last tile.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn seed_load_hands_each_region_on_after_its_last_tile() {
+        let part = two_region_seed();
+        let centers: Vec<(f32, f32)> = part
+            .regions
+            .iter()
+            .map(|r| (r.cylinder.cx, r.cylinder.cy))
+            .collect();
+        let mut load = SeedLoad::new(part);
+        let mut mapper = Mapper::new(test_config());
+
+        assert!(load.step(&mut mapper).is_none());
+        assert!(!load.finished());
+        let first = load.step(&mut mapper).map(|c| (c.cx, c.cy));
+        assert_eq!(first, Some(centers[0]));
+        assert!(!load.finished());
+        let second = load.step(&mut mapper).map(|c| (c.cx, c.cy));
+        assert_eq!(second, Some(centers[1]));
+        assert!(load.finished());
+        assert_eq!((load.done, load.tiles, load.created), (3, 3, 3));
+    }
+
+    #[test]
+    fn only_an_idle_seed_accepts_a_loaded_map() {
+        assert!(SeedState::Idle.accepts_cloud());
+        assert!(!SeedState::Placing.accepts_cloud());
+        assert!(!SeedState::Loading(SeedLoad::new(two_region_seed())).accepts_cloud());
+        assert!(!SeedState::Done.accepts_cloud());
+    }
+
+    /// A seeded region is due once with its points, and once more empty after
+    /// it is cleared.
+    #[test]
+    fn map_regions_are_due_on_change_and_once_more_when_emptied() {
+        let mut mapper = Mapper::new(test_config());
+        let part = partition_seed(
+            &[(1.5, 1.5, 0.5), (40.5, 40.5, 0.5)],
+            1.0,
+            (0.0, 0.0, 0.0),
+            4.0,
+        );
+        for tile in part.tiles() {
+            mapper.seed_tile(tile);
+        }
+        let mut viz = RegionSweep::default();
+        let sizes = |due: Vec<(Cell, Vec<f32>)>| -> Vec<(Cell, usize)> {
+            due.into_iter().map(|(c, p)| (c, p.len() / 3)).collect()
+        };
+
+        let due = map_regions_due(&mut mapper, &mut viz, 1.0, 4.0, 0);
+        assert_eq!(sizes(due), vec![((0, 0), 1), ((2, 2), 1)]);
+        assert!(map_regions_due(&mut mapper, &mut viz, 1.0, 4.0, 0).is_empty());
+
+        mapper.clear_metric([(1.5, 1.5, 0.5)]);
+        let due = map_regions_due(&mut mapper, &mut viz, 1.0, 4.0, 0);
+        assert_eq!(sizes(due), vec![((0, 0), 0)]);
+        assert!(map_regions_due(&mut mapper, &mut viz, 1.0, 4.0, 0).is_empty());
     }
 
     /// The clear-mask handler names voxels by decoding a cloud and quantizing

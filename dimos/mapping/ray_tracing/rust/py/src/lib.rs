@@ -84,8 +84,16 @@ pub struct VoxelRayMapper {
     seed: Option<(SeedPartition, usize)>,
 }
 
-/// A seeded region for Python: (cx, cy, radius, z_min, z_max) and its points.
-type SeededRegion<'py> = ((f32, f32, f32, f32, f32), Bound<'py, PyArray2<f32>>);
+/// One region of a seed as the map now holds it: the cylinder covering its
+/// chunks and the support-gated (M, 3) float32 points inside.
+#[pyclass(frozen, get_all)]
+pub struct SeededRegion {
+    center: (f32, f32),
+    radius: f32,
+    z_min: f32,
+    z_max: f32,
+    points: Py<PyArray2<f32>>,
+}
 
 #[pymethods]
 impl VoxelRayMapper {
@@ -242,10 +250,9 @@ impl VoxelRayMapper {
         Ok(regions)
     }
 
-    /// Seed the next pending region and return it as the map now holds it:
-    /// (cx, cy, radius, z_min, z_max) and the support-gated (M, 3) float32
-    /// points inside. None once every region has landed.
-    fn seed_next_region<'py>(&mut self, py: Python<'py>) -> Option<SeededRegion<'py>> {
+    /// Seed the next pending region and return it as the map now holds it.
+    /// None once every region has landed.
+    fn seed_next_region(&mut self, py: Python<'_>) -> Option<SeededRegion> {
         let (part, next) = self.seed.as_mut()?;
         let Some(region) = part.regions.get(*next) else {
             self.seed = None;
@@ -260,10 +267,13 @@ impl VoxelRayMapper {
             mapper.local_points(&region.cylinder.bounds())
         });
         let c = region.cylinder;
-        Some((
-            (c.cx, c.cy, c.radius, c.z_min, c.z_max),
-            flat_to_array(py, points),
-        ))
+        Some(SeededRegion {
+            center: (c.cx, c.cy),
+            radius: c.radius,
+            z_min: c.z_min,
+            z_max: c.z_max,
+            points: flat_to_array(py, points).unbind(),
+        })
     }
 
     /// Healthy voxel centers and their surface normals, both (M, 3) float32 in
@@ -378,5 +388,6 @@ impl VoxelRayMapper {
 #[pymodule(name = "dimos_voxel_ray_tracing")]
 fn dimos_voxel_ray_tracing_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<VoxelRayMapper>()?;
+    m.add_class::<SeededRegion>()?;
     Ok(())
 }

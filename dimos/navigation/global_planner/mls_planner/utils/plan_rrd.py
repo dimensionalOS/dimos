@@ -341,10 +341,47 @@ def _seed_next_region(ray: RayTraceMap, planners: list[MLSPlanner]) -> bool:
     region = ray.mapper.seed_next_region()
     if region is None:
         return False
-    (cx, cy, radius, z_min, z_max), points = region
     for p in planners:
-        p.update_seed_region(points, (cx, cy), radius, z_min, z_max)
+        p.update_seed_region(
+            region.points, region.center, region.radius, region.z_min, region.z_max
+        )
     return True
+
+
+class _Seeding:
+    """The premap seed, landing one region per frame once the recording reaches it."""
+
+    def __init__(self, loaded_map: Observation[PointCloud2] | None, region_m: float) -> None:
+        self.pending = loaded_map
+        self.seeded = loaded_map is not None
+        self.region_m = region_m
+        self.regions = 0
+        self.landed = 0
+        self.loading = False
+
+    @property
+    def left(self) -> int:
+        return self.regions - self.landed
+
+    def step(
+        self,
+        ray: RayTraceMap,
+        planners: list[MLSPlanner],
+        tf_lookup: StreamTF,
+        world_frame: str,
+        ts: float,
+        start: tuple[float, float, float],
+    ) -> None:
+        if self.pending is not None and ts >= self.pending.ts:
+            seed_pts = place_loaded_map(self.pending, tf_lookup, world_frame, ts)
+            self.regions = _start_seed(ray, seed_pts, start, self.region_m)
+            self.pending, self.loading = None, True
+        elif self.loading:
+            if _seed_next_region(ray, planners):
+                self.landed += 1
+            else:
+                self.loading = False
+                print("\nseed finished")
 
 
 def _build_planners(
@@ -598,16 +635,14 @@ def main(
         ray_pipeline = pose_tagged.transform(ray)
         tf_sync = _TfSync(tf)
 
-        loaded_map = first_loaded_map(store, loaded_map_stream)
-        seeded_run = loaded_map is not None
-        regions_left = 0
-        if loaded_map is not None:
+        seeding = _Seeding(first_loaded_map(store, loaded_map_stream), region_m)
+        if seeding.pending is not None:
             rr.log(
                 REGIONS_LEFT_SERIES,
                 rr.SeriesLines(colors=[[255, 255, 255]], names=["regions_left"]),
                 static=True,
             )
-            print(f"loaded_map at ts={loaded_map.ts:.3f}; seeding when reached")
+            print(f"loaded_map at ts={seeding.pending.ts:.3f}; seeding when reached")
 
         configs = _parse_configs(config, wall_clearance, wall_buffer, wall_buffer_weight)
         ref_clearance = configs[0][0]
@@ -665,17 +700,11 @@ def main(
                     ref_clearance,
                     crop,
                 )
-                if loaded_map is not None and ray_obs.ts >= loaded_map.ts:
-                    seed_pts = place_loaded_map(loaded_map, tf_lookup, world_frame, ray_obs.ts)
-                    regions_left = _start_seed(ray, seed_pts, start, region_m)
-                    loaded_map = None
-                elif regions_left:
-                    if _seed_next_region(ray, [p for _, _, p in planners]):
-                        regions_left -= 1
-                    if regions_left == 0:
-                        print("\nseed finished")
-                if seeded_run:
-                    rr.log(REGIONS_LEFT_SERIES, rr.Scalars(float(regions_left)))
+                seeding.step(
+                    ray, [p for _, _, p in planners], tf_lookup, world_frame, ray_obs.ts, start
+                )
+                if seeding.seeded:
+                    rr.log(REGIONS_LEFT_SERIES, rr.Scalars(float(seeding.left)))
                 _log_odometry(ray_obs.pose_tuple, ray_obs.ts, sensor_trail, base)
                 frame += 1
                 print(

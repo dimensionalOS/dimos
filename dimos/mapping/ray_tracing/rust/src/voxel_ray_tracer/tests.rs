@@ -14,7 +14,7 @@
 
 use super::*;
 
-/// A tiny xorshift stream, so a test's random inputs are stable across runs.
+/// A xorshift stream, for stable random test inputs.
 fn test_rng(mut state: u64) -> impl FnMut() -> u64 + Copy {
     move || {
         state ^= state << 13;
@@ -1666,8 +1666,7 @@ fn seed_into_live_map_keeps_indexes_consistent() {
     }
 }
 
-/// Tiles land nearest the origin first, so a load applied one tile per idle
-/// pass brings up the sensor's surroundings before the far end of the map.
+/// Tiles land nearest the origin first.
 #[test]
 fn partition_seed_orders_tiles_nearest_the_origin_first() {
     let voxel_size = 1.0;
@@ -1686,8 +1685,7 @@ fn partition_seed_orders_tiles_nearest_the_origin_first() {
 }
 
 /// Regions are the squares of a `region_m` grid, nearest the origin first,
-/// each sized to the chunks it holds with a voxel to spare all round, so a
-/// consumer applying one region at a time sees whole columns.
+/// each cylinder covering its chunks with a voxel to spare.
 #[test]
 fn partition_seed_groups_chunks_into_regions_with_covering_cylinders() {
     let voxel_size = 1.0;
@@ -1786,8 +1784,7 @@ fn seed_tiles_interleaved_with_live_frames_keep_indexes_consistent() {
     assert!(created_total > 0);
 }
 
-/// A seeded voxel is an ordinary voxel at health 1. A live ray through it
-/// carves it like any stale geometry: one miss drops it out of every emit,
+/// A seeded voxel starts at health 1: one miss drops it out of every emit,
 /// the next removes it from the map.
 #[test]
 fn live_rays_carve_seeded_voxels_they_pass_through() {

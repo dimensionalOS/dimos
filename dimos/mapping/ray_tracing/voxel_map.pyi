@@ -15,6 +15,18 @@
 import numpy as np
 from numpy.typing import NDArray
 
+class SeededRegion:
+    """One region of a seed as the map now holds it.
+
+    The cylinder covering its chunks and the support-gated (M, 3) float32 points inside.
+    """
+
+    center: tuple[float, float]
+    radius: float
+    z_min: float
+    z_max: float
+    points: NDArray[np.float32]
+
 class VoxelRayMapper:
     """Voxel map with raycast clearing of dynamic objects."""
 
@@ -94,13 +106,10 @@ class VoxelRayMapper:
         """
         ...
 
-    def seed_next_region(
-        self,
-    ) -> tuple[tuple[float, float, float, float, float], NDArray[np.float32]] | None:
+    def seed_next_region(self) -> SeededRegion | None:
         """Seed the next pending region and return it as the map now holds it.
 
-        The tuple is (cx, cy, radius, z_min, z_max) with the support-gated
-        (M, 3) float32 points inside. None once every region has landed.
+        None once every region has landed.
         """
         ...
 
@@ -154,4 +163,4 @@ class VoxelRayMapper:
     def __len__(self) -> int: ...
     def __repr__(self) -> str: ...
 
-__all__ = ["VoxelRayMapper"]
+__all__ = ["SeededRegion", "VoxelRayMapper"]

@@ -23,6 +23,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.global_planner import viz
+from dimos.navigation.global_planner.mls_planner.viz import render_surface_region
 
 
 def test_goal_placeholder_is_not_drawn() -> None:
@@ -72,4 +73,13 @@ def test_bridge_config_pickles_for_the_workers() -> None:
     static = pickle.loads(pickle.dumps(viz.nav_static(0.7, 0.3, 0.3, 0.1)))
     overrides = pickle.loads(pickle.dumps(viz.nav_visual_override(2.0, 0.08, 0.1)))
     assert len(static["world/robot_body"](rr)) == 2
-    assert callable(overrides["world/surface_map"])
+
+    surface = overrides["world/surface_map"]
+    assert surface.func is render_surface_region and surface.keywords["voxel_size"] == 0.08
+    regions = overrides["world/map_regions"]
+    assert regions.func is render_map_region
+    assert regions.keywords == {"voxel_size": 0.08, "height_range": viz.HEIGHT_RANGE}
+    region = PointCloud2.from_numpy(np.array([[1.0, 1.0, 0.0]], dtype=np.float32))
+    region.seq = (4 << 16) | 7
+    (path, _, static_entry) = regions(region)[0]
+    assert path == "world/map_regions/4_7" and static_entry

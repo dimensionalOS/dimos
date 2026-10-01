@@ -48,8 +48,8 @@ enum MapUpdate {
     },
 }
 
-/// One region of a seeded map, as the ray tracer hands them on. Every one
-/// must land, so they queue rather than replace each other.
+/// One region of a seeded map, as the ray tracer hands them on. They queue,
+/// since every one must land.
 struct SeedRegion {
     cloud: PointCloud2,
     bounds: PoseStamped,
@@ -59,8 +59,7 @@ struct SeedRegion {
 const SEED_PAIR_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Seed clouds and bounds waiting for their counterpart, keyed by the region
-/// number in their header seq. Every region of a seed shares one stamp and
-/// the two topics can interleave, so a newest-wins slot would mispair them.
+/// number in their header seq, since every region of a seed shares one stamp.
 #[derive(Default)]
 struct SeedPairs {
     clouds: HashMap<i32, (PointCloud2, Instant)>,
@@ -302,9 +301,8 @@ impl Worker {
                 if goal_changed || live_update {
                     self.maybe_replan(&mut planner, &mut last_path_at).await;
                 }
-                // Live updates apply first, then one seed region per pass, so a
-                // seed never holds up the map around the robot. Seed regions
-                // alone never replan, so a seed cannot flood the path topic.
+                // Live updates apply first, then one seed region per pass. Seed
+                // regions alone never replan.
                 let seed = self.seed_regions.lock().expect("seed mutex").pop_front();
                 let Some(seed) = seed else {
                     break;
@@ -333,9 +331,8 @@ impl Worker {
         applied
     }
 
-    /// Publish the nodes and the surface and edge cells due this tick, rate
-    /// capped to viz_publish_hz since building them is costly and unread by
-    /// planning.
+    /// Publish the nodes and the surface and edge cells due this tick, at
+    /// most viz_publish_hz.
     async fn publish_viz_if_due(
         &self,
         planner: &Planner,

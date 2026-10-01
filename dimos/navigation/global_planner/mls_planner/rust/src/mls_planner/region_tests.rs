@@ -1021,9 +1021,8 @@ fn seed_regions_keep_high_geometry() {
     );
 }
 
-/// A live update inside a seeded area, and a seed region over a live area,
-/// both end at the map's current state, so order between the two sources
-/// never leaves geometry the other saw removed.
+/// A live update over a seeded area and a seed region over a live area both
+/// end at the map's current state.
 #[test]
 fn live_and_seed_regions_converge_in_either_order() {
     let cfg = test_config();

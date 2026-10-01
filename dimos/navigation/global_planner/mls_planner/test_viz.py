@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
+
 import numpy as np
 
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
@@ -75,4 +77,12 @@ def test_overrides_follow_the_planner_publish_rate() -> None:
     off = viz.planner_visual_override(0.0, 0.08, 0.1)
     on = viz.planner_visual_override(2.0, 0.08, 0.1)
     assert off == {"world/surface_map": None, "world/nodes": None, "world/node_edges": None}
-    assert callable(on["world/surface_map"]) and callable(on["world/node_edges"])
+    surface = on["world/surface_map"]
+    assert isinstance(surface, partial) and surface.func is viz.render_surface_region
+    assert surface.keywords == {
+        "voxel_size": 0.08,
+        "wall_clearance_m": 0.1,
+        "clearance_clamp_m": 1.0,
+    }
+    assert on["world/nodes"] is viz.render_nodes
+    assert on["world/node_edges"] is viz.render_edge_region

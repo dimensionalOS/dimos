@@ -36,7 +36,7 @@ from dimos.robot.unitree.go2.nav_3d_config import (
 )
 from dimos.visualization.vis_module import vis_module
 
-# What the planner searched over (surface, nodes, weighted edges), by changed cell.
+# What the planner searched over, by changed cell: surface, nodes and weighted edges.
 planner_viz_hz = 2.0
 
 
@@ -55,7 +55,7 @@ _nav_rerun_config = {
     "static": nav_static(ROBOT_LENGTH, ROBOT_WIDTH, ROBOT_HEIGHT, wall_clearance_m),
     "visual_override": {
         **rerun_config["visual_override"],
-        # The raw premap is millions of points. The seeded voxels arrive on seed_map.
+        # The raw premap is millions of points. The viewer gets its voxels on map_regions.
         "world/loaded_map": None,
         "world/camera_info": None,
         "world/color_image": None,

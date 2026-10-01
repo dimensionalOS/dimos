@@ -260,7 +260,8 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
             # Fast path on the Zenoh delivery thread: keep only the newest per topic,
             # or every message of a keyed channel in order.
             with lock:
-                if topic.topic.removeprefix("dimos/") in keyed:
+                name = topic.topic
+                if isinstance(name, str) and name.removeprefix("dimos/") in keyed:
                     if len(ordered) == ordered.maxlen:
                         ordered.popleft()
                         self.unconflated_dropped += 1

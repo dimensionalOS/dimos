@@ -26,36 +26,40 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import typer
 
+from dimos.mapping.ray_tracing.module import RayTracingVoxelMapConfig
 from dimos.mapping.ray_tracing.utils.loaded_map import LOADED_MAP_STREAM
 from dimos.mapping.ray_tracing.viz import PREMAP_POINT_RADIUS, log_loaded_map, voxel_map_points
 from dimos.mapping.relocalization.lidar.module import LidarConfig
-from dimos.mapping.relocalization.lidar.relocalize import PRESETS, LidarRelocalizer
+from dimos.mapping.relocalization.lidar.relocalize import DEFAULT_PRESET, PRESETS, LidarRelocalizer
 from dimos.mapping.relocalization.module import yaw_deg
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.unitree.go2 import nav_3d_config
 from dimos.utils.data import resolve_named_path
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Transform import Transform
 
+# rerun is imported inside the functions that log: it is heavy and only this command loads it.
+
 TIMELINE = "ts"
+FITNESS_SERIES = "metrics/reloc/fitness"
 MAP_FRAME = "map"
 RECORDED_MAP_COLOR = (255, 120, 120)
 
 _FIELDS = LidarConfig.model_fields
+_VOXEL_SIZE = RayTracingVoxelMapConfig.model_fields["voxel_size"].default
 
 
-class Attempt(NamedTuple):
+class ReplayAttempt(NamedTuple):
     t_s: float
     fitness: float
     fix: Transform | None
 
 
 class Replay(NamedTuple):
-    attempts: list[Attempt]
+    attempts: list[ReplayAttempt]
     fix: Transform | None
     fix_ts: float
     recorded: Transform | None
@@ -98,7 +102,7 @@ def _init_recording(name: str, out: Path | None) -> None:
         )
     )
     register_colormap_annotation("turbo")
-    rr.log("metrics/reloc/fitness", rr.SeriesLines(names=["fitness"]), static=True)
+    rr.log(FITNESS_SERIES, rr.SeriesLines(names=["fitness"]), static=True)
 
 
 def replay(
@@ -130,7 +134,7 @@ def replay(
     relocalizer = LidarRelocalizer(premap.pointcloud, PRESETS[preset])
     recorded = _recorded_fix(store, world_frame, MAP_FRAME)
 
-    attempts: list[Attempt] = []
+    attempts: list[ReplayAttempt] = []
     fix: Transform | None = None
     fix_ts = 0.0
     next_attempt = 0.0
@@ -148,8 +152,8 @@ def replay(
             continue
         next_attempt = obs.ts + reloc_interval
         fix_attempt = relocalizer.attempt(obs.data.pointcloud, world_frame, MAP_FRAME)
-        attempts.append(Attempt(obs.ts - t0, fix_attempt.result.fitness, fix_attempt.fix))
-        rr.log("metrics/reloc/fitness", rr.Scalars(fix_attempt.result.fitness))
+        attempts.append(ReplayAttempt(obs.ts - t0, fix_attempt.result.fitness, fix_attempt.fix))
+        rr.log(FITNESS_SERIES, rr.Scalars(fix_attempt.result.fitness))
         _print_attempt(attempts[-1], recorded)
         if fix_attempt.fix is None:
             continue
@@ -182,7 +186,7 @@ def write_loaded_map(
     return True
 
 
-def _print_attempt(attempt: Attempt, recorded: Transform | None) -> None:
+def _print_attempt(attempt: ReplayAttempt, recorded: Transform | None) -> None:
     if attempt.fix is None:
         print(f"{attempt.t_s:.1f}s refused fitness={attempt.fitness:.3f}")
         return
@@ -202,7 +206,7 @@ def main(
     premap: str = typer.Option(..., "--premap", help="Premap .pc2.lcm: bare name or path"),
     lidar: str = typer.Option("lidar", "--lidar", help="Lidar stream in the recording"),
     world_frame: str = typer.Option("odom", "--world-frame", help="Frame the live map is built in"),
-    preset: str = typer.Option("go2-nav", "--preset", help=f"One of {sorted(PRESETS)}"),
+    preset: str = typer.Option(DEFAULT_PRESET, "--preset", help=f"One of {sorted(PRESETS)}"),
     reloc_interval: float = typer.Option(
         _FIELDS["reloc_interval"].default,
         "--reloc-interval",
@@ -213,9 +217,7 @@ def main(
         "--min-local-points",
         help="Local map points below which an attempt is skipped",
     ),
-    voxel_size: float = typer.Option(
-        nav_3d_config.voxel_size, "--voxel-size", help="Live map voxel size (m)"
-    ),
+    voxel_size: float = typer.Option(_VOXEL_SIZE, "--voxel-size", help="Live map voxel size (m)"),
     after: float = typer.Option(
         10.0, "--after", help="Seconds of live map to keep logging after the fix, for the overlay"
     ),

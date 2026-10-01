@@ -80,12 +80,10 @@ pub struct Config {
     /// disables them entirely. The path output is unthrottled.
     #[validate(range(min = 0.0))]
     pub viz_publish_hz: f32,
-    /// Edge of the square cells the surface and edge viz publish by. A tick
-    /// sends the cells that changed, so a viewer never takes the whole map.
+    /// Edge of the square cells the surface and edge viz publish by.
     #[validate(range(exclusive_min = 0.0))]
     pub viz_region_m: f32,
-    /// Unchanged cells republished per tick, round robin, so a viewer that
-    /// joined late or lost a message fills in. 0 turns the sweep off.
+    /// Unchanged cells republished per tick, round robin. 0 turns the sweep off.
     pub viz_sweep_regions: u32,
     /// Worker threads for parallel planner work.
     #[validate(range(min = 1))]

@@ -71,10 +71,9 @@ enum Dirty {
     Cells(BTreeSet<Cell>),
 }
 
-/// What each cell last published, so a tick republishes the cells whose
-/// content changed plus a fixed slice of the sweep that heals a viewer's
-/// losses. Only the cells an update touched are hashed, the scan over the
-/// surface still walks every item.
+/// What each cell last published, so a tick sends the cells whose content
+/// changed plus a slice of the sweep. Only the cells an update touched are
+/// hashed.
 pub struct RegionViz {
     pitch: i32,
     /// Columns past a rewritten window the graph repair can still reach.

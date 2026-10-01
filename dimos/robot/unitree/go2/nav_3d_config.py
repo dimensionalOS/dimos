@@ -28,8 +28,7 @@ ray_tracing_config = RayTracingVoxelMapConfig(
     voxel_size=voxel_size, global_emit_every=50, viz_emit_every=5
 )
 
-# global_map is remapped off by every user, so the planner runs purely on the
-# incremental local_map + region_bounds pair. viz_publish_hz is per blueprint.
+# Every user remaps global_map off. viz_publish_hz is set per blueprint.
 mls_planner_config = MLSPlannerNativeConfig(
     voxel_size=voxel_size,
     robot_height=ROBOT_HEIGHT,
@@ -42,7 +41,7 @@ def relocalization(republish_loaded_map: float) -> Blueprint:
     """The premap relocalizer every Go2 nav_3d stack shares.
 
     The republish covers a ray tracer that missed the one-shot loaded_map publish.
-    Zero under zenoh, where nothing is lost and the premap is 110 MB a time.
+    Zero under zenoh, which never drops it.
     """
     return LocalMapRelocalization.blueprint(
         world_frame="odom",

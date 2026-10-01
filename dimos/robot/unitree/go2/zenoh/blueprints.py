@@ -328,12 +328,8 @@ go2_dds_motion_pointlio = autoconnect(
     robot_model="unitree_go2",
 )
 
-# The relocalizer matches the raycaster's local map against the premap, publishes the
-# odom -> map fix on tf and the placed premap on loaded_map, which the raycaster seeds
-# from and hands on to the planner region by region as seed_map. The republish covers a
-# raycaster that missed the one-shot loaded_map publish. This stack runs on the
-# robot's headless computer, so it carries no viewer modules. The screen is
-# `go2-viewer` on another machine, dialing the GO2DDS router.
+# No loaded_map republish: zenoh never drops it. Headless on the robot, so the viewer
+# modules are dropped and go2-viewer on another machine is the screen.
 go2_dds_motion_pointlio_relocalization = autoconnect(
     go2_dds_motion_pointlio.disabled_modules(
         RerunBridgeModule, WebsocketVisModule, RerunWebSocketServer
@@ -378,7 +374,7 @@ go2_viewer = autoconnect(
     # a client: the router forwards to clients only, never between peers
     zenoh_mode="client",
     zenoh_connect=GO2_ROUTER,
-    # the router appears well after the robot's `dimos run`, keep dialing until it does
+    # the router appears well after the robot's dimos run, keep dialing until it does
     zenoh_connect_timeout=120.0,
     # the robot's stack owns the bus-wide `Coordinator` name; this one only watches
     serve_coordinator_rpc=False,

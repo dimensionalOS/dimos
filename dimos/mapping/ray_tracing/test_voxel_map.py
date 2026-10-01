@@ -130,16 +130,23 @@ def test_seed_regions_land_nearest_first_and_gate_support() -> None:
     lone = np.array([[40.5, 40.5, 0.5]], dtype=np.float32)
 
     assert mapper.start_seed(np.vstack([slab, lone]), (40.0, 40.0, 0.0), 16.0) == 2
-    (cx, cy, radius, z_min, z_max), points = mapper.seed_next_region()
-    assert (cx, cy) == (40.0, 40.0), "the origin's region lands first"
-    assert z_min < 0.5 < z_max
-    assert points.shape == (0, 3), "an isolated voxel has no support"
+    first = mapper.seed_next_region()
+    assert first is not None
+    assert first.center == (40.0, 40.0), "the origin's region lands first"
+    assert first.z_min < 0.5 < first.z_max
+    assert first.points.shape == (0, 3), "an isolated voxel has no support"
 
-    (cx, cy, radius, _, _), points = mapper.seed_next_region()
-    assert (cx, cy) == (8.0, 8.0)
-    assert radius > 8.0
-    assert points.dtype == np.float32
-    assert any(np.allclose(p, [2.5, 2.5, 0.5]) for p in points)
+    second = mapper.seed_next_region()
+    assert second is not None
+    assert second.center == (8.0, 8.0)
+    assert second.radius == pytest.approx(np.hypot(8.0, 8.0) + 1.0), (
+        "one chunk box, reached corner to corner plus a voxel of margin"
+    )
+    assert second.points.dtype == np.float32
+    corners = {(0.5, 0.5), (0.5, 4.5), (4.5, 0.5), (4.5, 4.5)}
+    landed = {(float(x), float(y)) for x, y, _ in second.points}
+    assert len(second.points) == 21, "the corners have three neighbors, under the gate of four"
+    assert landed == {(x, y) for x in coords for y in coords} - corners
     assert mapper.seed_next_region() is None
     assert mapper.voxel_count() == 26
 
