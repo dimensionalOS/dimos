@@ -41,7 +41,7 @@ def relocalization(republish_loaded_map: float) -> Blueprint:
     """The premap relocalizer every Go2 nav_3d stack shares.
 
     The republish covers a ray tracer that missed the one-shot loaded_map publish.
-    Zero under zenoh, which never drops it.
+    Zero under zenoh, where loaded_map is a never-drop channel.
     """
     return LocalMapRelocalization.blueprint(
         world_frame="odom",

@@ -69,6 +69,7 @@ _NEVER_DROP_CHANNELS = (
     "agent_idle",
     "command",
     "audio_in",
+    "loaded_map",
     "seed_map",
     "seed_bounds",
 )

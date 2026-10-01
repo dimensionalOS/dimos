@@ -328,7 +328,7 @@ go2_dds_motion_pointlio = autoconnect(
     robot_model="unitree_go2",
 )
 
-# No loaded_map republish: zenoh never drops it. Headless on the robot, so the viewer
+# No loaded_map republish: the channel is never-drop. Headless on the robot, so the viewer
 # modules are dropped and go2-viewer on another machine is the screen.
 go2_dds_motion_pointlio_relocalization = autoconnect(
     go2_dds_motion_pointlio.disabled_modules(
