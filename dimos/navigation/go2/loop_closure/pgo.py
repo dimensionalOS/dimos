@@ -44,7 +44,7 @@ stays cheap and gtsam-free for consumers that only need ``PoseGraph``.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, TypeVar, cast
 
@@ -53,6 +53,7 @@ from scipy.spatial.transform import Rotation, Slerp
 
 from dimos.memory.transform import Transformer
 from dimos.memory.type.observation import Observation
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -178,7 +179,38 @@ class PoseGraph(Transformer[Any, Any]):
         Useful when applying the correction to non-pose data (e.g. point
         clouds): ``pointcloud.transform(graph.correction_at(obs.ts))``.
         """
-        return self._interp()(ts)
+        R, t = self._corrections(np.array([ts]))
+        return Transform(
+            translation=Vector3(t[0]),
+            rotation=Quaternion.from_rotation_matrix(R[0].as_matrix()),
+            frame_id=FRAME_WORLD_CORRECTED,
+            child_frame_id=FRAME_WORLD_RAW,
+            ts=float(ts),
+        )
+
+    def place(self, cloud: PointCloud2) -> PointCloud2:
+        """Move each point by the correction for its capture time, anchored at the latest keyframe.
+
+        Capture time is the cloud's per-point ``stamps`` when present, else
+        ``cloud.ts``. The latest keyframe's correction maps to identity, so
+        current data stays where raw odometry puts it and older data moves.
+        """
+        pts = cloud.points_f32()
+        if not len(pts):
+            return cloud
+        stamps = cloud.stamps_f64()
+        if stamps is None:
+            stamps = np.full(len(pts), cloud.ts)
+        unique, inverse = np.unique(stamps, return_inverse=True)
+        R, t = self._corrections(unique)
+        now_R, now_t = self._corrections(np.array([np.inf]))
+        anchor = now_R[0].inv()
+        R, t = anchor * R, anchor.apply(t - now_t[0])
+        return PointCloud2.from_numpy(
+            R[inverse].apply(pts.astype(np.float64)) + t[inverse],
+            frame_id=cloud.frame_id,
+            timestamp=cloud.ts,
+        )
 
     def __call__(self, upstream: Iterator[Observation[Any]]) -> Iterator[Observation[Any]]:
         """Rewrite obs.pose via :meth:`correct`; pass through pose-less obs unchanged."""
@@ -190,11 +222,18 @@ class PoseGraph(Transformer[Any, Any]):
             raw_tf = Transform.from_pose(FRAME_BODY, ps)
             yield obs.derive(data=obs.data, pose=self.correct(raw_tf))
 
-    def _interp(self) -> Callable[[float], Transform]:
-        """Lazy slerp/lerp drift-correction lookup keyed by ts."""
-        cached = self.__dict__.get("_interp_cache")
+    def _corrections(self, ts: np.ndarray) -> tuple[Rotation, np.ndarray]:
+        """Vectorized drift correction: slerp rotation, lerp translation, clipped to the keyframes."""
+        ts_arr, slerp, t_stack = self._drifts()
+        clipped = np.clip(ts, ts_arr[0], ts_arr[-1])
+        t = np.stack([np.interp(clipped, ts_arr, t_stack[:, i]) for i in range(3)], axis=1)
+        return slerp(clipped), t
+
+    def _drifts(self) -> tuple[np.ndarray, Slerp, np.ndarray]:
+        """Lazy per-keyframe drift table (ts, rotation slerp, translations)."""
+        cached = self.__dict__.get("_drifts_cache")
         if cached is not None:
-            return cast("Callable[[float], Transform]", cached)
+            return cast("tuple[np.ndarray, Slerp, np.ndarray]", cached)
 
         if not self.keyframes:
             raise ValueError("PoseGraph has no keyframes")
@@ -212,32 +251,10 @@ class PoseGraph(Transformer[Any, Any]):
             t_list.append(t_list[0])
 
         ts_arr = np.array(ts_list)
-        t_stack = np.stack(t_list)
-        slerp = Slerp(ts_arr, Rotation.from_quat(np.stack(quat_list)))
-
-        def interp(ts: float) -> Transform:
-            ts_clip = float(np.clip(ts, ts_arr[0], ts_arr[-1]))
-            R = slerp([ts_clip])[0].as_matrix()
-            idx = int(np.searchsorted(ts_arr, ts_clip))
-            if idx == 0:
-                t = t_stack[0]
-            elif idx >= len(ts_arr):
-                t = t_stack[-1]
-            else:
-                t_lo, t_hi = ts_arr[idx - 1], ts_arr[idx]
-                alpha = (ts_clip - t_lo) / (t_hi - t_lo) if t_hi > t_lo else 0.0
-                t = (1 - alpha) * t_stack[idx - 1] + alpha * t_stack[idx]
-            return Transform(
-                translation=Vector3(t),
-                rotation=Quaternion.from_rotation_matrix(R),
-                frame_id=FRAME_WORLD_CORRECTED,
-                child_frame_id=FRAME_WORLD_RAW,
-                ts=float(ts),
-            )
-
+        table = (ts_arr, Slerp(ts_arr, Rotation.from_quat(np.stack(quat_list))), np.stack(t_list))
         # frozen=True blocks plain attribute writes; use object.__setattr__.
-        object.__setattr__(self, "_interp_cache", interp)
-        return interp
+        object.__setattr__(self, "_drifts_cache", table)
+        return table
 
 
 class PGO(Transformer[PointCloud2, "PoseGraph"]):
@@ -299,11 +316,15 @@ class PGO(Transformer[PointCloud2, "PoseGraph"]):
 
 def _obs_to_pose3(obs: Observation[Any]) -> gtsam.Pose3:
     """Convert an observation's pose to a `gtsam.Pose3`."""
-    import gtsam  # type: ignore[import-not-found,import-untyped]
-
     pose = obs.pose
     if pose is None:
         raise LookupError("No pose set on this observation")
+    return _pose_to_pose3(pose)
+
+
+def _pose_to_pose3(pose: Pose) -> gtsam.Pose3:
+    import gtsam  # type: ignore[import-not-found,import-untyped]
+
     t, r = pose.position, pose.orientation
     return gtsam.Pose3(
         gtsam.Rot3.Quaternion(r.w, r.x, r.y, r.z),
@@ -351,6 +372,31 @@ class _PGOState:
         self._isam2 = gtsam.ISAM2(params)
         self._graph = gtsam.NonlinearFactorGraph()
         self._values = gtsam.Values()
+
+    @property
+    def n_keyframes(self) -> int:
+        return len(self._key_poses)
+
+    @property
+    def n_loops(self) -> int:
+        return len(self._accepted_loops)
+
+    def keyframe_poses(self) -> tuple[np.ndarray, np.ndarray]:
+        """Optimized keyframe poses, anchored at the latest: positions (K, 3), xyzw quats (K, 4)."""
+        if not self._key_poses:
+            return np.empty((0, 3)), np.empty((0, 4))
+        anchor = self._world_correction.inverse()
+        poses = [anchor.compose(kp.optimized) for kp in self._key_poses]
+        positions = np.array([p.translation() for p in poses])
+        quats = Rotation.from_matrix(np.array([p.rotation().matrix() for p in poses])).as_quat()
+        return positions, quats
+
+    def loop_segments(self) -> tuple[np.ndarray, np.ndarray]:
+        """Accepted loop edges in the same frame: endpoints (L, 2, 3) and ICP scores (L,)."""
+        positions, _ = self.keyframe_poses()
+        pairs = np.array([(lp.source, lp.target) for lp in self._accepted_loops], dtype=int)
+        scores = np.array([lp.score for lp in self._accepted_loops])
+        return positions[pairs.reshape(-1, 2)], scores
 
     def process(
         self,

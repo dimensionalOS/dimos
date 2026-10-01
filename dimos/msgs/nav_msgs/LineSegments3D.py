@@ -34,6 +34,9 @@ if TYPE_CHECKING:
 
 # Path prefix after the 8 byte fingerprint: poses_length, header seq, stamp sec, stamp nsec, frame_id length.
 _PREFIX = struct.Struct(">iiiiI")
+# The header seq sits after the fingerprint and poses_length.
+_SEQ = struct.Struct(">i")
+_SEQ_OFFSET = 12
 # PoseStamped bytes before its frame_id text: header seq, stamp sec, stamp nsec, frame_id length.
 _POSE_HEAD = 16
 _POSE_DOUBLES = 7
@@ -71,7 +74,19 @@ class LineSegments3D(Timestamped):
         )
 
     def lcm_encode(self) -> bytes:
-        raise NotImplementedError("Encoded on C++ side")
+        """Encode as the Path payload `lcm_decode` reads: a pose pair per segment, weight in qw."""
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+        from dimos.msgs.nav_msgs.Path import Path
+
+        poses = [
+            PoseStamped(*point, 0.0, 0.0, 0.0, weight, ts=self.ts, frame_id=self.frame_id)
+            for segment, weight in zip(self.segments.tolist(), self.weights.tolist(), strict=True)
+            for point in segment
+        ]
+        # Path has no seq of its own, so it is written into the encoded header.
+        raw = bytearray(Path(ts=self.ts, frame_id=self.frame_id, poses=poses).lcm_encode())
+        _SEQ.pack_into(raw, _SEQ_OFFSET, self.seq)
+        return bytes(raw)
 
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO) -> LineSegments3D:

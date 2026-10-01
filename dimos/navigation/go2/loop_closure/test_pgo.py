@@ -18,20 +18,21 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from dimos.mapping.loop_closure.pgo import (
-    PGO,
-    Keyframe,
-    PGOConfig,
-    PoseGraph,
-    _obs_to_pose3,
-    _pose3_to_transform,
-)
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.stream import Stream
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.go2.loop_closure.pgo import (
+    PGO,
+    Keyframe,
+    PGOConfig,
+    PoseGraph,
+    _obs_to_pose3,
+    _PGOState,
+    _pose3_to_transform,
+)
 
 # TODO(PY311): drop — the mapping extra excludes gtsam-extended where it has no
 # wheels (py3.10 Linux), see pyproject.
@@ -65,7 +66,7 @@ class TestPGOConfig:
 
     def test_kwargs_typed_dict_matches_config(self) -> None:
         """`PGOKwargs` must mirror every `PGOConfig` field 1:1."""
-        from dimos.mapping.loop_closure.pgo import PGOKwargs
+        from dimos.navigation.go2.loop_closure.pgo import PGOKwargs
 
         assert set(PGOConfig.model_fields.keys()) == set(PGOKwargs.__annotations__.keys())
 
@@ -159,6 +160,23 @@ def _make_lidar_stream(n_frames: int = 12, points_per_frame: int = 500) -> Strea
     return lidar
 
 
+def test_state_reports_keyframes_anchored_at_the_latest() -> None:
+    state = _PGOState(PGOConfig())
+    for obs in _make_lidar_stream(n_frames=12):
+        state.process(_obs_to_pose3(obs), obs.ts, obs.data)
+
+    positions, quats = state.keyframe_poses()
+    assert positions.shape == (state.n_keyframes, 3)
+    assert quats.shape == (state.n_keyframes, 4)
+    # no loop closed, so nothing moved: keyframes sit on the odometry line
+    np.testing.assert_allclose(positions[-1], [12.0, 0.0, 0.0], atol=1e-6)
+    np.testing.assert_allclose(positions[:, 1:], 0.0, atol=1e-6)
+
+    segments, scores = state.loop_segments()
+    assert segments.shape == (0, 2, 3)
+    assert scores.shape == (0,)
+
+
 class TestPipelineEndToEnd:
     def test_straight_line_produces_keyframes(self) -> None:
         lidar = _make_lidar_stream(n_frames=12)
@@ -236,6 +254,40 @@ class TestPoseGraphCorrection:
         graph = PoseGraph()
         with pytest.raises(Exception):
             graph.keyframes = (Keyframe(ts=0, local=Transform(), optimized=Transform()),)  # type: ignore[misc]
+
+
+class TestPlace:
+    def _graph(self) -> PoseGraph:
+        turn = Quaternion.from_rotation_matrix(Rotation.from_euler("z", np.pi / 2).as_matrix())
+        return _graph_with_drift_at(
+            [
+                Transform(translation=Vector3(0.0, 0.0, 0.0), ts=1.0),
+                Transform(translation=Vector3(10.0, 0.0, 0.0), rotation=turn, ts=11.0),
+            ]
+        )
+
+    def test_latest_data_stays_put(self) -> None:
+        cloud = PointCloud2.from_numpy(np.array([[1.0, 2.0, 3.0]]), timestamp=11.0)
+        np.testing.assert_allclose(
+            self._graph().place(cloud).points_f32(), [[1.0, 2.0, 3.0]], atol=1e-5
+        )
+
+    def test_old_data_moves_relative_to_the_latest_keyframe(self) -> None:
+        # C(now)^-1 . C(1): undo the latest correction (turn 90 deg, +10 x).
+        cloud = PointCloud2.from_numpy(np.array([[10.0, 1.0, 0.0]]), timestamp=1.0)
+        np.testing.assert_allclose(
+            self._graph().place(cloud).points_f32(), [[1.0, 0.0, 0.0]], atol=1e-5
+        )
+
+    def test_per_point_stamps_override_the_cloud_ts(self) -> None:
+        cloud = PointCloud2.from_numpy(
+            np.array([[10.0, 1.0, 0.0], [1.0, 2.0, 3.0]]),
+            timestamp=1.0,
+            stamps=np.array([1.0, 11.0]),
+        )
+        np.testing.assert_allclose(
+            self._graph().place(cloud).points_f32(), [[1.0, 0.0, 0.0], [1.0, 2.0, 3.0]], atol=1e-5
+        )
 
 
 class TestApplyAsTransformer:

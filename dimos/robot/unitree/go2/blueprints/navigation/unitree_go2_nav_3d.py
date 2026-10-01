@@ -13,11 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""3d navigation on Go2 with ray tracing and MLS planning"""
+"""3d navigation on Go2 with ray tracing and MLS planning.
+
+The Mid-360 driver defaults to the factory lidar IP. Set ``MID360__LIDAR_IP`` when
+the sensor lives elsewhere.
+"""
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.global_planner.viz import nav_static, nav_visual_override
@@ -60,6 +65,7 @@ _nav_rerun_config = {
         "world/camera_info": None,
         "world/color_image": None,
         "world/lidar": None,
+        "world/lidar_raw": None,
         **nav_visual_override(planner_viz_hz, voxel_size, wall_clearance_m),
     },
 }
@@ -79,6 +85,7 @@ unitree_go2_nav_3d = autoconnect(
             (GO2Connection, "odom", "odom_go2"),
         ]
     ),
+    mid360_for_pointlio(),
     PointLio.blueprint(),
     Go2Mid360StaticTf.blueprint(),
     RayTracingVoxelMap.blueprint(**ray_tracing_config.model_dump(exclude_unset=True)),
@@ -89,10 +96,10 @@ unitree_go2_nav_3d = autoconnect(
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
     BasicPathFollower.blueprint(heading_gain=1.0, lookahead_time_s=2.5, min_lookahead_m=1.2),
     MovementManager.blueprint(),
-).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
+).global_config(n_workers=11, robot_model="unitree_go2", obstacle_avoidance=False)
 
 # LCM can lose the one-shot loaded_map publish, so this stack republishes it.
 unitree_go2_nav_3d_relocalization = autoconnect(
     unitree_go2_nav_3d,
     relocalization(republish_loaded_map=30.0),
-).global_config(n_workers=11)
+).global_config(n_workers=12)

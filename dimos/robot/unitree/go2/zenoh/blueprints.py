@@ -26,7 +26,7 @@ failure can be bisected by dropping down a level:
   a baked host on the robot publishes their outputs.
 - ``go2-zenoh-motion``: ``local_planner`` + ``trajectory_follower`` replanning over the
   raycaster's local map, the follower reading the required precision off the path stamps.
-- ``go2-zenoh-motion-pointlio``: ``go2-zenoh-motion`` running its own ``PointLioRust``,
+- ``go2-zenoh-motion-pointlio``: ``go2-zenoh-motion`` running its own ``PointLio``,
   for when the MID-360 hangs off this box rather than the robot.
 - ``go2-viewer``: the rerun half alone, as a zenoh client of the robot's router.
 - ``go2-dds-basic``: ``go2-zenoh-basic`` with :class:`GO2DDS` in place of the bridge, for the
@@ -42,7 +42,7 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
@@ -244,8 +244,8 @@ go2_zenoh_motion = autoconnect(
 
 
 # `go2-zenoh-motion` with Point-LIO here: the MID-360 hangs off the Jetson, so the robot's
-# onboard LIO is blind. The mount tree stays the bridge's (rooted at mid360_link); rust
-# Point-LIO because the C++ SDK is LCM-only. host_ip is explicit: the Jetson has two NICs.
+# onboard LIO is blind. The mount tree stays the bridge's (rooted at mid360_link).
+# host_ip is explicit: the Jetson has two NICs.
 go2_zenoh_motion_pointlio = autoconnect(
     _go2_zenoh_motion_base,
     TrajectoryFollowerNative.blueprint(),
@@ -258,7 +258,7 @@ go2_zenoh_motion_pointlio = autoconnect(
         ]
     ),
     mid360_for_pointlio(lidar_ip="192.168.123.157", host_ip="192.168.123.5"),
-    PointLioRust.blueprint(),
+    PointLio.blueprint(),
     # the clouds are already drawn as the raytraced map; only this stack has lidar_raw
     vis_module(
         viewer_backend=global_config.viewer,
@@ -283,8 +283,8 @@ go2_zenoh_motion_pointlio = autoconnect(
 # `go2-zenoh-motion-pointlio` with GO2DDS as the robot side, no go2web bridge anywhere.
 # Its native process is the zenoh router (the Go2 forwards 7447 to the Jetson, so the
 # viewer still dials go22); every other process dials it on loopback. The head L1 stays
-# off and Point-LIO owns odom, so GO2DDS publishes no lidar, odometry or odom tf edge; its
-# body IMU moves aside for the MID-360's, which Point-LIO reads on `imu`.
+# off and Point-LIO owns odom, so GO2DDS publishes no lidar, odometry or odom tf edge. Its
+# raw L1 cloud and body IMU move aside so only the MID-360 reaches Point-LIO's inputs.
 _go2_dds_pointlio = GO2DDS.blueprint(
     iface="enP8p1s0",
     lidar_on=False,
@@ -294,6 +294,7 @@ _go2_dds_pointlio = GO2DDS.blueprint(
     [
         (GO2DDS, "odometry", "go2_odometry_unused"),
         (GO2DDS, "lidar", "go2_lidar_unused"),
+        (GO2DDS, "lidar_raw", "go2_lidar_raw_unused"),
         (GO2DDS, "imu", "body_imu"),
     ]
 )
@@ -318,7 +319,7 @@ go2_dds_motion_pointlio = autoconnect(
     LocalPlannerNative.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),
     TrajectoryFollowerNative.blueprint(),
     mid360_for_pointlio(lidar_ip="192.168.123.157", host_ip="192.168.123.5"),
-    PointLioRust.blueprint(),
+    PointLio.blueprint(),
 ).global_config(
     transport="zenoh",
     zenoh_connect="tcp/127.0.0.1:7447",

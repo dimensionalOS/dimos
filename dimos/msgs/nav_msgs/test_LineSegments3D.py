@@ -70,3 +70,17 @@ def test_mixed_frame_id_lengths_are_rejected() -> None:
     raw = encode_edges(20, frame_ids=["odom", "map", "base_link"])
     with pytest.raises(ValueError, match="frame_id length"):
         LineSegments3D.lcm_decode(raw)
+
+
+def test_encode_round_trips() -> None:
+    seq = (-3 << 16) | 5
+    msg = LineSegments3D(
+        ts=12.5, frame_id="world", segments=expected_segments(3), weights=[0.1, 0.2, 0.3], seq=seq
+    )
+    back = LineSegments3D.lcm_decode(msg.lcm_encode())
+    assert back.frame_id == "world"
+    assert back.ts == 12.5
+    assert back.seq == seq
+    np.testing.assert_array_equal(back.segments, msg.segments)
+    np.testing.assert_allclose(back.weights, msg.weights)
+    assert len(LineSegments3D.lcm_decode(LineSegments3D(ts=1.0).lcm_encode())) == 0

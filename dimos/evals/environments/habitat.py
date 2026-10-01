@@ -26,6 +26,7 @@ from pydantic import model_validator
 
 from dimos.evals.environments.sim import Sim, SimConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.simulation.habitat.server import HabitatProp
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
@@ -46,6 +47,8 @@ class HabitatEnvironmentConfig(SimConfig):
     start_position_ros_override: tuple[float, float, float] | None = None
     # Optional path to the Habitat executable.
     executable: str | None = None
+    # Static models placed in the scene.
+    props: tuple[HabitatProp, ...] = ()
 
     @model_validator(mode="after")
     def finite_spawn(self) -> HabitatEnvironmentConfig:
@@ -68,6 +71,7 @@ class HabitatEnvironment(Sim):
         "start_position_ros",
         "executable",
         "publish_semantic",
+        "props",
     )
 
     config: HabitatEnvironmentConfig

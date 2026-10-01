@@ -31,7 +31,6 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseArray import PoseArray
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -948,7 +947,7 @@ def test_lcm_schema_joins_user_params_in_the_request_only() -> None:
         ),
         (Channel("traj", JointTrajectory), r"'traj': .*declares its own LCM fingerprint"),
         (Channel("motors", MotorCommandArray), r"'motors': .*dimos_lcm.*@web_encoder"),
-        (Channel("poses", PoseArray), r"'poses': .*not supported by json\.v1"),
+        (Channel("poses", bytes), r"'poses': .*not supported by json\.v1"),
     ],
     ids=["id_type_mismatch", "lcm_id_on_dict", "foreign_fingerprint", "no_schema", "no_lcm"],
 )
