@@ -38,7 +38,6 @@ exclude-newer-span = "P7D"
 [options.exclude-newer-package]
 can-motor-control = false
 dim-odom = false
-dimos-lcm = false
 dimos-viewer = false
 eclipse-zenoh = false
 edgetam-dimos = false
@@ -1718,7 +1717,6 @@ dependencies = [
     { name = "cmeel-tinyxml2" },
     { name = "cryptography" },
     { name = "dimos-generated" },
-    { name = "dimos-lcm" },
     { name = "dimos-message-build" },
     { name = "dimos-viewer" },
     { name = "eclipse-zenoh" },
@@ -2367,7 +2365,6 @@ requires-dist = [
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
     { name = "dimos-generated", directory = "packages/dimos-generated" },
-    { name = "dimos-lcm", specifier = ">=0.1.3" },
     { name = "dimos-message-build", directory = "dimos/message_codegen" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
@@ -2685,21 +2682,6 @@ tests-self-hosted = [
 name = "dimos-generated"
 version = "0.1.0"
 source = { directory = "packages/dimos-generated" }
-
-[[package]]
-name = "dimos-lcm"
-version = "0.1.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "foxglove-websocket" },
-    { name = "lcm-dimos-fork" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/09/b2/4cdd2bce665ab633313b5d371e0a63fcae2cf77a934a2a9bf820db88a540/dimos_lcm-0.1.3.tar.gz", hash = "sha256:5f7dbd3055f299823bc0e450c59583ad5a2d093c182deec8a86073853881bb09", size = 405688, upload-time = "2026-06-03T07:20:20.552Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/95/19/2d8babf544993508359922ea59db2280d42efa0d5a80d4d0cae22ce40d67/dimos_lcm-0.1.3-py3-none-any.whl", hash = "sha256:63317225a0b4ab0f05e4b656f3f78ac9ba4e914998da2c689ca839cbbd83d57d", size = 1714087, upload-time = "2026-06-03T07:20:22.689Z" },
-]
 
 [[package]]
 name = "dimos-message-build"
@@ -3304,18 +3286,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d9/71/fd2ea96cdc512d92da5678a1c98c267ddd4d8c5130b76d0f7a80f9a9fde8/fonttools-4.61.1-cp312-cp312-win32.whl", hash = "sha256:75da8f28eff26defba42c52986de97b22106cb8f26515b7c22443ebc9c2d3261", size = 2269060, upload-time = "2025-12-12T17:30:18.058Z" },
     { url = "https://files.pythonhosted.org/packages/80/3b/a3e81b71aed5a688e89dfe0e2694b26b78c7d7f39a5ffd8a7d75f54a12a8/fonttools-4.61.1-cp312-cp312-win_amd64.whl", hash = "sha256:497c31ce314219888c0e2fce5ad9178ca83fe5230b01a5006726cdf3ac9f24d9", size = 2319078, upload-time = "2025-12-12T17:30:22.862Z" },
     { url = "https://files.pythonhosted.org/packages/c7/4e/ce75a57ff3aebf6fc1f4e9d508b8e5810618a33d900ad6c19eb30b290b97/fonttools-4.61.1-py3-none-any.whl", hash = "sha256:17d2bf5d541add43822bcf0c43d7d847b160c9bb01d15d5007d84e2217aaa371", size = 1148996, upload-time = "2025-12-12T17:31:21.03Z" },
-]
-
-[[package]]
-name = "foxglove-websocket"
-version = "0.1.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "websockets" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/db/b5/df32ac550eb0df9000ed78d872eb19738edecfd88f47fe08588d5066f317/foxglove_websocket-0.1.4.tar.gz", hash = "sha256:2ec8936982e478d103dd90268a572599fc0cce45a4ab95490d5bc31f7c8a8af8", size = 16616, upload-time = "2025-07-14T20:26:28.278Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c4/73/3a3e6cb864ddf98800a9236ad497d32e5b50eb1682ac659f7d669d92faec/foxglove_websocket-0.1.4-py3-none-any.whl", hash = "sha256:772e24e2c98bdfc704df53f7177c8ff5bab0abc4dac59a91463aca16debdd83a", size = 14392, upload-time = "2025-07-14T20:26:26.899Z" },
 ]
 
 [[package]]
