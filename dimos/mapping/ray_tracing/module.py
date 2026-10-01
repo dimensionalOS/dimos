@@ -74,6 +74,8 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     world_frame: str = "odom"
     # Max stamp gap between a cloud and the transform used to register it (s).
     tf_match_tolerance_s: float = TF_MATCH_TOLERANCE_S
+    # Skip clouds this much (s) older than the newest transform for their frame, so a map that fell behind catches up; 0 keeps all.
+    max_cloud_age_s: float = 0.0
     # Worker threads for parallel map work.
     worker_threads: int = 4
     # Edge of the square regions a seeded map is handed on in and the map viz publishes by.

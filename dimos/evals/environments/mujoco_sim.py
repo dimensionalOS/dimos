@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import time
 from typing import TYPE_CHECKING, cast
 
@@ -27,8 +28,6 @@ from dimos.evals.environments.lib.recorded_poses import last_body_transform
 from dimos.evals.environments.sim import Sim, SimConfig
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
     from dimos.memory.store.base import Store
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -46,6 +45,7 @@ class MujocoEnvironmentConfig(SimConfig):
         "tf",
         "odom",
     )
+    scene: Path | None = None
 
 
 class MujocoEnvironment(Sim):
@@ -56,6 +56,8 @@ class MujocoEnvironment(Sim):
     def configure_launch(self, proc: DimosCliCall) -> None:
         proc.simulator = "mujoco"
         proc.global_args = ["--record-topics", ",".join(self.config.recorded_topics)]
+        if self.config.scene is not None:
+            proc.global_args += ["--mujoco-scene", str(self.config.scene.resolve())]
         proc.extra_env.update(self.config.module_env)
         proc.extra_env.setdefault(
             "MUJOCOSIMMODULE__HEADLESS", os.environ.get("MUJOCOSIMMODULE__HEADLESS", "true")

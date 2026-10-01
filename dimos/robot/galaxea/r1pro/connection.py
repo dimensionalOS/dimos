@@ -91,7 +91,7 @@ _WRIST_DEPTH_CAMERAS: dict[str, str] = {
 _HEAD_DEPTH_TOPIC = "/hdas/camera_head/depth/depth_registered"
 _LIDAR_TOPIC = "/hdas/lidar_chassis_left"
 # base_link -> lidar_chassis_left_link, the fixed joint origin in the vendor URDF.
-_LIDAR_MOUNT_XYZ = (0.15711, 0.26215, 0.29465)
+_LIDAR_MOUNT_XYZ = (0.15711, 0.21215, 0.29465)
 
 
 @dataclass

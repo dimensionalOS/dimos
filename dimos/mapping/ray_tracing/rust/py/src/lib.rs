@@ -153,6 +153,7 @@ impl VoxelRayMapper {
             region_percentile,
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
+            max_cloud_age_s: 0.0,
             worker_threads,
             region_m,
             viz_emit_every: 0,

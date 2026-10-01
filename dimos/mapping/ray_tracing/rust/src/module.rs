@@ -102,6 +102,18 @@ pub struct RayTracingVoxelMap {
     worker: Option<JoinHandle<()>>,
 }
 
+/// Whether transforms have already moved past a cloud's stamp, so the one it needs will never
+/// arrive: waiting on it would cap a backed-up queue's drain rate at 1/TF_WAIT_TIMEOUT.
+fn transform_is_past(stamp: f64, latest_tf: Option<f64>, tolerance: f64) -> bool {
+    latest_tf.is_some_and(|latest| latest > stamp + tolerance)
+}
+
+/// Whether a cloud is more than `max_age_s` older than the newest transform for its frame (0 keeps all).
+/// Aged against the transforms rather than the wall clock, so a replay ages the same way.
+fn is_stale(stamp: f64, latest_tf: Option<f64>, max_age_s: f64) -> bool {
+    max_age_s > 0.0 && latest_tf.is_some_and(|latest| latest - stamp > max_age_s)
+}
+
 impl RayTracingVoxelMap {
     async fn spawn_worker(&mut self) {
         let (tx, rx) = mpsc::channel(JOB_QUEUE_CAPACITY);
@@ -334,14 +346,26 @@ impl Worker {
         // Register with the transform nearest the cloud stamp, waiting briefly
         // for one still in flight rather than dropping the cloud.
         let stamp = time_secs(&msg.header.stamp);
-        let Some(tf_pose) = self
+        let tolerance = self.config.tf_match_tolerance_s;
+        let lookup = self
             .tf
             .lookup(&self.config.world_frame, &msg.header.frame_id)
             .at(stamp)
-            .tolerance(self.config.tf_match_tolerance_s)
-            .within(TF_WAIT_TIMEOUT)
-            .await
-        else {
+            .tolerance(tolerance);
+        let latest = self
+            .tf
+            .get_latest(&self.config.world_frame, &msg.header.frame_id)
+            .map(|latest| latest.ts);
+        if is_stale(stamp, latest, self.config.max_cloud_age_s) {
+            warn_throttled!(Duration::from_secs(5), cloud_frame = %msg.header.frame_id, "Skipped a cloud older than max_cloud_age_s: the map is behind and catching up.");
+            return;
+        }
+        let found = if transform_is_past(stamp, latest, tolerance) {
+            lookup.get()
+        } else {
+            lookup.within(TF_WAIT_TIMEOUT).await
+        };
+        let Some(tf_pose) = found else {
             warn!(
                 stamp,
                 world_frame = %self.config.world_frame,
@@ -805,6 +829,7 @@ mod tests {
             region_percentile: 95.0,
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
+            max_cloud_age_s: 0.0,
             worker_threads: 4,
             region_m: 4.0,
             viz_emit_every: 0,
@@ -976,6 +1001,22 @@ mod tests {
         let due = map_regions_due(&mut mapper, &mut viz, 1.0, 4.0, 0);
         assert_eq!(sizes(due), vec![((0, 0), 0)]);
         assert!(map_regions_due(&mut mapper, &mut viz, 1.0, 4.0, 0).is_empty());
+    }
+
+    #[test]
+    fn a_cloud_waits_for_its_transform_only_while_it_could_still_arrive() {
+        assert!(!transform_is_past(100.0, None, 0.1));
+        assert!(!transform_is_past(100.0, Some(100.05), 0.1));
+        assert!(transform_is_past(100.0, Some(100.5), 0.1));
+    }
+
+    #[test]
+    fn a_cloud_is_stale_by_the_newest_transform_not_the_wall_clock() {
+        assert!(!is_stale(100.0, None, 1.0));
+        assert!(!is_stale(100.0, Some(100.5), 1.0));
+        assert!(is_stale(100.0, Some(101.5), 1.0));
+        // 0 keeps every cloud, however old.
+        assert!(!is_stale(100.0, Some(500.0), 0.0));
     }
 
     /// The clear-mask handler names voxels by decoding a cloud and quantizing
