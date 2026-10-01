@@ -21,7 +21,6 @@ import signal
 import subprocess
 import sys
 import threading
-import time
 
 import pytest
 
@@ -39,7 +38,7 @@ WATCHED = (("odom", PoseStamped), ("lidar", PointCloud2), ("color_image", Image)
 # near-lossless; lidar and color_image are large frames whose delivery relies
 # on the 64MB rmem tuning, so leave headroom for designed shedding.
 FLOOR_FRACTION = {"odom": 0.9, "lidar": 0.9, "color_image": 0.5}
-# When set, write the tracked series (wall/CPU/memory/threads/disk/network) to this path.
+# When set, write the tracked series (memory/threads/network/disk/instructions) to this path.
 METRICS_PATH = os.environ.get("DIMOS_BENCH_METRICS")
 # With DIMOS_BENCH_METRICS: perf events (e.g. "instructions:u,cycles:u") counted over
 # the CLI's whole process tree and added to the series. A core's clock and idle
@@ -88,25 +87,17 @@ def _cgroup_stat(name: str) -> dict[str, str]:
     return dict(line.split() for line in lines)
 
 
-def _cpu_mark() -> tuple[float, float, float]:
-    """(wall, user, system): monotonic seconds and this cgroup's CPU seconds.
+def _cgroup_anon_bytes() -> int:
+    """Anonymous memory currently charged to this cgroup, whole process tree.
 
     Cgroup accounting counts every process in the job's cgroup, live or
     exited — per-process rusage can't: the forkserver workers doing most of
     the work are never reaped by the test process, so RUSAGE_CHILDREN misses
-    them.
-    """
-    fields = _cgroup_stat("cpu.stat")
-    return time.monotonic(), int(fields["user_usec"]) / 1e6, int(fields["system_usec"]) / 1e6
-
-
-def _cgroup_anon_bytes() -> int:
-    """Anonymous memory currently charged to this cgroup, whole process tree.
-
-    Page cache is deliberately excluded (memory.current would include it): it
-    scales with file reads and global memory pressure, not with the pipeline.
-    memory.peak is no use either — it is cumulative since cgroup creation, so
-    on a CI runner it would report the job's setup steps, not the benchmark.
+    them. Page cache is deliberately excluded (memory.current would include
+    it): it scales with file reads and global memory pressure, not with the
+    pipeline. memory.peak is no use either — it is cumulative since cgroup
+    creation, so on a CI runner it would report the job's setup steps, not
+    the benchmark.
     """
     return int(_cgroup_stat("memory.stat")["anon"])
 
@@ -185,8 +176,8 @@ def _perf_counts(path: Path, events: list[str]) -> tuple[dict[str, float], float
     either. A counted share below 100% means the events were multiplexed onto
     too few counters, and the counts are scaled estimates.
 
-    Deliberately not split at the first frame like the CPU time: the first
-    frame lands somewhere inside the parallel module starts, so a split there
+    Deliberately not split into startup and steady state at the first frame:
+    it lands somewhere inside the parallel module starts, so a split there
     moves startup work between the halves without changing the total (on the
     arm runner the halves ranged 17-24% between identical runs, the total 0.1%).
     """
@@ -226,20 +217,16 @@ def test_go2_replay_realtime_load() -> None:
 
     counts = dict.fromkeys(FLOOR_FRACTION, 0)
     lock = threading.Lock()
-    cpu_marks: dict[str, tuple[float, float, float]] = {}
     io_marks: dict[str, int] = {}
     net_marks: dict[str, int] = {}
 
     def mark(name: str) -> None:
         if METRICS_PATH:
-            cpu_marks[name] = _cpu_mark()
             io_marks[name] = _cgroup_io_bytes()
             net_marks[name] = _net_bytes()
 
     def record(name: str) -> None:
         with lock:
-            if not any(counts.values()):
-                mark("first frame")
             counts[name] += 1
 
     # Same topics and backend the blueprint materializes for these
@@ -322,23 +309,17 @@ def test_go2_replay_realtime_load() -> None:
     assert not low, f"floors not met (got, floor): {low}, expected~{expected}"
 
     if METRICS_PATH:
-        start, first, end = cpu_marks["start"], cpu_marks["first frame"], cpu_marks["end"]
         entries = [
-            # Startup: process spawn until the first frame reaches the bus.
-            ("first frame wall", first[0] - start[0], "s"),
-            ("first frame cpu", (first[1] + first[2]) - (start[1] + start[2]), "s"),
-            # Steady-state cost of the realtime run — the headline.
-            ("run cpu", (end[1] + end[2]) - (first[1] + first[2]), "s"),
-            ("run cpu (user)", end[1] - first[1], "s"),
-            ("run cpu (system)", end[2] - first[2], "s"),
             # Maxima sampled at 10Hz across the run, whole process tree.
             ("peak memory", peak_anon / 2**20, "MB"),
             ("peak threads", float(peak_tasks), "threads"),
-            # Block-device writeback across the run.
-            ("disk write", (io_marks["end"] - io_marks["start"]) / 2**20, "MB"),
             # Bytes between the workers: loopback for zenoh, looped multicast
             # for LCM.
             ("network (transport)", (net_marks["end"] - net_marks["start"]) / 2**20, "MB"),
+            # Block-device writeback across the run: the deployment's logs, once
+            # the job has warmed pytest's plugin caches (otherwise their
+            # ~8 MB of bytecode lands here). Tracked, not gated.
+            ("disk write", (io_marks["end"] - io_marks["start"]) / 2**20, "MB"),
         ]
         # Context for reading a point, not series: what was delivered (work
         # that got shed under load shows here first) and whether perf had a
