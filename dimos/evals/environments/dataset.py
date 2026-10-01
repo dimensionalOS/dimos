@@ -21,23 +21,23 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-from dimos.evals.environments.base import Environment
+from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.environments.lib.launch import default_mcp_url, validate_blueprints
 from dimos.evals.types import RunningEnvironment
 from dimos.memory.cli.dataset import open_dataset, resolve_dataset
 from dimos.memory.store.base import Store
 from dimos.memory.stream import Stream
-from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
     from dimos.evals.agents.base import Agent
 
 
-class DatasetConfig(BaseConfig):
+class DatasetConfig(EnvironmentConfig):
     name: str
     select: tuple[Callable[[Store], Stream[Any, Any]], ...] = ()
     mcp_url: str = ""
     launch_timeout_s: float = 300.0
+    agent_artifacts: tuple[str, ...] = ("recording",)
 
 
 class Dataset(Environment):
